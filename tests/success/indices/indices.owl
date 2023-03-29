@@ -1,0 +1,22 @@
+locality alice
+
+name d<i> : nonce @ alice
+name dk<i> : enckey Data<[d<i>], |static|> @ alice
+
+name d2<i, j> : nonce @ alice
+name mk : enckey (exists i. Name(dk<i>)) @ alice
+
+def alice<i> () @ alice
+    : Unit =
+    assert (/\_i [dk<i>] <= [mk]);
+    assert (/\_i ([dk<i>] /\ [d<i>]) <= (/\_i [dk<i>] ) /\ (/\_i [d<i>]));
+    let c = samp enc(get(mk), pack<i>(get(dk<i>))) in
+    output c
+
+def alice3<i, j> () @ alice : Name(dk<i>) = 
+    get(dk<i>)
+
+def alice2<i, j>() @ alice
+: Unit =
+    let _ = assume(i =idx j) in
+    let x : Name(d<i>) = get(d<j>) in ()

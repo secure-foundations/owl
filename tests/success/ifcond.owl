@@ -1,0 +1,20 @@
+locality alice
+
+name n : nonce @ alice
+
+def main() @ alice : Unit = 
+    let x = get(n) in
+    input i in 
+    let b = checknonce(x, i) in
+    if b then
+        assert ([n] <= adv);
+        ()
+    else ()
+
+def main2() @ alice : Unit = 
+    let x = get(n) in
+    input i in 
+    if checknonce(x, i) then
+        assert ([n] <= adv);
+        ()
+    else ()

@@ -1,0 +1,18 @@
+locality alice
+
+
+enum tst {
+    | A Data<adv> | |nonce| |
+    | B
+}
+
+name k : enckey tst @ alice
+
+def alice_main(x : Data<adv> | |nonce| |, y : Data<adv> | |enckey| |) @ alice : Unit = 
+    let a = A(x) in
+    assert (length(a) = plus(|nonce|, |tag|));
+    let c = samp enc(get(k), a) in 
+    assert (length(c) = cipherlen(plus(|nonce|, |tag|)));
+    ()
+    
+    

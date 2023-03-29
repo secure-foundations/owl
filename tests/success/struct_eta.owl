@@ -1,0 +1,11 @@
+locality alice
+
+struct t { 
+    x : Data<adv> | |nonce| |,
+    y : Data<adv> | |nonce| |,
+    z : Data<adv> | |nonce| |
+}
+
+def amain (a : t) @ alice : Unit = 
+    assert (length(a) = 3 * |nonce|);
+    ()

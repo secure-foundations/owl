@@ -1,0 +1,22 @@
+locality alice
+name d0 : nonce @ alice
+name d : nonce @ alice
+
+func f
+    arity 0
+
+func g
+    arity 0
+
+
+name k : prf { 
+    l0 : f() -> enckey Name(d),
+    l1 : get(d0) -> enckey Name(d)
+} @ alice
+
+
+def alice() @ alice : Unit = 
+    corr_case k in 
+    let k' : if sec(k) then Name(PRF<k, l0>) else Data<[k]> = prf<l0>(get(k), f()) in 
+    assert ([d] <= [PRF<k, l0>]);
+    ()

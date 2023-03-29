@@ -1,0 +1,26 @@
+locality alice
+
+def this_works() @ alice : Unit =
+    input A in
+    input B in 
+    
+    if eq(length(A), |nonce|) && eq(length(B), |nonce|) then
+        assert(eq(length(A), |nonce|));
+        assert(eq(length(B), |nonce|));
+        ()
+    else 
+        ()
+
+def this_should_work_but_doesnt() @ alice : Unit =
+    input A in
+    input B in 
+    input C in
+
+
+    if eq(length(A), |nonce|) && eq(length(B), |nonce|) && eq(length(C), |nonce|) then
+        assert(eq(length(A), |nonce|)); 
+        assert(eq(length(B), |nonce|)); 
+        assert(eq(length(C), |nonce|)); 
+        ()
+    else 
+        ()

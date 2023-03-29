@@ -1,0 +1,189 @@
+/*
+ * Reference: https://en.wikipedia.org/wiki/Needham%E2%80%93Schroeder_protocol
+ *
+ * Original Protocol:
+ * A -> S: A, B, NA
+ * S -> A: {NA, KAB, B, {KAB, A}KB}KA
+ * A -> B: {KAB, A}KB
+ * B -> A: {NB}KAB
+ * A -> B: {NB - 1}KAB
+ *
+ */
+
+locality Alice
+locality Bob
+locality AS
+
+name NA<i> : nonce @ Alice
+name NB<i> : nonce @ Bob
+
+// ************************************************************************
+// Data encrypted using the shared key KAB ********************************
+enum KABEnum<i> { 
+    | nonceB Name(NB<i>)
+    | Other Data<adv>
+}
+
+name KAB<i> : enckey (exists j. KABEnum<idx j>) @ AS
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using B's key KB ****************************************
+struct kB_message {
+    _kAB1: (exists i. Name(KAB<i>)),
+    _A   : Data<adv> ||nonce||
+}
+
+name KB : enckey kB_message @ Bob, AS
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using A's key KA ****************************************
+struct kA_message {
+    _nA  : Data<adv> ||nonce||,
+    _kAB2: (exists i. Name(KAB<i>)),
+    _B   : Data<adv> ||nonce||,
+    // _x   : Data<adv> |cipherlen(plus(|enckey|, zero()))| // missing username length
+    _x   : Data<adv> |cipherlen(|enckey| + |nonce|)|
+}
+
+name KA : enckey kA_message @ Alice, AS
+// ************************************************************************
+
+
+// ************************************************************************
+// The messages exchanged by the parties **********************************
+struct msg1_AtoS {
+    msg1_A  : Data<adv> ||nonce||,
+    msg1_B  : Data<adv> ||nonce||,
+    msg1_nA : Data<adv> ||nonce||
+}
+// The other messages are all just single values and do not require structs
+// ************************************************************************
+
+
+// ************************************************************************
+// Helper functions *******************************************************
+// func some_func
+//     arity 1
+
+// func check_nonce
+//     arity 2
+// ************************************************************************
+
+
+// ************************************************************************
+// Alice's result and operation *******************************************
+enum alice_result<i, j> {
+    | alice_Some Name(KAB<j>)
+    | alice_None
+}
+
+name A_username : nonce @ Alice
+name B_username : nonce @ Alice
+
+def Alice_main<i> (
+) @ Alice
+    requires ([NA<i>] /\ [A_username] /\ [B_username] <= adv)
+: if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
+    let A = get(A_username) in
+    let B = get(B_username) in
+    
+    let kA:Name(KA) = get(KA) in
+    let nA:Name(NA<i>) = get(NA<i>) in
+    let _ = output msg1_AtoS(A, B, nA) to endpoint(AS) in
+
+    corr_case KA in
+    input inp in
+    (case dec(kA, inp) return if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv>
+        | None => 
+            unpack j, _ = () in // arbitrary j
+            alice_None<idx i, idx j>()
+        | Some res =>
+            let kAB : if sec(KA) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB2(res) in
+            let B' = _B(res) in
+            unpack j, kAB' = kAB in
+            corr_case KAB<j> in
+
+            let m1 = _x(res) in
+            let _ = output m1 to endpoint(Bob) in
+
+            input inp2 in
+            assert (corr(KA) ==> corr(KAB<j>));
+            (case dec(kAB', inp2) return if sec(KA) then alice_result<idx i, idx j> else Data<adv>
+                | None => alice_None<idx i, idx j>()
+                | Some res2 =>
+                    let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
+                    let encm = samp enc(kAB', nB') in // some_func(nB')
+                    let _ = output encm to endpoint(Bob) in
+                    alice_Some<idx i, idx j>(kAB')
+            )
+   )
+// ************************************************************************
+
+
+// ************************************************************************
+// Server's operation *****************************************************
+def AS_main<i> () @ AS
+: Unit =
+    input inp in
+    let A'  = msg1_A(inp) in
+    let B'  = msg1_B(inp) in
+    let nA' = msg1_nA(inp) in
+    let kAB = get(KAB<i>) in
+    let kAB' = pack<i>(kAB) in
+    let kA  = get(KA) in
+    let kB  = get(KB) in
+
+    if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) && eq(length(B'), |nonce|) then
+        let m1 = kB_message(kAB', A') in
+        let encm1 = samp enc(kB, m1) in
+
+        let m2 = kA_message(nA', kAB', B', encm1) in
+        let encm2 = samp enc(kA, m2) in
+
+        let _ = output encm2 to endpoint(Alice) in ()
+    else let _ = output "" to endpoint(Alice) in ()    
+// ************************************************************************
+
+
+// ************************************************************************
+// Bob's result and operation *********************************************
+enum bob_result<i, j> {
+    | bob_Some Name(KAB<j>)
+    | bob_None
+}
+
+def Bob_main<i> () @ Bob
+: if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv> =
+    let kB : Name(KB) = get(KB) in
+    corr_case KB in
+    input inp in 
+    (case dec(kB, inp) return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+        | None => 
+          unpack j, _ = () in // arbitrary j
+          bob_None<idx i, idx j>()
+        | Some res =>
+            let kAB : if sec(KB) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB1(res) in
+            let A' = _A(res) in
+            unpack j, kAB' = kAB in
+            corr_case KAB<j> in 
+
+            let nB = get(NB<i>) in
+            let indexed_enum_value = nonceB<idx i>(nB) in
+            let encm = samp enc(kAB', pack<i>(indexed_enum_value)) in
+            let _ = output encm to endpoint(Alice) in
+
+            input inp2 in
+            (case dec(kAB', inp2) return if (sec(KB)) then bob_result<idx i, idx j> else Data<adv>
+                | None => bob_None<idx i, idx j>()
+                | Some res2 =>
+                    // let _ = check_nonce(res2, nB) in
+                    assert (corr(KB) ==> corr(KAB<j>));
+                    let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
+                    bob_Some<idx i, idx j>(m)
+            )
+    )
+// ************************************************************************

@@ -1,0 +1,64 @@
+// Steps 2 and 3 of kerberos
+include "kerberos.owli"
+
+def ticketserver_main () @ ticketserver
+    : Unit =
+
+    // i = (AK)_kT, (ClientRequest)_AK 
+    input i in 
+    
+    corr_case kT in
+    case dec(get(kT), _client_to_ticketserver_msg_1(i)) 
+         | None => ()
+         | Some ak =>
+         
+             corr_case AK in
+             (case dec(ak, _client_to_ticketserver_msg_2(i)) 
+                 | Some ClientRequest =>
+                     let st = samp enc(get(kS), get(SK)) in
+                     let m = samp enc(ak, TicketResponse(get(SK))) in
+                     let p = ticketserver_msg(st, m) in
+                     let _ = output p to endpoint(client) in ()
+                 | None => ())
+
+
+def service_main () @ service
+    : Unit =
+
+    // i = (SK)_kS, ("client")_SK
+    input i in
+    
+    corr_case kS in
+    case dec(get(kS), _client_to_service_msg_1(i)) 
+         | None => ()
+         | Some sk =>
+             corr_case SK in
+             (case dec(sk, _client_to_service_msg_2(i)) 
+                 | None => ()
+                 | Some u =>
+                     if eq(u, get(uname)) then
+                         let _ = output "" to endpoint(client) in ()
+                     else ())
+
+// called by the respective client_main() functions for the two versions of kerberos
+def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv> |cipherlen(|enckey|)|, username : Data<static> ||nonce||) @ client
+    : Unit = 
+    corr_case AK in
+    corr_case K in
+    let m = samp enc(ak, ClientRequest()) in
+    let p = client_to_ticketserver_msg(tgt, m) in
+    let _ = output p to endpoint(ticketserver) in
+
+    input i' in 
+    let service_ticket = _ticketserver_msg_1(i') in
+    (case dec(ak, _ticketserver_msg_2(i')) 
+        | None => ()
+        | Some res =>
+            (case res 
+                | ClientRequest => () 
+                | TicketResponse sk => 
+                let m' = samp enc(sk, username) in
+                let p' = client_to_service_msg(service_ticket, m') in
+                let _ = output p' to endpoint(service) in 
+                // wait for service's response
+                input _ in () ))

@@ -1,0 +1,18 @@
+locality A
+
+name N<i> : nonce @ A
+name M : nonce @ A
+
+def alice<i>() @ A : Unit = 
+    // Annotation on Some
+    let tst : Option Name(N<i>) = Some<type Name(N<i>)>(get(N<i>)) in 
+    // No annotation on Some: infers the type
+    let tst1 : Option Name(N<i>) = Some(get(N<i>)) in 
+    // Subtyping on option
+    let tst2 : Option Data<[N<i>]> = tst1 in 
+    // Pass in bad data for argument with annotation --> Data with covering
+    // label
+    let tst3 : Data<[M]> = Some<type Name(N<i>)>(get(M)) in 
+    // None always requires the option
+    let tst4 : Option Name(N<i>) = None<type Name(N<i>)>() in
+    ()

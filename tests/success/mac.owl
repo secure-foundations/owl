@@ -1,0 +1,30 @@
+locality A
+locality B
+
+name d : nonce @ A
+name k : mackey Name(d) @ A, B
+
+// func p1 
+//     arity 1
+// func p2 
+//     arity 1
+
+// func concat
+//     arity 2
+
+def A_main () @ A 
+    requires corr(d) : Unit = 
+    let _ = output get(d) to endpoint(B) in
+    output mac(get(k), get(d)) to endpoint(B)
+
+def B_main () @ B : Unit = 
+    input i in 
+    input j in 
+    corr_case k in 
+    case mac_vrfy(get(k), i, j) return Unit
+    | None => ()
+    | Some m => 
+        let mm : if sec(k) then Name(d) else Data<adv> = m in
+        ()
+
+

@@ -1,0 +1,16 @@
+locality alice
+name d : nonce @ alice
+name X : DH @ alice
+name Y : DH @ alice
+name Z : DH @ alice
+name W : DH @ alice
+
+// random_oracle l1 : concat(get(X), get(Y)) -> enckey Name(d)
+// random_oracle l2 : get(X) -> enckey Name(d)
+
+random_oracle l3 : dh_combine(dhpk(get(X)), get(Y)) -> enckey Name(d)
+random_oracle l4 : dh_combine(dhpk(get(Z)), get(W)) -> enckey Name(d)
+
+def alice () @ alice : Unit = 
+    ()
+

@@ -1,0 +1,9 @@
+locality alice
+
+def main(b : Bool<adv>)@alice : Unit = 
+    if b then 
+        assert(b = true)
+    else
+        ()
+
+    

@@ -1,0 +1,92 @@
+
+locality alice
+locality bob
+
+name d : nonce @ alice
+name X : DH @ alice
+name Y : DH @ bob
+name skA : sigkey (dhpk(X)) @ alice
+name skB : sigkey (dhpk(Y)) @ bob
+random_oracle l : dh_combine(dhpk(get(Y)), get(X)) -> enckey Name(d) 
+
+struct alice_msg {
+    _a1: dhpk(X),
+    _a2: Data<adv> ||signature||
+}
+
+struct bob_msg {
+    _b1: dhpk(Y),
+    _b2: Data<adv> ||signature||
+}
+
+enum DHKEResult { 
+    | SomeData Name(d)
+    | NoData
+}
+
+flow [X] <= [skB]
+flow [Y] <= [skB]
+flow [X] <= [skA]
+flow [Y] <= [skA]
+flow [d] <= [X]
+flow [d] <= [Y]
+flow [X] <= [d]
+flow [Y] <= [d]
+
+def alice_main () @ alice 
+    requires corr(skB) ==> corr(d) // TODO: this is artificial
+: Unit = 
+    let vkB: vk(skB) = get_vk(skB) in
+    let signed_x = sign(get(skA), dhpk(get(X))) in
+    let a = alice_msg(dhpk(get(X)), signed_x) in
+    let _ = output a to endpoint(bob) in
+    input i, _ in 
+    corr_case skB in
+    case vrfy(vkB, _b1(i), _b2(i)) return Unit
+     | Some m => 
+       let bobs_pk : if sec(skB) then dhpk(Y) else Data<adv> = m in
+       corr_case X in
+       corr_case Y in
+       corr_case d in
+       let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv /\ [X] /\ [Y])> = dh_combine(bobs_pk, get(X)) in
+       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = H<l>(ss) in
+       let c = samp enc(k, get(d)) in
+       let _ = output c to endpoint(bob) in 
+       ()
+     | None => ()
+
+
+def bob_main () @ bob 
+: Unit = 
+    let vkA: vk(skA) = get_vk(skA) in
+    let signed_y = sign(get(skB), dhpk(get(Y))) in
+    let b = bob_msg(dhpk(get(Y)), signed_y) in
+    let _ = output b to endpoint(alice) in
+    input i, _ in 
+    corr_case skA in
+    case vrfy(vkA, _a1(i), _a2(i)) return Unit
+     | Some m => 
+       corr_case X in
+       corr_case Y in
+       corr_case d in
+       let pkX : if sec(skA) then dhpk(X) else Data<adv> = m in
+       let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = dh_combine(pkX, get(Y)) in
+       let ss_swap : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = ss in 
+       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = H<l> (ss_swap) in
+       input ii, _ in 
+       corr_case RO<l> in
+       (case dec(k, ii) return Unit
+       | None => ()
+       | Some dd => 
+         let ddd : if sec(X) /\ sec(Y) /\ sec(RO<l>) then
+            Name(d) else Data<adv> = dd in
+         ()
+         )
+     | None => ()
+
+/* The problem that needs to be solved by extra typing is:
+    - If pkY is adv controlled,
+    - Then "shared secret" ss is adv controlled,
+    - Which means H(ss) is adv controlled,
+    - So encrypting d under H(ss) will leak d.
+    */

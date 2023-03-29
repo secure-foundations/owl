@@ -1,0 +1,32 @@
+locality A
+
+name N<i, j> : nonce @ A
+name M<i> : nonce @ A
+
+name K : enckey (exists i. exists j. Name(N<i, j>)) @ A
+
+
+def alice<i, j>() @ A : Unit =
+  assert (/\_i /\_j [N<i, j>] <= /\_j /\_i [N<i, j>]);
+  assert (/\_i /\_j [M<i>] <= /\_i [M<i>]);
+  assert (/\_i /\_j ([N<i, j>] /\ [M<i>] /\ [M<j>])
+          <=
+          (/\_i /\_j [N<i,j>])
+          /\
+          (/\_i [M<i>]));
+  ()
+
+def bob() @ A
+: Unit =
+    input inp in
+    let k = get(K) in
+    corr_case K in
+    (case dec(k, inp)
+        | None => ()
+        | Some r =>
+            unpack j1, r' = r in
+            let x2: if sec(K) then (exists i. Name(N<j1, i>)) else Data<adv> = r' in
+            unpack j2, r'' = r' in
+            let x3: if sec(K) then Name(N<j1, j2>) else Data<adv> = r'' in
+            ()
+    )
