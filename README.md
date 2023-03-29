@@ -1,5 +1,15 @@
 # Owl
 
+## Setup
+
+To build and run Owl, you need `cabal` and `ghc` in your `PATH`. You can use [ghcup](https://www.haskell.org/ghcup/) to install them. 
+Additionally, you need the [Z3 Prover](https://github.com/Z3Prover/z3) installed
+and in your `PATH`; binary releases are [here](https://github.com/Z3Prover/z3/releases). Owl has been tested with Z3 version `4.12.1`.
+
+To build and run, type `cabal run owl`. 
+
+
+
 ## Extraction
 
 Owl currently features a prototype extraction mechanism generating safe Rust code. To use it, you will need Rust (including `cargo` and `rustfmt`) installed and in your `PATH`. 
