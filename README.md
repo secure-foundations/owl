@@ -31,11 +31,17 @@ Suppose you want to extract the protocol in `protocol.owl`, which contains local
 
 ## Syntax highlighting
 
-For vim: add the following to your vimrc:
+### Vim
+
+Add the following to your vimrc:
 
     set runtimepath+=$OWL_HOME/vim
 
 where `$OWL_HOME` is set accordingly.
+
+### VSCode
+
+See `vscode/README.md` for details.
 
 
 ## Supported Cryptographic Operations
