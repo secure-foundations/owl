@@ -1,0 +1,46 @@
+/*
+ * Basic Hash (without indices - 1 reader and only 1 tag)
+ * https://www.chatzi.org/papers/rfid_privacy.pdf
+ * https://github.com/squirrel-prover/squirrel-prover/blob/master/examples/basic-hash.sp
+ *
+ * Protocol:
+ * ---------
+ * T -> R : <nT, h(nT,key)>
+ * R -> T : ok
+ */
+
+locality T
+locality R
+
+name NT : nonce @ T
+flow [NT] <= adv
+name K : mackey Name(NT) @ T, R
+
+struct s {
+    _nT : Name(NT),
+    _m  : Data<static>
+}
+
+def tag () @ T
+: Unit =
+    let nT = get(NT) in
+    let m = mac(get(K), nT) in
+    output s(nT, m)
+
+enum reader_response {
+    | Ok Name(NT) // don't need to include nT here, but just keeping this consistent with the indexed version
+    | No
+}
+
+def reader () @ R
+: if sec(K) then reader_response<l:adv> else Data<adv> =
+    input i in
+    corr_case K in
+    let nT = _nT(i) in
+    let m = _m(i) in
+    (case mac_vrfy(get(K), nT, m) return if sec(K) then reader_response<l:adv> else Data<adv>
+        | None => No()
+        | Some m' =>
+            output Ok(m');
+            Ok(m')
+    )

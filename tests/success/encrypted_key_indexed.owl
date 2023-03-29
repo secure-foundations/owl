@@ -1,0 +1,42 @@
+/* 
+    A, B already have key k
+
+    On round i:
+        A -> B : {i, k_data_i}_k
+
+        B -> A : {x_i}_(k_data_i)
+
+        A : retrieve x_i
+*/
+
+locality alice
+locality bob
+name x<i> : nonce @ bob
+name k_data : enckey (exists i. x:Name(x<i>){happened(bob<i>())}) @ alice
+name shared_key : enckey (Name(k_data)) @ alice, bob
+
+enum Result {
+    | Ok (exists i. Name(x<i>))
+    | Err
+}
+
+def alice () @ alice
+     : if sec(k_data) then Result else Data<adv> = 
+    let c = samp enc(get(shared_key), get(k_data)) in
+    let _ = output c in 
+    input i in 
+    corr_case k_data in
+    case dec(get(k_data), i) 
+     | Some j => Ok(j)
+     | None => Err()
+    
+def bob<i> () @ bob
+    : Unit = 
+    input i in 
+    corr_case shared_key in
+    case dec(get(shared_key), i) return Unit
+     | Some k => 
+        let msg : x:Name(x<i>){happened(bob<i>())} = get(x<i>) in 
+        let c = samp enc(k, pack<i>(msg)) in
+        output c
+     | None => ()

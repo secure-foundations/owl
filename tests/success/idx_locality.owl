@@ -1,0 +1,44 @@
+// A locality parameterized by a party ID
+locality alice : 1
+locality bob
+// A name parameterized by a single session ID
+name nB<i> : nonce @ bob
+// A name parameterized by a session ID and a party ID. The party ID is in scope
+// for the relevant localities
+name nA<i@j> : nonce @ alice<j>
+
+name nnA<@j> : nonce @ alice<j>
+
+// The below fails, due to using a session ID as a party ID for alice:
+// name nA<i@j> : nonce @ alice<i>
+
+// The following typechecks, but bob won't really be able to use m<i@j> unless
+// the def has those as parameters
+name m<@j> : nonce @ alice<j>, bob
+
+// Below, i and j have type Ghost. Ghost indices can be used either as session
+// IDs or party IDs
+struct t<i, j> { 
+    _a : Name(nA<i@j>)
+    // _b : Data<adv>
+}
+
+def sub<i@j>() @ alice<j> : Unit = ()
+
+// Below, i is a session ID, j is a party ID
+def alice_main<i,k@j>() @ alice<j> : Unit = 
+    let x = get(nA<i@j>) in 
+    let xx = get(nA<k@j>) in
+    // The below fails: 
+    // let x = get(nA<j@i>) in 
+    // Both kinds of indices can be quantified over
+    let t : exists j. Name(nA<i@j>) = pack<j>(x) in 
+    let t : exists k. Name(nA<k@j>) = pack<k>(xx) in 
+    input inp in 
+    let y : t<idx i,idx j> = t<idx i,idx j>(x) in
+    let z = call sub<i@j>() in 
+    ()
+
+def bob_main<@j>() @ bob : Unit =
+    // let y = get(m<@j>) in
+    ()

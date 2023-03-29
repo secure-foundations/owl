@@ -1,0 +1,42 @@
+include "kerberos.owli"
+
+// *********************************
+// pre-shared key for STANDARD mode
+// *********************************
+
+// In previous versions this was called kC
+name K : enckey Name(AK) @ authserver, client    
+
+def client_main () @ client
+    : Unit =
+    
+    let username = get(uname) in
+    let _ = output username to endpoint(authserver) in
+
+    // i = tgt, enc(K, AK)
+    input i in 
+
+    let tgt = _authserver_msg_1(i) in
+    if eq(length(tgt), cipherlen(|enckey|)) then 
+        corr_case K in
+        case dec(get(K), _authserver_msg_2(i)) 
+            | None => ()
+            | Some ak =>
+                call client_kerberos(ak, tgt, username)
+    else ()
+    
+def authserver_main () @ authserver
+    : Unit =
+
+    // i = client's username
+    input i, _ in 
+    if eq(i, get(uname)) then
+
+        // make & send TGT = (AK)_kT, m = (AK)_K
+        let tgt = samp enc(get(kT), get(AK)) in
+
+        let m = samp enc(get(K), get(AK)) in
+        let p = authserver_msg(tgt, m) in
+
+        let _ = output p to endpoint(client) in ()
+    else ()

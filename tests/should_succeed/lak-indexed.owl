@@ -1,0 +1,113 @@
+/* 
+ * LAK
+ * https://arxiv.org/pdf/1710.02049.pdf
+ * https://pdfs.semanticscholar.org/d226/deb2b3b416716e3f5fdfe3083afa33ae8257.pdf
+ * https://github.com/squirrel-prover/squirrel-prover/blob/master/examples/lak-tags-full-wa.sp
+ *
+ * Protocol:
+ * --------
+ * R -> T: nr
+ * T -> R: nT, h(<nR, nT, tag1>, k)
+ * R -> T: h(<h(<nR, nT, tag1>, k), nr, tag2>, k)
+ */
+
+locality T
+locality R
+
+name nT<i> : nonce @ T
+name nR<i> : nonce @ R
+
+struct m1 { // MAC'd by k
+    m1_nr  : Data<adv> ||nonce||,
+    m1_nt  : Data<adv> ||nonce||,
+    m1_tag : Data<adv> ||nonce||
+}
+
+struct m2 {
+    m2_nt  : Data<adv> ||nonce||,
+    m2_mac : Data<adv> ||maclen||
+}
+
+struct m3 { // MAC'd by k
+    m3_mac : Data<adv> ||maclen||, // change to Data<static>?
+    // m3_nr  : Name(nR),
+    m3_nr  : Data<adv> ||nonce||,
+    m3_tag : Data<static> ||nonce||
+}
+
+enum macd_by_k {
+    | msg1 m1
+    | msg2 m3
+    // | msg2 (__m:m3{happened(tag())})
+}
+
+name K<i> : mackey (macd_by_k<l:adv>) @ T, R
+
+table keys : adv -> (exists i. Name(K<i>)) @ R 
+    // invariant forall i. Some?(keys(nR<i>)) ==> keys(nR<i>) = Some(k<i>)
+
+enum reader_response {
+    | Ok
+    | No
+}
+
+name tag1_tag : nonce @ T, R
+name tag2_tag : nonce @ T, R
+flow [tag2_tag] <= static
+
+def R_main<i> () @ R
+    requires ([nR<i>] /\ [tag1_tag] /\ [tag2_tag] <= adv)
+: reader_response<l:adv> =
+    let tag1 = get(tag1_tag) in
+    let tag2 = get(tag2_tag) in 
+    let NR = get(nR<i>) in
+    let _ = output NR to endpoint(T) in
+
+    input inp in
+    let NT = m2_nt(inp) in
+    let mc = m2_mac(inp) in
+    // let msg_to_mac_verify = msg1<idx i>(m1<idx i>(NR, NT, tag1)) in
+    let msg_to_mac_verify = msg1(m1(NR, NT, tag1)) in
+
+    let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, NT) in
+
+    (case x return reader_response<l:adv>
+        | None => No()
+        | Some k_packed =>
+            unpack j, k = k_packed in
+
+            // TODO: Should I make m1, m2 and m3 indexed, and build the
+            //   msg_to_mac_verify here using `j` instead of a non-indexed
+            //   version?
+
+            corr_case K<j> in
+            (case mac_vrfy(k, msg_to_mac_verify, mc) return reader_response<l:adv>
+            | None => No()
+            | Some m =>
+                let b = eq(length(mc), |maclen|) in
+                if b return reader_response<l:adv> then
+                    let mc : Data<adv>||maclen|| = mc in
+                    let msg_to_mac = msg2(m3(mc, NR, tag2)) in
+                    // let msg_to_mac = msg2<idx i>(m3<idx i>(inp, NR, tag2)) in
+                    let _ = output mac(k, msg_to_mac) to endpoint(T) in
+                    Ok()
+                else 
+                    No()
+            )
+    )
+
+def T_main<i> () @ T
+    requires ([tag1_tag] /\ [nT<i>] <= adv)
+: Unit =
+    let tag1 = get(tag1_tag) in
+    input NR in 
+    let b = eq(length(NR), |nonce|) in
+    if b then
+        let NR : Data<adv>||nonce|| = NR in
+        let msg_to_mac : macd_by_k<l:adv> = msg1( m1(NR, get(nT<i>), tag1)) in
+        // let msg_to_mac = msg1<idx i>(m1<idx i>(NR, get(nT<i>), tag1)) in
+        let msg  = mac(get(K<i>), msg_to_mac) in 
+        output msg to endpoint(R)
+    else ()
+    // let m = mac(get(k), get(nT)) in
+    // output s(get(nT), m)

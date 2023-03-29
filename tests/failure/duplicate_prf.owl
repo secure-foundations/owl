@@ -1,0 +1,11 @@
+locality alice
+name d : nonce @ alice
+
+name X : DH @ alice
+name Y : DH @ alice
+
+name k : prf { 
+    l1 : pair (get(X), get(Y)) -> enckey Name(d),
+    l2 : pair (get(X), get(Y)) -> enckey Name(d)
+} @ alice
+

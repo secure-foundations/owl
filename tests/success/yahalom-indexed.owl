@@ -1,0 +1,250 @@
+/**
+ * Reference: https://en.wikipedia.org/wiki/Yahalom_(protocol)
+ *
+ * A -> B: A, NA
+ * B -> S: B, {A, NA, NB}KB
+ * S -> A: {B, KAB, NA, NB}KA, {A, KAB}KB
+ * A -> B: {A, KAB}KB, {NB}KAB
+ */
+
+locality Alice
+locality Bob
+locality AS
+
+name NA<i> : nonce @ Alice
+name NB<i> : nonce @ Bob
+flow /\_i [NB<i>] <= adv
+
+// name KAB<i> : enckey (exists j. Name(NB<j>)) @ AS
+name KAB<i> : enckey (Data<adv>) @ AS
+
+// func check_nonce
+//     arity 2
+
+// func check_username
+//     arity 2    
+
+struct kA_message<i> {
+    _B_kA   : Data<adv> ||nonce||,
+    _kAB_kA : Name(KAB<i>),
+    _nA_kA  : Data<adv> ||nonce||,
+    // _nB_kA  : exists j. Name(NB<j>)
+    // _nB_kA  : if sec(KB) then (exists j. Name(NB<j>)) else Data<adv> // have to change the type for KAB also to the same thing if this line is uncommented
+    _nB_kA  : Data<adv> ||nonce||
+}
+
+name KA : enckey (exists i. kA_message<idx i>) @ Alice, AS
+
+struct kB_message_1<i> {
+    _A_kB1  : Data<adv> ||nonce||,
+    _nA_kB1 : Data<adv> ||nonce||,
+    _nB_kB1 : Name(NB<i>)
+}
+
+struct kB_message_2<i, j> {
+    _A_kB2   : Data<adv> ||nonce||,
+    _kAB_kB2 : Name(KAB<j>),
+    _nB_kB2  : Name(NB<i>)
+}
+
+enum kB_messages<i, j> {
+    | mB1 kB_message_1<idx i>        // message 2
+    | mB2 kB_message_2<idx i, idx j> // message 3
+}
+
+enum encd_by_kB {
+    | e1 Data<adv> 
+    | e2 Data<adv> 
+}
+
+name KB : enckey (exists i. exists j. kB_messages<idx i, idx j>) @ Bob, AS
+
+struct msg1_AtoB {
+    msg1_A  : Data<adv> ||nonce||,
+    msg1_nA : Data<adv> ||nonce||
+}
+
+struct msg2_BtoS {
+    msg2_B : Data<adv> ||nonce||,
+    msg2_x : encd_by_kB
+}
+
+struct msg3_StoA {
+    msg3_tkt1 : Data<adv> |cipherlen((3 * |nonce|) + |enckey|)|,
+    msg3_tkt2 : encd_by_kB
+}
+
+struct msg4_AtoB {
+    msg4_x   : Data<adv> |cipherlen(|nonce|)|, 
+    msg4_tkt : encd_by_kB
+}
+
+enum alice_result<i, j> {
+    | alice_Some Name(KAB<j>)
+    | alice_None
+}
+
+name Alice_username : nonce @ Alice
+
+def Alice_main<i> () @ Alice
+    requires ([NA<i>] /\ [Alice_username] <= adv)
+: if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
+    let A = get(Alice_username) in
+    let nA = get(NA<i>) in
+    let kA = get(KA) in
+    corr_case KA in
+
+    let _ = output (msg1_AtoB(A, nA)) to endpoint(Bob) in
+
+    input inp1 in
+    let tkt1 = msg3_tkt1(inp1) in
+    let tkt2 = msg3_tkt2(inp1) in   
+
+    (case dec(kA, tkt1) return if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv>
+        | None => 
+            unpack j, _ = () in
+            alice_None<idx i, idx j>()
+        | Some res =>
+            unpack j, res' = res in
+            let B'   = _B_kA<idx j>(res') in
+            let kAB' = _kAB_kA<idx j>(res') in 
+            let nA'  = _nA_kA<idx j>(res') in
+            // let nB_packed'  = _nB_kA<idx j>(res') in
+            let nB'  = _nB_kA<idx j>(res') in
+            
+            // let _ = check_nonce(nA, nA') in
+
+            // let encm = samp enc(kAB', nB_packed') in
+            let encm = samp enc(kAB', nB') in
+            // case tkt2' return if sec(KA) then (exists j. alice_result<l:adv, idx i, idx j>) else Data<adv>
+            // | e1 _ => pack<j>(alice_None<idx i, idx j>())
+            // | e2 tkt2 =>
+            let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
+            pack<j>(alice_Some<idx i, idx j>(kAB'))
+    )
+
+
+enum bob_result<i, j> {
+    | bob_Some Name(KAB<j>)
+    | bob_None
+}
+
+name Bob_username : nonce @ Bob
+
+def Bob_main<i> () @ Bob
+    requires ([Bob_username] <= adv)
+: if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv> =
+    let B = get(Bob_username) in
+    let nB = get(NB<i>) in
+    let kB = get(KB) in
+    corr_case KB in
+
+    input inp in
+
+    let A'  = msg1_A(inp) in
+    let nA' = msg1_nA(inp) in
+
+    unpack j_, _ = () in
+
+
+    if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) then
+        let temp = kB_message_1<idx i>(A', nA', nB) in
+        let temp_wrapped = mB1<idx i, idx j_>(temp) in
+        let temp_packed = pack<i>(pack<j_>(temp_wrapped)) in
+
+        let encm = samp enc(kB, temp_packed) in
+        let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
+
+        input inp2 in
+
+        let tkt' = msg4_tkt(inp2) in
+        let x = msg4_x(inp2) in
+
+        case tkt' return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+        | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
+        | e2 tkt =>
+            (case dec(kB, tkt) return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+                | None => pack<j_>(bob_None<idx i, idx j_>())
+                | Some res =>
+                    unpack i', res' = res in
+                    unpack j', res'' = res' in
+                    (case res'' return if sec(KB) then bob_result<idx i, idx j'> else Data<adv>
+                        | mB1 _ => bob_None<idx i, idx j'>()
+                        | mB2 msg2 =>
+                            let mm : if sec(KB) then kB_message_2<idx i', idx j'> else Data<adv> = msg2 in
+                            let A''  = _A_kB2<idx i', idx j'>(mm) in
+                            // let _ = check_username(A'', A') in
+                            let kAB':if sec(KB) then Name(KAB<j'>) else Data<adv> = _kAB_kB2<idx i', idx j'>(mm) in
+                            let nB' :if sec(KB) then Name(NB<i'>) else Data<adv> = _nB_kB2<idx i', idx j'>(mm) in
+
+                            if checknonce(nB', nB) return if sec(KB) then bob_result<idx i, idx j'> else Data<adv> then
+                                assert(sec(KB) ==> (i =idx i'));
+                                corr_case KAB<j'> in
+                                (case dec(kAB', x) return if sec(KB) then bob_result<idx i, idx j'> else Data<adv>
+                                    | None => bob_None<idx i, idx j'>()
+                                    | Some res2 =>
+                                        // unpack j'', nB' = res2 in
+                                        let nB' = res2 in
+                                        if checknonce(nB', nB) return if sec(KB) then bob_result<idx i, idx j'> else Data<adv> then
+                                            bob_Some<idx i, idx j'>(kAB')
+                                        else
+                                            bob_None<idx i, idx j'>()
+                                )
+                            else
+                                bob_None<idx i, idx j'>()
+                    )
+            )
+    else
+        pack<j_>(bob_None<idx i, idx j_>())
+
+def AS_main<i> () @ AS
+: Unit =
+    let kAB = get(KAB<i>) in
+    let kA = get(KA) in
+    let kB = get(KB) in
+    corr_case KB in
+
+    input inp in
+
+    let B' = msg2_B(inp) in
+    if eq(length(B'), |nonce|)  then
+        let x' = msg2_x(inp) in
+        case x' return Unit 
+            | e2 _ => ()
+            | e1 x'' => 
+                (case dec(kB, x'') return Unit
+                    | None => ()
+                    | Some res =>
+                        unpack i1, res' = res in
+                        unpack j1, res'' = res' in
+
+                        (case res'' return Unit
+                            | mB1 msg1 =>
+                                let A'  = _A_kB1<idx i1>(msg1) in
+                                let nA' = _nA_kB1<idx i1>(msg1) in
+                                // let nB':if sec(KB) then Name(NB<i1>) else Data<adv> = _nB_kB1<idx i1>(msg1) in
+                                let nB' = _nB_kB1<idx i1>(msg1) in
+
+                                if eq(length(nA'), |nonce|) && eq(length(nB'), |nonce|) && eq(length(A'), |nonce|)  then
+                                        // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
+                                        let temp': kA_message<idx i> = kA_message<idx i>(B', kAB, nA', nB') in
+                                        
+                                        let encmA = samp enc(kA, pack<i>(temp')) in
+                                        let temp = kB_message_2<idx i1, idx i>(A', kAB, nB') in
+                                        let temp_wrapped = mB2<idx i1, idx i>(temp) in
+                                        let temp_packed = pack<i1>(pack<i>(temp_wrapped)) in
+                                        let encmB = samp enc(kB, temp_packed) in
+
+                                        let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
+                                        ()
+                                else () // TODO output () here?
+                            | mB2 _ => ()
+                        )
+                )
+    else ()
+
+// TODO: Strengthen spec for all servers also? if sec(KA, KB) then valid key output    
+// Cannot really prove something meaningful if kab encs Data<adv>
+//   This protocol finds the nB fix issue
+//   This protocol introduces a key dependency : KB -> KA
+//   Maybe make KB: enckey (some_enum) where enum could be adv/static?

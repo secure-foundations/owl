@@ -1,0 +1,79 @@
+/* 
+    A, B already have key k
+
+    A -> B : {k_data}_k
+
+    B -> A : {x}_(k_data)
+
+    A : retrieve x
+
+
+    label ::=
+        [k] |
+        label /\ label |
+        public | 
+        adv
+
+
+    k
+    |
+    |
+    k_data
+    |
+    |
+    x
+
+
+    k : enckey t          c : adv         [k] !<= adv
+    -------------------------------
+    dec(k, c) : option t
+
+
+
+    k : enckey t          c : adv         [k] <= adv
+    -------------------------------
+    dec(k, c) : option adv
+
+
+*/
+
+locality alice
+locality bob
+
+name x : nonce @ bob
+name k_data : enckey (z:Name(x){happened(bob())}) @ alice
+name shared_key : enckey (z:Name(k_data){happened(alice())}) @ alice, bob
+
+enum Result {
+    | SomeResult Name(x)
+    | NoResult
+}
+
+def alice () @ alice
+     : if sec(k_data) then (x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob())}) else Data<adv> = 
+    let c = samp enc(get(shared_key), get(k_data)) in
+    let _ = output c in 
+    input i, _ in 
+    corr_case k_data in
+    let result = case dec(get(k_data), i) return (if sec(k_data) then x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob())} else Data<adv>)
+     | Some j => 
+       assert(sec(k_data) ==> happened(bob()));
+       SomeResult(j)
+     | None => NoResult()
+    in
+    result
+    
+def bob () @ bob
+    : x:Bool<adv>{(x /\ sec(shared_key)) ==> happened(alice()) } = 
+    input i, _ in 
+    // i : Data<adv>
+    corr_case shared_key in
+    case dec(get(shared_key), i) return z:Bool<adv>{(z /\ sec(shared_key)) ==> happened(alice()) }
+     | Some k => 
+        assert (sec(shared_key) ==> happened(alice()));
+        let c = samp enc(k, get(x)) in
+        output c;
+        true
+     | None => false
+        
+

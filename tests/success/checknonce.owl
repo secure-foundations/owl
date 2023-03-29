@@ -1,0 +1,16 @@
+locality alice
+
+name n<k> : nonce @ alice
+name m<l> : nonce @ alice
+
+def alice<i, j>() @ alice : Unit = 
+    let ni = get(n<i>) in 
+    let nj = get(n<j>) in 
+    let b = checknonce(ni, nj) in 
+    if b then
+        assert (i =idx j);
+        let mj : Name(m<j>) = get(m<i>) in 
+        ()
+    else ()
+
+

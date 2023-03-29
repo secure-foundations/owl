@@ -1,0 +1,5 @@
+include "transp.owli"
+
+name k : enckey Name(data) @ Server
+def ke_Server() @ Server : Unit
+def ke_Client() @ Client : Option (if sec(k) then Name(k) else Data<adv>)

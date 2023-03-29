@@ -1,0 +1,250 @@
+/*
+ * Reference: https://en.wikipedia.org/wiki/Otway%E2%80%93Rees_protocol
+ * The naming here is terrible, will fix soon.
+ * This version does not have the session identifier 'M' in any message.
+ */
+
+locality Alice
+locality Bob
+locality AS
+
+name NA : nonce @ Alice
+name NB : nonce @ Bob
+
+name kAB : enckey Data<static> @ Alice, Bob, AS
+
+// ************************************************************************
+// Helper functions *******************************************************
+func username_length
+    arity 0
+
+func magic_parse
+    arity 1
+
+func check_session_identifier
+    arity 1
+
+func check_valid_username
+    arity 1
+
+func check_equal
+    arity 3
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using A's key KA ****************************************
+struct kA_message_1 {
+    _nA1 : Name(NA),
+    _AA  : Data<adv>,
+    _BA  : Data<adv>
+}
+
+struct kA_message_2 {
+    _nA2  : Name(NA),
+    _kABA : Name(kAB)
+}
+
+enum kA_messages {
+    | mA1 kA_message_1 // messages 1 and 2
+    | mA2 kA_message_2 // messages 3 and 4
+}
+
+name KA : enckey kA_messages @ Alice, AS // error: Need label on enum if <adv> not provided
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using B's key KB ****************************************
+struct kB_message_1 {
+    _nB1 : Name(NB),
+    _AB  : Data<adv>,
+    _BB  : Data<adv>
+}
+
+struct kB_message_2 {
+    _nB2  : Name(NB),
+    _kABB : Name(kAB)
+}
+
+enum kB_messages {
+    | mB1 kB_message_1 // message 2
+    | mB2 kB_message_2 // message 3
+}
+
+name KB : enckey kB_messages @ Bob, AS // error: Need label on enum if <adv> not provided
+// ************************************************************************
+
+
+// ************************************************************************
+// The messages exchanged by the parties **********************************
+// TODO Josh: we'll need to Owl to know that |struct| == sigma(len(fields))
+// TODO Sam: Once that is done, try to use structs to represent input/output messages instead of concat
+struct msg1_AtoB {
+    msg1_A : Data<adv>,
+    msg1_B : Data<adv>,
+    msg1_x : Data<adv>
+}
+
+struct msg2_BToS {
+    msg2_A : Data<adv>,
+    msg2_B : Data<adv>,
+    msg2_x1 : Data<adv>,
+    msg2_x2 : Data<adv>
+}
+
+struct msg3_StoB {
+    msg3_x1 : Data<adv>, // {NA, KAB}KAS
+    msg3_x2 : Data<adv>  // {NB, KAB}KBS
+}
+
+struct msg4_BtoA {
+    msg4_x2 : Data<adv>
+}
+// ************************************************************************
+
+
+// ************************************************************************
+// Alice's result and operation *******************************************
+enum alice_result {
+    | alice_Some Name(kAB)
+    | alice_None
+}
+
+def alice (
+    A : (x : Data<static>{(length(x) = username_length())}),
+    B : (x : Data<static>{(length(x) = username_length())}),
+    nA : Name(NA)
+) @ Alice 
+    // requires ([m] <= adv) // Notes: since we output M, we need to tell Owl that M is public
+: if sec(KA) then alice_result else Data<adv> =
+    let kA:Name(KA) = get(KA) in
+    corr_case KA in // TODO Josh: better error message if 'kA' used instead of 'KA'
+    let encm = samp enc(kA, mA1(kA_message_1(nA, A, B))) in
+    // debug printTyContext;
+    let _ = output msg1_AtoB(A, B, encm) in
+
+    input i in
+    let st = magic_parse(i) in
+    (case dec(kA, st) return if sec(KA) then alice_result else Data<adv>
+        | None => alice_None()
+        | Some res =>
+            (case res return if sec(KA) then alice_result else Data<adv>
+                | mA1 _ => alice_None()
+                | mA2 msg2 =>
+                    let b = checknonce(_nA2(msg2), nA) in
+                    if b return if sec(KA) then alice_result else Data<adv> then
+                        let kab:if sec(KA) then Name(kAB) else Data<adv> = _kABA(msg2) in
+                        alice_Some(kab)
+                    else
+                        alice_None()
+            )
+    )
+// ************************************************************************
+
+
+// ************************************************************************
+// Bob's result and operation *********************************************
+enum bob_result {
+    | bob_Some Name(kAB)
+    | bob_None
+}
+
+def bob (
+    // B : (x : Data<static>{(length(x) = username_length())}),
+    B : Data<static>,
+    nB : Name(NB) 
+) @ Bob 
+    // requires ([NB] <= adv) // wrong, but just checking
+: if sec(KB) then bob_result else Data<adv> =
+    let kB:Name(KB) = get(KB) in
+    corr_case KB in
+
+    input i in 
+    let A'    = msg1_A(i) in
+    let B'    = msg1_B(i) in 
+    let encm' = msg1_x(i) in 
+
+    // let _ = check_session_identifier(M') in
+    let _ = check_valid_username(A') in
+    let _ = check_valid_username(B') in // TODO: if B == B'...
+
+    let payload' : kB_message_1 = kB_message_1(nB, A', B) in 
+    let payload : kB_messages = mB1(payload') in
+    let encm = samp enc(kB, payload) in
+    let _ = output msg2_BToS(A', B, encm', encm) in
+
+    input i in 
+    let x1' = msg3_x1(i) in
+    let x2' = msg3_x2(i) in
+
+    // let _ = check_session_identifier(M') in
+    (case dec(kB, x2') return if sec(KB) then bob_result else Data<adv>
+        | None => bob_None()
+        | Some res =>
+            (case res return if sec(KB) then bob_result else Data<adv>
+                | mB1 _ => bob_None()
+                | mB2 msg2 =>
+                    let b = checknonce(_nB2(msg2), nB) in
+                    if b return if sec(KB) then bob_result else Data<adv> then
+                        let kab:if sec(KB) then Name(kAB) else Data<adv> = _kABB(msg2) in
+                        let _ = output msg4_BtoA(x1') in
+                        bob_Some(kab)
+                    else
+                        bob_None()
+            )
+    )
+// ************************************************************************
+
+// ************************************************************************
+// Server's result and operation ******************************************
+
+def server (
+    kab : Name(kAB)
+) @ AS
+: Unit = 
+    let kA:Name(KA) = get(KA) in
+    corr_case KA in
+    let kB:Name(KB) = get(KB) in
+    corr_case KB in
+
+    input i in
+    let A = msg2_A(i) in
+    let B = msg2_B(i) in
+    let x1 = msg2_x1(i) in
+    let x2 = msg2_x2(i) in
+
+    (case dec(kA, x1) 
+        | None => ()
+        | Some resA =>
+            (case resA 
+                | mA1 msg1A =>
+                    // attempt to decrypt the second message only after the first one decrypts correctly
+                    (case dec(kB, x2) 
+                        | None => ()
+                        | Some resB =>
+                            (case resB 
+                                | mB1 msg1B =>
+                                    let _ = check_equal(A, _AA(msg1A), _AB(msg1B)) in
+                                    let _ = check_equal(B, _BA(msg1A), _BB(msg1B)) in
+                                    // let _ = check_equal(M, _mA(msg1A), _mB(msg1B)) in
+
+                                    let nA = _nA1(msg1A) in
+                                    let nB = _nB1(msg1B) in
+
+                                    let encmA = samp enc(kA, mA2(kA_message_2(nA, kab))) in
+                                    let encmB = samp enc(kB, mB2(kB_message_2(nB, kab))) in
+                                    let _ = output msg3_StoB(encmA, encmB)
+                                    in ()
+                                | mB2 _ => ()
+                            )
+                    )
+                | mA2 _ => ()
+            )
+    )
+
+// ************************************************************************
+
+
+// Notes: Name - refinement on name that says value(name) == value(Name)
+// Notes: Name: name -> type (different universe of types)

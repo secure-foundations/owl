@@ -1,0 +1,29 @@
+locality alice
+
+name n : nonce @ alice
+name m : nonce @ alice
+// So the below equality checks work
+flow [n] <= adv
+flow [m] <= adv
+
+func f
+    arity 0
+
+def alice(x : Bool<static>) @ alice : Unit = 
+    (if f() return Unit then 
+        assert (f () = true); ()
+    else
+        assert (! (f () = true)); () 
+    );
+    (if x return Unit then
+        assert (x = true); ()
+     else
+        assert (x = false); ()
+    );
+    (if eq(get(n), get(m)) return Unit then
+        assert (False); ()
+     else
+         assert (! (get(n) = get(m))); ()
+    )
+
+

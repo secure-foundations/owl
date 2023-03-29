@@ -1,0 +1,234 @@
+/*
+ * Excerpt from Squirrel SSH:
+
+        We refer to P and S as the two processes of ssh-forward-part1-comp.sp
+        In this protocol,
+            - PFA is a process which first runs P, and then starts a forwarded agent
+            process, which accepts to sign queries received on the secure channel
+            established through P
+            - PDIS is a protocol which first runs S, and then can run P on the distant
+            server. When P while require a signature, it will request it on the channel
+            established by S, to contact some forwarded agent.
+            - SDIS is the server that will communicated with P run by PDIS.
+
+        PFA <-> PDIS : SSH key exchange, deriving an ideal key k11.
+
+        PDIS -> SDIS : g^a
+        SDIS-> PDIS : g^b, pkS, sign(h(g^a,g^b, g^ab),skS) )
+        PDIS -> PFA : enc(<"sign request",h(g^a,g^b, g^ab)>,k11 )
+        PFA -> PDIS : enc(<"sign answer",sign(h(g^a,g^b, g^ab),skP)>,k11 )
+        PDIS -> SDIS : enc( sign(g(g^a,g^b,g^ab),skP) , g^ab)
+ */
+
+locality PFA  // forwarding agent
+locality PDIS // local
+locality SDIS // remote
+
+enum sign_request_response {
+    | _req Data<static>
+    | _res Data<adv>
+}
+
+name a : DH @ PFA
+name b : DH @ PDIS
+name b1 : DH @ PDIS
+name c : DH @ SDIS
+
+enum dhpk_b {
+    | _comm_with_pfa dhpk(b)
+    | _comm_with_sdis dhpk(b1)
+}
+
+enum signed_by_PFA {
+    | _signed_by_PFA_g_pow_a dhpk(a)
+    | _signed_by_PFA_hash Data<adv>
+}
+
+name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
+// name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
+name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
+flow [b] <= [skPDIS]
+flow [a] <= [skPDIS]
+name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
+flow [b1] <= [skSDIS]
+flow [c] <= [skSDIS]
+
+flow [b1] <= [skPFA]
+flow [c] <= [skPFA]
+
+// TODO: this is currently required
+flow [b1] <= [c]
+flow [c] <= [b1]
+
+flow [b] <= [a]
+flow [a] <= [b]
+
+random_oracle l1 : dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
+random_oracle l2 : dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> // TODO: Enum of sign request and answer
+
+struct PFA_msg {
+    _pfa1: dhpk(a),
+    _pfa2: Data<adv> ||signature||
+}
+
+struct PDIS_msg1 {
+    _pdis1_1: dhpk(b),
+    _pdis2_1: Data<adv> ||signature||
+}
+// can just use an enum in the above struct instead of two structs
+struct PDIS_msg2 {
+    _pdis1_2: dhpk(b1),
+    _pdis2_2: Data<adv> ||signature|| 
+}
+
+struct SDIS_msg {
+    _sdis1: dhpk(c),
+    _sdis2: Data<adv> ||signature||
+}
+
+def PFA_FW (k11: if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PFA
+    // requires sec(a) /\ sec(b) // /\ ([skPDIS] <= [RO<l1>]) /\ ([RO<l1>] <= [skPDIS])
+: Unit =
+    input inp in // from PDIS (actual non-KE)
+    corr_case skPDIS in
+    corr_case a in
+    corr_case b in
+    corr_case RO<l1> in
+    case dec(k11, inp)
+        | None => ()
+        | Some m' =>
+            case m'
+            | _res _ => ()
+            | _req hh =>
+                let signed = sign(get(skPFA), _signed_by_PFA_hash(hh)) in
+                let signed_response = _res(signed) in
+                let signed_response_wrapped = _res(signed_response) in
+                let msg_to_send_PDIS = samp enc(k11, signed_response_wrapped) in
+                let _ = output msg_to_send_PDIS to endpoint(PDIS) in // error
+                ()
+
+def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
+: Unit =
+    corr_case skPFA in
+    corr_case a in
+    corr_case b in
+    let g_pow_b1 = dhpk(get(b1)) in
+    let signed_g_pow_b1 = sign(get(skPDIS), _comm_with_sdis(g_pow_b1)) in
+    let _ = output PDIS_msg2(g_pow_b1, signed_g_pow_b1) to endpoint(SDIS) in
+    
+    input inp in
+    let vkSDIS = get_vk(skSDIS) in
+    corr_case skSDIS in
+    case vrfy(vkSDIS, _sdis1(inp), _sdis2(inp)) return Unit
+        | None => ()
+        | Some m =>
+            let g_pow_c:if sec(skSDIS) then dhpk(c) else Data<adv> = m in
+            let ss     :if sec(skSDIS) then shared_secret(b1, c) else Data<adv> = dh_combine(g_pow_c, get(b1)) in
+            corr_case b1 in 
+            corr_case c in 
+            let k      :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = H<l2>(ss) in
+            
+            // request PFA to sign
+            let request = _req("a") in // TODO: "a" is the hash
+            let enc_request = samp enc(k11, request) in
+            let _ = output enc_request to endpoint(PFA) in
+
+            // get its input
+            input inp2 in
+            corr_case RO<l1> in
+            case dec(k11, inp2)
+                | None => ()
+                | Some m' =>
+                    case m'
+                        | _req _ => ()
+                        | _res h2 =>
+                            // enc that with k and send to SDIS
+                            let msg_to_send_SDIS = samp enc(k, h2) in // _m2(r) == "sign answer"
+                            let _ = output msg_to_send_SDIS to endpoint(SDIS) in
+                            ()
+                    
+
+def SDIS_actual () @ SDIS
+: Unit =
+    let g_pow_c = dhpk(get(c)) in
+    let signed_g_pow_c = sign(get(skSDIS), g_pow_c) in
+    let _ = output SDIS_msg(g_pow_c, signed_g_pow_c) to endpoint(PDIS) in
+
+    input inp in
+    let vkPDIS = get_vk(skPDIS) in
+    corr_case skPDIS in
+    case vrfy(vkPDIS, _pdis1_2(inp), _pdis2_2(inp)) return Unit
+        | None => ()
+        | Some m =>
+            case m return Unit
+                | _comm_with_pfa _ => ()
+                | _comm_with_sdis m' =>
+                    corr_case b1 in 
+                    corr_case c in 
+                    let g_pow_b1:if sec(skPDIS) then dhpk(b1) else Data<adv> = m' in
+                    let ss      :if sec(skPDIS) then shared_secret(b1, c) else Data<adv /\ [c]> = dh_combine(g_pow_b1, get(c)) in
+                    let k       :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = H<l2>(ss) in
+                    
+                    input inp2 in
+                    corr_case RO<l2> in
+                    case dec(k, inp2) return Unit
+                        | None => ()
+                        | Some m'' =>
+                            // m'' is the signature which was forwarded using the agent from the client
+                            ()
+
+
+def PFA_KE () @ PFA
+// : if sec(skPDIS) then Name(RO<l1>) else Data<adv> =
+: Unit =
+    let g_pow_a = dhpk(get(a)) in
+    let signed_g_pow_a = sign(get(skPFA), _signed_by_PFA_g_pow_a(g_pow_a)) in
+    let _ = output PFA_msg(g_pow_a, signed_g_pow_a) to endpoint(PDIS) in
+
+    input inp in // signed g_pow_b
+    let vkPDIS = get_vk(skPDIS) in
+    corr_case skPDIS in
+    // case vrfy(vkPDIS, _pdis1(inp), _pdis2(inp)) return if sec(skPDIS) then Name(RO<l1>) else Data<adv>
+    case vrfy(vkPDIS, _pdis1_1(inp), _pdis2_1(inp)) return Unit
+        | None => ()
+        | Some m =>
+            case m return Unit
+            | _comm_with_sdis _ => ()
+            | _comm_with_pfa m' =>
+                let g_pow_b:if sec(skPDIS) then dhpk(b) else Data<adv> = m' in
+                corr_case a in 
+                corr_case b in 
+                let ss     :if sec(skPDIS) then shared_secret(b, a) else Data<adv /\ [a]> = dh_combine(g_pow_b, get(a)) in
+                let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = H<l1>(ss) in
+                call PFA_FW (k11)
+
+
+def PDIS_KE () @ PDIS
+: Unit =
+    let g_pow_b = dhpk(get(b)) in
+    let signed_g_pow_b = sign(get(skPDIS), _comm_with_pfa(g_pow_b)) in
+    let _ = output PDIS_msg1(g_pow_b, signed_g_pow_b) to endpoint(PFA) in
+
+    input inp in // from PFA (KE), signed g_pow_a
+    let vkPFA = get_vk(skPFA) in
+    corr_case skPFA in
+    case vrfy(vkPFA, _pfa1(inp), _pfa2(inp)) return Unit
+        | None => ()
+        | Some m =>
+            case m return Unit
+                | _signed_by_PFA_hash _ => ()
+                | _signed_by_PFA_g_pow_a m' =>
+                    let g_pow_a:if sec(skPFA) then dhpk(a) else Data<adv> = m' in
+                    corr_case a in
+                    corr_case b in
+                    let ss     :if sec(skPFA) then shared_secret(b, a) else Data<adv /\ [b]> = dh_combine(g_pow_a, get(b)) in
+                    // ss_swap?
+                    let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = H<l1>(ss) in
+                    let _ = output "" to endpoint(SDIS) in // TODO: The hash stuff
+                    call PDIS_actual(k11)
+
+
+// Entry points
+def PFA_main() @ PFA : Unit = call PFA_KE()
+def PDIS_main() @ PDIS : Unit = call PDIS_KE()
+def SDIS_main() @ SDIS : Unit = call SDIS_actual()

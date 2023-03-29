@@ -1,0 +1,12 @@
+locality alice
+
+name x : nonce @ alice
+
+enum t {
+    | A
+    | B
+}
+
+def alice () @ alice : t  =
+    if get(x) return t then A() else B()
+    

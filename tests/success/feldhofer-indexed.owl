@@ -1,0 +1,89 @@
+/**
+ * Reference: https://link.springer.com/content/pdf/10.1007/978-3-540-28632-5_26.pdf
+ * Excerpt from the above paper: 
+ *   After retrieving all unique IDs of the tags using the inventory request
+ *   and the anti-collision sequence, the reader sends a challenge C1 to Tag1. This tag
+ *   immediately starts the encryption of the challenge without sending any response.
+ *   In the meanwhile, the reader sends further challenges to the tags Tag2 and
+ *   Tag3. They also start encrypting their challenges after reception. After finishing
+ *   the encryption of EK (C1), Tag1 waits for the request to send the encrypted
+ *   value R1 back to the reader. When the reader has sent the three challenges,
+ *   it sends a request for receiving the response from Tag1. The received value
+ *   R1 is verified by encrypting the challenge C1 and comparing the result with the
+ *   received value. The two other unanswered challenges are received using the same
+ *   method. Then the reader starts from the beginning authenticating all other tags
+ *   in the environment.
+ *
+ * Protocol:
+ * R -> T : nR
+ * T -> R : {nR}K
+ */
+
+locality T
+locality R
+
+name NR<i> : nonce @ R
+flow /\_i [NR<i>] <= adv
+name K<i> : enckey (x:Data<adv>{happened(T_main<i>())}) @ T, R
+
+table keys : (exists i. Name(K<i>)) @ R
+
+def T_main<i>() @ T
+: Unit =
+    let k = get(K<i>) in
+    input inp in
+    let encm = samp enc(k, inp) in
+    output encm to endpoint(R)
+
+enum reader_response<i> {
+    | No
+    | Ok (if sec(K<i>) then (x:Data<adv> {happened(T_main<i>())}) else Data<adv>)
+}
+
+// reader runs in session j, has a table of NR<j> to some K<i> for tag index i
+def R_main<j>() @ R
+: exists i. reader_response<idx i> =
+    let nR = get(NR<j>) in
+    let _ = output nR to endpoint(T) in
+
+    input inp in
+
+    let x : Option (exists i. Name(K<i>)) = lookup(keys, nR) in
+    (case x return (exists i. reader_response<idx i>)
+        | None =>
+            unpack i, _ = () in
+            No<idx i>()
+        | Some k_packed =>
+            unpack i, k = k_packed in
+            corr_case K<i> in
+            (case dec(k, inp) return reader_response<idx i>
+                | None => No<idx i>()
+                | Some nR' => 
+                    // let b = eq(length(inp), cipherlen(|nonce|)) in
+                    // if b then
+                    Ok<idx i>(inp)
+                    // else 
+                    //     No<idx i>()
+            )
+    )
+
+// The below is another version without tables
+// Reader runs in some session i and wants to auth tag j
+// enum reader_response<i, j> {
+//     | No
+//     | Ok (if sec(K<j>) then (x:Data<adv>{happened(T_main<j>())}) else Data<adv>)
+// }
+
+// def reader<i, j>() @ R
+// : reader_response<idx i, idx j> =
+//     let k = get(K<j>) in
+//     corr_case K<j> in
+//     let nR = get(NR<i>) in
+//     let _ = output nR in
+
+//     input inp in
+//     (case dec(k, inp) return reader_response<idx i, idx j> //return if sec(K<i>) then reader_response<idx i> else Data<adv>
+//         | None => No<idx i, idx j>()
+//         | Some nR' => 
+//             Ok<idx i, idx j>(inp)
+//     )

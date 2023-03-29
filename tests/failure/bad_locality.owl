@@ -1,0 +1,8 @@
+locality alice
+locality bob
+
+name x : nonce @ bob
+
+def a () @ alice : Unit = 
+    let x = get(x) in
+    ()

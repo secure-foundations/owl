@@ -1,0 +1,18 @@
+locality alice
+
+struct t1 { 
+    _t1_a : Data<adv> | |nonce| |,
+    _t1_b : Data<adv> | |vk| |
+}
+
+struct t { 
+    // Length annotations below are arbitrary
+    _t_x : t1,
+    _t_y : Data<adv> | |vk| |
+}
+
+def tst_ex (x : t) @ alice : Unit = 
+    assert (length(x) =  (2 * |vk|) + |nonce|);
+    ()
+
+def alice_main () @ alice : Unit = ()

@@ -1,0 +1,20 @@
+locality alice
+locality bob
+
+name d : nonce @ bob
+name skA : pkekey Name(d) @ alice
+
+def bob_main () @ bob : Unit = 
+    let pkA : encpk(skA) = get_encpk(skA) in 
+    let c = samp pkenc(pkA, get(d)) in 
+    output c to endpoint(alice);
+    ()
+
+def alice_main () @ alice : Unit = 
+    input i in
+    corr_case skA in
+    let c : if sec(skA) then Union<Name(d), Data<adv> > else Data<adv> = pkdec(get(skA), i) in 
+    union_case x = c in 
+    // Here, if sec(sk), x can have type Name(d) or Data<adv>; if sk is corrupt,
+    // x has type Data<adv>
+    ()

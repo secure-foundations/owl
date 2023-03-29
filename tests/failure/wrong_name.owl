@@ -1,0 +1,6 @@
+locality alice
+name x : DH @ alice
+name y : DH @ alice
+def alice () @ alice : Unit = 
+    let z : Name(y) = get(x) in 
+    Z ()
