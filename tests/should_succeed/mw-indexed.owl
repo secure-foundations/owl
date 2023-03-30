@@ -72,7 +72,7 @@ def reader<i>(c0: Data<static>, c1: Data<static>) @ R
             let mac_to_verify = h1_t<idx j>(c0, nR, nT) in
 
             let mc'  = xor(id, mc) in
-            case mac_vrfy(k, mac_to_verify, mc') return reader_response<l:adv>
+            case mac_vrfy(k, mac_to_verify, mc') 
                 | None => No()
                 | Some m =>
                     // let _ = check_equal(mc, xor(id, m)) in

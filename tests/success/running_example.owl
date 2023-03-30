@@ -15,6 +15,7 @@ def alice<@j>() @ alice : if sec(msg<@j>) then Result<idx j> else Data<adv> =
   output c;
   input i in
   corr_case k_data<@j> in
+  corr_case msg<@j> in
   case dec(get(k_data<@j>), i)
   | Some o => Ok<idx j>(o)
   | None => Err<idx j>()

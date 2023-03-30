@@ -34,7 +34,7 @@ def ke_Server () @ Server
     let _ = output a to endpoint(Client) in
     input i, _ in 
     corr_case skC in
-    case vrfy(vkC, _c1(i), _c2(i)) return Unit
+    case vrfy(vkC, _c1(i), _c2(i)) 
      | Some m => 
        let client_pk : if sec(skC) then dhpk(C) else Data<adv> = m in
        corr_case S in 
@@ -57,7 +57,7 @@ def ke_Client () @ Client
     let _ = output b to endpoint(Server) in
     input i, _ in 
     corr_case skS in
-    case vrfy(vkS, _s1(i), _s2(i)) return Option (if sec(k) then Name(k) else Data<adv>)
+    case vrfy(vkS, _s1(i), _s2(i)) 
      | Some m => 
        let server_pk : if sec(skS) then dhpk(S) else Data<adv> = m in
        let ss : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = dh_combine(server_pk, get(C)) in
@@ -67,7 +67,7 @@ def ke_Client () @ Client
        corr_case RO<l> in
        corr_case k in 
        false_elim in
-       (case dec(dhk, ii) return Option (if sec(k) then Name(k) else Data<adv>)
+       (case dec(dhk, ii) 
        | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
        | Some dd => 
          let ddd : if sec(k) then Name(k) else Data<adv> = dd in

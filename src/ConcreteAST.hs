@@ -123,7 +123,7 @@ concretify e =
           k' <- concretify k
           return $ subst x a k' -- i is dangling here, but that shouldn't matter
       ESamp x y -> return $ CSamp x y
-      EIf a _ e1 e2 -> do
+      EIf a e1 e2 -> do
           c1 <- concretify e1
           c2 <- concretify e2
           return $ CIf a c1 c2
@@ -133,7 +133,7 @@ concretify e =
       EAssume _ -> error "Concretify on assume"
       EAdmit -> error "Concretify on admit"
       ECall a b c -> return $ CCall a b c
-      ECase a cases _ -> do
+      ECase a cases -> do
           cases' <- forM cases $ \(c, o) ->
               case o of
                 Left e -> do

@@ -47,7 +47,7 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
     let nB' = _nbB(x) in 
     let b1 = checknonce(get(nA), nA') in 
     let b2 = eq(length(nB'), |nonce|) in 
-    if b1 && b2 return (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) then 
+    if b1 && b2 then 
         false_elim in 
         let c' = samp pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
         let _ = output c' to endpoint(bob) in
@@ -64,9 +64,9 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
     corr_case nB in
     let m = pkdec(get(skB), i) in
     union_case x = m in
-    case x return (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>)
+    case x 
     | Msg1 nA' =>  
-        if eq(length(nA'), |nonce|) return  (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) then 
+        if eq(length(nA'), |nonce|) then 
             let p = nsl_bob_message(nA', get(nB)) in 
             let c = samp pkenc(pkA, p) in
             output c to endpoint(alice);
@@ -74,12 +74,12 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
             let m' = pkdec(get(skB), i) in
             union_case x' = m in
             (
-            case x' return (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>)
+            case x' 
             | Msg1 _ => NRNone()
             | Msg3 p => 
                 let b1 = checknonce(get(nB), _na3B(p)) in 
                 let b2 = checknonce(nA', _na3A(p)) in 
-                if b1 && b2 return (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) then 
+                if b1 && b2 then 
                     false_elim in
                     let res: if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = 
                         NRSome(nsl_result(nA', get(nB))) in

@@ -34,7 +34,7 @@ def bob<i> () @ bob
     : Unit = 
     input i in 
     corr_case shared_key in
-    case dec(get(shared_key), i) return Unit
+    case dec(get(shared_key), i) 
      | Some k => 
         let msg : x:Name(x<i>){happened(bob<i>())} = get(x<i>) in 
         let c = samp enc(k, pack<i>(msg)) in

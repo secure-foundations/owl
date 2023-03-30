@@ -10,17 +10,17 @@ func f
     arity 0
 
 def alice(x : Bool<static>) @ alice : Unit = 
-    (if f() return Unit then 
+    (if f() then
         assert (f () = true); ()
     else
         assert (! (f () = true)); () 
     );
-    (if x return Unit then
+    (if x then
         assert (x = true); ()
      else
         assert (x = false); ()
     );
-    (if eq(get(n), get(m)) return Unit then
+    (if eq(get(n), get(m)) then
         assert (False); ()
      else
          assert (! (get(n) = get(m))); ()

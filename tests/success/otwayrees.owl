@@ -133,14 +133,14 @@ def alice (
 
     input i in
     let st = magic_parse(i) in
-    (case dec(kA, st) return if sec(KA) then alice_result else Data<adv>
+    (case dec(kA, st) 
         | None => alice_None()
         | Some res =>
-            (case res return if sec(KA) then alice_result else Data<adv>
+            (case res 
                 | mA1 _ => alice_None()
                 | mA2 msg2 =>
                     let b = checknonce(_nA2(msg2), nA) in
-                    if b return if sec(KA) then alice_result else Data<adv> then
+                    if b then
                         let kab:if sec(KA) then Name(kAB) else Data<adv> = _kABA(msg2) in
                         alice_Some(kab)
                     else
@@ -186,14 +186,14 @@ def bob (
     let x2' = msg3_x2(i) in
 
     let _ = check_session_identifier(M') in
-    (case dec(kB, x2') return if sec(KB) then bob_result else Data<adv>
+    (case dec(kB, x2') 
         | None => bob_None()
         | Some res =>
-            (case res return if sec(KB) then bob_result else Data<adv>
+            (case res 
                 | mB1 _ => bob_None()
                 | mB2 msg2 =>
                     let b = checknonce(_nB2(msg2), nB) in
-                    if b return if sec(KB) then bob_result else Data<adv> then
+                    if b then
                         let kab:if sec(KB) then Name(kAB) else Data<adv> = _kABB(msg2) in
                         let _ = output msg4_BtoA(M', x1') in
                         bob_Some(kab)

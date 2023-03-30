@@ -42,7 +42,7 @@ def bob_main () @ bob
     input i, ev in 
     // i : Data<adv>
     corr_case shared_key in
-    case dec(get(shared_key), i) // return Unit
+    case dec(get(shared_key), i) 
      | Some k => 
         let foo = t(get(x), get(y)) in
         let c = samp enc(k, foo) in

@@ -38,7 +38,7 @@ def reader () @ R
     corr_case K in
     let nT = _nT(i) in
     let m = _m(i) in
-    (case mac_vrfy(get(K), nT, m) return if sec(K) then reader_response<l:adv> else Data<adv>
+    (case mac_vrfy(get(K), nT, m) 
         | None => No()
         | Some m' =>
             output Ok(m');

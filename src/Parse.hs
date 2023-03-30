@@ -730,21 +730,15 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "if"
         t <- parseAExpr
-        oty <- optionMaybe $ do
-            reserved "return"
-            parseTy
         reserved "then"
         e1 <- parseExpr
         reserved "else"
         e2 <- parseExpr
-        return $ EIf t oty e1 e2)
+        return $ EIf t e1 e2)
     <|>
     (parseSpanned $ do
         reserved "case"
         x <- parseAExpr
-        oAnn <- optionMaybe $ do
-            reserved "return"
-            parseTy
         xs <- many1 $ do
           symbol "|"
           c <- identifier
@@ -754,7 +748,7 @@ parseExprTerm =
           return (c, case ov of
                        Nothing -> Left e
                        Just x -> Right (ignore x, bind (s2n x) e))
-        return $ ECase x xs oAnn
+        return $ ECase x xs 
     )
     <|>
     (parseSpanned $ do

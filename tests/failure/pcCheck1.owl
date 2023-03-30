@@ -8,5 +8,5 @@ enum t {
 }
 
 def alice () @ alice : t  =
-    if get(x) return t then A() else B()
+    if get(x) then A() else B()
     

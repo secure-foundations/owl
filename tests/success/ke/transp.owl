@@ -6,6 +6,7 @@ def server() @ Server :
     call ke_Server();
     input i in
     corr_case k in
+    corr_case data in
     dec(get(k), i)
 
 def client(x : Name(data)) @ Client: Unit = 

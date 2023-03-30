@@ -97,10 +97,10 @@ def Alice_main<i> (
 
     corr_case KA in
     input inp in
-    (case dec(kA, inp) return if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv>
+    (case dec(kA, inp) 
         | None => 
             unpack j, _ = () in // arbitrary j
-            alice_None<idx i, idx j>()
+            pack<j>(alice_None<idx i, idx j>())
         | Some res =>
             let kAB : if sec(KA) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB2(res) in
             let B' = _B(res) in
@@ -112,15 +112,15 @@ def Alice_main<i> (
 
             input inp2 in
             assert (corr(KA) ==> corr(KAB<j>));
-            (case dec(kAB', inp2) return if sec(KA) then alice_result<idx i, idx j> else Data<adv>
-                | None => alice_None<idx i, idx j>()
+            (case dec(kAB', inp2) 
+                | None => pack<j>(alice_None<idx i, idx j>())
                 | Some res2 =>
                     let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
                     let encm = samp enc(kAB', nB') in // some_func(nB')
                     let _ = output encm to endpoint(Bob) in
-                    alice_Some<idx i, idx j>(kAB')
+                    pack<j>(alice_Some<idx i, idx j>(kAB'))
             )
-   )
+    )
 // ************************************************************************
 
 
@@ -161,10 +161,10 @@ def Bob_main<i> () @ Bob
     let kB : Name(KB) = get(KB) in
     corr_case KB in
     input inp in 
-    (case dec(kB, inp) return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+    (case dec(kB, inp) 
         | None => 
           unpack j, _ = () in // arbitrary j
-          bob_None<idx i, idx j>()
+          pack<j>(bob_None<idx i, idx j>())
         | Some res =>
             let kAB : if sec(KB) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB1(res) in
             let A' = _A(res) in
@@ -177,13 +177,13 @@ def Bob_main<i> () @ Bob
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in
-            (case dec(kAB', inp2) return if (sec(KB)) then bob_result<idx i, idx j> else Data<adv>
-                | None => bob_None<idx i, idx j>()
+            (case dec(kAB', inp2) 
+                | None => pack<j>(bob_None<idx i, idx j>())
                 | Some res2 =>
                     // let _ = check_nonce(res2, nB) in
                     assert (corr(KB) ==> corr(KAB<j>));
                     let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
-                    bob_Some<idx i, idx j>(m)
+                    pack<j>(bob_Some<idx i, idx j>(m))
             )
     )
 // ************************************************************************

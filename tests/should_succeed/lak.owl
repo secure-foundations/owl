@@ -62,7 +62,7 @@ def reader (
     let NR = get(nR) in
     let msg_to_mac_verify = msg1(m1(NR, NT, tag1)) in
     corr_case k in
-    case mac_vrfy(get(k), msg_to_mac_verify, mc) return reader_response<adv>
+    case mac_vrfy(get(k), msg_to_mac_verify, mc) 
     | None => No()
     | Some m =>
         let msg_to_mac = msg2(m3(i, NR, tag2)) in

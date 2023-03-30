@@ -161,17 +161,17 @@ def Alice_main<i> (
 
     // let _ = check_session_identifier(M') in
 
-    (case dec(kA, x1') return if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv>
+    (case dec(kA, x1') 
         | None => pack<j>(alice_None<idx i, idx j>())
         | Some res =>
             unpack i', res' = res in
             unpack j', res'' = res' in
 
-            let o =
-            (case res'' return if sec(KA) then alice_result<idx i, idx j'> else Data<adv>
+            let o : if sec(KA) then alice_result<idx i, idx j'> else Data<adv>  =
+            (case res'' 
                 | mA1 _ => alice_None<idx i, idx j'>()
                 | mA2 msg2 =>
-                    if checknonce(_nA2<idx i', idx j'>(msg2), nA) return if sec(KA) then alice_result<idx i, idx j'> else Data<adv> then
+                    if checknonce(_nA2<idx i', idx j'>(msg2), nA) then
                         let kAB:if sec(KA) then Name(KAB<j'>) else Data<adv> = _kABA<idx i, idx j'>(msg2) in
                         alice_Some<idx i, idx j'>(kAB)
                     else
@@ -210,7 +210,7 @@ def Bob_main<i> (
 
     unpack j, _ = () in
 
-    (case encm' return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+    (case encm' 
         | mA2_enc _ =>
             let _ = output "" to endpoint(AS) in
             input _ in
@@ -228,10 +228,6 @@ def Bob_main<i> (
                 let temp_packed = mB1<idx i, idx j>(temp) in
                 let encm = samp enc(kB, pack<i>(pack<j>(temp_packed))) in
                 
-                // let encm'':encd_kA_message<l:adv> = (case encm' return encd_kA_message<l:adv>
-                //     | mA1_enc v => mA1_enc(v)
-                //     | mA2_enc v => mA2_enc(v)
-                // ) in
                 let o : msg2_BToS = msg2_BToS(M', A', B, v') in
                 let _ = output o to endpoint(AS) in
                 let _ = output mB1_enc(encm) to endpoint(AS) in
@@ -243,17 +239,18 @@ def Bob_main<i> (
 
                 // let _ = check_session_identifier(M') in
 
-                (case dec(kB, x2') return if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv>
+                (case dec(kB, x2') 
                     | None => let _ = output "" to endpoint(Alice) in pack<j>(bob_None<idx i, idx j>())
                     | Some res =>
                         unpack i', res' = res in
                         unpack j', res'' = res' in
 
-                        let o =
-                        (case res'' return if sec(KB) then bob_result<idx i, idx j'> else Data<adv>
+                        let o : if sec(KB) then bob_result<idx i, idx j'> else Data<adv> =
+                        (case res'' 
                             | mB1 _ => bob_None<idx i, idx j'>()
                             | mB2 msg2 =>
-                                if checknonce(_nB2<idx i', idx j'>(msg2), nB) return if sec(KB) then bob_result<idx i, idx j'> else Data<adv> then
+                                if checknonce(_nB2<idx i', idx j'>(msg2), nB)
+                                    then
                                     // let _ = assert(sec(KB) ==> (i =idx i')) in
                                     let kAB:if sec(KB) then Name(KAB<j'>) else Data<adv> = _kABB<idx i, idx j'>(msg2) in
                                     let _ = output msg4_BtoA(M', x1') to endpoint(Alice) in

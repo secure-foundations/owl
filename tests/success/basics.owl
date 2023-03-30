@@ -17,7 +17,7 @@ def alice1 () @ alice : Data<adv> =
     let _ = output c1 in  
     corr_case k in
     let c : if sec(k) then Option t else Option Data<adv> = dec(get(k), parse(i)) in 
-    (case c return Data<adv>
+    (case c 
      | Some x => 
        let res : Data<adv> = () in res
      | None => 
@@ -28,7 +28,7 @@ def alice2 (vk : vk(skB)) @ alice : Data<adv> =
     input t, _ in 
     input m, _ in 
     corr_case skB in
-    case vrfy(vk, t, m) return Unit
+    case vrfy(vk, t, m) 
     | None => ()
     | Some m' => 
         let m'' : if sec(skB) then Name(n) else Data<adv> = m' in

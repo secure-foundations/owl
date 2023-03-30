@@ -66,7 +66,7 @@ def R_main<i>() @ R
     // let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, nT) in
     let x: Option (exists j. pair<idx j>) = lookup(keys, nT) in
 
-    (case x return reader_response
+    (case x 
         | None => No()
         | Some p_packed =>
             unpack j, p = p_packed in
@@ -77,7 +77,7 @@ def R_main<i>() @ R
             let mac_to_verify = h1_t<idx j>(zz(), nR, nT) in
 
             let mc'  = xor(id, mc) in
-            (case mac_vrfy(k, mac_to_verify, mc') return reader_response
+            (case mac_vrfy(k, mac_to_verify, mc') 
                 | None => No()
                 | Some m =>
                     // let _ = check_equal(mc, xor(id, m)) in

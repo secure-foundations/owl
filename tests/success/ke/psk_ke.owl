@@ -9,6 +9,7 @@ def ke_Server() @ Server : Unit =
 def ke_Client () @ Client : Option (if sec(k) then Name(k) else Data<adv>) = 
     input i in
     corr_case shared_key in
+    corr_case k in
     dec(get(shared_key), i)
 
     

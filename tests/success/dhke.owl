@@ -42,7 +42,7 @@ def alice_main () @ alice
     let _ = output a to endpoint(bob) in
     input i, _ in 
     corr_case skB in
-    case vrfy(vkB, _b1(i), _b2(i)) return Unit
+    case vrfy(vkB, _b1(i), _b2(i)) 
      | Some m => 
        let bobs_pk : if sec(skB) then dhpk(Y) else Data<adv> = m in
        corr_case X in
@@ -64,7 +64,7 @@ def bob_main () @ bob
     let _ = output b to endpoint(alice) in
     input i, _ in 
     corr_case skA in
-    case vrfy(vkA, _a1(i), _a2(i)) return Unit
+    case vrfy(vkA, _a1(i), _a2(i)) 
      | Some m => 
        corr_case X in
        corr_case Y in
@@ -75,7 +75,7 @@ def bob_main () @ bob
        let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = H<l> (ss_swap) in
        input ii, _ in 
        corr_case RO<l> in
-       (case dec(k, ii) return Unit
+       (case dec(k, ii) 
        | None => ()
        | Some dd => 
          let ddd : if sec(X) /\ sec(Y) /\ sec(RO<l>) then

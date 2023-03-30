@@ -16,7 +16,7 @@ def a<i> () @ alice : Unit =
     debug "Good case for foo";
     debug "=======";
     let b = eq(length(i), some_length()) in
-    if b return Unit then
+    if b then
         // TODO: currently the type system requires you to unfold out your major
         // subtyping queries into different let statements. So putting "i"
         // instead of "j" won't work below.

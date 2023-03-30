@@ -708,11 +708,11 @@ checkDecl dcl k =
                         Just bdy' ->
                           local (set tcScope $ Def l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                              t <- inferExpr bdy'
-                              let p1 = atomicCaseSplits t
-                              let p2 = atomicCaseSplits tyAnn
-                              let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
-                              withAllSplits ps $ assertSubtype t tyAnn
+                              t <- checkExpr (Just tyAnn) bdy'
+                              -- let p1 = atomicCaseSplits t
+                              -- let p2 = atomicCaseSplits tyAnn
+                              -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
+                              -- withAllSplits ps $ assertSubtype t tyAnn
                               return $ DefConcrete
           let fdef = bind (is1, is2) $ FuncDef l (bind xs (preReq, tyAnn))
           dfs <- view defs
@@ -1314,87 +1314,91 @@ checkEndpoint (Endpoint x) = do
 checkEndpoint (EndpointLocality l) = do
     checkLocality l
 
+getOutTy :: Maybe Ty -> Ty -> Check Ty
+getOutTy ot t1 = 
+    normalizeTy =<< case ot of
+      Nothing -> return t1
+      Just t2 -> do
+          assertSubtype t1 t2
+          return t2
+
 -- Infer type for expr
-inferExpr :: Expr -> Check Ty
-inferExpr e = do
+checkExpr :: Maybe Ty -> Expr -> Check Ty
+checkExpr ot e = do
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
-      EInput xsk -> do
+      (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
-          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over endpointContext (S.insert s)) $ inferExpr k
+          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over endpointContext (S.insert s)) $ checkExpr ot k
       (EOutput a ep) -> do
           case ep of
             Nothing -> return ()
             Just ep -> checkEndpoint ep
-          t <- inferAExpr a
-          l_t <- coveringLabel t
+          t' <- inferAExpr a
+          l_t <- coveringLabel t'
           flowCheck (e^.spanOf) l_t advLbl
-          return tUnit
+          getOutTy ot tUnit
       (EAssert p) -> do
           local (set tcScope $ Ghost) $ checkProp p
           (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert p
           g <- view tyContext
           debug $ pretty "Type context for assertion " <> pretty p <> pretty ":" <> (prettyTyContext g)
           assert (e^.spanOf) (show $ ErrAssertionFailed fn p) b
-          return $ tRefined tUnit (bind (s2n ".x") p)
+          getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
       (EAssume p) -> do
           local (set tcScope $ Ghost) $ checkProp p
-          return $ tRefined tUnit (bind (s2n ".x") p)
-      (EAdmit) -> return $ tAdmit
+          getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
+      (EAdmit) -> getOutTy ot $ tAdmit
       (EDebug (DebugPrint s)) -> do
           liftIO $ putStrLn s
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintTyOf a)) -> do
           t <- inferAExpr a
           t' <- normalizeTy t
           e <- ask
           tyc <- view tyContext
           liftIO $ putStrLn $ show $ pretty "Type for " <> pretty a <> pretty ": " <> pretty t <> line <> pretty "Normalized: " <> pretty t' <> line <> pretty "Under context: " <> prettyTyContext tyc
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
           liftIO $ putStrLn $ show $ pretty t <+> pretty "normalizes to: " <> pretty t'
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintProp p)) -> do
           liftIO $ putStrLn $ show $ pretty p
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintTyContext)) -> do
           tC <- view tyContext
           liftIO $ putStrLn $ show $ prettyTyContext tC
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintExpr e)) -> do
           liftIO $ putStrLn $ show $ pretty e
-          return tUnit
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintLabel l)) -> do
           liftIO $ putStrLn $ show $ pretty l
-          return tUnit
+          getOutTy ot $ tUnit
       (EUnionCase a xe) -> do
           t <- inferAExpr a
           (x, e) <- unbind xe
           case (stripRefinements t)^.val of
             TUnion t1 t2 -> do
                 debug $ pretty "first case for EUnionCase"
-                t1' <- withVars [(x, (ignore $ show x, t1))] $ inferExpr e
+                t1' <- withVars [(x, (ignore $ show x, t1))] $ checkExpr ot e
                 debug $ pretty "first case got" <+> pretty t1'
                 debug $ pretty "second case for EUnionCase"
-                t2' <- withVars [(x, (ignore $ show x, t2))] $ inferExpr e
+                t2' <- withVars [(x, (ignore $ show x, t2))] $ checkExpr ot e
                 debug $ pretty "second case got" <+> pretty t2'
                 assertSubtype t1' t2'
-                stripTy x t2'
+                getOutTy ot =<< stripTy x t2'
             _ -> do  -- Just continue
-                t <- withVars [(x, (ignore $ show x, t))] $ inferExpr e
-                stripTy x t
+                t <- withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
+                getOutTy ot =<< stripTy x t
       (ELet e tyAnn sx xe') -> do
-          t1 <- inferExpr e
-          t1' <- case tyAnn of
-                   Nothing -> return t1
-                   Just t' -> do
-                       checkTy t'
-                       t'' <- normalizeTy t'
-                       assertSubtype t1 t''
-                       return t''
+          case tyAnn of
+            Just t -> checkTy t
+            Nothing -> return ()
+          t1 <- checkExpr tyAnn e
           (x, e') <- unbind xe'
-          t2 <- withVars [(x, (ignore sx, t1'))] (inferExpr e')
+          t2 <- withVars [(x, (ignore sx, t1))] (checkExpr ot e')
           stripTy x t2
       (EUnpack a ixk) -> do
           t <- inferAExpr a
@@ -1404,14 +1408,13 @@ inferExpr e = do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') (bind (s2n ".res") (pEq (aeVar ".res") a) )
                 to <- local (over inScopeIndices $ M.insert i IdxGhost) $ do
-                    t <- withVars [(x, (ignore $ show x, tx))] $ inferExpr e
-                    normalizeTy t
+                    withVars [(x, (ignore $ show x, tx))] $ checkExpr ot e
                 to' <- stripTy x to
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
             _ -> do
-                t' <- local (over inScopeIndices $ M.insert i IdxGhost) $ withVars [(x, (ignore $ show x, t))] $ inferExpr e
+                t' <- local (over inScopeIndices $ M.insert i IdxGhost) $ withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
                 to' <- stripTy x t'
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
@@ -1423,7 +1426,7 @@ inferExpr e = do
           case M.lookup d dE of
             Just (ar, k) -> do
                 assert (e^.spanOf) (show $ pretty "Wrong arity for " <> pretty d) $ length ts == ar
-                mkSpanned <$> (k $ zip args ts)
+                getOutTy ot =<< mkSpanned <$> (k $ zip args ts)
             Nothing -> typeError (e^.spanOf) $ show (ErrUnknownDistr d)
       (ETLookup n a) -> do
           tenv <- view tableEnv
@@ -1436,7 +1439,7 @@ inferExpr e = do
                 case tc of
                   Def curr_loc -> do
                       assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
-                      return $ mkSpanned $ TOption t
+                      getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
       (ETWrite n a1 a2) -> do
           tenv <- view tableEnv
@@ -1451,7 +1454,7 @@ inferExpr e = do
                       assertSubtype ta (tData advLbl advLbl)
                       ta2 <- inferAExpr a2
                       assertSubtype ta2 t
-                      return tUnit
+                      getOutTy ot $ tUnit
 
       (ECall f (is1, is2) args) -> do
           ds <- view defs
@@ -1476,9 +1479,9 @@ inferExpr e = do
                       (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert prereq
                       assert (e^.spanOf) ("Precondition failed: " ++ show (pretty prereq) ++ show (pretty fn)) b
                       let happenedProp = pHappened f (is1, is2) args
-                      return (tRefined retTy (bind (s2n ".res") happenedProp))
+                      getOutTy ot $ (tRefined retTy (bind (s2n ".res") happenedProp))
                   _ -> typeError (ignore def ) $ "Unreachable"
-      (EIf a oty e1 e2) -> do
+      (EIf a e1 e2) -> do
           debug $ pretty "Checking if at" <+> pretty (unignore $ e^.spanOf)
           t <- inferAExpr a
           lt <- coveringLabel t
@@ -1491,121 +1494,78 @@ inferExpr e = do
                 (x, p) <- unbind xp
                 return $ subst x a p 
             _ -> return pTrue
-          do
-              case oty of
-                Just ty -> do
-                    checkTy ty
-                    x <- freshVar
-                    t1 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ inferExpr e1
-                    t2 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ inferExpr e2
-                    assertSubtype t1 ty
-                    assertSubtype t2 ty
-                    return ty
-                Nothing -> do
-                    x <- freshVar
-                    t1 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ inferExpr e1
-                    t2 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ inferExpr e2
-                    ty <- stripTy (s2n x) t1
-                    assertSubtype t2 ty
-                    return ty
+          x <- freshVar
+          t1 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot e1
+          t2 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ checkExpr ot e2
+          case ot of 
+            Just t3 -> return t3
+            Nothing -> do
+                t1' <- stripTy (s2n x) t1
+                assertSubtype t2 t1'
+                return t1'
       (ERet a) -> do
           t <- inferAExpr a
-          return $ tRefined t (bind (s2n ".res") $ pEq (aeVar ".res") a)
+          getOutTy ot $ tRefined t (bind (s2n ".res") $ pEq (aeVar ".res") a)
       (EFalseElim e) -> do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-        if b then return tAdmit else inferExpr e
+        if b then getOutTy ot tAdmit else checkExpr ot e
       (ECorrCase n e) -> do
           _ <- local (set tcScope Ghost) $ getNameType n
           x <- freshVar
           t1 <- withVars [(s2n x, (ignore x, tLemma (pFlow (nameLbl n) advLbl)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then return tAdmit else inferExpr e
+              if b then getOutTy ot tAdmit else checkExpr ot e
           t2 <- withVars [(s2n x, (ignore x, tLemma (pNot $ pFlow (nameLbl n) advLbl)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then return tAdmit else inferExpr e
+              if b then getOutTy ot tAdmit else checkExpr ot e 
           return $ mkSpanned $ TCase (mkSpanned $ PFlow (nameLbl n) advLbl) t1 t2
-      (ECase a cases otyAnn) -> do
+      (ECase a cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- inferAExpr a
           debug $ pretty "Inferred type " <> pretty t <> pretty "for argument"
           t <- normalizeTy t
           let t' = stripRefinements t
-          (l, otcases) <-
-              case t'^.val of
-                TData l1 l2 -> return (l1, Left (tData l1 l2))
-                TOption to -> return (advLbl, Right $ [("Some", Just to), ("None", Nothing)])
-                TVar s ps -> do
-                    td <- getTyDef (t^.spanOf) s
-                    case td of
-                      EnumDef b -> do
-                          bdy <- extractEnum (t'^.spanOf) ps s b
-                          return (advLbl, Right bdy)
+          (l, otcases) <- case t'^.val of
+                            TData l1 l2 -> return (l1, Left (tData l1 l2))
+                            TOption to -> return (advLbl, Right $ [("Some", Just to), ("None", Nothing)])
+                            TVar s ps -> do
+                                td <- getTyDef (t^.spanOf) s
+                                case td of
+                                  EnumDef b -> do
+                                      bdy <- extractEnum (t'^.spanOf) ps s b
+                                      return (advLbl, Right bdy)
           assert (e^.spanOf) (show $ pretty "Empty cases on case expression") $ length cases > 0
           flowCheck (t'^.spanOf) l advLbl
-          ret_ty <- liftIO $ newIORef Nothing
-          case otyAnn of
-            Just t -> do
-                checkTy t
-                liftIO $ writeIORef ret_ty (Just t)
-            Nothing -> return ()
-
-          case otcases of
-            Left td ->
-                forM cases $ \(c, b) -> do
-                    case b of
-                        Left e ->
-                              do
-                                  t <- inferExpr e
-                                  ot <- liftIO $ readIORef ret_ty
-                                  case ot of
-                                    Just r -> assertSubtype t r
-                                    Nothing -> liftIO $ writeIORef ret_ty (Just t)
-                        Right (sb, xe) -> do
+          branch_tys <- 
+              case otcases of
+                Left td -> do
+                    forM cases $ \(c, ocase) -> 
+                        case ocase of
+                          Left e -> checkExpr ot e
+                          Right (sb, xe) -> do
                               (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, td))] $ inferExpr e
-                              ot <- liftIO $ readIORef ret_ty
+                              t <- withVars [(x, (sb, td))] $ checkExpr ot e
                               case ot of
-                                Just r -> withVars [(x, (sb, td))] $ assertSubtype t r
-                                Nothing -> do
-                                    t' <- stripTy x t
-                                    liftIO $ writeIORef ret_ty (Just t')
-            Right tcases ->
-                forM tcases $ \(c, ot) ->
-                    case (ot, lookup c cases) of
-                      (_, Nothing) -> typeError (e^.spanOf) $ show $ pretty "Case not found: " <> pretty c
-                      (Nothing, Just (Left e)) -> do
-                          do
-                              t <- inferExpr e
-                              ot <- liftIO $ readIORef ret_ty
+                                 Just _ -> return t
+                                 Nothing -> stripTy x t
+                Right tcases -> do
+                    forM tcases $ \(c, ot') ->
+                        case (ot', lookup c cases) of
+                          (_, Nothing) -> typeError (e^.spanOf) $ show $ pretty "Case not found: " <> pretty c
+                          (Nothing, Just (Left e)) -> checkExpr ot e
+                          (Just tc, Just (Right (sb, xe))) -> do
+                              (x, e) <- unbind xe
+                              t <- withVars [(x, (sb, tc))] $ checkExpr ot e
                               case ot of
-                                Just r -> assertSubtype t r
-                                Nothing -> liftIO $ writeIORef ret_ty (Just t)
-                      (Just tc, Just (Right (sb, xe))) -> do
-                          (x, e) <- unbind xe
-                          t <- withVars [(x, (sb, tc))] $  inferExpr e
-                          ot <- liftIO $ readIORef ret_ty
-                          case ot of
-                            Just r -> withVars [(x, (sb, tc))] $ assertSubtype t r
-                            Nothing -> do
-                                t' <- stripTy x t
-                                liftIO $ writeIORef ret_ty (Just t')
-                      (_, _) -> typeError (e^.spanOf) $ show $ pretty "Mismatch on case: " <> pretty c
-
-          ot <- liftIO $ readIORef ret_ty
+                                Just _ -> return t
+                                Nothing -> stripTy x t
+                          (_, _) -> typeError (e^.spanOf) $ show $ pretty "Mismatch on case: " <> pretty c
           case ot of
-            Nothing -> typeError (e^.spanOf) $ show $ pretty "Weird case: didn't get a return type for case expression"
-            Just t -> do
-              typeProtectsLabel l t
-              return t
-
-
--- Strongest sound necessary conditions for derivability
--- derivability (dh_combine(pk(X), X)) when X, Y : NT_DH : X <= adv \/ Y <= adv
--- derivability (concat(x, y)) : (X /\ Y) <= adv
--- derivability (n : name) : corr(n)
--- derivability _ = True
---
---
+            Just t -> return t
+            Nothing -> do -- Need to synthesize type here. Take the first one
+                let t = head branch_tys
+                forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
+                return t
 
 unsolvability :: AExpr -> Check Prop
 unsolvability ae = local (set tcScope Ghost) $ do

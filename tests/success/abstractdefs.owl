@@ -24,20 +24,18 @@ def alice_main () @ alice
     let _ = output c to endpoint(bob) in 
     input i, _ in 
     corr_case k_data in
-    let result = case dec(get(k_data), i) return (if sec(k_data) then x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob_main())} else Data<adv>)
+    case dec(get(k_data), i) 
      | Some j => 
        assert(sec(k_data) ==> happened(bob_main()));
        SomeResult(j)
      | None => NoResult()
-    in
-    result
     
 def bob_main () @ bob
     : x:Bool<adv>{(x /\ sec(shared_key)) ==> happened(alice_main()) } = 
     input i, _ in 
     // i : Data<adv>
     corr_case shared_key in
-    case dec(get(shared_key), i) return z:Bool<adv>{(z /\ sec(shared_key)) ==> happened(alice_main()) }
+    case dec(get(shared_key), i) 
      | Some k => 
         assert (sec(shared_key) ==> happened(alice_main()));
         let c = samp enc(k, get(x)) in

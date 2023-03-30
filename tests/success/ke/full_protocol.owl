@@ -5,7 +5,7 @@ include "transp.owl"
 
 def Server_main () @ Server 
     : Option (if sec(data) then Name(data) else Data<adv>) 
-    = call server()
+    = corr_case data in call server()
 
 def Client_main () @ Client
     : Unit

@@ -45,14 +45,14 @@ def R_main () @ R
 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
-    (case x return reader_response
+    (case x 
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
 
             corr_case K<@j> in
 
-            (case mac_vrfy(k, nT, mc) return reader_response
+            (case mac_vrfy(k, nT, mc) 
                 | None => No()
                 | Some m =>
                     // Checking if m is of type Name(NT<j>) as expected

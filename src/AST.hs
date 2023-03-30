@@ -289,14 +289,14 @@ data ExprX =
     | EUnionCase AExpr (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | ESamp DistrName [AExpr]
-    | EIf AExpr (Maybe Ty) Expr Expr
+    | EIf AExpr Expr Expr
     | ERet AExpr
     | EDebug DebugCommand
     | EAssert Prop
     | EAssume Prop
     | EAdmit
     | ECall String ([Idx], [Idx]) [AExpr]
-    | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] (Maybe Ty) -- The (Ignore String) part is the name for the var
+    | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | ECorrCase NameExp Expr
     | EFalseElim Expr
     | ETLookup TableName AExpr
@@ -515,12 +515,8 @@ instance Pretty ExprX where
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
     pretty (EUnpack a k) = pretty "unpack a .... TODO"
     pretty (ESamp d as) = pretty "samp" <+> pretty d <> tupled (map pretty as)
-    pretty (EIf t oty e1 e2) = 
-        let ann = case oty of
-                    Just t' -> pretty "return" <+> pretty t'
-                    Nothing -> mempty
-        in
-        pretty "if" <+> pretty t <+> ann <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
+    pretty (EIf t e1 e2) = 
+        pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
     pretty (ERet ae) = pretty ae
     pretty (EAdmit) = pretty "admit"
     pretty (ECall f is as) = 
@@ -529,19 +525,14 @@ instance Pretty ExprX where
                      (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
         in
         pretty "call" <> inds <+> pretty f <> tupled (map pretty as)
-    pretty (ECase t xs oty) = 
-        let ann = 
-                case oty of
-                  Just t -> pretty "return" <+> pretty t
-                  Nothing -> mempty
-        in
+    pretty (ECase t xs) = 
         let pcases = 
                 map (\(c, o) -> 
                     case o of
                       Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
-        pretty "case" <+> pretty t <+> ann <+> vsep pcases
+        pretty "case" <+> pretty t <+> vsep pcases
     pretty (ECorrCase n e) = 
         pretty "corr_case" <+> pretty n <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc

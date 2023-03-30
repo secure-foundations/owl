@@ -82,16 +82,16 @@ def alice (
   input i in
   corr_case KA in
   corr_case KAB in
-  (case dec(kA, i) return if sec(KA) then alice_result else Data<adv>
+  (case dec(kA, i) 
     | None => alice_None()
     | Some res =>
-        let res' = res in // ERROR: assert res is of type kA_message
+        let res' = res in 
         let kAB : if sec(KA) then Name(KAB) else Data<adv> = _kAB2(res) in
         let m1 = _x(res) in
         let _ = output m1 in
 
         input i in
-        (case dec(kAB, i) return if sec(KA) then alice_result else Data<adv>
+        (case dec(kAB, i) 
             | None => alice_None()
             | Some res2 =>
                 // let nB':Name(NB) = some_func(res) in
@@ -139,7 +139,7 @@ def bob () @ Bob
     corr_case KB in
     corr_case KAB in
     input i in
-    (case dec(kB, i) return if sec(KB) then bob_result else Data<adv>
+    (case dec(kB, i) 
         | None => bob_None()
         | Some res =>
             let A' = _A(res) in
@@ -149,7 +149,7 @@ def bob () @ Bob
             output encm;
 
             input i2 in
-            (case dec(kAB', i2) return if sec(KB) then bob_result else Data<adv>
+            (case dec(kAB', i2) 
                 | None => bob_None()
                 | Some res =>
                     let _ = check_nonce(res, nB) in
