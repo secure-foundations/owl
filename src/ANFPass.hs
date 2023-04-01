@@ -17,11 +17,23 @@ import Unbound.Generics.LocallyNameless.Bind
 import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 
-elet :: Expr -> (DataVar -> Expr) -> Check Expr
-elet e k = do
-    x <- freshVar
-    let k' = k $ s2n x
-    return $ Spanned (e^.spanOf) $ ELet e Nothing x (bind (s2n x) k')
+elet :: Expr -> Maybe Ty -> Maybe String -> (DataVar -> Check Expr) -> Check Expr
+elet e tyann s k =       
+    go e tyann s k
+    where
+        go :: Expr -> Maybe Ty -> Maybe String -> (DataVar -> Check Expr) -> Check Expr
+        go e tyann s k = 
+            case e^.val of
+              ELet e1 tyann1 s1 xe1k -> do
+                  (x, e1k) <- unbind xe1k
+                  go e1 tyann1 (Just s1) $ \y -> go (subst x (mkSpanned $ AEVar (ignore $ show y) y) e1k) tyann s k
+              _ -> do
+                  x <- s2n <$> freshVar
+                  k' <- k x
+                  let s' = case s of
+                             Just st -> st
+                             Nothing -> show x
+                  return $ Spanned (e^.spanOf) $ ELet e tyann s' (bind x $ k')
 
 aevar :: Ignore Position -> DataVar -> AExpr
 aevar sp x = Spanned sp $ AEVar (ignore $ show x) x
@@ -68,28 +80,29 @@ anf e =
           return $ Spanned (e^.spanOf) $ EInput xek'
       EOutput a oe -> do
           e1 <- anfAExpr a
-          elet e1 $ \x -> Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
-      ELet e tyann s xk -> do
-          xk' <- anfBind xk
-          e' <- anf e
-          return $ Spanned (e^.spanOf) $ ELet e' tyann s xk'
+          elet e1 Nothing Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
+      ELet e1 tyann s xk -> do
+          (x, k) <- unbind xk
+          k' <- anf k
+          e' <- anf e1
+          elet e' tyann (Just s) $ \y -> return $ subst x (mkSpanned $ AEVar (ignore $ show y) y) k' 
       EUnionCase a xk -> do
           xk' <- anfBind xk
           ea <- anfAExpr a
-          elet ea $ \y -> Spanned (e^.spanOf) $ EUnionCase (aevar (a^.spanOf) y) xk'
+          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnionCase (aevar (a^.spanOf) y) xk'
       EUnpack a ixe -> do
           ixe' <- anfBind ixe
           ea <- anfAExpr a
-          elet ea $ \y -> Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
+          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
       ESamp ds args -> anfAExprList (e^.spanOf) args $ \xs -> Spanned (e^.spanOf) $ ESamp ds xs
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
           ea <- anfAExpr a
-          elet ea $ \y -> Spanned (e^.spanOf) $ EIf (aevar (a^.spanOf) y) e1' e2'
+          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EIf (aevar (a^.spanOf) y) e1' e2'
       ERet a -> do
           ea <- anfAExpr a
-          elet ea $ \y -> Spanned (e^.spanOf) $ ERet (aevar (a^.spanOf) y) 
+          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ERet (aevar (a^.spanOf) y) 
       EDebug dc -> 
           case dc of
             DebugPrintExpr e -> do
@@ -111,7 +124,7 @@ anf e =
                 Right (c, be) -> do
                     be' <- anfBind be
                     return $ (s, Right (c, be'))
-          elet ea $ \y -> Spanned (e^.spanOf) $ ECase (aevar (a^.spanOf) y) cases'
+          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (aevar (a^.spanOf) y) cases'
       ECorrCase ne k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ ECorrCase ne k'
@@ -120,15 +133,13 @@ anf e =
          return $ Spanned (e^.spanOf) $ EFalseElim k'
       ETLookup t a -> do
          ea <- anfAExpr a
-         elet ea $ \y -> Spanned (e^.spanOf) $ ETLookup t $ aevar (a^.spanOf) y
+         elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ETLookup t $ aevar (a^.spanOf) y
       ETWrite t a1 a2 -> do
          ea1 <- anfAExpr a1
          ea2 <- anfAExpr a2
          x <- s2n <$> freshVar
          y <- s2n <$> freshVar
          return $ Spanned (e^.spanOf) $ ELet ea1 Nothing (show x) $ bind x $ Spanned (e^.spanOf) $ ELet ea2 Nothing (show y) $ bind y $ Spanned (e^.spanOf) $ ETWrite t (aevar (a1^.spanOf) x) (aevar (a2^.spanOf) y)
-
-
 
 
 

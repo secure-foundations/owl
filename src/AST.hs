@@ -374,14 +374,15 @@ instance Subst Idx PropX
 instance Subst AExpr PropX
 
 
-instance Alpha ExprX
-
 instance Alpha DebugCommand
+instance Subst AExpr DebugCommand
 
 instance Alpha Locality
 instance Subst Idx Locality
 instance Subst AExpr Locality
 
+instance Alpha ExprX
+instance Subst AExpr ExprX
 --- Pretty instances ---
 
 instance Pretty (Name a) where

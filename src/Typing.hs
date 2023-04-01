@@ -122,6 +122,15 @@ initDetFuncs = withNormalizedTys $ M.fromList [
         return $ TBool zeroLbl,
     mkSimpleFunc "FALSE" 0 $ \args -> do
         return $ TBool zeroLbl,
+    ("eq", (2, \ps args -> do 
+        assert (ignore def) ("Bad params") $ length ps == 0
+        case args of
+          [(a1, t1), (a2, t2)] -> do
+              l1 <- coveringLabel t1
+              l2 <- coveringLabel t2
+              let tr = aeApp "TRUE" [] []
+              return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
+           )),
     mkSimpleFunc "eq" 2 $ \args -> do
         case args of
           [t1, t2] -> do
@@ -339,7 +348,7 @@ initDetFuncs = withNormalizedTys $ M.fromList [
     ("prf", (2, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(_, t1), (a, _)]) -> do
-              case t1^.val of
+              case (stripRefinements t1)^.val of
                 TName n -> do
                     nt <-  local (set tcScope Ghost) $ getNameType n
                     case nt^.val of
