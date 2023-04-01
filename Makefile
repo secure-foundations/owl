@@ -1,2 +1,2 @@
 all:
-	stack build
+	cabal build owl

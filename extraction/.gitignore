@@ -1,4 +1,4 @@
 target/
 src/main.rs
-src/pervasive
+Cargo.lock
 *.owl_config
