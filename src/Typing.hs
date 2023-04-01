@@ -20,6 +20,7 @@ import Control.Monad
 import qualified Data.List as L
 import qualified Data.List.Unique as UL
 import Control.Monad.Reader
+import qualified ANFPass as ANF
 import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
@@ -705,10 +706,11 @@ checkDecl dcl k =
                       x <- freshVar
                       case bdy of
                         Nothing -> return $ DefAbstract
-                        Just bdy' ->
+                        Just bdy' -> do
+                          bdy'' <- ANF.anf bdy'
                           local (set tcScope $ Def l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                              t <- checkExpr (Just tyAnn) bdy'
+                              t <- checkExpr (Just tyAnn) bdy''
                               -- let p1 = atomicCaseSplits t
                               -- let p2 = atomicCaseSplits tyAnn
                               -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2

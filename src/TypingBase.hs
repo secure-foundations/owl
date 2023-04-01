@@ -132,7 +132,7 @@ instance Pretty (TypeError) where
     pretty (ErrWrongCases s a expected actual) = 
         pretty "Wrong cases for " <> pretty s <> pretty " with "  <> pretty a  <> pretty " expected " <> pretty (M.keys expected) <> pretty " but got " <> pretty (M.keys actual)
     pretty (ErrAssertionFailed fn p) =
-        pretty ": Assertion failed: " <> pretty p <> pretty " from " <> pretty fn
+        pretty "Assertion failed: " <> pretty p <> pretty " from " <> pretty fn
     pretty (ErrUnknownName s) =  
         pretty "Unknown name: " <> pretty s
     pretty (ErrUnknownDistr s) =  

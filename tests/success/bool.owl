@@ -20,6 +20,12 @@ def alice(x : Bool<static>) @ alice : Unit =
      else
         assert (x = false); ()
     );
+    debug printExpr(
+    (if eq(get(n), get(m)) then
+        assert (False); ()
+     else
+         assert (! (get(n) = get(m))); ()
+    ));
     (if eq(get(n), get(m)) then
         assert (False); ()
      else
