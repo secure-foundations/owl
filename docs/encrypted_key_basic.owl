@@ -1,0 +1,43 @@
+/* 
+    A, B already have key k
+
+    A -> B : {k_data}_k
+
+    B -> A : {x}_(k_data)
+
+    A : retrieve x
+*/
+
+locality alice
+locality bob
+
+name x : nonce @ bob
+name k_data : enckey Name(x) @ alice 
+name psk : enckey Name(k_data) @ alice, bob 
+
+enum Result {
+    | SomeResult Name(x)
+    | NoResult
+}
+
+def alice () @ alice
+     : if sec(k_data) then Result else Data<adv> = 
+    let c = samp enc(get(psk), get(k_data)) in
+    output c;
+    input i in 
+    corr_case k_data in
+    let res = dec(get(k_data), i) in 
+    case res
+     | Some j => SomeResult(j)
+     | None => NoResult()
+    
+def bob () @ bob : Unit =
+    input i in // i : Data<adv>
+    corr_case psk in
+    case dec(get(psk), i) 
+     | Some k => 
+        let c = samp enc(k, get(x)) in
+        output c
+     | None => ()
+        
+
