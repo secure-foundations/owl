@@ -510,7 +510,7 @@ instance Pretty ExprX where
                      Nothing -> mempty
                      Just t -> pretty ":" <+> pretty t
         in
-        pretty "let" <+> x <+> tann <+> pretty "=" <+> pretty e1 <+> pretty "in" <+> k
+        pretty "let" <+> x <+> tann <+> pretty "=" <+> pretty e1 <+> pretty "in" <> line <> k
     pretty (EUnionCase a xk) = 
         let (x, k) = prettyBind xk in
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
@@ -533,7 +533,7 @@ instance Pretty ExprX where
                       Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
-        pretty "case" <+> pretty t <+> vsep pcases
+        pretty "case" <+> pretty t <> line <> vsep pcases
     pretty (ECorrCase n e) = 
         pretty "corr_case" <+> pretty n <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc

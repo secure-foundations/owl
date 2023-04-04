@@ -44,7 +44,7 @@ instance Alpha CTy
 instance Subst AExpr CTy
 
 -- For struct compilation, not general
-concretifyTy :: Ty -> FreshM CTy
+concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
   case t^.val of
     TData _ _ -> return CTData
@@ -101,7 +101,7 @@ data CExpr =
 instance Alpha CExpr
 instance Subst AExpr CExpr
 
-concretify :: Expr -> FreshM CExpr
+concretify :: Fresh m => Expr -> m CExpr
 concretify e =
     case e^.val of
       EInput xse -> do
@@ -149,8 +149,8 @@ concretify e =
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
 
-doConcretify :: Expr -> CExpr
-doConcretify = runFreshM . concretify
+-- doConcretify :: Expr -> CExpr
+-- doConcretify = runFreshM . concretify
 
 
 instance Pretty CTy where
@@ -180,13 +180,15 @@ instance Pretty CTy where
 
 instance Pretty CExpr where
     pretty CSkip = pretty "skip"
-    pretty (CInput xsk) = pretty "UNIMP" -- todo
+    pretty (CInput xsk) = 
+        let (x, sk) = prettyBind xsk in
+        pretty "input" <+> x <> comma <+> sk
     pretty (COutput a l) = pretty "output " <> pretty a <+> (case l of
        Nothing -> pretty ""
        Just s -> pretty "to" <+> pretty s)
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
-        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <+> k
+        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
     pretty (CSamp d xs) = pretty "samp" <+> pretty d <> tupled (map pretty xs)
     pretty (CIf a e1 e2) =
         pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
@@ -204,7 +206,7 @@ instance Pretty CExpr where
                       Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
                       Right xe -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
-        pretty "case" <+> pretty a <+> vsep pcases
+        pretty "case" <+> pretty a <> line <> vsep pcases
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
 
