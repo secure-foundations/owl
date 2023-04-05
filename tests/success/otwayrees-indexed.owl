@@ -141,7 +141,6 @@ def Alice_main<i> (
     let A = get(A_username) in
     let B = get(B_username) in
     let M = get(m<i>) in
-
     let nA = get(NA<i>) in
     let kA = get(KA) in
     corr_case KA in
@@ -153,8 +152,7 @@ def Alice_main<i> (
     let _ = output msg1_AtoB(M, A, B, mA1_enc(encm)) to endpoint(Bob) in
 
     input inp in // inp:msg4_BtoA
-    let M'  = msg4_M(inp) in
-    let x1' = msg4_x1(inp) in
+    let M', x1' = msg4_M(inp), msg4_x1(inp) in
 
     // let _ = check_session_identifier(M') in
 
@@ -175,7 +173,6 @@ def Alice_main<i> (
     end
 // ************************************************************************
 
-
 // ************************************************************************
 // Bob's result and operation *********************************************
 enum bob_result<i, j> {
@@ -194,10 +191,7 @@ def Bob_main<i> (
     corr_case KB in
 
     input inp in // inp:msg1_AtoB
-    let M'    = msg1_M(inp) in
-    let A'    = msg1_A(inp) in
-    let B'    = msg1_B(inp) in 
-    let encm' = msg1_x(inp) in 
+    let M', A', B', encm' = msg1_M(inp), msg1_A(inp), msg1_B(inp), msg1_x(inp) in 
 
     // let _ = check_session_identifier(M') in
     // let _ = check_valid_username(A') in
@@ -224,9 +218,7 @@ def Bob_main<i> (
                 let _ = output mB1_enc(encm) to endpoint(AS) in
 
                 input inp2 in // inp:msg3_StoB
-                let M'  = msg3_M(inp2) in
-                let x1' = msg3_x1(inp2) in
-                let x2' = msg3_x2(inp2) in
+                let M', x1', x2' = msg3_M(inp2), msg3_x1(inp2), msg3_x2(inp2) in
 
                 // let _ = check_session_identifier(M') in
 
@@ -270,13 +262,9 @@ def AS_main<i> () @ AS
     corr_case KB in
 
     input inp in // inp:msg2_BtoS
-    let M = msg2_M(inp) in
-    let A = msg2_A(inp) in
-    let B = msg2_B(inp) in
-    let x1 = msg2_x1(inp) in
+    let M, A, B, x1 = msg2_M(inp), msg2_A(inp), msg2_B(inp), msg2_x1(inp) in
 
     input x2 in
-
     // let _ = check_valid_username(A) in
     // let _ = check_valid_username(B) in
 
