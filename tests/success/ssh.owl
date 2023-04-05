@@ -101,11 +101,8 @@ def PFA_FW (k11: if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PFA
             | _res _ => ()
             | _req hh =>
                 let signed = sign(get(skPFA), _signed_by_PFA_hash(hh)) in
-                let signed_response = _res(signed) in
-                let signed_response_wrapped = _res(signed_response) in
-                let msg_to_send_PDIS = samp enc(k11, signed_response_wrapped) in
-                let _ = output msg_to_send_PDIS to endpoint(PDIS) in // error
-                ()
+                let msg_to_send_PDIS = samp enc(k11, _res(_res(signed))) in
+                let _ = output msg_to_send_PDIS to endpoint(PDIS) in ()
 
 def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
 : Unit =

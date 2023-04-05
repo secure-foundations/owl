@@ -40,14 +40,11 @@ name skS : sigkey signed_by_pkS @ S
 def S_main () @ S : Unit =
     let sigK = get(skS) in
     input inp in
-    let a = _A(inp) in
-    let b = _B(inp) in
+    let a, b = _A(inp), _B(inp) in
     // check lengths
     if eq(length(a), |nonce|) && eq(length(b), |nonce|) then
-        let pkA = get_encpk(skA) in
-        let pkB = get_encpk(skB) in
-        let msg_to_sign_1 = signed_by_pkS(a, _pkA(pkA), get(T)) in
-        let msg_to_sign_2 = signed_by_pkS(b, _pkB(pkB), get(T)) in
+        let msg_to_sign_1 = signed_by_pkS(a, _pkA(get_encpk(skA)), get(T)) in
+        let msg_to_sign_2 = signed_by_pkS(b, _pkB(get_encpk(skB)), get(T)) in
         let sig1 = sign(sigK, msg_to_sign_1) in
         let sig2 = sign(sigK, msg_to_sign_2) in
         let _ = output tickets(sig1, sig2, msg_to_sign_1, msg_to_sign_2) to endpoint(A) in
@@ -69,10 +66,7 @@ def A_main() @ A
     let b = get(B_username) in    
     let _ = output addrs(a, b) to endpoint(S) in
     input inp in
-    let t1 = _t1(inp) in
-    let t2 = _t2(inp) in
-    let s1 = _s1(inp) in
-    let s2 = _s2(inp) in
+    let t1, t2, s1, s2 = _t1(inp), _t2(inp), _s1(inp), _s2(inp) in
     corr_case skS in 
 
     let pkA = get_encpk(skA) in
@@ -83,8 +77,7 @@ def A_main() @ A
             case vrfy(get_vk(skS), t2, s2) 
                 | None => A_No()
                 | Some s =>
-                    let pkB:if sec(skS) then pk else Data<adv> = _pk(s) in
-                    case pkB 
+                    case _pk(s) 
                         | _pkA _ => A_No()
                         | _pkB o =>
                             let _ = output inp to endpoint(B) in
@@ -101,10 +94,7 @@ def B_main() @ B
 : B_result =
     let b = get(B_username) in
     input inp in
-    let t1 = _t1(inp) in
-    let t2 = _t2(inp) in
-    let s1 = _s1(inp) in
-    let s2 = _s2(inp) in
+    let t1, t2, s1, s2 = _t1(inp), _t2(inp), _s1(inp), _s2(inp) in
     corr_case skS in 
 
     let pkB = get_encpk(skB) in
@@ -115,8 +105,6 @@ def B_main() @ B
             case vrfy(get_vk(skS), t1, s1) 
                 | None => B_No()
                 | Some s =>
-                    let pkA:if sec(skS) then pk else Data<adv> = _pk(s) in
-                    case pkA 
+                    case _pk(s)
                         | _pkB _ => B_No()
-                        | _pkA o =>
-                            B_Ok(o)
+                        | _pkA o => B_Ok(o)

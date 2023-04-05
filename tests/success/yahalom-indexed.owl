@@ -97,10 +97,9 @@ def Alice_main<i> () @ Alice
     let _ = output (msg1_AtoB(A, nA)) to endpoint(Bob) in
 
     input inp1 in
-    let tkt1 = msg3_tkt1(inp1) in
-    let tkt2 = msg3_tkt2(inp1) in   
+    let tkt1, tkt2 = msg3_tkt1(inp1), msg3_tkt2(inp1) in   
 
-    (case dec(kA, tkt1) 
+    begin case dec(kA, tkt1) 
         | None => 
             unpack j, _ = () in
             pack<j>(alice_None<idx i, idx j>())
@@ -111,7 +110,6 @@ def Alice_main<i> () @ Alice
             let nA'  = _nA_kA<idx j>(res') in
             // let nB_packed'  = _nB_kA<idx j>(res') in
             let nB'  = _nB_kA<idx j>(res') in
-            
             // let _ = check_nonce(nA, nA') in
 
             // let encm = samp enc(kAB', nB_packed') in
@@ -121,7 +119,7 @@ def Alice_main<i> () @ Alice
             // | e2 tkt2 =>
             let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
             pack<j>(alice_Some<idx i, idx j>(kAB'))
-    )
+    end
 
 
 enum bob_result<i, j> {
@@ -148,34 +146,29 @@ def Bob_main<i> () @ Bob
 
 
     if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) then
-        let temp = kB_message_1<idx i>(A', nA', nB) in
-        let temp_wrapped = mB1<idx i, idx j_>(temp) in
-        let temp_packed = pack<i>(pack<j_>(temp_wrapped)) in
+        let temp_packed = pack<i>(pack<j_>(mB1<idx i, idx j_>(kB_message_1<idx i>(A', nA', nB)))) in
 
         let encm = samp enc(kB, temp_packed) in
         let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
-
+        
         input inp2 in
-
-        let tkt' = msg4_tkt(inp2) in
-        let x = msg4_x(inp2) in
+        let tkt', x = msg4_tkt(inp2), msg4_x(inp2) in
 
         case tkt' 
         | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
         | e2 tkt =>
-            (case dec(kB, tkt) 
+            begin case dec(kB, tkt) 
                 | None => pack<j_>(bob_None<idx i, idx j_>())
                 | Some res =>
                     unpack i', res' = res in
                     unpack j', res'' = res' in
-                    (case res'' 
+                    begin case res'' 
                         | mB1 _ => pack<j'>(bob_None<idx i, idx j'>())
                         | mB2 msg2 =>
-                            let mm : if sec(KB) then kB_message_2<idx i', idx j'> else Data<adv> = msg2 in
-                            let A''  = _A_kB2<idx i', idx j'>(mm) in
+                            let A''  = _A_kB2<idx i', idx j'>(msg2) in
                             // let _ = check_username(A'', A') in
-                            let kAB':if sec(KB) then Name(KAB<j'>) else Data<adv> = _kAB_kB2<idx i', idx j'>(mm) in
-                            let nB' :if sec(KB) then Name(NB<i'>) else Data<adv> = _nB_kB2<idx i', idx j'>(mm) in
+                            let kAB':if sec(KB) then Name(KAB<j'>) else Data<adv> = _kAB_kB2<idx i', idx j'>(msg2) in
+                            let nB' :if sec(KB) then Name(NB<i'>) else Data<adv> = _nB_kB2<idx i', idx j'>(msg2) in
 
                             if checknonce(nB', nB) then 
                                 assert(sec(KB) ==> (i =idx i'));
@@ -191,8 +184,8 @@ def Bob_main<i> () @ Bob
                                             pack<j'>(bob_None<idx i, idx j'>()))
                             else
                                 pack<j'>(bob_None<idx i, idx j'>())
-                       )
-            )
+                    end
+            end
     else
         pack<j_>(bob_None<idx i, idx j_>())
 
@@ -211,13 +204,13 @@ def AS_main<i> () @ AS
         case x' 
             | e2 _ => ()
             | e1 x'' => 
-                (case dec(kB, x'') 
+                begin case dec(kB, x'') 
                     | None => ()
                     | Some res =>
                         unpack i1, res' = res in
                         unpack j1, res'' = res' in
 
-                        (case res'' 
+                        begin case res'' 
                             | mB1 msg1 =>
                                 let A'  = _A_kB1<idx i1>(msg1) in
                                 let nA' = _nA_kB1<idx i1>(msg1) in
@@ -226,20 +219,14 @@ def AS_main<i> () @ AS
 
                                 if eq(length(nA'), |nonce|) && eq(length(nB'), |nonce|) && eq(length(A'), |nonce|)  then
                                         // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
-                                        let temp': kA_message<idx i> = kA_message<idx i>(B', kAB, nA', nB') in
-                                        
-                                        let encmA = samp enc(kA, pack<i>(temp')) in
-                                        let temp = kB_message_2<idx i1, idx i>(A', kAB, nB') in
-                                        let temp_wrapped = mB2<idx i1, idx i>(temp) in
-                                        let temp_packed = pack<i1>(pack<i>(temp_wrapped)) in
-                                        let encmB = samp enc(kB, temp_packed) in
-
+                                        let encmA = samp enc(kA, pack<i>(kA_message<idx i>(B', kAB, nA', nB'))) in
+                                        let encmB = samp enc(kB, pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB'))))) in
                                         let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
                                         ()
-                                else () // TODO output () here?
+                                else ()
                             | mB2 _ => ()
-                        )
-                )
+                        end
+                end
     else ()
 
 // TODO: Strengthen spec for all servers also? if sec(KA, KB) then valid key output    

@@ -73,8 +73,7 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
             input i' in
             let m' = pkdec(get(skB), i) in
             union_case x' = m in
-            (
-            case x' 
+            begin case x' 
             | Msg1 _ => NRNone()
             | Msg3 p => 
                 let b1 = checknonce(get(nB), _na3B(p)) in 
@@ -85,6 +84,6 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
                         NRSome(nsl_result(nA', get(nB))) in
                     res
                 else NRNone()
-            )
+            end
         else NRNone()
     | Msg3 _ => NRNone()

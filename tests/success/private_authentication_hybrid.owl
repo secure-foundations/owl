@@ -39,9 +39,7 @@ def A_main<i> () @ A
     let hybridKA          = get(hybrid_skA) in
     let enc_hybridKA      = samp pkenc(get_encpk(pkB), hybridKA) in
     let _ = output enc_hybridKA to endpoint(B) in
-    let msg_to_enc        = m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))) in
-    let msg_to_enc_packed = pack<i>(msg_to_enc) in
-    let encm              = samp enc(hybridKA, msg_to_enc_packed) in
+    let encm              = samp enc(hybridKA, pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))))) in
     let _ = output encm to endpoint(B) in
 
     input enc_hybridKB in
@@ -74,10 +72,8 @@ def B_main<j> () @ B
                 let hybridKB          = get(hybrid_skB) in
                 let enc_hybridKB      = samp pkenc(get_encpk(pkA), hybridKB) in
                 let _ = output enc_hybridKB to endpoint(A) in
-                let msg_to_enc        = m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)) in
-                let msg_to_enc_packed = (pack<j>(msg_to_enc)) in
                 let pubKeyA = get_encpk(pkA) in
-                let encm = samp enc(hybridKB, msg_to_enc_packed) in
+                let encm = samp enc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
                 let _ = output encm to endpoint(A) in
                 ()
             else ()
