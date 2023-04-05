@@ -1,0 +1,18 @@
+locality alice
+
+struct t { 
+    _x : Data<adv> | |nonce| |,
+    _y : Data<adv> | |nonce| |,
+    _z : Data<adv> | |nonce| |
+}
+
+struct s {
+    _a : Data<adv> | |nonce| |
+}
+
+def alice_main() @ alice : Unit =
+    input i in
+    let x, y, z = _x(i), _y(i), _z(i) in
+    let s' = s(x) in
+    output s'
+    

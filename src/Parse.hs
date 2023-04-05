@@ -697,17 +697,24 @@ parseExprTerm =
         return $ EUnionCase a $ bind (s2n x) e
     )
     <|>
-    (parseSpanned $ do
+    (do
+        p <- getPosition
         reserved "let"
-        x <- identifier
-        tyAnn <- optionMaybe $ do
-            symbol ":"
-            parseTy
+        xts <- ((do
+                x <- identifier
+                tyAnn <- optionMaybe $ do
+                    symbol ":"
+                    parseTy
+                return (x, tyAnn))
+            `sepBy` (reservedOp ","))
         reservedOp "="
-        e <- parseExpr
+        es <- parseExpr `sepBy` (reservedOp ",")
         reserved "in"
+        p' <- getPosition
         e' <- parseExpr
-        return $ ELet e tyAnn x $ bind (s2n x) e'
+        if length xts /= length es then fail "must have same number of binders and expressions" else
+            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet (head es) tyAnn x $ bind (s2n x) k in
+            return $ foldl f e' $ zip xts es
     )
     <|>
     (parseSpanned $ do
