@@ -43,6 +43,9 @@ where `$OWL_HOME` is set accordingly.
 
 See `vscode/README.md` for details.
 
+## Related Publications
+
+Joshua Gancher, Sydney Gibson, Pratap Singh, Samvid Dharanikota, & Bryan Parno. (2023). [Owl: Compositional Verification of Security Protocols via an Information-Flow Type System](https://eprint.iacr.org/2023/473.pdf). 
 
 ## Supported Cryptographic Operations
 
