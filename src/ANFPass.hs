@@ -139,4 +139,5 @@ anf e =
          ea2 <- anfAExpr a2
          x <- fresh $ s2n ".x"
          y <- fresh $ s2n ".x"
+         -- TODO: This should be a multiple `elet` call instead
          return $ Spanned (e^.spanOf) $ ELet ea1 Nothing (show x) $ bind x $ Spanned (e^.spanOf) $ ELet ea2 Nothing (show y) $ bind y $ Spanned (e^.spanOf) $ ETWrite t (aevar (a1^.spanOf) x) (aevar (a2^.spanOf) y)
