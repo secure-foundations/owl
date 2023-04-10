@@ -90,14 +90,13 @@ def Alice_main<i> (
 : if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
     let A = get(A_username) in
     let B = get(B_username) in
-    
     let kA:Name(KA) = get(KA) in
     let nA:Name(NA<i>) = get(NA<i>) in
     let _ = output msg1_AtoS(A, B, nA) to endpoint(AS) in
 
     corr_case KA in
     input inp in
-    (case dec(kA, inp) 
+    begin case dec(kA, inp) 
         | None => 
             unpack j, _ = () in // arbitrary j
             pack<j>(alice_None<idx i, idx j>())
@@ -112,15 +111,15 @@ def Alice_main<i> (
 
             input inp2 in
             assert (corr(KA) ==> corr(KAB<j>));
-            (case dec(kAB', inp2) 
+            begin case dec(kAB', inp2) 
                 | None => pack<j>(alice_None<idx i, idx j>())
                 | Some res2 =>
                     let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
                     let encm = samp enc(kAB', nB') in // some_func(nB')
                     let _ = output encm to endpoint(Bob) in
                     pack<j>(alice_Some<idx i, idx j>(kAB'))
-            )
-    )
+            end
+    end
 // ************************************************************************
 
 
@@ -129,21 +128,15 @@ def Alice_main<i> (
 def AS_main<i> () @ AS
 : Unit =
     input inp in
-    let A'  = msg1_A(inp) in
-    let B'  = msg1_B(inp) in
-    let nA' = msg1_nA(inp) in
+    let A', B', nA' = msg1_A(inp), msg1_B(inp), msg1_nA(inp) in
     let kAB = get(KAB<i>) in
     let kAB' = pack<i>(kAB) in
     let kA  = get(KA) in
     let kB  = get(KB) in
 
     if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) && eq(length(B'), |nonce|) then
-        let m1 = kB_message(kAB', A') in
-        let encm1 = samp enc(kB, m1) in
-
-        let m2 = kA_message(nA', kAB', B', encm1) in
-        let encm2 = samp enc(kA, m2) in
-
+        let encm1 = samp enc(kB, kB_message(kAB', A')) in
+        let encm2 = samp enc(kA, kA_message(nA', kAB', B', encm1)) in
         let _ = output encm2 to endpoint(Alice) in ()
     else let _ = output "" to endpoint(Alice) in ()    
 // ************************************************************************
@@ -161,7 +154,7 @@ def Bob_main<i> () @ Bob
     let kB : Name(KB) = get(KB) in
     corr_case KB in
     input inp in 
-    (case dec(kB, inp) 
+    begin case dec(kB, inp) 
         | None => 
           unpack j, _ = () in // arbitrary j
           pack<j>(bob_None<idx i, idx j>())
@@ -171,19 +164,17 @@ def Bob_main<i> () @ Bob
             unpack j, kAB' = kAB in
             corr_case KAB<j> in 
 
-            let nB = get(NB<i>) in
-            let indexed_enum_value = nonceB<idx i>(nB) in
-            let encm = samp enc(kAB', pack<i>(indexed_enum_value)) in
+            let encm = samp enc(kAB', pack<i>(nonceB<idx i>(get(NB<i>)))) in
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in
-            (case dec(kAB', inp2) 
+            begin case dec(kAB', inp2) 
                 | None => pack<j>(bob_None<idx i, idx j>())
                 | Some res2 =>
                     // let _ = check_nonce(res2, nB) in
                     assert (corr(KB) ==> corr(KAB<j>));
                     let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
                     pack<j>(bob_Some<idx i, idx j>(m))
-            )
-    )
+            end
+    end
 // ************************************************************************

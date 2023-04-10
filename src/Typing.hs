@@ -20,6 +20,7 @@ import Control.Monad
 import qualified Data.List as L
 import qualified Data.List.Unique as UL
 import Control.Monad.Reader
+import qualified ANFPass as ANF
 import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
@@ -121,6 +122,15 @@ initDetFuncs = withNormalizedTys $ M.fromList [
         return $ TBool zeroLbl,
     mkSimpleFunc "FALSE" 0 $ \args -> do
         return $ TBool zeroLbl,
+    ("eq", (2, \ps args -> do 
+        assert (ignore def) ("Bad params") $ length ps == 0
+        case args of
+          [(a1, t1), (a2, t2)] -> do
+              l1 <- coveringLabel t1
+              l2 <- coveringLabel t2
+              let tr = aeApp "TRUE" [] []
+              return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
+           )),
     mkSimpleFunc "eq" 2 $ \args -> do
         case args of
           [t1, t2] -> do
@@ -338,7 +348,7 @@ initDetFuncs = withNormalizedTys $ M.fromList [
     ("prf", (2, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(_, t1), (a, _)]) -> do
-              case t1^.val of
+              case (stripRefinements t1)^.val of
                 TName n -> do
                     nt <-  local (set tcScope Ghost) $ getNameType n
                     case nt^.val of
@@ -705,10 +715,11 @@ checkDecl dcl k =
                       x <- freshVar
                       case bdy of
                         Nothing -> return $ DefAbstract
-                        Just bdy' ->
+                        Just bdy' -> do
+                          bdy'' <- ANF.anf bdy'
                           local (set tcScope $ Def l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                              t <- checkExpr (Just tyAnn) bdy'
+                              t <- checkExpr (Just tyAnn) bdy''
                               -- let p1 = atomicCaseSplits t
                               -- let p2 = atomicCaseSplits tyAnn
                               -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2

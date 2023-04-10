@@ -21,11 +21,13 @@ import Prettyprinter
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
+import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
+import qualified ANFPass as ANF
 import ConcreteAST
 import Debug.Trace
 import System.IO
@@ -63,7 +65,8 @@ data Env = Env {
     _lenConsts :: M.Map String Int,
     _enums :: M.Map (S.Set String) String,
     _oracles :: M.Map String String, -- how to print the output length
-    _includes :: S.Set String -- files we have included so far
+    _includes :: S.Set String, -- files we have included so far
+    _freshCtr :: Integer
 }
 
 data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
@@ -128,7 +131,7 @@ debugPrint :: Show s => s -> ExtractionMonad ()
 debugPrint = liftIO . hPrint stderr
 
 replacePrimes :: String -> String
-replacePrimes = map (\c -> if c == '\'' then '_' else c)
+replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
@@ -140,6 +143,13 @@ sidName :: String -> String
 sidName x = "sid_" ++ replacePrimes x
 
 makeLenses ''Env
+
+instance Fresh ExtractionMonad where
+    fresh (Fn s _) = do
+        n <- use freshCtr
+        freshCtr %= (+) 1
+        return $ Fn s n
+    fresh nm@(Bn {}) = return nm
 
 showAEADCipher :: ExtractionMonad String
 showAEADCipher = do
@@ -310,7 +320,7 @@ initFuncs = M.fromList [
         ("checknonce", (Bool, \args -> case args of
                 [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
-        )), 
+        )),
         ("xor", (VecU8, \args -> case args of
             [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
             [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
@@ -323,7 +333,7 @@ initFuncs = M.fromList [
     ]
 
 initEnv :: String -> Env
-initEnv path = Env path defaultCipher defaultHMACMode initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty
+initEnv path = Env path defaultCipher defaultHMACMode initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -720,8 +730,8 @@ extractEnum owlName owlCases' = do
 -- Code generation
 
 extractAExpr :: M.Map String RustTy -> AExprX -> ExtractionMonad (RustTy, Doc ann, Doc ann)
-extractAExpr binds (AEVar owlV _) = do
-    let v = rustifyName . unignore $ owlV
+extractAExpr binds (AEVar _ owlV) = do
+    let v = rustifyName . show $ owlV
     case binds M.!? v of
       Nothing -> do
         debugPrint $ "failed to find " ++ show v ++ " in binds: " ++ show binds
@@ -978,7 +988,7 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
 extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
-    let concreteBody = doConcretify owlBody
+    concreteBody <- ANF.anf owlBody >>= concretify
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
@@ -1097,7 +1107,7 @@ sortDecls dcls = do
             oracles %= M.insert n rtlen
             return (gDecls, locMap, shared, pubkeys)
         DeclFlow _ _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
-        DeclDetFunc name _ _ -> 
+        DeclDetFunc name _ _ ->
             if name == "xor" then return (gDecls, locMap, shared, pubkeys) -- We do support xor if needed
             else throwError $ UnsupportedDecl "can't use uninterpreted functions in extracted protocols"
         DeclTable name ty (Locality lname _) -> do
