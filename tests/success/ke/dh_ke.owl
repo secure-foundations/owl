@@ -17,13 +17,13 @@ struct client_msg {
 }
 
 // todo: make these smaller
-flow [k] <= [skC]
-flow [k] <= [skS]
-flow [k] <= [C]
-flow [k] <= [S]
-flow [S] <= [skS]
-flow [C] <= [skS]
-flow [skS] <= [k]
+corr [skC] ==> [k]
+corr [skS] ==> [k]
+corr [C] ==> [k]
+corr [S] ==> [k]
+corr [skS] ==> [S]
+corr [skS] ==> [C]
+corr [k] ==> [skS]
 
 def ke_Server () @ Server
     //requires corr(skC) ==> corr(k) // TODO: this is artificial
@@ -43,6 +43,8 @@ def ke_Server () @ Server
        let dhk : if sec(C) /\ sec(S) then Name(RO<l>) else Data<adv> = H<l>(ss) in
        let c = samp enc(dhk, get(k)) in
        corr_case k in
+       false_elim in
+       assert (([skC] <= adv) ==> ([k] <= adv)); 
        let _ = output c to endpoint(Client) in 
        ()
      | None => ()

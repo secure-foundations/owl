@@ -13,7 +13,7 @@ locality T
 locality R
 
 name NT : nonce @ T
-flow [NT] <= adv
+corr adv ==> [NT] 
 name K : mackey Name(NT) @ T, R
 
 struct s {

@@ -76,7 +76,8 @@ data Env = Env {
     _labelVars :: S.Set String,
     _freshCtr :: IORef Integer,
     _tableEnv :: M.Map String (Ty, Locality),
-    _flowDecls :: [(Label, Label)],
+    _flowAxioms :: [(Label, Label)],
+    _advCorrConstraints :: [(Label, Label)],
     _inScopeIndices ::  M.Map IdxVar IdxType
 }
 

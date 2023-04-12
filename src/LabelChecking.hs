@@ -71,12 +71,21 @@ smtLabelSetup = do
     x <- freshSMTName
     emitAssertion $ sForall [(SAtom x, nameSort)] (sNot $ sFlows (SApp [SAtom "LblOf", SAtom x]) (SAtom "%zeroLbl")) [(SApp [SAtom "LblOf", SAtom x])] 
 
-    fds <- view flowDecls
-    forM_ fds $ \(l1, l2) -> do
+    -- Flow axioms for abstract types
+    fas <- view flowAxioms
+    forM_ fas $ \(l1, l2) -> do
         v1 <- symLbl l1
         v2 <- symLbl l2
         emitComment $ "Flow decl: " ++ show (pretty l1) ++ " <= " ++ show (pretty l2)
         emitAssertion $ sFlows v1 v2
+    
+    -- Constraints on the adv
+    afcs <- view advCorrConstraints
+    forM_ afcs $ \(l1, l2) -> do
+        v1 <- symLbl l1
+        v2 <- symLbl l2
+        ladv <- symLbl advLbl
+        emitAssertion $ sImpl (sFlows v1 ladv) (sFlows v2 ladv)
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l

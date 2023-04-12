@@ -42,7 +42,7 @@ struct ClientPKResponse {
     _AuthCert : Data<adv> ||signature||,
     _vkA : vk(sigkeyA), 
     _k : Name(K),
-    _sigofK : Data<[K] /\ static> ||signature||
+    _sigofK : Data<[K]> ||signature||
 }
 
 name seckeyCnew : pkekey ClientPKResponse @ client

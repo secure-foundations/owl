@@ -13,10 +13,10 @@ locality T: 1
 locality R
 
 name NR : nonce @ R
-flow [NR] <= adv
+corr adv ==> [NR]
 name NT<@i> : nonce @ T<i>
 // name username<j> : nonce @ T
-flow /\_i [NT<@i>] <= adv
+corr adv ==> /\_i [NT<@i>]
 
 struct nonces<i> {
     _nR : Data<adv> ||nonce||,

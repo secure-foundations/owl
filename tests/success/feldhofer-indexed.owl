@@ -23,7 +23,7 @@ locality T
 locality R
 
 name NR<i> : nonce @ R
-flow /\_i [NR<i>] <= adv
+corr adv ==> /\_i [NR<i>]
 name K<i> : enckey (x:Data<adv>{happened(T_main<i>())}) @ T, R
 
 table keys : (exists i. Name(K<i>)) @ R

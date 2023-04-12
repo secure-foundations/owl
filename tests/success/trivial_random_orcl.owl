@@ -1,6 +1,6 @@
 locality alice
 random_oracle l : () -> nonce
-flow [RO<l>] <= adv
+corr adv ==> [RO<l>]
 
 def alice () @ alice : Unit = 
     assert (corr(RO<l>))

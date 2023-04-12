@@ -37,7 +37,7 @@ import Parse
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f S.empty initDetFuncs initDistrs OM.empty OM.empty S.empty Ghost M.empty M.empty [] M.empty M.empty S.empty r M.empty [] M.empty
+    return $ Env f S.empty initDetFuncs initDistrs OM.empty OM.empty S.empty Ghost M.empty M.empty [] M.empty M.empty S.empty r M.empty [] [] M.empty
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -654,7 +654,7 @@ addTyDef s td k = do
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError (ignore def) $ show $ pretty "Overlapping abstract types: " <> pretty s
           len_lbl' <- tyLenLbl $ mkSpanned $ TVar s []
-          local (over flowDecls $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
+          local (over flowAxioms $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
               local (over tyDefs $ M.insert s td) $
                   k
       Just _ -> typeError (ignore def) $ show $ pretty "Type already defined: " <> pretty s
@@ -737,10 +737,10 @@ checkDecl dcl k =
                     `aeq`
                     fd'
                 local (over defs $ M.insert n (is_abs, fdef)) k
-      (DeclFlow l1 l2) -> do
+      (DeclCorr l1 l2) -> do
           checkLabel l1
           checkLabel l2
-          local (over flowDecls $ \xs -> (l1, l2) : xs ) $ k
+          local (over advCorrConstraints $ \xs -> (l1, l2) : xs ) $ k
       (DeclStruct n ixs) -> do
           (is, xs) <- unbind ixs
           dfs <- view detFuncs

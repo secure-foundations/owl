@@ -53,7 +53,7 @@ enum reader_response {
 
 name tag1_tag : nonce @ T, R
 name tag2_tag : nonce @ T, R
-flow [tag2_tag] <= static
+// flow [tag2_tag] <= static
 
 def R_main<i> () @ R
     requires ([nR<i>] /\ [tag1_tag] /\ [tag2_tag] <= adv)

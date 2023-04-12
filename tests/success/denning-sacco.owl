@@ -6,7 +6,7 @@ struct msg {
 }
 
 name T : nonce @ A, B, S
-flow [T] <= adv
+corr adv ==> [T]
 name skA : pkekey msg @ A
 name skB : pkekey msg @ B
 

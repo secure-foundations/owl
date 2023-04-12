@@ -253,7 +253,7 @@ data DeclX =
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclRandOrcl String [String] (AExpr, NameType)
-    | DeclFlow Label Label 
+    | DeclCorr Label Label 
     | DeclLocality String Int
 
 type Decl = Spanned DeclX

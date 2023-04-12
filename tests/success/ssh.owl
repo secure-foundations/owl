@@ -47,21 +47,21 @@ enum signed_by_PFA {
 name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
 // name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
 name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
-flow [b] <= [skPDIS]
-flow [a] <= [skPDIS]
+corr [skPDIS] ==> [b]
+corr [skPDIS] ==> [a]
 name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
-flow [b1] <= [skSDIS]
-flow [c] <= [skSDIS]
+corr [skSDIS] ==> [b1]
+corr [skSDIS] ==> [c]
 
-flow [b1] <= [skPFA]
-flow [c] <= [skPFA]
+corr [skPFA] ==> [b1]
+corr [skPFA] ==> [c]
 
 // TODO: this is currently required
-flow [b1] <= [c]
-flow [c] <= [b1]
+corr [c] ==> [b1]
+corr [b1] ==> [c]
 
-flow [b] <= [a]
-flow [a] <= [b]
+corr [a] ==> [b]
+corr [b] ==> [a]
 
 random_oracle l1 : dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
 random_oracle l2 : dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> // TODO: Enum of sign request and answer

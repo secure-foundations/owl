@@ -47,15 +47,14 @@ locality client // C
 locality authserver // KAS
 
 name uname : nonce @ ticketserver, service, client, authserver
-flow [uname] <= adv
-flow [uname] <= static
+corr adv ==> [uname]
 
 // *********************************
 // keys for Kerberos stages 2 and 3
 // *********************************
 
 // SK = service key
-name SK : enckey Data<static> @ ticketserver
+name SK : enckey Data<adv> @ ticketserver
 
 // messages to/from the ticket server
 // encrypted using AK
@@ -97,5 +96,6 @@ struct client_to_service_msg {
 
 name K // : enckey Name(AK) @ authserver
 
-def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv> |cipherlen(|enckey|)|, username : Data<static> ||nonce||) @ client : Unit
+def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
+|cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client : Unit
 

@@ -24,14 +24,14 @@ enum DHKEResult {
     | NoData
 }
 
-flow [X] <= [skB]
-flow [Y] <= [skB]
-flow [X] <= [skA]
-flow [Y] <= [skA]
-flow [d] <= [X]
-flow [d] <= [Y]
-flow [X] <= [d]
-flow [Y] <= [d]
+corr [skB] ==> [X]
+corr [skB] ==> [Y]
+corr [skA] ==> [X]
+corr [skA] ==> [Y]
+corr [X] ==> [d] 
+corr [Y] ==> [d] 
+corr [d] ==> [X] 
+corr [d] ==> [Y] 
 
 def alice_main () @ alice 
     requires corr(skB) ==> corr(d) // TODO: this is artificial

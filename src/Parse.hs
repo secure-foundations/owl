@@ -524,11 +524,11 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
-        reserved "flow"
+        reserved "corr"
         l1 <- parseLabel
-        symbol "<="
+        symbol "==>"
         l2 <- parseLabel
-        return $ DeclFlow l1 l2
+        return $ DeclCorr l1 l2
     )
     <|>
     (parseSpanned $ do

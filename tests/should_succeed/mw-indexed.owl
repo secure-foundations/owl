@@ -12,8 +12,8 @@ locality R
 
 name NT<i> : nonce @ T
 name NR<i> : nonce @ R
-flow /\_i [NR<i>] <= adv
-flow /\_i [NT<i>] <= adv
+corr adv ==> /\_i [NR<i>] 
+corr adv ==> /\_i [NT<i>]
 // name ID<i> : nonce @ T, R
 
 func xor

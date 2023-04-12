@@ -41,7 +41,8 @@ def service_main () @ service
                      else ())
 
 // called by the respective client_main() functions for the two versions of kerberos
-def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv> |cipherlen(|enckey|)|, username : Data<static> ||nonce||) @ client
+def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
+|cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     : Unit = 
     corr_case AK in
     corr_case K in

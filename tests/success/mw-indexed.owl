@@ -12,11 +12,11 @@ locality R
 
 name NT<i> : nonce @ T
 name NR<i> : nonce @ R
-flow /\_i [NR<i>] <= adv
-flow /\_i [NT<i>] <= adv // can remove this with xor property
+corr adv ==> /\_i [NR<i>]
+corr adv ==> /\_i [NT<i>] // can remove this with xor property
 
 name id<i> : nonce @ T
-flow /\_i [id<i>] <= adv // can remove this with xor property
+corr adv ==> /\_i [id<i>] // can remove this with xor property
 
 func xor
     arity 2

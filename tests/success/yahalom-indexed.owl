@@ -13,7 +13,7 @@ locality AS
 
 name NA<i> : nonce @ Alice
 name NB<i> : nonce @ Bob
-flow /\_i [NB<i>] <= adv
+corr adv ==> /\_i [NB<i>]
 
 // name KAB<i> : enckey (exists j. Name(NB<j>)) @ AS
 name KAB<i> : enckey (Data<adv>) @ AS

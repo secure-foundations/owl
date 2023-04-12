@@ -3,8 +3,8 @@ locality alice
 name n : nonce @ alice
 name m : nonce @ alice
 // So the below equality checks work
-flow [n] <= adv
-flow [m] <= adv
+corr adv ==> [n]
+corr adv ==> [m]
 
 func f
     arity 0

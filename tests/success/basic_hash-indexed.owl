@@ -14,7 +14,7 @@ locality R
 
 name NT<@i> : nonce @ T<i>
 // name username<j> : nonce @ T
-flow /\_i [NT<@i>] <= adv
+corr adv ==> /\_i [NT<@i>]
 
 name K<@i> : mackey (t:Name(NT<@i>){happened(T_main<@i>())}) @ T<i>, R
 
