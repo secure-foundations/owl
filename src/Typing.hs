@@ -1521,7 +1521,7 @@ checkExpr ot e = do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ECorrCase n e) -> do
-          _ <- local (set tcScope Ghost) $ getNameType n
+          _ <- local (set tcScope Ghost) $ getNameTypeOpt n
           x <- freshVar
           t1 <- withVars [(s2n x, (ignore x, tLemma (pFlow (nameLbl n) advLbl)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
