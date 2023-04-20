@@ -41,7 +41,7 @@ smtTypingQuery = fromSMT smtSetup
 
 setupIndexEnv :: Sym ()
 setupIndexEnv = do
-    inds <- view inScopeIndices
+    inds <- view $ curMod . inScopeIndices
     assocs <- forM (M.keys inds) $ \i -> do
         x <- freshIndexVal (show i)
         return (i, x)
@@ -58,7 +58,7 @@ sZero = SAtom "zero"
 
 setupNameEnv :: Sym ()
 setupNameEnv = do
-    nE <- view nameEnv
+    nE <- view $ curMod . nameEnv
     assocs <- forM (OM.assocs nE) $ \(n, o) -> do 
         ((is1, is2), ntLclsOpt) <- liftCheck $ unbind o
         let ntOpt = case ntLclsOpt of
@@ -403,7 +403,7 @@ emitFuncAxioms = do
         [(SApp [andbf, SAtom "x", SAtom "y"])]
 
     emitComment $ "RO equality axioms"
-    ro <- view randomOracle
+    ro <- view $ curMod . randomOracle
     forM_ (M.assocs ro) $ \(s, (ae, _)) -> do
         v <- interpretAExp ae
         emitAssertion $ sEq (sValue $ sROName s) v
@@ -419,7 +419,7 @@ enumDisjConstraint fs v =
 
 enumTestFaithulAxioms :: Sym ()
 enumTestFaithulAxioms = do
-    tds <- view tyDefs
+    tds <- view $ curMod . tyDefs
     forM_ tds $ \td ->
         case td of
           EnumDef m' -> do
@@ -449,7 +449,7 @@ subTypeCheck t1 t2 = do
 
 emitDHCombineDisjoint :: Sym ()
 emitDHCombineDisjoint = do
-    nE <- view nameEnv
+    nE <- view $ curMod . nameEnv
     -- Get all DH names
     -- forall x y n1 n2, n1 <> n2 => dhcombine(x, n1) <> dhcombine(y, n2)
     dhnames' <- forM (OM.assocs nE) $ \(x, nt) -> do

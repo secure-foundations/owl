@@ -280,7 +280,7 @@ symIndex (IVar ispan v) = do
     case M.lookup v iEnv of 
       Just i -> return i
       Nothing -> do
-          indices <- view inScopeIndices
+          indices <- view $ curMod . inScopeIndices
           liftCheck $ typeError ispan (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (M.keys indices))
             
 getSymName :: NameExp -> Sym SExp

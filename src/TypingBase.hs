@@ -58,26 +58,30 @@ instance Pretty IdxType where
 data DefIsAbstract = DefAbstract | DefConcrete
     deriving Eq
 
+data ModDef = ModDef { 
+    _localities :: M.Map String Int,
+    _defs :: M.Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
+    _tableEnv :: M.Map String (Ty, Locality),
+    _flowAxioms :: [(Label, Label)],
+    _advCorrConstraints :: [(Label, Label)],
+    _inScopeIndices ::  M.Map IdxVar IdxType,
+    _randomOracle :: M.Map String (AExpr, NameType),
+    _tyDefs :: M.Map TyVar TyDef,
+    _endpointContext :: S.Set EndpointVar,
+    _nameEnv :: OM.OMap String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+}
+
 data Env = Env { 
     _envFlags :: Flags,
     _envIncludes :: S.Set String,
     _detFuncs :: M.Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
     _distrs :: M.Map String (Int, [(AExpr, Ty)] -> Check TyX),
-    _nameEnv :: OM.OMap String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
     _tyContext :: OM.OMap DataVar (Ignore String, Ty),
-    _endpointContext :: S.Set EndpointVar,
     _tcScope :: TcScope,
-    _tyDefs :: M.Map TyVar TyDef,
-    _randomOracle :: M.Map String (AExpr, NameType),
     _localAssumptions :: [SymAdvAssms],
+    _curMod :: ModDef,
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
-    _localities :: M.Map String Int,
-    _defs :: M.Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
-    _freshCtr :: IORef Integer,
-    _tableEnv :: M.Map String (Ty, Locality),
-    _flowAxioms :: [(Label, Label)],
-    _advCorrConstraints :: [(Label, Label)],
-    _inScopeIndices ::  M.Map IdxVar IdxType
+    _freshCtr :: IORef Integer
 }
 
 
@@ -165,6 +169,8 @@ makeLenses ''FuncDef
 
 makeLenses ''Env
 
+makeLenses ''ModDef
+
 instance Fresh Check where
     fresh (Fn s _) = do
         r <- view freshCtr
@@ -236,7 +242,7 @@ withVars assocs k = do
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = do
-    m <- view inScopeIndices
+    m <- view $ curMod . inScopeIndices
     tc <- view tcScope
     case M.lookup i m of
       Just t -> 
@@ -273,7 +279,7 @@ getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
     case ne^.val of 
      BaseName (vs1, vs2) n -> do
-         nE <- view nameEnv
+         nE <- view $ curMod . nameEnv
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
@@ -288,7 +294,7 @@ getNameInfo ne = do
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
      ROName s -> do
-        ro <- view randomOracle
+        ro <- view $ curMod . randomOracle
         case M.lookup s ro of
           Just (_, nt) -> return $ Just (nt, Nothing)
           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO s
@@ -328,7 +334,7 @@ getTyDef :: Ignore Position -> Path Ty -> Check TyDef
 getTyDef pos s = 
     case s of
       PVar s -> do 
-        tDs <- view tyDefs
+        tDs <- view $ curMod . tyDefs
         case M.lookup s tDs of
           Just td -> return td
           Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
@@ -478,7 +484,7 @@ coveringLabel' t =
               typeError (t^.spanOf) $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
-          l <- local (over inScopeIndices $ M.insert x IdxGhost) $ coveringLabel' t
+          l <- local (over (curMod . inScopeIndices) $ M.insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
 
@@ -490,7 +496,7 @@ prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty 
 
 prettyContext :: Env -> Doc ann
 prettyContext e =
-    vsep [prettyIndices (e^.inScopeIndices), prettyTyContext (e^.tyContext)]
+    vsep [prettyIndices (e^.curMod^.inScopeIndices), prettyTyContext (e^.tyContext)]
 
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for

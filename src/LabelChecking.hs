@@ -72,7 +72,7 @@ smtLabelSetup = do
     emitAssertion $ sForall [(SAtom x, nameSort)] (sNot $ sFlows (SApp [SAtom "LblOf", SAtom x]) (SAtom "%zeroLbl")) [(SApp [SAtom "LblOf", SAtom x])] 
 
     -- Flow axioms for abstract types
-    fas <- view flowAxioms
+    fas <- view $ curMod . flowAxioms
     forM_ fas $ \(l1, l2) -> do
         v1 <- symLbl l1
         v2 <- symLbl l2
@@ -80,7 +80,7 @@ smtLabelSetup = do
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv
-    afcs <- view advCorrConstraints
+    afcs <- view $ curMod . advCorrConstraints
     forM_ afcs $ \(l1, l2) -> do
         v1 <- symLbl l1
         v2 <- symLbl l2
@@ -206,7 +206,7 @@ symLbl l = do
 
 emitNameDefAssms :: Sym ()
 emitNameDefAssms = do
-    nE <- view nameEnv
+    nE <- view $ curMod . nameEnv
     forM_ (OM.assocs nE) $ \(n, o) -> do 
         ((is1, is2), _) <- liftCheck $ unbind o
         ivs1 <- forM [1..length is1] $ \_ -> freshSMTIndexName
@@ -214,8 +214,8 @@ emitNameDefAssms = do
         sIE <- use symIndexEnv
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs1)
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs2)
-        local (over inScopeIndices $ M.union $ M.fromList $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
-            local (over inScopeIndices $ M.union $ M.fromList $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
+        local (over (curMod . inScopeIndices) $ M.union $ M.fromList $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
+            local (over (curMod . inScopeIndices)  $ M.union $ M.fromList $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
                 let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) n
                 liftCheck $ debug $ pretty "nameDefAssms for " <> pretty ne
                 ntOpt <- liftCheck $ getNameTypeOpt ne
@@ -224,7 +224,7 @@ emitNameDefAssms = do
                     Nothing -> return sTrue
                 emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
         symIndexEnv .= sIE
-    ro <- view randomOracle
+    ro <- view $ curMod . randomOracle
     forM_ (M.assocs ro) $ \(s, (ae, nt)) -> do
         assm <- nameDefFlows (roName s) nt
         emitAssertion assm
