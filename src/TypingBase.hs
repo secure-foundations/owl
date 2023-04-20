@@ -324,10 +324,10 @@ debug d = do
     b <- view $ envFlags . fDebug
     when b $ liftIO $ putStrLn $ show d
 
-getTyDef :: Ignore Position -> TyName -> Check TyDef
+getTyDef :: Ignore Position -> Path Ty -> Check TyDef
 getTyDef pos s = 
     case s of
-      TVar s -> do 
+      PVar s -> do 
         tDs <- view tyDefs
         case M.lookup s tDs of
           Just td -> return td
@@ -418,7 +418,7 @@ getStructParams pos ps =
             ParamIdx i -> return i
             _ -> typeError pos $ "Wrong param on struct: " ++ show p
 
-extractEnum :: Ignore Position -> [FuncParam] -> TyName -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
+extractEnum :: Ignore Position -> [FuncParam] -> Path Ty -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum pos ps s b = do
     idxs <- getEnumParams pos ps
     (is, bdy') <- unbind b
@@ -426,7 +426,7 @@ extractEnum pos ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-extractStruct :: Ignore Position -> [FuncParam] -> TyName -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
+extractStruct :: Ignore Position -> [FuncParam] -> Path Ty -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
 extractStruct pos ps s b = do
     idxs <- getStructParams pos ps
     (is, xs') <- unbind b

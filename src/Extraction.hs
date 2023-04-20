@@ -393,7 +393,7 @@ layoutCTy (CTDataWithLength aexp) =
 layoutCTy (CTOption ct) = do
     lct <- layoutCTy ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
-layoutCTy (CTConst (TVar s)) = do
+layoutCTy (CTConst (PVar s)) = do
     lookupTyLayout . rustifyName $ show s
 layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
 layoutCTy CTUnit = return $ LBytes 1
@@ -965,7 +965,7 @@ rustifyArgTy :: CTy -> ExtractionMonad RustTy
 rustifyArgTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyArgTy (CTConst (TVar n)) = do
+rustifyArgTy (CTConst (PVar n)) = do
     l <- lookupTyLayout . rustifyName $ show n
     return $ case l of
         LBytes _ -> VecU8

@@ -209,8 +209,8 @@ setupAllFuncs = do
     return ()
 
 
-smtNameOfTyName :: TyName -> String
-smtNameOfTyName (TVar s) = show s
+smtNameOfTyName :: Path Ty -> String
+smtNameOfTyName (PVar s) = show s
 
 tyConstraints :: Ty -> SExp -> Sym SExp
 tyConstraints t v = do

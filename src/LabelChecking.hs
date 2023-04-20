@@ -186,7 +186,7 @@ symCanonAtom c =
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
-getSymLblConst (TyLabelVar (TVar s)) = do
+getSymLblConst (TyLabelVar n@(PVar s)) = do
     e <- use symLabelVarEnv
     case M.lookup s e of
       Just res -> return res

@@ -55,9 +55,8 @@ type DataVar = Name AExpr
 type IdxVar = Name Idx
 type TyVar = Name Ty
 
-data TyName = 
-    TVar TyVar -- bound var
-  -- TODO: path here
+data Path a = 
+    PVar (Name a)
     deriving (Show, Generic, Typeable, Eq)
 
 data Idx = IVar (Ignore Position) IdxVar
@@ -122,7 +121,7 @@ data LabelX =
     deriving (Show, Generic, Typeable)
 
 data LblConst = 
-    TyLabelVar TyName
+    TyLabelVar (Path Ty)
     deriving (Show, Generic, Typeable)
 
 
@@ -202,7 +201,7 @@ data TyX =
     | TRefined Ty (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TConst TyName [FuncParam]
+    | TConst (Path Ty) [FuncParam]
     | TBool Label
     | TUnion Ty Ty
     | TUnit
@@ -378,9 +377,9 @@ instance Alpha LblConst
 instance Subst Idx LblConst
 instance Subst AExpr LblConst
 
-instance Alpha TyName
-instance Subst Idx TyName
-instance Subst AExpr TyName
+instance (Typeable a, Alpha a) => Alpha (Path a)
+instance Subst Idx a => Subst Idx (Path a)
+instance Subst AExpr a => Subst AExpr (Path a)
 
 instance Alpha TyX
 instance Subst Idx TyX
@@ -438,8 +437,8 @@ instance Pretty LabelX where
         let (b, l') = prettyBind l in
         pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
 
-instance Pretty TyName where
-    pretty (TVar s) = pretty s
+instance Pretty (Path a) where
+    pretty (PVar s) = pretty s
 
 instance Pretty TyX where
     pretty TUnit =

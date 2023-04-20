@@ -29,7 +29,7 @@ data CTy =
     CTData
     | CTDataWithLength AExpr
     | CTOption CTy
-    | CTConst TyName
+    | CTConst (Path Ty)
     | CTBool
     -- | CTUnion CTy CTy
     | CTUnit

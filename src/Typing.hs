@@ -653,7 +653,7 @@ addTyDef s td k = do
                 return $ foldr joinLbl zeroLbl ls
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError (ignore def) $ show $ pretty "Overlapping abstract types: " <> pretty s
-          len_lbl' <- tyLenLbl $ mkSpanned $ TConst (TVar s) []
+          len_lbl' <- tyLenLbl $ mkSpanned $ TConst (PVar s) []
           local (over flowAxioms $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
               local (over tyDefs $ M.insert s td) $
                   k
@@ -764,7 +764,7 @@ checkDecl dcl k =
                           b1 <- isSubtype (snd $ args !! i) (substs (zip is idxs) $ snd $ xs !! i)
                           return $ acc && b1) True [0..(length args - 1)]
                       if b then
-                           return (TRefined (mkSpanned $ TConst (TVar $ s2n n) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args))))
+                           return (TRefined (mkSpanned $ TConst (PVar $ s2n n) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args))))
                            else trivialTypeOf (map snd args)
                   else trivialTypeOf (map snd args))
           -- TODO: the typing below is stale
@@ -776,7 +776,7 @@ checkDecl dcl k =
                           ParamIdx i -> return i
                           _ -> typeError (dcl^.spanOf) $ "Non-index param passed to struct destructor"
                       assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on struct destructor") $ length ps == length is
-                      b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (TVar $ s2n n) ps)
+                      b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PVar $ s2n n) ps)
                       if b then return (substs (zip is idxs) (t^.val)) else (trivialTypeOf $ map snd args)))) xs
           local (\e -> e { _detFuncs = (M.fromList destrs) <> M.insert n constr (e ^. detFuncs)}) $
               addTyDef (s2n n) (StructDef ixs) $
@@ -798,7 +798,7 @@ checkDecl dcl k =
                         case args of
                           [(x, t')] -> do
                               b1 <- isSubtype t' (substs (zip is idxs) t)
-                              if b1 then return (TRefined (mkSpanned $ TConst (TVar $ s2n n) (ps))
+                              if b1 then return (TRefined (mkSpanned $ TConst (PVar $ s2n n) (ps))
                                                           (bind (s2n ".res") $
                                                               pEq (aeLength (aeVar ".res"))
                                                                   (aeApp "plus" [] [aeLength x, aeLenConst "tag" ])))
@@ -814,14 +814,14 @@ checkDecl dcl k =
                               _ -> typeError (dcl^.spanOf) $ "Non-index param passed to enum constructor"
                         assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on enum construstor") $ length ps == length is
                         assert (dcl^.spanOf) (show $ ErrBadArgs cname (map snd args)) $ length args == 0
-                        return $ TRefined (mkSpanned $ TConst (TVar $ s2n n) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))))) bdy
+                        return $ TRefined (mkSpanned $ TConst (PVar $ s2n n) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))))) bdy
         let tests =
                 withNormalizedTys $ M.fromList $ map (\(x, _) ->
                     mkSimpleFunc (x ++ "?") 1 $ \args ->
                         case args of
                           [t] ->
                               case (stripRefinements t)^.val of
-                                TConst s (ParamLbl l : _) | s == (TVar $ s2n n) -> return $ TBool l
+                                TConst s (ParamLbl l : _) | s == (PVar $ s2n n) -> return $ TBool l
                                 _ -> do
                                     l <- coveringLabel t
                                     return $ TBool l) bdy
@@ -1097,8 +1097,8 @@ checkLabel l =
           (LJoin l1 l2) -> do
               checkLabel l1
               checkLabel l2
-          (LConst (TyLabelVar (TVar s))) -> do
-              _ <- getTyDef (l^.spanOf) (TVar s)
+          (LConst (TyLabelVar (PVar s))) -> do
+              _ <- getTyDef (l^.spanOf) (PVar s)
               return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
