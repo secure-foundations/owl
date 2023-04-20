@@ -37,7 +37,7 @@ import Parse
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f S.empty initDetFuncs initDistrs OM.empty OM.empty S.empty Ghost M.empty M.empty [] M.empty M.empty S.empty r M.empty [] [] M.empty
+    return $ Env f S.empty initDetFuncs initDistrs OM.empty OM.empty S.empty Ghost M.empty M.empty [] M.empty M.empty r M.empty [] [] M.empty
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -464,7 +464,7 @@ normalizeTy t0 =
     (TDH_PK n) -> return t0
     (TEnc_PK n) -> return t0
     (TSS n m) -> return t0
-    TVar s ps -> do
+    TConst s ps -> do
         td <- getTyDef (t0^.spanOf) s
         case td of
           TyAbstract -> return t0
@@ -473,7 +473,7 @@ normalizeTy t0 =
           EnumDef _ ->
               case ps of
                 ps' -> do
-                    return $ Spanned (t0^.spanOf) $ TVar s (ps')
+                    return $ Spanned (t0^.spanOf) $ TConst s (ps')
     (TExistsIdx xt) -> do
         (x, t) <- unbind xt
         t' <- local (over inScopeIndices $ M.insert x IdxGhost) $ normalizeTy t
@@ -533,7 +533,7 @@ isSubtype' t1 t2 =
       (TUnit,  _) -> do
         isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp "UNIT" [] []))) t2
       (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
-      (TVar x ps1, TVar y ps2) | (x == y) -> do
+      (TConst x ps1, TConst y ps2) | (x == y) -> do
           td <- getTyDef (t1^.spanOf) x
           case td of
             EnumDef _ -> do
@@ -603,10 +603,10 @@ typeProtectsLabel' l t0 =
         typeProtectsLabel' l t1
         typeProtectsLabel' l t2
       (TUnit) -> return () -- Only sound since TUnit is unit 
-      TVar s ps -> do
+      TConst s ps -> do
           td <- getTyDef (t0^.spanOf) s
           case td of
-            TyAbstract -> flowCheck (t0^.spanOf) l (mkSpanned $ LVar s)
+            TyAbstract -> flowCheck (t0^.spanOf) l (mkSpanned $ LConst $ TyLabelVar s)
             TyAbbrev t -> typeProtectsLabel' l t
             StructDef xs -> typeError (t0^.spanOf) $ "TODO: typeProtectsLabel for struct"
             EnumDef b -> do
@@ -637,7 +637,7 @@ coveringLabel t = do
     coveringLabel' t'
 
 
-addTyDef :: String -> TyDef -> Check () -> Check ()
+addTyDef :: TyVar -> TyDef -> Check () -> Check ()
 addTyDef s td k = do
     tds <- view tyDefs
     case M.lookup s tds of
@@ -653,7 +653,7 @@ addTyDef s td k = do
                 return $ foldr joinLbl zeroLbl ls
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError (ignore def) $ show $ pretty "Overlapping abstract types: " <> pretty s
-          len_lbl' <- tyLenLbl $ mkSpanned $ TVar s []
+          len_lbl' <- tyLenLbl $ mkSpanned $ TConst (TVar s) []
           local (over flowAxioms $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
               local (over tyDefs $ M.insert s td) $
                   k
@@ -745,7 +745,7 @@ checkDecl dcl k =
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
           tvars <- view tyDefs
-          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ M.member n tvars
+          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ M.member (s2n n) tvars
           assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ M.member n dfs
           assert (dcl^.spanOf) (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
           local (set inScopeIndices $ M.fromList $ map (\i -> (i, IdxGhost)) is) $
@@ -764,7 +764,7 @@ checkDecl dcl k =
                           b1 <- isSubtype (snd $ args !! i) (substs (zip is idxs) $ snd $ xs !! i)
                           return $ acc && b1) True [0..(length args - 1)]
                       if b then
-                           return (TRefined (mkSpanned $ TVar n ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args))))
+                           return (TRefined (mkSpanned $ TConst (TVar $ s2n n) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args))))
                            else trivialTypeOf (map snd args)
                   else trivialTypeOf (map snd args))
           -- TODO: the typing below is stale
@@ -776,10 +776,10 @@ checkDecl dcl k =
                           ParamIdx i -> return i
                           _ -> typeError (dcl^.spanOf) $ "Non-index param passed to struct destructor"
                       assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on struct destructor") $ length ps == length is
-                      b <- isSubtype (snd $ args !! 0) (mkSpanned $ TVar n ps)
+                      b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (TVar $ s2n n) ps)
                       if b then return (substs (zip is idxs) (t^.val)) else (trivialTypeOf $ map snd args)))) xs
           local (\e -> e { _detFuncs = (M.fromList destrs) <> M.insert n constr (e ^. detFuncs)}) $
-              addTyDef n (StructDef ixs) $
+              addTyDef (s2n n) (StructDef ixs) $
                   k
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
@@ -798,7 +798,7 @@ checkDecl dcl k =
                         case args of
                           [(x, t')] -> do
                               b1 <- isSubtype t' (substs (zip is idxs) t)
-                              if b1 then return (TRefined (mkSpanned $ TVar n (ps))
+                              if b1 then return (TRefined (mkSpanned $ TConst (TVar $ s2n n) (ps))
                                                           (bind (s2n ".res") $
                                                               pEq (aeLength (aeVar ".res"))
                                                                   (aeApp "plus" [] [aeLength x, aeLenConst "tag" ])))
@@ -814,18 +814,18 @@ checkDecl dcl k =
                               _ -> typeError (dcl^.spanOf) $ "Non-index param passed to enum constructor"
                         assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on enum construstor") $ length ps == length is
                         assert (dcl^.spanOf) (show $ ErrBadArgs cname (map snd args)) $ length args == 0
-                        return $ TRefined (mkSpanned $ TVar n (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))))) bdy
+                        return $ TRefined (mkSpanned $ TConst (TVar $ s2n n) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))))) bdy
         let tests =
                 withNormalizedTys $ M.fromList $ map (\(x, _) ->
                     mkSimpleFunc (x ++ "?") 1 $ \args ->
                         case args of
                           [t] ->
                               case (stripRefinements t)^.val of
-                                TVar s (ParamLbl l : _) | s == n -> return $ TBool l
+                                TConst s (ParamLbl l : _) | s == (TVar $ s2n n) -> return $ TBool l
                                 _ -> do
                                     l <- coveringLabel t
                                     return $ TBool l) bdy
-        addTyDef n (EnumDef b) $
+        addTyDef (s2n n) (EnumDef b) $
             local (\e -> e { _detFuncs = (e ^.detFuncs) <> constrs <> tests}) $
                 k
       (DeclTy s ot) -> do
@@ -833,10 +833,9 @@ checkDecl dcl k =
         case ot of
           Just t -> do
             checkTy t
-            addTyDef s (TyAbbrev t) k
+            addTyDef (s2n s) (TyAbbrev t) k
           Nothing ->
-            local (over tyDefs $ M.insert s (TyAbstract)) $
-                local (over labelVars $ S.insert s) $
+            local (over tyDefs $ M.insert (s2n s) (TyAbstract)) $
                     k
       (DeclTable n t loc) -> do
           tbls <- view tableEnv
@@ -965,14 +964,12 @@ checkTy t =
               withVars [(x, (ignore $ show x, t))] $ checkProp p
           (TOption t) -> do
               checkTy t
-          (TVar s ps) -> do
+          (TConst s ps) -> do
               td <- getTyDef (t^.spanOf) s
               forM_ ps checkParam
               case td of
                 TyAbstract -> do
                     assert (t^.spanOf) (show $ pretty "Abstract types do not support indices yet") $ length ps == 0
-                    lvs <- view labelVars
-                    assert (t^.spanOf) (show $ pretty "Unknown abstract type: " <> pretty s) $ S.member s lvs
                 TyAbbrev t ->
                     assert (t^.spanOf) (show $ pretty "Params should be empty for abbrev " <> pretty s) $ length ps == 0
                 StructDef ib -> do
@@ -1048,7 +1045,7 @@ tyLenLbl t =
       TOption t' -> do
           l' <- tyLenLbl t'
           return $ joinLbl advLbl l'
-      TVar s ps -> do
+      TConst s ps -> do
           td <- getTyDef (t^.spanOf) s
           case td of
             TyAbstract -> return advLbl
@@ -1100,9 +1097,9 @@ checkLabel l =
           (LJoin l1 l2) -> do
               checkLabel l1
               checkLabel l2
-          (LVar s) -> do
-              lEnv <- view labelVars
-              assert (l^.spanOf) (show $ pretty "Unknown label variable: " <> pretty s) $ S.member s lEnv
+          (LConst (TyLabelVar (TVar s))) -> do
+              _ <- getTyDef (l^.spanOf) (TVar s)
+              return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
               local (over inScopeIndices $ M.insert i IdxGhost) $ checkLabel l
@@ -1264,15 +1261,15 @@ stripTy x t =
           t1' <- stripTy x t1
           t2' <- stripTy x t2
           return $ mkSpanned $ TCase p t1' t2'
-      TVar s ps -> do
+      TConst s ps -> do
           forM_ ps $ \p ->
               case p of
                 ParamAExpr a ->
-                    if x `elem` getAExprDataVars a then typeError (t^.spanOf) "Hard case for TVar" else return ()
+                    if x `elem` getAExprDataVars a then typeError (t^.spanOf) "Hard case for TConst" else return ()
                 ParamLbl l ->
-                    if x `elem` getLabelDataVars l then typeError (t^.spanOf) "Hard case for TVar" else return ()
+                    if x `elem` getLabelDataVars l then typeError (t^.spanOf) "Hard case for TConst" else return ()
                 ParamTy t ->
-                    if x `elem` getTyDataVars t then typeError (t^.spanOf) "Hard case for TVar" else return ()
+                    if x `elem` getTyDataVars t then typeError (t^.spanOf) "Hard case for TConst" else return ()
                 _ -> return ()
           return t
       TBool l -> do
@@ -1539,7 +1536,7 @@ checkExpr ot e = do
           (l, otcases) <- case t'^.val of
                             TData l1 l2 -> return (l1, Left (tData l1 l2))
                             TOption to -> return (advLbl, Right $ [("Some", Just to), ("None", Nothing)])
-                            TVar s ps -> do
+                            TConst s ps -> do
                                 td <- getTyDef (t^.spanOf) s
                                 case td of
                                   EnumDef b -> do
@@ -1589,7 +1586,7 @@ unsolvability ae = local (set tcScope Ghost) $ do
             _ -> return pFalse
       AEApp f [] xs -> do
           tDs <- view tyDefs
-          case M.lookup f tDs of
+          case M.lookup (s2n f) tDs of
             Just (StructDef _) -> do  -- f is a constructor of a struct; derivability is the and
                 ps <- mapM unsolvability xs
                 return $ foldr pOr pFalse ps

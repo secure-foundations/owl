@@ -67,13 +67,12 @@ data Env = Env {
     _tyContext :: OM.OMap DataVar (Ignore String, Ty),
     _endpointContext :: S.Set EndpointVar,
     _tcScope :: TcScope,
-    _tyDefs :: M.Map String TyDef,
+    _tyDefs :: M.Map TyVar TyDef,
     _randomOracle :: M.Map String (AExpr, NameType),
     _localAssumptions :: [SymAdvAssms],
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _localities :: M.Map String Int,
     _defs :: M.Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
-    _labelVars :: S.Set String,
     _freshCtr :: IORef Integer,
     _tableEnv :: M.Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
@@ -325,12 +324,14 @@ debug d = do
     b <- view $ envFlags . fDebug
     when b $ liftIO $ putStrLn $ show d
 
-getTyDef :: Ignore Position -> String -> Check TyDef
-getTyDef pos s = do
-    tDs <- view tyDefs
-    case M.lookup s tDs of
-      Just td -> return td
-      Nothing -> typeError pos $ "Unknown type variable: " ++ s 
+getTyDef :: Ignore Position -> TyName -> Check TyDef
+getTyDef pos s = 
+    case s of
+      TVar s -> do 
+        tDs <- view tyDefs
+        case M.lookup s tDs of
+          Just td -> return td
+          Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
 
 -- AExpr's have unambiguous types, so can be inferred.
 
@@ -417,7 +418,7 @@ getStructParams pos ps =
             ParamIdx i -> return i
             _ -> typeError pos $ "Wrong param on struct: " ++ show p
 
-extractEnum :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
+extractEnum :: Ignore Position -> [FuncParam] -> TyName -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum pos ps s b = do
     idxs <- getEnumParams pos ps
     (is, bdy') <- unbind b
@@ -425,7 +426,7 @@ extractEnum pos ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-extractStruct :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
+extractStruct :: Ignore Position -> [FuncParam] -> TyName -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
 extractStruct pos ps s b = do
     idxs <- getStructParams pos ps
     (is, xs') <- unbind b
@@ -455,7 +456,7 @@ coveringLabel' t =
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
           return $ joinLbl l1 l2
-      (TVar s ps) -> do
+      (TConst s ps) -> do
           td <- getTyDef (t^.spanOf) s
           case td of
             EnumDef b -> do
@@ -463,7 +464,7 @@ coveringLabel' t =
                 ls <- mapM coveringLabel' $ catMaybes $ map snd bdy
                 let l2 = foldr joinLbl zeroLbl ls
                 return $ l2
-            TyAbstract -> return $ joinLbl (varLbl s) advLbl
+            TyAbstract -> return $ joinLbl (lblConst $ TyLabelVar s) advLbl
             TyAbbrev t -> coveringLabel' t
             StructDef ixs -> do
                 xs <- extractStruct (t^.spanOf) ps s ixs

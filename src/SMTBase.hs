@@ -73,7 +73,7 @@ data CanonAtom =
     CanonLName NameExp
       | CanonZero
       | CanonAdv
-      | CanonVar String
+      | CanonConst LblConst
     deriving (Show, Generic, Typeable)
 
 instance Alpha CanonLabel
@@ -97,7 +97,7 @@ data SolverEnv = SolverEnv {
     _lengthConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
     _symNameEnv :: M.Map String SExp,
-    _symLabelVarEnv :: M.Map String SExp,
+    _symLabelVarEnv :: M.Map TyVar SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String SExp,

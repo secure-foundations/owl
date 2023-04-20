@@ -126,7 +126,7 @@ parseLabelTerm =
           symbol "#"
           n <- identifier
           symbol "#"
-          return $ LVar n)
+          return $ LConst $ TyLabelVar $ TVar $ s2n n)
       <|> (try $ parseSpanned $ do
           symbol "/\\_"
           i <- identifier
@@ -276,7 +276,7 @@ parseTyTerm =
                 let ps = case ps' of
                            Nothing -> []
                            Just xs -> xs
-                return $ TVar x ps
+                return $ TConst (TVar $ s2n x) ps
             )
     )
 

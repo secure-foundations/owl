@@ -31,7 +31,6 @@ type FuncName = String -- For deterministic functions eg xor(*, *),
 type DistrName = String -- For probabilistic functions eg senc
 type DefName = String -- For process definitions eg alice(..)
 type ConstrName = String
-type TyName = String
 type TableName = String
 
 data Spanned a = Spanned { 
@@ -54,6 +53,12 @@ mkSpannedWith s x = Spanned (ignore s) x
 
 type DataVar = Name AExpr
 type IdxVar = Name Idx
+type TyVar = Name Ty
+
+data TyName = 
+    TVar TyVar -- bound var
+  -- TODO: path here
+    deriving (Show, Generic, Typeable, Eq)
 
 data Idx = IVar (Ignore Position) IdxVar
     deriving (Show, Generic, Typeable)
@@ -112,8 +117,12 @@ data LabelX =
     | LZero
     | LAdv 
     | LJoin Label Label 
-    | LVar String -- Used Internally?
+    | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
+    deriving (Show, Generic, Typeable)
+
+data LblConst = 
+    TyLabelVar TyName
     deriving (Show, Generic, Typeable)
 
 
@@ -128,8 +137,8 @@ advLbl = mkSpanned LAdv
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)
 
-varLbl :: String -> Label
-varLbl s = mkSpanned (LVar s)
+lblConst :: LblConst -> Label
+lblConst s = mkSpanned (LConst s)
 
 
 data PropX = 
@@ -193,7 +202,7 @@ data TyX =
     | TRefined Ty (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TVar TyName [FuncParam]
+    | TConst TyName [FuncParam]
     | TBool Label
     | TUnion Ty Ty
     | TUnit
@@ -365,6 +374,14 @@ instance Alpha LabelX
 instance Subst Idx LabelX
 instance Subst AExpr LabelX
 
+instance Alpha LblConst
+instance Subst Idx LblConst
+instance Subst AExpr LblConst
+
+instance Alpha TyName
+instance Subst Idx TyName
+instance Subst AExpr TyName
+
 instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
@@ -408,16 +425,21 @@ prettyBind b =
     let (x, y) = unsafeUnbind b in
     (pretty x, pretty y)
 
+instance Pretty LblConst where
+    pretty (TyLabelVar s) = pretty s
 
 instance Pretty LabelX where
     pretty (LName n) = pretty "[" <> pretty n <> pretty "]"
     pretty LZero = pretty "static"
     pretty (LAdv) = pretty "adv"
     pretty (LJoin v1 v2) = pretty v1 <+> pretty "/\\" <+> pretty v2
-    pretty (LVar s) = pretty s
+    pretty (LConst s) = pretty s
     pretty (LRangeIdx l) = 
         let (b, l') = prettyBind l in
         pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
+
+instance Pretty TyName where
+    pretty (TVar s) = pretty s
 
 instance Pretty TyX where
     pretty TUnit =
@@ -435,7 +457,7 @@ instance Pretty TyX where
             pretty "Option" <+> pretty t
     pretty (TCase p t1 t2) = 
             pretty "if" <+> pretty p <+> pretty "then" <+> pretty t1 <> pretty " else " <> pretty t2 
-    pretty (TVar n ps) =
+    pretty (TConst n ps) =
             pretty n <> pretty "<" <> pretty (intercalate "," (map (show . pretty) ps)) <> pretty ">"
     pretty (TName n) =
             pretty "Name(" <> pretty n <> pretty ")"

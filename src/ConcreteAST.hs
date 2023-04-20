@@ -29,7 +29,7 @@ data CTy =
     CTData
     | CTDataWithLength AExpr
     | CTOption CTy
-    | CTVar TyName
+    | CTConst TyName
     | CTBool
     -- | CTUnion CTy CTy
     | CTUnit
@@ -60,7 +60,7 @@ concretifyTy t =
         (cct, CTData) -> return cct
         (CTData, cct') -> return cct'
         _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TCase failed"
-    TVar s _ -> return $ CTVar s
+    TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
     TUnion t t' -> do
       ct <- concretifyTy t
@@ -163,7 +163,7 @@ instance Pretty CTy where
             pretty "Data " <+> pretty "|" <> pretty a <> pretty "|"
     pretty (CTOption t) =
             pretty "Option" <> pretty t
-    pretty (CTVar n) =
+    pretty (CTConst n) =
             pretty n
     pretty (CTName n) =
             pretty "Name(" <> pretty n <> pretty ")"

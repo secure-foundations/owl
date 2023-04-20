@@ -97,7 +97,7 @@ simplLabel l =
       LName _ -> return l
       LZero -> return l
       LAdv -> return l
-      LVar _ -> return l
+      LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
       LRangeIdx il -> do
           (i, l') <- unbind il
@@ -124,7 +124,7 @@ canonLabel l =
       LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
       LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
       LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
-      LVar s -> return $ CanonAnd [CanonNoBig $ CanonVar s]
+      LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
           (is, l) <- canonRange [i] l'
@@ -139,7 +139,7 @@ canonRange is l =
           canonRange (i : is) l'
       LZero -> return (is, CanonZero)
       LAdv -> return (is, CanonAdv)
-      LVar s -> return (is, CanonVar s)
+      LConst s -> return (is, CanonConst s)
       LName ne -> return (is, CanonLName ne)
 
 
@@ -183,18 +183,18 @@ symCanonAtom c =
         return $ SApp [SAtom "LblOf", n]
       CanonZero -> return $ SAtom "%zeroLbl"
       CanonAdv -> return $ SAtom "%adv"
-      CanonVar s -> getSymLblVar s
+      CanonConst s -> getSymLblConst s
 
-getSymLblVar :: String -> Sym SExp
-getSymLblVar p = do
+getSymLblConst :: LblConst -> Sym SExp
+getSymLblConst (TyLabelVar (TVar s)) = do
     e <- use symLabelVarEnv
-    case M.lookup p e of
+    case M.lookup s e of
       Just res -> return res
       Nothing -> do
-          let sname = SAtom $ "%lvar_" ++ (show $ pretty p)
+          let sname = SAtom $ "%lvar_" ++ (show $ pretty s)
           emit $ SApp [SAtom "declare-fun", sname, SApp [], SAtom "Lbl"]
           emitAssertion $ sFlows (SAtom "%adv") sname
-          symLabelVarEnv %= (M.insert p sname)
+          symLabelVarEnv %= (M.insert s sname)
           return sname
 
 
@@ -235,7 +235,7 @@ emitNameDefAssms = do
 
 data SymLbl = 
     SName NameExp
-      | SVar String
+      | SConst LblConst
       | SAdv
       | SRange (Bind IdxVar SymLbl)
       deriving (Show, Generic, Typeable)
@@ -247,7 +247,7 @@ mkSymLbl l =
     case l^.val of
       LZero -> return S.empty
       LName n -> return $ S.singleton $ AlphaOrd $ SName n
-      LVar s -> return $ S.singleton $ AlphaOrd $ SVar s
+      LConst s -> return $ S.singleton $ AlphaOrd $ SConst s
       LAdv -> return $ S.singleton $ AlphaOrd SAdv
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeIdx xl -> do
@@ -263,7 +263,7 @@ lblFromSym s =
     case s of
       SName n -> return $ nameLbl n
       SAdv -> return advLbl
-      SVar n -> return $ varLbl n
+      SConst n -> return $ lblConst n
       SRange xl -> do
           (x, l) <- unbind xl
           l' <- lblFromSym l

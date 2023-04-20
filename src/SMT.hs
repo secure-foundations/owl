@@ -209,6 +209,9 @@ setupAllFuncs = do
     return ()
 
 
+smtNameOfTyName :: TyName -> String
+smtNameOfTyName (TVar s) = show s
+
 tyConstraints :: Ty -> SExp -> Sym SExp
 tyConstraints t v = do
     case t^.val of
@@ -263,14 +266,14 @@ tyConstraints t v = do
           c1 <- tyConstraints t1 v
           c2 <- tyConstraints t2 v
           return $ sOr c1 c2
-      TVar s ps -> do
+      TConst s ps -> do
           td <- liftCheck $ getTyDef (t^.spanOf) s
           case td of
             TyAbstract -> return sTrue
             TyAbbrev t -> tyConstraints t v
             StructDef ixs -> do
                 dts <- liftCheck $ extractStruct (t^.spanOf) ps s ixs
-                let v' = SApp $ (SAtom s : map (\(d, _) -> SApp [SAtom d, v]) dts)
+                let v' = SApp $ (SAtom (smtNameOfTyName s) : map (\(d, _) -> SApp [SAtom d, v]) dts)
                 let ext_ax = sEq v v' -- Extensionality axiom
                 let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ map (\(d, _) -> SApp [SAtom d, v]) dts
                 ty_axioms <- forM dts $ \(d, t) -> tyConstraints t (SApp [SAtom d, v])
