@@ -4,9 +4,6 @@ locality B
 name nA<i> : nonce @ A
 name k : mackey (exists i. Name(nA<i>)) @ A, B
 
-func concat
-    arity 2
-
 def alice<i> () @ A 
     requires corr(nA<i>) 
              /\ (/\_i [nA<i>] <= adv)

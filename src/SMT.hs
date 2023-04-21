@@ -79,9 +79,8 @@ setupNameEnv = do
             [sLength $ sValue $ sBaseName sname (map SAtom is)]
         -- Disjointness from constants
         emitComment $ "Disjointness from constants for " ++ n
-        fncs <- view detFuncs
         fi <- use funcInterps
-        let constants = map (\x -> fromJust $ M.lookup x fi) $ map fst $ filter (\p -> fst (snd p) == 0) $ fncs
+        let constants = map fst $ filter (\p -> snd p == 0) $ M.elems fi
         emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) is) 
          (sAnd $ map (\f -> sNot $ sEq (sValue $ sBaseName sname (map SAtom is)) f) constants)
          [(sBaseName sname (map SAtom is))]
@@ -149,21 +148,46 @@ setupTyEnv = do
             varVals %= (M.insert x v)
             go xs
 
-setupFunc :: (String, Int) -> Sym ()
+setupUserFunc :: (Path DetFuncProxy, UserFunc) -> Sym ()
+setupUserFunc (s, f) =
+    case f of
+      StructConstructor tv -> do
+        tds <- view $ curMod . tyDefs
+        case lookup tv tds of
+          Just (StructDef idf) -> do
+              let ar = length $ snd $ unsafeUnbind idf
+              setupFunc (s, ar)
+          Nothing -> error $ "Struct not found: " ++ show tv
+      StructProjector _ _ -> setupFunc (s, 1)
+      EnumConstructor tv variant ->  do
+        tds <- view $ curMod . tyDefs
+        case lookup tv tds of
+          Just (EnumDef idf) -> do
+              let enum_map = snd $ unsafeUnbind idf 
+              case lookup variant enum_map of
+                Nothing -> error $ "Bad variant in SMT: " ++ show variant
+                Just Nothing -> setupFunc (s, 0)
+                Just (Just _) -> setupFunc (s, 1)
+          _ -> error "Unknown struct in SMT"
+      EnumTest _ _ -> setupFunc (s, 1)
+      UninterpUserFunc f ar -> setupFunc (s, ar)
+
+
+setupFunc :: (Path DetFuncProxy, Int) -> Sym ()
 setupFunc (s, ar) = do
     fs <- use funcInterps
     case M.lookup s fs of
-      Just _ -> error $ "Function " ++ s ++ " already defined in SMT. " ++ show (M.keys fs)
+      Just _ -> error $ "Function " ++ show s ++ " already defined in SMT. " ++ show (M.keys fs)
       Nothing -> do
-          emit $ SApp [SAtom "declare-fun", SAtom s, SApp (replicate ar (bitstringSort)), bitstringSort]
-          funcInterps %= (M.insert s (SAtom s))
+          emit $ SApp [SAtom "declare-fun", SAtom (smtNameOfTyName s), SApp (replicate ar (bitstringSort)), bitstringSort]
+          funcInterps %= (M.insert s (SAtom (smtNameOfTyName s), ar))
 
-getFunc :: String -> Sym SExp
+getFunc :: Path DetFuncProxy -> Sym SExp
 getFunc s = do
     fs <- use funcInterps
     case M.lookup s fs of
-      Just v -> return v
-      Nothing -> error $ "Function not in SMT: " ++ s
+      Just (v, _) -> return v
+      Nothing -> error $ "Function not in SMT: " ++ show s
 
 constant :: String -> Sym SExp
 constant s = do
@@ -189,7 +213,9 @@ lengthConstant s = do
 setupAllFuncs :: Sym ()
 setupAllFuncs = do
     fncs <- view detFuncs
-    mapM_ setupFunc $ map (\(k, (v, _)) -> (k, v)) fncs
+    mapM_ setupFunc $ map (\(k, (v, _)) -> (PVar k, v)) fncs
+    ufs <- view $ curMod . userFuncs 
+    mapM_ setupUserFunc $ map (\(k, v) -> (PVar k, v)) ufs 
 
     -- Verification-oriented funcs, none are unary
     emit $ SApp [SAtom "declare-fun", SAtom "EnumVal", SApp [bitstringSort], bitstringSort]
@@ -209,7 +235,7 @@ setupAllFuncs = do
     return ()
 
 
-smtNameOfTyName :: Path Ty -> String
+smtNameOfTyName :: Path a -> String
 smtNameOfTyName (PVar s) = show s
 
 tyConstraints :: Ty -> SExp -> Sym SExp
@@ -242,21 +268,21 @@ tyConstraints t v = do
           return $ (v `sEq` v') `sAnd2` ((sLength v) `sEq` lv)
       (TVK n) -> do
         nv <- symNameExp n
-        vk <- getFunc "vk" 
+        vk <- getFunc (PVar $ s2n "vk")
         return $ v `sEq` (SApp [vk, nv])
       (TDH_PK n) -> do
         nv <- symNameExp n
-        pk <- getFunc "dhpk" 
+        pk <- getFunc (PVar $ s2n "dhpk")
         return $ v `sEq` (SApp [pk, nv])
       (TSS n m) -> do
         nv <- symNameExp n
         mv <- symNameExp m
-        pk <- getFunc "dhpk" 
-        f <- getFunc "dh_combine" 
+        pk <- getFunc (PVar $ s2n "dhpk")
+        f <- getFunc (PVar $ s2n "dh_combine")
         return $ v `sEq` (SApp [f, SApp [pk, nv], mv])
       (TEnc_PK n) -> do
         nv <- symNameExp n
-        pk <- getFunc "enc_pk" 
+        pk <- getFunc (PVar $ s2n "enc_pk") 
         return $ v `sEq` (SApp [pk, nv])
       TUnit -> do
           let b = unit
@@ -272,27 +298,27 @@ tyConstraints t v = do
             TyAbstract -> return sTrue
             TyAbbrev t -> tyConstraints t v
             StructDef ixs -> do
-                dts <- liftCheck $ extractStruct (t^.spanOf) ps s ixs
+                dts <- liftCheck $ extractStruct (t^.spanOf) ps (show s) ixs
                 let v' = SApp $ (SAtom (smtNameOfTyName s) : map (\(d, _) -> SApp [SAtom d, v]) dts)
                 let ext_ax = sEq v v' -- Extensionality axiom
                 let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ map (\(d, _) -> SApp [SAtom d, v]) dts
                 ty_axioms <- forM dts $ \(d, t) -> tyConstraints t (SApp [SAtom d, v])
                 return $ sAnd (ext_ax : length_ax : ty_axioms)
             EnumDef b -> do
-                bdy <- liftCheck $ extractEnum (t^.spanOf) ps s b
+                bdy <- liftCheck $ extractEnum (t^.spanOf) ps (show s) b
                 let val = SApp [SAtom "EnumVal", v]
                 cases <- forM [0 .. (length bdy - 1)] $ \i -> do
                     c <- tyConstraints (case snd $ bdy !! i of
                                           Just t -> t
                                           Nothing -> tUnit
                                        ) val
-                    fconstr <- getFunc $ fst $ bdy !! i
-                    ftest <- getFunc $ (fst $ bdy !! i) ++ "?"
+                    fconstr <- getFunc $ PVar . s2n $ fst $ bdy !! i
+                    ftest <- getFunc $ PVar . s2n $ (fst $ bdy !! i) ++ "?"
                     let vEq = case (snd $ bdy !! i) of
                           Just _ -> sEq v (SApp [fconstr, val])
                           Nothing -> sTrue
                     return $ sAnd [vEq, (sEq (SApp [ftest, v]) bTrue), c]
-                ftests <- mapM (\(n, _) -> getFunc $ n ++ "?") bdy
+                ftests <- mapM (\(n, _) -> getFunc $ PVar . s2n $ n ++ "?") bdy
                 return $ (SApp $ [SAtom "or"] ++ cases) `sAnd2` (enumDisjConstraint ftests v)
       TCase tc t1 t2 -> do
           c1 <- tyConstraints t1 v
@@ -323,9 +349,9 @@ interpretAExp ae =
         vs <- mapM interpretAExp xs
         case f of
           -- Special cases
-          "UNIT" -> return unit
-          "true" -> return bTrue
-          "false" -> return bFalse
+          f | f == (PVar $ s2n "UNIT") -> return unit
+          f | f == (PVar $ s2n "true") -> return bTrue
+          f | f == (PVar $ s2n "false") -> return bFalse
           _ -> do
               vf <- getFunc f
               return $ sApp vf vs
@@ -333,8 +359,8 @@ interpretAExp ae =
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "IntToBS", SAtom (show i)]
       AEGet ne -> symNameExp ne
-      AEGetEncPK ne -> interpretAExp $ aeApp "enc_pk" [] [mkSpanned $ AEGet ne]
-      AEGetVK ne -> interpretAExp $ aeApp "vk" [] [mkSpanned $ AEGet ne]
+      AEGetEncPK ne -> interpretAExp $ aeApp (PVar $ s2n "enc_pk") [] [mkSpanned $ AEGet ne]
+      AEGetVK ne -> interpretAExp $ aeApp (PVar $ s2n "vk") [] [mkSpanned $ AEGet ne]
       AEPackIdx i a -> interpretAExp a
 
 
@@ -391,13 +417,13 @@ emitFuncAxioms = do
     emitAssertion $ sDistinct [tt, t, f]
 
     -- eq(x,y) = true ==> x = y
-    eqf <- getFunc "eq" 
+    eqf <- getFunc (PVar $ s2n "eq")
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] ((sEq (SApp [eqf, SAtom "x", SAtom "y"]) t) `sImpl` (sEq (SAtom "x") (SAtom "y"))) [(SApp [eqf, SAtom "x", SAtom "y"])]
     -- eq(x,y) = false ==> x != y
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] ((sEq (SApp [eqf, SAtom "x", SAtom "y"]) f) `sImpl` (sNot $ sEq (SAtom "x") (SAtom "y"))) [(SApp [eqf, SAtom "x", SAtom "y"])]
 
     -- andb(x, y) = true ==> x = true /\ y = true
-    andbf <- getFunc "andb"
+    andbf <- getFunc (PVar $ s2n "andb")
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] 
         ((sEq (SApp [andbf, SAtom "x", SAtom "y"]) t) `sImpl` (sAnd2 (sEq (SAtom "x") t) (sEq (SAtom "y") t))) 
         [(SApp [andbf, SAtom "x", SAtom "y"])]
@@ -425,8 +451,8 @@ enumTestFaithulAxioms = do
           EnumDef m' -> do
               (_, m) <- liftCheck $ unbind m'
               forM_ m $ \(x, ot) -> do
-                  fconstr <- getFunc x
-                  ftest <- getFunc $ x ++ "?"
+                  fconstr <- getFunc $ PVar $ s2n x
+                  ftest <- getFunc $ PVar $ s2n $ x ++ "?"
                   case ot of
                     Nothing -> 
                         emitAssertion $ sEq (SApp [ftest, fconstr]) bTrue

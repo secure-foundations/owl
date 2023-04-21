@@ -136,6 +136,9 @@ replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
+rustifyPath :: Path a -> String
+rustifyPath (PVar s) = show s
+
 locName :: String -> String
 locName x = "loc_" ++ replacePrimes x
 
@@ -366,27 +369,27 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp "cipherlen" _ [inner] -> do
+            AEApp f _ [inner] | f == (PVar $ s2n "cipherlen") -> do
                 tagSz <- useAeadTagSize
                 li <- helper inner
                 case li of
                     (LBytes ni) -> return $ LBytes (ni + tagSz)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "plus" _ [a, b] -> do
+            AEApp f _ [a, b] | f == (PVar $ s2n "plus") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "mult" _ [a, b] -> do
+            AEApp f _ [a, b] | f == (PVar $ s2n "mult") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "zero" _ _ -> return $ LBytes 0
+            AEApp f _ _ | f == (PVar $ s2n "zero") -> return $ LBytes 0
             AEApp fn _ [] -> do
-                lookupTyLayout . rustifyName $ fn -- func name used as a length constant
+                lookupTyLayout . rustifyName . rustifyPath $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
     in
     helper aexp
@@ -743,13 +746,13 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? owlFn of
+    case fs M.!? (rustifyPath owlFn) of
         Just (rt, f) -> do
             str <- f args
             return (rt, preArgs, pretty str)
         Nothing -> do
             adtfs <- use adtFuncs
-            case adtfs M.!? owlFn of
+            case adtfs M.!? (rustifyPath owlFn) of
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
                     let s = case argvaropt of
@@ -759,7 +762,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
-                    if owlFn == "H" then
+                    if owlFn == (PVar $ s2n "H") then
                         -- special case for the random oracle function
                         let unspanned = map (view val) owlArgs in
                         case (fparams, unspanned) of
@@ -772,13 +775,13 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn == "dhpk" then
+                        if owlFn == (PVar $ s2n "dhpk") then
                             let unspanned = map (view val) owlArgs in
                             case unspanned of
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
                                 _ -> throwError $ TypeError "got wrong number of args to dhpk"
                         else
-                            throwError $ UndefinedSymbol owlFn
+                            throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =

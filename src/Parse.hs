@@ -382,7 +382,7 @@ parsePropTerm =
         <|>
         (parseSpanned $ try $ do
             e <- parseAExpr
-            return $ PEq e (aeApp "TRUE" [] [])
+            return $ PEq e (builtinFunc "TRUE" []) 
         )
 
 
@@ -644,7 +644,7 @@ parseExprTerm =
         char ')'
         p' <- getPosition
         whiteSpace
-        return $ Spanned (ignore $ mkPos p p') $ ERet $ Spanned (ignore $ mkPos p p') (AEApp "UNIT" [] [])
+        return $ Spanned (ignore $ mkPos p p') $ ERet $ Spanned (ignore $ mkPos p p') (AEApp (PVar $ s2n "UNIT") [] [])
         )
     <|>
     parensPos parseExpr
@@ -928,18 +928,18 @@ parseAExprTable =
     [ [ 
     Infix (do
     symbol "+" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp "plus" [] [e1, e2])
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (PVar $ s2n "plus") [] [e1, e2])
               )
     AssocLeft], [
     Infix (do
     symbol "*" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp "mult" [] [e1, e2])
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (PVar $ s2n "mult") [] [e1, e2])
               )
     AssocLeft]
     ,[
     Infix (do
     symbol "&&" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp "andb" [] [e1, e2])
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (PVar $ s2n "andb") [] [e1, e2])
               )
     AssocLeft]
     ]
@@ -950,19 +950,19 @@ parseAExprTerm =
         char ')'
         p' <- getPosition
         whiteSpace
-        return $ Spanned (ignore $ mkPos p p') $ AEApp "UNIT" [] []
+        return $ Spanned (ignore $ mkPos p p') $ AEApp (PVar $ s2n "UNIT") [] []
     )
     <|>
     parensPos parseAExpr
     <|>
     (parseSpanned $ do
         reserved "true"
-        return $ AEApp "TRUE" [] []
+        return $ AEApp (PVar $ s2n "TRUE") [] []
     )
     <|>
     (parseSpanned $ do
         reserved "false"
-        return $ AEApp "FALSE" [] []
+        return $ AEApp (PVar $ s2n "FALSE") [] []
     )
     <|>
     (parseSpanned $ do
@@ -1032,7 +1032,7 @@ parseAExprTerm =
         let ps = case op of
                    Just ps -> ps
                    Nothing -> []
-        return $ AEApp x ps args)
+        return $ AEApp (PVar $ s2n x) ps args)
       <|>
       (return $ AEVar (ignore x) (s2n x))
     )}) 

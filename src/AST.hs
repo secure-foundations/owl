@@ -3,6 +3,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -27,7 +28,6 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
 -- localities are like "alice", "bob", "alice, bob", ...
-type FuncName = String -- For deterministic functions eg xor(*, *), 
 type DistrName = String -- For probabilistic functions eg senc
 type DefName = String -- For process definitions eg alice(..)
 type ConstrName = String
@@ -57,7 +57,13 @@ type TyVar = Name Ty
 
 data Path a = 
     PVar (Name a)
-    deriving (Show, Generic, Typeable, Eq)
+    deriving (Generic, Typeable, Eq, Ord)
+
+instance Show (Path a) where
+    show (PVar s) = show s
+
+data DetFuncProxy
+    deriving (Show, Generic, Typeable)
 
 data Idx = IVar (Ignore Position) IdxVar
     deriving (Show, Generic, Typeable)
@@ -76,7 +82,7 @@ type EndpointVar = Name Endpoint
 
 data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
-    | AEApp FuncName [FuncParam] [AExpr]
+    | AEApp (Path DetFuncProxy) [FuncParam] [AExpr]
     | AEString String
     | AEGet NameExp
     | AEGetEncPK NameExp
@@ -277,18 +283,21 @@ aeVar s = mkSpanned (AEVar (ignore s) (s2n s))
 aeVar' :: DataVar -> AExpr
 aeVar' v = mkSpanned $ AEVar (ignore $ show v) v
 
-aeApp :: FuncName -> [FuncParam] -> [AExpr] -> AExpr
+aeApp :: Path DetFuncProxy -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
+builtinFunc :: String -> [AExpr] -> AExpr
+builtinFunc s xs = aeApp (PVar $ s2n s) [] xs
+
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp "length" [] [x]
+aeLength x = aeApp (PVar $ s2n "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp "true" [] [])
+aeTrue = mkSpanned (AEApp (PVar $ s2n "true") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)
@@ -350,6 +359,10 @@ instance Subst Idx Idx where
 instance Subst AExpr Idx
 
 instance Subst AExpr Endpoint
+
+instance Alpha DetFuncProxy
+instance Subst Idx DetFuncProxy
+instance Subst AExpr DetFuncProxy
 
 instance Alpha AExprX
 instance Subst Idx AExprX

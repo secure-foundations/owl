@@ -30,17 +30,18 @@ import TypingBase
 import qualified SMT as SMT
 import qualified SMTBase as SMT
 import Unbound.Generics.LocallyNameless
+import Unbound.Generics.LocallyNameless.Unsafe
 import qualified Text.Parsec as P
 import Parse
 
 emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f mempty initDetFuncs initDistrs mempty Ghost mempty emptyModDef r
+    return $ Env f mempty initDetFuncs initDistrs mempty Ghost mempty emptyModDef interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -103,11 +104,11 @@ extractVKFromType t =
       TVK k -> Just k
       _ ->  Nothing
 
-mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (String, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
-mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
+mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (Name DetFuncProxy, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
+mkSimpleFunc s i k = (s2n s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
 
-withNormalizedTys :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
-    Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+withNormalizedTys :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
+    Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 withNormalizedTys mp =
     let f (x, y) = (x, \a b -> do
             b' <- mapM (\(a, t) -> do
@@ -117,7 +118,7 @@ withNormalizedTys mp =
             ) in
     map (\(k, v) -> (k, f v)) mp
 
-initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+initDetFuncs :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "UNIT" 0 $ \args -> do
         return $ TUnit,
@@ -125,16 +126,16 @@ initDetFuncs = withNormalizedTys $ [
         return $ TBool zeroLbl,
     mkSimpleFunc "FALSE" 0 $ \args -> do
         return $ TBool zeroLbl,
-    ("eq", (2, \ps args -> do 
+    (s2n "eq", (2, \ps args -> do 
         assert (ignore def) ("Bad params") $ length ps == 0
         case args of
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
               l2 <- coveringLabel t2
-              let tr = aeApp "TRUE" [] []
+              let tr = aeApp (PVar $ s2n "TRUE") [] []
               return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
            )),
-    ("Some", (1, \ps args -> do
+    (s2n "Some", (1, \ps args -> do
         case (ps, args) of
           ([], [(x, t)]) -> do
               return $ TOption t
@@ -143,19 +144,19 @@ initDetFuncs = withNormalizedTys $ [
               l <- coveringLabel t1
               if b then return (TOption t) else return (TData l l) 
           _ -> typeError (ignore def) $ show $ ErrBadArgs "Some" (map snd args))),
-    ("None", (0, \ps args -> do
+    (s2n "None", (0, \ps args -> do
         case (ps, args) of
           ([ParamTy t], []) -> do
               return (TOption t)
           _ -> typeError (ignore def) $ show $ ErrBadArgs "None" (map snd args))),
-    ("andb", (2, \ps args -> do
+    (s2n "andb", (2, \ps args -> do
         assert (ignore def) ("Bad params") $ length ps == 0
         case args of
           [(x, t1), (y, t2)] -> do
             l1 <- coveringLabel t1
             l2 <- coveringLabel t2
             let l = joinLbl l1 l2
-            let tr = aeApp "TRUE" [] []
+            let tr = aeApp (PVar $ s2n "TRUE") [] []
             assertSubtype t1 (mkSpanned $ TBool l)
             assertSubtype t2 (mkSpanned $ TBool l)
             return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pAnd (pEq x tr) (pEq y tr)))
@@ -288,7 +289,7 @@ initDetFuncs = withNormalizedTys $ [
                     return $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
                 _ -> trivialTypeOf $ args
           _ -> trivialTypeOf $ args,
-    ("mac_vrfy", (3, \ps args ->
+    (s2n "mac_vrfy", (3, \ps args ->
         case (ps, args) of
           ([], [(xt1, t1), (m, mt), (xt, t)]) | Just k <- extractNameFromType t1 -> do
               nt <- local (set tcScope Ghost) $ getNameType k
@@ -308,17 +309,17 @@ initDetFuncs = withNormalizedTys $ [
               l <- coveringLabelOf $ map snd args
               return $ TOption $ tData l l
           _ -> typeError (ignore def) $ "params in mac_vrfy")),
-    ("checknonce", (2, \ps args ->
+    (s2n "checknonce", (2, \ps args ->
         case (ps, args) of
           ([], [(x, t1), (y, t2)]) ->
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
                   debug $ pretty "Checking name " <> pretty n <> pretty " against " <> pretty m
-                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp "TRUE" [] [])))
+                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])))
                   else case (n^.val, m^.val) of
                        (BaseName (is1, is1') a, BaseName (is2, is2') b) | a == b -> do
                            let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
-                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp "TRUE" [] [])) p))
+                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) p))
                        _ -> do
                            l <- coveringLabelOf $ map snd args
                            return $ TBool l
@@ -327,21 +328,21 @@ initDetFuncs = withNormalizedTys $ [
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp "TRUE" [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
                   nt <-  local (set tcScope Ghost) $ getNameType n
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp "TRUE" [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 _ -> do
                   l <- coveringLabelOf $ map snd args
                   return $ TBool l
           _ -> typeError (ignore def) $ "Wrong parameters to checknonce"
     )),
-    ("prf", (2, \ps args ->
+    (s2n "prf", (2, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(_, t1), (a, _)]) -> do
               case (stripRefinements t1)^.val of
@@ -359,7 +360,7 @@ initDetFuncs = withNormalizedTys $ [
                         _ -> typeError (ignore def) $ show $ ErrWrongNameType n "prf" nt
                 _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)
           _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args))),
-    ("H", (1, \ps args ->
+    (s2n "H", (1, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(a, t)]) -> do
               ro <- view $ curMod . randomOracle
@@ -392,7 +393,7 @@ initDistrs = [
                     debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
                     b1 <- isSubtype t t'
                     if b1 then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp "cipherlen" [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ s2n "cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -407,13 +408,85 @@ initDistrs = [
                 NT_PKE t' -> do
                     b <- isSubtype t t'
                     if (b) then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp "pk_cipherlen" [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ s2n "pk_cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
           _ -> trivialTypeOf $ map snd args
             ))
                         ]
+
+interpUserFunc :: Ignore Position -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+interpUserFunc pos (StructConstructor tv) = do
+    tds <- view $ curMod . tyDefs
+    case lookup tv tds of
+      Just (StructDef idf) -> do
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          return (ar, \ps xs -> do
+              forM_ ps checkParam
+              nts <- extractStruct pos ps (show tv) idf 
+              assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              if length xs == ar then do
+                b <- foldM (\acc i -> do
+                    b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
+                    return $ acc && b1) True [0..(length xs - 1)]
+                if b then return (TRefined (mkSpanned $ TConst (PVar $ tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
+              else trivialTypeOf (map snd xs))
+      _ -> typeError pos $ "Unknown struct: " ++ show tv
+interpUserFunc pos (StructProjector tv field) = do
+    tds <- view $ curMod . tyDefs
+    case lookup tv tds of
+      Just (StructDef idf) -> do
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          return (1, \ps args -> do
+              forM_ ps checkParam
+              nts <- extractStruct pos ps (show tv) idf 
+              assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              case lookup field nts of
+                Just t -> do
+                  b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PVar tv) ps)
+                  if b then return (t^.val) else trivialTypeOf $ map snd args
+                Nothing -> typeError pos $ "Unknown struct field: " ++ field)
+      _ -> typeError pos $ "Unknown struct: " ++ show tv
+interpUserFunc pos (EnumConstructor tv variant) = do
+    tds <- view $ curMod . tyDefs
+    case lookup tv tds of
+      Just (EnumDef idf) -> do
+          let (is_ar, enum_map) = let (xs, ys) = unsafeUnbind idf in (length xs, ys)
+          ar <- case lookup variant enum_map of
+                  Nothing -> typeError pos $ "Unknown enum variant: " ++ variant
+                  Just Nothing -> return 0
+                  Just (Just _) -> return 1
+          return (ar, \ps args -> do 
+              forM_ ps checkParam
+              nts <- extractEnum pos ps (show tv) idf
+              assert pos (show $ pretty "Index arity mismatch on enum constructor") $ length ps == is_ar 
+              let ot = fromJust $ lookup variant nts
+              case ot of
+                Nothing -> return $ TRefined (mkSpanned $ TConst (PVar tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
+                Just t -> do
+                    b <- isSubtype (snd $ args !! 0) t
+                    if b then return (TRefined (mkSpanned $ TConst (PVar tv) (ps))
+                                                          (bind (s2n ".res") $
+                                                              pEq (aeLength (aeVar ".res"))
+                                                                  (aeApp (PVar $ s2n "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
+                    else trivialTypeOf (map snd args))
+      _ -> typeError pos $ "Unknown enum: " ++ show tv 
+interpUserFunc pos (EnumTest tv variant) = do
+    return $ snd $ mkSimpleFunc (variant ++ "?") 1 $ \args ->
+        case args of
+          [t] -> 
+              case (stripRefinements t)^.val of
+                TConst s _ | s == (PVar tv) -> return $ TBool advLbl
+                _ -> do
+                    l <- coveringLabel t
+                    return $ TBool l
+interpUserFunc pos (UninterpUserFunc f ar) = do
+    return $ (ar, withNoParams (show f) $ \args -> do
+        l <- coveringLabelOf $ map snd args
+        return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar f) [] (map fst args))))
+
+
 
 -- Normalize a type expression. Only nontrivial computations are to normalize a
 -- nested refinement, and to normalize a case whether a name n is honest.
@@ -527,7 +600,7 @@ isSubtype' t1 t2 =
       (TRefined t _, _) -> isSubtype' t t2
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp "UNIT" [] []))) t2
+        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (PVar $ s2n "UNIT") [] []))) t2
       (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
       (TConst x ps1, TConst y ps2) | (x == y) -> do
           td <- getTyDef (t1^.spanOf) x
@@ -606,7 +679,7 @@ typeProtectsLabel' l t0 =
             TyAbbrev t -> typeProtectsLabel' l t
             StructDef xs -> typeError (t0^.spanOf) $ "TODO: typeProtectsLabel for struct"
             EnumDef b -> do
-                bdy <- extractEnum (t0^.spanOf) ps s b
+                bdy <- extractEnum (t0^.spanOf) ps (show s) b
                 flowCheck (t0^.spanOf) l advLbl
       (TName n) ->
           flowCheck (t0^.spanOf) l (nameLbl n)
@@ -674,8 +747,8 @@ addNameDef n (is1, is2) (nt, nls) k = do
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
 sumOfLengths :: [AExpr] -> AExpr
-sumOfLengths [] = aeApp "zero" [] []
-sumOfLengths (x:xs) = aeApp "plus" [] [aeLength x, sumOfLengths xs]
+sumOfLengths [] = aeApp (PVar $ s2n "zero") [] []
+sumOfLengths (x:xs) = aeApp (PVar $ s2n "plus") [] [aeLength x, sumOfLengths xs]
 
 checkDecl :: Decl -> Check () -> Check ()
 checkDecl dcl k =
@@ -742,87 +815,26 @@ checkDecl dcl k =
           dfs <- view detFuncs
           tvars <- view $ curMod . tyDefs
           assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member (s2n n) tvars
-          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n dfs
+          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member (s2n n) dfs
           assert (dcl^.spanOf) (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
           local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
               forM_ xs $ \(x, t) -> do
                   checkTy t
-                  assert (dcl^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
-          let constr = (length xs, \ps args -> do
-                  idxs <- forM ps $ \p -> do
-                    checkParam p
-                    case p of
-                      ParamIdx i -> return i
-                      _ -> typeError (dcl^.spanOf) $ show $ pretty "Non-index param passed to struct constructor: " <> pretty p
-                  assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on struct construstor") $ length ps == length is
-                  if length args == length xs then do
-                      b <- foldM (\acc i -> do
-                          b1 <- isSubtype (snd $ args !! i) (substs (zip is idxs) $ snd $ xs !! i)
-                          return $ acc && b1) True [0..(length args - 1)]
-                      if b then
-                           return (TRefined (mkSpanned $ TConst (PVar $ s2n n) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args))))
-                           else trivialTypeOf (map snd args)
-                  else trivialTypeOf (map snd args))
-          -- TODO: the typing below is stale
-          let destrs = map (\(x, t) ->
-                  (x, (1, \ps args -> do
-                      idxs <- forM ps $ \p -> do
-                        checkParam p
-                        case p of
-                          ParamIdx i -> return i
-                          _ -> typeError (dcl^.spanOf) $ "Non-index param passed to struct destructor"
-                      assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on struct destructor") $ length ps == length is
-                      b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PVar $ s2n n) ps)
-                      if b then return (substs (zip is idxs) (t^.val)) else (trivialTypeOf $ map snd args)))) xs
-          local (\e -> e { _detFuncs = (destrs) <> insert n constr (e ^. detFuncs)}) $
-              addTyDef (s2n n) (StructDef ixs) $
-                  k
+                  assert (dcl^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member (s2n x) dfs
+          let projs = map (\(x, t) ->  (s2n x, StructProjector (s2n n) x)) xs 
+          local (over (curMod . userFuncs) $ insert (s2n n) (StructConstructor (s2n n))) $ 
+              local (over (curMod . userFuncs) $ mappend projs) $ 
+                  addTyDef (s2n n) (StructDef ixs) $ 
+                      k
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
         local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
             mapM_ checkTy $ catMaybes $ map snd bdy
         assert (dcl^.spanOf) (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
-        let constrs = withNormalizedTys $ map (\(cname, ot) ->
-                case ot of
-                  Just t -> (cname, (1, \ps args -> do
-                        idxs <- forM ps $ \p -> do
-                            checkParam p
-                            case p of
-                              ParamIdx i -> return i
-                              _ -> typeError (dcl^.spanOf) $ "Non-index param passed to enum constructor"
-                        assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on enum construstor") $ length ps == length is
-                        case args of
-                          [(x, t')] -> do
-                              b1 <- isSubtype t' (substs (zip is idxs) t)
-                              if b1 then return (TRefined (mkSpanned $ TConst (PVar $ s2n n) (ps))
-                                                          (bind (s2n ".res") $
-                                                              pEq (aeLength (aeVar ".res"))
-                                                                  (aeApp "plus" [] [aeLength x, aeLenConst "tag" ])))
-                                    else do
-                                      l <- coveringLabel t'
-                                      return $ TData l l 
-                          _ -> typeError (dcl^.spanOf ) $ show $ ErrBadArgs cname (map snd args)))
-                  Nothing ->
-                      (cname, (0, \ps args -> do
-                        forM_ ps $ \p ->
-                            case p of
-                              ParamIdx _ -> return ()
-                              _ -> typeError (dcl^.spanOf) $ "Non-index param passed to enum constructor"
-                        assert (dcl^.spanOf) (show $ pretty "Index arity mismatch on enum construstor") $ length ps == length is
-                        assert (dcl^.spanOf) (show $ ErrBadArgs cname (map snd args)) $ length args == 0
-                        return $ TRefined (mkSpanned $ TConst (PVar $ s2n n) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))))) bdy
-        let tests =
-                withNormalizedTys $ map (\(x, _) ->
-                    mkSimpleFunc (x ++ "?") 1 $ \args ->
-                        case args of
-                          [t] ->
-                              case (stripRefinements t)^.val of
-                                TConst s (ParamLbl l : _) | s == (PVar $ s2n n) -> return $ TBool l
-                                _ -> do
-                                    l <- coveringLabel t
-                                    return $ TBool l) bdy
-        addTyDef (s2n n) (EnumDef b) $
-            local (\e -> e { _detFuncs = (e ^.detFuncs) <> constrs <> tests}) $
+        let constrs = map (\(x, ot) -> (s2n x, EnumConstructor (s2n n) x)) bdy 
+        let tests = map (\(x, ot) -> (s2n (x ++ "?"), EnumTest (s2n n) x)) bdy
+        local (over (curMod . userFuncs) $ mappend (constrs ++ tests)) $ 
+            addTyDef (s2n n) (EnumDef b) $
                 k
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
@@ -841,10 +853,10 @@ checkDecl dcl k =
           checkTy t
           local (over (curMod . tableEnv) $ insert n (t, loc)) k
       (DeclDetFunc f opts ar) -> do
-        let g = withNoParams f $ \args -> do
-                l <- coveringLabelOf $ map snd args
-                return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp f [] (map fst args)))
-        local (\e -> e { _detFuncs = insert f (ar, g) (e ^. detFuncs)}) k
+        dfs <- view detFuncs
+        assert (dcl^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member (s2n f) dfs
+        local (over (curMod . userFuncs) $ insert (s2n f) (UninterpUserFunc (s2n f) ar)) $ 
+            k
       (DeclLocality n i) -> local (over (curMod . localities) $ insert n i) k
       (DeclRandOrcl s ps (ae, nt)) -> do
         assert (dcl^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
@@ -938,6 +950,14 @@ checkNameType nt =
           checkTyPubLen t
       NT_MAC t -> checkTy t
 
+checkParam :: FuncParam -> Check ()
+checkParam (ParamAExpr a) = do
+    _ <- inferAExpr a
+    return ()
+checkParam (ParamStr s) = return ()
+checkParam (ParamLbl l) =  checkLabel l
+checkParam (ParamTy t) =  checkTy t
+checkParam (ParamIdx i) = local (set tcScope Ghost) $ checkIdx i
 
 checkTy :: Ty -> Check ()
 checkTy t =
@@ -969,10 +989,10 @@ checkTy t =
                 TyAbbrev t ->
                     assert (t^.spanOf) (show $ pretty "Params should be empty for abbrev " <> pretty s) $ length ps == 0
                 StructDef ib -> do
-                    _ <- extractStruct (t^.spanOf) ps s ib
+                    _ <- extractStruct (t^.spanOf) ps (show s) ib
                     return ()
                 EnumDef b -> do
-                    _ <- extractEnum (t^.spanOf) ps s b
+                    _ <- extractEnum (t^.spanOf) ps (show s) b
                     return ()
           (TName n) -> do
               _ <- getNameTypeOpt n
@@ -1013,14 +1033,6 @@ checkTy t =
 
 
 
-checkParam :: FuncParam -> Check ()
-checkParam (ParamAExpr a) = do
-    _ <- inferAExpr a
-    return ()
-checkParam (ParamStr s) = return ()
-checkParam (ParamLbl l) =  checkLabel l
-checkParam (ParamTy t) =  checkTy t
-checkParam (ParamIdx i) = local (set tcScope Ghost) $ checkIdx i
 
 
 tyLenLbl :: Ty -> Check Label
@@ -1047,12 +1059,12 @@ tyLenLbl t =
             TyAbstract -> return advLbl
             TyAbbrev t -> tyLenLbl t
             StructDef b -> do
-                bdy <- extractStruct (t^.spanOf) ps s b
+                bdy <- extractStruct (t^.spanOf) ps (show s) b
                 local (set tcScope $ Ghost) $ do
                     ls <- forM bdy $ \(_, t) -> tyLenLbl t
                     return $ foldr joinLbl zeroLbl ls
             EnumDef b -> do
-                bdy <- extractEnum (t^.spanOf) ps s b
+                bdy <- extractEnum (t^.spanOf) ps (show s) b
                 ls <- forM bdy $ \(_, ot) ->
                     case ot of
                       Just t' -> tyLenLbl t'
@@ -1326,6 +1338,7 @@ getOutTy ot t1 =
           assertSubtype t1 t2
           return t2
 
+
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = do
@@ -1536,7 +1549,7 @@ checkExpr ot e = do
                                 td <- getTyDef (t^.spanOf) s
                                 case td of
                                   EnumDef b -> do
-                                      bdy <- extractEnum (t'^.spanOf) ps s b
+                                      bdy <- extractEnum (t'^.spanOf) ps (show s) b
                                       return (advLbl, Right bdy)
           assert (e^.spanOf) (show $ pretty "Empty cases on case expression") $ length cases > 0
           flowCheck (t'^.spanOf) l advLbl
@@ -1574,16 +1587,16 @@ checkExpr ot e = do
 unsolvability :: AExpr -> Check Prop
 unsolvability ae = local (set tcScope Ghost) $ do
     case ae^.val of
-      AEApp "dh_combine" [] [x, y] -> do
+      AEApp f [] [x, y] | f == (PVar $ s2n "dh_combine")-> do
           t1 <- inferAExpr x
           t2 <- inferAExpr y
           case (t1^.val, t2^.val) of
             (TDH_PK n, TName m) -> return $ pAnd (pNot $ pFlow (nameLbl n) advLbl) (pNot $ pFlow (nameLbl m) advLbl)
             _ -> return pFalse
       AEApp f [] xs -> do
-          tDs <- view $ curMod . tyDefs
-          case lookup (s2n f) tDs of
-            Just (StructDef _) -> do  -- f is a constructor of a struct; derivability is the and
+          uf <- getUserFunc f
+          case uf of
+            Just (StructConstructor _) -> do -- f is a constructor of a struct; derivability is the and
                 ps <- mapM unsolvability xs
                 return $ foldr pOr pFalse ps
             _ -> return pFalse

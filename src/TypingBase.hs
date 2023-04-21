@@ -26,7 +26,6 @@ import Unbound.Generics.LocallyNameless.Name
 import System.FilePath ((</>))
 import System.IO
 
-
 member :: Eq a => a -> [(a, b)] -> Bool
 member k xs = elem k $ map fst xs
 
@@ -64,6 +63,13 @@ data DefIsAbstract = DefAbstract | DefConcrete
 
 type Map a b = [(a, b)]
 
+data UserFunc =
+    StructConstructor TyVar 
+      | StructProjector TyVar String  
+      | EnumConstructor TyVar String
+      | EnumTest TyVar String
+      | UninterpUserFunc (Name DetFuncProxy) Int
+
 data ModDef = ModDef { 
     _localities :: Map String Int,
     _defs :: Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
@@ -73,6 +79,7 @@ data ModDef = ModDef {
     _inScopeIndices ::  Map IdxVar IdxType,
     _randomOracle :: Map String (AExpr, NameType),
     _tyDefs :: Map TyVar TyDef,
+    _userFuncs :: Map (Name DetFuncProxy) UserFunc,
     _endpointContext :: S.Set EndpointVar,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
 }
@@ -80,12 +87,13 @@ data ModDef = ModDef {
 data Env = Env { 
     _envFlags :: Flags,
     _envIncludes :: S.Set String,
-    _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
+    _detFuncs :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
     _distrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX),
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
     _curMod :: ModDef,
+    _interpUserFuncs :: Ignore Position -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer
 }
@@ -119,7 +127,7 @@ data TypeError =
       | ErrAssertionFailed (Maybe String) Prop
       | ErrDuplicateVarName DataVar
       | ErrUnknownDistr String
-      | ErrUnknownFunc String
+      | ErrUnknownFunc (Path DetFuncProxy)
       | ErrFlowCheck Label Label
       | ErrUnknownVar  DataVar
       | ErrUnknownType String
@@ -347,6 +355,24 @@ getTyDef pos s =
 
 -- AExpr's have unambiguous types, so can be inferred.
 
+getUserFunc :: Path DetFuncProxy -> Check (Maybe UserFunc)
+getUserFunc (PVar p) = do
+    fs <- view $ curMod . userFuncs
+    return $ lookup p fs
+
+
+getFuncInfo :: Ignore Position -> Path DetFuncProxy -> Check (Maybe (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
+getFuncInfo pos (PVar s) = do
+    fs <- view detFuncs
+    case lookup s fs of
+      Just r -> return $ Just r
+      Nothing -> do
+           ufs <- view $ curMod . userFuncs
+           case lookup s ufs of
+             Just uf -> do
+                 uf_interp <- view interpUserFuncs
+                 Just <$> uf_interp pos uf
+             Nothing -> return Nothing
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
@@ -360,8 +386,8 @@ inferAExpr ae = do
       (AEApp f params args) -> do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
-        fE <- view detFuncs
-        case lookup f fE of 
+        fi <- getFuncInfo (ae^.spanOf) f
+        case fi of
           Just (ar, k) -> do
               assert (ae^.spanOf) (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
               mkSpanned <$> k params (zip args ts)
@@ -425,12 +451,12 @@ getEnumParams pos ps = forM ps $ \p ->
 
 getStructParams :: Ignore Position -> [FuncParam] -> Check [Idx]
 getStructParams pos ps =
-    forM ps $ \p -> 
+    forM ps $ \p -> do
         case p of
             ParamIdx i -> return i
             _ -> typeError pos $ "Wrong param on struct: " ++ show p
 
-extractEnum :: Ignore Position -> [FuncParam] -> Path Ty -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
+extractEnum :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum pos ps s b = do
     idxs <- getEnumParams pos ps
     (is, bdy') <- unbind b
@@ -438,7 +464,7 @@ extractEnum pos ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-extractStruct :: Ignore Position -> [FuncParam] -> Path Ty -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
+extractStruct :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
 extractStruct pos ps s b = do
     idxs <- getStructParams pos ps
     (is, xs') <- unbind b
@@ -472,14 +498,14 @@ coveringLabel' t =
           td <- getTyDef (t^.spanOf) s
           case td of
             EnumDef b -> do
-                bdy <- extractEnum (t^.spanOf) ps s b
+                bdy <- extractEnum (t^.spanOf) ps (show s) b
                 ls <- mapM coveringLabel' $ catMaybes $ map snd bdy
                 let l2 = foldr joinLbl zeroLbl ls
                 return $ l2
             TyAbstract -> return $ joinLbl (lblConst $ TyLabelVar s) advLbl
             TyAbbrev t -> coveringLabel' t
             StructDef ixs -> do
-                xs <- extractStruct (t^.spanOf) ps s ixs
+                xs <- extractStruct (t^.spanOf) ps (show s) ixs
                 ls <- forM xs $ \(_, t) -> coveringLabel' t
                 return $ foldr joinLbl zeroLbl ls
       TAdmit -> return $ zeroLbl -- mostly a placeholder
