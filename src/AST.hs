@@ -600,3 +600,4 @@ instance Alpha a => Ord (AlphaOrd a) where
 
 tLemma :: Prop -> Ty
 tLemma p = tRefined tUnit (bind (s2n "._") p)
+

@@ -42,7 +42,7 @@ smtTypingQuery = fromSMT smtSetup
 setupIndexEnv :: Sym ()
 setupIndexEnv = do
     inds <- view $ curMod . inScopeIndices
-    assocs <- forM (M.keys inds) $ \i -> do
+    assocs <- forM (map fst inds) $ \i -> do
         x <- freshIndexVal (show i)
         return (i, x)
     symIndexEnv .= M.fromList assocs
@@ -59,7 +59,7 @@ sZero = SAtom "zero"
 setupNameEnv :: Sym ()
 setupNameEnv = do
     nE <- view $ curMod . nameEnv
-    assocs <- forM (OM.assocs nE) $ \(n, o) -> do 
+    assocs <- forM nE $ \(n, o) -> do 
         ((is1, is2), ntLclsOpt) <- liftCheck $ unbind o
         let ntOpt = case ntLclsOpt of
                     Nothing -> Nothing -- liftCheck $ typeError $ ErrNameStillAbstract n
@@ -81,15 +81,15 @@ setupNameEnv = do
         emitComment $ "Disjointness from constants for " ++ n
         fncs <- view detFuncs
         fi <- use funcInterps
-        let constants = map (\x -> fromJust $ M.lookup x fi) $ map fst $ filter (\p -> fst (snd p) == 0) $ M.assocs fncs
+        let constants = map (\x -> fromJust $ M.lookup x fi) $ map fst $ filter (\p -> fst (snd p) == 0) $ fncs
         emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) is) 
          (sAnd $ map (\f -> sNot $ sEq (sValue $ sBaseName sname (map SAtom is)) f) constants)
          [(sBaseName sname (map SAtom is))]
         return (n, sname)
     -- Disjointness across names 
     emitComment $ "Disjointness across names"
-    when (not $ OM.null nE) $ do
-        let different_pairs = [(x, y) | (x : ys) <- tails (OM.assocs nE), y <- ys]
+    when (not $ null nE) $ do
+        let different_pairs = [(x, y) | (x : ys) <- tails nE, y <- ys]
         forM_ different_pairs $ \((n1, o1), (n2, o2)) -> do
             ((is1, is2), _) <- liftCheck $ unbind o1
             ((is1', is2'), _) <- liftCheck $ unbind o2
@@ -141,7 +141,7 @@ mkTy s t = do
 setupTyEnv :: Sym ()
 setupTyEnv = do
     vE <- view tyContext
-    go (OM.assocs vE)
+    go vE
     where
         go [] = return ()
         go ((x, (_, t)) : xs) = do
@@ -149,11 +149,11 @@ setupTyEnv = do
             varVals %= (M.insert x v)
             go xs
 
-setupFunc :: String -> Int -> Sym ()
-setupFunc s ar = do
+setupFunc :: (String, Int) -> Sym ()
+setupFunc (s, ar) = do
     fs <- use funcInterps
     case M.lookup s fs of
-      Just _ -> error $ "Function " ++ s ++ " already defined in SMT "
+      Just _ -> error $ "Function " ++ s ++ " already defined in SMT. " ++ show (M.keys fs)
       Nothing -> do
           emit $ SApp [SAtom "declare-fun", SAtom s, SApp (replicate ar (bitstringSort)), bitstringSort]
           funcInterps %= (M.insert s (SAtom s))
@@ -189,7 +189,7 @@ lengthConstant s = do
 setupAllFuncs :: Sym ()
 setupAllFuncs = do
     fncs <- view detFuncs
-    M.traverseWithKey setupFunc $ (fst <$> fncs)
+    mapM_ setupFunc $ map (\(k, (v, _)) -> (k, v)) fncs
 
     -- Verification-oriented funcs, none are unary
     emit $ SApp [SAtom "declare-fun", SAtom "EnumVal", SApp [bitstringSort], bitstringSort]
@@ -404,7 +404,7 @@ emitFuncAxioms = do
 
     emitComment $ "RO equality axioms"
     ro <- view $ curMod . randomOracle
-    forM_ (M.assocs ro) $ \(s, (ae, _)) -> do
+    forM_ ro $ \(s, (ae, _)) -> do
         v <- interpretAExp ae
         emitAssertion $ sEq (sValue $ sROName s) v
     
@@ -420,7 +420,7 @@ enumDisjConstraint fs v =
 enumTestFaithulAxioms :: Sym ()
 enumTestFaithulAxioms = do
     tds <- view $ curMod . tyDefs
-    forM_ tds $ \td ->
+    forM_ tds $ \(_, td) ->
         case td of
           EnumDef m' -> do
               (_, m) <- liftCheck $ unbind m'
@@ -452,7 +452,7 @@ emitDHCombineDisjoint = do
     nE <- view $ curMod . nameEnv
     -- Get all DH names
     -- forall x y n1 n2, n1 <> n2 => dhcombine(x, n1) <> dhcombine(y, n2)
-    dhnames' <- forM (OM.assocs nE) $ \(x, nt) -> do
+    dhnames' <- forM nE  $ \(x, nt) -> do
         ((ps1, ps2), ntLclsOpt') <- unbind nt
         nt' <- case ntLclsOpt' of
             Nothing -> liftCheck $ typeError (ignore def) $ show $ ErrNameStillAbstract x

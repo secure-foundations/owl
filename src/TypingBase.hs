@@ -8,9 +8,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 module TypingBase where
 import AST
-import qualified Data.Map.Strict as M
 import Error.Diagnose
-import qualified Data.Map.Ordered as OM
 import qualified Data.Set as S
 import Data.Maybe
 import Data.IORef
@@ -28,6 +26,12 @@ import Unbound.Generics.LocallyNameless.Name
 import System.FilePath ((</>))
 import System.IO
 
+
+member :: Eq a => a -> [(a, b)] -> Bool
+member k xs = elem k $ map fst xs
+
+insert :: Eq a => a -> b -> [(a, b)] -> [(a, b)]
+insert k v xs = (k, v) : (filter (\p -> k /= (fst p)) xs)
 
 data Flags = Flags { 
     _fDebug :: Bool,
@@ -58,25 +62,27 @@ instance Pretty IdxType where
 data DefIsAbstract = DefAbstract | DefConcrete
     deriving Eq
 
+type Map a b = [(a, b)]
+
 data ModDef = ModDef { 
-    _localities :: M.Map String Int,
-    _defs :: M.Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
-    _tableEnv :: M.Map String (Ty, Locality),
+    _localities :: Map String Int,
+    _defs :: Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
+    _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
     _advCorrConstraints :: [(Label, Label)],
-    _inScopeIndices ::  M.Map IdxVar IdxType,
-    _randomOracle :: M.Map String (AExpr, NameType),
-    _tyDefs :: M.Map TyVar TyDef,
+    _inScopeIndices ::  Map IdxVar IdxType,
+    _randomOracle :: Map String (AExpr, NameType),
+    _tyDefs :: Map TyVar TyDef,
     _endpointContext :: S.Set EndpointVar,
-    _nameEnv :: OM.OMap String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
 }
 
 data Env = Env { 
     _envFlags :: Flags,
     _envIncludes :: S.Set String,
-    _detFuncs :: M.Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
-    _distrs :: M.Map String (Int, [(AExpr, Ty)] -> Check TyX),
-    _tyContext :: OM.OMap DataVar (Ignore String, Ty),
+    _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
+    _distrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX),
+    _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
     _curMod :: ModDef,
@@ -106,7 +112,7 @@ data TyDef =
 data TypeError =
     ErrWrongNameType NameExp String NameType
       | ErrBadArgs String [Ty] 
-      | ErrWrongCases String AExpr (M.Map String (Maybe Ty)) (M.Map String (Either Expr (Ignore String, Bind DataVar Expr)))
+      | ErrWrongCases String AExpr (Map String (Maybe Ty)) (Map String (Either Expr (Ignore String, Bind DataVar Expr)))
       | ErrUnknownName String
       | ErrUnknownRO String
       | ErrUnknownPRF NameExp String
@@ -134,7 +140,7 @@ instance Pretty (TypeError) where
     pretty (ErrDuplicateVarName s) = 
         pretty "Duplicate variable name: " <> pretty s
     pretty (ErrWrongCases s a expected actual) = 
-        pretty "Wrong cases for " <> pretty s <> pretty " with "  <> pretty a  <> pretty " expected " <> pretty (M.keys expected) <> pretty " but got " <> pretty (M.keys actual)
+        pretty "Wrong cases for " <> pretty s <> pretty " with "  <> pretty a  <> pretty " expected " <> pretty (map fst expected) <> pretty " but got " <> pretty (map fst actual)
     pretty (ErrAssertionFailed fn p) =
         pretty "Assertion failed: " <> pretty p <> pretty " from " <> pretty fn
     pretty (ErrUnknownName s) =  
@@ -223,8 +229,8 @@ joinLbl l1 l2 =
     mkSpanned $ LJoin l1 l2
 
 
-addVars :: [(DataVar, (Ignore String, Ty))] -> OM.OMap DataVar (Ignore String, Ty) -> OM.OMap DataVar (Ignore String, Ty)
-addVars xs g = g OM.|<> (OM.fromList xs)
+addVars :: [(DataVar, (Ignore String, Ty))] -> Map DataVar (Ignore String, Ty) -> Map DataVar (Ignore String, Ty)
+addVars xs g = g ++ xs 
     
 assert :: Ignore Position -> String -> Bool -> Check ()
 assert pos m b = if b then return () else typeError pos m 
@@ -236,7 +242,7 @@ withVars :: [(DataVar, (Ignore String, Ty))] -> Check a -> Check a
 withVars assocs k = do
     tyC <- view tyContext
     forM_ assocs $ \(x, _) -> 
-        assert (ignore def) (show $ ErrDuplicateVarName x) $ not $ OM.member x tyC
+        assert (ignore def) (show $ ErrDuplicateVarName x) $ not $ elem x $ map fst tyC
     local (over tyContext $ addVars assocs) k
 
 
@@ -244,7 +250,7 @@ inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = do
     m <- view $ curMod . inScopeIndices
     tc <- view tcScope
-    case M.lookup i m of
+    case lookup i m of
       Just t -> 
           case (tc, t) of
             (Def _, IdxGhost) ->  
@@ -283,7 +289,7 @@ getNameInfo ne = do
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
-         case OM.lookup n nE of
+         case lookup n nE of
            Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName n
            Just int -> do
                ((is, ps), ntLclsOpt) <- unbind int
@@ -295,7 +301,7 @@ getNameInfo ne = do
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
      ROName s -> do
         ro <- view $ curMod . randomOracle
-        case M.lookup s ro of
+        case lookup s ro of
           Just (_, nt) -> return $ Just (nt, Nothing)
           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO s
      PRFName n s -> do
@@ -335,7 +341,7 @@ getTyDef pos s =
     case s of
       PVar s -> do 
         tDs <- view $ curMod . tyDefs
-        case M.lookup s tDs of
+        case lookup s tDs of
           Just td -> return td
           Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
 
@@ -348,14 +354,14 @@ inferAExpr ae = do
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
-        case OM.lookup x tC of 
+        case lookup x tC of 
           Just (_, t) -> return t
           Nothing -> typeError (ae^.spanOf) $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
         fE <- view detFuncs
-        case M.lookup f fE of 
+        case lookup f fE of 
           Just (ar, k) -> do
               assert (ae^.spanOf) (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
               mkSpanned <$> k params (zip args ts)
@@ -484,15 +490,15 @@ coveringLabel' t =
               typeError (t^.spanOf) $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
-          l <- local (over (curMod . inScopeIndices) $ M.insert x IdxGhost) $ coveringLabel' t
+          l <- local (over (curMod . inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
 
-prettyTyContext :: OM.OMap DataVar (Ignore String, Ty) -> Doc ann
-prettyTyContext e = vsep $ map (\(_, (x, t)) -> pretty (unignore x) <> pretty ":" <+> pretty t) (OM.assocs e)
+prettyTyContext :: Map DataVar (Ignore String, Ty) -> Doc ann
+prettyTyContext e = vsep $ map (\(_, (x, t)) -> pretty (unignore x) <> pretty ":" <+> pretty t) e
 
-prettyIndices :: M.Map IdxVar IdxType -> Doc ann
-prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty ":" <+> pretty it) $ M.assocs m
+prettyIndices :: Map IdxVar IdxType -> Doc ann
+prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty ":" <+> pretty it) m
 
 prettyContext :: Env -> Doc ann
 prettyContext e =

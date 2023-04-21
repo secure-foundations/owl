@@ -207,15 +207,15 @@ symLbl l = do
 emitNameDefAssms :: Sym ()
 emitNameDefAssms = do
     nE <- view $ curMod . nameEnv
-    forM_ (OM.assocs nE) $ \(n, o) -> do 
+    forM_ nE $ \(n, o) -> do 
         ((is1, is2), _) <- liftCheck $ unbind o
         ivs1 <- forM [1..length is1] $ \_ -> freshSMTIndexName
         ivs2 <- forM [1..length is2] $ \_ -> freshSMTIndexName
         sIE <- use symIndexEnv
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs1)
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs2)
-        local (over (curMod . inScopeIndices) $ M.union $ M.fromList $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
-            local (over (curMod . inScopeIndices)  $ M.union $ M.fromList $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
+        local (over (curMod . inScopeIndices) $ (++) $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
+            local (over (curMod . inScopeIndices)  $ (++) $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
                 let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) n
                 liftCheck $ debug $ pretty "nameDefAssms for " <> pretty ne
                 ntOpt <- liftCheck $ getNameTypeOpt ne
@@ -225,7 +225,7 @@ emitNameDefAssms = do
                 emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
         symIndexEnv .= sIE
     ro <- view $ curMod . randomOracle
-    forM_ (M.assocs ro) $ \(s, (ae, nt)) -> do
+    forM_ ro $ \(s, (ae, nt)) -> do
         assm <- nameDefFlows (roName s) nt
         emitAssertion assm
 
