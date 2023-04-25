@@ -361,18 +361,18 @@ getUserFunc (PVar p) = do
     return $ lookup p fs
 
 
-getFuncInfo :: Ignore Position -> Path DetFuncProxy -> Check (Maybe (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
-getFuncInfo pos (PVar s) = do
+getFuncInfo :: Ignore Position -> Path DetFuncProxy -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+getFuncInfo pos f@(PVar s) = do
     fs <- view detFuncs
     case lookup s fs of
-      Just r -> return $ Just r
+      Just r -> return r
       Nothing -> do
            ufs <- view $ curMod . userFuncs
            case lookup s ufs of
              Just uf -> do
                  uf_interp <- view interpUserFuncs
-                 Just <$> uf_interp pos uf
-             Nothing -> return Nothing
+                 uf_interp pos uf
+             Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
@@ -386,14 +386,9 @@ inferAExpr ae = do
       (AEApp f params args) -> do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
-        fi <- getFuncInfo (ae^.spanOf) f
-        case fi of
-          Just (ar, k) -> do
-              assert (ae^.spanOf) (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
-              mkSpanned <$> k params (zip args ts)
-              -- If the det func is found in our environment, use k to infer the
-              -- return type.
-          Nothing -> typeError (ae^.spanOf) (show $ ErrUnknownFunc f)
+        (ar, k) <- getFuncInfo (ae^.spanOf) f
+        assert (ae^.spanOf) (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
+        mkSpanned <$> k params (zip args ts)
       (AEString s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
