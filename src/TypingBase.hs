@@ -63,12 +63,14 @@ data DefIsAbstract = DefAbstract | DefConcrete
 
 type Map a b = [(a, b)]
 
+type TyVar = String
+
 data UserFunc =
     StructConstructor TyVar 
       | StructProjector TyVar String  
       | EnumConstructor TyVar String
       | EnumTest TyVar String
-      | UninterpUserFunc (Name DetFuncProxy) Int
+      | UninterpUserFunc String Int
 
 data ModDef = ModDef { 
     _localities :: Map String Int,
@@ -79,7 +81,7 @@ data ModDef = ModDef {
     _inScopeIndices ::  Map IdxVar IdxType,
     _randomOracle :: Map String (AExpr, NameType),
     _tyDefs :: Map TyVar TyDef,
-    _userFuncs :: Map (Name DetFuncProxy) UserFunc,
+    _userFuncs :: Map String UserFunc,
     _endpointContext :: S.Set EndpointVar,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
 }
@@ -87,7 +89,7 @@ data ModDef = ModDef {
 data Env = Env { 
     _envFlags :: Flags,
     _envIncludes :: S.Set String,
-    _detFuncs :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
+    _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
     _distrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX),
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
@@ -127,7 +129,7 @@ data TypeError =
       | ErrAssertionFailed (Maybe String) Prop
       | ErrDuplicateVarName DataVar
       | ErrUnknownDistr String
-      | ErrUnknownFunc (Path DetFuncProxy)
+      | ErrUnknownFunc (Path)
       | ErrFlowCheck Label Label
       | ErrUnknownVar  DataVar
       | ErrUnknownType String
@@ -344,7 +346,7 @@ debug d = do
     b <- view $ envFlags . fDebug
     when b $ liftIO $ putStrLn $ show d
 
-getTyDef :: Ignore Position -> Path Ty -> Check TyDef
+getTyDef :: Ignore Position -> Path -> Check TyDef
 getTyDef pos s = 
     case s of
       PVar s -> do 
@@ -355,13 +357,13 @@ getTyDef pos s =
 
 -- AExpr's have unambiguous types, so can be inferred.
 
-getUserFunc :: Path DetFuncProxy -> Check (Maybe UserFunc)
+getUserFunc :: Path -> Check (Maybe UserFunc)
 getUserFunc (PVar p) = do
     fs <- view $ curMod . userFuncs
     return $ lookup p fs
 
 
-getFuncInfo :: Ignore Position -> Path DetFuncProxy -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+getFuncInfo :: Ignore Position -> Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 getFuncInfo pos f@(PVar s) = do
     fs <- view detFuncs
     case lookup s fs of

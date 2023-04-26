@@ -148,7 +148,7 @@ setupTyEnv = do
             varVals %= (M.insert x v)
             go xs
 
-setupUserFunc :: (Path DetFuncProxy, UserFunc) -> Sym ()
+setupUserFunc :: (Path, UserFunc) -> Sym ()
 setupUserFunc (s, f) =
     case f of
       StructConstructor tv -> do
@@ -173,7 +173,7 @@ setupUserFunc (s, f) =
       UninterpUserFunc f ar -> setupFunc (s, ar)
 
 
-setupFunc :: (Path DetFuncProxy, Int) -> Sym ()
+setupFunc :: (Path, Int) -> Sym ()
 setupFunc (s, ar) = do
     fs <- use funcInterps
     case M.lookup s fs of
@@ -182,7 +182,7 @@ setupFunc (s, ar) = do
           emit $ SApp [SAtom "declare-fun", SAtom (smtNameOfTyName s), SApp (replicate ar (bitstringSort)), bitstringSort]
           funcInterps %= (M.insert s (SAtom (smtNameOfTyName s), ar))
 
-getFunc :: Path DetFuncProxy -> Sym SExp
+getFunc :: Path -> Sym SExp
 getFunc s = do
     fs <- use funcInterps
     case M.lookup s fs of
@@ -235,7 +235,7 @@ setupAllFuncs = do
     return ()
 
 
-smtNameOfTyName :: Path a -> String
+smtNameOfTyName :: Path -> String
 smtNameOfTyName (PVar s) = show s
 
 tyConstraints :: Ty -> SExp -> Sym SExp
@@ -268,21 +268,21 @@ tyConstraints t v = do
           return $ (v `sEq` v') `sAnd2` ((sLength v) `sEq` lv)
       (TVK n) -> do
         nv <- symNameExp n
-        vk <- getFunc (PVar $ s2n "vk")
+        vk <- getFunc (PVar  "vk")
         return $ v `sEq` (SApp [vk, nv])
       (TDH_PK n) -> do
         nv <- symNameExp n
-        pk <- getFunc (PVar $ s2n "dhpk")
+        pk <- getFunc (PVar  "dhpk")
         return $ v `sEq` (SApp [pk, nv])
       (TSS n m) -> do
         nv <- symNameExp n
         mv <- symNameExp m
-        pk <- getFunc (PVar $ s2n "dhpk")
-        f <- getFunc (PVar $ s2n "dh_combine")
+        pk <- getFunc (PVar  "dhpk")
+        f <- getFunc (PVar  "dh_combine")
         return $ v `sEq` (SApp [f, SApp [pk, nv], mv])
       (TEnc_PK n) -> do
         nv <- symNameExp n
-        pk <- getFunc (PVar $ s2n "enc_pk") 
+        pk <- getFunc (PVar  "enc_pk") 
         return $ v `sEq` (SApp [pk, nv])
       TUnit -> do
           let b = unit
@@ -312,13 +312,13 @@ tyConstraints t v = do
                                           Just t -> t
                                           Nothing -> tUnit
                                        ) val
-                    fconstr <- getFunc $ PVar . s2n $ fst $ bdy !! i
-                    ftest <- getFunc $ PVar . s2n $ (fst $ bdy !! i) ++ "?"
+                    fconstr <- getFunc $ PVar $ fst $ bdy !! i
+                    ftest <- getFunc $ PVar $ (fst $ bdy !! i) ++ "?"
                     let vEq = case (snd $ bdy !! i) of
                           Just _ -> sEq v (SApp [fconstr, val])
                           Nothing -> sTrue
                     return $ sAnd [vEq, (sEq (SApp [ftest, v]) bTrue), c]
-                ftests <- mapM (\(n, _) -> getFunc $ PVar . s2n $ n ++ "?") bdy
+                ftests <- mapM (\(n, _) -> getFunc $ PVar $ n ++ "?") bdy
                 return $ (SApp $ [SAtom "or"] ++ cases) `sAnd2` (enumDisjConstraint ftests v)
       TCase tc t1 t2 -> do
           c1 <- tyConstraints t1 v
@@ -349,9 +349,9 @@ interpretAExp ae =
         vs <- mapM interpretAExp xs
         case f of
           -- Special cases
-          f | f == (PVar $ s2n "UNIT") -> return unit
-          f | f == (PVar $ s2n "true") -> return bTrue
-          f | f == (PVar $ s2n "false") -> return bFalse
+          f | f == (PVar  "UNIT") -> return unit
+          f | f == (PVar  "true") -> return bTrue
+          f | f == (PVar  "false") -> return bFalse
           _ -> do
               vf <- getFunc f
               return $ sApp vf vs
@@ -359,8 +359,8 @@ interpretAExp ae =
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "IntToBS", SAtom (show i)]
       AEGet ne -> symNameExp ne
-      AEGetEncPK ne -> interpretAExp $ aeApp (PVar $ s2n "enc_pk") [] [mkSpanned $ AEGet ne]
-      AEGetVK ne -> interpretAExp $ aeApp (PVar $ s2n "vk") [] [mkSpanned $ AEGet ne]
+      AEGetEncPK ne -> interpretAExp $ aeApp (PVar  "enc_pk") [] [mkSpanned $ AEGet ne]
+      AEGetVK ne -> interpretAExp $ aeApp (PVar  "vk") [] [mkSpanned $ AEGet ne]
       AEPackIdx i a -> interpretAExp a
 
 
@@ -417,13 +417,13 @@ emitFuncAxioms = do
     emitAssertion $ sDistinct [tt, t, f]
 
     -- eq(x,y) = true ==> x = y
-    eqf <- getFunc (PVar $ s2n "eq")
+    eqf <- getFunc (PVar  "eq")
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] ((sEq (SApp [eqf, SAtom "x", SAtom "y"]) t) `sImpl` (sEq (SAtom "x") (SAtom "y"))) [(SApp [eqf, SAtom "x", SAtom "y"])]
     -- eq(x,y) = false ==> x != y
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] ((sEq (SApp [eqf, SAtom "x", SAtom "y"]) f) `sImpl` (sNot $ sEq (SAtom "x") (SAtom "y"))) [(SApp [eqf, SAtom "x", SAtom "y"])]
 
     -- andb(x, y) = true ==> x = true /\ y = true
-    andbf <- getFunc (PVar $ s2n "andb")
+    andbf <- getFunc (PVar  "andb")
     emitAssertion $ sForall [(SAtom "x", bitstringSort), (SAtom "y", bitstringSort)] 
         ((sEq (SApp [andbf, SAtom "x", SAtom "y"]) t) `sImpl` (sAnd2 (sEq (SAtom "x") t) (sEq (SAtom "y") t))) 
         [(SApp [andbf, SAtom "x", SAtom "y"])]
@@ -451,8 +451,8 @@ enumTestFaithulAxioms = do
           EnumDef m' -> do
               (_, m) <- liftCheck $ unbind m'
               forM_ m $ \(x, ot) -> do
-                  fconstr <- getFunc $ PVar $ s2n x
-                  ftest <- getFunc $ PVar $ s2n $ x ++ "?"
+                  fconstr <- getFunc $ PVar  x
+                  ftest <- getFunc $ PVar  $ x ++ "?"
                   case ot of
                     Nothing -> 
                         emitAssertion $ sEq (SApp [ftest, fconstr]) bTrue

@@ -104,11 +104,11 @@ extractVKFromType t =
       TVK k -> Just k
       _ ->  Nothing
 
-mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (Name DetFuncProxy, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
-mkSimpleFunc s i k = (s2n s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
+mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (String, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
+mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
 
-withNormalizedTys :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
-    Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+withNormalizedTys :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
+    Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 withNormalizedTys mp =
     let f (x, y) = (x, \a b -> do
             b' <- mapM (\(a, t) -> do
@@ -118,7 +118,7 @@ withNormalizedTys mp =
             ) in
     map (\(k, v) -> (k, f v)) mp
 
-initDetFuncs :: Map (Name DetFuncProxy) (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "UNIT" 0 $ \args -> do
         return $ TUnit,
@@ -126,16 +126,16 @@ initDetFuncs = withNormalizedTys $ [
         return $ TBool zeroLbl,
     mkSimpleFunc "FALSE" 0 $ \args -> do
         return $ TBool zeroLbl,
-    (s2n "eq", (2, \ps args -> do 
+    ("eq", (2, \ps args -> do 
         assert (ignore def) ("Bad params") $ length ps == 0
         case args of
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
               l2 <- coveringLabel t2
-              let tr = aeApp (PVar $ s2n "TRUE") [] []
+              let tr = aeApp (PVar $ "TRUE") [] []
               return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
            )),
-    (s2n "Some", (1, \ps args -> do
+    ("Some", (1, \ps args -> do
         case (ps, args) of
           ([], [(x, t)]) -> do
               return $ TOption t
@@ -144,19 +144,19 @@ initDetFuncs = withNormalizedTys $ [
               l <- coveringLabel t1
               if b then return (TOption t) else return (TData l l) 
           _ -> typeError (ignore def) $ show $ ErrBadArgs "Some" (map snd args))),
-    (s2n "None", (0, \ps args -> do
+    ("None", (0, \ps args -> do
         case (ps, args) of
           ([ParamTy t], []) -> do
               return (TOption t)
           _ -> typeError (ignore def) $ show $ ErrBadArgs "None" (map snd args))),
-    (s2n "andb", (2, \ps args -> do
+    ("andb", (2, \ps args -> do
         assert (ignore def) ("Bad params") $ length ps == 0
         case args of
           [(x, t1), (y, t2)] -> do
             l1 <- coveringLabel t1
             l2 <- coveringLabel t2
             let l = joinLbl l1 l2
-            let tr = aeApp (PVar $ s2n "TRUE") [] []
+            let tr = aeApp (PVar $ "TRUE") [] []
             assertSubtype t1 (mkSpanned $ TBool l)
             assertSubtype t2 (mkSpanned $ TBool l)
             return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pAnd (pEq x tr) (pEq y tr)))
@@ -289,7 +289,7 @@ initDetFuncs = withNormalizedTys $ [
                     return $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
                 _ -> trivialTypeOf $ args
           _ -> trivialTypeOf $ args,
-    (s2n "mac_vrfy", (3, \ps args ->
+    ("mac_vrfy", (3, \ps args ->
         case (ps, args) of
           ([], [(xt1, t1), (m, mt), (xt, t)]) | Just k <- extractNameFromType t1 -> do
               nt <- local (set tcScope Ghost) $ getNameType k
@@ -309,17 +309,17 @@ initDetFuncs = withNormalizedTys $ [
               l <- coveringLabelOf $ map snd args
               return $ TOption $ tData l l
           _ -> typeError (ignore def) $ "params in mac_vrfy")),
-    (s2n "checknonce", (2, \ps args ->
+    ("checknonce", (2, \ps args ->
         case (ps, args) of
           ([], [(x, t1), (y, t2)]) ->
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
                   debug $ pretty "Checking name " <> pretty n <> pretty " against " <> pretty m
-                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])))
+                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])))
                   else case (n^.val, m^.val) of
                        (BaseName (is1, is1') a, BaseName (is2, is2') b) | a == b -> do
                            let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
-                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) p))
+                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) p))
                        _ -> do
                            l <- coveringLabelOf $ map snd args
                            return $ TBool l
@@ -328,21 +328,21 @@ initDetFuncs = withNormalizedTys $ [
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
                   nt <-  local (set tcScope Ghost) $ getNameType n
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ s2n "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 _ -> do
                   l <- coveringLabelOf $ map snd args
                   return $ TBool l
           _ -> typeError (ignore def) $ "Wrong parameters to checknonce"
     )),
-    (s2n "prf", (2, \ps args ->
+    ("prf", (2, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(_, t1), (a, _)]) -> do
               case (stripRefinements t1)^.val of
@@ -360,7 +360,7 @@ initDetFuncs = withNormalizedTys $ [
                         _ -> typeError (ignore def) $ show $ ErrWrongNameType n "prf" nt
                 _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)
           _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args))),
-    (s2n "H", (1, \ps args ->
+    ("H", (1, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(a, t)]) -> do
               ro <- view $ curMod . randomOracle
@@ -393,7 +393,7 @@ initDistrs = [
                     debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
                     b1 <- isSubtype t t'
                     if b1 then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ s2n "cipherlen") [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ "cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -408,7 +408,7 @@ initDistrs = [
                 NT_PKE t' -> do
                     b <- isSubtype t t'
                     if (b) then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ s2n "pk_cipherlen") [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ "pk_cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -469,7 +469,7 @@ interpUserFunc pos (EnumConstructor tv variant) = do
                     if b then return (TRefined (mkSpanned $ TConst (PVar tv) (ps))
                                                           (bind (s2n ".res") $
                                                               pEq (aeLength (aeVar ".res"))
-                                                                  (aeApp (PVar $ s2n "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
+                                                                  (aeApp (PVar $ "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
                     else trivialTypeOf (map snd args))
       _ -> typeError pos $ "Unknown enum: " ++ show tv 
 interpUserFunc pos (EnumTest tv variant) = do
@@ -600,7 +600,7 @@ isSubtype' t1 t2 =
       (TRefined t _, _) -> isSubtype' t t2
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (PVar $ s2n "UNIT") [] []))) t2
+        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (PVar $ "UNIT") [] []))) t2
       (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
       (TConst x ps1, TConst y ps2) | (x == y) -> do
           td <- getTyDef (t1^.spanOf) x
@@ -747,8 +747,8 @@ addNameDef n (is1, is2) (nt, nls) k = do
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
 sumOfLengths :: [AExpr] -> AExpr
-sumOfLengths [] = aeApp (PVar $ s2n "zero") [] []
-sumOfLengths (x:xs) = aeApp (PVar $ s2n "plus") [] [aeLength x, sumOfLengths xs]
+sumOfLengths [] = aeApp (PVar $ "zero") [] []
+sumOfLengths (x:xs) = aeApp (PVar $ "plus") [] [aeLength x, sumOfLengths xs]
 
 checkDecl :: Decl -> Check () -> Check ()
 checkDecl dcl k =
@@ -814,36 +814,36 @@ checkDecl dcl k =
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
           tvars <- view $ curMod . tyDefs
-          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member (s2n n) tvars
-          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member (s2n n) dfs
+          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n tvars
+          assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n dfs
           assert (dcl^.spanOf) (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
           local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
               forM_ xs $ \(x, t) -> do
                   checkTy t
-                  assert (dcl^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member (s2n x) dfs
-          let projs = map (\(x, t) ->  (s2n x, StructProjector (s2n n) x)) xs 
-          local (over (curMod . userFuncs) $ insert (s2n n) (StructConstructor (s2n n))) $ 
+                  assert (dcl^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
+          let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
+          local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
-                  addTyDef (s2n n) (StructDef ixs) $ 
+                  addTyDef n (StructDef ixs) $ 
                       k
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
         local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
             mapM_ checkTy $ catMaybes $ map snd bdy
         assert (dcl^.spanOf) (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
-        let constrs = map (\(x, ot) -> (s2n x, EnumConstructor (s2n n) x)) bdy 
-        let tests = map (\(x, ot) -> (s2n (x ++ "?"), EnumTest (s2n n) x)) bdy
+        let constrs = map (\(x, ot) -> (x, EnumConstructor n x)) bdy 
+        let tests = map (\(x, ot) -> (x ++ "?", EnumTest n x)) bdy
         local (over (curMod . userFuncs) $ mappend (constrs ++ tests)) $ 
-            addTyDef (s2n n) (EnumDef b) $
+            addTyDef n (EnumDef b) $
                 k
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
           Just t -> do
             checkTy t
-            addTyDef (s2n s) (TyAbbrev t) k
+            addTyDef s (TyAbbrev t) k
           Nothing ->
-            local (over (curMod . tyDefs) $ insert (s2n s) (TyAbstract)) $
+            local (over (curMod . tyDefs) $ insert s (TyAbstract)) $
                     k
       (DeclTable n t loc) -> do
           tbls <- view $ curMod . tableEnv
@@ -854,8 +854,8 @@ checkDecl dcl k =
           local (over (curMod . tableEnv) $ insert n (t, loc)) k
       (DeclDetFunc f opts ar) -> do
         dfs <- view detFuncs
-        assert (dcl^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member (s2n f) dfs
-        local (over (curMod . userFuncs) $ insert (s2n f) (UninterpUserFunc (s2n f) ar)) $ 
+        assert (dcl^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
+        local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             k
       (DeclLocality n i) -> local (over (curMod . localities) $ insert n i) k
       (DeclRandOrcl s ps (ae, nt)) -> do
@@ -1587,7 +1587,7 @@ checkExpr ot e = do
 unsolvability :: AExpr -> Check Prop
 unsolvability ae = local (set tcScope Ghost) $ do
     case ae^.val of
-      AEApp f [] [x, y] | f == (PVar $ s2n "dh_combine")-> do
+      AEApp f [] [x, y] | f == (PVar $ "dh_combine")-> do
           t1 <- inferAExpr x
           t2 <- inferAExpr y
           case (t1^.val, t2^.val) of

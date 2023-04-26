@@ -100,7 +100,7 @@ data SolverEnv = SolverEnv {
     _symLabelVarEnv :: M.Map TyVar SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
-    _funcInterps :: M.Map (Path DetFuncProxy) (SExp, Int),
+    _funcInterps :: M.Map (Path) (SExp, Int),
     _smtLog :: [SExp],
     _trivialVC :: Bool,
     _freshSMTCtr :: Int

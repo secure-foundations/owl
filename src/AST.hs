@@ -53,17 +53,13 @@ mkSpannedWith s x = Spanned (ignore s) x
 
 type DataVar = Name AExpr
 type IdxVar = Name Idx
-type TyVar = Name Ty
 
-data Path a = 
-    PVar (Name a)
+data Path = 
+    PVar String
     deriving (Generic, Typeable, Eq, Ord)
 
-instance Show (Path a) where
+instance Show (Path) where
     show (PVar s) = show s
-
-data DetFuncProxy
-    deriving (Show, Generic, Typeable)
 
 data Idx = IVar (Ignore Position) IdxVar
     deriving (Show, Generic, Typeable)
@@ -82,7 +78,7 @@ type EndpointVar = Name Endpoint
 
 data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
-    | AEApp (Path DetFuncProxy) [FuncParam] [AExpr]
+    | AEApp (Path) [FuncParam] [AExpr]
     | AEString String
     | AEGet NameExp
     | AEGetEncPK NameExp
@@ -127,7 +123,7 @@ data LabelX =
     deriving (Show, Generic, Typeable)
 
 data LblConst = 
-    TyLabelVar (Path Ty)
+    TyLabelVar (Path)
     deriving (Show, Generic, Typeable)
 
 
@@ -207,7 +203,7 @@ data TyX =
     | TRefined Ty (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TConst (Path Ty) [FuncParam]
+    | TConst (Path) [FuncParam]
     | TBool Label
     | TUnion Ty Ty
     | TUnit
@@ -283,21 +279,21 @@ aeVar s = mkSpanned (AEVar (ignore s) (s2n s))
 aeVar' :: DataVar -> AExpr
 aeVar' v = mkSpanned $ AEVar (ignore $ show v) v
 
-aeApp :: Path DetFuncProxy -> [FuncParam] -> [AExpr] -> AExpr
+aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
 builtinFunc :: String -> [AExpr] -> AExpr
-builtinFunc s xs = aeApp (PVar $ s2n s) [] xs
+builtinFunc s xs = aeApp (PVar $ s) [] xs
 
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp (PVar $ s2n "length") [] [x]
+aeLength x = aeApp (PVar $ "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp (PVar $ s2n "true") [] [])
+aeTrue = mkSpanned (AEApp (PVar $ "true") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)
@@ -360,10 +356,6 @@ instance Subst AExpr Idx
 
 instance Subst AExpr Endpoint
 
-instance Alpha DetFuncProxy
-instance Subst Idx DetFuncProxy
-instance Subst AExpr DetFuncProxy
-
 instance Alpha AExprX
 instance Subst Idx AExprX
 instance Subst AExpr AExprX where
@@ -390,9 +382,9 @@ instance Alpha LblConst
 instance Subst Idx LblConst
 instance Subst AExpr LblConst
 
-instance (Typeable a, Alpha a) => Alpha (Path a)
-instance Subst Idx a => Subst Idx (Path a)
-instance Subst AExpr a => Subst AExpr (Path a)
+instance Alpha Path
+instance Subst Idx Path
+instance Subst AExpr Path
 
 instance Alpha TyX
 instance Subst Idx TyX
@@ -450,7 +442,7 @@ instance Pretty LabelX where
         let (b, l') = prettyBind l in
         pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
 
-instance Pretty (Path a) where
+instance Pretty (Path) where
     pretty (PVar s) = pretty s
 
 instance Pretty TyX where
