@@ -379,7 +379,7 @@ parsePropTerm =
         (parseSpanned $ do
             reserved "happened"
             symbol "("
-            s <- identifier
+            s <- parsePath
             inds <- parseIdxParams
             symbol "("
             xs <- (parseAExpr `sepBy` (symbol ","))
@@ -460,7 +460,7 @@ parseNameType =
 
 parseLocality :: Parser Locality
 parseLocality = do
-    x <- identifier
+    x <- parsePath
     ys <- optionMaybe $ do
         symbol "<"
         is <- (parseIdx `sepBy` (symbol ","))
@@ -746,7 +746,7 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "call"
-        x <- identifier
+        x <- parsePath
         inds <- parseIdxParams
         symbol "("
         args <- parseArgs

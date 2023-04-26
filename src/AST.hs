@@ -55,6 +55,7 @@ mkSpannedWith s x = Spanned (ignore s) x
 type DataVar = Name AExpr
 type IdxVar = Name Idx
 
+-- Paths are used for localities, defs, names, and types
 data Path = 
     PPathVar (Name Path)
       | PEmpty 
@@ -109,7 +110,7 @@ data NameExpX =
 
 type NameExp = Spanned NameExpX
 
-data Locality = Locality String [Idx]
+data Locality = Locality Path [Idx]
     deriving (Show, Generic, Typeable)
 
 
@@ -158,7 +159,7 @@ data PropX =
     | PEqIdx Idx Idx
     | PImpl Prop Prop
     | PFlow Label Label 
-    | PHappened String ([Idx], [Idx]) [AExpr]
+    | PHappened Path ([Idx], [Idx]) [AExpr]
     deriving (Show, Generic, Typeable)
 
 
@@ -188,7 +189,7 @@ pNot p = mkSpanned $ PNot p
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2
 
-pHappened :: String -> ([Idx], [Idx]) -> [AExpr] -> Prop
+pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
 
@@ -317,7 +318,7 @@ data ExprX =
     | EAssert Prop
     | EAssume Prop
     | EAdmit
-    | ECall String ([Idx], [Idx]) [AExpr]
+    | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | ECorrCase NameExp Expr
     | EFalseElim Expr

@@ -395,7 +395,7 @@ interpretProp p =
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1
           ivs' <- mapM symIndex id2
-          return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ s ++ "\""), mkIdxList (ivs ++ ivs'), mkBSList vs]
+          return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ smtName s ++ "\""), mkIdxList (ivs ++ ivs'), mkBSList vs]
       (PFlow l1 l2 ) -> do
         x <- symLbl l1
         y <- symLbl l2

@@ -780,7 +780,7 @@ checkDecl dcl k =
                   withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
                       checkProp preReq
                       checkTy tyAnn
-                      let happenedProp = pHappened n (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
+                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
                       x <- freshVar
                       case bdy of
                         Nothing -> return $ DefAbstract
@@ -1312,15 +1312,17 @@ stripTy x t =
 
 
 checkLocality :: Locality -> Check ()
-checkLocality (Locality n xs) = do
+checkLocality (Locality p xs) = do
     lcs <- view $ curMod . localities
-    case lookup n lcs of
-      Nothing -> typeError (ignore def) $ show $ pretty "Unknown locality: " <> pretty n
-      Just ar -> do
-          assert (ignore def) (show $ pretty "Wrong arity for locality " <> pretty n) $ ar == length xs
-          forM_ xs $ \i -> do
-              it <- inferIdx i
-              assert (ignore def) (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
+    case p of
+      PDot PEmpty n -> 
+        case lookup n lcs of
+          Nothing -> typeError (ignore def) $ show $ pretty "Unknown locality: " <> pretty n
+          Just ar -> do
+              assert (ignore def) (show $ pretty "Wrong arity for locality " <> pretty n) $ ar == length xs
+              forM_ xs $ \i -> do
+                  it <- inferIdx i
+                  assert (ignore def) (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
 
 
 checkEndpoint :: Endpoint -> Check ()
@@ -1338,6 +1340,14 @@ getOutTy ot t1 =
           assertSubtype t1 t2
           return t2
 
+getDef :: Ignore Position -> Path -> Check (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef)
+getDef pos p = 
+    case p of
+      PDot PEmpty s -> do
+          ds <- view $ curMod . defs
+          case lookup s ds of
+            Nothing -> typeError pos $ show $ pretty "Unknown def: " <> pretty p
+            Just res -> return res
 
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
@@ -1474,30 +1484,27 @@ checkExpr ot e = do
                       getOutTy ot $ tUnit
 
       (ECall f (is1, is2) args) -> do
-          ds <- view $ curMod . defs
+          (_, bfdef) <- getDef (e^.spanOf) f
           ts <- view tcScope
-          case lookup f ds of
-            Nothing -> typeError (e^.spanOf) $ show $  pretty "Unknown definition: " <> pretty f
-            Just (_, bfdef) -> do
-                ((bi1, bi2), fd) <- unbind bfdef
-                assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is1 == length bi1
-                assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is2 == length bi2
-                forM_ is1 checkIdxSession
-                forM_ is2 checkIdxPId
-                let (FuncDef fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) fd
-                case ts of
-                  Def curr_locality -> do
-                      assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl `aeq` curr_locality
-                      (xts, (pr, rt)) <- unbind o
-                      assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
-                      argTys <- mapM inferAExpr args
-                      forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
-                      let (prereq, retTy) = substs (zip (map fst xts) args) (pr, rt)
-                      (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert prereq
-                      assert (e^.spanOf) ("Precondition failed: " ++ show (pretty prereq) ++ show (pretty fn)) b
-                      let happenedProp = pHappened f (is1, is2) args
-                      getOutTy ot $ (tRefined retTy (bind (s2n ".res") happenedProp))
-                  _ -> typeError (ignore def ) $ "Unreachable"
+          ((bi1, bi2), fd) <- unbind bfdef
+          assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is1 == length bi1
+          assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is2 == length bi2
+          forM_ is1 checkIdxSession
+          forM_ is2 checkIdxPId
+          let (FuncDef fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) fd
+          case ts of
+            Def curr_locality -> do
+                assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl `aeq` curr_locality
+                (xts, (pr, rt)) <- unbind o
+                assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
+                argTys <- mapM inferAExpr args
+                forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
+                let (prereq, retTy) = substs (zip (map fst xts) args) (pr, rt)
+                (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert prereq
+                assert (e^.spanOf) ("Precondition failed: " ++ show (pretty prereq) ++ show (pretty fn)) b
+                let happenedProp = pHappened f (is1, is2) args
+                getOutTy ot $ (tRefined retTy (bind (s2n ".res") happenedProp))
+            _ -> typeError (ignore def ) $ "Unreachable"
       (EIf a e1 e2) -> do
           debug $ pretty "Checking if at" <+> pretty (unignore $ e^.spanOf)
           t <- inferAExpr a

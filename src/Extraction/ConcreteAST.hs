@@ -92,7 +92,7 @@ data CExpr =
     | CSamp DistrName [AExpr]
     | CIf AExpr CExpr CExpr
     | CRet AExpr
-    | CCall String ([Idx], [Idx]) [AExpr]
+    | CCall Path ([Idx], [Idx]) [AExpr]
     | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
     | CTLookup String AExpr
     | CTWrite String AExpr AExpr
