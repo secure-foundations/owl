@@ -137,7 +137,8 @@ rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
 rustifyPath :: Path -> String
-rustifyPath (PVar s) = show s
+rustifyPath (PDot PEmpty s) = show s
+rustifyPath p = error $ "bad path: " ++ show p
 
 locName :: String -> String
 locName x = "loc_" ++ replacePrimes x
@@ -369,25 +370,25 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp f _ [inner] | f == (PVar $ "cipherlen") -> do
+            AEApp f _ [inner] | f == (PDot PEmpty $ "cipherlen") -> do
                 tagSz <- useAeadTagSize
                 li <- helper inner
                 case li of
                     (LBytes ni) -> return $ LBytes (ni + tagSz)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PVar $ "plus") -> do
+            AEApp f _ [a, b] | f == (PDot PEmpty $ "plus") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PVar $ "mult") -> do
+            AEApp f _ [a, b] | f == (PDot PEmpty $ "mult") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ _ | f == (PVar $ "zero") -> return $ LBytes 0
+            AEApp f _ _ | f == (PDot PEmpty $ "zero") -> return $ LBytes 0
             AEApp fn _ [] -> do
                 lookupTyLayout . rustifyName . rustifyPath $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
@@ -396,8 +397,8 @@ layoutCTy (CTDataWithLength aexp) =
 layoutCTy (CTOption ct) = do
     lct <- layoutCTy ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
-layoutCTy (CTConst (PVar s)) = do
-    lookupTyLayout . rustifyName $ show s
+layoutCTy (CTConst p) = do
+    lookupTyLayout . rustifyName . rustifyPath $ p
 layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
 layoutCTy CTUnit = return $ LBytes 1
 layoutCTy (CTName n) = do
@@ -762,7 +763,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
-                    if owlFn == (PVar $ "H") then
+                    if owlFn == (PDot PEmpty $ "H") then
                         -- special case for the random oracle function
                         let unspanned = map (view val) owlArgs in
                         case (fparams, unspanned) of
@@ -775,7 +776,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn == (PVar $ "dhpk") then
+                        if owlFn == (PDot PEmpty $ "dhpk") then
                             let unspanned = map (view val) owlArgs in
                             case unspanned of
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
@@ -968,7 +969,7 @@ rustifyArgTy :: CTy -> ExtractionMonad RustTy
 rustifyArgTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyArgTy (CTConst (PVar n)) = do
+rustifyArgTy (CTConst (PDot PEmpty n)) = do
     l <- lookupTyLayout . rustifyName $ show n
     return $ case l of
         LBytes _ -> VecU8

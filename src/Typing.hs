@@ -132,7 +132,7 @@ initDetFuncs = withNormalizedTys $ [
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
               l2 <- coveringLabel t2
-              let tr = aeApp (PVar $ "TRUE") [] []
+              let tr = aeApp (topLevelPath $ "TRUE") [] []
               return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
            )),
     ("Some", (1, \ps args -> do
@@ -156,7 +156,7 @@ initDetFuncs = withNormalizedTys $ [
             l1 <- coveringLabel t1
             l2 <- coveringLabel t2
             let l = joinLbl l1 l2
-            let tr = aeApp (PVar $ "TRUE") [] []
+            let tr = aeApp (topLevelPath $ "TRUE") [] []
             assertSubtype t1 (mkSpanned $ TBool l)
             assertSubtype t2 (mkSpanned $ TBool l)
             return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pAnd (pEq x tr) (pEq y tr)))
@@ -315,11 +315,11 @@ initDetFuncs = withNormalizedTys $ [
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
                   debug $ pretty "Checking name " <> pretty n <> pretty " against " <> pretty m
-                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])))
+                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])))
                   else case (n^.val, m^.val) of
                        (BaseName (is1, is1') a, BaseName (is2, is2') b) | a == b -> do
                            let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
-                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) p))
+                           return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) p))
                        _ -> do
                            l <- coveringLabelOf $ map snd args
                            return $ TBool l
@@ -328,14 +328,14 @@ initDetFuncs = withNormalizedTys $ [
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
                   nt <-  local (set tcScope Ghost) $ getNameType n
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
-                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (PVar $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
+                        return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 _ -> do
                   l <- coveringLabelOf $ map snd args
@@ -393,7 +393,7 @@ initDistrs = [
                     debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
                     b1 <- isSubtype t t'
                     if b1 then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ "cipherlen") [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -408,7 +408,7 @@ initDistrs = [
                 NT_PKE t' -> do
                     b <- isSubtype t t'
                     if (b) then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (PVar $ "pk_cipherlen") [] [aeLength x])
+                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
                     else
                         trivialTypeOf $ map snd args
                 _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -430,7 +430,7 @@ interpUserFunc pos (StructConstructor tv) = do
                 b <- foldM (\acc i -> do
                     b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
                     return $ acc && b1) True [0..(length xs - 1)]
-                if b then return (TRefined (mkSpanned $ TConst (PVar $ tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
+                if b then return (TRefined (mkSpanned $ TConst (topLevelPath $ tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
               else trivialTypeOf (map snd xs))
       _ -> typeError pos $ "Unknown struct: " ++ show tv
 interpUserFunc pos (StructProjector tv field) = do
@@ -444,7 +444,7 @@ interpUserFunc pos (StructProjector tv field) = do
               assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               case lookup field nts of
                 Just t -> do
-                  b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PVar tv) ps)
+                  b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (topLevelPath tv) ps)
                   if b then return (t^.val) else trivialTypeOf $ map snd args
                 Nothing -> typeError pos $ "Unknown struct field: " ++ field)
       _ -> typeError pos $ "Unknown struct: " ++ show tv
@@ -463,13 +463,13 @@ interpUserFunc pos (EnumConstructor tv variant) = do
               assert pos (show $ pretty "Index arity mismatch on enum constructor") $ length ps == is_ar 
               let ot = fromJust $ lookup variant nts
               case ot of
-                Nothing -> return $ TRefined (mkSpanned $ TConst (PVar tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
+                Nothing -> return $ TRefined (mkSpanned $ TConst (topLevelPath tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
                 Just t -> do
                     b <- isSubtype (snd $ args !! 0) t
-                    if b then return (TRefined (mkSpanned $ TConst (PVar tv) (ps))
+                    if b then return (TRefined (mkSpanned $ TConst (topLevelPath tv) (ps))
                                                           (bind (s2n ".res") $
                                                               pEq (aeLength (aeVar ".res"))
-                                                                  (aeApp (PVar $ "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
+                                                                  (aeApp (topLevelPath $ "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
                     else trivialTypeOf (map snd args))
       _ -> typeError pos $ "Unknown enum: " ++ show tv 
 interpUserFunc pos (EnumTest tv variant) = do
@@ -477,14 +477,14 @@ interpUserFunc pos (EnumTest tv variant) = do
         case args of
           [t] -> 
               case (stripRefinements t)^.val of
-                TConst s _ | s == (PVar tv) -> return $ TBool advLbl
+                TConst s _ | s == (topLevelPath tv) -> return $ TBool advLbl
                 _ -> do
                     l <- coveringLabel t
                     return $ TBool l
 interpUserFunc pos (UninterpUserFunc f ar) = do
     return $ (ar, withNoParams (show f) $ \args -> do
         l <- coveringLabelOf $ map snd args
-        return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PVar f) [] (map fst args))))
+        return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath f) [] (map fst args))))
 
 
 
@@ -600,7 +600,7 @@ isSubtype' t1 t2 =
       (TRefined t _, _) -> isSubtype' t t2
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (PVar $ "UNIT") [] []))) t2
+        isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (topLevelPath $ "UNIT") [] []))) t2
       (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
       (TConst x ps1, TConst y ps2) | (x == y) -> do
           td <- getTyDef (t1^.spanOf) x
@@ -722,7 +722,7 @@ addTyDef s td k = do
                 return $ foldr joinLbl zeroLbl ls
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError (ignore def) $ show $ pretty "Overlapping abstract types: " <> pretty s
-          len_lbl' <- tyLenLbl $ mkSpanned $ TConst (PVar s) []
+          len_lbl' <- tyLenLbl $ mkSpanned $ TConst (topLevelPath s) []
           local (over (curMod . flowAxioms) $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
               local (over (curMod . tyDefs) $ insert s td) $
                   k
@@ -747,8 +747,8 @@ addNameDef n (is1, is2) (nt, nls) k = do
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
 sumOfLengths :: [AExpr] -> AExpr
-sumOfLengths [] = aeApp (PVar $ "zero") [] []
-sumOfLengths (x:xs) = aeApp (PVar $ "plus") [] [aeLength x, sumOfLengths xs]
+sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
+sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
 
 checkDecl :: Decl -> Check () -> Check ()
 checkDecl dcl k =
@@ -1105,8 +1105,8 @@ checkLabel l =
           (LJoin l1 l2) -> do
               checkLabel l1
               checkLabel l2
-          (LConst (TyLabelVar (PVar s))) -> do
-              _ <- getTyDef (l^.spanOf) (PVar s)
+          (LConst (TyLabelVar p))  -> do
+              _ <- getTyDef (l^.spanOf) p
               return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
@@ -1587,7 +1587,7 @@ checkExpr ot e = do
 unsolvability :: AExpr -> Check Prop
 unsolvability ae = local (set tcScope Ghost) $ do
     case ae^.val of
-      AEApp f [] [x, y] | f == (PVar $ "dh_combine")-> do
+      AEApp f [] [x, y] | f == (topLevelPath $ "dh_combine")-> do
           t1 <- inferAExpr x
           t2 <- inferAExpr y
           case (t1^.val, t2^.val) of

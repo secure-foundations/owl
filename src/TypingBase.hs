@@ -63,7 +63,6 @@ data DefIsAbstract = DefAbstract | DefConcrete
 
 type Map a b = [(a, b)]
 
-type TyVar = String
 
 data UserFunc =
     StructConstructor TyVar 
@@ -349,7 +348,7 @@ debug d = do
 getTyDef :: Ignore Position -> Path -> Check TyDef
 getTyDef pos s = 
     case s of
-      PVar s -> do 
+      PDot PEmpty s -> do 
         tDs <- view $ curMod . tyDefs
         case lookup s tDs of
           Just td -> return td
@@ -358,13 +357,13 @@ getTyDef pos s =
 -- AExpr's have unambiguous types, so can be inferred.
 
 getUserFunc :: Path -> Check (Maybe UserFunc)
-getUserFunc (PVar p) = do
+getUserFunc (PDot PEmpty p) = do
     fs <- view $ curMod . userFuncs
     return $ lookup p fs
 
 
 getFuncInfo :: Ignore Position -> Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
-getFuncInfo pos f@(PVar s) = do
+getFuncInfo pos f@(PDot PEmpty s) = do
     fs <- view detFuncs
     case lookup s fs of
       Just r -> return r

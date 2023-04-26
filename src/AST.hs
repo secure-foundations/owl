@@ -32,6 +32,7 @@ type DistrName = String -- For probabilistic functions eg senc
 type DefName = String -- For process definitions eg alice(..)
 type ConstrName = String
 type TableName = String
+type TyVar = String
 
 data Spanned a = Spanned { 
     _spanOf :: Ignore Position,
@@ -55,11 +56,19 @@ type DataVar = Name AExpr
 type IdxVar = Name Idx
 
 data Path = 
-    PVar String
+    PPathVar (Name Path)
+      | PEmpty 
+      | PDot Path String
     deriving (Generic, Typeable, Eq, Ord)
 
+topLevelPath :: String -> Path
+topLevelPath s = PDot PEmpty s
+
 instance Show (Path) where
-    show (PVar s) = show s
+    show PEmpty = ""
+    show (PPathVar s) = show s
+    show (PDot x y) = show x ++ "." ++ show y
+
 
 data Idx = IVar (Ignore Position) IdxVar
     deriving (Show, Generic, Typeable)
@@ -283,17 +292,17 @@ aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
 builtinFunc :: String -> [AExpr] -> AExpr
-builtinFunc s xs = aeApp (PVar $ s) [] xs
+builtinFunc s xs = aeApp (PDot PEmpty s) [] xs
 
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp (PVar $ "length") [] [x]
+aeLength x = aeApp (PDot PEmpty "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp (PVar $ "true") [] [])
+aeTrue = mkSpanned (AEApp (topLevelPath "true") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)
@@ -443,7 +452,7 @@ instance Pretty LabelX where
         pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
 
 instance Pretty (Path) where
-    pretty (PVar s) = pretty s
+    pretty x = pretty $ show x
 
 instance Pretty TyX where
     pretty TUnit =
