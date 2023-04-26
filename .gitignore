@@ -3,3 +3,4 @@ dist-newstyle/
 temp.rs
 hie.yaml
 stack.yaml.lock
+.vscode/
