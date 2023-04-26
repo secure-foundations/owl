@@ -182,17 +182,17 @@ instance Pretty CExpr where
     pretty CSkip = pretty "skip"
     pretty (CInput xsk) = 
         let (x, sk) = prettyBind xsk in
-        pretty "input" <+> x <> comma <+> sk
-    pretty (COutput a l) = pretty "output " <> pretty a <+> (case l of
+        parens (pretty "input" <+> x) <+> pretty "in" <> line <> sk
+    pretty (COutput a l) =  pretty "output " <> parens (pretty a <+> (case l of
        Nothing -> pretty ""
-       Just s -> pretty "to" <+> pretty s)
+       Just s -> pretty "," <+> pretty s))
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
-        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
-    pretty (CSamp d xs) = pretty "samp" <+> pretty d <> tupled (map pretty xs)
+        pretty "let" <+> x <+> pretty "=" <+> parens (pretty e) <+> pretty "in" <> line <> k
+    pretty (CSamp d xs) = pretty "sample" <> parens (pretty d <> tupled (map pretty xs))
     pretty (CIf a e1 e2) =
         pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (CRet a) = pretty "ret " <> pretty a
+    pretty (CRet a) = pretty "ret " <> parens (pretty a)
     pretty (CCall f is as) = 
         let inds = case is of
                      ([], []) -> mempty
@@ -203,10 +203,10 @@ instance Pretty CExpr where
         let pcases =
                 map (\(c, o) ->
                     case o of
-                      Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
-                      Right xe -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
+                      Left e -> pretty c <+> pretty "=>" <+> braces (pretty e)
+                      Right xe -> let (x, e) = prettyBind xe in pretty c <+> x <+> pretty "=>" <+> braces e
                     ) xs in
-        pretty "case" <+> pretty a <> line <> vsep pcases
+        pretty "case" <+> parens (pretty a) <> line <> braces (vsep pcases)
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
 
