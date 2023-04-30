@@ -57,18 +57,27 @@ type IdxVar = Name Idx
 
 -- Paths are used for localities, defs, names, and types
 data Path = 
-    PPathVar (Name Path)
-      | PEmpty 
-      | PDot Path String
+    PUnresolved String
+      | PRes ResolvedPath
+    deriving (Generic, Typeable, Eq, Ord)
+
+data ResolvedPath =
+      PTop
+      | PPathVar (Name ResolvedPath)
+      | PDot ResolvedPath String
     deriving (Generic, Typeable, Eq, Ord)
 
 topLevelPath :: String -> Path
-topLevelPath s = PDot PEmpty s
+topLevelPath s = PRes $ PDot PTop s
 
 instance Show (Path) where
-    show PEmpty = ""
+    show (PUnresolved s) = "?" ++ s
+    show (PRes p) = show p
+
+instance Show ResolvedPath where
+    show PTop = "Top"
     show (PPathVar s) = show s
-    show (PDot x y) = show x ++ "." ++ show y
+    show (PDot x y) = show x ++ "." ++ y
 
 
 data Idx = IVar (Ignore Position) IdxVar
@@ -102,7 +111,7 @@ type AExpr = Spanned AExprX
 
 
 data NameExpX = 
-    BaseName ([Idx], [Idx]) String
+    BaseName ([Idx], [Idx]) Path
     | ROName String
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
@@ -272,14 +281,17 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String [String] (AExpr, NameType)
+    | DeclRandOrcl String (AExpr, NameType)
     | DeclCorr Label Label 
     | DeclLocality String Int
+    | DeclModule String (Bind (Name ResolvedPath) [Decl])
+    deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
 
 data DetFuncOps =
     UninterpFunc
+    deriving (Show, Generic, Typeable)
 
 
 
@@ -293,10 +305,10 @@ aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
 builtinFunc :: String -> [AExpr] -> AExpr
-builtinFunc s xs = aeApp (PDot PEmpty s) [] xs
+builtinFunc s xs = aeApp (PUnresolved s) [] xs
 
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp (PDot PEmpty "length") [] [x]
+aeLength x = aeApp (PUnresolved "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
@@ -322,8 +334,8 @@ data ExprX =
     | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | ECorrCase NameExp Expr
     | EFalseElim Expr
-    | ETLookup TableName AExpr
-    | ETWrite TableName AExpr AExpr
+    | ETLookup Path AExpr
+    | ETWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)
 
 type Expr = Spanned ExprX
@@ -363,11 +375,18 @@ instance Alpha Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ v) = Just (SubstName v)
 instance Subst AExpr Idx
+instance Subst ResolvedPath Idx
 
 instance Subst AExpr Endpoint
+instance Subst ResolvedPath Endpoint
+
+
+instance Alpha DeclX
+instance Subst ResolvedPath DeclX
 
 instance Alpha AExprX
 instance Subst Idx AExprX
+instance Subst ResolvedPath AExprX
 instance Subst AExpr AExprX where
     isCoerceVar (AEVar _ v) = Just (SubstCoerce v (\x -> Just (_val x)))
     isCoerceVar _ = Nothing
@@ -375,45 +394,66 @@ instance Subst AExpr AExprX where
 instance Alpha NameExpX
 instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
+instance Subst ResolvedPath NameExpX
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
+instance Subst ResolvedPath NameTypeX
 
 instance Alpha FuncParam
 instance Subst Idx FuncParam
 instance Subst AExpr FuncParam
+instance Subst ResolvedPath FuncParam
 
 instance Alpha LabelX
 instance Subst Idx LabelX
 instance Subst AExpr LabelX
+instance Subst ResolvedPath LabelX
 
 instance Alpha LblConst
 instance Subst Idx LblConst
 instance Subst AExpr LblConst
+instance Subst ResolvedPath LblConst
+
+instance Alpha DetFuncOps
+instance Subst ResolvedPath DetFuncOps
 
 instance Alpha Path
 instance Subst Idx Path
 instance Subst AExpr Path
+instance Subst ResolvedPath Path where
+
+instance Alpha ResolvedPath
+instance Subst ResolvedPath ResolvedPath where
+    isvar (PPathVar v) = Just (SubstName v)
+    isvar _ = Nothing
+instance Subst AExpr ResolvedPath
+instance Subst Idx ResolvedPath
 
 instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
+instance Subst ResolvedPath TyX
 
 instance Alpha PropX
 instance Subst Idx PropX
 instance Subst AExpr PropX
+instance Subst ResolvedPath PropX
 
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
+instance Subst ResolvedPath DebugCommand
 
 instance Alpha Locality
 instance Subst Idx Locality
 instance Subst AExpr Locality
+instance Subst ResolvedPath Locality
 
 instance Alpha ExprX
 instance Subst AExpr ExprX
+instance Subst ResolvedPath ExprX
 --- Pretty instances ---
 
 instance Pretty (Name a) where
@@ -601,6 +641,17 @@ instance Pretty Endpoint where
 
 instance Pretty Locality where
     pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
+
+instance Pretty DeclX where
+    pretty (DeclModule s nk) =  
+        let (n, k) = prettyBind nk in
+        pretty "module" <+> pretty s <+> angles (n <> pretty "." <> k)
+    pretty (DeclName s isk) = 
+        let (is, k) = prettyBind isk in
+        pretty "name" <+> pretty s <+> is <> k
+    pretty d = pretty (show d)
+
+
 
 -- Wrapper datatype for native comparison up to alpha equivalence. Used for
 -- indexing maps by ASTs 

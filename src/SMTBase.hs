@@ -121,6 +121,19 @@ liftCheck c = do
       Left s -> Sym $ lift $ throwError $ "SMT ERROR" 
       Right i -> return i
 
+class SmtName a where
+    smtName :: a -> String
+
+instance SmtName ResolvedPath where
+    smtName (PDot PTop a) = a
+    smtName PTop = "Top"
+    smtName (PPathVar x) = show x
+    smtName (PDot a b) = smtName a ++ "__" ++ b
+
+instance SmtName Path where
+    smtName (PUnresolved _) = error "smtName of unresolved path"
+    smtName (PRes p) = smtName p
+
 freshSMTName :: Sym String
 freshSMTName = do
     freshSMTCtr += 1
@@ -280,7 +293,7 @@ symIndex (IVar ispan v) = do
     case M.lookup v iEnv of 
       Just i -> return i
       Nothing -> do
-          indices <- view $ curMod . inScopeIndices
+          indices <- view $ inScopeIndices
           liftCheck $ typeError ispan (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
             
 getSymName :: NameExp -> Sym SExp
@@ -288,7 +301,7 @@ getSymName ne =
     case ne^.val of
       BaseName (is1, is2) s -> do
         nEnv <- use symNameEnv
-        case M.lookup s nEnv of
+        case M.lookup (smtName s) nEnv of
           Just f -> do
               case (is1, is2) of
                 ([], []) -> return f

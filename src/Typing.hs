@@ -21,6 +21,7 @@ import qualified Data.List as L
 import qualified Data.List.Unique as UL
 import Control.Monad.Reader
 import qualified ANFPass as ANF
+import qualified PathResolution as PR
 import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
@@ -35,13 +36,13 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f mempty initDetFuncs initDistrs mempty Ghost mempty emptyModDef interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty Ghost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -363,7 +364,7 @@ initDetFuncs = withNormalizedTys $ [
     ("H", (1, \ps args ->
         case (ps, args) of
           ([ParamStr s], [(a, t)]) -> do
-              ro <- view $ curMod . randomOracle
+              ro <- view $ randomOracle
               case lookup s ro of
                 Nothing -> typeError (ignore def) $ show $ pretty "Unknown RO lbl: " <> pretty s
                 Just (ae, _) -> do
@@ -545,7 +546,7 @@ normalizeTy t0 =
                     return $ Spanned (t0^.spanOf) $ TConst s (ps')
     (TExistsIdx xt) -> do
         (x, t) <- unbind xt
-        t' <- local (over (curMod . inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
+        t' <- local (over (inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
         return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
     TAdmit -> return t0
 
@@ -623,7 +624,7 @@ isSubtype' t1 t2 =
       (TExistsIdx xt1, TExistsIdx xt2) -> do
           (xi, t1) <- unbind xt1
           (xi', t2) <- unbind xt2
-          local (over (curMod . inScopeIndices) $ insert xi IdxGhost) $
+          local (over (inScopeIndices) $ insert xi IdxGhost) $
               isSubtype' t1 (subst xi' (mkIVar xi) t2)
       (_, TUnion t1' t2') -> do
           b1 <- isSubtype' t1 t1'
@@ -730,8 +731,8 @@ addTyDef s td k = do
 
 addNameDef :: String -> ([IdxVar], [IdxVar]) -> (NameType, [Locality]) -> Check () -> Check ()
 addNameDef n (is1, is2) (nt, nls) k = do
-    nE <- view $ curMod . nameEnv
-    _ <- case lookup n nE of
+    md <- view curMod
+    _ <- case lookup n (md ^. nameEnv) of
       Nothing -> return ()
       Just o -> do
         ((is1', is2'), ntnlsOpt') <- unbind o
@@ -740,9 +741,9 @@ addNameDef n (is1, is2) (nt, nls) k = do
                         (length is1 == length is1' && length is2 == length is2')
           Just _ -> typeError (ignore def) $ "Duplicate name: " ++ n
     assert (nt^.spanOf) (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
-    local (over (curMod . inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (curMod . inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-            forM_ nls checkLocality
+    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
+        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+            forM_ nls (checkLocality (nt^.spanOf))
             checkNameType nt
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
@@ -750,18 +751,68 @@ sumOfLengths :: [AExpr] -> AExpr
 sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
 sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
 
+checkDecls :: [Decl] -> Check ()
+checkDecls [] = return ()
+checkDecls (d:ds) = 
+    case d^.val of
+      (DeclLocality n i) -> local (over (curMod . localities) $ insert n i) $ checkDecls ds
+      DeclInclude _ -> error "Include found during type inference"
+      DeclName n o -> do
+        ((is1, is2), ntnlsOpt) <- unbind o
+        case ntnlsOpt of
+          Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ checkDecls ds
+          Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ checkDecls ds
+      DeclModule n xds' -> do
+          (x, ds') <- unbind xds'
+          m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
+              checkDecls ds'
+              view curMod
+          local (over (curMod . modules) $ insert n (bind x m')) $ checkDecls ds
+      DeclDef n o1 -> do
+          ((is1, is2), (l, o2)) <- unbind o1
+          (xs, (opreReq, tyAnn, bdy)) <- unbind o2
+          let preReq = case opreReq of
+                         Nothing -> pTrue
+                         Just p -> p
+          is_abs <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
+              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+                  checkLocality (d^.spanOf) l
+                  forM_ xs $ \(x, t) -> checkTy $ unembed t
+                  withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
+                      checkProp preReq
+                      checkTy tyAnn
+                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
+                      x <- freshVar
+                      case bdy of
+                        Nothing -> return $ DefAbstract
+                        Just bdy' -> do
+                          bdy'' <- ANF.anf bdy'
+                          local (set tcScope $ Def l) $
+                              withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
+                              t <- checkExpr (Just tyAnn) bdy''
+                              -- let p1 = atomicCaseSplits t
+                              -- let p2 = atomicCaseSplits tyAnn
+                              -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
+                              -- withAllSplits ps $ assertSubtype t tyAnn
+                              return $ DefConcrete
+          let fdef = bind (is1, is2) $ FuncDef l (bind xs (preReq, tyAnn))
+          dfs <- view $ curMod . defs
+          case lookup n dfs of
+            Nothing -> local (over (curMod . defs) $ insert n (is_abs, fdef)) $ checkDecls ds 
+            Just (DefConcrete, _) -> typeError (d^.spanOf) $ show $ pretty "Duplicate definition: " <> pretty n
+            Just (DefAbstract, fd') -> do -- Do the subtyping
+                assert (ignore def) (show $ pretty "Duplicate abstract def: " <> pretty n) $ is_abs == DefConcrete
+                assert (ignore def) (show $ pretty "Concrete def mismatch with abstract def: " <> pretty n) $
+                    fdef
+                    `aeq`
+                    fd'
+                local (over (curMod . defs) $ insert n (is_abs, fdef)) $ checkDecls ds
+
+-- TODO: move up
 checkDecl :: Decl -> Check () -> Check ()
 checkDecl dcl k =
     case dcl^.val of
-      (DeclInclude fn) -> do
-          incls <- view envIncludes
-          if S.member fn incls then k else do
-              flags <- view envFlags
-              let fn' = (_fFileLoc flags) </> fn
-              s <- liftIO $ readFile fn'
-              case P.parse parseFile (takeFileName fn') s of
-                Left err -> typeError (dcl^.spanOf) $ "parse error: " ++ show err
-                Right dcls -> checkDeclsWithCont dcls $ local (over envIncludes $ S.insert fn) $ k
+      (DeclInclude fn) -> error "Include found during type inference"
       (DeclName n o) -> do
         ((is1, is2), ntnlsOpt) <- unbind o
         case ntnlsOpt of
@@ -773,9 +824,9 @@ checkDecl dcl k =
           let preReq = case opreReq of
                          Nothing -> pTrue
                          Just p -> p
-          is_abs <- local (over (curMod . inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
-              local (over (curMod . inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-                  checkLocality l
+          is_abs <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
+              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+                  checkLocality (dcl^.spanOf) l
                   forM_ xs $ \(x, t) -> checkTy $ unembed t
                   withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
                       checkProp preReq
@@ -817,7 +868,7 @@ checkDecl dcl k =
           assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n tvars
           assert (dcl^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n dfs
           assert (dcl^.spanOf) (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
-          local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
+          local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
               forM_ xs $ \(x, t) -> do
                   checkTy t
                   assert (dcl^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
@@ -828,7 +879,7 @@ checkDecl dcl k =
                       k
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
-        local (set (curMod . inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
+        local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
             mapM_ checkTy $ catMaybes $ map snd bdy
         assert (dcl^.spanOf) (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
         let constrs = map (\(x, ot) -> (x, EnumConstructor n x)) bdy 
@@ -849,7 +900,7 @@ checkDecl dcl k =
           tbls <- view $ curMod . tableEnv
           locs <- view $ curMod . localities
           assert (dcl^.spanOf) (show $ pretty "Duplicate table name: " <> pretty n) (not $ member n tbls)
-          checkLocality loc
+          checkLocality (dcl^.spanOf) loc
           checkTy t
           local (over (curMod . tableEnv) $ insert n (t, loc)) k
       (DeclDetFunc f opts ar) -> do
@@ -858,15 +909,19 @@ checkDecl dcl k =
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             k
       (DeclLocality n i) -> local (over (curMod . localities) $ insert n i) k
-      (DeclRandOrcl s ps (ae, nt)) -> do
-        assert (dcl^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
+      (DeclRandOrcl s (ae, nt)) -> do
+        -- assert (dcl^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
         _ <- inferAExpr ae
         checkNameType nt
         checkROName nt
         checkROUnique ae
-        ro <- view $ curMod . randomOracle
+        ro <- view $ randomOracle
         assert (dcl^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (curMod . randomOracle) $ insert s (ae, nt)) k 
+        local (over (randomOracle) $ insert s (ae, nt)) k 
+      (DeclModule s xds) -> do
+          (x, ds) <- unbind xds
+          return ()
+
 
 checkROName :: NameType -> Check ()
 checkROName nt =  
@@ -912,10 +967,10 @@ withAllSplits (p:ps) k = do
 
 -- We then fold the list of decls, checking later ones after processing the
 -- earlier ones.
-checkDecls :: [Decl] -> Check ()
-checkDecls [] = return ()
-checkDecls (d:ds) = checkDecl d (checkDecls ds)
-
+--checkDecls :: [Decl] -> Check ()
+--checkDecls [] = return ()
+--checkDecls (d:ds) = checkDecl d (checkDecls ds)
+--
 checkDeclsWithCont :: [Decl] -> Check () -> Check ()
 checkDeclsWithCont [] k = k
 checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
@@ -923,7 +978,7 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
 checkROUnique :: AExpr -> Check ()
 checkROUnique e = do
-    ro_vals <- view $ curMod . randomOracle
+    ro_vals <- view $ randomOracle
     (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map fst $ map snd $ ro_vals) e
     assert (e^.spanOf) "RO uniqueness check failed" b
     return ()
@@ -999,7 +1054,7 @@ checkTy t =
               return ()
           (TExistsIdx it) -> do
               (i, t) <- unbind it
-              local (over (curMod . inScopeIndices) $ insert i IdxGhost) $ checkTy t
+              local (over (inScopeIndices) $ insert i IdxGhost) $ checkTy t
           (TVK n) -> do
               nt <- getNameType n
               case nt^.val of
@@ -1081,7 +1136,7 @@ tyLenLbl t =
           return $ joinLbl l1 l2
       (TExistsIdx it) -> do
           (i, t) <- unbind it
-          l <- local (over (curMod . inScopeIndices) $ insert i IdxGhost) $ tyLenLbl t
+          l <- local (over (inScopeIndices) $ insert i IdxGhost) $ tyLenLbl t
           return $ mkSpanned $ LRangeIdx $ bind i l
       TAdmit -> return zeroLbl
 
@@ -1110,7 +1165,7 @@ checkLabel l =
               return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
-              local (over (curMod . inScopeIndices) $ insert i IdxGhost) $ checkLabel l
+              local (over (inScopeIndices) $ insert i IdxGhost) $ checkLabel l
 
 checkProp :: Prop -> Check ()
 checkProp p =
@@ -1311,26 +1366,24 @@ stripTy x t =
           return $ mkSpanned $ TExistsIdx $ bind i t
 
 
-checkLocality :: Locality -> Check ()
-checkLocality (Locality p xs) = do
-    lcs <- view $ curMod . localities
-    case p of
-      PDot PEmpty n -> 
-        case lookup n lcs of
-          Nothing -> typeError (ignore def) $ show $ pretty "Unknown locality: " <> pretty n
+checkLocality :: Ignore Position -> Locality -> Check ()
+checkLocality pos pth@(Locality (PRes (PDot p s)) xs) = do
+    md <- getModule pos p
+    case lookup s (md^.localities) of 
+          Nothing -> typeError pos $ show $ pretty "Unknown locality: " <> pretty pth
           Just ar -> do
-              assert (ignore def) (show $ pretty "Wrong arity for locality " <> pretty n) $ ar == length xs
+              assert pos (show $ pretty "Wrong arity for locality " <> pretty pth) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
-                  assert (ignore def) (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
+                  assert pos (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
 
 
-checkEndpoint :: Endpoint -> Check ()
-checkEndpoint (Endpoint x) = do
+checkEndpoint :: Ignore Position -> Endpoint -> Check ()
+checkEndpoint pos (Endpoint x) = do
     s <- view $ curMod . endpointContext
-    assert (ignore def) (show $ pretty "Unknown endpoint: " <> pretty x) $ S.member x s
-checkEndpoint (EndpointLocality l) = do
-    checkLocality l
+    assert pos (show $ pretty "Unknown endpoint: " <> pretty x) $ elem x s
+checkEndpoint pos (EndpointLocality l) = do
+    checkLocality pos l
 
 getOutTy :: Maybe Ty -> Ty -> Check Ty
 getOutTy ot t1 = 
@@ -1341,13 +1394,11 @@ getOutTy ot t1 =
           return t2
 
 getDef :: Ignore Position -> Path -> Check (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef)
-getDef pos p = 
-    case p of
-      PDot PEmpty s -> do
-          ds <- view $ curMod . defs
-          case lookup s ds of
-            Nothing -> typeError pos $ show $ pretty "Unknown def: " <> pretty p
-            Just res -> return res
+getDef pos pth@(PRes (PDot p s)) = do
+    md <- getModule pos p
+    case lookup s (md^.defs) of
+      Nothing -> typeError pos $ show $ pretty "Unknown def: " <> pretty pth
+      Just res -> return res
 
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
@@ -1356,11 +1407,11 @@ checkExpr ot e = do
     case e^.val of
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
-          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (curMod . endpointContext) (S.insert s)) $ checkExpr ot k
+          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (curMod . endpointContext) (s :)) $ checkExpr ot k
       (EOutput a ep) -> do
           case ep of
             Nothing -> return ()
-            Just ep -> checkEndpoint ep
+            Just ep -> checkEndpoint (e^.spanOf) ep
           t' <- inferAExpr a
           l_t <- coveringLabel t'
           flowCheck (e^.spanOf) l_t advLbl
@@ -1434,14 +1485,14 @@ checkExpr ot e = do
             TExistsIdx jt' -> do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') (bind (s2n ".res") (pEq (aeVar ".res") a) )
-                to <- local (over (curMod . inScopeIndices) $ insert i IdxGhost) $ do
+                to <- local (over (inScopeIndices) $ insert i IdxGhost) $ do
                     withVars [(x, (ignore $ show x, tx))] $ checkExpr ot e
                 to' <- stripTy x to
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
             _ -> do
-                t' <- local (over (curMod . inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
+                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
                 to' <- stripTy x t'
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
@@ -1455,12 +1506,12 @@ checkExpr ot e = do
                 assert (e^.spanOf) (show $ pretty "Wrong arity for " <> pretty d) $ length ts == ar
                 getOutTy ot =<< mkSpanned <$> (k $ zip args ts)
             Nothing -> typeError (e^.spanOf) $ show (ErrUnknownDistr d)
-      (ETLookup n a) -> do
-          tenv <- view $ curMod . tableEnv
-          tc <- view tcScope
-          case lookup n tenv of
+      (ETLookup pth@(PRes (PDot p n)) a) -> do
+          md <- getModule (e^.spanOf) p
+          case lookup n (md^.tableEnv) of 
             Nothing -> typeError (e^.spanOf) $ show $ pretty (unignore $ a^.spanOf) <+> pretty "Unknown table: " <> pretty n
             Just (t, loc) -> do
+                tc <- view tcScope
                 ta <- inferAExpr a
                 assertSubtype ta (tData advLbl advLbl)
                 case tc of
@@ -1468,12 +1519,12 @@ checkExpr ot e = do
                       assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
-      (ETWrite n a1 a2) -> do
-          tenv <- view $ curMod . tableEnv
-          tc <- view tcScope
-          case lookup n tenv of
+      (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
+          md <- getModule (e^.spanOf) p
+          case lookup n (md^.tableEnv) of 
             Nothing -> typeError (e^.spanOf) $ show $  pretty (unignore $ e^.spanOf) <+> pretty "Unknown table: " <> pretty n
             Just (t, loc) -> do
+                tc <- view tcScope
                 case tc of
                   Def curr_loc -> do
                       assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
@@ -1601,7 +1652,7 @@ unsolvability ae = local (set tcScope Ghost) $ do
             (TDH_PK n, TName m) -> return $ pAnd (pNot $ pFlow (nameLbl n) advLbl) (pNot $ pFlow (nameLbl m) advLbl)
             _ -> return pFalse
       AEApp f [] xs -> do
-          uf <- getUserFunc f
+          uf <- getUserFunc (ae^.spanOf) f
           case uf of
             Just (StructConstructor _) -> do -- f is a constructor of a struct; derivability is the and
                 ps <- mapM unsolvability xs
@@ -1618,6 +1669,10 @@ unsolvability ae = local (set tcScope Ghost) $ do
 typeCheckDecls :: Flags -> [Decl] -> IO (Either Env ())
 typeCheckDecls f ds = do
     e <- emptyEnv f
-    runExceptT $ runReaderT (unCheck $ checkDecls ds) e
+    r <- PR.runResolve f $ PR.resolveDecls ds
+    case r of
+      Left () -> return $ Left e
+      Right ds' -> do
+          runExceptT $ runReaderT (unCheck $ checkDecls ds') e
 
 

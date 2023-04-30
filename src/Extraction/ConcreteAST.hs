@@ -94,8 +94,8 @@ data CExpr =
     | CRet AExpr
     | CCall Path ([Idx], [Idx]) [AExpr]
     | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
-    | CTLookup String AExpr
-    | CTWrite String AExpr AExpr
+    | CTLookup Path AExpr
+    | CTWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)
 
 instance Alpha CExpr

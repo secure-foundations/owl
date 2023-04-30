@@ -23,7 +23,7 @@ owlStyle   = emptyDef
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey", "mackey", "sec", "let", "DH", "nonce", "samp", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey", "mackey", "sec", "let", "DH", "nonce", "samp", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -98,15 +98,30 @@ parseNameExp =
             return $ PRFName n p)
         <|>
         (do
-            i <- identifier
+            i <- parsePath
             inds <- parseIdxParams
             return $ BaseName inds i
         )
 
 parsePath :: Parser Path
-parsePath = do
-    x <- identifier
-    return $ PDot PEmpty x
+parsePath = 
+    (try $ do
+        x <- identifier
+        char '.'
+        xs <- identifier `sepBy1` (char '.')
+        return $ PRes $ go $ reverse (x : xs)
+    )
+    <|>
+    (do
+        x <- identifier
+        return $ PUnresolved x
+    )
+        where
+            go :: [String] -> ResolvedPath
+            go (x:xs) = PDot (go xs) x
+            go [] = PTop
+                
+
 
 parseLabel = buildExpressionParser parseLabelTable parseLabelTerm
 parseLabelTable = [ [ Infix (do
@@ -242,24 +257,24 @@ parseTyTerm =
     )
     <|>
     (try $ parseSpanned $ do
-        x <- parsePath
+        x <- identifier
         case x of
-          PDot PEmpty "vk" -> do
+          "vk" -> do
                  symbol "("
                  n <- parseNameExp
                  symbol ")"
                  return $ TVK n
-          PDot PEmpty "dhpk" -> do
+          "dhpk" -> do
                  symbol "("
                  n <- parseNameExp
                  symbol ")"
                  return $ TDH_PK n
-          PDot PEmpty "encpk" -> do
+          "encpk" -> do
                  symbol "("
                  n <- parseNameExp
                  symbol ")"
                  return $ TEnc_PK n
-          PDot PEmpty "shared_secret" -> do
+          "shared_secret" -> do
                  symbol "("
                  n <- parseNameExp
                  symbol ","
@@ -546,7 +561,7 @@ parseDecls =
         e <- parseAExpr
         symbol "->"
         nt <- parseNameType
-        return $ DeclRandOrcl l [] (e, nt))
+        return $ DeclRandOrcl l (e, nt))
     <|>
     (parseSpanned $ do
         reserved "func"
@@ -579,6 +594,16 @@ parseDecls =
         symbol "@"
         loc <- parseLocality
         return $ DeclTable n t loc)
+    <|>
+    (parseSpanned $ do
+        reserved "module"
+        n <- identifier
+        symbol "{"
+        ds <- parseDecls
+        symbol "}"
+        return $ DeclModule n $ bind (s2n $ "._mod_" ++ n) ds
+    )
+
 
 
 parseDebugCommand = 
@@ -807,7 +832,7 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "lookup"
         symbol "("
-        n <- identifier
+        n <- parsePath
         symbol ","
         a <- parseAExpr
         symbol ")"
@@ -817,7 +842,7 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "write"
         symbol "("
-        n <- identifier
+        n <- parsePath
         symbol ","
         a <- parseAExpr
         symbol ","

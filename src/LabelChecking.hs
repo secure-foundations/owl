@@ -72,7 +72,7 @@ smtLabelSetup = do
     emitAssertion $ sForall [(SAtom x, nameSort)] (sNot $ sFlows (SApp [SAtom "LblOf", SAtom x]) (SAtom "%zeroLbl")) [(SApp [SAtom "LblOf", SAtom x])] 
 
     -- Flow axioms for abstract types
-    fas <- view $ curMod . flowAxioms
+    fas <- liftCheck $ collectFlowAxioms
     forM_ fas $ \(l1, l2) -> do
         v1 <- symLbl l1
         v2 <- symLbl l2
@@ -80,7 +80,7 @@ smtLabelSetup = do
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv
-    afcs <- view $ curMod . advCorrConstraints
+    afcs <- liftCheck $ collectAdvCorrConstraints 
     forM_ afcs $ \(l1, l2) -> do
         v1 <- symLbl l1
         v2 <- symLbl l2
@@ -186,7 +186,7 @@ symCanonAtom c =
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
-getSymLblConst (TyLabelVar n@(PDot PEmpty s)) = do
+getSymLblConst (TyLabelVar n@(PUnresolved s)) = do
     e <- use symLabelVarEnv
     case M.lookup s e of
       Just res -> return res
@@ -206,7 +206,7 @@ symLbl l = do
 
 emitNameDefAssms :: Sym ()
 emitNameDefAssms = do
-    nE <- view $ curMod . nameEnv
+    nE <- liftCheck $ collectNameEnv
     forM_ nE $ \(n, o) -> do 
         ((is1, is2), _) <- liftCheck $ unbind o
         ivs1 <- forM [1..length is1] $ \_ -> freshSMTIndexName
@@ -214,9 +214,9 @@ emitNameDefAssms = do
         sIE <- use symIndexEnv
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs1)
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs2)
-        local (over (curMod . inScopeIndices) $ (++) $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
-            local (over (curMod . inScopeIndices)  $ (++) $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
-                let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) n
+        local (over (inScopeIndices) $ (++) $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
+            local (over (inScopeIndices)  $ (++) $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
+                let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) (PRes n)
                 liftCheck $ debug $ pretty "nameDefAssms for " <> pretty ne
                 ntOpt <- liftCheck $ getNameTypeOpt ne
                 assms <- case ntOpt of 
@@ -224,7 +224,7 @@ emitNameDefAssms = do
                     Nothing -> return sTrue
                 emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
         symIndexEnv .= sIE
-    ro <- view $ curMod . randomOracle
+    ro <- view $ randomOracle
     forM_ ro $ \(s, (ae, nt)) -> do
         assm <- nameDefFlows (roName s) nt
         emitAssertion assm

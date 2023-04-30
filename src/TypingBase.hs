@@ -5,6 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-} 
 {-# LANGUAGE FlexibleContexts #-} 
 {-# LANGUAGE DataKinds #-} 
+{-# LANGUAGE RankNTypes #-} 
 {-# LANGUAGE DeriveGeneric #-}
 module TypingBase where
 import AST
@@ -19,6 +20,7 @@ import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
 import Control.Lens
+import Control.Lens.At
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import Unbound.Generics.LocallyNameless
@@ -59,7 +61,10 @@ instance Pretty IdxType where
     pretty IdxGhost = pretty "IdxGhost"
 
 data DefIsAbstract = DefAbstract | DefConcrete
-    deriving Eq
+    deriving (Eq, Show, Generic, Typeable)
+
+instance Alpha DefIsAbstract
+instance Subst ResolvedPath DefIsAbstract
 
 type Map a b = [(a, b)]
 
@@ -70,6 +75,10 @@ data UserFunc =
       | EnumConstructor TyVar String
       | EnumTest TyVar String
       | UninterpUserFunc String Int
+    deriving (Show, Generic, Typeable)
+
+instance Alpha UserFunc
+instance Subst ResolvedPath UserFunc
 
 data ModDef = ModDef { 
     _localities :: Map String Int,
@@ -77,23 +86,27 @@ data ModDef = ModDef {
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
     _advCorrConstraints :: [(Label, Label)],
-    _inScopeIndices ::  Map IdxVar IdxType,
-    _randomOracle :: Map String (AExpr, NameType),
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
-    _endpointContext :: S.Set EndpointVar,
-    _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    _endpointContext :: [EndpointVar],
+    _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
+    _modules :: Map String (Bind (Name ResolvedPath) ModDef)
 }
+    deriving (Show, Generic, Typeable)
+
+instance Alpha ModDef
+instance Subst ResolvedPath ModDef
 
 data Env = Env { 
     _envFlags :: Flags,
-    _envIncludes :: S.Set String,
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
     _distrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX),
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
-    _curMod :: ModDef,
+    _randomOracle :: Map String (AExpr, NameType),
+    _inScopeIndices ::  Map IdxVar IdxType,
+    _curModules :: Map (Maybe (Name ResolvedPath)) ModDef,
     _interpUserFuncs :: Ignore Position -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer
@@ -108,6 +121,7 @@ data FuncDef = FuncDef {
 
 instance Alpha FuncDef
 instance Subst Idx FuncDef
+instance Subst ResolvedPath FuncDef
 
 data SymAdvAssms =
     SASec NameExp
@@ -117,12 +131,17 @@ data TyDef =
       | StructDef (Bind [IdxVar] [(String, Ty)])
       | TyAbbrev Ty
       | TyAbstract -- Public length
+    deriving (Show, Generic, Typeable)
+
+instance Alpha TyDef
+instance Subst Idx TyDef
+instance Subst ResolvedPath TyDef
 
 data TypeError =
     ErrWrongNameType NameExp String NameType
       | ErrBadArgs String [Ty] 
       | ErrWrongCases String AExpr (Map String (Maybe Ty)) (Map String (Either Expr (Ignore String, Bind DataVar Expr)))
-      | ErrUnknownName String
+      | ErrUnknownName Path
       | ErrUnknownRO String
       | ErrUnknownPRF NameExp String
       | ErrAssertionFailed (Maybe String) Prop
@@ -231,6 +250,7 @@ freshLbl = do
 
 -- Convenience functions for adding to the environment 
 
+
 joinLbl :: Label -> Label -> Label
 joinLbl l1 l2 = 
     if (l1^.val) `aeq` LZero then l2 else
@@ -255,9 +275,28 @@ withVars assocs k = do
     local (over tyContext $ addVars assocs) k
 
 
+unsafeHead :: Lens' [(a, b)] (a, b)
+unsafeHead = lens gt st
+    where
+        gt = head
+        st (_:xs) a = a:xs
+
+unsafeLookup :: (Eq a, Show a) => a -> Lens' (Map a b) b
+unsafeLookup x = lens gt st
+    where
+        gt a = case lookup x a of
+                 Just v -> v
+                 Nothing -> error $ "INTERNAL ERROR: Unknown key: " ++ show x
+        st m b = insert x b m
+
+curMod :: Lens' Env ModDef
+curMod = curModules . unsafeHead . _2
+
+
+
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = do
-    m <- view $ curMod . inScopeIndices
+    m <- view $ inScopeIndices
     tc <- view tcScope
     case lookup i m of
       Just t -> 
@@ -289,17 +328,31 @@ checkIdxPId i@(IVar pos _) = do
        Ghost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
        Def _ -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
 
+getModule :: Ignore Position -> ResolvedPath -> Check ModDef
+getModule pos rp = go rp
+    where
+        go :: ResolvedPath -> Check ModDef
+        go PTop = view $ curModules . (unsafeLookup Nothing)
+        go (PPathVar v) = view $ curModules . (unsafeLookup (Just v))
+        go p0@(PDot p' s) = do
+            md <- go p'
+            case lookup s (md^.modules) of
+              Just xmd' -> do
+                  (x, md') <- unbind xmd'
+                  return $ subst x p0 md' 
+              Nothing -> typeError pos $ "Unknown module: " ++ show p0
+
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
     case ne^.val of 
-     BaseName (vs1, vs2) n -> do
-         nE <- view $ curMod . nameEnv
+     BaseName (vs1, vs2) pth@(PRes (PDot p n)) -> do
+         md <- getModule (ne^.spanOf) p
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
-         case lookup n nE of
-           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName n
+         case lookup n (md^.nameEnv)  of
+           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName pth
            Just int -> do
                ((is, ps), ntLclsOpt) <- unbind int
                case ntLclsOpt of
@@ -309,7 +362,7 @@ getNameInfo ne = do
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
      ROName s -> do
-        ro <- view $ curMod . randomOracle
+        ro <- view $ randomOracle
         case lookup s ro of
           Just (_, nt) -> return $ Just (nt, Nothing)
           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO s
@@ -346,34 +399,32 @@ debug d = do
     when b $ liftIO $ putStrLn $ show d
 
 getTyDef :: Ignore Position -> Path -> Check TyDef
-getTyDef pos s = 
-    case s of
-      PDot PEmpty s -> do 
-        tDs <- view $ curMod . tyDefs
-        case lookup s tDs of
-          Just td -> return td
-          Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
+getTyDef pos (PRes (PDot p s)) = do
+    md <- getModule pos p
+    case lookup s (md ^. tyDefs) of
+      Just td -> return td
+      Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
 
 -- AExpr's have unambiguous types, so can be inferred.
 
-getUserFunc :: Path -> Check (Maybe UserFunc)
-getUserFunc (PDot PEmpty p) = do
-    fs <- view $ curMod . userFuncs
-    return $ lookup p fs
+getUserFunc :: Ignore Position -> Path -> Check (Maybe UserFunc)
+getUserFunc pos (PRes (PDot p s)) = do
+    md <- getModule pos p
+    return $ lookup s (md^.userFuncs)
 
 
 getFuncInfo :: Ignore Position -> Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
-getFuncInfo pos f@(PDot PEmpty s) = do
+getFuncInfo pos f@(PRes (PDot p s)) = do
     fs <- view detFuncs
-    case lookup s fs of
-      Just r -> return r
-      Nothing -> do
-           ufs <- view $ curMod . userFuncs
-           case lookup s ufs of
-             Just uf -> do
-                 uf_interp <- view interpUserFuncs
-                 uf_interp pos uf
-             Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
+    case (p, lookup s fs) of
+      (PTop, Just r) -> return r
+      (_, Nothing) -> do 
+          md <- getModule pos p
+          case lookup s (md ^. userFuncs) of 
+            Just uf -> do 
+                uf_interp <- view interpUserFuncs
+                uf_interp pos uf
+            Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
@@ -512,7 +563,7 @@ coveringLabel' t =
               typeError (t^.spanOf) $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
-          l <- local (over (curMod . inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
+          l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
 
@@ -524,7 +575,59 @@ prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty 
 
 prettyContext :: Env -> Doc ann
 prettyContext e =
-    vsep [prettyIndices (e^.curMod^.inScopeIndices), prettyTyContext (e^.tyContext)]
+    vsep [prettyIndices (e^.inScopeIndices), prettyTyContext (e^.tyContext)]
+
+
+-- Traversing modules to collect global info
+
+collectEnvInfo :: (ModDef -> Map String a) -> Check (Map ResolvedPath a)
+collectEnvInfo f = do
+    cms <- view curModules
+    res <- forM cms $ \(op, md) -> do
+        let p = case op of
+                  Nothing -> PTop
+                  Just n -> PPathVar n
+        go f p md 
+    return $ concat res
+        where
+            go :: (ModDef -> Map String a) -> ResolvedPath -> ModDef -> Check (Map ResolvedPath a)
+            go f p md = do 
+                let fs = map (\(s, f) -> (PDot p s, f)) (f md)
+                fs' <- forM (md^.modules) $ \(s, xmd) -> do
+                    (x, md) <- unbind xmd
+                    go f (PDot p s) (subst x p md)
+                return $ fs ++ concat fs'
+
+-- Just concat the stuff together
+collectEnvAxioms :: (ModDef -> [a]) -> Check [a]
+collectEnvAxioms f = do
+    cms <- view curModules
+    res <- forM cms $ \(op, md) -> do
+        let p = case op of
+                  Nothing -> PTop
+                  Just n -> PPathVar n
+        go f p md 
+    return $ concat res
+        where
+            go f p md = do
+                let xs = f md
+                ys <- forM (md^.modules) $ \(s, xmd) -> do
+                    (x, md) <- unbind xmd
+                    go f (PDot p s) (subst x p md)
+                return $ xs ++ concat ys
+
+collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
+collectNameEnv = collectEnvInfo (_nameEnv)
+
+collectFlowAxioms :: Check ([(Label, Label)])
+collectFlowAxioms = collectEnvAxioms (_flowAxioms)
+
+collectAdvCorrConstraints :: Check ([(Label, Label)])
+collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
+
+collectUserFuncs :: Check (Map ResolvedPath UserFunc)
+collectUserFuncs = collectEnvInfo (_userFuncs)
+
 
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for

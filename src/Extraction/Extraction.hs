@@ -137,7 +137,7 @@ rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
 rustifyPath :: Path -> String
-rustifyPath (PDot PEmpty s) = show s
+rustifyPath (PUnresolved s) = show s
 rustifyPath p = error $ "bad path: " ++ show p
 
 locName :: String -> String
@@ -351,7 +351,7 @@ lookupTyLayout n = do
 
 flattenNameExp :: NameExp -> String
 flattenNameExp n = case n ^. val of
-  BaseName _ s -> rustifyName s
+  BaseName _ s -> rustifyName (rustifyPath s)
 
 -------------------------------------------------------------------------------------------
 -- Data representation
@@ -370,25 +370,25 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp f _ [inner] | f == (PDot PEmpty $ "cipherlen") -> do
+            AEApp f _ [inner] | f == (PUnresolved $ "cipherlen") -> do
                 tagSz <- useAeadTagSize
                 li <- helper inner
                 case li of
                     (LBytes ni) -> return $ LBytes (ni + tagSz)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PDot PEmpty $ "plus") -> do
+            AEApp f _ [a, b] | f == (PUnresolved $ "plus") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PDot PEmpty $ "mult") -> do
+            AEApp f _ [a, b] | f == (PUnresolved $ "mult") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ _ | f == (PDot PEmpty $ "zero") -> return $ LBytes 0
+            AEApp f _ _ | f == (PUnresolved $ "zero") -> return $ LBytes 0
             AEApp fn _ [] -> do
                 lookupTyLayout . rustifyName . rustifyPath $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
@@ -763,7 +763,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
-                    if owlFn == (PDot PEmpty $ "H") then
+                    if owlFn == (PUnresolved $ "H") then
                         -- special case for the random oracle function
                         let unspanned = map (view val) owlArgs in
                         case (fparams, unspanned) of
@@ -776,7 +776,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn == (PDot PEmpty $ "dhpk") then
+                        if owlFn == (PUnresolved $ "dhpk") then
                             let unspanned = map (view val) owlArgs in
                             case unspanned of
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
@@ -788,7 +788,7 @@ extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of
         BaseName ([], _) s -> return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (flattenNameExp nameExp)))
-        BaseName (sidxs, _) s -> return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName s) <> tupled (map (pretty . sidName . show . pretty) sidxs))
+        BaseName (sidxs, _) s -> return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName $ rustifyPath s) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
 extractAExpr binds (AEGetEncPK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
 extractAExpr binds (AEGetVK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
@@ -942,7 +942,7 @@ extractExpr loc binds (CTLookup tbl ae) = do
             RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty "[..]"
             VecU8 -> return $ pretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
-    let tblName = rustifyName tbl
+    let tblName = rustifyName $ rustifyPath tbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
 extractExpr loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
@@ -969,7 +969,7 @@ rustifyArgTy :: CTy -> ExtractionMonad RustTy
 rustifyArgTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyArgTy (CTConst (PDot PEmpty n)) = do
+rustifyArgTy (CTConst (PUnresolved n)) = do
     l <- lookupTyLayout . rustifyName $ show n
     return $ case l of
         LBytes _ -> VecU8
@@ -1105,7 +1105,7 @@ sortDecls dcls = do
         DeclLocality l idxs -> do
             if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
             else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
-        DeclRandOrcl n _ (arg, rty) -> do
+        DeclRandOrcl n (arg, rty) -> do
             rtlen <- case rty ^. val of
                 NT_Nonce -> return "NONCE_SIZE"
                 NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"

@@ -14,10 +14,10 @@ cabal-version:       >=1.10
 extra-source-files:  README.md
 
 executable owl
-  hs-source-dirs:      src, src/Extraction
+  hs-source-dirs:      src, src/Extraction, src/Pass
   main-is:             Main.hs
   default-language:    Haskell2010
-  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass
+  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass, PathResolution
   build-depends:       base >= 4.7 && < 5,
                        parsec,
                        containers,
