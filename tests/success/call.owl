@@ -7,6 +7,8 @@ name blah : nonce @ alice
 def alice1<i> (b: Name(blah)) @ alice : Name(d<i>)
     = get(d<i>)
 
+def alice2<i> @ alice
+
 def alice2<i> () @ alice : Unit
     = 
     assert (happened(alice2<i>()));

@@ -48,12 +48,12 @@ data Flags = Flags {
 makeLenses ''Flags
 
 data TcScope = 
-      Ghost 
-      | Def Locality
+      TcGhost 
+      | TcDef Locality
 
 instance Pretty TcScope where
-    pretty Ghost = pretty "ghost"
-    pretty (Def l) = pretty "def" <> tupled [pretty l]
+    pretty TcGhost = pretty "ghost"
+    pretty (TcDef l) = pretty "def" <> tupled [pretty l]
 
 data IdxType = IdxSession | IdxPId | IdxGhost
     deriving Eq
@@ -63,11 +63,25 @@ instance Pretty IdxType where
     pretty IdxPId = pretty "IdxPId"
     pretty IdxGhost = pretty "IdxGhost"
 
-data DefIsAbstract = DefAbstract | DefConcrete
-    deriving (Eq, Show, Generic, Typeable)
+data Def = 
+    DefHeader (Bind ([IdxVar], [IdxVar]) Locality)-- All we we know is the arity
+    | Def (Bind ([IdxVar], [IdxVar]) DefSpec)
+    deriving (Show, Generic, Typeable)
 
-instance Alpha DefIsAbstract
-instance Subst ResolvedPath DefIsAbstract
+instance Alpha Def
+instance Subst Idx Def
+instance Subst ResolvedPath Def
+
+data DefSpec = DefSpec {
+    _isAbstract :: Ignore Bool, 
+    _defLocality :: Locality,
+    _preReq_retTy :: Bind [(DataVar, Embed Ty)] (Prop, Ty)
+}
+    deriving (Show, Generic, Typeable)
+
+instance Alpha DefSpec
+instance Subst Idx DefSpec
+instance Subst ResolvedPath DefSpec
 
 type Map a b = [(a, b)]
 
@@ -85,7 +99,7 @@ instance Subst ResolvedPath UserFunc
 
 data ModDef = ModDef { 
     _localities :: Map String Int,
-    _defs :: Map String (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef), -- First pair is whether 
+    _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
     _advCorrConstraints :: [(Label, Label)],
@@ -116,15 +130,6 @@ data Env = Env {
 }
 
 
-data FuncDef = FuncDef {
-    _funcLocality :: Locality,
-    _preReq_retTy :: Bind [(DataVar, Embed Ty)] (Prop, Ty)
-}
-    deriving (Show, Generic, Typeable)
-
-instance Alpha FuncDef
-instance Subst Idx FuncDef
-instance Subst ResolvedPath FuncDef
 
 data SymAdvAssms =
     SASec NameExp
@@ -202,7 +207,7 @@ newtype Check a = Check { unCheck :: ReaderT Env (ExceptT Env IO) a }
     deriving (Functor, Applicative, Monad, MonadReader Env, MonadIO)
 
 
-makeLenses ''FuncDef
+makeLenses ''DefSpec
 
 makeLenses ''Env
 
@@ -304,7 +309,7 @@ inferIdx (IVar pos i) = do
     case lookup i m of
       Just t -> 
           case (tc, t) of
-            (Def _, IdxGhost) ->  
+            (TcDef _, IdxGhost) ->  
                 typeError pos $ "Index should be nonghost: " ++ show (pretty i) 
             _ -> return t
       Nothing -> typeError pos $ "Unknown index: " ++ show (pretty i)
@@ -320,16 +325,16 @@ checkIdxSession i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       Ghost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or Session ID") $ it /= IdxPId
-       Def _ ->  assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Session ID") $ it == IdxSession
+       TcGhost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or Session ID") $ it /= IdxPId
+       TcDef _ ->  assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check ()
 checkIdxPId i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       Ghost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
-       Def _ -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
+       TcGhost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
+       TcDef _ -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
 
 getModule :: Ignore Position -> ResolvedPath -> Check ModDef
 getModule pos rp = go rp
@@ -416,6 +421,14 @@ getUserFunc pos (PRes (PDot p s)) = do
     md <- getModule pos p
     return $ lookup s (md^.userFuncs)
 
+getDefSpec :: Ignore Position -> Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
+getDefSpec pos (PRes (PDot p s)) = do
+    md <- getModule pos p
+    case lookup s (md^.defs) of
+      Nothing -> typeError pos $ "Unknown def: " ++ s
+      Just (DefHeader _) -> typeError pos $ "Def is unspecified: " ++ s
+      Just (Def r) -> return r
+
 
 getFuncInfo :: Ignore Position -> Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 getFuncInfo pos f@(PRes (PDot p s)) = do
@@ -451,7 +464,7 @@ inferAExpr ae = do
           assert (ae^.spanOf) ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
-            _ <- local (set tcScope Ghost) $ inferIdx idx
+            _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
       (AEGet ne) -> do
@@ -464,7 +477,7 @@ inferAExpr ae = do
                         Just x -> return x
                         Nothing -> typeError (ae^.spanOf) $ show $ pretty "Name not base: " <> pretty ne
                 case ts of
-                    Def curr_locality -> do
+                    TcDef curr_locality -> do
                         assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality) $
                             any (aeq curr_locality) ls'
                         return $ tName ne

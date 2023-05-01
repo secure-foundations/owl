@@ -23,6 +23,8 @@ struct nonces<i> {
     _nT1: Name(NT<@i>)
 }
 
+def T_main<@i> @ T<i>
+
 // name K<i> : mackey (t:Name(NT<i>){happened(tag<i>())}) @ T, R
 name K<@i> : mackey (t:nonces<idx i>{happened(T_main<i>())}) @ T<i>, R
 

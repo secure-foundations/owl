@@ -42,7 +42,7 @@ emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mem
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty Ghost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -177,7 +177,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "vk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <- local (set tcScope Ghost) $ getNameType n
+              nt <- local (set tcScope TcGhost) $ getNameType n
               case nt^.val of
                 NT_Sig _ ->
                     return $ TRefined (mkSpanned $ TVK n) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "vk")
@@ -186,7 +186,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "dhpk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <- local (set tcScope Ghost) $ getNameType n
+              nt <- local (set tcScope TcGhost) $ getNameType n
               case nt^.val of
                 NT_DH -> return $ TDH_PK n
                 _ -> trivialTypeOf args
@@ -194,7 +194,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "enc_pk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <-  local (set tcScope Ghost) $ getNameType n
+              nt <-  local (set tcScope TcGhost) $ getNameType n
               case nt^.val of
                 NT_PKE _ -> return $ TEnc_PK n
                 _ -> trivialTypeOf args
@@ -202,8 +202,8 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "dh_combine" 2 $ \args ->
         case args of
           [t1, t2] | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
-              nt_n <-  local (set tcScope Ghost) $ getNameType n
-              nt_m <-  local (set tcScope Ghost) $ getNameType m
+              nt_n <-  local (set tcScope TcGhost) $ getNameType n
+              nt_m <-  local (set tcScope TcGhost) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
                 (NT_DH, NT_DH) -> return $ TSS n m
                 _ -> trivialTypeOf $ args
@@ -211,7 +211,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "sign" 2 $ \args ->
         case args of
           [t1, t] | Just sk <- extractNameFromType t1 -> do
-              nt <- local (set tcScope Ghost) $  getNameType sk
+              nt <- local (set tcScope TcGhost) $  getNameType sk
               case nt^.val of
                 NT_Sig t' -> do
                     assertSubtype t t'
@@ -222,7 +222,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "pkdec" 2 $ \args -> do
         case args of
           [t1, t] | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope Ghost) $  getNameType k
+              nt <- local (set tcScope TcGhost) $  getNameType k
               case nt^.val of
                 NT_PKE t' -> do
                     l <- coveringLabel t
@@ -239,7 +239,7 @@ initDetFuncs = withNormalizedTys $ [
         case args of
           [t1, t] | Just k <- extractNameFromType t1 -> do
               debug $ pretty "Trying nontrivial dec"
-              nt <-  local (set tcScope Ghost) $ getNameType k
+              nt <-  local (set tcScope TcGhost) $ getNameType k
               l <- coveringLabel t
               case nt^.val of
                 NT_Enc t' -> do
@@ -262,7 +262,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "vrfy" 3 $ \args ->
         case args of
           [t1, x, t] | Just k <- extractVKFromType t1 -> do
-              nt <-  local (set tcScope Ghost) $ getNameType k
+              nt <-  local (set tcScope TcGhost) $ getNameType k
               case nt^.val of
                 NT_Sig t' -> do
                     debug $ pretty "Checking vrfy: " <> pretty args
@@ -282,7 +282,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "mac" 2 $ \args ->
         case args of
           [t1, t] | Just k <- extractNameFromType t1 -> do
-              nt <-  local (set tcScope Ghost) $ getNameType k
+              nt <-  local (set tcScope TcGhost) $ getNameType k
               case nt^.val of
                 NT_MAC t' -> do
                     assertSubtype t t'
@@ -293,7 +293,7 @@ initDetFuncs = withNormalizedTys $ [
     ("mac_vrfy", (3, \ps args ->
         case (ps, args) of
           ([], [(xt1, t1), (m, mt), (xt, t)]) | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope Ghost) $ getNameType k
+              nt <- local (set tcScope TcGhost) $ getNameType k
               case nt^.val of
                 NT_MAC t' -> do
                     l1 <- coveringLabel mt
@@ -325,14 +325,14 @@ initDetFuncs = withNormalizedTys $ [
                            l <- coveringLabelOf $ map snd args
                            return $ TBool l
                 (TName n, m) -> do
-                  nt <-  local (set tcScope Ghost) $ getNameType n
+                  nt <-  local (set tcScope TcGhost) $ getNameType n
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
-                  nt <-  local (set tcScope Ghost) $ getNameType n
+                  nt <-  local (set tcScope TcGhost) $ getNameType n
                   case nt^.val of
                     NT_Nonce -> do
                         l <- coveringLabel (mkSpanned m)
@@ -348,7 +348,7 @@ initDetFuncs = withNormalizedTys $ [
           ([ParamStr s], [(_, t1), (a, _)]) -> do
               case (stripRefinements t1)^.val of
                 TName n -> do
-                    nt <-  local (set tcScope Ghost) $ getNameType n
+                    nt <-  local (set tcScope TcGhost) $ getNameType n
                     case nt^.val of
                         NT_PRF aes -> do
                           case L.find (\p -> fst p == s) aes of
@@ -388,7 +388,7 @@ initDistrs = [
     ("enc", (2, \args -> do
         case args of
           [(_, t1), (x, t)] | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope Ghost) $  getNameType k
+              nt <- local (set tcScope TcGhost) $  getNameType k
               case nt^.val of
                 NT_Enc t' -> do
                     debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
@@ -404,7 +404,7 @@ initDistrs = [
     ("pkenc", (2, \args -> do
         case args of
           [(_, t1), (x, t)] | Just k <- extractEncPKFromType t1 -> do
-              nt <- local (set tcScope Ghost) $  getNameType k
+              nt <- local (set tcScope TcGhost) $  getNameType k
               case nt^.val of
                 NT_PKE t' -> do
                     b <- isSubtype t t'
@@ -706,6 +706,24 @@ coveringLabel t = do
     t' <- normalizeTy t
     coveringLabel' t'
 
+addDef :: Ignore Position -> String -> Def -> Check a -> Check a
+addDef pos n df cont = do
+    dfs <- view $ curMod . defs
+    case (df, lookup n dfs) of
+      (_, Nothing) -> local (over (curMod . defs) $ insert n df) $ cont
+      (DefHeader _, Just _) -> typeError pos $ "Def already defined: " ++ n
+      (Def isdp, Just (DefHeader bl)) -> do
+          (is, DefSpec _ l _) <- unbind isdp
+          assert pos ("Locality mismatch for " ++ n) $ (bind is l) `aeq` bl 
+          local (over (curMod . defs) $ insert n df) $ cont
+      (Def isdp, Just (Def isdp')) -> do
+          (is, DefSpec abs1 l1 ret1) <- unbind isdp
+          (_, DefSpec abs2 _ _) <- unbind isdp
+          assert pos ("Duplicate abstract def: " ++ n) $ not (unignore abs1)
+          assert pos ("Def already defined: " ++ n) $ unignore abs2
+          assert pos ("Concrete def mismatch with abstract def: " ++ n) $ isdp `aeq` isdp'
+          local (over (curMod . defs) $ insert n df) $ cont
+
 
 addTyDef :: TyVar -> TyDef -> Check a -> Check a
 addTyDef s td k = do
@@ -766,6 +784,13 @@ checkDecl d cont =
           m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
               checkDeclsWithCont ds' $ view curMod
           local (over (curMod . modules) $ insert n (bind x m')) $ cont
+      DeclDefHeader n isl -> do
+          ((is1, is2), l) <- unbind isl
+          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
+              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+                  checkLocality (d^.spanOf) l
+          let df = DefHeader isl 
+          addDef (d^.spanOf) n df $ cont
       DeclDef n o1 -> do
           ((is1, is2), (l, o2)) <- unbind o1
           (xs, (opreReq, tyAnn, bdy)) <- unbind o2
@@ -782,29 +807,19 @@ checkDecl d cont =
                       let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
                       x <- freshVar
                       case bdy of
-                        Nothing -> return $ DefAbstract
+                        Nothing -> return $ ignore True
                         Just bdy' -> do
                           bdy'' <- ANF.anf bdy'
-                          local (set tcScope $ Def l) $
+                          local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
                               -- let p1 = atomicCaseSplits t
                               -- let p2 = atomicCaseSplits tyAnn
                               -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
                               -- withAllSplits ps $ assertSubtype t tyAnn
-                              return $ DefConcrete
-          let fdef = bind (is1, is2) $ FuncDef l (bind xs (preReq, tyAnn))
-          dfs <- view $ curMod . defs
-          case lookup n dfs of
-            Nothing -> local (over (curMod . defs) $ insert n (is_abs, fdef)) $ cont
-            Just (DefConcrete, _) -> typeError (d^.spanOf) $ show $ pretty "Duplicate definition: " <> pretty n
-            Just (DefAbstract, fd') -> do -- Do the subtyping
-                assert (ignore def) (show $ pretty "Duplicate abstract def: " <> pretty n) $ is_abs == DefConcrete
-                assert (ignore def) (show $ pretty "Concrete def mismatch with abstract def: " <> pretty n) $
-                    fdef
-                    `aeq`
-                    fd'
-                local (over (curMod . defs) $ insert n (is_abs, fdef)) $ cont
+                              return $ ignore False
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn))
+          addDef (d^.spanOf) n df $ cont
       (DeclCorr l1 l2) -> do
           checkLabel l1
           checkLabel l2
@@ -1009,11 +1024,11 @@ checkParam (ParamAExpr a) = do
 checkParam (ParamStr s) = return ()
 checkParam (ParamLbl l) =  checkLabel l
 checkParam (ParamTy t) =  checkTy t
-checkParam (ParamIdx i) = local (set tcScope Ghost) $ checkIdx i
+checkParam (ParamIdx i) = local (set tcScope TcGhost) $ checkIdx i
 
 checkTy :: Ty -> Check ()
 checkTy t =
-    local (set tcScope $ Ghost) $
+    local (set tcScope $ TcGhost) $
         case t^.val of
           TUnit -> return ()
           TBool l -> checkLabel l
@@ -1078,7 +1093,7 @@ checkTy t =
               checkTy t1
               checkTy t2
           (TCase p t1 t2) -> do
-              local (set tcScope $ Ghost) $ checkProp p
+              local (set tcScope $ TcGhost) $ checkProp p
               checkTy t1
               checkTy t2
           TAdmit -> return ()
@@ -1112,7 +1127,7 @@ tyLenLbl t =
             TyAbbrev t -> tyLenLbl t
             StructDef b -> do
                 bdy <- extractStruct (t^.spanOf) ps (show s) b
-                local (set tcScope $ Ghost) $ do
+                local (set tcScope $ TcGhost) $ do
                     ls <- forM bdy $ \(_, t) -> tyLenLbl t
                     return $ foldr joinLbl zeroLbl ls
             EnumDef b -> do
@@ -1147,7 +1162,7 @@ checkTyPubLen t0 = do
 
 checkLabel :: Label -> Check ()
 checkLabel l =
-    local (set tcScope Ghost) $
+    local (set tcScope TcGhost) $
         case l^.val of
           (LName n) -> do
               _ <- getNameTypeOpt n
@@ -1166,7 +1181,7 @@ checkLabel l =
 
 checkProp :: Prop -> Check ()
 checkProp p =
-    local (set tcScope $ Ghost) $
+    local (set tcScope $ TcGhost) $
         case p^.val of
           PTrue -> return ()
           PFalse -> return ()
@@ -1391,13 +1406,6 @@ getOutTy ot t1 =
           assertSubtype t1 t2
           return t2
 
-getDef :: Ignore Position -> Path -> Check (DefIsAbstract, Bind ([IdxVar], [IdxVar]) FuncDef)
-getDef pos pth@(PRes (PDot p s)) = do
-    md <- getModule pos p
-    case lookup s (md^.defs) of
-      Nothing -> typeError pos $ show $ pretty "Unknown def: " <> pretty pth
-      Just res -> return res
-
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = do
@@ -1415,14 +1423,14 @@ checkExpr ot e = do
           flowCheck (e^.spanOf) l_t advLbl
           getOutTy ot tUnit
       (EAssert p) -> do
-          local (set tcScope $ Ghost) $ checkProp p
+          local (set tcScope $ TcGhost) $ checkProp p
           (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert p
           g <- view tyContext
           debug $ pretty "Type context for assertion " <> pretty p <> pretty ":" <> (prettyTyContext g)
           assert (e^.spanOf) (show $ ErrAssertionFailed fn p) b
           getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
       (EAssume p) -> do
-          local (set tcScope $ Ghost) $ checkProp p
+          local (set tcScope $ TcGhost) $ checkProp p
           getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
       (EAdmit) -> getOutTy ot $ tAdmit
       (EDebug (DebugPrintModules)) -> do
@@ -1517,7 +1525,7 @@ checkExpr ot e = do
                 ta <- inferAExpr a
                 assertSubtype ta (tData advLbl advLbl)
                 case tc of
-                  Def curr_loc -> do
+                  TcDef curr_loc -> do
                       assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
@@ -1528,7 +1536,7 @@ checkExpr ot e = do
             Just (t, loc) -> do
                 tc <- view tcScope
                 case tc of
-                  Def curr_loc -> do
+                  TcDef curr_loc -> do
                       assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
                       ta <- inferAExpr a1
                       assertSubtype ta (tData advLbl advLbl)
@@ -1537,16 +1545,16 @@ checkExpr ot e = do
                       getOutTy ot $ tUnit
 
       (ECall f (is1, is2) args) -> do
-          (_, bfdef) <- getDef (e^.spanOf) f
+          bfdef <- getDefSpec (e^.spanOf) f
           ts <- view tcScope
-          ((bi1, bi2), fd) <- unbind bfdef
+          ((bi1, bi2), dspec) <- unbind bfdef
           assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is1 == length bi1
           assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is2 == length bi2
           forM_ is1 checkIdxSession
           forM_ is2 checkIdxPId
-          let (FuncDef fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) fd
+          let (DefSpec _ fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) dspec
           case ts of
-            Def curr_locality -> do
+            TcDef curr_locality -> do
                 assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl `aeq` curr_locality
                 (xts, (pr, rt)) <- unbind o
                 assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
@@ -1587,7 +1595,7 @@ checkExpr ot e = do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ECorrCase n e) -> do
-          _ <- local (set tcScope Ghost) $ getNameTypeOpt n
+          _ <- local (set tcScope TcGhost) $ getNameTypeOpt n
           x <- freshVar
           t1 <- withVars [(s2n x, (ignore x, tLemma (pFlow (nameLbl n) advLbl)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
@@ -1645,7 +1653,7 @@ checkExpr ot e = do
                 return t
 
 unsolvability :: AExpr -> Check Prop
-unsolvability ae = local (set tcScope Ghost) $ do
+unsolvability ae = local (set tcScope TcGhost) $ do
     case ae^.val of
       AEApp f [] [x, y] | f == (topLevelPath $ "dh_combine")-> do
           t1 <- inferAExpr x

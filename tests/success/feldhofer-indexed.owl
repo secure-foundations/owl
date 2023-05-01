@@ -22,6 +22,9 @@
 locality T
 locality R
 
+
+def T_main<i> @ T
+
 name NR<i> : nonce @ R
 corr adv ==> /\_i [NR<i>]
 name K<i> : enckey (x:Data<adv>{happened(T_main<i>())}) @ T, R

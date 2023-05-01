@@ -266,6 +266,7 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
                          Bind [(DataVar, Embed Ty)]

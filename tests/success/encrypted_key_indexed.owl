@@ -11,6 +11,9 @@
 
 locality alice
 locality bob
+
+def bob<i> @ bob
+
 name x<i> : nonce @ bob
 name k_data : enckey (exists i. x:Name(x<i>){happened(bob<i>())}) @ alice
 name shared_key : enckey (Name(k_data)) @ alice, bob

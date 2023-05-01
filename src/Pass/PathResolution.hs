@@ -111,6 +111,13 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
+      DeclDefHeader s isl -> do
+          (is, l) <- unbind isl
+          l' <- resolveLocality (d^.spanOf) l
+          let d' = Spanned (d^.spanOf) $ DeclDefHeader s $ bind is l'
+          p <- view curPath
+          ds' <- local (over defPaths $ T.insert s p) $ resolveDecls ds
+          return (d' : ds')
       DeclDef s ix -> do
           (is, (l, k)) <- unbind ix
           (xets, (mp, t, oe)) <- unbind k
@@ -133,8 +140,9 @@ resolveDecls (d:ds) =
           let d' = Spanned (d^.spanOf) $ DeclEnum s $ bind is vs'
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ 
-              local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x, p)) vs) $ 
-                  resolveDecls ds
+                  local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x, p)) vs) $ 
+                   local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x ++ "?", p)) vs) $ 
+                      resolveDecls ds
           return (d' : ds')
       DeclInclude fn -> do
           incls <- view includes

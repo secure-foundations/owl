@@ -512,7 +512,7 @@ parseDecls =
         return $ DeclInclude s
     )
     <|>
-    (parseSpanned $ do
+    (try $ parseSpanned $ do
         reserved "def"
         n <- identifier
         inds <- parseIdxParamBinds
@@ -535,6 +535,15 @@ parseDecls =
             symbol "="
             parseExpr
         return $ DeclDef n (bind inds $ (nl, bind args (preReq, tyAnn, oe)))
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "def"
+        n <- identifier
+        inds <- parseIdxParamBinds
+        symbol "@"
+        nl <- parseLocality
+        return $ DeclDefHeader n (bind inds nl)
     )
     <|>
     (parseSpanned $ do

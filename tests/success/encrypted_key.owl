@@ -40,6 +40,10 @@
 locality alice
 locality bob
 
+def bob  @ bob
+
+def alice  @ alice
+
 name x : nonce @ bob
 name k_data : enckey (z:Name(x){happened(bob())}) @ alice
 name shared_key : enckey (z:Name(k_data){happened(alice())}) @ alice, bob

@@ -1090,6 +1090,7 @@ sortDecls dcls = do
                         else
                             -- name is local and can be locally generated
                             return (gDecls, foldl gPriv locMap locNames, shared, pubkeys)
+        DeclDefHeader _ _ -> return (gDecls, locMap, shared, pubkeys)
         DeclDef name binds -> do
             let ((sids, pids), (Locality loc lidxs, binds')) = unsafeUnbind binds
             let (args, (_, retTy, obody)) = unsafeUnbind binds'
