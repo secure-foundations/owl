@@ -1,6 +1,21 @@
 locality alice
 
-module M {
+module A = { 
+    module B = { 
+        name n : nonce @ alice
+        struct s { 
+            _x : Name(n)
+        }
+    }
+}
+
+module X = A.B
+
+def foo0() @ alice : Unit =
+    let x : X.s = X.s(get(X.n)) in 
+    ()
+
+module M = {
     name k : nonce @ alice
     name k2 : enckey Name(k) @ alice
     struct s { 
@@ -19,15 +34,16 @@ module M {
         case x 
         | Ok => ()
         | Bad => ()
-
 }
 
+module N = M
+
 def alice() @ alice : Unit = 
-    let x = get(M.k) in 
-    let y : M.s = M.s(x) in 
-    let z : M.s = call M.foo() in 
-    let w : M.t = M.Ok() in 
-    call M.bar(w);
+    let x = get(N.k) in 
+    let y : N.s = N.s(x) in 
+    let z : N.s = call N.foo() in 
+    let w : N.t = N.Ok() in 
+    call N.bar(w);
     case w
         | Ok => ()
         | Bad => ()

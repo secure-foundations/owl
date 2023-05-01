@@ -263,6 +263,11 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- tRefined :: Ty -> Var -> Prop -> Ty
 -- tRefined t x p = mkSpanned $ TRefined t x p
 
+data ModuleExp = 
+    ModuleBody (Bind (Name ResolvedPath) [Decl])
+      | ModuleVar Path
+      deriving (Show, Generic, Typeable)
+
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
@@ -285,7 +290,7 @@ data DeclX =
     | DeclRandOrcl String (AExpr, NameType)
     | DeclCorr Label Label 
     | DeclLocality String Int
-    | DeclModule String (Bind (Name ResolvedPath) [Decl])
+    | DeclModule String ModuleExp
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -385,6 +390,9 @@ instance Subst ResolvedPath Endpoint
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
+
+instance Alpha ModuleExp
+instance Subst ResolvedPath ModuleExp
 
 instance Alpha AExprX
 instance Subst Idx AExprX
@@ -645,14 +653,18 @@ instance Pretty Locality where
     pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
 
 instance Pretty DeclX where
-    pretty (DeclModule s nk) =  
-        let (n, k) = prettyBind nk in
-        pretty "module" <+> pretty s <+> angles (n <> pretty "." <> k)
+    pretty (DeclModule s ne) =  
+        pretty "module" <+> pretty s <+> pretty "=" <+> pretty ne
     pretty (DeclName s isk) = 
         let (is, k) = prettyBind isk in
         pretty "name" <+> pretty s <+> is <> k
     pretty d = pretty (show d)
 
+instance Pretty ModuleExp where
+    pretty (ModuleBody nk) = 
+        let (n, k) = prettyBind nk in
+        angles (n <> pretty "." <> k)
+    pretty (ModuleVar p) = pretty p
 
 
 -- Wrapper datatype for native comparison up to alpha equivalence. Used for

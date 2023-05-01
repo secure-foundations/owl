@@ -766,6 +766,22 @@ sumOfLengths :: [AExpr] -> AExpr
 sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
 sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
 
+inferModuleExp :: Ignore Position -> ModuleExp -> Check (Bind (Name ResolvedPath) ModDef)
+inferModuleExp pos (ModuleBody xds') = do
+    (x, ds') <- unbind xds'
+    m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
+        checkDeclsWithCont ds' $ view curMod
+    return $ bind x m'
+inferModuleExp pos (ModuleVar pth@(PRes (PDot p s))) = do
+    md1 <- getModule pos p
+    case lookup s (md1^.modules) of
+      Just b -> return b
+      Nothing -> typeError pos $ "Unknown module: " ++ show pth
+
+
+
+
+
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = 
     case d^.val of
@@ -776,11 +792,9 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n xds' -> do
-          (x, ds') <- unbind xds'
-          m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
-              checkDeclsWithCont ds' $ view curMod
-          local (over (curMod . modules) $ insert n (bind x m')) $ cont
+      DeclModule n me -> do
+          md <- inferModuleExp (d^.spanOf) me
+          local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
@@ -1385,7 +1399,7 @@ checkLocality pos pth@(Locality (PRes (PDot p s)) xs) = do
               forM_ xs $ \i -> do
                   it <- inferIdx i
                   assert pos (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
-checkLocality pos pth = error $ "Bad path: " ++ show pth
+checkLocality pos pth = error $ "Bad path: " ++ show pth ++ show pos
 
 
 checkEndpoint :: Ignore Position -> Endpoint -> Check ()

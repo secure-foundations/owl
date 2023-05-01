@@ -205,13 +205,22 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclModule s xs -> do
-          (x, ds1) <- unbind xs
-          ds1' <- local (set curPath (PPathVar x)) $ resolveDecls ds1 
-          let d' = Spanned (d^.spanOf) $ DeclModule s (bind x ds1')
+      DeclModule s me -> do
+          me' <- resolveModuleExp (d^.spanOf) me
           p <- view curPath
-          ds' <- local (over modPaths $ T.insert s p) $ resolveDecls ds
+          let d' = Spanned (d^.spanOf) $ DeclModule s me'
+          ds' <- local (over modPaths $ T.insert s p) $ resolveDecls ds 
           return (d' : ds')
+
+resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
+resolveModuleExp pos me = 
+    case me of
+      ModuleBody xs -> do
+          (x, ds1) <- unbind xs
+          ds1' <- local (set curPath (PPathVar x)) $ resolveDecls ds1
+          return $ ModuleBody $ bind x ds1'
+      ModuleVar p -> ModuleVar <$> resolvePath pos PTMod p
+
 
 resolveNameType :: NameType -> Resolve NameType
 resolveNameType e = do

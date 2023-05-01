@@ -607,11 +607,25 @@ parseDecls =
     (parseSpanned $ do
         reserved "module"
         n <- identifier
+        symbol "="
+        me <- parseModuleExp n
+        return $ DeclModule n me
+    )
+
+parseModuleExp :: String -> Parser ModuleExp
+parseModuleExp n = 
+    (do
         symbol "{"
         ds <- parseDecls
         symbol "}"
-        return $ DeclModule n $ bind (s2n $ "%mod_" ++ n) ds
+        return $ ModuleBody $ bind (s2n $ "%mod_" ++ n) ds
     )
+    <|>
+    (do
+        x <- parsePath
+        return $ ModuleVar x
+    )
+
 
 
 
