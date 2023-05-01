@@ -607,9 +607,12 @@ parseDecls =
     (parseSpanned $ do
         reserved "module"
         n <- identifier
+        ospec <- optionMaybe $ do
+            symbol ":"
+            parseModuleExp ("SPECOF" ++ n) 
         symbol "="
         me <- parseModuleExp n
-        return $ DeclModule n me
+        return $ DeclModule n ospec me
     )
 
 parseModuleExp :: String -> Parser ModuleExp

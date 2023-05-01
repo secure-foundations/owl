@@ -703,6 +703,7 @@ coveringLabel t = do
     t' <- normalizeTy t
     coveringLabel' t'
 
+
 addDef :: Ignore Position -> String -> Def -> Check a -> Check a
 addDef pos n df cont = do
     dfs <- view $ curMod . defs
@@ -792,8 +793,13 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n me -> do
+      DeclModule n ospec me -> do
           md <- inferModuleExp (d^.spanOf) me
+          case ospec of
+            Nothing -> return ()
+            Just me' -> do
+                md' <- inferModuleExp (d^.spanOf) me'
+                moduleMatches (d^.spanOf) md md'
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
@@ -1695,5 +1701,103 @@ typeCheckDecls f ds = do
       Left () -> return $ Left e
       Right ds' -> do
           runExceptT $ runReaderT (unCheck $ checkDecls ds') e
+
+
+---- Module stuff ----
+
+defMatches :: Ignore Position -> String -> Maybe Def -> Def -> Check ()
+defMatches pos s d1 d2 = 
+    case (d1, d2) of
+      (Just (DefHeader bl), DefHeader bl') -> assert pos ("Def mismatch: " ++ s) $ bl `aeq` bl'
+      (Just (DefHeader bl), Def blspec) -> do
+          (is, DefSpec _ l _) <- unbind blspec
+          assert pos ("Def mismatch: " ++ s) $ bl `aeq` (bind is l)
+      (Just (Def blspec), Def blspec') -> do
+          (is1, DefSpec ab l1 pty) <- unbind blspec
+          (is', DefSpec ab' l1' pty') <- unbind blspec'
+          assert pos ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
+          assert pos ("Def mismatch: " ++ s) $ blspec `aeq` blspec'
+      (Nothing, _) -> typeError pos $ "Missing def: " ++ s
+
+tyDefMatches :: Ignore Position -> String -> TyDef -> TyDef -> Check ()
+tyDefMatches pos s td1 td2 = 
+    case (td1, td2) of
+      (EnumDef d1, EnumDef d2) -> assert pos ("Enum mismatch: " ++ s) $ d1 `aeq` d2
+      (StructDef d1, StructDef d2) -> assert pos ("Struct mismatch: " ++ s) $ d1 `aeq` d2
+      _ -> typeError pos $ "UNIMP: tyDefMatches"
+
+
+userFuncMatches :: Ignore Position -> String -> UserFunc -> UserFunc -> Check ()
+userFuncMatches pos s f1 f2 = assert pos ("Func mismatch: " ++ s) $ f1 == f2
+
+nameMatches :: Ignore Position -> String -> 
+    Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])) -> 
+    Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])) -> 
+    Check ()
+nameMatches pos s xn1 xn2 = do
+    ((is1, is2), on1) <- unbind xn1
+    ((is1', is2'), on2) <- unbind xn2
+    case on1 of
+      Nothing -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
+      Just _ -> assert pos ("Name mismatch for " ++ s) $ xn1 `aeq` xn2
+
+moduleMatches :: Ignore Position -> Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
+moduleMatches pos xmd1 ymd2 = do
+    (x, md1) <- unbind xmd1
+    (y, md2_) <- unbind ymd2
+    let md2 = subst y (PPathVar x) md2_
+    -- Localities
+    forM_ (md2^.localities) $ \(s, i) -> assert pos ("Locality mismatch for module match: " ++ s) $ lookup s (md1^.localities) == Just i
+    -- Defs
+    forM_ (md2^.defs) $ \(s, df) -> defMatches pos s (lookup s (md1^.defs)) df
+    -- TableEnv
+    forM_ (md2^.tableEnv) $ \(s, tl) -> 
+        case lookup s (md1^.tableEnv) of
+          Nothing -> typeError pos $ "Missing tenv: " ++ s
+          Just tl' -> assert pos ("Table mismatch for " ++ s) $ tl `aeq` tl'
+    -- flowAxioms: bidirectional
+    forM_ (md2^.flowAxioms) $ \ax -> 
+        case L.find (aeq ax) (md1^.flowAxioms) of 
+          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+          Just _ -> return ()
+    forM_ (md1^.flowAxioms) $ \ax -> 
+        case L.find (aeq ax) (md2^.flowAxioms) of 
+          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+          Just _ -> return ()
+    -- advCorrConstraints :: bidirectional
+    forM_ (md2^.advCorrConstraints) $ \ax -> 
+        case L.find (aeq ax) (md1^.advCorrConstraints) of 
+          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+          Just _ -> return ()
+    forM_ (md1^.advCorrConstraints) $ \ax -> 
+        case L.find (aeq ax) (md2^.advCorrConstraints) of 
+          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+          Just _ -> return ()
+    -- tyDefs 
+    forM_ (md2^.tyDefs) $ \(s, td) -> 
+        case lookup s (md1^.tyDefs) of
+          Nothing -> typeError pos $ "Type missing: " ++ s
+          Just td' -> tyDefMatches pos s td' td
+    -- userFuncs
+    forM_ (md2^.userFuncs) $ \(s, f) -> 
+        case lookup s (md1^.userFuncs) of
+          Nothing -> typeError pos $ "Func missing: " ++ s
+          Just f' -> userFuncMatches pos s f' f
+    -- nameEnv
+    forM_ (md2^.nameEnv) $ \(s, n) -> 
+        case lookup s (md1^.nameEnv) of 
+          Nothing -> typeError pos $ "Name missing: " ++ s
+          Just n' -> nameMatches pos s n' n
+    -- modules
+    forM_ (md2^.modules) $ \(s, m1) ->
+        case lookup s (md1^.modules) of
+          Nothing -> typeError pos $ "Module missing: " ++ s
+          Just m2 -> moduleMatches pos m2 m1 
+
+
+
+
+
+
 
 

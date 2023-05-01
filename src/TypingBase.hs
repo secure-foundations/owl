@@ -92,7 +92,7 @@ data UserFunc =
       | EnumConstructor TyVar String
       | EnumTest TyVar String
       | UninterpUserFunc String Int
-    deriving (Show, Generic, Typeable)
+    deriving (Eq, Show, Generic, Typeable)
 
 instance Alpha UserFunc
 instance Subst ResolvedPath UserFunc

@@ -205,10 +205,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclModule s me -> do
+      DeclModule s ospec me -> do
           me' <- resolveModuleExp (d^.spanOf) me
+          ospec' <- traverse (resolveModuleExp (d^.spanOf)) ospec
           p <- view curPath
-          let d' = Spanned (d^.spanOf) $ DeclModule s me'
+          let d' = Spanned (d^.spanOf) $ DeclModule s ospec' me'
           ds' <- local (over modPaths $ T.insert s p) $ resolveDecls ds 
           return (d' : ds')
 

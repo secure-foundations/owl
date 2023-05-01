@@ -290,7 +290,7 @@ data DeclX =
     | DeclRandOrcl String (AExpr, NameType)
     | DeclCorr Label Label 
     | DeclLocality String Int
-    | DeclModule String ModuleExp
+    | DeclModule String (Maybe ModuleExp) ModuleExp
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -653,7 +653,7 @@ instance Pretty Locality where
     pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
 
 instance Pretty DeclX where
-    pretty (DeclModule s ne) =  
+    pretty (DeclModule s ospec ne) =  
         pretty "module" <+> pretty s <+> pretty "=" <+> pretty ne
     pretty (DeclName s isk) = 
         let (is, k) = prettyBind isk in
