@@ -178,21 +178,39 @@ instance Pretty CTy where
     -- pretty (CTUnion t1 t2) =
     --     pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
 
+
+-- NB: This is the trusted component of the extraction pipeline!
+-- The pretty-printer for CExprs is used to print out the Verus spec code 
+-- (in the form that is parsed by macro into an ITree datatype in Verus)
+
+-- Some helper functions:
+coinsSize :: DistrName -> Doc ann
+coinsSize "enc" = pretty "TAG_SIZE"
+
+prettyEndpoint :: Endpoint -> Doc ann
+prettyEndpoint (Endpoint evar) = pretty evar
+prettyEndpoint (EndpointLocality (Locality s _)) = pretty "Endpoint::Loc_" <> pretty s
+
 instance Pretty CExpr where
     pretty CSkip = pretty "skip"
-    pretty (CInput xsk) = 
+    pretty (CInput xsk) =
         let (x, sk) = prettyBind xsk in
         parens (pretty "input" <+> x) <+> pretty "in" <> line <> sk
-    pretty (COutput a l) =  pretty "output " <> parens (pretty a <+> (case l of
+    pretty (COutput a l) = parens $ pretty "output " <> parens (pretty a) <+> (case l of
        Nothing -> pretty ""
-       Just s -> pretty "," <+> pretty s))
+       Just s -> pretty "to" <+> parens (prettyEndpoint s))
+    -- Special case for `let _ = samp _ in ...` which is special-cased in the ITree syntax
+    pretty (CLet (CSamp d xs) xk) =
+        let (x, k) = prettyBind xk in
+        parens (pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map pretty xs) <> comma <+> x)) <+> 
+        pretty "in" <> line <> k
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
-        pretty "let" <+> x <+> pretty "=" <+> parens (pretty e) <+> pretty "in" <> line <> k
-    pretty (CSamp d xs) = pretty "sample" <> parens (pretty d <> tupled (map pretty xs))
+        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
+    pretty (CSamp d xs) = pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map pretty xs))
     pretty (CIf a e1 e2) =
         pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (CRet a) = pretty "ret " <> parens (pretty a)
+    pretty (CRet a) = parens $ pretty "ret " <> parens (pretty a)
     pretty (CCall f is as) = 
         let inds = case is of
                      ([], []) -> mempty
@@ -203,10 +221,10 @@ instance Pretty CExpr where
         let pcases =
                 map (\(c, o) ->
                     case o of
-                      Left e -> pretty c <+> pretty "=>" <+> braces (pretty e)
-                      Right xe -> let (x, e) = prettyBind xe in pretty c <+> x <+> pretty "=>" <+> braces e
+                      Left e -> pretty c <+> pretty "=>" <+> braces (pretty e) <> comma
+                      Right xe -> let (x, e) = prettyBind xe in pretty c <+> parens x <+> pretty "=>" <+> braces e <> comma
                     ) xs in
-        pretty "case" <+> parens (pretty a) <> line <> braces (vsep pcases)
+        parens $ pretty "case" <+> parens (pretty a) <> line <> braces (vsep pcases)
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
 
