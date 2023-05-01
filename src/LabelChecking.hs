@@ -186,15 +186,15 @@ symCanonAtom c =
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
-getSymLblConst (TyLabelVar n@(PUnresolved s)) = do
+getSymLblConst (TyLabelVar n@(PRes p)) = do
     e <- use symLabelVarEnv
-    case M.lookup s e of
+    case M.lookup p e of
       Just res -> return res
       Nothing -> do
-          let sname = SAtom $ "%lvar_" ++ (show $ pretty s)
+          let sname = SAtom $ "%lvar_" ++ (smtName p) 
           emit $ SApp [SAtom "declare-fun", sname, SApp [], SAtom "Lbl"]
           emitAssertion $ sFlows (SAtom "%adv") sname
-          symLabelVarEnv %= (M.insert s sname)
+          symLabelVarEnv %= (M.insert p sname)
           return sname
 
 

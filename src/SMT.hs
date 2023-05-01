@@ -349,9 +349,9 @@ interpretAExp ae =
         vs <- mapM interpretAExp xs
         case f of
           -- Special cases
-          f | f == (PUnresolved "UNIT") -> return unit
-          f | f == (PUnresolved "true") -> return bTrue
-          f | f == (PUnresolved "false") -> return bFalse
+          f | f == (topLevelPath "UNIT") -> return unit
+          f | f == (topLevelPath "true") -> return bTrue
+          f | f == (topLevelPath "false") -> return bFalse
           _ -> do
               vf <- getFunc $ smtName f
               return $ sApp vf vs
@@ -359,8 +359,8 @@ interpretAExp ae =
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "IntToBS", SAtom (show i)]
       AEGet ne -> symNameExp ne
-      AEGetEncPK ne -> interpretAExp $ aeApp (PUnresolved  "enc_pk") [] [mkSpanned $ AEGet ne]
-      AEGetVK ne -> interpretAExp $ aeApp (PUnresolved  "vk") [] [mkSpanned $ AEGet ne]
+      AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
+      AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
       AEPackIdx i a -> interpretAExp a
 
 

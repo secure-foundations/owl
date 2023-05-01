@@ -34,6 +34,9 @@ member k xs = elem k $ map fst xs
 insert :: Eq a => a -> b -> [(a, b)] -> [(a, b)]
 insert k v xs = (k, v) : (filter (\p -> k /= (fst p)) xs)
 
+insertMany :: Eq a => [(a, b)] -> [(a, b)] -> [(a, b)]
+insertMany kvs xs = kvs ++ filter (\p -> not (fst p `elem` map fst kvs)) xs 
+
 data Flags = Flags { 
     _fDebug :: Bool,
     _fLogSMT :: Bool,
@@ -377,6 +380,7 @@ getNameInfo ne = do
                     Just (_, (_, nt')) -> return $ Just (nt, Nothing)
                     Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownPRF n s
             _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
+     _ -> error $ "Unknown: " ++ show (pretty ne)
 
 getNameTypeOpt :: NameExp -> Check (Maybe NameType)
 getNameTypeOpt ne = do

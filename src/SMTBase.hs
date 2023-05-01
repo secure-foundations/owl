@@ -97,7 +97,7 @@ data SolverEnv = SolverEnv {
     _lengthConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
     _symNameEnv :: M.Map String SExp,
-    _symLabelVarEnv :: M.Map TyVar SExp,
+    _symLabelVarEnv :: M.Map ResolvedPath SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),
@@ -131,7 +131,7 @@ instance SmtName ResolvedPath where
     smtName (PDot a b) = smtName a ++ "__" ++ b
 
 instance SmtName Path where
-    smtName (PUnresolved _) = error "smtName of unresolved path"
+    smtName (PUnresolved r) = error $ "smtName of unresolved path: " ++ r
     smtName (PRes p) = smtName p
 
 freshSMTName :: Sym String

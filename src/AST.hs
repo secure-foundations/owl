@@ -305,10 +305,10 @@ aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
 builtinFunc :: String -> [AExpr] -> AExpr
-builtinFunc s xs = aeApp (PUnresolved s) [] xs
+builtinFunc s xs = aeApp (PRes $ PDot PTop s) [] xs
 
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp (PUnresolved "length") [] [x]
+aeLength x = aeApp (PRes $ PDot PTop "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
@@ -349,6 +349,7 @@ data DebugCommand =
       | DebugPrintTyContext
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
+      | DebugPrintModules
     deriving (Show, Generic, Typeable)
 
 data FuncParam = 

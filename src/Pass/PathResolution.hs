@@ -91,7 +91,7 @@ resolveError pos msg = do
     fn <- view $ flags . T.fFilename
     fl <- view $ flags . T.fFileLoc
     f <- view $ flags . T.fFileContents
-    let rep = Err Nothing msg [(unignore pos, This msg)] []
+    let rep = Err Nothing msg [(unignore pos, This ("Resolution error: " ++ msg))] []
     let diag = addFile (addReport def rep) (fn) f  
     printDiagnostic stdout True True 4 defaultStyle diag 
     Resolve $ lift $ throwError () 
@@ -132,7 +132,9 @@ resolveDecls (d:ds) =
               return (s, ot')
           let d' = Spanned (d^.spanOf) $ DeclEnum s $ bind is vs'
           p <- view curPath
-          ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
+          ds' <- local (over tyPaths $ T.insert s p) $ 
+              local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x, p)) vs) $ 
+                  resolveDecls ds
           return (d' : ds')
       DeclInclude fn -> do
           incls <- view includes
@@ -142,7 +144,7 @@ resolveDecls (d:ds) =
               s <- liftIO $ readFile fn'
               case P.parse P.parseFile (takeFileName fn') s of
                 Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
-                Right dcls -> local (over includes $ S.insert fn) $ resolveDecls dcls
+                Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
           vs' <- forM vs $ \(s, ot) -> do
@@ -150,7 +152,10 @@ resolveDecls (d:ds) =
               return (s, ot')
           let d' = Spanned (d^.spanOf) $ DeclStruct s $ bind is vs'
           p <- view curPath
-          ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
+          ds' <- local (over tyPaths $ T.insert s p) $ 
+              local (over funcPaths $ T.insert s p) $ 
+                  local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x, p)) vs) $ 
+                      resolveDecls ds
           return (d' : ds')
       DeclTy s ot -> do
           ot' <- traverse resolveTy ot
@@ -254,6 +259,11 @@ resolveTy e = do
                       (x, t) <- unbind xt
                       t' <- resolveTy t
                       return $ TExistsIdx $ bind x t'
+                  TCase p t1 t2 -> do
+                      p' <- resolveProp p
+                      t1' <- resolveTy t1
+                      t2' <- resolveTy t2
+                      return $ TCase p' t1' t2'
 
 
 resolveNameExp :: NameExp -> Resolve NameExp
@@ -281,18 +291,25 @@ resolvePath :: Ignore Position -> PathType -> Path -> Resolve Path
 resolvePath pos pt p = 
     case p of
       PRes _ -> return p
-      PUnresolved s -> do
-          mp <- case pt of
-                  PTName -> view namePaths
-                  PTTy -> view tyPaths
-                  PTFunc -> view funcPaths
-                  PTLoc -> view localityPaths
-                  PTDef -> view defPaths
-                  PTTbl -> view tablePaths
-                  PTMod -> view modPaths
-          case lookup s mp of
-            Just p -> return $ PRes $ PDot p s
-            Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
+      PUnresolved s -> 
+          if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else do
+              mp <- case pt of
+                      PTName -> view namePaths
+                      PTTy -> view tyPaths
+                      PTFunc -> view funcPaths
+                      PTLoc -> view localityPaths
+                      PTDef -> view defPaths
+                      PTTbl -> view tablePaths
+                      PTMod -> view modPaths
+              case lookup s mp of
+                Just p -> return $ PRes $ PDot p s
+                Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
+
+resolveEndpoint :: Ignore Position -> Endpoint -> Resolve Endpoint
+resolveEndpoint pos l = 
+    case l of
+      Endpoint v -> return $ Endpoint v
+      EndpointLocality loc -> EndpointLocality <$> resolveLocality pos loc
 
 resolveLocality :: Ignore Position -> Locality -> Resolve Locality
 resolveLocality pos l = 
@@ -313,7 +330,7 @@ resolveLabel l =
           return $ Spanned (l^.spanOf) $ LJoin l1' l2'
       LConst (TyLabelVar p) -> do
           p' <- resolvePath (l^.spanOf) PTTy p
-          return $ Spanned (l^.spanOf) $ LConst (TyLabelVar p) 
+          return $ Spanned (l^.spanOf) $ LConst (TyLabelVar p') 
       LRangeIdx xk -> do
           (x, k) <- unbind xk
           k' <- resolveLabel k
@@ -351,12 +368,16 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EInput $ bind x k'
+      EOutput a oe -> do
+          a' <- resolveAExpr a
+          oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
+          return $ Spanned (e^.spanOf) $ EOutput a' oe'
       ELet e1 ot s xk -> do
           e1' <- resolveExpr e1
           ot' <- traverse resolveTy ot
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ELet e1 ot' s (bind x k')
+          return $ Spanned (e^.spanOf) $ ELet e1' ot' s (bind x k')
       EUnionCase a xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
@@ -426,6 +447,7 @@ resolveDebugCommand dc =
       DebugPrintLabel l -> DebugPrintLabel <$> resolveLabel l
       DebugPrint _ -> return dc
       DebugPrintTyContext -> return dc
+      DebugPrintModules -> return dc
 
 
 resolveProp :: Prop -> Resolve Prop

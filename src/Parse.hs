@@ -646,6 +646,11 @@ parseDebugCommand =
     )
     <|>
     (try $ do
+        reserved "printModules"
+        return $ DebugPrintModules
+    )
+    <|>
+    (try $ do
         reserved "printExpr"
         symbol "("
         e <- parseExpr
