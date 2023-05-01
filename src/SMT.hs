@@ -148,32 +148,32 @@ setupTyEnv = do
             varVals %= (M.insert x v)
             go xs
 
-setupUserFunc :: (Path, UserFunc) -> Sym ()
+setupUserFunc :: (ResolvedPath, UserFunc) -> Sym ()
 setupUserFunc (s, f) =
     case f of
       StructConstructor tv -> do
-        tds <- view $ curMod . tyDefs
-        case lookup tv tds of
-          Just (StructDef idf) -> do
+        td <- liftCheck $ getTyDef (ignore def) (PRes $ PDot s tv)
+        case td of
+          StructDef idf -> do
               let ar = length $ snd $ unsafeUnbind idf
-              setupFunc (s, ar)
-          Nothing -> error $ "Struct not found: " ++ show tv
-      StructProjector _ _ -> setupFunc (s, 1)
+              setupFunc (PDot s tv, ar)
+          _ -> error $ "Struct not found: " ++ show tv
+      StructProjector _ proj -> setupFunc (PDot s proj, 1)
       EnumConstructor tv variant ->  do
-        tds <- view $ curMod . tyDefs
-        case lookup tv tds of
-          Just (EnumDef idf) -> do
+        td <- liftCheck $ getTyDef (ignore def) (PRes $ PDot s tv)
+        case td of
+          EnumDef idf -> do
               let enum_map = snd $ unsafeUnbind idf 
               case lookup variant enum_map of
                 Nothing -> error $ "Bad variant in SMT: " ++ show variant
-                Just Nothing -> setupFunc (s, 0)
-                Just (Just _) -> setupFunc (s, 1)
-          _ -> error "Unknown struct in SMT"
-      EnumTest _ _ -> setupFunc (s, 1)
-      UninterpUserFunc f ar -> setupFunc (s, ar)
+                Just Nothing -> setupFunc (PDot s variant, 0)
+                Just (Just _) -> setupFunc (PDot s variant, 1)
+          _ -> error "Unknown enum in SMT"
+      EnumTest _ variant -> setupFunc (PDot s (variant ++ "?"), 1)
+      UninterpUserFunc f ar -> setupFunc (PDot s f, ar)
 
 
-setupFunc :: (Path, Int) -> Sym ()
+setupFunc :: (ResolvedPath, Int) -> Sym ()
 setupFunc (s, ar) = do
     fs <- use funcInterps
     case M.lookup (smtName s) fs of
@@ -215,9 +215,9 @@ lengthConstant s = do
 setupAllFuncs :: Sym ()
 setupAllFuncs = do
     fncs <- view detFuncs
-    mapM_ setupFunc $ map (\(k, (v, _)) -> (topLevelPath k, v)) fncs
+    mapM_ setupFunc $ map (\(k, (v, _)) -> (PDot PTop k, v)) fncs
     ufs <- liftCheck $ collectUserFuncs
-    mapM_ setupUserFunc $ map (\(k, v) -> (PRes k, v)) ufs 
+    mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
     -- Verification-oriented funcs, none are unary
     emit $ SApp [SAtom "declare-fun", SAtom "EnumVal", SApp [bitstringSort], bitstringSort]
@@ -292,17 +292,17 @@ tyConstraints t v = do
           c1 <- tyConstraints t1 v
           c2 <- tyConstraints t2 v
           return $ sOr c1 c2
-      TConst s ps -> do
+      TConst s@(PRes (PDot pth _)) ps -> do
           td <- liftCheck $ getTyDef (t^.spanOf) s
           case td of
             TyAbstract -> return sTrue
             TyAbbrev t -> tyConstraints t v
             StructDef ixs -> do
                 dts <- liftCheck $ extractStruct (t^.spanOf) ps (show s) ixs
-                let v' = SApp $ (SAtom (smtName s) : map (\(d, _) -> SApp [SAtom d, v]) dts)
+                let v' = SApp $ (SAtom (smtName s) : map (\(d, _) -> SApp [SAtom $ smtName $ PDot pth d, v]) dts)
                 let ext_ax = sEq v v' -- Extensionality axiom
-                let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ map (\(d, _) -> SApp [SAtom d, v]) dts
-                ty_axioms <- forM dts $ \(d, t) -> tyConstraints t (SApp [SAtom d, v])
+                let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ map (\(d, _) -> SApp [SAtom $ smtName $ PDot pth d, v]) dts
+                ty_axioms <- forM dts $ \(d, t) -> tyConstraints t (SApp [SAtom $ smtName $ PDot pth d, v])
                 return $ sAnd (ext_ax : length_ax : ty_axioms)
             EnumDef b -> do
                 bdy <- liftCheck $ extractEnum (t^.spanOf) ps (show s) b
@@ -312,13 +312,13 @@ tyConstraints t v = do
                                           Just t -> t
                                           Nothing -> tUnit
                                        ) val
-                    fconstr <- getFunc $ fst $ bdy !! i
-                    ftest <- getFunc $ (fst $ bdy !! i) ++ "?"
+                    fconstr <- getFunc $ smtName $ PDot pth $ fst $ bdy !! i
+                    ftest <- getFunc $ smtName $ PDot pth $ (fst $ bdy !! i) ++ "?"
                     let vEq = case (snd $ bdy !! i) of
                           Just _ -> sEq v (SApp [fconstr, val])
                           Nothing -> sTrue
                     return $ sAnd [vEq, (sEq (SApp [ftest, v]) bTrue), c]
-                ftests <- mapM (\(n, _) -> getFunc $ n ++ "?") bdy
+                ftests <- mapM (\(n, _) -> getFunc $ smtName $ PDot pth $ n ++ "?") bdy
                 return $ (SApp $ [SAtom "or"] ++ cases) `sAnd2` (enumDisjConstraint ftests v)
       TCase tc t1 t2 -> do
           c1 <- tyConstraints t1 v
@@ -445,14 +445,14 @@ enumDisjConstraint fs v =
 
 enumTestFaithulAxioms :: Sym ()
 enumTestFaithulAxioms = do
-    tds <- view $ curMod . tyDefs
-    forM_ tds $ \(_, td) ->
+    tds <- liftCheck $ collectTyDefs
+    forM_ tds $ \(pth, td) -> do
         case td of
           EnumDef m' -> do
               (_, m) <- liftCheck $ unbind m'
               forM_ m $ \(x, ot) -> do
-                  fconstr <- getFunc $ x
-                  ftest <- getFunc $ x ++ "?"
+                  fconstr <- getFunc $ smtName $ PDot (pathPrefix pth) x
+                  ftest <- getFunc $ smtName $ PDot (pathPrefix pth) $  x ++ "?"
                   case ot of
                     Nothing -> 
                         emitAssertion $ sEq (SApp [ftest, fconstr]) bTrue

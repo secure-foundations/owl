@@ -610,7 +610,7 @@ parseDecls =
         symbol "{"
         ds <- parseDecls
         symbol "}"
-        return $ DeclModule n $ bind (s2n $ "._mod_" ++ n) ds
+        return $ DeclModule n $ bind (s2n $ "%mod_" ++ n) ds
     )
 
 

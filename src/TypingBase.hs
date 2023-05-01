@@ -105,7 +105,6 @@ data ModDef = ModDef {
     _advCorrConstraints :: [(Label, Label)],
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
-    _endpointContext :: [EndpointVar],
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
     _modules :: Map String (Bind (Name ResolvedPath) ModDef)
 }
@@ -122,9 +121,10 @@ data Env = Env {
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
     _randomOracle :: Map String (AExpr, NameType),
+    _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
     _curModules :: Map (Maybe (Name ResolvedPath)) ModDef,
-    _interpUserFuncs :: Ignore Position -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
+    _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModDef -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer
 }
@@ -350,6 +350,7 @@ getModule pos rp = go rp
                   return $ subst x p0 md' 
               Nothing -> typeError pos $ "Unknown module: " ++ show p0
 
+
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
@@ -440,7 +441,7 @@ getFuncInfo pos f@(PRes (PDot p s)) = do
           case lookup s (md ^. userFuncs) of 
             Just uf -> do 
                 uf_interp <- view interpUserFuncs
-                uf_interp pos uf
+                uf_interp pos p md uf
             Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
 
 inferAExpr :: AExpr -> Check Ty
@@ -645,6 +646,12 @@ collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
 collectUserFuncs :: Check (Map ResolvedPath UserFunc)
 collectUserFuncs = collectEnvInfo (_userFuncs)
 
+collectTyDefs :: Check (Map ResolvedPath TyDef)
+collectTyDefs = collectEnvInfo _tyDefs
+
+pathPrefix :: ResolvedPath -> ResolvedPath
+pathPrefix (PDot p _) = p
+pathPrefix _ = error "pathPrefix error" 
 
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for

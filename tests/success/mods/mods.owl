@@ -1,0 +1,35 @@
+locality alice
+
+module M {
+    name k : nonce @ alice
+    name k2 : enckey Name(k) @ alice
+    struct s { 
+        _x : Name(k)
+    }
+
+    enum t {
+        | Ok
+        | Bad
+    }
+
+    def foo() @ alice : s = 
+        s(get(k))
+
+    def bar(x : t) @ alice : Unit = 
+        case x 
+        | Ok => ()
+        | Bad => ()
+
+}
+
+def alice() @ alice : Unit = 
+    let x = get(M.k) in 
+    let y : M.s = M.s(x) in 
+    let z : M.s = call M.foo() in 
+    let w : M.t = M.Ok() in 
+    call M.bar(w);
+    case w
+        | Ok => ()
+        | Bad => ()
+
+

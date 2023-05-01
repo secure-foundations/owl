@@ -145,14 +145,18 @@ resolveDecls (d:ds) =
                       resolveDecls ds
           return (d' : ds')
       DeclInclude fn -> do
-          incls <- view includes
-          if S.member fn incls then return [] else do
-              fl <- view flags
-              let fn' = (T._fFileLoc fl) </> fn
-              s <- liftIO $ readFile fn'
-              case P.parse P.parseFile (takeFileName fn') s of
-                Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
-                Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
+          p <- view curPath
+          case p of
+            PTop -> do
+              incls <- view includes
+              if S.member fn incls then return [] else do
+                  fl <- view flags
+                  let fn' = (T._fFileLoc fl) </> fn
+                  s <- liftIO $ readFile fn'
+                  case P.parse P.parseFile (takeFileName fn') s of
+                    Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
+                    Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
+            _ -> resolveError (d^.spanOf) $ "include statements only allowed at top level"
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
           vs' <- forM vs $ \(s, ot) -> do

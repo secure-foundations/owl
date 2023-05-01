@@ -36,13 +36,13 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -417,10 +417,9 @@ initDistrs = [
             ))
                         ]
 
-interpUserFunc :: Ignore Position -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
-interpUserFunc pos (StructConstructor tv) = do
-    tds <- view $ curMod . tyDefs
-    case lookup tv tds of
+interpUserFunc :: Ignore Position -> ResolvedPath -> ModDef -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+interpUserFunc pos pth md (StructConstructor tv) = do
+    case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
           let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
           return (ar, \ps xs -> do
@@ -431,12 +430,11 @@ interpUserFunc pos (StructConstructor tv) = do
                 b <- foldM (\acc i -> do
                     b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
                     return $ acc && b1) True [0..(length xs - 1)]
-                if b then return (TRefined (mkSpanned $ TConst (topLevelPath $ tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
+                if b then return (TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
               else trivialTypeOf (map snd xs))
       _ -> typeError pos $ "Unknown struct: " ++ show tv
-interpUserFunc pos (StructProjector tv field) = do
-    tds <- view $ curMod . tyDefs
-    case lookup tv tds of
+interpUserFunc pos pth md (StructProjector tv field) = do
+    case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
           let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
           return (1, \ps args -> do
@@ -445,13 +443,12 @@ interpUserFunc pos (StructProjector tv field) = do
               assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               case lookup field nts of
                 Just t -> do
-                  b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (topLevelPath tv) ps)
+                  b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PRes $ PDot pth tv) ps)
                   if b then return (t^.val) else trivialTypeOf $ map snd args
                 Nothing -> typeError pos $ "Unknown struct field: " ++ field)
       _ -> typeError pos $ "Unknown struct: " ++ show tv
-interpUserFunc pos (EnumConstructor tv variant) = do
-    tds <- view $ curMod . tyDefs
-    case lookup tv tds of
+interpUserFunc pos pth md (EnumConstructor tv variant) = do
+    case lookup tv (md^.tyDefs) of
       Just (EnumDef idf) -> do
           let (is_ar, enum_map) = let (xs, ys) = unsafeUnbind idf in (length xs, ys)
           ar <- case lookup variant enum_map of
@@ -464,28 +461,28 @@ interpUserFunc pos (EnumConstructor tv variant) = do
               assert pos (show $ pretty "Index arity mismatch on enum constructor") $ length ps == is_ar 
               let ot = fromJust $ lookup variant nts
               case ot of
-                Nothing -> return $ TRefined (mkSpanned $ TConst (topLevelPath tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
+                Nothing -> return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
                 Just t -> do
                     b <- isSubtype (snd $ args !! 0) t
-                    if b then return (TRefined (mkSpanned $ TConst (topLevelPath tv) (ps))
+                    if b then return (TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) (ps))
                                                           (bind (s2n ".res") $
                                                               pEq (aeLength (aeVar ".res"))
                                                                   (aeApp (topLevelPath $ "plus") [] [aeLength (fst $ args !! 0), aeLenConst "tag" ])))
                     else trivialTypeOf (map snd args))
       _ -> typeError pos $ "Unknown enum: " ++ show tv 
-interpUserFunc pos (EnumTest tv variant) = do
+interpUserFunc pos pth md (EnumTest tv variant) = do
     return $ snd $ mkSimpleFunc (variant ++ "?") 1 $ \args ->
         case args of
           [t] -> 
               case (stripRefinements t)^.val of
-                TConst s _ | s == (topLevelPath tv) -> return $ TBool advLbl
+                TConst s _ | s == (PRes $ PDot pth tv) -> return $ TBool advLbl
                 _ -> do
                     l <- coveringLabel t
                     return $ TBool l
-interpUserFunc pos (UninterpUserFunc f ar) = do
+interpUserFunc pos pth md (UninterpUserFunc f ar) = do
     return $ (ar, withNoParams (show f) $ \args -> do
         l <- coveringLabelOf $ map snd args
-        return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath f) [] (map fst args))))
+        return $ TRefined (tData l l) $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PRes $ PDot pth f) [] (map fst args))))
 
 
 
@@ -1393,7 +1390,7 @@ checkLocality pos pth = error $ "Bad path: " ++ show pth
 
 checkEndpoint :: Ignore Position -> Endpoint -> Check ()
 checkEndpoint pos (Endpoint x) = do
-    s <- view $ curMod . endpointContext
+    s <- view $ endpointContext
     assert pos (show $ pretty "Unknown endpoint: " <> pretty x) $ elem x s
 checkEndpoint pos (EndpointLocality l) = do
     checkLocality pos l
@@ -1413,7 +1410,7 @@ checkExpr ot e = do
     case e^.val of
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
-          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (curMod . endpointContext) (s :)) $ checkExpr ot k
+          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
       (EOutput a ep) -> do
           case ep of
             Nothing -> return ()
