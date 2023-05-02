@@ -208,8 +208,8 @@ instance Pretty CExpr where
         let (x, k) = prettyBind xk in
         pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
     pretty (CSamp d xs) = pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map pretty xs))
-    pretty (CIf a e1 e2) =
-        pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
+    pretty (CIf a e1 e2) = parens $ 
+        pretty "if" <+> parens (pretty a) <+> pretty "then" <+> parens (pretty e1) <+> pretty "else" <+> parens (pretty e2)
     pretty (CRet a) = parens $ pretty "ret " <> parens (pretty a)
     pretty (CCall f is as) = 
         let inds = case is of
