@@ -439,7 +439,7 @@ layoutEnum name cases = do
 genOwlOpsImpl :: String -> Doc ann
 genOwlOpsImpl name = pretty
     "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
-        "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> () { (&self.0[..]).owl_output(dest_addr, ret_addr) }",
+        "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) { (&self.0[..]).owl_output(dest_addr, ret_addr) }",
         "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self.0[..]).owl_enc(key) }",
         "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_dec(key) }",
         "fn owl_eq(&self, other: &Self) -> bool { *self.0 == *other.0 }",
@@ -455,7 +455,7 @@ genOwlOpsImpl name = pretty
         "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0[..]).owl_xor(other) }"
     ])
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann)
+extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
     -- liftIO $ print name
@@ -475,7 +475,7 @@ extractStruct owlName owlFields = do
     let owlOpsImpl = genOwlOpsImpl name
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
-    return $ vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs ++ [owlOpsImpl]
+    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs ++ [owlOpsImpl], pretty "")
     where
         mkStructFuncs owlName parsingOutcomeName owlFields = return $
             M.fromList $
@@ -602,7 +602,7 @@ extractStruct owlName owlFields = do
 
 
 
-extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann)
+extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractEnum owlName owlCases' = do
     let owlCases = M.fromList owlCases'
     let name = rustifyName owlName
@@ -623,7 +623,18 @@ extractEnum owlName owlCases' = do
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) owlName
-    return $ vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs ++ [owlOpsImpl]
+
+    --TODO refactor
+    let rustifySpecTyOpt topt = 
+            case topt of
+                Just ty -> do pretty <$> (rustifyArgTy . doConcretifyTy $ ty)
+                Nothing -> do return (pretty "")
+    enumSpecCases <- mapM (\(n, topt) -> do tp <- rustifySpecTyOpt topt; return $ pretty n <> parens tp) owlCases'
+    let enumSpec = pretty "pub enum" <+> pretty name <> braces (line <> (
+                        vsep . punctuate comma $ enumSpecCases
+                    ) <> line)
+
+    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs ++ [owlOpsImpl], enumSpec)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
@@ -985,24 +996,33 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     return ()
 
 
-extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
+extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann, Doc ann)
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
     -- TODO refactor
-    liftIO . print $ owlName
     concreteBody' <- concretify owlBody
-    liftIO . print . pretty . replacePrimes . show . pretty $ concreteBody'
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
+    defSpec <- genDefSpec concreteBody' rustArgs rtb
     funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
-    return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
+    return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
         genFuncDecl name sidArgs owlArgs rt = do
             let argsPrettied = pretty "&mut self," <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
+        genDefSpec body owlArgs rt = do
+            let argsPrettied = hsep . punctuate comma . map extractArg $ owlArgs
+            let rtPrettied = case rt of
+                                Unit -> pretty ""
+                                _ -> pretty "->" <+> pretty rt
+            return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+                pretty "owl_spec!" <> parens (line <> 
+                    (pretty . replacePrimes . show . pretty $ body) 
+                <> line) <> line <>
+                rbrace
 
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
@@ -1123,7 +1143,7 @@ sortDecls dcls = do
 
 
 -- return number of arguments to main and the print of the locality
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Int, Doc ann)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Int, Doc ann, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     let sfs = stateFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
@@ -1132,11 +1152,12 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     case find (\(n,_,sids,as,_,_) -> (n == loc ++ "_main") && null as) defs of
         Just (_,_,sids,_,_,_) -> do
             initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
-            fns <- mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
+            (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
             return $ (length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
-                pretty "impl" <+> pretty (locName loc) <+> braces (initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)))
+                pretty "impl" <+> pretty (locName loc) <+> braces (initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
+                vsep fnspecs)
         Nothing -> throwError $ LocalityWithNoMain loc
     where
         genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ pretty "" else do
@@ -1198,15 +1219,15 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                     ) <>
                 rbrace
 
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName Int, Doc ann)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName Int, Doc ann, Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
-    (sidArgMap, ps) <- foldM (go pubkeys) (M.empty, []) $ M.assocs locMap
-    return (sidArgMap, addrs <> line <> vsep ps)
+    (sidArgMap, ps, spec_ps) <- foldM (go pubkeys) (M.empty, [], []) $ M.assocs locMap
+    return (sidArgMap, addrs <> line <> vsep ps, vsep spec_ps)
     where
-        go pubKeys (m, ps) (lname, ldata) = do
-            (nSidArgs, p) <- extractLoc pubKeys (lname, ldata)
-            return (M.insert lname nSidArgs m, ps ++ [p])
+        go pubKeys (m, ps, spec_ps) (lname, ldata) = do
+            (nSidArgs, p, spec_p) <- extractLoc pubKeys (lname, ldata)
+            return (M.insert lname nSidArgs m, ps ++ [p], spec_ps ++ [spec_p])
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
@@ -1292,7 +1313,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 -------------------------------------------------------------------------------------------
 -- Decl extraction
 
-extractDecl :: Decl -> ExtractionMonad (Doc ann)
+extractDecl :: Decl -> ExtractionMonad (Doc ann, Doc ann)
 extractDecl dcl =
     case dcl^.val of
         DeclStruct name fields -> do
@@ -1305,70 +1326,89 @@ extractDecl dcl =
             case topt of
               Nothing -> do
                 typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
-                return $ pretty ""
+                return $ (pretty "", pretty "")
               Just t -> do
                 lct <- layoutCTy . doConcretifyTy $ t
                 typeLayouts %= M.insert (rustifyName name) lct
-                return $ pretty ""
-        _ -> return $ pretty "" -- Other decls are handled elsewhere
+                return $ (pretty "", pretty "")
+        _ -> return $ (pretty "", pretty "") -- Other decls are handled elsewhere
 
-extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
-extractDecls' [] = return $ pretty ""
+extractDecls' :: [Decl] -> ExtractionMonad (Doc ann, Doc ann)
+extractDecls' [] = return $ (pretty "", pretty "")
 extractDecls' (d:ds) = do
-    dExtracted <- extractDecl d
-    dsExtracted <- extractDecls' ds
-    return $ dExtracted <> line <> line <> dsExtracted
+    (dExtracted, sExtracted) <- extractDecl d
+    (dsExtracted, ssExtracted) <- extractDecls' ds
+    return $ (dExtracted <> line <> line <> dsExtracted, sExtracted <> line <> line <> ssExtracted)
 
-extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
+extractDecls :: [Decl] -> ExtractionMonad (Doc ann, Doc ann)
 extractDecls ds = do
     (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
-    globalsExtracted <- extractDecls' globalDecls
-    (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
+    (globalsExtracted, globalSpecsExtracted) <- extractDecls' globalDecls
+    (sidArgMap, locsExtracted, specsExtracted) <- extractLocs pubKeys locDecls
     p <- preamble
+    vp <- verusPreamble
     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
-    return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
+    return (p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep, 
+            vp <> line <> pretty "verus!{" <> line <> globalSpecsExtracted <> line <> specsExtracted <> line <> pretty "} // verus!")
+
+
+verusPreamble :: ExtractionMonad (Doc ann)
+verusPreamble = do
+    return $ vsep $ map pretty
+        [   "#![allow(unused_imports)]",
+            "#![allow(non_camel_case_types)]",
+            "#![allow(non_snake_case)]",
+            "#![allow(non_upper_case_globals)]",
+            "pub use vstd::{*, prelude::*, vec::*, seq::*, option::*, modes::*};",
+            "pub mod speclib;",
+            "#[macro_use] pub use speclib::{*, itree::*};",
+            ""
+        ]
+
+
+preamble :: ExtractionMonad (Doc ann)
+preamble = do
+    c <- showAEADCipher
+    h <- showHMACMode
+    return $ vsep $ map pretty
+        [   "#![allow(non_camel_case_types)]",
+            "#![allow(non_snake_case)]",
+            "#![allow(non_upper_case_globals)]",
+            "pub use std::rc::Rc;",
+            "pub use std::io::{self, Write, BufRead};",
+            "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
+            "pub use std::thread;",
+            "pub use std::str;",
+            "pub use std::fs;",
+            "pub use std::time::Duration;",
+            "pub use serde::{Serialize, Deserialize};",
+            "pub use std::env;",
+            "pub use std::collections::HashMap;",
+            "pub use std::time::Instant;",
+            "pub use owl_crypto_primitives::owl_aead;",
+            "pub use owl_crypto_primitives::owl_hmac;",
+            "pub use owl_crypto_primitives::owl_pke;",
+            "pub use owl_crypto_primitives::owl_util;",
+            "pub use owl_crypto_primitives::owl_dhke;",
+            "pub use owl_crypto_primitives::owl_hkdf;",
+            "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
+            "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
+            "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
+            "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
+            "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
+        ] ++
+        [   owlOpsTraitDef,
+            owlOpsTraitImpls,
+            owl_msgDef,
+            owl_outputDef,
+            owl_inputDef,
+            owl_miscFns,
+            pretty "// -------- START LINE COUNTING HERE --------"
+        ]
     where
-        preamble = do
-            c <- showAEADCipher
-            h <- showHMACMode
-            return $ vsep $ map pretty
-                [   "#![allow(non_camel_case_types)]",
-                    "#![allow(non_snake_case)]",
-                    "#![allow(non_upper_case_globals)]",
-                    "pub use std::rc::Rc;",
-                    "pub use std::io::{self, Write, BufRead};",
-                    "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
-                    "pub use std::thread;",
-                    "pub use std::str;",
-                    "pub use std::fs;",
-                    "pub use std::time::Duration;",
-                    "pub use serde::{Serialize, Deserialize};",
-                    "pub use std::env;",
-                    "pub use std::collections::HashMap;",
-                    "pub use std::time::Instant;",
-                    "pub use owl_crypto_primitives::owl_aead;",
-                    "pub use owl_crypto_primitives::owl_hmac;",
-                    "pub use owl_crypto_primitives::owl_pke;",
-                    "pub use owl_crypto_primitives::owl_util;",
-                    "pub use owl_crypto_primitives::owl_dhke;",
-                    "pub use owl_crypto_primitives::owl_hkdf;",
-                    "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
-                    "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
-                    "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
-                    "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
-                    "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
-                ] ++
-                [   owlOpsTraitDef,
-                    owlOpsTraitImpls,
-                    owl_msgDef,
-                    owl_outputDef,
-                    owl_inputDef,
-                    owl_miscFns,
-                    pretty "// -------- START LINE COUNTING HERE --------"
-                ]
         owlOpsTraitDef = vsep $ map pretty [
                 "trait OwlOps {",
-                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> ();",
+                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str);",
                     "fn owl_enc(&self, key: &[u8]) -> Vec<u8>;",
                     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;",
                     "fn owl_eq(&self, other: &Self) -> bool",
@@ -1390,7 +1430,7 @@ extractDecls ds = do
             ]
         owlOpsTraitImpls = vsep $ map pretty [
                 "impl OwlOps for &[u8] {",
-                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> () {",
+                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) {",
                         "output(self, dest_addr, ret_addr);",
                     "}",
                     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> {",
@@ -1451,7 +1491,7 @@ extractDecls ds = do
                     "}",
                 "}",
                 "impl OwlOps for Vec<u8> {",
-                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> () { (&self[..]).owl_output(dest_addr, ret_addr) }",
+                    "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) { (&self[..]).owl_output(dest_addr, ret_addr) }",
                     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self[..]).owl_enc(key) }",
                     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self[..]).owl_dec(key) }",
                     "fn owl_eq(&self, other: &Self) -> bool { self == other }",
@@ -1505,5 +1545,5 @@ extractDecls ds = do
                 "}"
             ]
 
-extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann))
+extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann, Doc ann))
 extract path dcls = runExtractionMonad (initEnv path) $ extractDecls dcls

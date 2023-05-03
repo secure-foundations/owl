@@ -1,4 +1,5 @@
 target/
 src/main.rs
+src/main_spec.rs
 Cargo.lock
 *.owl_config

@@ -179,7 +179,7 @@ instance Pretty CTy where
     --     pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
 
 
--- NB: This is the trusted component of the extraction pipeline!
+-- NB: This is a trusted component of the extraction pipeline!
 -- The pretty-printer for CExprs is used to print out the Verus spec code 
 -- (in the form that is parsed by macro into an ITree datatype in Verus)
 
@@ -204,6 +204,9 @@ instance Pretty CExpr where
         let (x, k) = prettyBind xk in
         parens (pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map pretty xs) <> comma <+> x)) <+> 
         pretty "in" <> line <> k
+    pretty (CLet (COutput a l) xk) =
+        let (x, k) = prettyBind xk in
+        pretty (COutput a l) <+> pretty "in" <> line <> k
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
         pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k

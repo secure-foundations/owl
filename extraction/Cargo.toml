@@ -2,6 +2,7 @@
 name = "extraction-temp"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.68.0"
 
 [lib]
 name = "owl_crypto_primitives"
