@@ -479,7 +479,7 @@ inferAExpr ae = do
                         Nothing -> typeError (ae^.spanOf) $ show $ pretty "Name not base: " <> pretty ne
                 case ts of
                     TcDef curr_locality -> do
-                        assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality) $
+                        assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality <> pretty " but expected any of " <> pretty ls') $
                             any (aeq curr_locality) ls'
                         return $ tName ne
                     _ -> return $ tName ne
