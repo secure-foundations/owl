@@ -578,6 +578,14 @@ parseDecls =
     (try $ parseSpanned $ do
         reserved "locality"
         nl <- identifier
+        symbol "="
+        p <- parsePath
+        return $ DeclLocality nl (Right p)
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "locality"
+        nl <- identifier
         oi <- optionMaybe $ do
             symbol ":"
             whiteSpace
@@ -588,14 +596,6 @@ parseDecls =
                   Just i -> i
                   Nothing -> 0
         return $ DeclLocality nl (Left i))
-    <|>
-    (parseSpanned $ do
-        reserved "locality"
-        nl <- identifier
-        symbol "="
-        p <- parsePath
-        return $ DeclLocality nl (Right p)
-    )
     <|>
     (parseSpanned $ do
         reserved "table"

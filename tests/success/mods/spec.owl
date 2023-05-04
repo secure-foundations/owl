@@ -1,0 +1,12 @@
+locality alice : 1
+
+module Spec = {
+    locality bob : 1
+    name k<@i> : nonce @ bob<i>
+}
+
+module Spec2 : Spec = {
+    locality bob = alice
+    name k<@i> : nonce @ alice<i>
+    name k2<@i> : nonce @ alice<i>
+}
