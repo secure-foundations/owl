@@ -575,7 +575,7 @@ parseDecls =
         whiteSpace
         return $ DeclDetFunc x UninterpFunc (read i))
     <|>
-    (parseSpanned $ do
+    (try $ parseSpanned $ do
         reserved "locality"
         nl <- identifier
         oi <- optionMaybe $ do
@@ -587,7 +587,15 @@ parseDecls =
         let i = case oi of
                   Just i -> i
                   Nothing -> 0
-        return $ DeclLocality nl i)
+        return $ DeclLocality nl (Left i))
+    <|>
+    (parseSpanned $ do
+        reserved "locality"
+        nl <- identifier
+        symbol "="
+        p <- parsePath
+        return $ DeclLocality nl (Right p)
+    )
     <|>
     (parseSpanned $ do
         reserved "table"

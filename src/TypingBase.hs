@@ -98,7 +98,7 @@ instance Alpha UserFunc
 instance Subst ResolvedPath UserFunc
 
 data ModDef = ModDef { 
-    _localities :: Map String Int,
+    _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
     _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
@@ -476,12 +476,13 @@ inferAExpr ae = do
             Nothing -> typeError (ae^.spanOf) $ show $ ErrNameStillAbstract $ show $ pretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
-                        Just x -> return x
+                        Just xs -> mapM (normLocality (ae^.spanOf)) xs
                         Nothing -> typeError (ae^.spanOf) $ show $ pretty "Name not base: " <> pretty ne
                 case ts of
                     TcDef curr_locality -> do
-                        assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality <> pretty " but expected any of " <> pretty ls') $
-                            any (aeq curr_locality) ls'
+                        curr_locality' <- normLocality (ae^.spanOf) curr_locality
+                        assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
+                            any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
       (AEGetEncPK ne) -> do
@@ -653,6 +654,22 @@ collectTyDefs = collectEnvInfo _tyDefs
 pathPrefix :: ResolvedPath -> ResolvedPath
 pathPrefix (PDot p _) = p
 pathPrefix _ = error "pathPrefix error" 
+
+-- Normalize and check locality
+normLocality :: Ignore Position -> Locality -> Check Locality
+normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
+    md <- getModule pos p
+    case lookup s (md^.localities) of 
+      Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
+      Just (Right p') -> normLocality pos $ Locality (PRes p') xs
+      Just (Left ar) -> do
+              assert pos (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
+              forM_ xs $ \i -> do
+                  it <- inferIdx i
+                  assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
+              return loc
+
+
 
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for

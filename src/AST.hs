@@ -296,7 +296,7 @@ data DeclX =
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclRandOrcl String (AExpr, NameType)
     | DeclCorr Label Label 
-    | DeclLocality String Int
+    | DeclLocality String (Either Int Path)
     | DeclModule String (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
     deriving (Show, Generic, Typeable)
 

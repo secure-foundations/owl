@@ -716,8 +716,8 @@ addDef pos n df cont = do
           local (over (curMod . defs) $ insert n df) $ cont
       (Def isdp, Just (Def isdp')) -> do
           (is, DefSpec abs1 l1 ret1) <- unbind isdp
-          (_, DefSpec abs2 _ _) <- unbind isdp
-          assert pos ("Duplicate abstract def: " ++ n) $ not (unignore abs1)
+          (_, DefSpec abs2 _ _) <- unbind isdp'
+          assert pos ("Duplicate abstract def: " ++ n) $ not (unignore abs1) 
           assert pos ("Def already defined: " ++ n) $ unignore abs2
           assert pos ("Concrete def mismatch with abstract def: " ++ n) $ isdp `aeq` isdp'
           local (over (curMod . defs) $ insert n df) $ cont
@@ -759,7 +759,7 @@ addNameDef n (is1, is2) (nt, nls) k = do
     assert (nt^.spanOf) (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
     local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
         local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-            forM_ nls (checkLocality (nt^.spanOf))
+            forM_ nls (normLocality (nt^.spanOf))
             checkNameType nt
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
@@ -827,7 +827,14 @@ withModules ((x, d) : xs) k = do
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = 
     case d^.val of
-      (DeclLocality n i) -> local (over (curMod . localities) $ insert n i) $ cont
+      (DeclLocality n dcl) -> 
+          case dcl of
+            Left i -> local (over (curMod . localities) $ insert n (Left i)) $ cont
+            Right (PRes pth@(PDot p s)) -> do
+                md <- getModule (d^.spanOf) p
+                case lookup s (md^.localities) of 
+                  Nothing -> typeError (d^.spanOf) $ "Unknown locality: " ++ show pth
+                  Just _ -> local (over (curMod . localities) $ insert n (Right pth)) $ cont
       DeclInclude _ -> error "Include found during type inference"
       DeclName n o -> do
         ((is1, is2), ntnlsOpt) <- unbind o
@@ -843,7 +850,7 @@ checkDecl d cont =
           ((is1, is2), l) <- unbind isl
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-                  checkLocality (d^.spanOf) l
+                  normLocality (d^.spanOf) l
           let df = DefHeader isl 
           addDef (d^.spanOf) n df $ cont
       DeclDef n o1 -> do
@@ -854,7 +861,7 @@ checkDecl d cont =
                          Just p -> p
           is_abs <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-                  checkLocality (d^.spanOf) l
+                  normLocality (d^.spanOf) l
                   forM_ xs $ \(x, t) -> checkTy $ unembed t
                   withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
                       checkProp preReq
@@ -918,7 +925,7 @@ checkDecl d cont =
           tbls <- view $ curMod . tableEnv
           locs <- view $ curMod . localities
           assert (d^.spanOf) (show $ pretty "Duplicate table name: " <> pretty n) (not $ member n tbls)
-          checkLocality (d^.spanOf) loc
+          normLocality (d^.spanOf) loc
           checkTy t
           local (over (curMod . tableEnv) $ insert n (t, loc)) cont
       (DeclDetFunc f opts ar) -> do
@@ -1432,26 +1439,13 @@ stripTy x t =
           t' <- stripTy x t
           return $ mkSpanned $ TExistsIdx $ bind i t
 
-
-checkLocality :: Ignore Position -> Locality -> Check ()
-checkLocality pos pth@(Locality (PRes (PDot p s)) xs) = do
-    md <- getModule pos p
-    case lookup s (md^.localities) of 
-          Nothing -> typeError pos $ show $ pretty "Unknown locality: " <> pretty pth
-          Just ar -> do
-              assert pos (show $ pretty "Wrong arity for locality " <> pretty pth) $ ar == length xs
-              forM_ xs $ \i -> do
-                  it <- inferIdx i
-                  assert pos (show $ pretty "Index should be party ID: " <> pretty i) $ it == IdxPId
-checkLocality pos pth = error $ "Bad path: " ++ show pth ++ show pos
-
-
 checkEndpoint :: Ignore Position -> Endpoint -> Check ()
 checkEndpoint pos (Endpoint x) = do
     s <- view $ endpointContext
     assert pos (show $ pretty "Unknown endpoint: " <> pretty x) $ elem x s
 checkEndpoint pos (EndpointLocality l) = do
-    checkLocality pos l
+    normLocality pos l
+    return ()
 
 getOutTy :: Maybe Ty -> Ty -> Check Ty
 getOutTy ot t1 = 
@@ -1581,7 +1575,9 @@ checkExpr ot e = do
                 assertSubtype ta (tData advLbl advLbl)
                 case tc of
                   TcDef curr_loc -> do
-                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
+                      curr_loc' <- normLocality (e^.spanOf) curr_loc
+                      loc' <- normLocality (e^.spanOf) loc
+                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
       (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
@@ -1592,7 +1588,9 @@ checkExpr ot e = do
                 tc <- view tcScope
                 case tc of
                   TcDef curr_loc -> do
-                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc `aeq` loc
+                      curr_loc' <- normLocality (e^.spanOf) curr_loc
+                      loc' <- normLocality (e^.spanOf) loc
+                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
                       ta <- inferAExpr a1
                       assertSubtype ta (tData advLbl advLbl)
                       ta2 <- inferAExpr a2
@@ -1610,7 +1608,9 @@ checkExpr ot e = do
           let (DefSpec _ fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) dspec
           case ts of
             TcDef curr_locality -> do
-                assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl `aeq` curr_locality
+                fl' <- normLocality (e^.spanOf) fl
+                curr_locality' <- normLocality (e^.spanOf) curr_locality
+                assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
                 (xts, (pr, rt)) <- unbind o
                 assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
                 argTys <- mapM inferAExpr args

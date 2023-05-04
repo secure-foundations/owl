@@ -213,8 +213,13 @@ resolveDecls (d:ds) =
           let d' = Spanned (d^.spanOf) $ DeclCorr l1' l2' 
           ds' <- resolveDecls ds
           return (d' : ds')
-      DeclLocality s _ -> do
-          let d' = d
+      DeclLocality s dc -> do
+          dc' <- case dc of
+                  Left i -> return $ Left i
+                  Right pth -> do
+                      pth' <- resolvePath (d^.spanOf) PTLoc pth
+                      return $ Right pth'
+          let d' = Spanned (d^.spanOf) $ DeclLocality s dc'
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')

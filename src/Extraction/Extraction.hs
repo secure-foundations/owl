@@ -1103,9 +1103,9 @@ sortDecls dcls = do
                   return (gDecls, locMap, shared, pubkeys)
         DeclEnum n c -> return (gDecls ++ [d], locMap, shared, pubkeys)
         DeclStruct n f -> return (gDecls ++ [d], locMap, shared, pubkeys)
-        DeclLocality l idxs -> do
-            if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
-            else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
+        DeclLocality l idxs -> error "TODO fix"
+            --if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
+            --else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
         DeclRandOrcl n (arg, rty) -> do
             rtlen <- case rty ^. val of
                 NT_Nonce -> return "NONCE_SIZE"
