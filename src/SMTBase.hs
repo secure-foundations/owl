@@ -131,8 +131,8 @@ instance SmtName ResolvedPath where
     smtName (PDot a b) = smtName a ++ "__" ++ b
 
 instance SmtName Path where
-    smtName (PUnresolved r) = error $ "smtName of unresolved path: " ++ r
     smtName (PRes p) = smtName p
+    smtName r@_ = error $ "smtName of unresolved path: " ++ show r
 
 freshSMTName :: Sym String
 freshSMTName = do

@@ -1,0 +1,25 @@
+locality alice
+
+module S = { 
+    name x : nonce @ alice
+}
+
+module Srefined = {
+    name x : nonce @ alice
+    name z : nonce @ alice
+}
+
+module S2 = { }
+
+module blah = {
+    name bar : nonce @ alice
+}
+                 
+module M (X : S) = { 
+    module inner (Y : S2) = { 
+        name y : enckey Name(X.x) @ alice
+    }
+}
+
+module N1 = M(Srefined)
+module N2 = N1.inner(blah)

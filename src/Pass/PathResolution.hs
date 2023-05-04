@@ -25,6 +25,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import System.FilePath ((</>), takeFileName)
 import System.IO
+import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
@@ -59,7 +60,7 @@ data ResolveEnv = ResolveEnv {
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
-    _modPaths :: T.Map String ResolvedPath,
+    _modPaths :: T.Map String (Bool, ResolvedPath), -- Bool is whether the module is bound
     _freshCtr :: IORef Integer
                              }
 
@@ -75,6 +76,13 @@ instance Fresh Resolve where
         liftIO $ writeIORef r (n + 1)
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
+
+freshModVar :: Resolve (Name ResolvedPath)
+freshModVar = do
+    r <- view freshCtr
+    i <- liftIO $ readIORef r
+    liftIO $ writeIORef r (i + 1)
+    return $ s2n $ "_MOD" ++ show i
 
 emptyResolveEnv :: T.Flags -> IO ResolveEnv
 emptyResolveEnv f = do
@@ -95,6 +103,11 @@ resolveError pos msg = do
     let diag = addFile (addReport def rep) (fn) f  
     printDiagnostic stdout True True 4 defaultStyle diag 
     Resolve $ lift $ throwError () 
+
+debug :: Doc ann -> Resolve ()
+debug d = do
+    b <- view $ flags . T.fDebug
+    when b $ liftIO $ putStrLn $ show d
 
 resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
@@ -205,12 +218,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclModule s ospec me -> do
-          me' <- resolveModuleExp (d^.spanOf) me
-          ospec' <- traverse (resolveModuleExp (d^.spanOf)) ospec
+      DeclModule s bdy -> do
+          bdy' <- resolveModuleDecl (d^.spanOf) bdy
+          let d' = Spanned (d^.spanOf) $ DeclModule s bdy'
           p <- view curPath
-          let d' = Spanned (d^.spanOf) $ DeclModule s ospec' me'
-          ds' <- local (over modPaths $ T.insert s p) $ resolveDecls ds 
+          ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
@@ -221,7 +233,30 @@ resolveModuleExp pos me =
           ds1' <- local (set curPath (PPathVar x)) $ resolveDecls ds1
           return $ ModuleBody $ bind x ds1'
       ModuleVar p -> ModuleVar <$> resolvePath pos PTMod p
+      ModuleApp p ps -> do
+          p' <- resolvePath pos PTMod p
+          ps' <- mapM (resolvePath pos PTMod) ps
+          return $ ModuleApp p' ps'
 
+resolveModuleDecl :: Ignore Position -> Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp) -> 
+    Resolve (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp)) 
+resolveModuleDecl pos bdy = do
+    (args, (me, ospec)) <- unbind bdy
+    (args', me', ospec') <- go pos args (me, ospec)
+    return $ bind args' (me', ospec')
+        where
+            go :: Ignore Position -> [(Name ResolvedPath, String, Embed ModuleExp)] -> (ModuleExp, Maybe ModuleExp) -> 
+                Resolve ([(Name ResolvedPath, String, Embed ModuleExp)], ModuleExp, Maybe ModuleExp) 
+            go pos [] (me, ospec) = do
+                me' <- resolveModuleExp pos me
+                ospec' <- traverse (resolveModuleExp pos) ospec
+                return ([], me', ospec')
+            go pos ((x, s, t) : xs) me_ospec = do
+                v <- freshModVar
+                t' <- resolveModuleExp pos (unembed t)
+                (args', me', ospec') <- local (over modPaths $ T.insert s (True, PPathVar v)) $ 
+                    go pos xs me_ospec
+                return $ ((v, s, embed t') : args', me', ospec')
 
 resolveNameType :: NameType -> Resolve NameType
 resolveNameType e = do
@@ -313,8 +348,28 @@ resolvePath :: Ignore Position -> PathType -> Path -> Resolve Path
 resolvePath pos pt p = 
     case p of
       PRes _ -> return p
-      PUnresolved s -> 
-          if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else do
+      PUnresolvedPath x xs -> do
+          debug $ pretty "Resolving " <> pretty p
+          mp <- view modPaths
+          res <- case lookup x mp of
+                  Just (b, p) -> do
+                      debug $ pretty x <+> pretty "points to" <+> pretty (show p) 
+                      let xs' = if b then xs else x:xs
+                      return $ PRes $ go (Just p) (reverse xs')
+                  Nothing -> do
+                      debug $ pretty x <+> pretty "not found"
+                      return $ PRes $ go Nothing (reverse (x:xs))
+          debug $ pretty "Resolved " <> pretty " into " <> pretty res
+          return res
+      PUnresolvedVar s -> 
+          if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else 
+          if (pt == PTMod) then do
+                           mp <- view modPaths
+                           case lookup s mp of
+                             Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
+                             Just (b, p) -> do
+                                 if b then return (PRes p) else return (PRes (PDot p s))
+          else do
               mp <- case pt of
                       PTName -> view namePaths
                       PTTy -> view tyPaths
@@ -322,10 +377,15 @@ resolvePath pos pt p =
                       PTLoc -> view localityPaths
                       PTDef -> view defPaths
                       PTTbl -> view tablePaths
-                      PTMod -> view modPaths
               case lookup s mp of
                 Just p -> return $ PRes $ PDot p s
                 Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
+    where
+        go :: Maybe ResolvedPath -> [String] -> ResolvedPath
+        go p [] = case p of
+                    Just v -> v
+                    Nothing -> PTop
+        go p (x:xs) = PDot (go p xs) x 
 
 resolveEndpoint :: Ignore Position -> Endpoint -> Resolve Endpoint
 resolveEndpoint pos l = 

@@ -36,7 +36,7 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -768,7 +768,8 @@ sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
 sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
 
 inferModuleExp :: Ignore Position -> ModuleExp -> Check (Bind (Name ResolvedPath) ModDef)
-inferModuleExp pos (ModuleBody xds') = do
+inferModuleExp pos m@(ModuleBody xds') = do
+    debug $ pretty "Inferring module " <> pretty (show m)
     (x, ds') <- unbind xds'
     m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
         checkDeclsWithCont ds' $ view curMod
@@ -778,10 +779,50 @@ inferModuleExp pos (ModuleVar pth@(PRes (PDot p s))) = do
     case lookup s (md1^.modules) of
       Just b -> return b
       Nothing -> typeError pos $ "Unknown module: " ++ show pth
+inferModuleExp pos (ModuleApp pth@(PRes (PDot p s)) ps) = do
+    md1 <- getModule pos p
+    case lookup s (md1^.functors) of
+      Just (argSpecs, bdy) -> do
+          ds <- forM ps $ \p -> inferModuleExp pos (ModuleVar p)
+          assert pos ("Wrong number of arguments to functor: expected " ++ show (length argSpecs) ++ " but got " ++ show (length ds)) $ length argSpecs == length ds
+          forM_ (zip ds argSpecs) $ \(d, s) -> moduleMatches pos d s
+          (bn, b) <- unbind bdy
+          pths <- forM ps $ \p -> 
+              case p of
+                PRes v -> return v
+                _ -> error $ "Got unresolved path: " ++ show p
+          return $ substs (zip bn pths) b
 
+inferModuleBody :: Ignore Position -> (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
+    -> Check (Either (Bind (Name ResolvedPath) ModDef)  ([Bind (Name ResolvedPath) ModDef], Bind [Name ResolvedPath] (Bind (Name ResolvedPath) ModDef)))
+inferModuleBody pos bdy = do
+    (args, (me, ospec)) <- unbind bdy
+    case args of 
+      [] -> do
+          md <- inferModuleExp pos me
+          case ospec of
+            Just me' -> do
+                md' <- inferModuleExp pos me
+                moduleMatches pos md md'
+            Nothing -> return ()
+          return $ Left md
+      _ -> do
+          argSpec <- forM args $ \(x, s, me) -> do
+              debug $ pretty "Inferring arg type for " <> pretty s
+              md <- inferModuleExp pos $ unembed me
+              return (x, md)
+          case ospec of
+            Nothing -> return ()
+            _ -> typeError pos $ "Module specifications not allowed for functors, for now"
+          md <- withModules argSpec $ inferModuleExp pos me 
+          return $ Right (map snd argSpec, bind (map fst argSpec) md)
 
-
-
+withModules :: [(Name ResolvedPath, Bind (Name ResolvedPath) ModDef)] -> Check a -> Check a
+withModules [] k = k
+withModules ((x, d) : xs) k = do
+    (n, d0) <- unbind d
+    let d' = subst n (PPathVar x) d0
+    local (over curModules $ insert (Just x) d') k
 
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = 
@@ -793,14 +834,11 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n ospec me -> do
-          md <- inferModuleExp (d^.spanOf) me
-          case ospec of
-            Nothing -> return ()
-            Just me' -> do
-                md' <- inferModuleExp (d^.spanOf) me'
-                moduleMatches (d^.spanOf) md md'
-          local (over (curMod . modules) $ insert n md) $ cont
+      DeclModule n bdy -> do
+          bdy' <- inferModuleBody (d^.spanOf) bdy
+          case bdy' of 
+            Left md -> local (over (curMod . modules) $ insert n md) $ cont
+            Right funct -> local (over (curMod . functors) $ insert n funct) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do

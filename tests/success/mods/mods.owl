@@ -1,8 +1,9 @@
 locality alice
 
 module A = { 
+    locality bob
     module B = { 
-        name n : nonce @ alice
+        name n : nonce @ bob
         struct s { 
             _x : Name(n)
         }
@@ -11,7 +12,7 @@ module A = {
 
 module X = A.B
 
-def foo0() @ alice : Unit =
+def foo0() @ A.bob : Unit =
     let x : X.s = X.s(get(X.n)) in 
     ()
 

@@ -57,7 +57,8 @@ type IdxVar = Name Idx
 
 -- Paths are used for localities, defs, names, and types
 data Path = 
-    PUnresolved String
+    PUnresolvedVar String
+      | PUnresolvedPath String [String]
       | PRes ResolvedPath
     deriving (Generic, Typeable, Eq, Ord)
 
@@ -70,9 +71,14 @@ data ResolvedPath =
 topLevelPath :: String -> Path
 topLevelPath s = PRes $ PDot PTop s
 
-instance Show (Path) where
-    show (PUnresolved s) = "?" ++ s
+instance Show Path where
+    show (PUnresolvedVar s) = "?" ++ s
+    show (PUnresolvedPath s xs) = "?" ++ s ++ go xs
+        where
+            go [] = ""
+            go (x:xs) = "." ++ x ++ go xs
     show (PRes p) = show p
+
 
 instance Show ResolvedPath where
     show PTop = "Top"
@@ -266,6 +272,7 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 data ModuleExp = 
     ModuleBody (Bind (Name ResolvedPath) [Decl])
       | ModuleVar Path
+      | ModuleApp Path [Path]
       deriving (Show, Generic, Typeable)
 
 -- Decls are surface syntax
@@ -290,7 +297,7 @@ data DeclX =
     | DeclRandOrcl String (AExpr, NameType)
     | DeclCorr Label Label 
     | DeclLocality String Int
-    | DeclModule String (Maybe ModuleExp) ModuleExp
+    | DeclModule String (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -653,11 +660,6 @@ instance Pretty Locality where
     pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
 
 instance Pretty DeclX where
-    pretty (DeclModule s ospec ne) =  
-        pretty "module" <+> pretty s <+> pretty "=" <+> pretty ne
-    pretty (DeclName s isk) = 
-        let (is, k) = prettyBind isk in
-        pretty "name" <+> pretty s <+> is <> k
     pretty d = pretty (show d)
 
 instance Pretty ModuleExp where

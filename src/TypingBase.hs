@@ -106,7 +106,8 @@ data ModDef = ModDef {
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
-    _modules :: Map String (Bind (Name ResolvedPath) ModDef)
+    _modules :: Map String (Bind (Name ResolvedPath) ModDef),
+    _functors :: Map String ([Bind (Name ResolvedPath) ModDef], Bind [Name ResolvedPath] (Bind (Name ResolvedPath) ModDef))
 }
     deriving (Show, Generic, Typeable)
 

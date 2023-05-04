@@ -109,19 +109,13 @@ parsePath =
         x <- identifier
         char '.'
         xs <- identifier `sepBy1` (char '.')
-        return $ PRes $ go $ reverse (x : xs)
+        return $ PUnresolvedPath x xs
     )
     <|>
     (do
         x <- identifier
-        return $ PUnresolved x
+        return $ PUnresolvedVar x
     )
-        where
-            go :: [String] -> ResolvedPath
-            go (x:xs) = PDot (go xs) x
-            go [] = PTop
-                
-
 
 parseLabel = buildExpressionParser parseLabelTable parseLabelTerm
 parseLabelTable = [ [ Infix (do
@@ -607,12 +601,25 @@ parseDecls =
     (parseSpanned $ do
         reserved "module"
         n <- identifier
+        args <- optionMaybe $ do
+            symbol "("
+            xt <- (do
+                x <- identifier
+                symbol ":"
+                t <- parseModuleExp x
+                return (s2n x, x, embed t)
+                  ) `sepBy` (symbol ",")
+            symbol ")"
+            return xt
+        let args' = case args of
+                      Just v -> v
+                      Nothing -> []
         ospec <- optionMaybe $ do
             symbol ":"
             parseModuleExp ("SPECOF" ++ n) 
         symbol "="
         me <- parseModuleExp n
-        return $ DeclModule n ospec me
+        return $ DeclModule n $ bind args' (me, ospec)
     )
 
 parseModuleExp :: String -> Parser ModuleExp
@@ -622,6 +629,14 @@ parseModuleExp n =
         ds <- parseDecls
         symbol "}"
         return $ ModuleBody $ bind (s2n $ "%mod_" ++ n) ds
+    )
+    <|>
+    (try $ do
+        x <- parsePath
+        symbol "("
+        ys <- parsePath `sepBy1` (symbol ",")
+        symbol ")"
+        return $ ModuleApp x ys
     )
     <|>
     (do
