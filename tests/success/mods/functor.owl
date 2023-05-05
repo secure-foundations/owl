@@ -9,17 +9,14 @@ module Srefined = {
     name z : nonce @ alice
 }
 
-module S2 = { }
+module T = { }
 
 module blah = {
     name bar : nonce @ alice
 }
                  
 module M (X : S) = { 
-    module inner (Y : S2) = { 
-        name y : enckey Name(X.x) @ alice
-    }
+    module Z : T = X
 }
 
 module N1 = M(Srefined)
-module N2 = N1.inner(blah)

@@ -779,6 +779,11 @@ inferModuleExp pos (ModuleVar pth@(PRes (PDot p s))) = do
     case lookup s (md1^.modules) of
       Just b -> return b
       Nothing -> typeError pos $ "Unknown module: " ++ show pth
+inferModuleExp pos (ModuleVar pth@(PRes (PPathVar x))) = do
+    cm <- view curModules
+    case lookup (Just x) cm of
+      Just md -> return $ bind x md
+      Nothing -> typeError pos $ "Internal error: unknown module" ++ show pth
 inferModuleExp pos (ModuleApp pth@(PRes (PDot p s)) ps) = do
     md1 <- getModule pos p
     case lookup s (md1^.functors) of
@@ -802,7 +807,7 @@ inferModuleBody pos bdy = do
           md <- inferModuleExp pos me
           case ospec of
             Just me' -> do
-                md' <- inferModuleExp pos me
+                md' <- inferModuleExp pos me'
                 moduleMatches pos md md'
             Nothing -> return ()
           return $ Left md
@@ -1783,6 +1788,7 @@ moduleMatches :: Ignore Position -> Bind (Name ResolvedPath) ModDef -> Bind (Nam
 moduleMatches pos xmd1 ymd2 = do
     (x, md1) <- unbind xmd1
     (y, md2_) <- unbind ymd2
+    debug $ pretty "moduleMatches with " <> pretty x <> pretty " and " <> pretty y
     let md2 = subst y (PPathVar x) md2_
     -- Localities
     forM_ (md2^.localities) $ \(s, i) -> assert pos ("Locality mismatch for module match: " ++ s) $ lookup s (md1^.localities) == Just i
