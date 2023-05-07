@@ -123,7 +123,7 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
             let ss     :if sec(skSDIS) then shared_secret(b1, c) else Data<adv> = dh_combine(g_pow_c, get(b1)) in
             corr_case b1 in 
             corr_case c in 
-            let k      :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = H<l2>(ss) in
+            let k      :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = hash<l2>(ss) in 
             
             // request PFA to sign
             let request = _req("a") in // TODO: "a" is the hash
@@ -164,7 +164,7 @@ def SDIS_actual () @ SDIS
                     corr_case c in 
                     let g_pow_b1:if sec(skPDIS) then dhpk(b1) else Data<adv> = m' in
                     let ss      :if sec(skPDIS) then shared_secret(b1, c) else Data<adv /\ [c]> = dh_combine(g_pow_b1, get(c)) in
-                    let k       :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = H<l2>(ss) in
+                    let k       :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = hash<l2>(ss) in
                     
                     input inp2 in
                     corr_case RO<l2> in
@@ -195,7 +195,7 @@ def PFA_KE () @ PFA
                 corr_case a in 
                 corr_case b in 
                 let ss     :if sec(skPDIS) then shared_secret(b, a) else Data<adv /\ [a]> = dh_combine(g_pow_b, get(a)) in
-                let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = H<l1>(ss) in
+                let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = hash<l1>(ss) in
                 call PFA_FW (k11)
 
 
@@ -219,7 +219,7 @@ def PDIS_KE () @ PDIS
                     corr_case b in
                     let ss     :if sec(skPFA) then shared_secret(b, a) else Data<adv /\ [b]> = dh_combine(g_pow_a, get(b)) in
                     // ss_swap?
-                    let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = H<l1>(ss) in
+                    let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = hash<l1>(ss) in
                     let _ = output "" to endpoint(SDIS) in // TODO: The hash stuff
                     call PDIS_actual(k11)
 

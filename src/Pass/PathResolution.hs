@@ -38,6 +38,7 @@ data PathType =
       | PTLoc
       | PTDef
       | PTTbl
+      | PTRO
       | PTMod
       deriving Eq
 
@@ -46,6 +47,7 @@ instance Show PathType where
     show PTTy = "type"
     show PTFunc = "function"
     show PTLoc = "locality"
+    show PTRO = "RO"
     show PTDef = "def"
     show PTTbl = "table"
     show PTMod = "module"
@@ -57,6 +59,7 @@ data ResolveEnv = ResolveEnv {
     _namePaths :: T.Map String ResolvedPath,
     _tyPaths :: T.Map String ResolvedPath,
     _funcPaths :: T.Map String ResolvedPath,
+    _roPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
@@ -87,7 +90,7 @@ freshModVar = do
 emptyResolveEnv :: T.Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] r
 
 runResolve :: T.Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -200,12 +203,12 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      -- TODO: paths for random oracle
-      DeclRandOrcl x (z, w) -> do
-          z' <- resolveAExpr z
+      DeclRandOrcl x (zs, w) -> do
+          zs' <- mapM resolveAExpr zs
           w' <- resolveNameType w
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (z', w')
-          ds' <- resolveDecls ds
+          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (zs', w')
+          p <- view curPath
+          ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
       DeclCorr l1 l2 -> do
           l1' <- resolveLabel l1
@@ -334,7 +337,9 @@ resolveNameExp ne =
         BaseName s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ BaseName s p'
-        ROName s -> return ne
+        ROName p -> do 
+            p' <- resolvePath (ne^.spanOf) PTRO p
+            return $ Spanned (ne^.spanOf) $ ROName p'
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s
@@ -381,6 +386,7 @@ resolvePath pos pt p =
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
                       PTDef -> view defPaths
+                      PTRO -> view roPaths
                       PTTbl -> view tablePaths
               case lookup s mp of
                 Just p -> return $ PRes $ PDot p s
@@ -451,6 +457,10 @@ resolveAExpr a =
 resolveExpr :: Expr -> Resolve Expr
 resolveExpr e = 
     case e^.val of
+      ECrypt (CHash p) xs -> do
+          p' <- resolvePath (e^.spanOf) PTRO p
+          xs' <- mapM resolveAExpr xs
+          return $ Spanned (e^.spanOf) $ ECrypt (CHash p') xs'
       EInput xk -> do
           (x, k) <- unbind xk
           k' <- resolveExpr k

@@ -224,9 +224,9 @@ emitNameDefAssms = do
                     Nothing -> return sTrue
                 emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
         symIndexEnv .= sIE
-    ro <- view $ randomOracle
-    forM_ ro $ \(s, (ae, nt)) -> do
-        assm <- nameDefFlows (roName s) nt
+    ros <- liftCheck $ collectRO
+    forM_ ros $ \(s, (ae, nt)) -> do
+        assm <- nameDefFlows (roName (PRes s)) nt
         emitAssertion assm
 
 

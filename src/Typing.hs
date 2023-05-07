@@ -36,13 +36,13 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -353,33 +353,33 @@ initDetFuncs = withNormalizedTys $ [
                         NT_PRF aes -> do
                           case L.find (\p -> fst p == s) aes of
                             Just (_, (ae, nt')) -> do
-                                  (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel ae a
+                                  (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel [ae] [a]
                                   -- FL CHECK HERE 
                                   corr <- flowsTo (ignore def) (nameLbl n) advLbl
                                   if (not corr) && b then return (TName $ prfName n s) else trivialTypeOf (map snd args)
                             _ -> typeError (ignore def) $ show $ ErrUnknownPRF n s
                         _ -> typeError (ignore def) $ show $ ErrWrongNameType n "prf" nt
                 _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)
-          _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args))),
-    ("H", (1, \ps args ->
-        case (ps, args) of
-          ([ParamStr s], [(a, t)]) -> do
-              ro <- view $ randomOracle
-              case lookup s ro of
-                Nothing -> typeError (ignore def) $ show $ pretty "Unknown RO lbl: " <> pretty s
-                Just (ae, _) -> do
-                  (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel ae a
-                  -- Either must be unsolvable, or flow to adv
-                  uns <- unsolvability ae
-                  b <- decideProp uns
-                  case b of
-                    Just True -> return $ TName $ roName s
-                    _ -> do
-                        lt <- coveringLabel t
-                        flowCheck (t^.spanOf) lt advLbl
-                        return $ TData advLbl advLbl
-          (_, _) -> typeError (ignore def) $ "Wrong params or args to H"
-    ))
+          _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)))--,
+    --("H", (1, \ps args ->
+    --    case (ps, args) of
+    --      ([ParamStr s], [(a, t)]) -> do
+    --          ro <- view $ randomOracle
+    --          case lookup s ro of
+    --            Nothing -> typeError (ignore def) $ show $ pretty "Unknown RO lbl: " <> pretty s
+    --            Just (ae, _) -> do
+    --              (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel ae a
+    --              -- Either must be unsolvable, or flow to adv
+    --              uns <- unsolvability ae
+    --              b <- decideProp uns
+    --              case b of
+    --                Just True -> return $ TName $ roName s
+    --                _ -> do
+    --                    lt <- coveringLabel t
+    --                    flowCheck (t^.spanOf) lt advLbl
+    --                    return $ TData advLbl advLbl
+    --      (_, _) -> typeError (ignore def) $ "Wrong params or args to H"
+    --))
     ]
 
 
@@ -938,68 +938,47 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s (ae, nt)) -> do
+      (DeclRandOrcl s (aes, nt)) -> do
         -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
-        _ <- inferAExpr ae
+        _ <- mapM inferAExpr aes
         checkNameType nt
         checkROName nt
-        checkROUnique ae
-        ro <- view $ randomOracle
+        localROCheck (d^.spanOf) aes
+        checkROUnique (d^.spanOf) aes
+        ro <- view $ curMod . randomOracle
         assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (randomOracle) $ insert s (ae, nt)) cont 
+        local (over (curMod . randomOracle) $ insert s (aes, nt)) cont 
 
--- TODO: move up
---checkDecl :: Decl -> Check () -> Check ()
---checkDecl dcl k =
---    case dcl^.val of
---      (DeclInclude fn) -> error "Include found during type inference"
---      (DeclName n o) -> do
---        ((is1, is2), ntnlsOpt) <- unbind o
---        case ntnlsOpt of
---          Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ k
---          Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) k
---      DeclDef n o1 -> do
---          ((is1, is2), (l, o2)) <- unbind o1
---          (xs, (opreReq, tyAnn, bdy)) <- unbind o2
---          let preReq = case opreReq of
---                         Nothing -> pTrue
---                         Just p -> p
---          is_abs <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
---              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
---                  checkLocality (dcl^.spanOf) l
---                  forM_ xs $ \(x, t) -> checkTy $ unembed t
---                  withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
---                      checkProp preReq
---                      checkTy tyAnn
---                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
---                      x <- freshVar
---                      case bdy of
---                        Nothing -> return $ DefAbstract
---                        Just bdy' -> do
---                          bdy'' <- ANF.anf bdy'
---                          local (set tcScope $ Def l) $
---                              withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
---                              t <- checkExpr (Just tyAnn) bdy''
---                              -- let p1 = atomicCaseSplits t
---                              -- let p2 = atomicCaseSplits tyAnn
---                              -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
---                              -- withAllSplits ps $ assertSubtype t tyAnn
---                              return $ DefConcrete
---          let fdef = bind (is1, is2) $ FuncDef l (bind xs (preReq, tyAnn))
---          dfs <- view $ curMod . defs
---          case lookup n dfs of
---            Nothing -> local (over (curMod . defs) $ insert n (is_abs, fdef)) k
---            Just (DefConcrete, _) -> typeError (dcl^.spanOf) $ show $ pretty "Duplicate definition: " <> pretty n
---            Just (DefAbstract, fd') -> do -- Do the subtyping
---                assert (ignore def) (show $ pretty "Duplicate abstract def: " <> pretty n) $ is_abs == DefConcrete
---                assert (ignore def) (show $ pretty "Concrete def mismatch with abstract def: " <> pretty n) $
---                    fdef
---                    `aeq`
---                    fd'
---                local (over (curMod . defs) $ insert n (is_abs, fdef)) k
---      (DeclModule s xds) -> do
---          (x, ds) <- unbind xds
---          return ()
+nameExpIsLocal :: NameExp -> Check Bool
+nameExpIsLocal ne = 
+    case ne^.val of
+      BaseName _ (PRes (PDot p s)) -> do
+          (k, _) <- head <$> view curModules
+          case k of
+            Nothing -> return $ p == PTop
+            Just pv -> return $ p == PPathVar pv
+      ROName (PRes (PDot p s)) -> do
+          (k, _) <- head <$> view curModules
+          case k of
+            Nothing -> return $ p == PTop
+            Just pv -> return $ p == PPathVar pv
+      PRFName ne _ -> nameExpIsLocal ne
+
+
+localROCheck :: Ignore Position -> [AExpr] -> Check ()
+localROCheck pos aes = do
+    ts <- mapM inferAExpr aes
+    bs <- forM ts $ \t ->
+        case t^.val of
+          TName ne -> nameExpIsLocal ne
+          TVK ne -> nameExpIsLocal ne
+          TDH_PK ne -> nameExpIsLocal ne
+          TEnc_PK ne -> nameExpIsLocal ne
+          TSS ne ne' -> liftM2 (||) (nameExpIsLocal ne) (nameExpIsLocal ne')
+          _ -> return False
+    assert pos ("Random oracle decl must involve a local name") $ or bs
+    
+
 
 
 checkROName :: NameType -> Check ()
@@ -1055,11 +1034,11 @@ checkDeclsWithCont [] k = k
 checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
 
-checkROUnique :: AExpr -> Check ()
-checkROUnique e = do
-    ro_vals <- view $ randomOracle
-    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map fst $ map snd $ ro_vals) e
-    assert (e^.spanOf) "RO uniqueness check failed" b
+checkROUnique :: Ignore Position -> [AExpr] -> Check ()
+checkROUnique pos es = do
+    ro_vals <- view $ curMod . randomOracle
+    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map (\(s, (a, _)) -> a) ro_vals) es 
+    assert pos "RO uniqueness check failed" b
     return ()
 
 checkNameType :: NameType -> Check ()
@@ -1465,6 +1444,19 @@ checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = do
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
+      (ECrypt (CHash p) aes) -> do 
+          (aes', nt) <- getRO (e^.spanOf) p
+          debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
+          (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
+          uns <- unsolvability aes'
+          b <- decideProp uns
+          case b of
+            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p
+            _ -> do 
+                ts <- mapM inferAExpr aes
+                lt <- coveringLabelOf ts 
+                flowCheck (e^.spanOf) lt advLbl
+                getOutTy ot $ mkSpanned $ TData advLbl advLbl
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
           withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
@@ -1712,27 +1704,22 @@ checkExpr ot e = do
                 forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
                 return t
 
-unsolvability :: AExpr -> Check Prop
-unsolvability ae = local (set tcScope TcGhost) $ do
-    case ae^.val of
-      AEApp f [] [x, y] | f == (topLevelPath $ "dh_combine")-> do
-          t1 <- inferAExpr x
-          t2 <- inferAExpr y
-          case (t1^.val, t2^.val) of
-            (TDH_PK n, TName m) -> return $ pAnd (pNot $ pFlow (nameLbl n) advLbl) (pNot $ pFlow (nameLbl m) advLbl)
-            _ -> return pFalse
-      AEApp f [] xs -> do
-          uf <- getUserFunc (ae^.spanOf) f
-          case uf of
-            Just (StructConstructor _) -> do -- f is a constructor of a struct; derivability is the and
-                ps <- mapM unsolvability xs
-                return $ foldr pOr pFalse ps
-            _ -> return pFalse
-      _ -> do
-          t <- inferAExpr ae
-          case t^.val of
-            TName n -> return $ pNot $ pFlow (nameLbl n) advLbl
-            _ -> return pFalse
+unsolvability :: [AExpr] -> Check Prop
+unsolvability aes = local (set tcScope TcGhost) $ do
+    bs <- forM aes $ \ae -> 
+        case ae^.val of
+          AEApp f [] [x, y] | f == (topLevelPath $ "dh_combine")-> do
+              t1 <- inferAExpr x
+              t2 <- inferAExpr y
+              case (t1^.val, t2^.val) of
+                (TDH_PK n, TName m) -> return $ pAnd (pNot $ pFlow (nameLbl n) advLbl) (pNot $ pFlow (nameLbl m) advLbl)
+                _ -> return pFalse
+          _ -> do
+              t <- inferAExpr ae
+              case t^.val of
+                TName n -> return $ pNot $ pFlow (nameLbl n) advLbl
+                _ -> return pFalse
+    return $ foldr pOr pFalse bs
 
 ---- Entry point ----
 
@@ -1780,9 +1767,12 @@ nameMatches :: Ignore Position -> String ->
 nameMatches pos s xn1 xn2 = do
     ((is1, is2), on1) <- unbind xn1
     ((is1', is2'), on2) <- unbind xn2
-    case on1 of
-      Nothing -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
-      Just _ -> assert pos ("Name mismatch for " ++ s) $ xn1 `aeq` xn2
+    case (substs (zip is1 (map mkIVar is1')) $ substs (zip is2 (map mkIVar is2')) $ on1, on2) of
+      (Nothing, Nothing) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
+      (Just _, Nothing) -> typeError pos $ "Name should be concrete: " ++ show s
+      (Just (nt1, ls1), Just (nt2, ls2)) -> do
+          assert pos ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
+          assert pos ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
 
 moduleMatches :: Ignore Position -> Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
 moduleMatches pos xmd1 ymd2 = do
@@ -1791,7 +1781,15 @@ moduleMatches pos xmd1 ymd2 = do
     debug $ pretty "moduleMatches with " <> pretty x <> pretty " and " <> pretty y
     let md2 = subst y (PPathVar x) md2_
     -- Localities
-    forM_ (md2^.localities) $ \(s, i) -> assert pos ("Locality mismatch for module match: " ++ s) $ lookup s (md1^.localities) == Just i
+    forM_ (md2^.localities) $ \(s, i) -> do
+        ar1 <- case i of
+                 Left ar -> return ar
+                 Right p -> normLocalityPath pos $ PRes p 
+        ar2 <- case lookup s (md1^.localities) of
+                 Nothing -> typeError pos $ "Locality not found for module match: " ++ s
+                 Just (Left ar) -> return ar
+                 Just (Right p) -> normLocalityPath pos $ PRes p
+        assert pos ("Locality arity mismatch for module match: " ++ s) $ ar1 == ar2
     -- Defs
     forM_ (md2^.defs) $ \(s, df) -> defMatches pos s (lookup s (md1^.defs)) df
     -- TableEnv

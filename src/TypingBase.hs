@@ -106,6 +106,7 @@ data ModDef = ModDef {
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
+    _randomOracle :: Map String ([AExpr], NameType),
     _modules :: Map String (Bind (Name ResolvedPath) ModDef),
     _functors :: Map String ([Bind (Name ResolvedPath) ModDef], Bind [Name ResolvedPath] (Bind (Name ResolvedPath) ModDef))
 }
@@ -121,7 +122,6 @@ data Env = Env {
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
-    _randomOracle :: Map String (AExpr, NameType),
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
     _curModules :: Map (Maybe (Name ResolvedPath)) ModDef,
@@ -151,7 +151,7 @@ data TypeError =
       | ErrBadArgs String [Ty] 
       | ErrWrongCases String AExpr (Map String (Maybe Ty)) (Map String (Either Expr (Ignore String, Bind DataVar Expr)))
       | ErrUnknownName Path
-      | ErrUnknownRO String
+      | ErrUnknownRO ResolvedPath
       | ErrUnknownPRF NameExp String
       | ErrAssertionFailed (Maybe String) Prop
       | ErrDuplicateVarName DataVar
@@ -171,7 +171,7 @@ instance Pretty (TypeError) where
     pretty (ErrBadArgs s ts) = 
         pretty "Bad argument types for " <> pretty s <> pretty ": got " <> pretty ts
     pretty (ErrUnknownRO s) = 
-        pretty "Unknown random oracle value: " <> pretty s
+        pretty "Unknown random oracle value: " <> pretty (show s)
     pretty (ErrUnknownPRF n s) = 
         pretty "Unknown prf value for " <> pretty n <> pretty ": " <> pretty s
     pretty (ErrDuplicateVarName s) = 
@@ -371,11 +371,11 @@ getNameInfo ne = do
                     when ((length vs1, length vs2) /= (length is, length ps)) $ 
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
-     ROName s -> do
-        ro <- view $ randomOracle
-        case lookup s ro of
+     ROName (PRes (PDot p s)) -> do
+        md <- getModule (ne^.spanOf) p 
+        case lookup s (md^.randomOracle) of 
           Just (_, nt) -> return $ Just (nt, Nothing)
-          Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO s
+          Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO p
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
          case ntLclsOpt of
@@ -388,6 +388,15 @@ getNameInfo ne = do
                     Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownPRF n s
             _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (pretty ne)
+
+getRO :: Ignore Position -> Path -> Check ([AExpr], NameType)
+getRO pos (PRes (PDot p s)) = do
+        md <- getModule pos p 
+        case lookup s (md^.randomOracle) of 
+          Just r -> return r
+          Nothing -> typeError pos $ show $ ErrUnknownRO p
+getRO pos pth = typeError pos $ "Unknown path: " ++ show pth
+
 
 getNameTypeOpt :: NameExp -> Check (Maybe NameType)
 getNameTypeOpt ne = do
@@ -639,6 +648,9 @@ collectEnvAxioms f = do
 collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
 collectNameEnv = collectEnvInfo (_nameEnv)
 
+collectRO :: Check (Map ResolvedPath ([AExpr], NameType))
+collectRO = collectEnvInfo (_randomOracle)
+
 collectFlowAxioms :: Check ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 
@@ -669,7 +681,14 @@ normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
                   assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
               return loc
 
-
+-- Normalize locality path, get arity
+normLocalityPath :: Ignore Position -> Path -> Check Int
+normLocalityPath pos (PRes loc@(PDot p s)) = do
+    md <- getModule pos p
+    case lookup s (md^.localities) of 
+      Nothing -> typeError pos $ "Unknown locality: " ++ show loc
+      Just (Left ar) -> return ar
+      Just (Right p) -> normLocalityPath pos (PRes p)
 
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for

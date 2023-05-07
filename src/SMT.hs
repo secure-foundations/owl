@@ -429,10 +429,12 @@ emitFuncAxioms = do
         [(SApp [andbf, SAtom "x", SAtom "y"])]
 
     emitComment $ "RO equality axioms"
-    ro <- view $ randomOracle
-    forM_ ro $ \(s, (ae, _)) -> do
-        v <- interpretAExp ae
-        emitAssertion $ sEq (sValue $ sROName s) v
+    ros <- liftCheck $ collectRO
+    let sConcat a b = SApp [SAtom "concat", a, b]
+    forM_ ros $ \(s, (aes, _)) -> do
+        vs <- mapM interpretAExp aes
+        let v = foldr sConcat (head vs) (tail vs) 
+        emitAssertion $ sEq (sValue $ sROName $ smtName s) v
     
     emitComment $ "Enum test faithful axioms"
     enumTestFaithulAxioms
@@ -530,14 +532,23 @@ emitROInjectivityAxioms = do
     emitDHCombineDisjoint
 
 
+sConcats :: [SExp] -> SExp
+sConcats vs = 
+    let sConcat a b = SApp [SAtom "concat", a, b] in
+    foldr sConcat (head vs) (tail vs) 
 
-symROUnique :: [AExpr] -> AExpr -> Sym ()
-symROUnique es e = do
-    emitComment $ "Proving ROUnique with es = " ++ show (pretty es) ++ " and e = " ++ show (pretty e)
-    vs <- mapM interpretAExp es
-    v <- interpretAExp e
+
+
+
+
+symROUnique :: [[AExpr]] -> [AExpr] -> Sym ()
+symROUnique ess e = do
+    emitComment $ "Proving ROUnique with es = " ++ show (pretty ess) ++ " and e = " ++ show (pretty e)
+    vs <- forM ess $ \es -> do
+        vs <- mapM interpretAExp es
+        return $ sConcats vs
+    v <- sConcats <$> mapM interpretAExp  e
     emitROInjectivityAxioms
-
     forM_ vs $ \v' -> 
         emitToProve $ sNot $ sEq v v' 
 
@@ -549,15 +560,20 @@ symListUniq es = do
     return ()
 
 ---- First AExpr is in the top level (ie, only names), second is regular
-symCheckEqTopLevel :: AExpr -> AExpr -> Sym ()
-symCheckEqTopLevel eghost e = do
-    vE <- use varVals
-    v_e <- interpretAExp e
-    varVals .= M.empty
-    v_eghost <- interpretAExp eghost
-    varVals .= vE
-    emitComment $ "Checking if " ++ show (pretty e) ++ " equals ghost val " ++ show (pretty eghost) 
-    emitToProve $ sEq v_e v_eghost
+symCheckEqTopLevel :: [AExpr] -> [AExpr] -> Sym ()
+symCheckEqTopLevel eghosts es = do
+    if length eghosts /= length es then emitToProve sFalse else do
+        vE <- use varVals
+        v_es <- mapM interpretAExp es
+        t_es <- liftCheck $ mapM inferAExpr es
+        forM_ (zip v_es t_es) $ \(x, t) -> do
+            c <- tyConstraints t x
+            emitAssertion c
+        varVals .= M.empty
+        v_eghosts <- mapM interpretAExp eghosts
+        varVals .= vE
+        emitComment $ "Checking if " ++ show (pretty es) ++ " equals ghost val " ++ show (pretty eghosts) 
+        emitToProve $ sAnd $ map (\(x, y) -> sEq x y) $ zip v_es v_eghosts 
 
 symAssert :: Prop -> Sym ()
 symAssert p = do

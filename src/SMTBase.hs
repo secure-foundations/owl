@@ -309,7 +309,7 @@ getSymName ne =
                     vs1 <- mapM symIndex is1
                     vs2 <- mapM symIndex is2
                     return $ SApp $ f : vs1 ++ vs2
-      ROName s -> return $ SApp [SAtom "ROName", SAtom $ "\"" ++ s ++ "\""] 
+      ROName s -> return $ SApp [SAtom "ROName", SAtom $ "\"" ++ smtName s ++ "\""] 
       PRFName ne s -> do
           n <- getSymName ne
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]

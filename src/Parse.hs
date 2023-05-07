@@ -84,7 +84,7 @@ parseNameExp =
         (do
             reserved "RO"
             symbol "<"
-            p <- identifier
+            p <- parsePath
             symbol ">"
             return $ ROName p)
         <|>
@@ -561,10 +561,10 @@ parseDecls =
         reserved "random_oracle"
         l <- identifier
         symbol ":"
-        e <- parseAExpr
+        es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
         nt <- parseNameType
-        return $ DeclRandOrcl l (e, nt))
+        return $ DeclRandOrcl l (es, nt))
     <|>
     (parseSpanned $ do
         reserved "func"
@@ -751,6 +751,17 @@ parseExprTerm =
         reserved "in"
         e <- parseExpr
         return $ EInput $ bind (s2n x, s2n y) e
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "hash"
+        symbol "<"
+        p <- parsePath
+        symbol ">"
+        symbol "("
+        as <- parseArgs
+        symbol ")"
+        return $ ECrypt (CHash p) as
     )
     <|>
     (parseSpanned $ do 

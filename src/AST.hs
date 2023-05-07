@@ -118,7 +118,7 @@ type AExpr = Spanned AExprX
 
 data NameExpX = 
     BaseName ([Idx], [Idx]) Path
-    | ROName String
+    | ROName Path
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
 
@@ -132,7 +132,7 @@ data Locality = Locality Path [Idx]
 
 
 
-roName :: String -> NameExp
+roName :: Path -> NameExp
 roName s = mkSpanned (ROName s)
 
 prfName :: NameExp -> String -> NameExp
@@ -294,7 +294,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String (AExpr, NameType)
+    | DeclRandOrcl String ([AExpr], NameType)
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
     | DeclModule String (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
@@ -343,6 +343,7 @@ data ExprX =
     | EAssert Prop
     | EAssume Prop
     | EAdmit
+    | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | ECorrCase NameExp Expr
@@ -352,6 +353,11 @@ data ExprX =
     deriving (Show, Generic, Typeable)
 
 type Expr = Spanned ExprX
+
+data CryptOp = 
+    CHash Path
+    deriving (Show, Generic, Typeable)
+
 
 
 data DebugCommand = 
@@ -471,6 +477,10 @@ instance Subst ResolvedPath Locality
 instance Alpha ExprX
 instance Subst AExpr ExprX
 instance Subst ResolvedPath ExprX
+
+instance Alpha CryptOp
+instance Subst AExpr CryptOp
+instance Subst ResolvedPath CryptOp
 --- Pretty instances ---
 
 instance Pretty (Name a) where
@@ -591,6 +601,8 @@ instance Pretty AExprX where
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty ExprX where 
+    pretty (ECrypt (CHash p) a) = do
+        pretty "RO" <+> pretty p <+> pretty a
     pretty (EInput k) = 
         let ((x, i), e) = unsafeUnbind k in
         pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e

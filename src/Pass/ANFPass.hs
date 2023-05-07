@@ -112,6 +112,8 @@ anf e =
       EAssert _ -> return e
       EAssume _ -> return e
       EAdmit -> return e
+      ECrypt p as ->
+          anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECrypt p xs 
       ECall s is as -> 
           anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECall s is xs
       ECase a cases -> do
