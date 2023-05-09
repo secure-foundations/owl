@@ -302,6 +302,7 @@ getSymName ne =
       BaseName (is1, is2) s -> do
         nEnv <- use symNameEnv
         case M.lookup (smtName s) nEnv of
+          Nothing -> error $ "UNKNOWN SYM NAME: " ++ show s
           Just f -> do
               case (is1, is2) of
                 ([], []) -> return f

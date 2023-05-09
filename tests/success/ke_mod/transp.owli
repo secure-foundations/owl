@@ -1,0 +1,7 @@
+include "params.owli"
+
+module type TRANSP (P : Params) = { 
+    def server() @ P.Server : Option (if sec(P.data) then Name(P.data) else Data<adv>) 
+    def client(x : Name(P.data)) @ P.Client : Unit
+}
+

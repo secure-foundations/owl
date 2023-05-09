@@ -5,8 +5,23 @@ module Spec = {
     name k<@i> : nonce @ bob<i>
 }
 
+
 module Spec2 : Spec = {
     locality bob = alice
     name k<@i> : nonce @ bob<i>
     name k2<@i> : nonce @ bob<i>
+}
+
+module S = { 
+    locality bob 
+    name k : enckey Data<adv> @ bob
+    def bob() @ bob : Name(k)
+}
+
+module T (X : S) = {
+    module Inner : S = { 
+        locality bob = X.bob
+        name k : enckey Data<adv> @ bob
+        def bob() @ bob : Name(k)
+    }
 }

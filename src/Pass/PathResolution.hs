@@ -80,12 +80,12 @@ instance Fresh Resolve where
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
 
-freshModVar :: Resolve (Name ResolvedPath)
-freshModVar = do
+freshModVar :: String -> Resolve (Name ResolvedPath)
+freshModVar s = do
     r <- view freshCtr
     i <- liftIO $ readIORef r
     liftIO $ writeIORef r (i + 1)
-    return $ s2n $ "_MOD" ++ show i
+    return $ s2n $ "_MOD_" ++ s ++ show i
 
 emptyResolveEnv :: T.Flags -> IO ResolveEnv
 emptyResolveEnv f = do
@@ -165,7 +165,7 @@ resolveDecls (d:ds) =
           case p of
             PTop -> do
               incls <- view includes
-              if S.member fn incls then return [] else do
+              if S.member fn incls then resolveDecls ds else do
                   fl <- view flags
                   let fn' = (T._fFileLoc fl) </> fn
                   s <- liftIO $ readFile fn'
@@ -260,7 +260,7 @@ resolveModuleDecl pos bdy = do
                 ospec' <- traverse (resolveModuleExp pos) ospec
                 return ([], me', ospec')
             go pos ((x, s, t) : xs) me_ospec = do
-                v <- freshModVar
+                v <- freshModVar s
                 t' <- resolveModuleExp pos (unembed t)
                 (args', me', ospec') <- local (over modPaths $ T.insert s (True, PPathVar v)) $ 
                     go pos xs me_ospec

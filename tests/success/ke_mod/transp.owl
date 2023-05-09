@@ -1,0 +1,27 @@
+include "transp.owli"
+include "ke.owli"
+
+module Transp (P : Params) = { 
+    module TRSPEC = TRANSP(P)
+    module KESPEC = KE(P)
+    module Protocol (K : KESPEC) = {
+        module Inner : TRSPEC = { 
+            def server() @ P.Server : 
+                Option (if sec(P.data) then Name(P.data) else Data<adv>) = 
+                call K.ke_Server();
+                input i in
+                corr_case K.k in
+                corr_case P.data in
+                dec(get(K.k), i)
+
+            def client(x : Name(P.data)) @ P.Client: Unit = 
+                    corr_case K.k in
+                    let o = call K.ke_Client() in
+                    case o 
+                     | None => ()
+                     | Some k => 
+                        let c = samp enc(k, x) in 
+                        output c to endpoint(P.Server)
+            }
+    }
+}

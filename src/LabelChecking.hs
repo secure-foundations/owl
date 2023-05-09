@@ -91,7 +91,7 @@ getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l
 
 -- Simplify the label, floating /\ above /\_i, removing /\_i if i is not used
-simplLabel :: Fresh m => Label -> m Label
+simplLabel :: Label -> Check Label
 simplLabel l = 
     case l^.val of
       LName _ -> return l
@@ -115,7 +115,7 @@ simplLabel l =
 -- Canonizes the label, assuming it has been simplified
 -- 
 canonLabel :: Label -> Sym CanonLabel
-canonLabel l = 
+canonLabel l = do
     case l^.val of
       LJoin l1 l2 -> do
           (CanonAnd c1) <- canonLabel l1
@@ -200,7 +200,7 @@ getSymLblConst (TyLabelVar n@(PRes p)) = do
 
 symLbl :: Label -> Sym SExp
 symLbl l = do
-    l' <- simplLabel l
+    l' <- liftCheck $ simplLabel l
     c <- canonLabel l'
     symCanonLabel c
 
@@ -217,7 +217,6 @@ emitNameDefAssms = do
         local (over (inScopeIndices) $ (++) $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
             local (over (inScopeIndices)  $ (++) $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
                 let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) (PRes n)
-                liftCheck $ debug $ pretty "nameDefAssms for " <> pretty ne
                 ntOpt <- liftCheck $ getNameTypeOpt ne
                 assms <- case ntOpt of 
                     Just nt -> nameDefFlows ne nt
@@ -242,7 +241,7 @@ data SymLbl =
 
 instance Alpha SymLbl
 
-mkSymLbl :: Label -> FreshM (S.Set (AlphaOrd SymLbl))
+mkSymLbl :: Label -> Check (S.Set (AlphaOrd SymLbl))
 mkSymLbl l = 
     case l^.val of
       LZero -> return S.empty
@@ -258,7 +257,7 @@ mkSymLbl l =
           else mkSymLbl l
 
 
-lblFromSym :: SymLbl -> FreshM Label
+lblFromSym :: SymLbl -> Check Label
 lblFromSym s = 
     case s of
       SName n -> return $ nameLbl n
@@ -269,13 +268,13 @@ lblFromSym s =
           l' <- lblFromSym l
           return $ mkSpanned $ LRangeIdx $ bind x l'
 
-lblFromSym' :: S.Set (AlphaOrd SymLbl) -> FreshM Label
+lblFromSym' :: S.Set (AlphaOrd SymLbl) -> Check Label
 lblFromSym' s = do
     xs <- mapM lblFromSym $ map _unAlphaOrd $ S.toList s
     return $ foldr joinLbl zeroLbl xs
 
-normLabel :: Label -> Label
-normLabel l = runFreshM $ do
+normLabel :: Label -> Check Label
+normLabel l = do
     l' <- simplLabel l
     s <- mkSymLbl l'
     lblFromSym' s

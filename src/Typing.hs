@@ -548,8 +548,9 @@ normalizeTy t0 =
     TAdmit -> return t0
 
 normalizeLabel :: Label -> Check Label
-normalizeLabel l = do
-    return $ normLabel l
+normalizeLabel l = do                
+    debug $ pretty "Normalizing " <> pretty l
+    normLabel l
 
 
 -- Subtype checking, assuming the types are normalized
@@ -877,6 +878,7 @@ checkDecl d cont =
                         Nothing -> return $ ignore True
                         Just bdy' -> do
                           bdy'' <- ANF.anf bdy'
+                          debug $ pretty "Checking def body " <> pretty n
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
@@ -1738,7 +1740,7 @@ typeCheckDecls f ds = do
 defMatches :: Ignore Position -> String -> Maybe Def -> Def -> Check ()
 defMatches pos s d1 d2 = 
     case (d1, d2) of
-      (Just (DefHeader bl), DefHeader bl') -> assert pos ("Def mismatch: " ++ s) $ bl `aeq` bl'
+      (Just (DefHeader bl), DefHeader bl') -> assert pos ("Def mismatch with headers: " ++ s) $ bl `aeq` bl'
       (Just (DefHeader bl), Def blspec) -> do
           (is, DefSpec _ l _) <- unbind blspec
           assert pos ("Def mismatch: " ++ s) $ bl `aeq` (bind is l)
@@ -1746,6 +1748,12 @@ defMatches pos s d1 d2 =
           (is1, DefSpec ab l1 pty) <- unbind blspec
           (is', DefSpec ab' l1' pty') <- unbind blspec'
           assert pos ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
+          (args, pty_bdy) <- unbind pty
+          (args', pty_bdy') <- unbind pty'
+          debug $ pretty "Headers:"
+          debug $ pretty pty_bdy
+          debug $ pretty pty_bdy'
+          -- debug $ pretty "Checking def with types " <> pretty pty <+> pretty pty'
           assert pos ("Def mismatch: " ++ s) $ blspec `aeq` blspec'
       (Nothing, _) -> typeError pos $ "Missing def: " ++ s
 
@@ -1797,23 +1805,15 @@ moduleMatches pos xmd1 ymd2 = do
         case lookup s (md1^.tableEnv) of
           Nothing -> typeError pos $ "Missing tenv: " ++ s
           Just tl' -> assert pos ("Table mismatch for " ++ s) $ tl `aeq` tl'
-    -- flowAxioms: bidirectional
+    -- flowAxioms 
     forM_ (md2^.flowAxioms) $ \ax -> 
         case L.find (aeq ax) (md1^.flowAxioms) of 
           Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
           Just _ -> return ()
-    forM_ (md1^.flowAxioms) $ \ax -> 
-        case L.find (aeq ax) (md2^.flowAxioms) of 
-          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
-          Just _ -> return ()
-    -- advCorrConstraints :: bidirectional
+    -- advCorrConstraints 
     forM_ (md2^.advCorrConstraints) $ \ax -> 
         case L.find (aeq ax) (md1^.advCorrConstraints) of 
-          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
-          Just _ -> return ()
-    forM_ (md1^.advCorrConstraints) $ \ax -> 
-        case L.find (aeq ax) (md2^.advCorrConstraints) of 
-          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+          Nothing -> typeError pos $ "corr constraint mismatch " ++ show (pretty ax)
           Just _ -> return ()
     -- tyDefs 
     forM_ (md2^.tyDefs) $ \(s, td) -> 

@@ -240,6 +240,7 @@ setupAllFuncs = do
 
 tyConstraints :: Ty -> SExp -> Sym SExp
 tyConstraints t v = do
+    liftCheck $ debug $ pretty "tyConstraints for " <> pretty t
     case t^.val of
       (TData _ _) -> return $ sTrue
       (TDataWithLength _ a) -> do
@@ -358,7 +359,9 @@ interpretAExp ae =
       AEString s -> return $ SApp [SAtom "StringToBS", SAtom $ "\"" ++ s ++ "\""]
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "IntToBS", SAtom (show i)]
-      AEGet ne -> symNameExp ne
+      AEGet ne -> do
+          liftCheck $ debug $ pretty "Evaluating get" <+> parens (pretty ne)
+          symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
       AEPackIdx i a -> interpretAExp a
@@ -396,6 +399,7 @@ interpretProp p =
           ivs' <- mapM symIndex id2
           return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ smtName s ++ "\""), mkIdxList (ivs ++ ivs'), mkBSList vs]
       (PFlow l1 l2 ) -> do
+        liftCheck $ debug $ pretty "Interpreting prop " <> pretty l1 <+> pretty "<=" <+> pretty l2
         x <- symLbl l1
         y <- symLbl l2
         return $ SApp [SAtom "Flows", x, y]
@@ -596,6 +600,7 @@ symDecideProp p = do
 
 checkFlows :: Label -> Label -> Check (Maybe String, Maybe Bool)
 checkFlows l1 l2 = do
+    debug $ pretty "checkFlows for " <> pretty l1 <+> pretty "and" <+> pretty l2
     b1 <- fromSMT smtSetup $ do
             emitComment $ "Trying to prove " ++ show (pretty l1) ++ " <= " ++ show (pretty l2)
             x <- symLbl l1

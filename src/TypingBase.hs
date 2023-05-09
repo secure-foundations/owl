@@ -609,6 +609,9 @@ prettyContext e =
 
 -- Traversing modules to collect global info
 
+instance Pretty ResolvedPath where
+    pretty a = pretty $ show a
+
 collectEnvInfo :: (ModDef -> Map String a) -> Check (Map ResolvedPath a)
 collectEnvInfo f = do
     cms <- view curModules
@@ -624,7 +627,7 @@ collectEnvInfo f = do
                 let fs = map (\(s, f) -> (PDot p s, f)) (f md)
                 fs' <- forM (md^.modules) $ \(s, xmd) -> do
                     (x, md) <- unbind xmd
-                    go f (PDot p s) (subst x p md)
+                    go f (PDot p s) (subst x (PDot p s) md)
                 return $ fs ++ concat fs'
 
 -- Just concat the stuff together
@@ -642,7 +645,7 @@ collectEnvAxioms f = do
                 let xs = f md
                 ys <- forM (md^.modules) $ \(s, xmd) -> do
                     (x, md) <- unbind xmd
-                    go f (PDot p s) (subst x p md)
+                    go f (PDot p s) (subst x (PDot p s) md)
                 return $ xs ++ concat ys
 
 collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))

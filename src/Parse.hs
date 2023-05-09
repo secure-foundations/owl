@@ -608,6 +608,7 @@ parseDecls =
     <|>
     (parseSpanned $ do
         reserved "module"
+        _ <- optionMaybe $ reserved "type"
         n <- identifier
         args <- optionMaybe $ do
             symbol "("
