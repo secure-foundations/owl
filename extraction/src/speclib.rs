@@ -15,6 +15,17 @@ verus! {
 //     Vec { vec: v.vec.clone() }
 // }
 
+// Macro version of the stdlib's Option::and
+#[macro_export]
+macro_rules! option_and {
+    ($id:ident, $($tt:tt)*) => {
+        match $id {
+            Some($id) => { $($tt)* },
+            None => None
+        }
+    }
+}
+
 pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
 {
     (v.is_None() && s.is_None()) ||
@@ -75,24 +86,27 @@ pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins:
     todo!()
 }
 
-pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq<u8>)
+pub open spec(checked) fn enc(k: Option<Seq<u8>>, x: Option<Seq<u8>>, coins: Seq<u8>) -> (c: Option<Seq<u8>>)
 {
-    if (k.len() == crate::KEY_SIZE && coins.len() == crate::TAG_SIZE) {
-        evercrypt_spec_of_enc(k, x, coins)
-    } else {
-        seq![]
+    match (k, x) {
+        (Some(k), Some(x)) =>
+            if (k.len() == crate::KEY_SIZE && coins.len() == crate::TAG_SIZE) {
+                Some(evercrypt_spec_of_enc(k, x, coins))
+            } else {
+                Some(seq![])
+            }
+        _ => None
     }
 }
 
-#[verifier(external_body)]
-pub exec fn enc_impl(k: &Vec<u8>, x: &Vec<u8>, c: &Vec<u8>) -> (ctxt: Vec<u8>)
-    ensures
-        ((k.len() == crate::KEY_SIZE && c.len() == crate::TAG_SIZE) ==> ctxt@ === enc(k@, x@, c@)),
-       !((k.len() == crate::KEY_SIZE && c.len() == crate::TAG_SIZE) ==> ctxt@ === seq![]),
-{
-    todo!() // call evercrypt
-}
+// #[macro_export]
+// macro_rules! enc {
+//     ($($tt:tt)*) => {
+//         enc($($tt)*)
+//     }
+// }
 
+// 0
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
     recommends k.len() == crate::KEY_SIZE,
@@ -100,39 +114,58 @@ pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Opt
     todo!()
 }
 
-pub open spec(checked) fn dec(k: Seq<u8>, c: Seq<u8>) -> (x: Option<Seq<u8>>)
+pub open spec(checked) fn dec(k: Option<Seq<u8>>, c: Option<Seq<u8>>) -> (x: Option<Option<Seq<u8>>>)
 {
-    if (k.len() == crate::KEY_SIZE) {
-        evercrypt_spec_of_dec(k, c)
-    } else {
-        crate::Option::None
+    match (k, c) {
+        (Some(k), Some(c)) =>
+            if (k.len() == crate::KEY_SIZE) {
+                Some(evercrypt_spec_of_dec(k, c))
+            } else {
+                Some(None)
+            }
+        _ => None
     }
 }
 
-#[verifier(external_body)]
-pub exec fn dec_impl(k: &Vec<u8>, c: &Vec<u8>) -> (x: Option<Vec<u8>>)
-    ensures
-        (k.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==> x.is_Some() && x.get_Some_0()@ === dec(k@, c@).get_Some_0(),
-        dec(k@, c@).is_None() ==> x.is_None(),
-        k.len() != crate::KEY_SIZE ==> x.is_None(),
-{
-    todo!() // call evercrypt
-}
+// #[macro_export]
+// macro_rules! dec {
+//     ($($tt:tt)*) => {
+//         dec($($tt)*)
+//     }
+// }
+
+// #[verifier(external_body)]
+// pub exec fn dec_impl(k: &Vec<u8>, c: &Vec<u8>) -> (x: Option<Vec<u8>>)
+//     ensures
+//         (k.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==> x.is_Some() && x.get_Some_0()@ === dec(k@, c@).get_Some_0(),
+//         dec(k@, c@).is_None() ==> x.is_None(),
+//         k.len() != crate::KEY_SIZE ==> x.is_None(),
+// {
+//     todo!() // call evercrypt
+// }
 
 pub open spec fn eq(a: Seq<u8>, b: Seq<u8>) -> bool
 {
     a == b
 }
 
-pub open spec fn get(x: Seq<u8>) -> Seq<u8>
+pub open spec fn get(x: Seq<u8>) -> Option<Seq<u8>>
 {
-    x
+    Some(x)
 }
 
-pub open spec fn UNIT() -> (_:())
+pub open spec fn UNIT() -> Option<()>
 {
-    ()
+    Some(())
 }
+
+
+// #[macro_export]
+// macro_rules! UNIT {
+//     ($($tt:tt)*) => {
+//         ($($tt)*)
+//     }
+// }
 
 pub open spec fn andb(x: bool, y: bool) -> bool
 {
@@ -157,8 +190,8 @@ pub mod itree {
     verus! {
     #[is_variant]
     pub enum ITree<A> {
-        Input  (FnSpec(Seq<u8>, Endpoint) -> ITree<A>),
-        Output (Seq<u8>, Endpoint, Box<ITree<A>>),
+        Input  (FnSpec(Option<Seq<u8>>, Endpoint) -> ITree<A>),
+        Output (Option<Seq<u8>>, Endpoint, Box<ITree<A>>),
         Sample (usize, FnSpec(Seq<u8>) -> ITree<A>),
         Ret    (A),
     }
@@ -185,7 +218,7 @@ pub mod itree {
         };
         // vvv check this
         (output ($($e:tt)*) to ($($endpoint:tt)*)) => {
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(())))
+            (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(Some(())))))
         };
         ((sample($n:expr, $f:ident($($arg:expr),*), $var:ident)) in $($next:tt)*) => {
             (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!(let $var = (ret($f($($arg),*, coins))) in $($next)*)})))
@@ -269,10 +302,10 @@ pub mod itree {
         pub open spec(checked) fn take_input(&self, i: Seq<u8>, ev: Endpoint) -> ITree<A>
             recommends self.is_input()
         {
-            (self.get_Input_0())(i, ev)
+            (self.get_Input_0())(Some(i), ev)
         }
         pub open spec fn is_output(&self, o: Seq<u8>) -> bool {
-            self.is_Output() && self.get_Output_0() === o
+            self.is_Output() && self.get_Output_0() === Some(o)
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A>
             recommends (exists |o| self.is_output(o))

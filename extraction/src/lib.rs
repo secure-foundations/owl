@@ -4,7 +4,6 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub mod main_spec;
 
 #[cfg(test)]
 mod tests {
@@ -183,5 +182,3 @@ mod tests {
         }
     }
 }
-
-// } // verus!

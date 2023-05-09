@@ -42,8 +42,8 @@ main = do
                           let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success! Time to typecheck: %0.5f seconds\n" (diff :: Double)
                           if extract args then do
-                              let extfn = "extraction/src/main.rs"
-                              let specfn = "extraction/src/main_spec.rs"
+                              let extfn = "extraction/src/main_impl.rs"
+                              let specfn = "extraction/src/main.rs"
                               res <- E.extract (takeDirectory fn) ast
                               case res of
                                 Left err -> E.printErr err

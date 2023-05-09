@@ -49,11 +49,23 @@ instance Pretty RustTy where
   pretty VecU8 = pretty "Vec<u8>"
   pretty RcVecU8 = pretty "Rc<Vec<u8>>"
   pretty Bool = pretty "bool"
-  pretty Number = pretty "usize" --should just work
+  pretty Number = pretty "usize"
   pretty String = pretty "String"
   pretty Unit = pretty "()"
   pretty (ADT s) = pretty s
   pretty (Option r) = pretty "Option" <> angles (pretty r)
+
+data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
+    deriving (Show, Eq, Generic, Typeable)
+
+instance Pretty SpecTy where
+  pretty SpecSeqU8 = pretty "Seq<u8>"
+  pretty SpecBool = pretty "bool"
+  pretty SpecNumber = pretty "usize"
+  pretty SpecString = pretty "String"
+  pretty SpecUnit = pretty "()"
+  pretty (SpecADT s) = pretty s
+  pretty (SpecOption r) = pretty "Option" <> angles (pretty r)
 
 data Env = Env {
     _path :: String,
@@ -141,6 +153,9 @@ locName x = "loc_" ++ replacePrimes x
 
 sidName :: String -> String
 sidName x = "sid_" ++ replacePrimes x
+
+specName :: String -> String
+specName s = "owlSpec_" ++ replacePrimes s
 
 makeLenses ''Env
 
@@ -455,6 +470,84 @@ genOwlOpsImpl name = pretty
         "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0[..]).owl_xor(other) }"
     ])
 
+specGenParserSerializer :: String -> ExtractionMonad (Doc ann)
+specGenParserSerializer name = do
+    -- TODO nesting design---Seq or ADT args---depends on parsing lib
+    let parser = pretty "#[verifier(external_body)]" <+> pretty "pub open spec fn parse_" <> pretty name <> parens (pretty "x: Seq<u8>") <+>
+                    pretty "->" <+> pretty "Option" <> angles (pretty name) <+> braces (line <>
+                    (pretty "todo!()") <> line
+                )
+    let serializer = pretty "#[verifier(external_body)]" <+> pretty "pub open spec fn serialize_" <> pretty name <> parens (pretty "x:" <+> pretty name) <+>
+                    pretty "->" <+> pretty "Seq<u8>" <+> braces (line <>
+                    (pretty "todo!()") <> line
+                )
+    return $ vsep [parser, serializer]
+
+specExtractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann)
+specExtractStruct owlName owlFields = do
+    let name = specName owlName
+    fields <- mapM (\(n, t) -> (rustifySpecTy . doConcretifyTy) t >>= \t' -> return (n, t')) owlFields
+    let structDef = pretty "pub struct" <+> pretty name <> braces (line <> (
+                        vsep . punctuate comma . map (\(n, t) -> pretty "pub" <+> pretty (specName n) <+> pretty ":" <+> pretty t) $ fields
+                    ) <> line)
+    parseSerializeDefs <- specGenParserSerializer name
+    constructor <- genConstructor owlName fields
+    selectors <- mapM (genFieldSelector owlName) fields
+    return $ vsep $ [structDef, parseSerializeDefs, constructor] ++ selectors 
+    where
+        genConstructor owlName fields = do
+            let args = parens . hsep . punctuate comma . map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": Option<Seq<u8>>") $ fields
+            let foldOptAnd (n,_) acc = pretty "option_and!" <> parens (pretty "arg_" <> pretty n <> pretty "," <+> acc)
+            let structBody = pretty "Some" <> parens (pretty "serialize_" <> pretty (specName owlName) <>
+                    parens (pretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> pretty (specName n) <> pretty ": arg_" <> pretty n) $ fields)))
+            return $
+                pretty "pub open spec fn" <+> pretty owlName <> args <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
+                    foldr foldOptAnd structBody fields
+                <> line)
+        genFieldSelector owlName (fieldName, fieldTy) = do
+            return $ 
+                pretty "pub open spec fn" <+> pretty fieldName <> parens (pretty owlName <> pretty ": Option<Seq<u8>>") <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
+                    pretty "option_and!" <> parens (pretty owlName <> comma <+> braces (line <>
+                        pretty "let parsed = parse_" <> pretty (specName owlName) <> parens (pretty owlName) <> pretty ";" <> line <>
+                        pretty "option_and!" <> parens (pretty "parsed" <> comma <+> pretty "Some" <> parens (pretty "parsed." <> pretty (specName fieldName)))
+                    <> line))
+                <> line)
+
+specExtractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann)
+specExtractEnum owlName owlCases = do
+    let name = specName owlName
+    cases <- mapM (\(n, topt) -> do
+                        t' <- case topt of
+                            Just t -> Just <$> (rustifySpecTy . doConcretifyTy) t
+                            Nothing -> return Nothing
+                        return (n, t')) owlCases
+    let enumDef = pretty "#[is_variant]" <> line <> pretty "pub enum" <+> pretty name <> braces (line <> (
+                        vsep . punctuate comma . map (\(n, t) -> pretty (specName n) <> parens (pretty t)) $ cases
+                    ) <> line)
+    parseSerializeDefs <- specGenParserSerializer name
+    caseConstructors <- mapM (genCaseConstructor name) cases
+    return $ vsep $ [enumDef, parseSerializeDefs] ++ caseConstructors
+    where
+        genCaseConstructor name (caseName, Just caseTy) = do
+            return $
+                pretty "pub open spec fn" <+> pretty caseName <> parens (pretty "x: Option<Seq<u8>>") <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
+                    pretty "option_and!" <> parens (pretty "x," <+> pretty "Some" <> parens (
+                            pretty "serialize_" <> pretty name <> parens (
+                                pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> parens (pretty "x")
+                            )
+                        )) <> line
+                )
+
+        genCaseConstructor name (caseName, Nothing) = do
+            return $
+                pretty "pub open spec fn" <+> pretty caseName <> pretty "()" <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
+                    pretty "Some" <> parens (
+                            pretty "serialize_" <> pretty name <> parens (
+                                pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> pretty "()"
+                            )
+                        ) <> line
+                )
+
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
@@ -475,7 +568,8 @@ extractStruct owlName owlFields = do
     let owlOpsImpl = genOwlOpsImpl name
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
-    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs ++ [owlOpsImpl], pretty "")
+    structSpec <- specExtractStruct owlName owlFields
+    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs ++ [owlOpsImpl], structSpec)
     where
         mkStructFuncs owlName parsingOutcomeName owlFields = return $
             M.fromList $
@@ -600,8 +694,6 @@ extractStruct owlName owlFields = do
             pretty "}" <> line <>
             pretty "}"
 
-
-
 extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractEnum owlName owlCases' = do
     let owlCases = M.fromList owlCases'
@@ -623,16 +715,7 @@ extractEnum owlName owlCases' = do
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) owlName
-
-    --TODO refactor
-    let rustifySpecTyOpt topt = 
-            case topt of
-                Just ty -> do pretty <$> (rustifyArgTy . doConcretifyTy $ ty)
-                Nothing -> do return (pretty "")
-    enumSpecCases <- mapM (\(n, topt) -> do tp <- rustifySpecTyOpt topt; return $ pretty n <> parens tp) owlCases'
-    let enumSpec = pretty "pub enum" <+> pretty name <> braces (line <> (
-                        vsep . punctuate comma $ enumSpecCases
-                    ) <> line)
+    enumSpec <- specExtractEnum owlName owlCases'
 
     return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs ++ [owlOpsImpl], enumSpec)
     where
@@ -986,6 +1069,22 @@ rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
 rustifyArgTy _ = return VecU8
 
+specTyOf :: RustTy -> SpecTy
+specTyOf VecU8 = SpecSeqU8
+specTyOf RcVecU8 = SpecSeqU8
+specTyOf Bool = SpecBool
+specTyOf Number = SpecNumber
+specTyOf String = SpecString
+specTyOf Unit = SpecUnit
+specTyOf (ADT _) = SpecSeqU8 -- TODO nesting?
+specTyOf (Option rt) = SpecOption (specTyOf rt)
+
+rustifySpecTy :: CTy -> ExtractionMonad SpecTy
+rustifySpecTy ct = do
+    rt <- rustifyArgTy ct
+    return $ specTyOf rt
+
+
 makeFunc :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty  -> ExtractionMonad ()
 makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     let name = rustifyName owlName
@@ -1006,21 +1105,19 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
-    defSpec <- genDefSpec concreteBody' rustArgs rtb
+    defSpec <- genDefSpec concreteBody' rustArgs (specTyOf rtb)
     funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
         genFuncDecl name sidArgs owlArgs rt = do
             let argsPrettied = pretty "&mut self," <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
-        genDefSpec body owlArgs rt = do
+        genDefSpec body owlArgs specRt = do
             let argsPrettied = hsep . punctuate comma . map extractArg $ owlArgs
-            let rtPrettied = case rt of
-                                Unit -> pretty ""
-                                _ -> pretty "->" <+> pretty rt
+            let rtPrettied = pretty "-> ITree<Option<" <> pretty specRt <> pretty ">>"
             return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-                pretty "owl_spec!" <> parens (line <> 
-                    (pretty . replacePrimes . show . pretty $ body) 
+                pretty "owl_spec!" <> parens (line <>
+                    (pretty . replacePrimes . show . pretty $ body)
                 <> line) <> line <>
                 rbrace
 
@@ -1275,7 +1372,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                     pretty "for i in 0..n_" <> pretty (locName idxLocName) <> braces (ni <+> pretty (rustifyName name) <> pretty ".insert(i, owl_tmp);")
             else throwError $ UnsupportedSharedIndices "can't have a name shared by multiple PID-parameterized localities"
 
-        genSalt = pretty "let" <+> pretty "salt" <+> pretty "=" <+> pretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt 
+        genSalt = pretty "let" <+> pretty "salt" <+> pretty "=" <+> pretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt
 
         writeConfig pubKeys (loc, (npids, _, ss, _, _)) =
             let configInits = hsep . punctuate comma $
@@ -1348,8 +1445,8 @@ extractDecls ds = do
     p <- preamble
     vp <- verusPreamble
     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
-    return (p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep, 
-            vp <> line <> pretty "verus!{" <> line <> globalSpecsExtracted <> line <> specsExtracted <> line <> pretty "} // verus!")
+    return (p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep,
+            vp <> line <> pretty "verus!{" <> line <> globalSpecsExtracted <> line <> specsExtracted <> line <> pretty "} // verus!" <> line <> pretty "fn main () {} // TODO remove")
 
 
 verusPreamble :: ExtractionMonad (Doc ann)
