@@ -2,10 +2,8 @@ include "transp.owli"
 include "ke.owli"
 
 module Transp (P : Params) = { 
-    module TRSPEC = TRANSP(P)
-    module KESPEC = KE(P)
-    module Protocol (K : KESPEC) = {
-        module Inner : TRSPEC = { 
+    module Protocol (K : KE(P)) = {
+        module Inner : TRANSP(P) = { 
             def server() @ P.Server : 
                 Option (if sec(P.data) then Name(P.data) else Data<adv>) = 
                 call K.ke_Server();
