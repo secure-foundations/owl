@@ -1,9 +1,12 @@
+use vstd::{prelude::*, vec::*};
 use crate::owl_util::gen_rand_bytes;
 use aead::{Aead, Nonce, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};
 use chacha20poly1305::ChaCha20Poly1305;
 
-#[derive(Debug, Clone, Copy)]
+verus! {
+
+#[derive(Clone, Copy)]
 pub enum Mode {
     Aes128Gcm,
     Aes256Gcm,
@@ -68,7 +71,7 @@ pub fn gen_rand_key_iv(mode: Mode) -> Vec<u8> {
     gen_rand_bytes(key_size(mode) + nonce_size(mode))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Error {
     InvalidInit,
     InvalidAlgorithm,
@@ -85,13 +88,17 @@ pub type Aad = [u8];
 pub type Ciphertext = Vec<u8>;
 pub type Tag = Vec<u8>;
 
+#[verifier(external_body)]
 pub fn encrypt_combined(
     alg: Mode,
     k: &[u8],
     msg: &[u8],
     iv: &[u8],
-    aad: &Aad,
+    //aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    // TODO handle AAD if needed
+    let aad = &[];
+
     // check lengths
     if k.len() != key_size(alg) {
         return Err(Error::InvalidKeySize);
@@ -100,6 +107,7 @@ pub fn encrypt_combined(
         return Err(Error::InvalidNonce);
     }
 
+    #[verifier(external_body)]
     fn encrypt_inner<C: Aead + KeyInit>(
         k: &[u8],
         msg: &[u8],
@@ -107,8 +115,8 @@ pub fn encrypt_combined(
         aad: &Aad,
     ) -> Result<Vec<u8>, Error> {
         let cipher = match C::new_from_slice(k) {
-            Ok(c) => c,
-            Err(_) => {
+            std::result::Result::Ok(c) => c,
+            std::result::Result::Err(_) => {
                 return Err(Error::InvalidInit);
             }
         };
@@ -117,12 +125,12 @@ pub fn encrypt_combined(
         let plaintext = Payload { msg: msg, aad: aad };
 
         let ctxt = match cipher.encrypt(nonce, plaintext) {
-            Ok(v) => v,
-            Err(_) => {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(_) => {
                 return Err(Error::Encrypting);
             }
         };
-        return Ok(ctxt);
+        return Ok(Vec{ vec: ctxt });
     }
 
     return match alg {
@@ -132,31 +140,38 @@ pub fn encrypt_combined(
     };
 }
 
+#[verifier(external_body)]
 pub fn encrypt(
     alg: Mode,
     k: &[u8],
     msg: &[u8],
     iv: &[u8],
-    aad: &Aad,
+    // aad: &Aad,
 ) -> Result<(Ciphertext, Tag), Error> {
-    let mut ctxt_tag = encrypt_combined(alg, k, msg, iv, aad)?;
+    let mut ctxt_tag = match encrypt_combined(alg, k, msg, iv) {
+        Ok(c) => c,
+        Err(e) => return Err(e),
+    };
 
     if ctxt_tag.len() <= tag_size(alg) {
         return Err(Error::Encrypting);
     }
 
-    let tag = ctxt_tag.split_off(ctxt_tag.len() - tag_size(alg));
+    let tag = Vec { vec: ctxt_tag.vec.split_off(ctxt_tag.len() - tag_size(alg)) };
     return Ok((ctxt_tag, tag));
 }
 
+#[verifier(external_body)]
 pub fn decrypt(
     alg: Mode,
     k: &[u8],
     ctxt: &[u8],
     tag: &[u8],
     iv: &[u8],
-    aad: &Aad,
+    // aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    let aad = &[];
+
     // check lengths
     if k.len() != key_size(alg) {
         return Err(Error::InvalidKeySize);
@@ -168,6 +183,7 @@ pub fn decrypt(
         return Err(Error::InvalidTagSize);
     }
 
+    #[verifier(external_body)]
     fn decrypt_inner<C: Aead + KeyInit>(
         k: &[u8],
         ctxt: &[u8],
@@ -176,8 +192,8 @@ pub fn decrypt(
         aad: &Aad,
     ) -> Result<Vec<u8>, Error> {
         let cipher = match C::new_from_slice(k) {
-            Ok(c) => c,
-            Err(_) => {
+            std::result::Result::Ok(c) => c,
+            std::result::Result::Err(_) => {
                 return Err(Error::InvalidInit);
             }
         };
@@ -190,12 +206,12 @@ pub fn decrypt(
         };
 
         let ctxt = match cipher.decrypt(nonce, ciphertext) {
-            Ok(v) => v,
-            Err(_) => {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(_) => {
                 return Err(Error::Decrypting);
             }
         };
-        return Ok(ctxt);
+        return Ok(Vec { vec: ctxt });
     }
 
     return match alg {
@@ -205,12 +221,13 @@ pub fn decrypt(
     };
 }
 
+#[verifier(external_body)]
 pub fn decrypt_combined(
     alg: Mode,
     k: &[u8],
     ctxt: &[u8],
     iv: &[u8],
-    aad: &Aad,
+    // aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
     if ctxt.len() < tag_size(alg) {
         return Err(Error::InvalidTagSize);
@@ -218,5 +235,6 @@ pub fn decrypt_combined(
     let msg_len = ctxt.len() - tag_size(alg);
     let tag = &ctxt[msg_len..];
     let ctxt = &ctxt[..msg_len];
-    return decrypt(alg, k, ctxt, tag, iv, aad);
+    return decrypt(alg, k, ctxt, tag, iv);
 }
+} // verus!

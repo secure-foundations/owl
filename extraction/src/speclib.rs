@@ -7,14 +7,6 @@ pub use vstd::{modes::*, option::*, prelude::*, seq::*, vec::*, *};
 ////////////////////////////////////////////////////////////////////////////////
 verus! {
 
-// /// Clones a Vec<u8> (because currently Verus doesn't support this natively)
-// #[verifier(external_body)]
-// pub exec fn vec_u8_clone(v: &Vec<u8>) -> (res: Vec<u8>)
-//     ensures v@ == res@
-// {
-//     Vec { vec: v.vec.clone() }
-// }
-
 // Macro version of the stdlib's Option::and
 #[macro_export]
 macro_rules! option_and {

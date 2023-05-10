@@ -490,12 +490,12 @@ instance Pretty AExprX where
     pretty (AEVar s n) = pretty (unignore s)
     pretty (AEApp f _ as) = pretty f <> tupled (map pretty as)
     pretty (AEString s) = pretty "\"" <> pretty s <> pretty "\""
-    pretty (AELenConst s) = pretty s <> pretty "_len" -- pretty "|" <> pretty s <> pretty "|"
+    pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
     pretty (AEInt i) = pretty i
     pretty (AEGet ne) = pretty "get" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEPackIdx s a) =  pretty a -- pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
+    pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty ExprX where 
     pretty (EInput k) = 

@@ -50,10 +50,10 @@ main = do
                                 Right (rust_code, spec_code) -> do
                                   writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
-                                  callProcess "rustfmt" [extfn]
+                                  -- callProcess "rustfmt" [extfn]
                                   writeFile specfn $ "// Extracted Verus specs code from file " ++ fn ++ ":\n"
                                   appendFile specfn $ show spec_code
-                                  callProcess "rustfmt" [specfn]
+                                  -- callProcess "rustfmt" [specfn]
                                   putStrLn $ "Successfully extracted to file " ++ extfn ++ " and extracted Verus specs to file " ++ specfn
                                   return ()
                           else return ()

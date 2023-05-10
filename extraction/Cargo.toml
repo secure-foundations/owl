@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.68.0"
 
-[lib]
-name = "owl_crypto_primitives"
-path = "src/lib.rs"
+# [lib]
+# name = "owl_crypto_primitives"
+# path = "src/lib.rs"
 
-[[bin]]
+[bin]
 name = "extraction-temp"
 path = "src/main.rs"
 
