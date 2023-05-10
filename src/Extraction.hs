@@ -576,20 +576,21 @@ extractStruct owlName owlFields = do
                     case args of
                       (ADT _, arg) : _ -> do
                         return $ (Nothing, show $
-                            pretty "Rc::new(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <> parens (pretty "&mut" <+> pretty arg) <> pretty ".to_owned())")
+                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <> 
+                                parens (pretty "&mut" <+> pretty arg) <> pretty "))")
                       (VecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "Rc::new(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&" <+> pretty owlName) <> pretty ".to_owned())")
+                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
+                                parens (pretty "&" <+> pretty owlName) <> pretty "))")
                       (RcVecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "Rc::new(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&" <+> pretty owlName) <> pretty ".to_owned())")
+                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
+                                parens (pretty "&" <+> pretty owlName) <> pretty "))")
                       _ -> throwError $ TypeError $ "attempt to get from " ++ owlName ++ " with bad args"
                 ))) owlFields
 
         genStructParsingOutcomeDef parsingOutcomeName layoutFields = return $
-            pretty "#[derive(PartialEq, Eq, Debug)]" <> line <>
+            pretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
             pretty "pub enum" <+> pretty parsingOutcomeName <+>
             vsep [  lbrace,
                     pretty "Success" <> parens (hsep $ punctuate comma $ replicate (length layoutFields + 1) $ pretty "usize") <> comma,
@@ -611,35 +612,38 @@ extractStruct owlName owlFields = do
                 pretty "if" <+> pretty "arg.len() - i" <+> pretty "<" <+> pretty nb <+> lbrace <> line <>
                 pretty "return None;" <> line <>
                 rbrace <> line <>
-                pretty "i +=" <+> pretty nb <> pretty ";"
+                pretty "i = i +" <+> pretty nb <> pretty ";"
             LStruct sn sfs ->
                 pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
                 pretty "match" <+> pretty "len_valid_" <> pretty sn <> parens (pretty "&arg[i..]") <+> lbrace <> line <>
-                pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "_" | _ <- [0..(length sfs - 1)]] ++ [pretty "l"]) <+> pretty "=>" <+> braces (pretty "i += l;") <> line <>
+                pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "_" | _ <- [0..(length sfs - 1)]] ++ [pretty "l"]) <+> pretty "=>" <+> braces (pretty "i = i + l;") <> line <>
                 pretty "None => " <> braces (pretty "return None;") <> line <>
                 rbrace
             LEnum en _   ->
                 pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
                 pretty "match" <+> pretty "len_valid_" <> pretty en <> parens (pretty "&arg[i..]") <+> lbrace <> line <>
-                pretty "Some(l) => " <> braces (pretty "i += l;") <> line <>
+                pretty "Some(l) => " <> braces (pretty "i = i + l;") <> line <>
                 pretty "None => " <> braces (pretty "return None;") <> line <>
                 rbrace
 
         genParseFnDef name parsingOutcomeName layout layoutFields = return $
             pretty "pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
-                pretty "if arg.parsing_outcome ==" <+> pretty parsingOutcomeName <> pretty "::Failure" <+> lbrace <> line <>
-                    pretty "match len_valid_" <> pretty name <> parens (pretty "&arg.data.as_slice()") <+> lbrace <> line <>
-                    pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <+>
-                        pretty "=>" <+> braces (
-                            pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success" <>
-                                (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <>
-                            pretty ";"
-                        ) <> line <>
-                    pretty "None => " <> braces (
-                            pretty "arg.data =" <+> pretty "Rc::new(Vec { vec: vec![0;" <+> pretty (lenLayoutFailure layout) <> pretty "]});" <> line <>
-                            pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
-                        ) <> line <>
-                    rbrace <> line <>
+                pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
+                    pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
+                        pretty "match len_valid_" <> pretty name <> parens (pretty "&arg.data.as_slice()") <+> lbrace <> line <>
+                        pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <+>
+                            pretty "=>" <+> braces (
+                                pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success" <>
+                                    (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <>
+                                pretty ";"
+                            ) <> line <>
+                        pretty "None => " <> braces (
+                                pretty "arg.data =" <+> pretty "Rc::new(Vec { vec: vec![0;" <+> pretty (lenLayoutFailure layout) <> pretty "]});" <> line <>
+                                pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
+                            ) <> line <>
+                        rbrace <> line <>
+                    rbrace <> comma <> line <>
+                    pretty "_ => {}" <>
                 rbrace <> line <>
             rbrace
 
@@ -666,7 +670,7 @@ extractStruct owlName owlFields = do
             pretty "return" <+> pretty name <+> braces (pretty "data: Rc::new(Vec { vec: vec![0;" <+> pretty lenFailure <> pretty "]}), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" <> line <>
             rbrace <> line <>
             pretty "owl_util::extend_vec_u8" <> parens (pretty "&mut v," <+> pretty "arg_" <> pretty n) <> pretty ";" <> line <>
-            pretty "i += " <> pretty "arg_" <> pretty n <> pretty ".len();"
+            pretty "i = i + " <> pretty "arg_" <> pretty n <> pretty ".len();"
 
         genSelectorDefs name parsingOutcomeName layoutFields = do
             let (_, layoutOffsets) = mapAccumL (\(o,i) (n,l) -> let nextO = o + lenLayoutFailure l in ((nextO, i + 1), (n,l,o,nextO,i))) (0,0) layoutFields
@@ -680,8 +684,8 @@ extractStruct owlName owlFields = do
             pretty "// parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
             pretty "match arg.parsing_outcome {" <> line <>
             success_pattern <+> pretty "=>" <+>
-                pretty "&arg.data.as_slice()[idx_" <> pretty structIdx <> pretty "..idx_" <> pretty (structIdx + 1) <> pretty "]," <> line <>
-            pretty parsingOutcomeName <> pretty "::Failure => &arg.data.as_slice()[" <> pretty failOffset <> pretty ".." <> pretty failNextOffset <> pretty "]" <> line <>
+                pretty "slice_subrange(&arg.data.as_slice(), idx_" <> pretty structIdx <> pretty ", idx_" <> pretty (structIdx + 1) <> pretty ")," <> line <>
+            pretty parsingOutcomeName <> pretty "::Failure => slice_subrange(&arg.data.as_slice()," <+> pretty failOffset <> pretty "," <+> pretty failNextOffset <> pretty ")" <> line <>
             pretty "}" <> line <>
             pretty "}"
 
@@ -722,7 +726,7 @@ extractEnum owlName owlCases' = do
                 )))) $ M.assocs owlCases
 
         genEnumParsingOutcomeDef parsingOutcomeName = return $
-            pretty "#[derive(PartialEq, Eq, Debug)]" <> line <>
+            pretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
             pretty "pub enum" <+> pretty parsingOutcomeName <+>
             vsep [  lbrace,
                     pretty "Success" <> comma,
@@ -762,15 +766,18 @@ extractEnum owlName owlCases' = do
 
         genParseFnDef name parsingOutcomeName layout = return $
             pretty "pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
-                pretty "if arg.parsing_outcome ==" <+> pretty parsingOutcomeName <> pretty "::Failure" <+> lbrace <> line <>
-                    pretty "match len_valid_" <> pretty name <> parens (pretty "&arg.data.as_slice()") <+> lbrace <> line <>
-                    pretty "Some(l)" <+>
-                        pretty "=>" <+> braces (pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success;") <> line <>
-                    pretty "None => " <> braces (
-                            pretty "arg.data =" <+> pretty "Rc::new(Vec { vec: vec![0;" <+> pretty (lenLayoutFailure layout) <> pretty "]});" <> line <>
-                            pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
-                        ) <> line <>
-                    rbrace <> line <>
+                pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
+                    pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
+                        pretty "match len_valid_" <> pretty name <> parens (pretty "&arg.data.as_slice()") <+> lbrace <> line <>
+                            pretty "Some(l)" <+>
+                                pretty "=>" <+> braces (pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success;") <> line <>
+                            pretty "None => " <> braces (
+                                    pretty "arg.data =" <+> pretty "Rc::new(Vec { vec: vec![0;" <+> pretty (lenLayoutFailure layout) <> pretty "]});" <> line <>
+                                    pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
+                                ) <> line <>
+                        rbrace <> line <>
+                    rbrace <> comma <> line <>
+                    pretty "_ => {}" <>
                 rbrace <> line <>
             rbrace
 
@@ -1249,7 +1256,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
             return $ (length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> line <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
-                pretty "impl" <+> pretty (locName loc) <+> braces (initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
+                pretty "impl" <+> pretty (locName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
                 vsep fnspecs)
         Nothing -> throwError $ LocalityWithNoMain loc
     where
@@ -1292,10 +1299,10 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
         genInitLoc loc localNames sharedNames pubKeys tbls = do
             localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames
-            return $ pretty "pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &str") <+> pretty "-> Self" <+> lbrace <> line <>
+            return $ pretty "#[verifier(external_body)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
                 pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr.into_rust_str()") <> pretty ".unwrap();" <>
                 vsep localInits <> line <>
-                pretty "let config_str = fs::read_to_string(config_path).expect(\"Config file not found\");" <> line <>
+                pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
                 pretty "let config:" <+> pretty (locName loc) <> pretty "_config =" <+> pretty "serde_json::from_str(&config_str).expect(\"Can't parse config file\");" <> line <>
                 pretty "return" <+> pretty (locName loc) <+>
                     braces (hsep . punctuate comma $
@@ -1395,7 +1402,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
         genRunLocBody loc nSidArgs =
             pretty "let mut s =" <+> pretty (locName loc) <> pretty "::init_" <> pretty (locName loc) <>
                 -- parens (pretty "&args.index(3)") <> pretty ";" <> line <>
-                parens (pretty "&args[3]") <> pretty ";" <> line <>
+                parens (pretty "&String::from_rust_string(args[3]).as_str()") <> pretty ";" <> line <>
             pretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty loc <> pretty "_main() ...\");" <> line <>
@@ -1618,7 +1625,7 @@ preamble = do
                 "}"
             ]
         owl_msgDef = vsep $ map pretty [
-                "#[derive(Serialize, Deserialize, Debug)]",
+                "// #[derive(Serialize, Deserialize, Debug)] // TODO incorporate real parsing/marshaling",
                 "pub struct msg {",
                     "ret_addr: std::string::String,",
                     "payload: std::vec::Vec<u8>",
@@ -1627,26 +1634,32 @@ preamble = do
         owl_outputDef = vsep $ map pretty [
                 "#[verifier(external_body)]",
                 "pub fn output(x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice) {",
+                    "/*",
                     "let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };",
                     "let serialized = serde_json::to_vec(&msg).unwrap();",
                     "let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();",
                     "stream.write_all(&serialized).unwrap();",
                     "stream.flush().unwrap();",
+                    "*/",
+                    "todo!()",
                 "}"
             ]
         owl_inputDef = vsep $ map pretty [
                 "#[verifier(external_body)]",
                 "pub fn owl_input(listener: &TcpListener) -> (_:(Vec<u8>, String)) {",
+                    "/*",
                     "let (mut stream, _addr) = listener.accept().unwrap();",
                     "let mut reader = io::BufReader::new(&mut stream);",
                     "let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();",
                     "reader.consume(received.len());",
                     "let msg : msg = serde_json::from_slice(&received).expect(\"Couldn't parse input\");",
                     "(Vec { vec: msg.payload }, String::from_rust_string(msg.ret_addr))",
+                    "*/",
+                    "todo!()",
                 "}"
             ]
         owl_miscFns = vsep $ map pretty [
-                "pub fn get_num_from_cmdline(loc_prompt: &str) -> usize {",
+                "/* pub fn get_num_from_cmdline(loc_prompt: &str) -> usize {",
                     "let mut input_text = std::string::String::new();",
                     "println!(\"Enter number of {loc_prompt} to generate: \");",
                     "io::stdin()",
@@ -1654,7 +1667,7 @@ preamble = do
                         ".expect(\"failed to read from stdin\");",
                     "let n = input_text.trim().parse::<usize>().expect(\"not an int\");",
                     "n",
-                "}"
+                "} */"
             ]
 
 extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann, Doc ann))
