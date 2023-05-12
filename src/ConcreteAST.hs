@@ -185,7 +185,7 @@ instance Pretty CTy where
 
 -- Some helper functions:
 coinsSize :: DistrName -> Doc ann
-coinsSize "enc" = pretty "TAG_SIZE"
+coinsSize "enc" = pretty "NONCE_SIZE"
 
 prettyEndpoint :: Endpoint -> Doc ann
 prettyEndpoint (Endpoint evar) = pretty evar

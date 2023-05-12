@@ -1,9 +1,9 @@
-use vstd::{prelude::*, vec::*};
 use p256::{
     ecdh::diffie_hellman,
     pkcs8::{DecodePublicKey, EncodePublicKey},
     PublicKey, SecretKey,
 };
+use vstd::{prelude::*, vec::*};
 
 verus! {
 

@@ -1,6 +1,6 @@
-use vstd::{prelude::*, vec::*};
 use hkdf::Hkdf;
 use sha2::Sha256;
+use vstd::{prelude::*, vec::*};
 
 verus! {
 

@@ -1,5 +1,5 @@
-use vstd::{prelude::*, vec::*};
 use rand::{distributions::Uniform, Rng};
+use vstd::{prelude::*, vec::*};
 
 verus! {
 

@@ -1,10 +1,10 @@
-use vstd::{prelude::*, vec::*};
 use crate::owl_util::gen_rand_bytes;
 use crypto::common::KeyInit;
 use digest::Mac;
 use hmac::Hmac;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
+use vstd::{prelude::*, vec::*};
 
 verus! {
 

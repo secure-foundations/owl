@@ -42,18 +42,18 @@ main = do
                           let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success! Time to typecheck: %0.5f seconds\n" (diff :: Double)
                           if extract args then do
-                              let extfn = "extraction/src/main_impl.rs"
-                              let specfn = "extraction/src/main.rs"
+                              let extfn = "extraction/src/main.rs"
+                              -- let specfn = "extraction/src/main_spec.rs"
                               res <- E.extract (takeDirectory fn) ast
                               case res of
                                 Left err -> E.printErr err
-                                Right (rust_code, spec_code) -> do
+                                Right verus_code -> do
                                   writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
-                                  appendFile extfn $ show rust_code
-                                  -- callProcess "rustfmt" [extfn]
-                                  writeFile specfn $ "// Extracted Verus specs code from file " ++ fn ++ ":\n"
-                                  appendFile specfn $ show spec_code
-                                  -- callProcess "rustfmt" [specfn]
-                                  putStrLn $ "Successfully extracted to file " ++ extfn ++ " and extracted Verus specs to file " ++ specfn
+                                  appendFile extfn $ show verus_code
+                                  callProcess "rustfmt" [extfn]
+                                  -- writeFile specfn $ "// Extracted Verus specs code from file " ++ fn ++ ":\n"
+                                  -- appendFile specfn $ show spec_code
+                                  -- -- callProcess "rustfmt" [specfn]
+                                  putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           else return ()

@@ -1,5 +1,5 @@
-use vstd::{*, prelude::*, vec::*, slice::*, seq::*};
 use std::rc::Rc;
+use vstd::{prelude::*, seq::*, slice::*, vec::*, *};
 
 verus! {
 
@@ -25,7 +25,7 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     let mut i = 0;
     proof { assert_seqs_equal!(v@, Seq::new(0, |i| e)); }
     while i < n
-        invariant 
+        invariant
             i <= n,
             v@ === Seq::new(i as nat, |j| e)
     {

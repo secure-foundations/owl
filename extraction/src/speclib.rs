@@ -39,13 +39,6 @@ pub closed spec fn spec_foo() -> Seq<u8>
     todo!()
 }
 
-#[verifier(external_body)]
-pub exec fn foo() -> (r:Vec<u8>)
-    ensures r@ === spec_foo()
-{
-    todo!()
-}
-
 #[is_variant]
 #[derive(Copy, Clone)]
 pub enum Endpoint {

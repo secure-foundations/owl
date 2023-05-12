@@ -263,7 +263,7 @@ initFuncs = M.fromList [
                 -- [(RcVecU8,k), (_,x)] -> return $ x ++ ".owl_enc(&(*" ++ k ++ ").as_slice())"
                 -- [(VecU8,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ".as_slice())"
                 -- [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
-                [k,x] -> return $ printOwlOp "owl_enc" x [k]
+                [k,x,iv] -> return $ printOwlOp "owl_enc" x [k,iv]
                 _ -> throwError $ TypeError $ "got wrong number of args for enc"
         )),
         ("dec", (Option VecU8, \args -> case args of
@@ -455,7 +455,7 @@ genOwlOpsImpl :: String -> Doc ann
 genOwlOpsImpl name = pretty
     "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
         "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&(*self.data).as_slice()).owl_output(dest_addr, ret_addr) }",
-        "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_enc(key) }",
+        "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_enc(key, iv) }",
         "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_dec(key) }",
         -- "fn owl_eq(&self, other: &Self) -> bool { (*self.data).as_slice().owl_eq(&(*other.data).as_slice()) }",
         "fn owl_length(&self) -> usize { (*self.data).len() }",
@@ -611,7 +611,7 @@ extractStruct owlName owlFields = do
         genLenValidFnDef name layoutFields =
             let fieldCheckers = map fieldChecker layoutFields in
             let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> pretty "start_" <> pretty n) layoutFields ++ [pretty "i"]) in
-            return $ pretty "pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
+            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
                 pretty " -> Option" <> (angles . parens . hsep . punctuate comma $ [pretty "usize" | _ <- [0..(length layoutFields)]]) <+> lbrace <> line <>
             pretty "let mut i = 0;" <> line <>
             vsep fieldCheckers <> line <>
@@ -638,7 +638,7 @@ extractStruct owlName owlFields = do
                 rbrace
 
         genParseFnDef name parsingOutcomeName layout layoutFields = return $
-            pretty "pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
                 pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
                     pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
                         pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
@@ -663,7 +663,7 @@ extractStruct owlName owlFields = do
             let argsPrettied = hsep $ punctuate comma $ map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": &[u8]") layoutFields
             let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> pretty "start_" <> pretty n) layoutFields ++ [pretty "i"])
             let checkAndExtenders = map (\(n,l) -> checkAndExtender name (lenLayoutFailure layout) parsingOutcomeName n l) layoutFields
-            return $ pretty "pub fn" <+> pretty "construct_" <> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty name <+> lbrace <> line <>
+            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty name <+> lbrace <> line <>
                 pretty "let mut v = vec_u8_from_elem(0,0);" <> line <>
                 pretty "let mut i = 0;" <> line <>
                 vsep checkAndExtenders <> line <>
@@ -691,7 +691,7 @@ extractStruct owlName owlFields = do
         genSelectorDef name parsingOutcomeName numFields (fieldName, fieldLayout, failOffset, failNextOffset, structIdx) =
             let success_pattern = pretty parsingOutcomeName <> pretty "::Success" <> (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..numFields]]) in
             -- return $
-            pretty "pub fn" <+> pretty "get_" <> pretty fieldName <> pretty "_" <> pretty name <> parens (pretty "arg: &" <+> pretty name) <+> pretty "->" <+> pretty "&[u8]" <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "get_" <> pretty fieldName <> pretty "_" <> pretty name <> parens (pretty "arg: &" <+> pretty name) <+> pretty "->" <+> pretty "&[u8]" <+> lbrace <> line <>
             pretty "// parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
             pretty "match arg.parsing_outcome {" <> line <>
             success_pattern <+> pretty "=>" <+>
@@ -746,7 +746,7 @@ extractEnum owlName owlCases' = do
 
         genLenValidFnDef name layoutCases =
             let caseCheckers = map caseChecker $ M.assocs layoutCases in
-            return $ pretty "pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
+            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
                 pretty " -> Option<usize>" <+> lbrace <> line <>
             pretty "if slice_len(arg) < 1 { return None; } else " <> line <>
             vsep (punctuate (pretty " else ") caseCheckers) <> line <>
@@ -776,7 +776,7 @@ extractEnum owlName owlCases' = do
                 pretty "if arg[0] ==" <+> pretty n <+> braces ( pretty "return Some(slice_len(arg));" )
 
         genParseFnDef name parsingOutcomeName layout = return $
-            pretty "pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
                 pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
                     pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
                         pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
@@ -797,7 +797,7 @@ extractEnum owlName owlCases' = do
 
         genConstructorDef :: String -> String -> (String, (Int, Maybe Layout)) -> Doc ann
         genConstructorDef name parsingOutcomeName (tagName, (tag, Just (LBytes 0))) = -- special case for a case with no payload, where the constructor takes no arg
-            pretty "pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> pretty "()" <+> pretty "->" <+> pretty name <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> pretty "()" <+> pretty "->" <+> pretty name <+> lbrace <> line <>
                 pretty "let mut v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
                 pretty "let res =" <+> pretty name <+> pretty "{ data: Rc::new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
                 pretty "res" <> line <>
@@ -903,7 +903,10 @@ extractAExpr binds (AELenConst s) = do
       Nothing -> throwError $ UndefinedSymbol s
       Just n -> return (Number, pretty "", pretty n)
 
-
+-- Some helper functions:
+extractSamp :: DistrName -> ExtractionMonad ((RustTy, String), Doc ann)
+extractSamp "enc" = return ((VecU8, "coins"), pretty "let coins = owl_aead::gen_rand_nonce(cipher());")
+extractSamp distr = throwError $ UndefinedSymbol distr
 
 extractExpr :: Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, Doc ann, Doc ann)
 extractExpr loc binds CSkip = return (binds, Unit, pretty "", pretty "()")
@@ -950,8 +953,9 @@ extractExpr loc binds (CSamp distr owlArgs) = do
       Nothing -> do
         throwError $ UndefinedSymbol distr
       Just (rt, f) -> do
-        str <- f args
-        return (binds, VecU8, preArgs, pretty str)
+        (coins, sampCoinsPrettied) <- extractSamp distr
+        str <- f $ args ++ [coins]
+        return (binds, VecU8, preArgs, braces (sampCoinsPrettied <+> pretty str))
 extractExpr loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preeT, eTPrettied) <- extractExpr loc binds eT
@@ -1144,8 +1148,8 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
 nameInit s nt = case nt^.val of
-    NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(CIPHER());"
-    NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key_iv(CIPHER());"
+    NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(cipher());"
+    NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
     NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&HMAC_MODE());"
     NT_PKE _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
@@ -1242,8 +1246,8 @@ sortDecls dcls = do
             else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
         DeclRandOrcl n _ (arg, rty) -> do
             rtlen <- case rty ^. val of
-                NT_Nonce -> return "NONCE_SIZE()"
-                NT_Enc _ -> return "KEY_SIZE() + NONCE_SIZE()"
+                NT_Nonce -> return "nonce_size()"
+                NT_Enc _ -> return "key_size() + nonce_size()"
                 _ -> throwError $ UnsupportedOracleReturnType n
             oracles %= M.insert n rtlen
             return (gDecls, locMap, shared, pubkeys)
@@ -1460,47 +1464,30 @@ extractDecls' (d:ds) = do
     (dsExtracted, ssExtracted) <- extractDecls' ds
     return $ (dExtracted <> line <> line <> dsExtracted, sExtracted <> line <> line <> ssExtracted)
 
-extractDecls :: [Decl] -> ExtractionMonad (Doc ann, Doc ann)
+extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
 extractDecls ds = do
     (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
     (globalsExtracted, globalSpecsExtracted) <- extractDecls' globalDecls
     (sidArgMap, locsExtracted, specsExtracted) <- extractLocs pubKeys locDecls
     p <- preamble
-    vp <- verusPreamble
     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
-    return (p <> line <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep <> pretty "} // verus!" <> line,
-            vp <> line <> globalSpecsExtracted <> line <> specsExtracted <> line <> pretty "} // verus!" <> line <> pretty "fn main () {} // TODO remove")
-
-
-verusPreamble :: ExtractionMonad (Doc ann)
-verusPreamble = do
-    c <- showAEADCipher
-    h <- showHMACMode
-    return $ vsep $ map pretty
-        [   "#![allow(unused_imports)]",
-            "#![allow(non_camel_case_types)]",
-            "#![allow(non_snake_case)]",
-            "#![allow(non_upper_case_globals)]",
-            "pub use vstd::{*, prelude::*, vec::*, seq::*, option::*, modes::*};",
-            "pub mod speclib;",
-            "#[macro_use] pub use speclib::{*, itree::*};",
-            "pub mod owl_aead;",
-            "pub mod owl_hmac;",
-            "pub mod owl_pke;",
-            "pub mod owl_util;",
-            "pub mod owl_dhke;",
-            "pub mod owl_hkdf;",
-            "pub mod execlib;",
-            "pub mod main_impl;",
-            "pub use main_impl::{*};",
-            "verus! {",
-            "pub spec const CIPHER: owl_aead::Mode = " ++ c ++ ";",
-            "pub spec const KEY_SIZE: usize = owl_aead::spec_key_size(CIPHER);",
-            "pub spec const TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);",
-            "pub spec const NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);",
-            "pub spec const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";",
-            ""
-        ]
+    return (
+        p                       <> line <> line <> line <> line <> 
+        pretty "// ------------------------------------" <> line <>
+        pretty "// ---------- SPECIFICATIONS ----------" <> line <>
+        pretty "// ------------------------------------" <> line <> line <>
+        globalSpecsExtracted    <> line <> line <>
+        specsExtracted          <> line <> line <> line <> line <>
+        pretty "// ------------------------------------" <> line <>
+        pretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
+        pretty "// ------------------------------------" <> line <> line <>
+        globalsExtracted        <> line <> line <>
+        locsExtracted           <> line <> line <>
+        pretty "// ------------------------------------" <> line <>
+        pretty "// ------------ ENTRY POINT -----------" <> line <>
+        pretty "// ------------------------------------" <> line <> line <>
+        ep                      <> line <> line <>
+        pretty "} // verus!"    <> line <> line)
 
 
 preamble :: ExtractionMonad (Doc ann)
@@ -1508,7 +1495,9 @@ preamble = do
     c <- showAEADCipher
     h <- showHMACMode
     return $ vsep $ map pretty
-        [   "#![allow(non_camel_case_types)]",
+        [   "#![allow(unused_imports)]",
+            "#![allow(unused_imports)]",
+            "#![allow(non_camel_case_types)]",
             "#![allow(non_snake_case)]",
             "#![allow(non_upper_case_globals)]",
             "pub use vstd::{*, prelude::*, vec::*, seq::*, option::*, modes::*, slice::*, string::*};",
@@ -1523,33 +1512,40 @@ preamble = do
             "pub use std::env;",
             "pub use std::collections::HashMap;",
             "pub use std::time::Instant;",
-            "pub use crate::owl_aead;",
-            "pub use crate::owl_hmac;",
-            "pub use crate::owl_pke;",
-            "pub use crate::owl_util;",
-            "pub use crate::owl_dhke;",
-            "pub use crate::owl_hkdf;",
+            "pub mod speclib;",
+            "#[macro_use] pub use crate::speclib::{*, itree::*};",
+            "pub mod execlib;",
             "#[macro_use] pub use crate::execlib::{*};",
+            "pub mod owl_aead;",
+            "pub mod owl_hmac;",
+            "pub mod owl_pke;",
+            "pub mod owl_util;",
+            "pub mod owl_dhke;",
+            "pub mod owl_hkdf;",
             "verus!{",
-            "pub const fn CIPHER() -> owl_aead::Mode { " ++ c ++ "}",
-            "pub const fn KEY_SIZE() -> usize { owl_aead::key_size(CIPHER()) }",
-            "pub const fn TAG_SIZE() -> usize { owl_aead::tag_size(CIPHER()) }",
-            "pub const fn NONCE_SIZE() -> usize { owl_aead::nonce_size(CIPHER()) }",
-            "pub const fn HMAC_MODE() -> owl_hmac::Mode { " ++ h ++ " }"
+            "pub spec const CIPHER: owl_aead::Mode = " ++ c ++ ";",
+            "pub spec const KEY_SIZE: usize = owl_aead::spec_key_size(CIPHER);",
+            "pub spec const TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);",
+            "pub spec const NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);",
+            "pub spec const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";",
+            "pub const fn cipher() -> owl_aead::Mode { " ++ c ++ "}",
+            "pub const fn key_size() -> usize { owl_aead::key_size(cipher()) }",
+            "pub const fn tag_size() -> usize { owl_aead::tag_size(cipher()) }",
+            "pub const fn nonce_size() -> usize { owl_aead::nonce_size(cipher()) }",
+            "pub const fn hmac_mode() -> owl_hmac::Mode { " ++ h ++ " }"
         ] ++
         [   owlOpsTraitDef,
             owlOpsTraitImpls,
             owl_msgDef,
             owl_outputDef,
             owl_inputDef,
-            owl_miscFns,
-            pretty "// -------- START LINE COUNTING HERE --------"
+            owl_miscFns
         ]
     where
         owlOpsTraitDef = vsep $ map pretty [
                 "trait OwlOps {",
                     "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice);",
-                    "fn owl_enc(&self, key: &[u8]) -> Vec<u8>;",
+                    "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8>;",
                     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;",
                     -- "fn owl_eq(&self, other: &Self) -> bool;",
                     --     "where Self: PartialEq",
@@ -1576,8 +1572,8 @@ preamble = do
                     -- "#[verifier(external_body)] fn owl_eq(&self, other: &&[u8]) -> bool {",
                     --     "self == other",
                     -- "}",
-                    "#[verifier(external_body)] fn owl_enc(&self, key: &[u8]) -> Vec<u8> {",
-                        "match owl_aead::encrypt_combined(CIPHER(), slice_subrange(&key, 0, KEY_SIZE()), self, slice_subrange(&key, KEY_SIZE(), key.len())) {",
+                    "#[verifier(external_body)] fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> {",
+                        "match owl_aead::encrypt_combined(cipher(), key, self, iv) {",
                             "Ok(c) => c,",
                             "Err(e) => {",
                                 "// dbg!(e);",
@@ -1586,7 +1582,7 @@ preamble = do
                         "}",
                     "}",
                     "#[verifier(external_body)] fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> {",
-                        "match owl_aead::decrypt_combined(CIPHER(), slice_subrange(&key, 0, KEY_SIZE()), self, slice_subrange(&key, KEY_SIZE(), key.len())) {",
+                        "match owl_aead::decrypt_combined(cipher(), slice_subrange(&key, 0, key_size()), self, slice_subrange(&key, key_size(), key.len())) {",
                             "Ok(p) => Some(p),",
                             "Err(e) => {",
                                 "// dbg!(e);",
@@ -1598,10 +1594,10 @@ preamble = do
                         "self.len()",
                     "}",
                     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> {",
-                        "owl_hmac::hmac(HMAC_MODE(), key, self, None)",
+                        "owl_hmac::hmac(hmac_mode(), key, self, None)",
                     "}",
                     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {",
-                        "if owl_hmac::verify(HMAC_MODE(), key, self, &value, None) {",
+                        "if owl_hmac::verify(hmac_mode(), key, self, &value, None) {",
                             "Some(slice_to_vec(self))",
                         "} else {",
                             "None",
@@ -1635,7 +1631,7 @@ preamble = do
                 "}",
                 "impl OwlOps for Vec<u8> {",
                     "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&self.as_slice()).owl_output(dest_addr, ret_addr) }",
-                    "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_enc(key) }",
+                    "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_enc(key, iv) }",
                     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_dec(key) }",
                     -- "fn owl_eq(&self, other: &Self) -> bool { self.as_slice().owl_eq(&other.as_slice()) }",
                     "fn owl_length(&self) -> usize { self.len() }",
@@ -1649,22 +1645,6 @@ preamble = do
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.as_slice()).owl_extract_expand_to_len(salt, len) }",
                     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_xor(other) }",
                 "}",
-                -- "impl OwlOps for Rc<Vec<u8>> {",
-                --     "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&*self.as_slice()).owl_output(dest_addr, ret_addr) }",
-                --     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_enc(key) }",
-                --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&*self.as_slice()).owl_dec(key) }",
-                --     -- "fn owl_eq(&self, other: &Self) -> bool { (*self).as_slice().owl_eq(&*other.as_slice()) }",
-                --     "fn owl_length(&self) -> usize { self.len() }",
-                --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_mac(key) }",
-                --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&*self.as_slice()).owl_mac_vrfy(key, value) }",
-                --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_pkenc(pubkey) }",
-                --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_pkdec(privkey) }",
-                --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_sign(privkey) }",
-                --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&*self.as_slice()).owl_vrfy(pubkey, signature) } ",
-                --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_dh_combine(others_pk) }",
-                --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&*self.as_slice()).owl_extract_expand_to_len(salt, len) }",
-                --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&*self.as_slice()).owl_xor(other) }",
-                -- "}"
                 ""
             ]
         owl_msgDef = vsep $ map pretty [
@@ -1713,5 +1693,5 @@ preamble = do
                 "} */"
             ]
 
-extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann, Doc ann))
+extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann))
 extract path dcls = runExtractionMonad (initEnv path) $ extractDecls dcls
