@@ -6,7 +6,7 @@ use chacha20poly1305::ChaCha20Poly1305;
 
 verus! {
 
-#[is_variant]
+// #[is_variant]
 #[derive(Clone, Copy)]
 pub enum Mode {
     Aes128Gcm,
@@ -14,9 +14,20 @@ pub enum Mode {
     Chacha20Poly1305,
 }
 
+#[inline]
+pub open spec fn spec_key_size(mode: Mode) -> usize {
+    match mode {
+        Mode::Aes128Gcm => 16,
+        Mode::Aes256Gcm => 32,
+        Mode::Chacha20Poly1305 => 32,
+    }
+}
+
 /// Get the key size of the `Mode` in bytes.
 #[inline]
-pub fn key_size(mode: Mode) -> usize {
+pub const fn key_size(mode: Mode) -> (u:usize)
+    ensures u == spec_key_size(mode)
+{
     match mode {
         Mode::Aes128Gcm => 16,
         Mode::Aes256Gcm => 32,
@@ -33,7 +44,20 @@ pub fn gen_rand_key(mode: Mode) -> Vec<u8> {
 
 /// Get the tag size of the `Mode` in bytes.
 #[inline]
-pub fn tag_size(mode: Mode) -> usize {
+pub open spec fn spec_tag_size(mode: Mode) -> usize {
+    match mode {
+        Mode::Aes128Gcm => 16,
+        Mode::Aes256Gcm => 16,
+        Mode::Chacha20Poly1305 => 16,
+    }
+}
+
+
+/// Get the tag size of the `Mode` in bytes.
+#[inline]
+pub const fn tag_size(mode: Mode) -> (u:usize)
+    ensures u == spec_tag_size(mode)
+{
     match mode {
         Mode::Aes128Gcm => 16,
         Mode::Aes256Gcm => 16,
@@ -50,7 +74,19 @@ pub fn gen_rand_tag(mode: Mode) -> Vec<u8> {
 
 /// Get the nonce size of the `Mode` in bytes.
 #[inline]
-pub fn nonce_size(mode: Mode) -> usize {
+pub open spec fn spec_nonce_size(mode: Mode) -> usize {
+    match mode {
+        Mode::Aes128Gcm => 12,
+        Mode::Aes256Gcm => 12,
+        Mode::Chacha20Poly1305 => 12,
+    }
+}
+
+/// Get the nonce size of the `Mode` in bytes.
+#[inline]
+pub const fn nonce_size(mode: Mode) -> (u:usize)
+    ensures u == spec_nonce_size(mode)
+{
     match mode {
         Mode::Aes128Gcm => 12,
         Mode::Aes256Gcm => 12,

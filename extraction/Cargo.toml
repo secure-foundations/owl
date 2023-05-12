@@ -8,7 +8,7 @@ rust-version = "1.68.0"
 # name = "owl_crypto_primitives"
 # path = "src/lib.rs"
 
-[bin]
+[[bin]]
 name = "extraction-temp"
 path = "src/main.rs"
 

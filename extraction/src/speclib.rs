@@ -62,13 +62,13 @@ pub enum Message {
 pub type Trace = Seq<Message>;
 
 // crypto
-pub const KEY_SIZE: usize = 32;
-pub const TAG_SIZE: usize = 12;
-pub const KEY_TAG_SIZE: usize = KEY_SIZE + TAG_SIZE;
+// pub const KEY_SIZE: usize = 32;
+// pub const TAG_SIZE: usize = 12;
+// pub const KEY_TAG_SIZE: usize = KEY_SIZE + TAG_SIZE;
 
-pub closed spec fn cipherlen(l : nat) -> nat {
-    l + crate::TAG_SIZE as nat
-}
+// pub closed spec fn cipherlen(l : nat) -> nat {
+//     l + crate::TAG_SIZE as nat
+// }
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>

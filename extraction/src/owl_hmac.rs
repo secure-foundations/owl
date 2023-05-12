@@ -37,7 +37,7 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
         None => tag_size(&mode),
     };
 
-    #[verifier(external_body)]
+    #[verifier(external)]
     fn hmac_inner<H: Mac + KeyInit>(key: &[u8], data: &[u8]) -> std::vec::Vec<u8> {
         let mut mac = <H as Mac>::new_from_slice(key).expect("HMAC got invalid length");
         mac.update(data);
