@@ -1,22 +1,16 @@
 locality alice
 
-module S = { 
+module type S = { 
     name x : nonce @ alice
 }
 
 module Srefined = {
     name x : nonce @ alice
     name z : nonce @ alice
-}
+} : S
 
-module T = { }
-
-module blah = {
-    name bar : nonce @ alice
+module M = functor (X : S) {
+    module Z = X
+    name k : enckey Name(Z.y) @ alice
 }
-                 
-module M (X : S) = { 
-    module Z : T = X
-}
-
-module N1 = M(Srefined)
+    

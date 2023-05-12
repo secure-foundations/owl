@@ -121,14 +121,19 @@ liftCheck c = do
       Left s -> Sym $ lift $ throwError $ "SMT ERROR" 
       Right i -> return i
 
+
+
 class SmtName a where
-    smtName :: a -> String
+    smtName :: a -> Sym String
 
 instance SmtName ResolvedPath where
-    smtName (PDot PTop a) = a
-    smtName PTop = "Top"
-    smtName (PPathVar x) = show x
-    smtName (PDot a b) = smtName a ++ "__" ++ b
+    smtName p = go <$> (liftCheck $ canonifyPath p)
+        where
+            go :: ResolvedPath -> String
+            go (PDot PTop a) = a 
+            go PTop = "Top"
+            go (PPathVar _ x) = show x
+            go (PDot a b) = go a ++ "__" ++ b
 
 instance SmtName Path where
     smtName (PRes p) = smtName p
@@ -301,7 +306,8 @@ getSymName ne =
     case ne^.val of
       BaseName (is1, is2) s -> do
         nEnv <- use symNameEnv
-        case M.lookup (smtName s) nEnv of
+        sn <- smtName s
+        case M.lookup sn nEnv of
           Nothing -> error $ "UNKNOWN SYM NAME: " ++ show s
           Just f -> do
               case (is1, is2) of
@@ -310,7 +316,9 @@ getSymName ne =
                     vs1 <- mapM symIndex is1
                     vs2 <- mapM symIndex is2
                     return $ SApp $ f : vs1 ++ vs2
-      ROName s -> return $ SApp [SAtom "ROName", SAtom $ "\"" ++ smtName s ++ "\""] 
+      ROName s -> do
+          sn <- smtName s
+          return $ SApp [SAtom "ROName", SAtom $ "\"" ++ sn ++ "\""] 
       PRFName ne s -> do
           n <- getSymName ne
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]

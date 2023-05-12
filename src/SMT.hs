@@ -65,12 +65,13 @@ setupNameEnv = do
                     Nothing -> Nothing -- liftCheck $ typeError $ ErrNameStillAbstract n
                     Just (nt', _) -> Just nt'
         let ar = length is1 + length is2
-        let sname = SAtom $ "%name_" ++ (smtName n) 
+        sn <- smtName n
+        let sname = SAtom $ "%name_" ++ sn
         emit $ SApp [SAtom "declare-fun", sname, SApp (replicate ar (indexSort)), nameSort]
         -- Length axiom
-        emitComment $ "Length axiom for " ++ smtName n
+        emitComment $ "Length axiom for " ++ sn
         l <- case ntOpt of 
-            Nothing -> symLenConst $ smtName n
+            Nothing -> symLenConst $ sn
             Just nt -> nameTypeLength nt
         is <- forM [1..ar] $ \_ -> freshSMTIndexName
         emitAssertion $ sForall 
@@ -78,13 +79,14 @@ setupNameEnv = do
             (sEq (sLength $ sValue $ sBaseName sname (map SAtom is)) l) 
             [sLength $ sValue $ sBaseName sname (map SAtom is)]
         -- Disjointness from constants
-        emitComment $ "Disjointness from constants for " ++ (smtName n)
+        sn <- smtName n
+        emitComment $ "Disjointness from constants for " ++ sn
         fi <- use funcInterps
         let constants = map fst $ filter (\p -> snd p == 0) $ M.elems fi
         emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) is) 
          (sAnd $ map (\f -> sNot $ sEq (sValue $ sBaseName sname (map SAtom is)) f) constants)
          [(sBaseName sname (map SAtom is))]
-        return (smtName n, sname)
+        return (sn, sname)
     -- Disjointness across names 
     emitComment $ "Disjointness across names"
     when (not $ null nE) $ do
@@ -94,13 +96,15 @@ setupNameEnv = do
             ((is1', is2'), _) <- liftCheck $ unbind o2
             let ar1 = length is1 + length is2
             let ar2 = length is1' + length is2'
-            emitComment $ "Disjointness " ++ smtName n1 ++ " <-> " ++ smtName n2
+            sn1 <- smtName n1
+            sn2 <- smtName n2
+            emitComment $ "Disjointness " ++ sn1 ++ " <-> " ++ sn2
             ivs1' <- forM [1..ar1] $ \_ -> freshSMTIndexName
             ivs2' <- forM [1..ar2] $ \_ -> freshSMTIndexName
             let ivs1 = map SAtom ivs1'
             let ivs2 = map SAtom ivs2'
-            let v1 = sValue $ sBaseName (SAtom $ "%name_" ++ smtName n1) (take ar1 ivs1)
-            let v2 = sValue $ sBaseName (SAtom $ "%name_" ++ smtName n2) (take ar2 ivs2)
+            let v1 = sValue $ sBaseName (SAtom $ "%name_" ++ sn1) (take ar1 ivs1)
+            let v2 = sValue $ sBaseName (SAtom $ "%name_" ++ sn2) (take ar2 ivs2)
             emitAssertion $ sForall (map (\i -> (i, indexSort)) (ivs1 ++ ivs2)) (sNot $ sEq v1 v2) [v1, v2]
     symNameEnv .= M.fromList assocs
 
@@ -176,11 +180,12 @@ setupUserFunc (s, f) =
 setupFunc :: (ResolvedPath, Int) -> Sym ()
 setupFunc (s, ar) = do
     fs <- use funcInterps
-    case M.lookup (smtName s) fs of
+    sn <- smtName s
+    case M.lookup sn fs of
       Just _ -> error $ "Function " ++ show s ++ " already defined in SMT. " ++ show (M.keys fs)
       Nothing -> do
-          emit $ SApp [SAtom "declare-fun", SAtom (smtName s), SApp (replicate ar (bitstringSort)), bitstringSort]
-          funcInterps %= (M.insert (smtName s) (SAtom (smtName s), ar))
+          emit $ SApp [SAtom "declare-fun", SAtom sn, SApp (replicate ar (bitstringSort)), bitstringSort]
+          funcInterps %= (M.insert sn (SAtom sn, ar))
 
 getFunc :: String -> Sym SExp
 getFunc s = do
@@ -189,7 +194,9 @@ getFunc s = do
       Just (v, _) -> return v
       Nothing -> error $ "Function not in SMT: " ++ show s ++ show (M.keys fs)
 
-getTopLevelFunc = getFunc . smtName . topLevelPath
+getTopLevelFunc s = do
+    sn <- smtName $ topLevelPath s
+    getFunc sn
 
 constant :: String -> Sym SExp
 constant s = do
@@ -300,10 +307,16 @@ tyConstraints t v = do
             TyAbbrev t -> tyConstraints t v
             StructDef ixs -> do
                 dts <- liftCheck $ extractStruct (t^.spanOf) ps (show s) ixs
-                let v' = SApp $ (SAtom (smtName s) : map (\(d, _) -> SApp [SAtom $ smtName $ PDot pth d, v]) dts)
+                sn <- smtName s
+                destArgs <- forM dts $ \(d, _) -> do
+                    sdn <- smtName $ PDot pth d
+                    return $ SApp [SAtom sdn, v]
+                let v' = SApp $ (SAtom sn : destArgs)
                 let ext_ax = sEq v v' -- Extensionality axiom
-                let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ map (\(d, _) -> SApp [SAtom $ smtName $ PDot pth d, v]) dts
-                ty_axioms <- forM dts $ \(d, t) -> tyConstraints t (SApp [SAtom $ smtName $ PDot pth d, v])
+                let length_ax = sEq (sLength v) $ foldr sPlus sZero $ map sLength $ destArgs
+                ty_axioms <- forM dts $ \(d, t) -> do
+                    sdn <- smtName $ PDot pth d
+                    tyConstraints t (SApp [SAtom sdn, v])
                 return $ sAnd (ext_ax : length_ax : ty_axioms)
             EnumDef b -> do
                 bdy <- liftCheck $ extractEnum (t^.spanOf) ps (show s) b
@@ -313,13 +326,13 @@ tyConstraints t v = do
                                           Just t -> t
                                           Nothing -> tUnit
                                        ) val
-                    fconstr <- getFunc $ smtName $ PDot pth $ fst $ bdy !! i
-                    ftest <- getFunc $ smtName $ PDot pth $ (fst $ bdy !! i) ++ "?"
+                    fconstr <- getFunc =<< (smtName $ PDot pth $ fst $ bdy !! i)
+                    ftest <- getFunc =<< (smtName $ PDot pth $ (fst $ bdy !! i) ++ "?")
                     let vEq = case (snd $ bdy !! i) of
                           Just _ -> sEq v (SApp [fconstr, val])
                           Nothing -> sTrue
                     return $ sAnd [vEq, (sEq (SApp [ftest, v]) bTrue), c]
-                ftests <- mapM (\(n, _) -> getFunc $ smtName $ PDot pth $ n ++ "?") bdy
+                ftests <- mapM (\(n, _) -> getFunc =<< (smtName $ PDot pth $ n ++ "?")) bdy
                 return $ (SApp $ [SAtom "or"] ++ cases) `sAnd2` (enumDisjConstraint ftests v)
       TCase tc t1 t2 -> do
           c1 <- tyConstraints t1 v
@@ -354,7 +367,7 @@ interpretAExp ae =
           f | f == (topLevelPath "true") -> return bTrue
           f | f == (topLevelPath "false") -> return bFalse
           _ -> do
-              vf <- getFunc $ smtName f
+              vf <- getFunc =<< (smtName f)
               return $ sApp vf vs
       AEString s -> return $ SApp [SAtom "StringToBS", SAtom $ "\"" ++ s ++ "\""]
       AELenConst s -> symLenConst s
@@ -397,7 +410,8 @@ interpretProp p =
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1
           ivs' <- mapM symIndex id2
-          return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ smtName s ++ "\""), mkIdxList (ivs ++ ivs'), mkBSList vs]
+          sn <- smtName s
+          return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ sn ++ "\""), mkIdxList (ivs ++ ivs'), mkBSList vs]
       (PFlow l1 l2 ) -> do
         liftCheck $ debug $ pretty "Interpreting prop " <> pretty l1 <+> pretty "<=" <+> pretty l2
         x <- symLbl l1
@@ -438,7 +452,8 @@ emitFuncAxioms = do
     forM_ ros $ \(s, (aes, _)) -> do
         vs <- mapM interpretAExp aes
         let v = foldr sConcat (head vs) (tail vs) 
-        emitAssertion $ sEq (sValue $ sROName $ smtName s) v
+        sn <- smtName s
+        emitAssertion $ sEq (sValue $ sROName $ sn) v
     
     emitComment $ "Enum test faithful axioms"
     enumTestFaithulAxioms
@@ -457,8 +472,8 @@ enumTestFaithulAxioms = do
           EnumDef m' -> do
               (_, m) <- liftCheck $ unbind m'
               forM_ m $ \(x, ot) -> do
-                  fconstr <- getFunc $ smtName $ PDot (pathPrefix pth) x
-                  ftest <- getFunc $ smtName $ PDot (pathPrefix pth) $  x ++ "?"
+                  fconstr <- getFunc =<< (smtName $ PDot (pathPrefix pth) x)
+                  ftest <- getFunc =<< (smtName $ PDot (pathPrefix pth) $  x ++ "?")
                   case ot of
                     Nothing -> 
                         emitAssertion $ sEq (SApp [ftest, fconstr]) bTrue
@@ -498,10 +513,12 @@ emitDHCombineDisjoint = do
     let n2 = SAtom "n2"
     let different_pairs = [(x, y) | (x : ys) <- tails dhnames, y <- ys]
     forM_ different_pairs $ \(m1, m2) -> do
+        sm1 <- smtName m1
+        sm2 <- smtName m2
         emitAssertion $ 
             sForall [(n1, nameSort), (n2, nameSort)]
-                (sNot $ sEq (sDhCombine n1 (SAtom $ "%name_" ++ smtName m1)) (sDhCombine n2 (SAtom $ "%name_" ++ smtName m2)))
-                [sDhCombine n1 (SAtom $ "%name_" ++ smtName m1), sDhCombine n2 (SAtom $ "%name_" ++ smtName m2)]
+                (sNot $ sEq (sDhCombine n1 (SAtom $ "%name_" ++ sm1)) (sDhCombine n2 (SAtom $ "%name_" ++ sm2)))
+                [sDhCombine n1 (SAtom $ "%name_" ++ sm1), sDhCombine n2 (SAtom $ "%name_" ++ sm2)]
 
 emitROInjectivityAxioms :: Sym ()
 emitROInjectivityAxioms = do

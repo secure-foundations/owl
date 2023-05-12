@@ -35,14 +35,14 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import qualified Text.Parsec as P
 import Parse
 
-emptyModDef :: ModDef
-emptyModDef = ModDef mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModBody :: ModBody
+emptyModBody = ModBody mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModDef)] interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody)] mempty interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -417,7 +417,7 @@ initDistrs = [
             ))
                         ]
 
-interpUserFunc :: Ignore Position -> ResolvedPath -> ModDef -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+interpUserFunc :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 interpUserFunc pos pth md (StructConstructor tv) = do
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
@@ -768,68 +768,57 @@ sumOfLengths :: [AExpr] -> AExpr
 sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
 sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
 
-inferModuleExp :: Ignore Position -> ModuleExp -> Check (Bind (Name ResolvedPath) ModDef)
-inferModuleExp pos m@(ModuleBody xds') = do
-    debug $ pretty "Inferring module " <> pretty (show m)
-    (x, ds') <- unbind xds'
-    m' <- local (over curModules $ insert (Just x) emptyModDef) $ do
-        checkDeclsWithCont ds' $ view curMod
-    return $ bind x m'
-inferModuleExp pos (ModuleVar pth@(PRes (PDot p s))) = do
-    md1 <- getModule pos p
-    case lookup s (md1^.modules) of
-      Just b -> return b
-      Nothing -> typeError pos $ "Unknown module: " ++ show pth
-inferModuleExp pos (ModuleVar pth@(PRes (PPathVar x))) = do
-    cm <- view curModules
-    case lookup (Just x) cm of
-      Just md -> return $ bind x md
-      Nothing -> typeError pos $ "Internal error: unknown module" ++ show pth
-inferModuleExp pos (ModuleApp pth@(PRes (PDot p s)) ps) = do
-    md1 <- getModule pos p
-    case lookup s (md1^.functors) of
-      Just (argSpecs, bdy) -> do
-          ds <- forM ps $ \p -> inferModuleExp pos (ModuleVar p)
-          assert pos ("Wrong number of arguments to functor: expected " ++ show (length argSpecs) ++ " but got " ++ show (length ds)) $ length argSpecs == length ds
-          forM_ (zip ds argSpecs) $ \(d, s) -> moduleMatches pos d s
-          (bn, b) <- unbind bdy
-          pths <- forM ps $ \p -> 
-              case p of
-                PRes v -> return v
-                _ -> error $ "Got unresolved path: " ++ show p
-          return $ substs (zip bn pths) b
-
-inferModuleBody :: Ignore Position -> (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
-    -> Check (Either (Bind (Name ResolvedPath) ModDef)  ([Bind (Name ResolvedPath) ModDef], Bind [Name ResolvedPath] (Bind (Name ResolvedPath) ModDef)))
-inferModuleBody pos bdy = do
-    (args, (me, ospec)) <- unbind bdy
-    case args of 
-      [] -> do
-          md <- inferModuleExp pos me
-          case ospec of
-            Just me' -> do
-                md' <- inferModuleExp pos me'
-                moduleMatches pos md md'
-            Nothing -> return ()
-          return $ Left md
-      _ -> do
-          argSpec <- forM args $ \(x, s, me) -> do
-              debug $ pretty "Inferring arg type for " <> pretty s
-              md <- inferModuleExp pos $ unembed me
-              return (x, md)
-          case ospec of
-            Nothing -> return ()
-            _ -> typeError pos $ "Module specifications not allowed for functors, for now"
-          md <- withModules argSpec $ inferModuleExp pos me 
-          return $ Right (map snd argSpec, bind (map fst argSpec) md)
-
-withModules :: [(Name ResolvedPath, Bind (Name ResolvedPath) ModDef)] -> Check a -> Check a
-withModules [] k = k
-withModules ((x, d) : xs) k = do
-    (n, d0) <- unbind d
-    let d' = subst n (PPathVar x) d0
-    local (over curModules $ insert (Just x) d') k
-
+inferModuleExp :: ModuleExp -> Check ModDef
+inferModuleExp me = 
+    case me^.val of
+      ModuleBody xds' ot -> do
+          (x, ds') <- unbind xds'
+          m' <- local (over openModules $ insert (Just x) emptyModBody) $ checkDeclsWithCont ds' $ view curMod
+          let md = MBody $ bind x m'
+          case ot of 
+            Nothing -> return md
+            Just met -> do
+                t <- inferModuleExp met
+                moduleMatches (me^.spanOf) md t
+                return md
+      ModuleFun xe -> do
+          ((x, s, t), k) <- unbind xe
+          p <- curModName
+          t1 <- inferModuleExp $ unembed t 
+          r <- local (over (curMod . modules) $ insert s t1) $ 
+              local (over modContext $ insert x (PDot p s)) $
+                  inferModuleExp k
+          return $ MFun s t1 (bind x r)
+      ModuleApp (PRes p1) arg@(PRes argp) -> do
+          md <- getModDef (me^.spanOf) p1
+          case md of
+            MBody _ -> typeError (me^.spanOf) $ "Not a functor: " ++ show p1
+            MFun _ s xd -> do
+              argd <- getModDef (me^.spanOf) argp
+              moduleMatches (me^.spanOf) argd s 
+              (x, d) <- unbind xd
+              return $ subst x argp d
+      ModuleVar pth@(PRes (PDot p s)) -> do
+          md1 <- openModule (me^.spanOf) p
+          case lookup s (md1^.modules) of 
+            Just b -> return b
+            Nothing -> typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
+      ModuleVar pth@(PRes (PPathVar OpenPathVar x)) -> do
+          cm <- view openModules
+          case lookup (Just x) cm of
+              Just md -> return $ MBody $ bind x md
+              Nothing -> typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
+      ModuleVar pth@(PRes (PPathVar ClosedPathVar x)) -> do
+          mc <- view modContext
+          case lookup x mc of
+            Just (PDot p s) -> do
+                md <- openModule (me^.spanOf) p
+                case lookup s (md^.modules) of 
+                  Just b -> return b
+                  Nothing -> typeError (me^.spanOf) $ "Internal error: Unknown module or functor: " ++ show pth
+            Nothing ->  typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
+      _ -> error $ "Unknown case: " ++ show me
+                  
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = 
     case d^.val of
@@ -837,7 +826,7 @@ checkDecl d cont =
           case dcl of
             Left i -> local (over (curMod . localities) $ insert n (Left i)) $ cont
             Right (PRes pth@(PDot p s)) -> do
-                md <- getModule (d^.spanOf) p
+                md <- openModule (d^.spanOf) p
                 case lookup s (md^.localities) of 
                   Nothing -> typeError (d^.spanOf) $ "Unknown locality: " ++ show pth
                   Just _ -> local (over (curMod . localities) $ insert n (Right pth)) $ cont
@@ -847,11 +836,9 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n bdy -> do
-          bdy' <- inferModuleBody (d^.spanOf) bdy
-          case bdy' of 
-            Left md -> local (over (curMod . modules) $ insert n md) $ cont
-            Right funct -> local (over (curMod . functors) $ insert n funct) $ cont
+      DeclModule n me -> do
+          md <- inferModuleExp me
+          local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
@@ -955,15 +942,11 @@ nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
     case ne^.val of
       BaseName _ (PRes (PDot p s)) -> do
-          (k, _) <- head <$> view curModules
-          case k of
-            Nothing -> return $ p == PTop
-            Just pv -> return $ p == PPathVar pv
+          p' <- curModName
+          return $ p == p'
       ROName (PRes (PDot p s)) -> do
-          (k, _) <- head <$> view curModules
-          case k of
-            Nothing -> return $ p == PTop
-            Just pv -> return $ p == PPathVar pv
+          p' <- curModName
+          return $ p == p'
       PRFName ne _ -> nameExpIsLocal ne
 
 
@@ -1188,7 +1171,9 @@ tyLenLbl t =
       (TCase _ _ _) -> do
           t' <- normalizeTy t
           case t'^.val of
-            TCase p _ _ -> typeError (t^.spanOf) $ show $ pretty "Inconclusive: " <> pretty p
+            TCase p _ _ -> do
+                debug $ pretty "Got inconclusive prop on TCase"
+                typeError (t^.spanOf) $ show $ pretty "Inconclusive: " <> pretty p
             _ -> tyLenLbl t'
       (TUnion t1 t2) -> do
           l1 <- tyLenLbl t1
@@ -1482,7 +1467,7 @@ checkExpr ot e = do
           getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
       (EAdmit) -> getOutTy ot $ tAdmit
       (EDebug (DebugPrintModules)) -> do
-          ms <- view curModules
+          ms <- view openModules
           liftIO $ putStrLn $ show ms
           getOutTy ot $ tUnit
       (EDebug (DebugPrint s)) -> do
@@ -1565,7 +1550,7 @@ checkExpr ot e = do
                 getOutTy ot =<< mkSpanned <$> (k $ zip args ts)
             Nothing -> typeError (e^.spanOf) $ show (ErrUnknownDistr d)
       (ETLookup pth@(PRes (PDot p n)) a) -> do
-          md <- getModule (e^.spanOf) p
+          md <- openModule (e^.spanOf) p
           case lookup n (md^.tableEnv) of 
             Nothing -> typeError (e^.spanOf) $ show $ pretty (unignore $ a^.spanOf) <+> pretty "Unknown table: " <> pretty n
             Just (t, loc) -> do
@@ -1580,7 +1565,7 @@ checkExpr ot e = do
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
       (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
-          md <- getModule (e^.spanOf) p
+          md <- openModule (e^.spanOf) p
           case lookup n (md^.tableEnv) of 
             Nothing -> typeError (e^.spanOf) $ show $  pretty (unignore $ e^.spanOf) <+> pretty "Unknown table: " <> pretty n
             Just (t, loc) -> do
@@ -1782,59 +1767,75 @@ nameMatches pos s xn1 xn2 = do
           assert pos ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert pos ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
 
-moduleMatches :: Ignore Position -> Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
-moduleMatches pos xmd1 ymd2 = do
-    (x, md1) <- unbind xmd1
-    (y, md2_) <- unbind ymd2
-    debug $ pretty "moduleMatches with " <> pretty x <> pretty " and " <> pretty y
-    let md2 = subst y (PPathVar x) md2_
-    -- Localities
-    forM_ (md2^.localities) $ \(s, i) -> do
-        ar1 <- case i of
-                 Left ar -> return ar
-                 Right p -> normLocalityPath pos $ PRes p 
-        ar2 <- case lookup s (md1^.localities) of
-                 Nothing -> typeError pos $ "Locality not found for module match: " ++ s
-                 Just (Left ar) -> return ar
-                 Just (Right p) -> normLocalityPath pos $ PRes p
-        assert pos ("Locality arity mismatch for module match: " ++ s) $ ar1 == ar2
-    -- Defs
-    forM_ (md2^.defs) $ \(s, df) -> defMatches pos s (lookup s (md1^.defs)) df
-    -- TableEnv
-    forM_ (md2^.tableEnv) $ \(s, tl) -> 
-        case lookup s (md1^.tableEnv) of
-          Nothing -> typeError pos $ "Missing tenv: " ++ s
-          Just tl' -> assert pos ("Table mismatch for " ++ s) $ tl `aeq` tl'
-    -- flowAxioms 
-    forM_ (md2^.flowAxioms) $ \ax -> 
-        case L.find (aeq ax) (md1^.flowAxioms) of 
-          Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
-          Just _ -> return ()
-    -- advCorrConstraints 
-    forM_ (md2^.advCorrConstraints) $ \ax -> 
-        case L.find (aeq ax) (md1^.advCorrConstraints) of 
-          Nothing -> typeError pos $ "corr constraint mismatch " ++ show (pretty ax)
-          Just _ -> return ()
-    -- tyDefs 
-    forM_ (md2^.tyDefs) $ \(s, td) -> 
-        case lookup s (md1^.tyDefs) of
-          Nothing -> typeError pos $ "Type missing: " ++ s
-          Just td' -> tyDefMatches pos s td' td
-    -- userFuncs
-    forM_ (md2^.userFuncs) $ \(s, f) -> 
-        case lookup s (md1^.userFuncs) of
-          Nothing -> typeError pos $ "Func missing: " ++ s
-          Just f' -> userFuncMatches pos s f' f
-    -- nameEnv
-    forM_ (md2^.nameEnv) $ \(s, n) -> 
-        case lookup s (md1^.nameEnv) of 
-          Nothing -> typeError pos $ "Name missing: " ++ s
-          Just n' -> nameMatches pos s n' n
-    -- modules
-    forM_ (md2^.modules) $ \(s, m1) ->
-        case lookup s (md1^.modules) of
-          Nothing -> typeError pos $ "Module missing: " ++ s
-          Just m2 -> moduleMatches pos m2 m1 
+moduleMatches :: Ignore Position -> ModDef -> ModDef -> Check ()
+moduleMatches pos md1 md2 = 
+    case (md1, md2) of 
+      (MBody _, MFun _ _ _) -> typeError pos $ "Expected functor, but got module"
+      (MFun _ _ _, MBody _) -> typeError pos $ "Expected module, but got functor"
+      (MFun s t1 xmd1, MFun _ t2 ymd2) -> do
+          moduleMatches pos t2 t1
+          (x, md1) <- unbind xmd1
+          (y, md2_) <- unbind ymd2
+          let md2 = subst y (PPathVar ClosedPathVar x) md2_
+          p <- curModName
+          local (over (curMod . modules) $ insert s t1) $ 
+              local (over modContext $ insert x (PDot p s)) $
+                moduleMatches pos md1 md2
+      (MBody xmd1, MBody ymd2) -> do
+          (x, md1) <- unbind xmd1
+          (y, md2_) <- unbind ymd2
+          debug $ pretty "moduleMatches with " <> pretty x <> pretty " and " <> pretty y
+          let md2 = subst y (PPathVar OpenPathVar x) md2_
+          -- Localities
+          forM_ (md2^.localities) $ \(s, i) -> do
+              ar1 <- case i of
+                       Left ar -> return ar
+                       Right p -> normLocalityPath pos $ PRes p 
+              ar2 <- case lookup s (md1^.localities) of
+                       Nothing -> typeError pos $ "Locality not found for module match: " ++ s
+                       Just (Left ar) -> return ar
+                       Just (Right p) -> normLocalityPath pos $ PRes p
+              assert pos ("Locality arity mismatch for module match: " ++ s) $ ar1 == ar2
+          -- Defs
+          forM_ (md2^.defs) $ \(s, df) -> defMatches pos s (lookup s (md1^.defs)) df
+          -- TableEnv
+          forM_ (md2^.tableEnv) $ \(s, tl) -> 
+              case lookup s (md1^.tableEnv) of
+                Nothing -> typeError pos $ "Missing tenv: " ++ s
+                Just tl' -> assert pos ("Table mismatch for " ++ s) $ tl `aeq` tl'
+          -- flowAxioms 
+          forM_ (md2^.flowAxioms) $ \ax -> 
+              case L.find (aeq ax) (md1^.flowAxioms) of 
+                Nothing -> typeError pos $ "flow axiom mismatch " ++ show (pretty ax)
+                Just _ -> return ()
+          -- advCorrConstraints 
+          forM_ (md2^.advCorrConstraints) $ \ax -> 
+              case L.find (aeq ax) (md1^.advCorrConstraints) of 
+                Nothing -> typeError pos $ "corr constraint mismatch " ++ show (pretty ax)
+                Just _ -> return ()
+          -- tyDefs 
+          forM_ (md2^.tyDefs) $ \(s, td) -> 
+              case lookup s (md1^.tyDefs) of
+                Nothing -> typeError pos $ "Type missing: " ++ s
+                Just td' -> tyDefMatches pos s td' td
+          -- userFuncs
+          forM_ (md2^.userFuncs) $ \(s, f) -> 
+              case lookup s (md1^.userFuncs) of
+                Nothing -> typeError pos $ "Func missing: " ++ s
+                Just f' -> userFuncMatches pos s f' f
+          -- nameEnv
+          forM_ (md2^.nameEnv) $ \(s, n) -> 
+              case lookup s (md1^.nameEnv) of 
+                Nothing -> typeError pos $ "Name missing: " ++ s
+                Just n' -> nameMatches pos s n' n
+          -- modules
+          forM_ (md2^.modules) $ \(s, m1) ->
+              case lookup s (md1^.modules) of
+                Nothing -> typeError pos $ "Module missing: " ++ s
+                Just m2 -> moduleMatches pos m2 m1 
+
+--moduleMatches :: Ignore Position -> Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
+--moduleMatches pos xmd1 ymd2 = do
 
 
 

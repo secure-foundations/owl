@@ -610,45 +610,43 @@ parseDecls =
         reserved "module"
         _ <- optionMaybe $ reserved "type"
         n <- identifier
-        args <- optionMaybe $ do
-            symbol "("
-            xt <- (do
-                x <- identifier
-                symbol ":"
-                t <- parseModuleExp x
-                return (s2n x, x, embed t)
-                  ) `sepBy` (symbol ",")
-            symbol ")"
-            return xt
-        let args' = case args of
-                      Just v -> v
-                      Nothing -> []
-        ospec <- optionMaybe $ do
-            symbol ":"
-            parseModuleExp ("SPECOF" ++ n) 
         symbol "="
         me <- parseModuleExp n
-        return $ DeclModule n $ bind args' (me, ospec)
+        return $ DeclModule n me 
     )
 
 parseModuleExp :: String -> Parser ModuleExp
 parseModuleExp n = 
-    (do
+    (parseSpanned $ do
         symbol "{"
         ds <- parseDecls
         symbol "}"
-        return $ ModuleBody $ bind (s2n $ "%mod_" ++ n) ds
+        ospec <- optionMaybe $ do
+            symbol ":"
+            parseModuleExp ("SPECOF" ++ n)
+        return $ ModuleBody (bind (s2n $ "%mod_" ++ n) ds) ospec
     )
     <|>
-    (try $ do
+    (parseSpanned $ do
+        reserved "functor"
+        symbol "("
+        m <- identifier
+        symbol ":"
+        nt <- parseModuleExp ("TYPEOF" ++ m)
+        symbol ")"
+        mb <- parseModuleExp n
+        return $ ModuleFun $ bind (s2n m, m, embed nt) mb
+    )
+    <|>
+    (try $ parseSpanned $ do
         x <- parsePath
         symbol "("
-        ys <- parsePath `sepBy1` (symbol ",")
+        ys <- parsePath 
         symbol ")"
         return $ ModuleApp x ys
     )
     <|>
-    (do
+    (parseSpanned $ do
         x <- parsePath
         return $ ModuleVar x
     )

@@ -1,7 +1,7 @@
 include "ke.owli"
 
-module DH_KE (P : Params) = {
-        module Mk : KE(P) = { 
+module DH_KE = functor (P : Params) {
+        module Mk = { 
             name k : enckey Name(P.data) @ P.Server
             name S : DH @ P.Server
             name C : DH @ P.Client
@@ -78,7 +78,6 @@ module DH_KE (P : Params) = {
                      None<ty: if sec(k) then Name(k) else Data<adv> >()
                      )
                  | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
-
-        }
+        } : KE(P)
 }
 

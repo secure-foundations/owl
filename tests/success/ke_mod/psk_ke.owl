@@ -1,11 +1,11 @@
 include "ke.owli"
 
-module PSK_KE (P : Params) = { 
-    module Mk : KE(P) = { 
+module PSK_KE = functor (P : Params) { 
+    module Mk = { 
         name k : enckey Name(P.data) @ P.Server
         name shared_key : enckey Name(k) @ P.Server, P.Client
 
-        def ke_Server() @ P.Server : Unit = 
+        def ke_Server() @ P.Server : Unit =
             let c = samp enc(get(shared_key), get(k)) in
             output c to endpoint(P.Client)
 
@@ -14,7 +14,7 @@ module PSK_KE (P : Params) = {
             corr_case shared_key in
             corr_case k in
             dec(get(shared_key), i)
-    } 
+    } : KE(P) 
 }
 
 

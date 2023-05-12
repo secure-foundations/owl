@@ -191,7 +191,8 @@ getSymLblConst (TyLabelVar n@(PRes p)) = do
     case M.lookup p e of
       Just res -> return res
       Nothing -> do
-          let sname = SAtom $ "%lvar_" ++ (smtName p) 
+          sp <- smtName p
+          let sname = SAtom $ "%lvar_" ++ sp
           emit $ SApp [SAtom "declare-fun", sname, SApp [], SAtom "Lbl"]
           emitAssertion $ sFlows (SAtom "%adv") sname
           symLabelVarEnv %= (M.insert p sname)

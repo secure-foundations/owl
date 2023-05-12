@@ -226,45 +226,34 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclModule s bdy -> do
-          bdy' <- resolveModuleDecl (d^.spanOf) bdy
-          let d' = Spanned (d^.spanOf) $ DeclModule s bdy'
+      DeclModule s me -> do
+          me' <- resolveModuleExp (d^.spanOf) me
+          let d' = Spanned (d^.spanOf) $ DeclModule s me' 
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
-    case me of
-      ModuleBody xs -> do
+    case me^.val of
+      ModuleBody xs mt -> do
+          mt' <- traverse (resolveModuleExp pos) mt
           (x, ds1) <- unbind xs
-          ds1' <- local (set curPath (PPathVar x)) $ resolveDecls ds1
-          return $ ModuleBody $ bind x ds1'
-      ModuleVar p -> ModuleVar <$> resolvePath pos PTMod p
-      ModuleApp p ps -> do
+          ds1' <- local (set curPath (PPathVar OpenPathVar x)) $ resolveDecls ds1
+          return $ Spanned (me^.spanOf) $ ModuleBody (bind x ds1') mt'
+      ModuleVar p -> do
+          p' <- resolvePath pos PTMod p 
+          return $ Spanned (me^.spanOf) $ ModuleVar p'
+      ModuleApp p p2 -> do
           p' <- resolvePath pos PTMod p
-          ps' <- mapM (resolvePath pos PTMod) ps
-          return $ ModuleApp p' ps'
-
-resolveModuleDecl :: Ignore Position -> Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp) -> 
-    Resolve (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp)) 
-resolveModuleDecl pos bdy = do
-    (args, (me, ospec)) <- unbind bdy
-    (args', me', ospec') <- go pos args (me, ospec)
-    return $ bind args' (me', ospec')
-        where
-            go :: Ignore Position -> [(Name ResolvedPath, String, Embed ModuleExp)] -> (ModuleExp, Maybe ModuleExp) -> 
-                Resolve ([(Name ResolvedPath, String, Embed ModuleExp)], ModuleExp, Maybe ModuleExp) 
-            go pos [] (me, ospec) = do
-                me' <- resolveModuleExp pos me
-                ospec' <- traverse (resolveModuleExp pos) ospec
-                return ([], me', ospec')
-            go pos ((x, s, t) : xs) me_ospec = do
-                v <- freshModVar s
-                t' <- resolveModuleExp pos (unembed t)
-                (args', me', ospec') <- local (over modPaths $ T.insert s (True, PPathVar v)) $ 
-                    go pos xs me_ospec
-                return $ ((v, s, embed t') : args', me', ospec')
+          p2' <- resolvePath pos PTMod p2
+          return $ Spanned (me^.spanOf) $ ModuleApp p' p2'
+      ModuleFun bdy -> do
+          ((x, s, t), me) <- unbind bdy
+          v <- freshModVar s
+          t' <- resolveModuleExp pos (unembed t)
+          me' <- local (over modPaths $ T.insert s (True, PPathVar ClosedPathVar v)) $ resolveModuleExp pos me 
+          return $ Spanned (me^.spanOf) $ ModuleFun $ bind (v, s, embed t') me' 
 
 resolveNameType :: NameType -> Resolve NameType
 resolveNameType e = do

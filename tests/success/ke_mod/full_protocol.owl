@@ -2,13 +2,13 @@ include "psk_ke.owl"
 include "dh_ke.owl" 
 include "transp.owl"
 
-module DH_TRANSP (P : Params) = {
+module DH_TRANSP = functor (P : Params) {
     module DH_KE_ = DH_KE(P)
     module DH_KE_INNER = DH_KE_.Mk
 
     module T = Transp(P)
     module T_ = T.Protocol(DH_KE_INNER)
-    module Inner : TRANSP(P) = T_.Inner
+    module Inner /* : TRANSP(P) */ = T_.Inner
 
     def Server_main () @ P.Server 
         : Option (if sec(P.data) then Name(P.data) else Data<adv>) 
@@ -19,13 +19,13 @@ module DH_TRANSP (P : Params) = {
         = call Inner.client(get(P.data))
 }
 
-module PSK_TRANSP (P : Params) = {
+module PSK_TRANSP = functor (P : Params) {
     module PSK_KE_ = PSK_KE(P)
     module PSK_KE = PSK_KE_.Mk
 
     module T = Transp(P)
     module T_ = T.Protocol(PSK_KE)
-    module Inner : TRANSP(P) = T_.Inner
+    module Inner /* : TRANSP(P) */ = T_.Inner
 
     def Server_main () @ P.Server 
         : Option (if sec(P.data) then Name(P.data) else Data<adv>) 

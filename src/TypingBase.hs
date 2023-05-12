@@ -97,7 +97,15 @@ data UserFunc =
 instance Alpha UserFunc
 instance Subst ResolvedPath UserFunc
 
-data ModDef = ModDef { 
+data ModDef = 
+    MBody (Bind (Name ResolvedPath) ModBody)
+    | MFun String ModDef (Bind (Name ResolvedPath) ModDef)
+    deriving (Show, Generic, Typeable)
+
+instance Alpha ModDef
+instance Subst ResolvedPath ModDef
+
+data ModBody = ModBody { 
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
     _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
@@ -107,13 +115,12 @@ data ModDef = ModDef {
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
     _randomOracle :: Map String ([AExpr], NameType),
-    _modules :: Map String (Bind (Name ResolvedPath) ModDef),
-    _functors :: Map String ([Bind (Name ResolvedPath) ModDef], Bind [Name ResolvedPath] (Bind (Name ResolvedPath) ModDef))
+    _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
 
-instance Alpha ModDef
-instance Subst ResolvedPath ModDef
+instance Alpha ModBody
+instance Subst ResolvedPath ModBody
 
 data Env = Env { 
     _envFlags :: Flags,
@@ -124,8 +131,9 @@ data Env = Env {
     _localAssumptions :: [SymAdvAssms],
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
-    _curModules :: Map (Maybe (Name ResolvedPath)) ModDef,
-    _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModDef -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
+    _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
+    _modContext :: Map (Name ResolvedPath) ResolvedPath,
+    _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer
 }
@@ -212,7 +220,7 @@ makeLenses ''DefSpec
 
 makeLenses ''Env
 
-makeLenses ''ModDef
+makeLenses ''ModBody
 
 instance Fresh Check where
     fresh (Fn s _) = do
@@ -284,7 +292,7 @@ withVars assocs k = do
     local (over tyContext $ addVars assocs) k
 
 
-unsafeHead :: Lens' [(a, b)] (a, b)
+unsafeHead :: Lens' [a] a
 unsafeHead = lens gt st
     where
         gt = head
@@ -298,10 +306,15 @@ unsafeLookup x = lens gt st
                  Nothing -> error $ "INTERNAL ERROR: Unknown key: " ++ show x
         st m b = insert x b m
 
-curMod :: Lens' Env ModDef
-curMod = curModules . unsafeHead . _2
+curMod :: Lens' Env ModBody
+curMod = openModules . unsafeHead . _2
 
-
+curModName :: Check ResolvedPath
+curModName = do
+    (k, _) <- head <$> view openModules
+    case k of
+      Nothing -> return PTop
+      Just pv -> return $ PPathVar OpenPathVar pv
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = do
@@ -337,27 +350,51 @@ checkIdxPId i@(IVar pos _) = do
        TcGhost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
        TcDef _ -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
 
-getModule :: Ignore Position -> ResolvedPath -> Check ModDef
-getModule pos rp = go rp
+openModule :: Ignore Position -> ResolvedPath -> Check ModBody
+openModule pos rp = do
+    go rp
     where
-        go :: ResolvedPath -> Check ModDef
-        go PTop = view $ curModules . (unsafeLookup Nothing)
-        go (PPathVar v) = view $ curModules . (unsafeLookup (Just v))
+        go :: ResolvedPath -> Check ModBody
+        go PTop = view $ openModules . unsafeLookup Nothing
+        go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup (Just v)
+        go (PPathVar ClosedPathVar v) = do
+            mc <- view modContext
+            case lookup v mc of
+              Just b -> openModule pos b
+              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
         go p0@(PDot p' s) = do
             md <- go p'
             case lookup s (md^.modules) of
-              Just xmd' -> do
-                  (x, md') <- unbind xmd'
-                  return $ subst x p0 md' 
+              Just (MBody xmb) -> do
+                  (x, mb) <- unbind xmb
+                  return $ subst x p0 mb
+              Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
               Nothing -> typeError pos $ "Unknown module: " ++ show p0
 
+getModDef :: Ignore Position -> ResolvedPath -> Check ModDef
+getModDef pos rp = do
+    go rp
+    where
+        go :: ResolvedPath -> Check ModDef
+        go PTop = typeError pos $ "Got top for getModDef"
+        go (PPathVar OpenPathVar v) = typeError pos $ "Got opened module var for getModDef"
+        go (PPathVar ClosedPathVar v) = do
+            mc <- view modContext
+            case lookup v mc of
+              Just b -> getModDef pos b
+              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
+        go p0@(PDot p' s) = do
+            md <- openModule pos p'
+            case lookup s (md^.modules) of
+              Just b -> return b
+              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
     case ne^.val of 
      BaseName (vs1, vs2) pth@(PRes (PDot p n)) -> do
-         md <- getModule (ne^.spanOf) p
+         md <- openModule (ne^.spanOf) p
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
@@ -372,7 +409,7 @@ getNameInfo ne = do
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
      ROName (PRes (PDot p s)) -> do
-        md <- getModule (ne^.spanOf) p 
+        md <- openModule (ne^.spanOf) p 
         case lookup s (md^.randomOracle) of 
           Just (_, nt) -> return $ Just (nt, Nothing)
           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO p
@@ -391,7 +428,7 @@ getNameInfo ne = do
 
 getRO :: Ignore Position -> Path -> Check ([AExpr], NameType)
 getRO pos (PRes (PDot p s)) = do
-        md <- getModule pos p 
+        md <- openModule pos p 
         case lookup s (md^.randomOracle) of 
           Just r -> return r
           Nothing -> typeError pos $ show $ ErrUnknownRO p
@@ -420,7 +457,7 @@ debug d = do
 
 getTyDef :: Ignore Position -> Path -> Check TyDef
 getTyDef pos (PRes (PDot p s)) = do
-    md <- getModule pos p
+    md <- openModule pos p
     case lookup s (md ^. tyDefs) of
       Just td -> return td
       Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
@@ -429,12 +466,12 @@ getTyDef pos (PRes (PDot p s)) = do
 
 getUserFunc :: Ignore Position -> Path -> Check (Maybe UserFunc)
 getUserFunc pos (PRes (PDot p s)) = do
-    md <- getModule pos p
+    md <- openModule pos p
     return $ lookup s (md^.userFuncs)
 
 getDefSpec :: Ignore Position -> Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
 getDefSpec pos (PRes (PDot p s)) = do
-    md <- getModule pos p
+    md <- openModule pos p
     case lookup s (md^.defs) of
       Nothing -> typeError pos $ "Unknown def: " ++ s
       Just (DefHeader _) -> typeError pos $ "Def is unspecified: " ++ s
@@ -447,7 +484,7 @@ getFuncInfo pos f@(PRes (PDot p s)) = do
     case (p, lookup s fs) of
       (PTop, Just r) -> return r
       (_, Nothing) -> do 
-          md <- getModule pos p
+          md <- openModule pos p
           case lookup s (md ^. userFuncs) of 
             Just uf -> do 
                 uf_interp <- view interpUserFuncs
@@ -612,40 +649,47 @@ prettyContext e =
 instance Pretty ResolvedPath where
     pretty a = pretty $ show a
 
-collectEnvInfo :: (ModDef -> Map String a) -> Check (Map ResolvedPath a)
+collectEnvInfo :: (ModBody -> Map String a) -> Check (Map ResolvedPath a)
 collectEnvInfo f = do
-    cms <- view curModules
-    res <- forM cms $ \(op, md) -> do
+    cms <- view openModules
+    res <- forM cms $ \(op, mb) -> do
         let p = case op of
                   Nothing -> PTop
-                  Just n -> PPathVar n
-        go f p md 
-    return $ concat res
+                  Just n -> PPathVar OpenPathVar n
+        go f p mb 
+    return $ concat res 
         where
-            go :: (ModDef -> Map String a) -> ResolvedPath -> ModDef -> Check (Map ResolvedPath a)
+            go :: (ModBody -> Map String a) -> ResolvedPath -> ModBody -> Check (Map ResolvedPath a)
             go f p md = do 
                 let fs = map (\(s, f) -> (PDot p s, f)) (f md)
-                fs' <- forM (md^.modules) $ \(s, xmd) -> do
-                    (x, md) <- unbind xmd
-                    go f (PDot p s) (subst x (PDot p s) md)
+                fs' <- forM (md^.modules) $ \(s, md) -> do
+                    case md of
+                      MFun _ _ _ -> return []
+                      MBody xmb -> do
+                        (x, mb) <- unbind xmb
+                        go f (PDot p s) (subst x (PDot p s) mb)
                 return $ fs ++ concat fs'
 
 -- Just concat the stuff together
-collectEnvAxioms :: (ModDef -> [a]) -> Check [a]
+collectEnvAxioms :: (ModBody -> [a]) -> Check [a]
 collectEnvAxioms f = do
-    cms <- view curModules
+    cms <- view openModules
     res <- forM cms $ \(op, md) -> do
         let p = case op of
                   Nothing -> PTop
-                  Just n -> PPathVar n
+                  Just n -> PPathVar OpenPathVar n
         go f p md 
-    return $ concat res
+    mc <- view modContext
+    return $ concat $ res 
         where
             go f p md = do
                 let xs = f md
-                ys <- forM (md^.modules) $ \(s, xmd) -> do
-                    (x, md) <- unbind xmd
-                    go f (PDot p s) (subst x (PDot p s) md)
+                ys <- forM (md^.modules) $ \(s, md) -> do
+                    case md of
+                      MFun _ _ _ -> return []
+                      MBody xmb -> do
+                        (x, mb) <- unbind xmb
+                        go f (PDot p s) (subst x (PDot p s) mb)
                 return $ xs ++ concat ys
 
 collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
@@ -670,10 +714,23 @@ pathPrefix :: ResolvedPath -> ResolvedPath
 pathPrefix (PDot p _) = p
 pathPrefix _ = error "pathPrefix error" 
 
+canonifyPath :: ResolvedPath -> Check ResolvedPath
+canonifyPath PTop = return PTop
+canonifyPath p@(PPathVar OpenPathVar _) = return p
+canonifyPath (PPathVar ClosedPathVar v) = do
+    cm <- view modContext
+    case lookup v cm of
+      Just p -> canonifyPath p
+      Nothing -> error "canonifyPath failure"
+canonifyPath (PDot p s) = do
+    p' <- canonifyPath p
+    return $ PDot p' s
+
 -- Normalize and check locality
 normLocality :: Ignore Position -> Locality -> Check Locality
 normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
-    md <- getModule pos p
+    p' <- canonifyPath p
+    md <- openModule pos p'
     case lookup s (md^.localities) of 
       Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
       Just (Right p') -> normLocality pos $ Locality (PRes p') xs
@@ -682,12 +739,12 @@ normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
               forM_ xs $ \i -> do
                   it <- inferIdx i
                   assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
-              return loc
+              return $ Locality (PRes (PDot p' s)) xs 
 
 -- Normalize locality path, get arity
 normLocalityPath :: Ignore Position -> Path -> Check Int
 normLocalityPath pos (PRes loc@(PDot p s)) = do
-    md <- getModule pos p
+    md <- openModule pos p
     case lookup s (md^.localities) of 
       Nothing -> typeError pos $ "Unknown locality: " ++ show loc
       Just (Left ar) -> return ar

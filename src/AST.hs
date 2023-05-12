@@ -62,9 +62,17 @@ data Path =
       | PRes ResolvedPath
     deriving (Generic, Typeable, Eq, Ord)
 
+data PathVarType = OpenPathVar | ClosedPathVar
+    deriving (Show, Generic, Typeable, Eq, Ord)
+
+instance Alpha PathVarType
+instance Subst ResolvedPath PathVarType
+instance Subst Idx PathVarType
+instance Subst AExpr PathVarType
+
 data ResolvedPath =
       PTop
-      | PPathVar (Name ResolvedPath)
+      | PPathVar PathVarType (Name ResolvedPath) 
       | PDot ResolvedPath String
     deriving (Generic, Typeable, Eq, Ord)
 
@@ -82,7 +90,7 @@ instance Show Path where
 
 instance Show ResolvedPath where
     show PTop = "Top"
-    show (PPathVar s) = show s
+    show (PPathVar _ s) = show s
     show (PDot x y) = show x ++ "." ++ y
 
 
@@ -269,11 +277,14 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- tRefined :: Ty -> Var -> Prop -> Ty
 -- tRefined t x p = mkSpanned $ TRefined t x p
 
-data ModuleExp = 
-    ModuleBody (Bind (Name ResolvedPath) [Decl])
+data ModuleExpX = 
+    ModuleBody (Bind (Name ResolvedPath) [Decl]) (Maybe ModuleExp)
       | ModuleVar Path
-      | ModuleApp Path [Path]
+      | ModuleApp Path Path
+      | ModuleFun (Bind (Name ResolvedPath, String, Embed ModuleExp) ModuleExp)
       deriving (Show, Generic, Typeable)
+
+type ModuleExp = Spanned ModuleExpX
 
 -- Decls are surface syntax
 data DeclX = 
@@ -297,7 +308,7 @@ data DeclX =
     | DeclRandOrcl String ([AExpr], NameType)
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
-    | DeclModule String (Bind [(Name ResolvedPath, String, Embed ModuleExp)] (ModuleExp, Maybe ModuleExp))
+    | DeclModule String ModuleExp 
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -404,8 +415,8 @@ instance Subst ResolvedPath Endpoint
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
 
-instance Alpha ModuleExp
-instance Subst ResolvedPath ModuleExp
+instance Alpha ModuleExpX
+instance Subst ResolvedPath ModuleExpX
 
 instance Alpha AExprX
 instance Subst Idx AExprX
@@ -449,7 +460,7 @@ instance Subst ResolvedPath Path where
 
 instance Alpha ResolvedPath
 instance Subst ResolvedPath ResolvedPath where
-    isvar (PPathVar v) = Just (SubstName v)
+    isvar (PPathVar _ v) = Just (SubstName v)
     isvar _ = Nothing
 instance Subst AExpr ResolvedPath
 instance Subst Idx ResolvedPath
@@ -674,8 +685,8 @@ instance Pretty Locality where
 instance Pretty DeclX where
     pretty d = pretty (show d)
 
-instance Pretty ModuleExp where
-    pretty (ModuleBody nk) = 
+instance Pretty ModuleExpX where
+    pretty (ModuleBody nk mt) = 
         let (n, k) = prettyBind nk in
         angles (n <> pretty "." <> k)
     pretty (ModuleVar p) = pretty p
