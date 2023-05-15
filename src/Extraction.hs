@@ -1138,7 +1138,7 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied
         genDefSpec (Locality lname _) body owlArgs specRt = do
             let argsPrettied = pretty "loc:" <+> pretty (locName lname) <> (hsep . punctuate comma . map extractArg $ owlArgs)
-            let rtPrettied = pretty "-> ITree<Option<" <> pretty specRt <> pretty ">>"
+            let rtPrettied = pretty "-> ITree<Option<" <> pretty specRt <> pretty ">, Endpoint>"
             return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
                 pretty "owl_spec!" <> parens (line <>
                     pretty body
@@ -1343,8 +1343,9 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
 extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName Int, Doc ann, Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
+    let specEndpoint = mkSpecEndpoint $ M.keys locMap
     (sidArgMap, ps, spec_ps) <- foldM (go pubkeys) (M.empty, [], []) $ M.assocs locMap
-    return (sidArgMap, addrs <> line <> vsep ps, vsep spec_ps)
+    return (sidArgMap, addrs <> line <> vsep ps, specEndpoint <> line <> vsep spec_ps)
     where
         go pubKeys (m, ps, spec_ps) (lname, ldata) = do
             (nSidArgs, p, spec_p) <- extractLoc pubKeys (lname, ldata)
@@ -1354,6 +1355,11 @@ extractLocs pubkeys locMap = do
         mkAddrs n (l:locs) =
             pretty "pub const fn" <+> pretty l <> pretty "_addr() -> StrSlice<'static> {" <+> pretty "new_strlit" <> parens (dquotes (pretty "127.0.0.1:" <> pretty (9001 + n))) <+> pretty "}" <> line <>
             mkAddrs (n+1) locs
+        mkSpecEndpoint lnames = 
+            pretty "#[is_variant]" <> line <> pretty "#[derive(Copy, Clone)]" <> line <> 
+            pretty "pub enum Endpoint" <+> braces (line <> 
+                (vsep . punctuate comma . map (\s -> pretty "Loc_" <> pretty s) $ lnames)
+            <> line)
 
 entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName Int -> ExtractionMonad (Doc ann)
 entryPoint locMap sharedNames pubKeys sidArgMap = do

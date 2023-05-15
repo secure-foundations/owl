@@ -32,33 +32,6 @@ pub open spec fn view_option(v: Option<Vec<u8>>) -> Option<Seq<u8>>
     }
 }
 
-// hack
-#[verifier(external_body)]
-pub closed spec fn spec_foo() -> Seq<u8>
-{
-    todo!()
-}
-
-#[is_variant]
-#[derive(Copy, Clone)]
-pub enum Endpoint {
-    Loc_alice,
-    Loc_bob,
-}
-
-#[is_variant]
-pub enum Message {
-    Input(Seq<u8>),
-    Output(Seq<u8>, Endpoint),
-}
-
-pub type Trace = Seq<Message>;
-
-// crypto
-// pub const KEY_SIZE: usize = 32;
-// pub const TAG_SIZE: usize = 12;
-// pub const KEY_TAG_SIZE: usize = KEY_SIZE + TAG_SIZE;
-
 // pub closed spec fn cipherlen(l : nat) -> nat {
 //     l + crate::TAG_SIZE as nat
 // }
@@ -84,14 +57,7 @@ pub open spec(checked) fn enc(k: Option<Seq<u8>>, x: Option<Seq<u8>>, coins: Seq
     }
 }
 
-// #[macro_export]
-// macro_rules! enc {
-//     ($($tt:tt)*) => {
-//         enc($($tt)*)
-//     }
-// }
 
-// 0
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
     recommends k.len() == crate::KEY_SIZE,
@@ -112,23 +78,6 @@ pub open spec(checked) fn dec(k: Option<Seq<u8>>, c: Option<Seq<u8>>) -> (x: Opt
     }
 }
 
-// #[macro_export]
-// macro_rules! dec {
-//     ($($tt:tt)*) => {
-//         dec($($tt)*)
-//     }
-// }
-
-// #[verifier(external_body)]
-// pub exec fn dec_impl(k: &Vec<u8>, c: &Vec<u8>) -> (x: Option<Vec<u8>>)
-//     ensures
-//         (k.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==> x.is_Some() && x.get_Some_0()@ === dec(k@, c@).get_Some_0(),
-//         dec(k@, c@).is_None() ==> x.is_None(),
-//         k.len() != crate::KEY_SIZE ==> x.is_None(),
-// {
-//     todo!() // call evercrypt
-// }
-
 pub open spec fn eq(a: Seq<u8>, b: Seq<u8>) -> bool
 {
     a == b
@@ -144,13 +93,6 @@ pub open spec fn UNIT() -> Option<()>
     Some(())
 }
 
-
-// #[macro_export]
-// macro_rules! UNIT {
-//     ($($tt:tt)*) => {
-//         ($($tt)*)
-//     }
-// }
 
 pub open spec fn andb(x: bool, y: bool) -> bool
 {
@@ -174,10 +116,10 @@ pub mod itree {
 
     verus! {
     #[is_variant]
-    pub enum ITree<A> {
-        Input  (FnSpec(Option<Seq<u8>>, Endpoint) -> ITree<A>),
-        Output (Option<Seq<u8>>, Endpoint, Box<ITree<A>>),
-        Sample (usize, FnSpec(Seq<u8>) -> ITree<A>),
+    pub enum ITree<A, #[verifier(maybe_negative)] Endpoint> {
+        Input  (FnSpec(Option<Seq<u8>>, Endpoint) -> ITree<A, Endpoint>),
+        Output (Option<Seq<u8>>, Endpoint, Box<ITree<A, Endpoint>>),
+        Sample (usize, FnSpec(Seq<u8>) -> ITree<A, Endpoint>),
         Ret    (A),
     }
 
@@ -280,11 +222,11 @@ pub mod itree {
     }
     pub(crate) use owl_spec;
 
-    impl<A> ITree<A> {
+    impl<A, Endpoint> ITree<A, Endpoint> {
         pub open spec fn is_input(&self) -> bool {
             self.is_Input()
         }
-        pub open spec(checked) fn take_input(&self, i: Seq<u8>, ev: Endpoint) -> ITree<A>
+        pub open spec(checked) fn take_input(&self, i: Seq<u8>, ev: Endpoint) -> ITree<A,Endpoint>
             recommends self.is_input()
         {
             (self.get_Input_0())(Some(i), ev)
@@ -292,7 +234,7 @@ pub mod itree {
         pub open spec fn is_output(&self, o: Seq<u8>) -> bool {
             self.is_Output() && self.get_Output_0() === Some(o)
         }
-        pub open spec(checked) fn give_output(&self) -> ITree<A>
+        pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o| self.is_output(o))
         {
             *self.get_Output_2()
@@ -300,7 +242,7 @@ pub mod itree {
         pub open spec fn is_sample(&self, n: usize) -> bool {
             self.is_Sample() && self.get_Sample_0() === n
         }
-        pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A>
+        pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
         {
             (self.get_Sample_1())(coins)
@@ -313,13 +255,13 @@ pub mod itree {
 
     struct UnforgeableAux;
 
-    pub struct ITreeToken<T> {
+    pub struct ITreeToken<T,Endpoint> {
         token: UnforgeableAux,
-        inner: T // just to satisfy rustc
+        inner: (T, Endpoint)
     }
 
-    impl<T> ITreeToken<T> {
-        pub closed spec fn view(self) -> ITree<T>;
+    impl<T,Endpoint> ITreeToken<T,Endpoint> {
+        pub closed spec fn view(self) -> ITree<T,Endpoint>;
     }
 
     } // verus!
@@ -332,29 +274,29 @@ pub mod itree {
 verus! {
 use itree::*;
 
-#[verifier(external_body)]
-pub exec fn input<A>(t: &mut Tracked<ITreeToken<A>>) -> (ie: (Vec<u8>, Endpoint))
-    requires old(t)@@.is_input()
-    ensures  t@@ === old(t)@@.take_input(ie.0@, ie.1)
-{
-    todo!()
-}
+// #[verifier(external_body)]
+// pub exec fn input<A>(t: &mut Tracked<ITreeToken<A>>) -> (ie: (Vec<u8>, Endpoint))
+//     requires old(t)@@.is_input()
+//     ensures  t@@ === old(t)@@.take_input(ie.0@, ie.1)
+// {
+//     todo!()
+// }
 
-#[verifier(external_body)]
-pub exec fn output<A>(o: &Vec<u8>, t: &mut Tracked<ITreeToken<A>>)
-    requires old(t)@@.is_output(o@)
-    ensures  t@@ === old(t)@@.give_output()
-{
-    todo!()
-}
+// #[verifier(external_body)]
+// pub exec fn output<A>(o: &Vec<u8>, t: &mut Tracked<ITreeToken<A>>)
+//     requires old(t)@@.is_output(o@)
+//     ensures  t@@ === old(t)@@.give_output()
+// {
+//     todo!()
+// }
 
-#[verifier(external_body)]
-pub exec fn sample<A>(n: usize, t: &mut Tracked<ITreeToken<A>>) -> (res: Vec<u8>)
-    requires old(t)@@.is_sample(n)
-    ensures t@@ === old(t)@@.get_sample(res@)
-{
-    todo!()
-}
+// #[verifier(external_body)]
+// pub exec fn sample<A>(n: usize, t: &mut Tracked<ITreeToken<A>>) -> (res: Vec<u8>)
+//     requires old(t)@@.is_sample(n)
+//     ensures t@@ === old(t)@@.get_sample(res@)
+// {
+//     todo!()
+// }
 
 } // verus!
 
