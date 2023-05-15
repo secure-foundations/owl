@@ -278,9 +278,9 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- tRefined t x p = mkSpanned $ TRefined t x p
 
 data ModuleExpX = 
-    ModuleBody (Bind (Name ResolvedPath) [Decl]) (Maybe ModuleExp)
+    ModuleBody (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
       | ModuleVar Path
-      | ModuleApp Path Path
+      | ModuleApp ModuleExp Path
       | ModuleFun (Bind (Name ResolvedPath, String, Embed ModuleExp) ModuleExp)
       deriving (Show, Generic, Typeable)
 
@@ -308,10 +308,17 @@ data DeclX =
     | DeclRandOrcl String ([AExpr], NameType)
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
-    | DeclModule String ModuleExp 
+    | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
+
+data IsModuleType = ModType | ModConcrete
+    deriving (Show, Generic, Typeable)
+
+instance Alpha IsModuleType
+instance Subst AExpr IsModuleType
+instance Subst ResolvedPath IsModuleType
 
 data DetFuncOps =
     UninterpFunc
@@ -686,10 +693,11 @@ instance Pretty DeclX where
     pretty d = pretty (show d)
 
 instance Pretty ModuleExpX where
-    pretty (ModuleBody nk mt) = 
+    pretty (ModuleBody nk) = 
         let (n, k) = prettyBind nk in
         angles (n <> pretty "." <> k)
     pretty (ModuleVar p) = pretty p
+    pretty x = pretty $ show x
 
 
 -- Wrapper datatype for native comparison up to alpha equivalence. Used for

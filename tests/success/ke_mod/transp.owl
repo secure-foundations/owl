@@ -1,9 +1,7 @@
 include "transp.owli"
 include "ke.owli"
 
-module Transp = functor (P : Params) { 
-    module Protocol = functor (K : KE(P)) {
-        module Inner  = { 
+module Transp (P : Params, K : KE(P)) : TRANSP(P) = {
             def server() @ P.Server : 
                 Option (if sec(P.data) then Name(P.data) else Data<adv>) = 
                 call K.ke_Server();
@@ -20,6 +18,4 @@ module Transp = functor (P : Params) {
                      | Some k => 
                         let c = samp enc(k, x) in 
                         output c to endpoint(P.Server)
-            } : TRANSP(P)
-    }
 }

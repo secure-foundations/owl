@@ -127,7 +127,7 @@ class SmtName a where
     smtName :: a -> Sym String
 
 instance SmtName ResolvedPath where
-    smtName p = go <$> (liftCheck $ canonifyPath p)
+    smtName p = return $ go p
         where
             go :: ResolvedPath -> String
             go (PDot PTop a) = a 

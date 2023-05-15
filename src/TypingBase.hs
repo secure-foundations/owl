@@ -132,7 +132,7 @@ data Env = Env {
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
     _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
-    _modContext :: Map (Name ResolvedPath) ResolvedPath,
+    _modContext :: Map (Name ResolvedPath) ModDef,
     _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer
@@ -357,11 +357,14 @@ openModule pos rp = do
         go :: ResolvedPath -> Check ModBody
         go PTop = view $ openModules . unsafeLookup Nothing
         go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup (Just v)
-        go (PPathVar ClosedPathVar v) = do
+        go p0@(PPathVar ClosedPathVar v) = do
             mc <- view modContext
             case lookup v mc of
-              Just b -> openModule pos b
-              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
+              Just (MBody xmb) -> do
+                  (x, mb) <- unbind xmb
+                  return $ subst x p0 mb 
+              Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
+              Nothing -> typeError pos $ "Unknown module or functor (functor argument, openModule): " ++ show p0
         go p0@(PDot p' s) = do
             md <- go p'
             case lookup s (md^.modules) of
@@ -381,8 +384,8 @@ getModDef pos rp = do
         go (PPathVar ClosedPathVar v) = do
             mc <- view modContext
             case lookup v mc of
-              Just b -> getModDef pos b
-              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
+              Just b -> return b
+              Nothing -> typeError pos $ "Unknown module or functor (functor argument, getModDef): " ++ show rp
         go p0@(PDot p' s) = do
             md <- openModule pos p'
             case lookup s (md^.modules) of
@@ -657,12 +660,20 @@ collectEnvInfo f = do
                   Nothing -> PTop
                   Just n -> PPathVar OpenPathVar n
         go f p mb 
-    return $ concat res 
+    mc <- view modContext
+    res' <- forM mc $ \(x, md) -> do
+        case md of
+          MFun _ _ _ -> return []
+          MBody xmb -> do
+              let p = PPathVar ClosedPathVar x
+              (y, mb) <- unbind xmb
+              go f (PPathVar ClosedPathVar x) (subst y p mb)
+    return $ concat $ res ++ res'
         where
             go :: (ModBody -> Map String a) -> ResolvedPath -> ModBody -> Check (Map ResolvedPath a)
-            go f p md = do 
-                let fs = map (\(s, f) -> (PDot p s, f)) (f md)
-                fs' <- forM (md^.modules) $ \(s, md) -> do
+            go f p mb = do 
+                let fs = map (\(s, f) -> (PDot p s, f)) (f mb)
+                fs' <- forM (mb^.modules) $ \(s, md) -> do
                     case md of
                       MFun _ _ _ -> return []
                       MBody xmb -> do
@@ -680,7 +691,14 @@ collectEnvAxioms f = do
                   Just n -> PPathVar OpenPathVar n
         go f p md 
     mc <- view modContext
-    return $ concat $ res 
+    res' <- forM mc $ \(x, md) -> do
+        case md of
+          MFun _ _ _ -> return []
+          MBody xmb -> do
+              let p = PPathVar ClosedPathVar x
+              (y, mb) <- unbind xmb
+              go f (PPathVar ClosedPathVar x) (subst y p mb)
+    return $ concat $ res ++ res' 
         where
             go f p md = do
                 let xs = f md
@@ -714,32 +732,19 @@ pathPrefix :: ResolvedPath -> ResolvedPath
 pathPrefix (PDot p _) = p
 pathPrefix _ = error "pathPrefix error" 
 
-canonifyPath :: ResolvedPath -> Check ResolvedPath
-canonifyPath PTop = return PTop
-canonifyPath p@(PPathVar OpenPathVar _) = return p
-canonifyPath (PPathVar ClosedPathVar v) = do
-    cm <- view modContext
-    case lookup v cm of
-      Just p -> canonifyPath p
-      Nothing -> error "canonifyPath failure"
-canonifyPath (PDot p s) = do
-    p' <- canonifyPath p
-    return $ PDot p' s
-
 -- Normalize and check locality
 normLocality :: Ignore Position -> Locality -> Check Locality
 normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
-    p' <- canonifyPath p
-    md <- openModule pos p'
+    md <- openModule pos p
     case lookup s (md^.localities) of 
       Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
-      Just (Right p') -> normLocality pos $ Locality (PRes p') xs
+      Just (Right p') -> normLocality pos $ Locality (PRes p) xs
       Just (Left ar) -> do
               assert pos (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
                   assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
-              return $ Locality (PRes (PDot p' s)) xs 
+              return $ Locality (PRes (PDot p s)) xs 
 
 -- Normalize locality path, get arity
 normLocalityPath :: Ignore Position -> Path -> Check Int

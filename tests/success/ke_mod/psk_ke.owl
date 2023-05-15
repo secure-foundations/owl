@@ -1,7 +1,6 @@
 include "ke.owli"
 
-module PSK_KE = functor (P : Params) { 
-    module Mk = { 
+module PSK_KE (P : Params) : KE(P) = { 
         name k : enckey Name(P.data) @ P.Server
         name shared_key : enckey Name(k) @ P.Server, P.Client
 
@@ -14,8 +13,9 @@ module PSK_KE = functor (P : Params) {
             corr_case shared_key in
             corr_case k in
             dec(get(shared_key), i)
-    } : KE(P) 
+
 }
+
 
 
     

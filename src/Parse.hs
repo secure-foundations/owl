@@ -606,25 +606,60 @@ parseDecls =
         loc <- parseLocality
         return $ DeclTable n t loc)
     <|>
-    (parseSpanned $ do
+    (parseSpanned $ do       
         reserved "module"
-        _ <- optionMaybe $ reserved "type"
+        imt <- parseIsModType
         n <- identifier
+        modArgs <- optionMaybe $ do
+            symbol "("
+            xs <- (do
+                n <- identifier
+                symbol ":"
+                t <- parseModuleExp $ "SPECOF" ++ n
+                return (n, t)
+                ) `sepBy1` (symbol ",")
+            symbol ")"
+            return xs
+        omt <- optionMaybe $ do
+            symbol ":"
+            parseModuleExp $ "TYPEOF" ++ n
         symbol "="
         me <- parseModuleExp n
-        return $ DeclModule n me 
+        let (bdy, otype) = mkModuleBinders modArgs me omt 
+        return $ DeclModule n imt bdy otype 
     )
+
+mkModuleBinders :: Maybe [(String, ModuleExp)] -> ModuleExp -> Maybe ModuleExp -> (ModuleExp, Maybe ModuleExp)
+mkModuleBinders Nothing me omt = (me, omt)
+mkModuleBinders (Just xs) me omt = 
+    (go xs me, fmap (go xs) omt)
+        where
+            go :: [(String, ModuleExp)] -> ModuleExp -> ModuleExp
+            go [] m = m
+            go ((x, t) : xs) m = 
+                let k = go xs m in
+                let p = joinPosition (unignore $ _spanOf t) (unignore $ _spanOf k) in 
+                Spanned (ignore p) $ ModuleFun $ bind (s2n x, x, embed t) $ k 
+
+
+parseIsModType :: Parser IsModuleType
+parseIsModType = do
+    ot <- optionMaybe $ reserved "type"
+    return $ case ot of
+                    Just _ -> ModType
+                    Nothing -> ModConcrete
+    
+
 
 parseModuleExp :: String -> Parser ModuleExp
 parseModuleExp n = 
+    parensPos (parseModuleExp n)
+    <|>
     (parseSpanned $ do
         symbol "{"
         ds <- parseDecls
         symbol "}"
-        ospec <- optionMaybe $ do
-            symbol ":"
-            parseModuleExp ("SPECOF" ++ n)
-        return $ ModuleBody (bind (s2n $ "%mod_" ++ n) ds) ospec
+        return $ ModuleBody (bind (s2n $ "%mod_" ++ n) ds) 
     )
     <|>
     (parseSpanned $ do
@@ -638,18 +673,24 @@ parseModuleExp n =
         return $ ModuleFun $ bind (s2n m, m, embed nt) mb
     )
     <|>
-    (try $ parseSpanned $ do
-        x <- parsePath
+    parseAppChain n
+
+parseAppChain :: String -> Parser ModuleExp
+parseAppChain n = parseSpanned $ do
+    p <- parsePath
+    oargs <- optionMaybe $ do
         symbol "("
-        ys <- parsePath 
+        xs <- (parsePath `sepBy1` (symbol ","))
         symbol ")"
-        return $ ModuleApp x ys
-    )
-    <|>
-    (parseSpanned $ do
-        x <- parsePath
-        return $ ModuleVar x
-    )
+        return xs
+    case oargs of
+      Nothing -> return $ ModuleVar p
+      Just ps -> return $ mkModuleApp (mkSpanned $ ModuleVar p) ps
+  where
+      mkModuleApp :: ModuleExp -> [Path] -> ModuleExpX
+      mkModuleApp m [] = error "empty mkModuleapp"
+      mkModuleApp m [x] = ModuleApp m x
+      mkModuleApp m (x : xs) = mkModuleApp (mkSpanned $ ModuleApp m x) xs
 
 
 

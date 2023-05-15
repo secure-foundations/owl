@@ -19,6 +19,15 @@ mkFlags :: String -> String -> String -> CmdArgs -> Flags
 mkFlags contents path bname (CmdArgs d logsmt _ _ _) =
     Flags d logsmt path bname contents
 
+typeCheckWith :: String -> IO ()
+typeCheckWith fn = do
+      s <- readFile fn
+      case (P.parse parseFile (takeFileName fn) s) of
+        Left err -> putStrLn $ "parse error: " ++ show err
+        Right ast -> do
+                res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) (CmdArgs False False False False (Just fn))) ast
+                return ()
+
 main :: IO ()
 main = do
   args <- doParseArgs

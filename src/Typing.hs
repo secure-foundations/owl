@@ -771,28 +771,22 @@ sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths
 inferModuleExp :: ModuleExp -> Check ModDef
 inferModuleExp me = 
     case me^.val of
-      ModuleBody xds' ot -> do
+      ModuleBody xds' -> do
           (x, ds') <- unbind xds'
           m' <- local (over openModules $ insert (Just x) emptyModBody) $ checkDeclsWithCont ds' $ view curMod
           let md = MBody $ bind x m'
-          case ot of 
-            Nothing -> return md
-            Just met -> do
-                t <- inferModuleExp met
-                moduleMatches (me^.spanOf) md t
-                return md
+          return md
       ModuleFun xe -> do
           ((x, s, t), k) <- unbind xe
           p <- curModName
           t1 <- inferModuleExp $ unembed t 
-          r <- local (over (curMod . modules) $ insert s t1) $ 
-              local (over modContext $ insert x (PDot p s)) $
+          r <- local (over modContext $ insert x t1) $ 
                   inferModuleExp k
           return $ MFun s t1 (bind x r)
-      ModuleApp (PRes p1) arg@(PRes argp) -> do
-          md <- getModDef (me^.spanOf) p1
+      ModuleApp e1 arg@(PRes argp) -> do
+          md <- inferModuleExp e1 
           case md of
-            MBody _ -> typeError (me^.spanOf) $ "Not a functor: " ++ show p1
+            MBody _ -> typeError (me^.spanOf) $ "Not a functor: " ++ show e1
             MFun _ s xd -> do
               argd <- getModDef (me^.spanOf) argp
               moduleMatches (me^.spanOf) argd s 
@@ -811,11 +805,7 @@ inferModuleExp me =
       ModuleVar pth@(PRes (PPathVar ClosedPathVar x)) -> do
           mc <- view modContext
           case lookup x mc of
-            Just (PDot p s) -> do
-                md <- openModule (me^.spanOf) p
-                case lookup s (md^.modules) of 
-                  Just b -> return b
-                  Nothing -> typeError (me^.spanOf) $ "Internal error: Unknown module or functor: " ++ show pth
+            Just b -> return b
             Nothing ->  typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
       _ -> error $ "Unknown case: " ++ show me
                   
@@ -836,8 +826,13 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n me -> do
+      DeclModule n _ me omt -> do
           md <- inferModuleExp me
+          case omt of
+            Nothing -> return ()
+            Just mt -> do
+              mdt <- inferModuleExp mt
+              moduleMatches (d^.spanOf) md mdt
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
@@ -1778,8 +1773,7 @@ moduleMatches pos md1 md2 =
           (y, md2_) <- unbind ymd2
           let md2 = subst y (PPathVar ClosedPathVar x) md2_
           p <- curModName
-          local (over (curMod . modules) $ insert s t1) $ 
-              local (over modContext $ insert x (PDot p s)) $
+          local (over modContext $ insert x t1) $ 
                 moduleMatches pos md1 md2
       (MBody xmd1, MBody ymd2) -> do
           (x, md1) <- unbind xmd1

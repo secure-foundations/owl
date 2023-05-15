@@ -2,42 +2,20 @@ include "psk_ke.owl"
 include "dh_ke.owl" 
 include "transp.owl"
 
-module DH_TRANSP = functor (P : Params) {
-    module DH_KE_ = DH_KE(P)
-    module DH_KE_INNER = DH_KE_.Mk
-
-    module T = Transp(P)
-    module T_ = T.Protocol(DH_KE_INNER)
-    module Inner /* : TRANSP(P) */ = T_.Inner
-
+module Full(P : Params, K : functor (Q : Params) KE(Q)) = { 
+    module KE = K(P)
+    module T = Transp(P, KE)
     def Server_main () @ P.Server 
         : Option (if sec(P.data) then Name(P.data) else Data<adv>) 
-        = corr_case P.data in call Inner.server()
+        = corr_case P.data in call T.server()
 
     def Client_main () @ P.Client
         : Unit
-        = call Inner.client(get(P.data))
+        = call T.client(get(P.data))
+
 }
 
-module PSK_TRANSP = functor (P : Params) {
-    module PSK_KE_ = PSK_KE(P)
-    module PSK_KE = PSK_KE_.Mk
+module FullDH (P : Params) = Full(P, DH_KE)
 
-    module T = Transp(P)
-    module T_ = T.Protocol(PSK_KE)
-    module Inner /* : TRANSP(P) */ = T_.Inner
+module FullPSK (P : Params) = Full(P, PSK_KE)
 
-    def Server_main () @ P.Server 
-        : Option (if sec(P.data) then Name(P.data) else Data<adv>) 
-        = corr_case P.data in call Inner.server()
-
-    def Client_main () @ P.Client
-        : Unit
-        = call Inner.client(get(P.data))
-}
-
-
-/*
-module DH_TRANSP
-
-    */

@@ -226,9 +226,10 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over localityPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclModule s me -> do
+      DeclModule s imt me mt -> do
           me' <- resolveModuleExp (d^.spanOf) me
-          let d' = Spanned (d^.spanOf) $ DeclModule s me' 
+          mt' <- traverse (resolveModuleExp (d^.spanOf)) mt
+          let d' = Spanned (d^.spanOf) $ DeclModule s imt me' mt' 
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
@@ -236,18 +237,17 @@ resolveDecls (d:ds) =
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
     case me^.val of
-      ModuleBody xs mt -> do
-          mt' <- traverse (resolveModuleExp pos) mt
+      ModuleBody xs -> do
           (x, ds1) <- unbind xs
           ds1' <- local (set curPath (PPathVar OpenPathVar x)) $ resolveDecls ds1
-          return $ Spanned (me^.spanOf) $ ModuleBody (bind x ds1') mt'
+          return $ Spanned (me^.spanOf) $ ModuleBody (bind x ds1') 
       ModuleVar p -> do
           p' <- resolvePath pos PTMod p 
           return $ Spanned (me^.spanOf) $ ModuleVar p'
-      ModuleApp p p2 -> do
-          p' <- resolvePath pos PTMod p
+      ModuleApp e1 p2 -> do
+          e1' <- resolveModuleExp pos e1
           p2' <- resolvePath pos PTMod p2
-          return $ Spanned (me^.spanOf) $ ModuleApp p' p2'
+          return $ Spanned (me^.spanOf) $ ModuleApp e1' p2'
       ModuleFun bdy -> do
           ((x, s, t), me) <- unbind bdy
           v <- freshModVar s
@@ -343,8 +343,13 @@ resolveFuncParam f =
       ParamIdx _ -> return f
 
 
-resolvePath :: Ignore Position -> PathType -> Path -> Resolve Path
-resolvePath pos pt p = 
+resolvePath pos pt p = do
+    p' <- resolvePath' pos pt p
+    debug $ pretty "Resolved " <> pretty p <> pretty " to " <> pretty p'
+    return p'
+
+resolvePath' :: Ignore Position -> PathType -> Path -> Resolve Path
+resolvePath' pos pt p = 
     case p of
       PRes _ -> return p
       PUnresolvedPath x xs -> do
@@ -352,13 +357,10 @@ resolvePath pos pt p =
           mp <- view modPaths
           res <- case lookup x mp of
                   Just (b, p) -> do
-                      debug $ pretty x <+> pretty "points to" <+> pretty (show p) 
                       let xs' = if b then xs else x:xs
                       return $ PRes $ go (Just p) (reverse xs')
                   Nothing -> do
-                      debug $ pretty x <+> pretty "not found"
                       return $ PRes $ go Nothing (reverse (x:xs))
-          debug $ pretty "Resolved " <> pretty " into " <> pretty res
           return res
       PUnresolvedVar s -> 
           if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else 
