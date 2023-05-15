@@ -2,7 +2,7 @@ include "psk_ke.owl"
 include "dh_ke.owl" 
 include "transp.owl"
 
-module Full(P : Params, K : functor (Q : Params) KE(Q)) = { 
+module Full(P : Params, K : functor (Q : Params) => KE(Q)) = { 
     module KE = K(P)
     module T = Transp(P, KE)
     def Server_main () @ P.Server 

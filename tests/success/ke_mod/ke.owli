@@ -1,6 +1,6 @@
 include "params.owli"
 
-module type KE = functor (P: Params) { 
+module type KE (P : Params) = {
     name k : enckey Name(P.data) @ P.Server
     def ke_Server() @ P.Server : Unit
     def ke_Client() @ P.Client : Option (if sec(k) then Name(k) else Data<adv>)

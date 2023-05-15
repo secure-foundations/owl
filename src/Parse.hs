@@ -669,6 +669,7 @@ parseModuleExp n =
         symbol ":"
         nt <- parseModuleExp ("TYPEOF" ++ m)
         symbol ")"
+        symbol "=>"
         mb <- parseModuleExp n
         return $ ModuleFun $ bind (s2n m, m, embed nt) mb
     )
