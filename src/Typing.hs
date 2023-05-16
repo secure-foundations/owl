@@ -1712,14 +1712,14 @@ unsolvability aes = local (set tcScope TcGhost) $ do
 
 ---- Entry point ----
 
-typeCheckDecls :: Flags -> [Decl] -> IO (Either Env ())
+typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
 typeCheckDecls f ds = do
     e <- emptyEnv f
     r <- PR.runResolve f $ PR.resolveDecls ds
     case r of
       Left () -> return $ Left e
       Right ds' -> do
-          runExceptT $ runReaderT (unCheck $ checkDecls ds') e
+          runExceptT $ runReaderT (unCheck $ checkDeclsWithCont ds' $ ask) e
 
 
 ---- Module stuff ----

@@ -12,6 +12,7 @@ import System.Directory
 import System.Process
 import System.CPUTime
 import Text.Printf
+import ModuleFlattening
 import Test
 import qualified Extraction as E
 
@@ -19,14 +20,18 @@ mkFlags :: String -> String -> String -> CmdArgs -> Flags
 mkFlags contents path bname (CmdArgs d logsmt _ _ _) =
     Flags d logsmt path bname contents
 
-typeCheckWith :: String -> IO ()
+typeCheckWith :: String -> IO Env
 typeCheckWith fn = do
       s <- readFile fn
       case (P.parse parseFile (takeFileName fn) s) of
-        Left err -> putStrLn $ "parse error: " ++ show err
+        Left err -> do
+            putStrLn $ "parse error: " ++ show err
+            error "Parse error"
         Right ast -> do
                 res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) (CmdArgs False False False False (Just fn))) ast
-                return ()
+                case res of
+                  Left e -> return e
+                  Right e -> return e
 
 main :: IO ()
 main = do
@@ -46,7 +51,7 @@ main = do
                     res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) args) ast
                     case res of
                       Left _ -> return ()
-                      Right () -> do
+                      Right _ -> do
                           end <- getCPUTime
                           let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success! Time to typecheck: %0.5f seconds\n" (diff :: Double)
