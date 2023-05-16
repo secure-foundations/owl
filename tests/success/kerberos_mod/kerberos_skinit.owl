@@ -1,0 +1,47 @@
+include "kerberos_stage1.owli"
+
+module Kerberos_SKINIT(P : Params) : Kerberos_Stage1(P) = { 
+    name K : enckey Name(P.AK) @ P.authserver, P.client    
+
+    struct client_stage1_t { 
+        _ak : if sec(K) then Name(P.AK) else Data<adv> ||enckey||,
+        _tgt : Data<adv> |cipherlen(|enckey|)|,
+        _username : Data<adv> ||nonce||
+    }
+
+    def client_stage1 () @ P.client
+        : Option client_stage1_t =
+        
+        let username = get(P.uname) in
+        let _ = output username to endpoint(P.authserver) in
+
+        // i = tgt, enc(K, AK)
+        input i in 
+
+        let tgt = P._authserver_msg_1(i) in
+        if eq(length(tgt), cipherlen(|enckey|)) then 
+            corr_case K in
+            case dec(get(K), P._authserver_msg_2(i)) 
+                | None => None<ty:client_stage1_t>()
+                | Some ak => 
+                   if eq(length(ak), |enckey|) then Some(client_stage1_t(ak,
+                       tgt, username)) else None<ty:client_stage1_t>()
+        else None<ty:client_stage1_t>()
+
+    def authserver_main () @ P.authserver
+        : Unit =
+
+        // i = client's username
+        input i, _ in 
+        if eq(i, get(P.uname)) then
+
+            // make & send TGT = (AK)_kT, m = (AK)_K
+            let tgt = samp enc(get(P.kT), get(P.AK)) in
+
+            let m = samp enc(get(K), get(P.AK)) in
+            let p = P.authserver_msg(tgt, m) in
+
+            let _ = output p to endpoint(P.client) in ()
+        else ()
+}
+

@@ -1756,11 +1756,12 @@ nameMatches pos s xn1 xn2 = do
     ((is1, is2), on1) <- unbind xn1
     ((is1', is2'), on2) <- unbind xn2
     case (substs (zip is1 (map mkIVar is1')) $ substs (zip is2 (map mkIVar is2')) $ on1, on2) of
-      (Nothing, Nothing) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
-      (Just _, Nothing) -> typeError pos $ "Name should be concrete: " ++ show s
+      (_, Nothing) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
+      (Nothing, Just _) -> typeError pos $ "Name should be concrete: " ++ show s
       (Just (nt1, ls1), Just (nt2, ls2)) -> do
           assert pos ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert pos ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
+
 
 moduleMatches :: Ignore Position -> ModDef -> ModDef -> Check ()
 moduleMatches pos md1 md2 = 
