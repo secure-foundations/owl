@@ -1,5 +1,7 @@
+use crate::owl_aead;
+use crate::speclib;
 use std::rc::Rc;
-use vstd::{prelude::*, seq::*, slice::*, vec::*, *};
+use vstd::{option::*, prelude::*, seq::*, slice::*, vec::*, *};
 
 verus! {
 
@@ -48,6 +50,41 @@ pub exec fn rc_clone(rc: &Rc<Vec<u8>>) -> (res: Rc<Vec<u8>>)
     ensures (*rc)@ == (*res)@
 {
     Rc::clone(&rc)
+}
+
+
+#[verifier(external_body)]
+pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
+    ensures
+        ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> Some(ctxt@) === speclib::enc(Some(k@), Some(msg@), iv@)),
+       !((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ === seq![]),
+{
+    todo!()
+    // match owl_aead::encrypt_combined(cipher(), k, msg, iv) {
+    //     Ok(c) => c,
+    //     Err(e) => {
+    //         // dbg!(e);
+    //         Vec { vec: vec![] }
+    //     }
+    // }
+}
+
+#[verifier(external_body)]
+pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
+    ensures
+        (k@.len() == crate::KEY_SIZE && speclib::dec(Some(k@), Some(c@)).is_Some()) ==>
+            x.is_Some() && x.get_Some_0()@ === speclib::dec(Some(k@), Some(c@)).get_Some_0().get_Some_0(),
+        speclib::dec(Some(k@), Some(c@)).is_None() ==> x.is_None(),
+        k@.len() != crate::KEY_SIZE ==> x.is_None(),
+{
+    todo!()
+    // match owl_aead::decrypt_combined(cipher(), slice_subrange(&k, 0, key_size()), self, slice_subrange(&key, key_size(), key.len())) {
+    //     Ok(p) => Some(p),
+    //     Err(e) => {
+    //         // dbg!(e);
+    //         None
+    //     }
+    // }
 }
 
 } // verus!

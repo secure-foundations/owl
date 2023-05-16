@@ -231,11 +231,11 @@ pub mod itree {
         {
             (self.get_Input_0())(Some(i), ev)
         }
-        pub open spec fn is_output(&self, o: Seq<u8>) -> bool {
-            self.is_Output() && self.get_Output_0() === Some(o)
+        pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
+            self.is_Output() && self.get_Output_0() === Some(o) && self.get_Output_1() === ev
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
-            recommends (exists |o| self.is_output(o))
+            recommends (exists |o, ev| self.is_output(o, ev))
         {
             *self.get_Output_2()
         }

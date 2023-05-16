@@ -239,14 +239,15 @@ initLenConsts = M.fromList [
 initTypeLayouts :: M.Map String Layout
 initTypeLayouts = M.map LBytes initLenConsts
 
-printOwlOp :: String -> (RustTy, String) -> [(RustTy, String)] -> String
-printOwlOp op fst args = printOwlFst fst ++ "." ++ op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
-    where 
-        printOwlFst (RcVecU8, s) = "(*" ++ s ++ ")"
-        printOwlFst (_, s) = s
-        printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ").as_slice()"
-        printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
-        printOwlArg (_, s) = s
+
+printOwlArg :: (RustTy, String) -> String
+printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ").as_slice()"
+printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
+printOwlArg (ADT _, s) = "(*" ++ s ++ ".data).as_slice()"
+printOwlArg (_, s) = s
+
+printOwlOp :: String -> [(RustTy, String)] -> String
+printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
 
 -- NB: Owl puts the key first in enc and dec, Rust puts the plaintext/ciphertext first
 initFuncs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String)
@@ -263,14 +264,14 @@ initFuncs = M.fromList [
                 -- [(RcVecU8,k), (_,x)] -> return $ x ++ ".owl_enc(&(*" ++ k ++ ").as_slice())"
                 -- [(VecU8,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ".as_slice())"
                 -- [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
-                [k,x,iv] -> return $ printOwlOp "owl_enc" x [k,iv]
+                [k,x,iv] -> return $ printOwlOp "owl_enc" [k,x,iv]
                 _ -> throwError $ TypeError $ "got wrong number of args for enc"
         )),
         ("dec", (Option VecU8, \args -> case args of
                 -- [(RcVecU8,k), (_,x)] -> return $ x ++ ".owl_dec(&(*" ++ k ++ ").as_slice())"
                 -- [(VecU8,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ".as_slice())"
                 -- [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
-                [k,x] -> return $ printOwlOp "owl_dec" x [k]
+                [k,x] -> return $ printOwlOp "owl_dec" [x,k]
                 _ -> throwError $ TypeError $ "got wrong number of args for dec"
         )),
         ("mac", (VecU8, \args -> case args of
@@ -452,23 +453,23 @@ layoutEnum name cases = do
 -- ADT extraction
 
 genOwlOpsImpl :: String -> Doc ann
-genOwlOpsImpl name = pretty
-    "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
-        "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&(*self.data).as_slice()).owl_output(dest_addr, ret_addr) }",
-        "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_enc(key, iv) }",
-        "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_dec(key) }",
-        -- "fn owl_eq(&self, other: &Self) -> bool { (*self.data).as_slice().owl_eq(&(*other.data).as_slice()) }",
-        "fn owl_length(&self) -> usize { (*self.data).len() }",
-        "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_mac(key) }",
-        "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_mac_vrfy(key, value) }",
-        "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_pkenc(pubkey) }",
-        "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_pkdec(privkey) }",
-        "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_sign(privkey) }",
-        "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_vrfy(pubkey, signature) } ",
-        "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_dh_combine(others_pk) }",
-        "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&(*self.data).as_slice()).owl_extract_expand_to_len(salt, len) }",
-        "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_xor(other) }"
-    ])
+genOwlOpsImpl name = pretty ""
+    -- "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
+    --     "fn owl_output<A>(&self, t: &mut Tracked<ITreeToken<A,Endpoint>>, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&(*self.data).as_slice()).owl_output(t, dest_addr, ret_addr) }",
+    --     "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_enc(key, iv) }",
+    --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_dec(key) }",
+    --     -- "fn owl_eq(&self, other: &Self) -> bool { (*self.data).as_slice().owl_eq(&(*other.data).as_slice()) }",
+    --     "fn owl_length(&self) -> usize { (*self.data).len() }",
+    --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_mac(key) }",
+    --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_mac_vrfy(key, value) }",
+    --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_pkenc(pubkey) }",
+    --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_pkdec(privkey) }",
+    --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_sign(privkey) }",
+    --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&(*self.data).as_slice()).owl_vrfy(pubkey, signature) } ",
+    --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_dh_combine(others_pk) }",
+    --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&(*self.data).as_slice()).owl_extract_expand_to_len(salt, len) }",
+    --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&(*self.data).as_slice()).owl_xor(other) }"
+    -- ])
 
 specGenParserSerializer :: String -> ExtractionMonad (Doc ann)
 specGenParserSerializer name = do
@@ -905,7 +906,7 @@ extractAExpr binds (AELenConst s) = do
 
 -- Some helper functions:
 extractSamp :: DistrName -> ExtractionMonad ((RustTy, String), Doc ann)
-extractSamp "enc" = return ((VecU8, "coins"), pretty "let coins = owl_aead::gen_rand_nonce(cipher());")
+extractSamp "enc" = return ((VecU8, "coins"), pretty "let coins = owl_sample(itree, nonce_size());")
 extractSamp distr = throwError $ UndefinedSymbol distr
 
 extractExpr :: Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, Doc ann, Doc ann)
@@ -917,19 +918,18 @@ extractExpr loc binds (CInput xsk) = do
     (_, rt', prek, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
     let eWrapped = pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
     let letbinding =
-            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(/* &self.listener */)" <> pretty ";" <> line <>
+            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(itree/*, &self.listener */)" <> pretty ";" <> line <>
             pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [letbinding, prek, kPrettied])
 extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (rty, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    let aePrettied' = case rty of
-            RcVecU8 -> parens (pretty "*" <> aePrettied)
-            _ -> aePrettied
+    let aePrettied' = pretty $ printOwlArg (rty, show aePrettied)
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
         Just (EndpointLocality (Locality lname _)) -> return $ pretty "&" <> pretty lname <> pretty "_addr()"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev) <> pretty ".as_str()"
-    return $ (binds, Unit, preAe, {- pretty "&" <> -} aePrettied' <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty myLname <> pretty "_addr()") {- <> pretty ";" -})
+    return $ (binds, Unit, preAe, pretty "owl_output" <> (parens . hsep . punctuate comma $ [pretty "itree", aePrettied', l, pretty "&" <> pretty myLname <> pretty "_addr()"]))
+    --{- pretty "&" <> -} aePrettied' <> pretty ".owl_output" <> parens (pretty "itree," <+> l <> comma <+> pretty "&" <> pretty myLname <> pretty "_addr()") {- <> pretty ";" -})
 extractExpr loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
@@ -1130,15 +1130,24 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
+        specRtPrettied specRt = pretty "<Option<" <> pretty specRt <> pretty ">, Endpoint>"
         genFuncDecl name sidArgs owlArgs rt = do
-            let argsPrettied = pretty "&mut self," <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
-            let rtPrettied = case rt of
-                    Unit -> pretty ""
-                    _ -> pretty "->" <+> pretty rt
-            return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied
+            let itree = pretty "itree: &mut Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
+            let argsPrettied =
+                    pretty "&mut self," <+> 
+                    itree <> comma <+>
+                    (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
+            let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> pretty rt)
+            let viewRes = case rt of
+                    Unit -> pretty "Some(())"
+                    _ -> pretty "res.view()"
+            let defReqEns =
+                    pretty "requires old(itree)@@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
+                    pretty "ensures  itree@@.results_in" <> parens viewRes <> line 
+            return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         genDefSpec (Locality lname _) body owlArgs specRt = do
             let argsPrettied = pretty "loc:" <+> pretty (locName lname) <> (hsep . punctuate comma . map extractArg $ owlArgs)
-            let rtPrettied = pretty "-> ITree<Option<" <> pretty specRt <> pretty ">, Endpoint>"
+            let rtPrettied = pretty "-> ITree" <> specRtPrettied specRt
             return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
                 pretty "owl_spec!" <> parens (line <>
                     pretty body
@@ -1345,7 +1354,7 @@ extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     let specEndpoint = mkSpecEndpoint $ M.keys locMap
     (sidArgMap, ps, spec_ps) <- foldM (go pubkeys) (M.empty, [], []) $ M.assocs locMap
-    return (sidArgMap, addrs <> line <> vsep ps, specEndpoint <> line <> vsep spec_ps)
+    return (sidArgMap, addrs <> line <> vsep ps, specEndpoint <> line <> endpointOfAddr <> line <> line <> (vsep . punctuate line $ spec_ps))
     where
         go pubKeys (m, ps, spec_ps) (lname, ldata) = do
             (nSidArgs, p, spec_p) <- extractLoc pubKeys (lname, ldata)
@@ -1353,13 +1362,16 @@ extractLocs pubkeys locMap = do
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
-            pretty "pub const fn" <+> pretty l <> pretty "_addr() -> StrSlice<'static> {" <+> pretty "new_strlit" <> parens (dquotes (pretty "127.0.0.1:" <> pretty (9001 + n))) <+> pretty "}" <> line <>
+            pretty "#[verifier(external_body)] pub const fn" <+> pretty l <> pretty "_addr() -> (a:StrSlice<'static>)" <> line <>
+                pretty "ensures endpoint_of_addr(a.view()) ==" <+> pretty "Endpoint::Loc_" <> pretty l <> line <> 
+            braces (line <> pretty "new_strlit" <> parens (dquotes (pretty "127.0.0.1:" <> pretty (9001 + n))) <> line) <> line <>
             mkAddrs (n+1) locs
         mkSpecEndpoint lnames = 
             pretty "#[is_variant]" <> line <> pretty "#[derive(Copy, Clone)]" <> line <> 
             pretty "pub enum Endpoint" <+> braces (line <> 
                 (vsep . punctuate comma . map (\s -> pretty "Loc_" <> pretty s) $ lnames)
             <> line)
+        endpointOfAddr = pretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { todo!() }"
 
 entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName Int -> ExtractionMonad (Doc ann)
 entryPoint locMap sharedNames pubKeys sidArgMap = do
@@ -1434,7 +1446,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty loc <> pretty "_main() ...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
+            pretty "let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled (pretty "todo!(/* itree token */)" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
@@ -1534,23 +1546,24 @@ preamble = do
             "pub spec const TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);",
             "pub spec const NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);",
             "pub spec const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";",
-            "pub const fn cipher() -> owl_aead::Mode { " ++ c ++ "}",
-            "pub const fn key_size() -> usize { owl_aead::key_size(cipher()) }",
-            "pub const fn tag_size() -> usize { owl_aead::tag_size(cipher()) }",
-            "pub const fn nonce_size() -> usize { owl_aead::nonce_size(cipher()) }",
-            "pub const fn hmac_mode() -> owl_hmac::Mode { " ++ h ++ " }"
+            "pub const fn cipher() -> (r:owl_aead::Mode) ensures r == CIPHER { " ++ c ++ "}",
+            "pub const fn key_size() -> (r:usize) ensures r == KEY_SIZE { owl_aead::key_size(cipher()) }",
+            "pub const fn tag_size() -> (r:usize) ensures r == TAG_SIZE { owl_aead::tag_size(cipher()) }",
+            "pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE { owl_aead::nonce_size(cipher()) }",
+            "pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE { " ++ h ++ " }"
         ] ++
         [   owlOpsTraitDef,
             owlOpsTraitImpls,
             owl_msgDef,
             owl_outputDef,
             owl_inputDef,
+            owl_sampleImplDef,
             owl_miscFns
         ]
     where
         owlOpsTraitDef = vsep $ map pretty [
                 "trait OwlOps {",
-                    "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice);",
+                    -- "fn owl_output/*<A>*/(&self, /*t: &mut Tracked<ITreeToken<A,Endpoint>>, */ dest_addr: &StrSlice, ret_addr: &StrSlice);",
                     "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8>;",
                     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;",
                     -- "fn owl_eq(&self, other: &Self) -> bool;",
@@ -1572,9 +1585,9 @@ preamble = do
             ]
         owlOpsTraitImpls = vsep $ map pretty [
                 "impl OwlOps for &[u8] {",
-                    "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) {",
-                        "output(self, dest_addr, ret_addr);",
-                    "}",
+                    -- "fn owl_output/*<A>*/(&self, /*t: &mut Tracked<ITreeToken<A,Endpoint>>, */ dest_addr: &StrSlice, ret_addr: &StrSlice) {",
+                    --     "output(/*t,*/ self, dest_addr, ret_addr);",
+                    -- "}",
                     -- "#[verifier(external_body)] fn owl_eq(&self, other: &&[u8]) -> bool {",
                     --     "self == other",
                     -- "}",
@@ -1635,22 +1648,22 @@ preamble = do
                         "{let c = Vec { vec: self.iter().zip(other).map(|(x, y)| x ^ y).collect() }; c}",
                     "}",
                 "}",
-                "impl OwlOps for Vec<u8> {",
-                    "fn owl_output(&self, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&self.as_slice()).owl_output(dest_addr, ret_addr) }",
-                    "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_enc(key, iv) }",
-                    "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_dec(key) }",
-                    -- "fn owl_eq(&self, other: &Self) -> bool { self.as_slice().owl_eq(&other.as_slice()) }",
-                    "fn owl_length(&self) -> usize { self.len() }",
-                    "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_mac(key) }",
-                    "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_mac_vrfy(key, value) }",
-                    "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_pkenc(pubkey) }",
-                    "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_pkdec(privkey) }",
-                    "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_sign(privkey) }",
-                    "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_vrfy(pubkey, signature) } ",
-                    "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_dh_combine(others_pk) }",
-                    "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.as_slice()).owl_extract_expand_to_len(salt, len) }",
-                    "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_xor(other) }",
-                "}",
+                -- "impl OwlOps for Vec<u8> {",
+                --     "fn owl_output<A>(&self, t: &mut Tracked<ITreeToken<A,Endpoint>>, dest_addr: &StrSlice, ret_addr: &StrSlice) { (&self.as_slice()).owl_output(t, dest_addr, ret_addr) }",
+                --     "fn owl_enc(&self, key: &[u8], iv: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_enc(key, iv) }",
+                --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_dec(key) }",
+                --     -- "fn owl_eq(&self, other: &Self) -> bool { self.as_slice().owl_eq(&other.as_slice()) }",
+                --     "fn owl_length(&self) -> usize { self.len() }",
+                --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_mac(key) }",
+                --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_mac_vrfy(key, value) }",
+                --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_pkenc(pubkey) }",
+                --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_pkdec(privkey) }",
+                --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_sign(privkey) }",
+                --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.as_slice()).owl_vrfy(pubkey, signature) } ",
+                --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_dh_combine(others_pk) }",
+                --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.as_slice()).owl_extract_expand_to_len(salt, len) }",
+                --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.as_slice()).owl_xor(other) }",
+                -- "}",
                 ""
             ]
         owl_msgDef = vsep $ map pretty [
@@ -1662,7 +1675,10 @@ preamble = do
             ]
         owl_outputDef = vsep $ map pretty [
                 "#[verifier(external_body)]",
-                "pub fn output(x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice) {",
+                "pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)",
+                    "requires old(t)@@.is_output(x@, endpoint_of_addr(dest_addr.view()))",
+                    "ensures  t@@ === old(t)@@.give_output()",
+                "{",
                     "/*",
                     "let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };",
                     "let serialized = serde_json::to_vec(&msg).unwrap();",
@@ -1675,7 +1691,10 @@ preamble = do
             ]
         owl_inputDef = vsep $ map pretty [
                 "#[verifier(external_body)]",
-                "pub fn owl_input(/*listener: &TcpListener*/) -> (_:(Vec<u8>, String)) {",
+                "pub fn owl_input<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, /*listener: &TcpListener*/) -> (ie:(Vec<u8>, String))", 
+                    "requires old(t)@@.is_input()",
+                    "ensures  t@@ === old(t)@@.take_input(ie.0@, endpoint_of_addr(ie.1.view()))",
+                "{",
                     "/*",
                     "let (mut stream, _addr) = listener.accept().unwrap();",
                     "let mut reader = io::BufReader::new(&mut stream);",
@@ -1687,6 +1706,15 @@ preamble = do
                     "todo!()",
                 "}"
             ]
+        owl_sampleImplDef = vsep $ map pretty [
+                "#[verifier(external_body)]",
+                "pub fn owl_sample<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)", 
+                    "requires old(t)@@.is_sample(n)",
+                    "ensures  t@@ === old(t)@@.get_sample(res@)",
+                "{",
+                    "owl_util::gen_rand_bytes(n)",
+                "}"
+            ]
         owl_miscFns = vsep $ map pretty [
                 "/* pub fn get_num_from_cmdline(loc_prompt: &str) -> usize {",
                     "let mut input_text = std::string::String::new();",
@@ -1696,7 +1724,8 @@ preamble = do
                         ".expect(\"failed to read from stdin\");",
                     "let n = input_text.trim().parse::<usize>().expect(\"not an int\");",
                     "n",
-                "} */"
+                "} */",
+                ""
             ]
 
 extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann))
