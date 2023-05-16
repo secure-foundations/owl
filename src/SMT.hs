@@ -363,9 +363,9 @@ interpretAExp ae =
         vs <- mapM interpretAExp xs
         case f of
           -- Special cases
-          f | f == (topLevelPath "UNIT") -> return unit
-          f | f == (topLevelPath "true") -> return bTrue
-          f | f == (topLevelPath "false") -> return bFalse
+          f | f `aeq` (topLevelPath "UNIT") -> return unit
+          f | f `aeq` (topLevelPath "true") -> return bTrue
+          f | f `aeq` (topLevelPath "false") -> return bFalse
           _ -> do
               vf <- getFunc =<< (smtName f)
               return $ sApp vf vs

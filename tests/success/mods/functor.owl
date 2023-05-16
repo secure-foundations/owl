@@ -7,10 +7,13 @@ module type S = {
 module Srefined = {
     name x : nonce @ alice
     name z : nonce @ alice
-} : S
+} 
 
-module M = functor (X : S) {
+module M = functor (X : S) => {
     module Z = X
-    name k : enckey Name(Z.y) @ alice
+    name k : enckey Name(Z.x) @ alice
+    def tst() @ alice : Unit = 
+        let k = get(Z.x) in 
+        ()
 }
     

@@ -615,16 +615,16 @@ parseDecls =
             xs <- (do
                 n <- identifier
                 symbol ":"
-                t <- parseModuleExp $ "SPECOF" ++ n
+                t <- parseModuleExp ModType $ "SPECOF" ++ n
                 return (n, t)
                 ) `sepBy1` (symbol ",")
             symbol ")"
             return xs
         omt <- optionMaybe $ do
             symbol ":"
-            parseModuleExp $ "TYPEOF" ++ n
+            parseModuleExp ModType $ "TYPEOF" ++ n
         symbol "="
-        me <- parseModuleExp n
+        me <- parseModuleExp imt n
         let (bdy, otype) = mkModuleBinders modArgs me omt 
         return $ DeclModule n imt bdy otype 
     )
@@ -649,17 +649,15 @@ parseIsModType = do
                     Just _ -> ModType
                     Nothing -> ModConcrete
     
-
-
-parseModuleExp :: String -> Parser ModuleExp
-parseModuleExp n = 
-    parensPos (parseModuleExp n)
+parseModuleExp :: IsModuleType -> String -> Parser ModuleExp
+parseModuleExp imt n = 
+    parensPos (parseModuleExp imt n)
     <|>
     (parseSpanned $ do
         symbol "{"
         ds <- parseDecls
         symbol "}"
-        return $ ModuleBody (bind (s2n $ "%mod_" ++ n) ds) 
+        return $ ModuleBody imt (bind (s2n $ "%mod_" ++ n) ds) 
     )
     <|>
     (parseSpanned $ do
@@ -667,17 +665,17 @@ parseModuleExp n =
         symbol "("
         m <- identifier
         symbol ":"
-        nt <- parseModuleExp ("TYPEOF" ++ m)
+        nt <- parseModuleExp ModType ("TYPEOF" ++ m)
         symbol ")"
         symbol "=>"
-        mb <- parseModuleExp n
+        mb <- parseModuleExp imt n
         return $ ModuleFun $ bind (s2n m, m, embed nt) mb
     )
     <|>
-    parseAppChain n
+    parseAppChain imt n
 
-parseAppChain :: String -> Parser ModuleExp
-parseAppChain n = parseSpanned $ do
+parseAppChain :: IsModuleType -> String -> Parser ModuleExp
+parseAppChain imt n = parseSpanned $ do
     p <- parsePath
     oargs <- optionMaybe $ do
         symbol "("

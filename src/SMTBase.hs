@@ -97,7 +97,7 @@ data SolverEnv = SolverEnv {
     _lengthConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
     _symNameEnv :: M.Map String SExp,
-    _symLabelVarEnv :: M.Map ResolvedPath SExp,
+    _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),

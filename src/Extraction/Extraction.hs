@@ -370,25 +370,25 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp f _ [inner] | f == (PUnresolvedVar $ "cipherlen") -> do
+            AEApp f _ [inner] | f `aeq` (PUnresolvedVar $ "cipherlen") -> do
                 tagSz <- useAeadTagSize
                 li <- helper inner
                 case li of
                     (LBytes ni) -> return $ LBytes (ni + tagSz)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PUnresolvedVar $ "plus") -> do
+            AEApp f _ [a, b] | f `aeq` (PUnresolvedVar $ "plus") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f == (PUnresolvedVar $ "mult") -> do
+            AEApp f _ [a, b] | f `aeq` (PUnresolvedVar $ "mult") -> do
                 la <- helper a
                 lb <- helper b
                 case (la, lb) of
                     (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
                     _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ _ | f == (PUnresolvedVar $ "zero") -> return $ LBytes 0
+            AEApp f _ _ | f `aeq` (PUnresolvedVar $ "zero") -> return $ LBytes 0
             AEApp fn _ [] -> do
                 lookupTyLayout . rustifyName . rustifyPath $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
@@ -763,7 +763,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
-                    if owlFn == (PUnresolvedVar $ "H") then
+                    if owlFn `aeq` (PUnresolvedVar $ "H") then
                         -- special case for the random oracle function
                         let unspanned = map (view val) owlArgs in
                         case (fparams, unspanned) of
@@ -776,7 +776,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn == (PUnresolvedVar $ "dhpk") then
+                        if owlFn `aeq` (PUnresolvedVar $ "dhpk") then
                             let unspanned = map (view val) owlArgs in
                             case unspanned of
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))

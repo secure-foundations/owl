@@ -237,10 +237,10 @@ resolveDecls (d:ds) =
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
     case me^.val of
-      ModuleBody xs -> do
+      ModuleBody imt xs -> do
           (x, ds1) <- unbind xs
           ds1' <- local (set curPath (PPathVar OpenPathVar x)) $ resolveDecls ds1
-          return $ Spanned (me^.spanOf) $ ModuleBody (bind x ds1') 
+          return $ Spanned (me^.spanOf) $ ModuleBody imt (bind x ds1') 
       ModuleVar p -> do
           p' <- resolvePath pos PTMod p 
           return $ Spanned (me^.spanOf) $ ModuleVar p'
@@ -252,7 +252,7 @@ resolveModuleExp pos me =
           ((x, s, t), me) <- unbind bdy
           v <- freshModVar s
           t' <- resolveModuleExp pos (unembed t)
-          me' <- local (over modPaths $ T.insert s (True, PPathVar ClosedPathVar v)) $ resolveModuleExp pos me 
+          me' <- local (over modPaths $ T.insert s (True, PPathVar (ClosedPathVar $ ignore s) v)) $ resolveModuleExp pos me 
           return $ Spanned (me^.spanOf) $ ModuleFun $ bind (v, s, embed t') me' 
 
 resolveNameType :: NameType -> Resolve NameType

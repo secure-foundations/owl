@@ -60,10 +60,10 @@ data Path =
     PUnresolvedVar String
       | PUnresolvedPath String [String]
       | PRes ResolvedPath
-    deriving (Generic, Typeable, Eq, Ord)
+    deriving (Generic, Typeable)
 
-data PathVarType = OpenPathVar | ClosedPathVar
-    deriving (Show, Generic, Typeable, Eq, Ord)
+data PathVarType = OpenPathVar | ClosedPathVar (Ignore String)
+    deriving (Show, Generic, Typeable)
 
 instance Alpha PathVarType
 instance Subst ResolvedPath PathVarType
@@ -74,7 +74,7 @@ data ResolvedPath =
       PTop
       | PPathVar PathVarType (Name ResolvedPath) 
       | PDot ResolvedPath String
-    deriving (Generic, Typeable, Eq, Ord)
+    deriving (Generic, Typeable)
 
 topLevelPath :: String -> Path
 topLevelPath s = PRes $ PDot PTop s
@@ -90,7 +90,9 @@ instance Show Path where
 
 instance Show ResolvedPath where
     show PTop = "Top"
-    show (PPathVar _ s) = show s
+    show (PDot (PPathVar OpenPathVar _) s) = s
+    show (PPathVar (ClosedPathVar s) _) = unignore s
+    show (PPathVar OpenPathVar s) = show s
     show (PDot x y) = show x ++ "." ++ y
 
 
@@ -278,7 +280,7 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- tRefined t x p = mkSpanned $ TRefined t x p
 
 data ModuleExpX = 
-    ModuleBody (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
+    ModuleBody IsModuleType (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
       | ModuleVar Path
       | ModuleApp ModuleExp Path
       | ModuleFun (Bind (Name ResolvedPath, String, Embed ModuleExp) ModuleExp)
@@ -314,7 +316,7 @@ data DeclX =
 type Decl = Spanned DeclX
 
 data IsModuleType = ModType | ModConcrete
-    deriving (Show, Generic, Typeable)
+    deriving (Show, Generic, Typeable, Eq)
 
 instance Alpha IsModuleType
 instance Subst AExpr IsModuleType
@@ -693,7 +695,7 @@ instance Pretty DeclX where
     pretty d = pretty (show d)
 
 instance Pretty ModuleExpX where
-    pretty (ModuleBody nk) = 
+    pretty (ModuleBody _ nk) = 
         let (n, k) = prettyBind nk in
         angles (n <> pretty "." <> k)
     pretty (ModuleVar p) = pretty p

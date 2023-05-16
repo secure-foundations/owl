@@ -25,6 +25,7 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name
+import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
 
@@ -102,10 +103,13 @@ data ModDef =
     | MFun String ModDef (Bind (Name ResolvedPath) ModDef)
     deriving (Show, Generic, Typeable)
 
+
+
 instance Alpha ModDef
 instance Subst ResolvedPath ModDef
 
 data ModBody = ModBody { 
+    _isModuleType :: IsModuleType,
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
     _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
@@ -221,6 +225,21 @@ makeLenses ''DefSpec
 makeLenses ''Env
 
 makeLenses ''ModBody
+
+modDefKind :: ModDef -> IsModuleType
+modDefKind (MBody xd) =
+    let (_, d) = unsafeUnbind xd in _isModuleType d
+modDefKind (MFun _ _ xd) = 
+    let (_, d) = unsafeUnbind xd in modDefKind d
+
+makeModDefConcrete :: ModDef -> Check ModDef
+makeModDefConcrete (MBody xd) = do
+    (x, d) <- unbind xd
+    return $ MBody $ bind x $ set isModuleType ModConcrete d
+makeModDefConcrete (MFun s t xk) = do
+    (x, k) <- unbind xk
+    k' <- makeModDefConcrete k
+    return $ MFun s t $ bind x k'
 
 instance Fresh Check where
     fresh (Fn s _) = do
@@ -352,12 +371,17 @@ checkIdxPId i@(IVar pos _) = do
 
 openModule :: Ignore Position -> ResolvedPath -> Check ModBody
 openModule pos rp = do
-    go rp
+    mb <- go rp
+    tc <- view tcScope
+    case tc of
+      TcDef _ -> assert pos ("Module must be concrete: " ++ show rp) $ (mb^.isModuleType) == ModConcrete 
+      _ -> return ()
+    return mb
     where
         go :: ResolvedPath -> Check ModBody
         go PTop = view $ openModules . unsafeLookup Nothing
         go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup (Just v)
-        go p0@(PPathVar ClosedPathVar v) = do
+        go p0@(PPathVar (ClosedPathVar _) v) = do
             mc <- view modContext
             case lookup v mc of
               Just (MBody xmb) -> do
@@ -381,7 +405,7 @@ getModDef pos rp = do
         go :: ResolvedPath -> Check ModDef
         go PTop = typeError pos $ "Got top for getModDef"
         go (PPathVar OpenPathVar v) = typeError pos $ "Got opened module var for getModDef"
-        go (PPathVar ClosedPathVar v) = do
+        go (PPathVar (ClosedPathVar _) v) = do
             mc <- view modContext
             case lookup v mc of
               Just b -> return b
@@ -665,9 +689,9 @@ collectEnvInfo f = do
         case md of
           MFun _ _ _ -> return []
           MBody xmb -> do
-              let p = PPathVar ClosedPathVar x
+              let p = PPathVar (ClosedPathVar (ignore $ show x)) x
               (y, mb) <- unbind xmb
-              go f (PPathVar ClosedPathVar x) (subst y p mb)
+              go f (PPathVar (ClosedPathVar $ ignore $ show x) x) (subst y p mb)
     return $ concat $ res ++ res'
         where
             go :: (ModBody -> Map String a) -> ResolvedPath -> ModBody -> Check (Map ResolvedPath a)
@@ -695,9 +719,9 @@ collectEnvAxioms f = do
         case md of
           MFun _ _ _ -> return []
           MBody xmb -> do
-              let p = PPathVar ClosedPathVar x
+              let p = PPathVar (ClosedPathVar $ ignore $ show x) x
               (y, mb) <- unbind xmb
-              go f (PPathVar ClosedPathVar x) (subst y p mb)
+              go f (PPathVar (ClosedPathVar $ ignore $ show x) x) (subst y p mb)
     return $ concat $ res ++ res' 
         where
             go f p md = do

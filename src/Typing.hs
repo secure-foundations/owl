@@ -35,14 +35,14 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import qualified Text.Parsec as P
 import Parse
 
-emptyModBody :: ModBody
-emptyModBody = ModBody mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody :: IsModuleType -> ModBody
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody)] mempty interpUserFunc r
+    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -318,7 +318,7 @@ initDetFuncs = withNormalizedTys $ [
                   debug $ pretty "Checking name " <> pretty n <> pretty " against " <> pretty m
                   if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])))
                   else case (n^.val, m^.val) of
-                       (BaseName (is1, is1') a, BaseName (is2, is2') b) | a == b -> do
+                       (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
                            let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
                            return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) p))
                        _ -> do
@@ -475,7 +475,7 @@ interpUserFunc pos pth md (EnumTest tv variant) = do
         case args of
           [t] -> 
               case (stripRefinements t)^.val of
-                TConst s _ | s == (PRes $ PDot pth tv) -> return $ TBool advLbl
+                TConst s _ | s `aeq` (PRes $ PDot pth tv) -> return $ TBool advLbl
                 _ -> do
                     l <- coveringLabel t
                     return $ TBool l
@@ -601,7 +601,7 @@ isSubtype' t1 t2 =
       (TUnit,  _) -> do
         isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (topLevelPath $ "UNIT") [] []))) t2
       (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
-      (TConst x ps1, TConst y ps2) | (x == y) -> do
+      (TConst x ps1, TConst y ps2) | (x `aeq` y) -> do
           td <- getTyDef (t1^.spanOf) x
           case td of
             EnumDef _ -> do
@@ -634,7 +634,7 @@ isSubtype' t1 t2 =
           return $ b1 && b2
       (TName n, TName m) ->
           case (n^.val, m^.val) of
-            (BaseName (is1, is1') a, BaseName (is2, is2') b) | a == b -> do
+            (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
               debug $ pretty "Equality query on indices " <> pretty (is1 ++ is1') <> pretty " and " <> pretty (is2 ++ is2')
               let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2 ++ is2')
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert p
@@ -771,16 +771,18 @@ sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths
 inferModuleExp :: ModuleExp -> Check ModDef
 inferModuleExp me = 
     case me^.val of
-      ModuleBody xds' -> do
+      ModuleBody imt xds' -> do
           (x, ds') <- unbind xds'
-          m' <- local (over openModules $ insert (Just x) emptyModBody) $ checkDeclsWithCont ds' $ view curMod
+          m' <- local (over openModules $ insert (Just x) (emptyModBody imt)) $ checkDeclsWithCont ds' $ view curMod
           let md = MBody $ bind x m'
           return md
       ModuleFun xe -> do
           ((x, s, t), k) <- unbind xe
           p <- curModName
           t1 <- inferModuleExp $ unembed t 
-          r <- local (over modContext $ insert x t1) $ 
+          assert (me^.spanOf) (show $ pretty "Not a module type: " <> pretty (unembed t)) $ (modDefKind t1) == ModType
+          t1Concrete <- makeModDefConcrete t1
+          r <- local (over modContext $ insert x t1Concrete) $ 
                   inferModuleExp k
           return $ MFun s t1 (bind x r)
       ModuleApp e1 arg@(PRes argp) -> do
@@ -789,6 +791,7 @@ inferModuleExp me =
             MBody _ -> typeError (me^.spanOf) $ "Not a functor: " ++ show e1
             MFun _ s xd -> do
               argd <- getModDef (me^.spanOf) argp
+              assert (me^.spanOf) ("Not a module: " ++ show argp) $ (modDefKind argd) == ModConcrete
               moduleMatches (me^.spanOf) argd s 
               (x, d) <- unbind xd
               return $ subst x argp d
@@ -802,7 +805,7 @@ inferModuleExp me =
           case lookup (Just x) cm of
               Just md -> return $ MBody $ bind x md
               Nothing -> typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
-      ModuleVar pth@(PRes (PPathVar ClosedPathVar x)) -> do
+      ModuleVar pth@(PRes (PPathVar (ClosedPathVar _) x)) -> do
           mc <- view modContext
           case lookup x mc of
             Just b -> return b
@@ -826,12 +829,16 @@ checkDecl d cont =
         case ntnlsOpt of
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
-      DeclModule n _ me omt -> do
+      DeclModule n imt me omt -> do
           md <- inferModuleExp me
+          case imt of
+            ModConcrete -> assert (d^.spanOf) ("Expected module, got module type: " ++ show (pretty me)) $ modDefKind md == imt
+            ModType -> assert (d^.spanOf) ("Expected module type, got module: " ++ show (pretty me)) $ modDefKind md == imt
           case omt of
             Nothing -> return ()
             Just mt -> do
               mdt <- inferModuleExp mt
+              assert (d^.spanOf) ("Expected module type: " ++ show (pretty mt)) $ modDefKind mdt == ModType
               moduleMatches (d^.spanOf) md mdt
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
@@ -938,10 +945,10 @@ nameExpIsLocal ne =
     case ne^.val of
       BaseName _ (PRes (PDot p s)) -> do
           p' <- curModName
-          return $ p == p'
+          return $ p `aeq` p'
       ROName (PRes (PDot p s)) -> do
           p' <- curModName
-          return $ p == p'
+          return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
 
 
@@ -1690,7 +1697,7 @@ unsolvability :: [AExpr] -> Check Prop
 unsolvability aes = local (set tcScope TcGhost) $ do
     bs <- forM aes $ \ae -> 
         case ae^.val of
-          AEApp f [] [x, y] | f == (topLevelPath $ "dh_combine")-> do
+          AEApp f [] [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
               t1 <- inferAExpr x
               t2 <- inferAExpr y
               case (t1^.val, t2^.val) of
@@ -1733,7 +1740,6 @@ defMatches pos s d1 d2 =
           debug $ pretty "Headers:"
           debug $ pretty pty_bdy
           debug $ pretty pty_bdy'
-          -- debug $ pretty "Checking def with types " <> pretty pty <+> pretty pty'
           assert pos ("Def mismatch: " ++ s) $ blspec `aeq` blspec'
       (Nothing, _) -> typeError pos $ "Missing def: " ++ s
 
@@ -1769,10 +1775,12 @@ moduleMatches pos md1 md2 =
       (MBody _, MFun _ _ _) -> typeError pos $ "Expected functor, but got module"
       (MFun _ _ _, MBody _) -> typeError pos $ "Expected module, but got functor"
       (MFun s t1 xmd1, MFun _ t2 ymd2) -> do
+          debug $ pretty "Checking moduleMatches of arguments"
           moduleMatches pos t2 t1
+          debug $ pretty "Checking moduleMatches of body"
           (x, md1) <- unbind xmd1
           (y, md2_) <- unbind ymd2
-          let md2 = subst y (PPathVar ClosedPathVar x) md2_
+          let md2 = subst y (PPathVar (ClosedPathVar $ ignore $ show x) x) md2_
           p <- curModName
           local (over modContext $ insert x t1) $ 
                 moduleMatches pos md1 md2
