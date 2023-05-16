@@ -85,8 +85,14 @@ parseNameExp =
             reserved "RO"
             symbol "<"
             p <- parsePath
+            oi <- optionMaybe $ do
+                symbol ","
+                many1 digit
             symbol ">"
-            return $ ROName p)
+            let i = case oi of
+                      Just x -> read x
+                      Nothing -> 0
+            return $ ROName p i)
         <|>
         (do
             reserved "PRF"
@@ -563,8 +569,8 @@ parseDecls =
         symbol ":"
         es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
-        nt <- parseNameType
-        return $ DeclRandOrcl l (es, nt))
+        nts <- parseNameType `sepBy1` (symbol "||")
+        return $ DeclRandOrcl l es nts)
     <|>
     (parseSpanned $ do
         reserved "func"
@@ -796,11 +802,17 @@ parseExprTerm =
         reserved "hash"
         symbol "<"
         p <- parsePath
+        oi <- optionMaybe $ do
+            symbol ","
+            many1 digit
         symbol ">"
         symbol "("
         as <- parseArgs
         symbol ")"
-        return $ ECrypt (CHash p) as
+        let i = case oi of
+                  Just x -> read x
+                  Nothing -> 0
+        return $ ECrypt (CHash p i) as
     )
     <|>
     (parseSpanned $ do 

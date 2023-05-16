@@ -118,7 +118,7 @@ data ModBody = ModBody {
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
-    _randomOracle :: Map String ([AExpr], NameType),
+    _randomOracle :: Map String ([AExpr], [NameType]),
     _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
@@ -435,10 +435,14 @@ getNameInfo ne = do
                     when ((length vs1, length vs2) /= (length is, length ps)) $ 
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
-     ROName (PRes (PDot p s)) -> do
+     ROName (PRes (PDot p s)) i -> do
         md <- openModule (ne^.spanOf) p 
         case lookup s (md^.randomOracle) of 
-          Just (_, nt) -> return $ Just (nt, Nothing)
+          Just (_, nts) -> 
+              if i < length nts then 
+                  return $ Just (nts !! i, Nothing)
+              else
+                  typeError (ne^.spanOf) $ "Random oracle index out of bounds: " ++ show (pretty ne)
           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO p
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
@@ -453,7 +457,7 @@ getNameInfo ne = do
             _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (pretty ne)
 
-getRO :: Ignore Position -> Path -> Check ([AExpr], NameType)
+getRO :: Ignore Position -> Path -> Check ([AExpr], [NameType])
 getRO pos (PRes (PDot p s)) = do
         md <- openModule pos p 
         case lookup s (md^.randomOracle) of 
@@ -737,7 +741,7 @@ collectEnvAxioms f = do
 collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
 collectNameEnv = collectEnvInfo (_nameEnv)
 
-collectRO :: Check (Map ResolvedPath ([AExpr], NameType))
+collectRO :: Check (Map ResolvedPath ([AExpr], [NameType]))
 collectRO = collectEnvInfo (_randomOracle)
 
 collectFlowAxioms :: Check ([(Label, Label)])
@@ -759,16 +763,18 @@ pathPrefix _ = error "pathPrefix error"
 -- Normalize and check locality
 normLocality :: Ignore Position -> Locality -> Check Locality
 normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
+    debug $ pretty "normLocality: " <> (pretty $ show loc)
     md <- openModule pos p
     case lookup s (md^.localities) of 
       Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
-      Just (Right p') -> normLocality pos $ Locality (PRes p) xs
+      Just (Right p') -> normLocality pos $ Locality (PRes p') xs
       Just (Left ar) -> do
               assert pos (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
                   assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
               return $ Locality (PRes (PDot p s)) xs 
+normLocality pos loc = typeError pos $ "bad case: " ++ show loc
 
 -- Normalize locality path, get arity
 normLocalityPath :: Ignore Position -> Path -> Check Int

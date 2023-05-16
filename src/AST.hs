@@ -128,7 +128,7 @@ type AExpr = Spanned AExprX
 
 data NameExpX = 
     BaseName ([Idx], [Idx]) Path
-    | ROName Path
+    | ROName Path Int
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
 
@@ -142,8 +142,8 @@ data Locality = Locality Path [Idx]
 
 
 
-roName :: Path -> NameExp
-roName s = mkSpanned (ROName s)
+roName :: Path -> Int -> NameExp
+roName s i = mkSpanned (ROName s i)
 
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
@@ -307,7 +307,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String ([AExpr], NameType)
+    | DeclRandOrcl String [AExpr] [NameType]
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
@@ -375,7 +375,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-    CHash Path
+    CHash Path Int
     deriving (Show, Generic, Typeable)
 
 
@@ -510,7 +510,7 @@ instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
 instance Pretty NameExpX where
-    pretty (ROName s) = pretty "RO<" <> pretty s <> pretty ">"
+    pretty (ROName s i) = pretty "RO<" <> pretty s <> pretty "," <> pretty i <> pretty ">" 
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
     pretty (BaseName vs n) = 
         case vs of
@@ -621,8 +621,8 @@ instance Pretty AExprX where
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty ExprX where 
-    pretty (ECrypt (CHash p) a) = do
-        pretty "RO" <+> pretty p <+> pretty a
+    pretty (ECrypt (CHash p i) a) = do
+        pretty "RO" <+> pretty p <+> pretty a <+> pretty i
     pretty (EInput k) = 
         let ((x, i), e) = unsafeUnbind k in
         pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e

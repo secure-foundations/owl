@@ -1106,13 +1106,14 @@ sortDecls dcls = do
         DeclLocality l idxs -> error "TODO fix"
             --if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
             --else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
-        DeclRandOrcl n (arg, rty) -> do
-            rtlen <- case rty ^. val of
-                NT_Nonce -> return "NONCE_SIZE"
-                NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"
-                _ -> throwError $ UnsupportedOracleReturnType n
-            oracles %= M.insert n rtlen
-            return (gDecls, locMap, shared, pubkeys)
+        -- TODO
+        --DeclRandOrcl n (arg, rty) -> do
+        --    rtlen <- case rty ^. val of
+        --        NT_Nonce -> return "NONCE_SIZE"
+        --        NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"
+        --        _ -> throwError $ UnsupportedOracleReturnType n
+        --    oracles %= M.insert n rtlen
+        --    return (gDecls, locMap, shared, pubkeys)
         DeclCorr _ _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
         DeclDetFunc name _ _ ->
             if name == "xor" then return (gDecls, locMap, shared, pubkeys) -- We do support xor if needed

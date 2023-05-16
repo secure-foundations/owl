@@ -203,10 +203,10 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclRandOrcl x (zs, w) -> do
+      DeclRandOrcl x zs ws -> do
           zs' <- mapM resolveAExpr zs
-          w' <- resolveNameType w
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (zs', w')
+          ws' <- mapM resolveNameType ws
+          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x zs' ws'
           p <- view curPath
           ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
@@ -326,9 +326,9 @@ resolveNameExp ne =
         BaseName s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ BaseName s p'
-        ROName p -> do 
+        ROName p i -> do 
             p' <- resolvePath (ne^.spanOf) PTRO p
-            return $ Spanned (ne^.spanOf) $ ROName p'
+            return $ Spanned (ne^.spanOf) $ ROName p' i
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s
@@ -448,10 +448,10 @@ resolveAExpr a =
 resolveExpr :: Expr -> Resolve Expr
 resolveExpr e = 
     case e^.val of
-      ECrypt (CHash p) xs -> do
+      ECrypt (CHash p i) xs -> do
           p' <- resolvePath (e^.spanOf) PTRO p
           xs' <- mapM resolveAExpr xs
-          return $ Spanned (e^.spanOf) $ ECrypt (CHash p') xs'
+          return $ Spanned (e^.spanOf) $ ECrypt (CHash p' i) xs'
       EInput xk -> do
           (x, k) <- unbind xk
           k' <- resolveExpr k

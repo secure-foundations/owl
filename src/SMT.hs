@@ -449,11 +449,12 @@ emitFuncAxioms = do
     emitComment $ "RO equality axioms"
     ros <- liftCheck $ collectRO
     let sConcat a b = SApp [SAtom "concat", a, b]
-    forM_ ros $ \(s, (aes, _)) -> do
+    forM_ ros $ \(s, (aes, nts)) -> do
         vs <- mapM interpretAExp aes
         let v = foldr sConcat (head vs) (tail vs) 
         sn <- smtName s
-        emitAssertion $ sEq (sValue $ sROName $ sn) v
+        forM_ [0 .. (length nts - 1)] $ \i -> do
+            emitAssertion $ sEq (sValue $ sROName sn i) (sHashSelect v i)
     
     emitComment $ "Enum test faithful axioms"
     enumTestFaithulAxioms

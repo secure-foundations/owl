@@ -759,8 +759,10 @@ addNameDef n (is1, is2) (nt, nls) k = do
           Just _ -> typeError (ignore def) $ "Duplicate name: " ++ n
     assert (nt^.spanOf) (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
     local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+            debug $ pretty "Checking localities of name defs " <> pretty nls <> pretty " for " <> pretty n
             forM_ nls (normLocality (nt^.spanOf))
+            debug $ pretty "done"
             checkNameType nt
     local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
 
@@ -929,16 +931,18 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s (aes, nt)) -> do
+      (DeclRandOrcl s aes nts) -> do
         -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
+        assert (d^.spanOf) ("Empty random oracle declaration") $ length nts > 0
         _ <- mapM inferAExpr aes
-        checkNameType nt
-        checkROName nt
+        forM_ nts $ \nt -> do
+            checkNameType nt
+            checkROName nt
         localROCheck (d^.spanOf) aes
         checkROUnique (d^.spanOf) aes
         ro <- view $ curMod . randomOracle
         assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (curMod . randomOracle) $ insert s (aes, nt)) cont 
+        local (over (curMod . randomOracle) $ insert s (aes, nts)) cont 
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -946,7 +950,7 @@ nameExpIsLocal ne =
       BaseName _ (PRes (PDot p s)) -> do
           p' <- curModName
           return $ p `aeq` p'
-      ROName (PRes (PDot p s)) -> do
+      ROName (PRes (PDot p s)) i -> do
           p' <- curModName
           return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
@@ -1433,14 +1437,15 @@ checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = do
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
-      (ECrypt (CHash p) aes) -> do 
-          (aes', nt) <- getRO (e^.spanOf) p
+      (ECrypt (CHash p i) aes) -> do 
+          (aes', nts) <- getRO (e^.spanOf) p
+          assert (e^.spanOf) ("RO index out of bounds") $ i < length nts
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           uns <- unsolvability aes'
           b <- decideProp uns
           case b of
-            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p
+            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
             _ -> do 
                 ts <- mapM inferAExpr aes
                 lt <- coveringLabelOf ts 

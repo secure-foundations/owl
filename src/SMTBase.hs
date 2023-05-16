@@ -211,7 +211,8 @@ smtPrelude = do
     emit $ SApp [SAtom "declare-sort", labelSort]
     emitRaw $ "(declare-fun Value (Name) BS)"
     emitRaw $ "(declare-fun LblOf (Name) Lbl)"
-    emitRaw $ "(declare-fun ROName (String) Name)"
+    emitRaw $ "(declare-fun ROName (String Int) Name)"
+    emitRaw $ "(declare-fun HashSelect (BS Int) BS)"
     emitRaw $ "(declare-fun PRFName (Name String) Name)"
     emitRaw $ "(declare-fun Happened (String IdxList BSList) Bool)"
     emitRaw $ "(declare-fun BSListNil () BSList)"
@@ -316,9 +317,9 @@ getSymName ne =
                     vs1 <- mapM symIndex is1
                     vs2 <- mapM symIndex is2
                     return $ SApp $ f : vs1 ++ vs2
-      ROName s -> do
+      ROName s i -> do
           sn <- smtName s
-          return $ SApp [SAtom "ROName", SAtom $ "\"" ++ sn ++ "\""] 
+          return $ SApp [SAtom "ROName", SAtom $ "\"" ++ sn ++ "\"", SAtom (show i)] 
       PRFName ne s -> do
           n <- getSymName ne
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
@@ -347,8 +348,11 @@ sBaseName n is =
 sLblOf :: SExp -> SExp
 sLblOf n = SApp [SAtom "LblOf", n]
 
-sROName :: String -> SExp
-sROName s = SApp [SAtom "ROName", SAtom $ "\"" ++ s ++ "\""]
+sROName :: String -> Int -> SExp
+sROName s i = SApp [SAtom "ROName", SAtom $ "\"" ++ s ++ "\"", SAtom (show i)]
+
+sHashSelect :: SExp -> Int -> SExp
+sHashSelect s i = SApp [SAtom "HashSelect", s, SAtom (show i)]
 
 
 instance Pretty CanonLabel where

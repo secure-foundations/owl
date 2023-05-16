@@ -225,9 +225,10 @@ emitNameDefAssms = do
                 emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
         symIndexEnv .= sIE
     ros <- liftCheck $ collectRO
-    forM_ ros $ \(s, (ae, nt)) -> do
-        assm <- nameDefFlows (roName (PRes s)) nt
-        emitAssertion assm
+    forM_ ros $ \(s, (ae, nts)) -> do
+        forM_ [0 .. (length nts - 1)] $ \i -> do
+            assm <- nameDefFlows (roName (PRes s) i) (nts !! i)
+            emitAssertion assm
 
 
 
