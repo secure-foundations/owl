@@ -271,7 +271,7 @@ initFuncs = M.fromList [
                 -- [(RcVecU8,k), (_,x)] -> return $ x ++ ".owl_dec(&(*" ++ k ++ ").as_slice())"
                 -- [(VecU8,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ".as_slice())"
                 -- [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
-                [k,x] -> return $ printOwlOp "owl_dec" [x,k]
+                [k,x] -> return $ printOwlOp "owl_dec" [k,x]
                 _ -> throwError $ TypeError $ "got wrong number of args for dec"
         )),
         ("mac", (VecU8, \args -> case args of
@@ -474,11 +474,11 @@ genOwlOpsImpl name = pretty ""
 specGenParserSerializer :: String -> ExtractionMonad (Doc ann)
 specGenParserSerializer name = do
     -- TODO nesting design---Seq or ADT args---depends on parsing lib
-    let parser = pretty "#[verifier(external_body)]" <+> pretty "pub open spec fn parse_" <> pretty name <> parens (pretty "x: Seq<u8>") <+>
+    let parser = pretty "#[verifier(external_body)]" <+> pretty "pub closed spec fn parse_" <> pretty name <> parens (pretty "x: Seq<u8>") <+>
                     pretty "->" <+> pretty "Option" <> angles (pretty name) <+> braces (line <>
                     (pretty "todo!()") <> line
                 )
-    let serializer = pretty "#[verifier(external_body)]" <+> pretty "pub open spec fn serialize_" <> pretty name <> parens (pretty "x:" <+> pretty name) <+>
+    let serializer = pretty "#[verifier(external_body)]" <+> pretty "pub closed spec fn serialize_" <> pretty name <> parens (pretty "x:" <+> pretty name) <+>
                     pretty "->" <+> pretty "Seq<u8>" <+> braces (line <>
                     (pretty "todo!()") <> line
                 )
@@ -497,21 +497,20 @@ specExtractStruct owlName owlFields = do
     return $ vsep $ [structDef, parseSerializeDefs, constructor] ++ selectors 
     where
         genConstructor owlName fields = do
-            let args = parens . hsep . punctuate comma . map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": Option<Seq<u8>>") $ fields
-            let foldOptAnd (n,_) acc = pretty "option_and!" <> parens (pretty "arg_" <> pretty n <> pretty "," <+> acc)
-            let structBody = pretty "Some" <> parens (pretty "serialize_" <> pretty (specName owlName) <>
-                    parens (pretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> pretty (specName n) <> pretty ": arg_" <> pretty n) $ fields)))
+            let args = parens . hsep . punctuate comma . map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": Seq<u8>") $ fields
+            let body = pretty "serialize_" <> pretty (specName owlName) <>
+                    parens (pretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> pretty (specName n) <> pretty ": arg_" <> pretty n) $ fields))
             return $
-                pretty "pub open spec fn" <+> pretty owlName <> args <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
-                    foldr foldOptAnd structBody fields
+                pretty "pub open spec fn" <+> pretty owlName <> args <+> pretty "-> Seq<u8>" <+> braces (line <>
+                    body
                 <> line)
         genFieldSelector owlName (fieldName, fieldTy) = do
             return $ 
-                pretty "pub open spec fn" <+> pretty fieldName <> parens (pretty owlName <> pretty ": Option<Seq<u8>>") <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
-                    pretty "option_and!" <> parens (pretty owlName <> comma <+> braces (line <>
-                        pretty "let parsed = parse_" <> pretty (specName owlName) <> parens (pretty owlName) <> pretty ";" <> line <>
-                        pretty "option_and!" <> parens (pretty "parsed" <> comma <+> pretty "Some" <> parens (pretty "parsed." <> pretty (specName fieldName)))
-                    <> line))
+                pretty "pub open spec fn" <+> pretty fieldName <> parens (pretty "arg: Seq<u8>") <+> pretty "-> Seq<u8>" <+> braces (line <>
+                    pretty "match" <+> pretty "parse_" <> pretty (specName owlName) <> parens (pretty "arg") <+> braces (line <>
+                        pretty "Some(parsed) => parsed." <> pretty (specName fieldName) <> comma <> line <>
+                        pretty "None => seq![] // TODO"
+                    <> line)
                 <> line)
 
 specExtractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann)
@@ -531,30 +530,26 @@ specExtractEnum owlName owlCases = do
     where
         genCaseConstructor name (caseName, Just caseTy) = do
             return $
-                pretty "pub open spec fn" <+> pretty caseName <> parens (pretty "x: Option<Seq<u8>>") <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
-                    pretty "option_and!" <> parens (pretty "x," <+> pretty "Some" <> parens (
-                            pretty "serialize_" <> pretty name <> parens (
-                                pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> parens (pretty "x")
-                            )
-                        )) <> line
-                )
+                pretty "pub open spec fn" <+> pretty caseName <> parens (pretty "x: Seq<u8>") <+> pretty "-> Seq<u8>" <+> braces (line <>
+                    pretty "serialize_" <> pretty name <> parens (
+                        pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> parens (pretty "x")
+                    )
+                <> line)
 
         genCaseConstructor name (caseName, Nothing) = do
             return $
-                pretty "pub open spec fn" <+> pretty caseName <> pretty "()" <+> pretty "-> Option<Seq<u8>>" <+> braces (line <>
-                    pretty "Some" <> parens (
-                            pretty "serialize_" <> pretty name <> parens (
-                                pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> pretty "()"
-                            )
-                        ) <> line
-                )
+                pretty "pub open spec fn" <+> pretty caseName <> pretty "()" <+> pretty "-> Seq<u8>" <+> braces (line <>
+                    pretty "serialize_" <> pretty name <> parens (
+                        pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> pretty "()"
+                    )
+                <> line)
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
     -- liftIO $ print name
     let parsingOutcomeName = name ++ "_ParsingOutcome"
-    let typeDef = pretty "pub struct" <+> pretty name <+> pretty "{ data: Rc<Vec<u8>>, parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"
+    let typeDef = pretty "pub struct" <+> pretty name <+> pretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"
     let fields = map (\(s,t) -> (rustifyName s, doConcretifyTy t)) owlFields
     layout <- layoutStruct name fields
     layoutFields <- case layout of
@@ -588,16 +583,16 @@ extractStruct owlName owlFields = do
                     case args of
                       (ADT _, arg) : _ -> do
                         return $ (Nothing, show $
-                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <> 
+                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <> 
                                 parens (pretty "&mut" <+> pretty arg) <> pretty "))")
                       (VecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&" <+> pretty owlName) <> pretty "))")
+                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
+                                parens (pretty "&mut" <+> pretty owlName) <> pretty "))")
                       (RcVecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "Rc::new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&" <+> pretty owlName) <> pretty "))")
+                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
+                                parens (pretty "&mut" <+> pretty owlName) <> pretty "))")
                       _ -> throwError $ TypeError $ "attempt to get from " ++ owlName ++ " with bad args"
                 ))) owlFields
 
@@ -639,7 +634,12 @@ extractStruct owlName owlFields = do
                 rbrace
 
         genParseFnDef name parsingOutcomeName layout layoutFields = return $
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> line <> 
+            pretty "ensures" <+>
+                -- TODO improve
+                pretty "parse_" <> pretty (specName . unrustifyName $ name) <> pretty "(arg.data@).is_Some() ==> arg.data@ === old(arg).data@" <> comma <> line <>
+                pretty "parse_" <> pretty (specName . unrustifyName $ name) <> pretty "(arg.data@).is_None() ==> arg.data@ === seq![] // TODO" <> comma <> line <>
+            lbrace <> line <>
                 pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
                     pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
                         pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
@@ -650,7 +650,7 @@ extractStruct owlName owlFields = do
                                 pretty ";"
                             ) <> line <>
                         pretty "None => " <> braces (
-                                pretty "arg.data =" <+> pretty "Rc::new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
+                                pretty "arg.data =" <+> pretty "rc_new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
                                 pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
                             ) <> line <>
                         rbrace <> line <>
@@ -662,14 +662,18 @@ extractStruct owlName owlFields = do
 
         genConstructorDef name parsingOutcomeName layout layoutFields = do
             let argsPrettied = hsep $ punctuate comma $ map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": &[u8]") layoutFields
+            let viewArgsPrettied = hsep $ punctuate comma $ map (\(n,_) -> pretty "arg_" <> pretty n <> pretty "@") layoutFields
             let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> pretty "start_" <> pretty n) layoutFields ++ [pretty "i"])
             let checkAndExtenders = map (\(n,l) -> checkAndExtender name (lenLayoutFailure layout) parsingOutcomeName n l) layoutFields
-            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty name <+> lbrace <> line <>
-                pretty "let mut v = vec_u8_from_elem(0,0);" <> line <>
-                pretty "let mut i = 0;" <> line <>
-                vsep checkAndExtenders <> line <>
-                pretty "let res =" <+> pretty name <+> pretty "{ data: Rc::new(v), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Success" <> parens startsPrettied <> pretty "};" <> line <>
-                pretty "res" <> line <>
+            return $ 
+                pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> parens argsPrettied <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
+                pretty "ensures res.data@ ===" <+> pretty owlName <> parens viewArgsPrettied <> line <>
+                lbrace <> line <>
+                    pretty "let mut v = vec_u8_from_elem(0,0);" <> line <>
+                    pretty "let mut i = 0;" <> line <>
+                    vsep checkAndExtenders <> line <>
+                    pretty "let res =" <+> pretty name <+> pretty "{ data: rc_new(v), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Success" <> parens startsPrettied <> pretty "};" <> line <>
+                    pretty "res" <> line <>
                 rbrace
         checkAndExtender name lenFailure parsingOutcomeName n l =
             let structEnumChecker dn = pretty "len_valid_" <> pretty dn <> parens (pretty "arg_" <> pretty n) <+> pretty " == None" in
@@ -679,7 +683,7 @@ extractStruct owlName owlFields = do
                     LEnum en _   -> structEnumChecker en in
             pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
             pretty "if" <+> checker <+> lbrace <> line <>
-            pretty "return" <+> pretty name <+> braces (pretty "data: Rc::new(vec_u8_from_elem(0," <+> pretty lenFailure <> pretty ")), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" <> line <>
+            pretty "return" <+> pretty name <+> braces (pretty "data: rc_new(vec_u8_from_elem(0," <+> pretty lenFailure <> pretty ")), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" <> line <>
             rbrace <> line <>
             pretty "extend_vec_u8" <> parens (pretty "&mut v," <+> pretty "arg_" <> pretty n) <> pretty ";" <> line <>
             pretty "i = i + " <> pretty "slice_len" <> parens (pretty "arg_" <> pretty n) <> pretty ";"
@@ -692,8 +696,11 @@ extractStruct owlName owlFields = do
         genSelectorDef name parsingOutcomeName numFields (fieldName, fieldLayout, failOffset, failNextOffset, structIdx) =
             let success_pattern = pretty parsingOutcomeName <> pretty "::Success" <> (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..numFields]]) in
             -- return $
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "get_" <> pretty fieldName <> pretty "_" <> pretty name <> parens (pretty "arg: &" <+> pretty name) <+> pretty "->" <+> pretty "&[u8]" <+> lbrace <> line <>
-            pretty "// parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "get_" <> pretty fieldName <> pretty "_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> pretty "->" <+> pretty "(res: &[u8])" <+> line <>
+            -- TODO make this better
+            pretty "ensures res@ ===" <+> pretty (unrustifyName fieldName) <> parens (pretty "old(arg).data@") <> line <>
+            lbrace <> line <>
+            pretty "parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
             pretty "match arg.parsing_outcome {" <> line <>
             success_pattern <+> pretty "=>" <+>
                 pretty "slice_subrange(&(*arg.data).as_slice(), idx_" <> pretty structIdx <> pretty ", idx_" <> pretty (structIdx + 1) <> pretty ")," <> line <>
@@ -712,7 +719,7 @@ extractEnum owlName owlCases' = do
       LEnum _ cs -> return cs
       _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
     let tagsComment = pretty "//" <+> pretty (M.foldlWithKey (\s name (tag,_) -> s ++ name ++ " -> " ++ show tag ++ ", ") "" layoutCases)
-    let typeDef = tagsComment <> line <> pretty "pub struct" <+> pretty name <+> pretty "{ data: Rc<Vec<u8>>, parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"
+    let typeDef = tagsComment <> line <> pretty "pub struct" <+> pretty name <+> pretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"
     parsingOutcomeDef <- genEnumParsingOutcomeDef parsingOutcomeName
     lenValidFnDef <- genLenValidFnDef name layoutCases
     parseFnDef <- genParseFnDef name parsingOutcomeName layout
@@ -784,7 +791,7 @@ extractEnum owlName owlCases' = do
                             pretty "Some(l)" <+>
                                 pretty "=>" <+> braces (pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success;") <> line <>
                             pretty "None => " <> braces (
-                                    pretty "arg.data =" <+> pretty "Rc::new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
+                                    pretty "arg.data =" <+> pretty "rc_new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
                                     pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
                                 ) <> line <>
                         rbrace <> line <>
@@ -798,15 +805,18 @@ extractEnum owlName owlCases' = do
 
         genConstructorDef :: String -> String -> (String, (Int, Maybe Layout)) -> Doc ann
         genConstructorDef name parsingOutcomeName (tagName, (tag, Just (LBytes 0))) = -- special case for a case with no payload, where the constructor takes no arg
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> pretty "()" <+> pretty "->" <+> pretty name <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> pretty "()" <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <> 
+            -- TODO improve
+            pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> pretty "()" <> line <>
+            lbrace <> line <>
                 pretty "let mut v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
-                pretty "let res =" <+> pretty name <+> pretty "{ data: Rc::new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
+                pretty "let res =" <+> pretty name <+> pretty "{ data: rc_new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
                 pretty "res" <> line <>
             rbrace
 
         genConstructorDef name parsingOutcomeName (tagName, (tag, tagLayout)) =
             -- Failure case for struct is always a zero tag with no payload
-            let failureReturn = pretty "return" <+> pretty name <+> braces (pretty "data: Rc::new(vec_u8_from_elem(0, 1)), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" in
+            let failureReturn = pretty "return" <+> pretty name <+> braces (pretty "data: rc_new(vec_u8_from_elem(0, 1)), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" in
             let checkAndExtender = case tagLayout of
                     Just (LBytes nb)    ->
                         pretty "if" <+> pretty "slice_len(arg)" <+> pretty "<" <+> pretty nb <+> braces failureReturn <> line <>
@@ -825,10 +835,12 @@ extractEnum owlName owlCases' = do
                     Nothing ->
                         pretty "extend_vec_u8(&mut v, &arg.as_slice());"
                 in
-            pretty "pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> parens (pretty "arg: &[u8]") <+> pretty "->" <+> pretty name <+> lbrace <> line <>
+            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> parens (pretty "arg: &[u8]") <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
+            pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> parens (pretty "arg@") <> line <>
+            lbrace <> line <>
                 pretty "let mut v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
                 checkAndExtender <> line <>
-                pretty "let res =" <+> pretty name <+> pretty "{data: Rc::new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
+                pretty "let res =" <+> pretty name <+> pretty "{data: rc_new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
                 pretty "res" <> line <>
             rbrace
 
@@ -865,7 +877,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                             Nothing -> pretty ""
                             Just (arg,var) ->
                                 pretty "let mut" <+> pretty var <+> pretty "=" <+> pretty adt <+> braces (pretty "data:" <+> pretty arg <> comma <+> pretty "parsing_outcome:" <+> pretty adt <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
-                                pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
+                                pretty "// parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
                     if owlFn == "H" then
@@ -916,7 +928,7 @@ extractExpr loc binds (CInput xsk) = do
     let rustX = rustifyName . show $ x
     let rustEv = if show ev == "_" then "_" else rustifyName . show $ ev
     (_, rt', prek, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
-    let eWrapped = pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+    let eWrapped = pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
     let letbinding =
             pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(itree/*, &self.listener */)" <> pretty ";" <> line <>
             pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
@@ -936,7 +948,7 @@ extractExpr loc binds (CLet e xk) = do
     (_, rt, preE, ePrettied) <- extractExpr loc binds e
     (_, rt', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
     let eWrapped = case rt of
-            VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+            VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
             RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
             _ -> pretty "temp_" <> pretty rustX
     let letbinding = case e of
@@ -989,7 +1001,7 @@ extractExpr loc binds (CCase ae cases) = do
                         let rustX = rustifyName . show $ x
                         (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
                         let eWrapped = case rt' of
-                                VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+                                VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
                                 RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
                                 _ -> pretty "temp_" <> pretty rustX
                         return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
@@ -1023,7 +1035,7 @@ extractExpr loc binds (CCase ae cases) = do
                         let (x, k) = unsafeUnbind xk
                         let rustX = rustifyName . show $ x
                         (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
-                        let eWrapped = pretty "Rc::new(caser_tmp.data[1..].to_vec())"
+                        let eWrapped = pretty "rc_new(caser_tmp.data[1..].to_vec())"
                         return (rt'', pretty b <+> pretty "=>"
                                     <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
         branchRt <- case casesPrettiedRts of
@@ -1031,12 +1043,12 @@ extractExpr loc binds (CCase ae cases) = do
           (b, _) : _ -> return b
         let defaultCase = case branchRt of
               VecU8 -> pretty "vec_u8_from_elem(0,1)"
-              RcVecU8 -> pretty "Rc::new(vec_u8_from_elem(0,1))"
+              RcVecU8 -> pretty "rc_new(vec_u8_from_elem(0,1))"
               Bool -> pretty "/* arbitrarily autogenerated */ false"
               Number -> pretty "/* arbitrarily autogenerated */ 0"
               String -> pretty "/* arbitrarily autogenerated */ \"\""
               Unit -> pretty "()"
-              ADT s -> pretty "{ let mut tmp = (Rc::new(vec_u8_from_elem(0,0))," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
+              ADT s -> pretty "{ let mut tmp = (rc_new(vec_u8_from_elem(0,0))," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
               Option _ -> pretty "/* arbitrarily autogenerated */ None"
         let casesPrettied = map snd casesPrettiedRts
         return (binds, branchRt, pretty "", preAe <> braces (
@@ -1130,7 +1142,7 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
-        specRtPrettied specRt = pretty "<Option<" <> pretty specRt <> pretty ">, Endpoint>"
+        specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
         genFuncDecl name sidArgs owlArgs rt = do
             let itree = pretty "itree: &mut Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
             let argsPrettied =
@@ -1139,7 +1151,8 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
                     (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> pretty rt)
             let viewRes = case rt of
-                    Unit -> pretty "Some(())"
+                    Unit -> pretty "()"
+                    ADT _ -> pretty "res.data.view()"
                     _ -> pretty "res.view()"
             let defReqEns =
                     pretty "requires old(itree)@@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
@@ -1298,7 +1311,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                         pretty "Some(v) =>" <+> rcClone <> pretty "(v)," <> line <>
                         pretty "None =>" <+> lbrace <> line <>
                             ni <> line <>
-                            pretty "let v = Rc::new" <> parens (pretty (rustifyName n)) <> pretty ";" <> line <>
+                            pretty "let v = rc_new" <> parens (pretty (rustifyName n)) <> pretty ";" <> line <>
                             pretty "self." <> pretty (rustifyName n) <> pretty ".insert" <> parens (tupled ([pretty "sid" <> pretty n | n <- [0..(nsids-1)]]) <> comma <+> rcClone <> pretty "(&v)") <> pretty ";" <> line <>
                             rcClone <> pretty "(&v)" <> line <>
                         rbrace <>
@@ -1339,13 +1352,13 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                         -- pretty "/* listener */"  :
                         map (\(s,_,nsids,_) ->
                                 if nsids == 0
-                                then (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "Rc::new" <> parens (pretty . rustifyName $ s)
+                                then (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty . rustifyName $ s)
                                 else (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "HashMap::new()"
                             ) localNames ++
-                        map (\(s,_,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "Rc::new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
-                        map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "Rc::new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
+                        map (\(s,_,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
+                        map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
                         map (\(n,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty "HashMap::new()") tbls ++
-                        [pretty "salt : Rc::new(config.salt)"]
+                        [pretty "salt : rc_new(config.salt)"]
                     ) <>
                 rbrace
 

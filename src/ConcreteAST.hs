@@ -200,6 +200,9 @@ replacePrimes' = pretty . replacePrimes . show
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
+unrustifyName :: String -> String
+unrustifyName = drop 4
+
 rustifyName' :: Doc ann -> Doc ann
 rustifyName' = pretty . rustifyName . show
 
@@ -220,7 +223,7 @@ specPrettyAE ae = specPrettyAE' (ae ^. val) where
     specPrettyAE' (AEString s) = pretty "\"" <> pretty s <> pretty "\""
     specPrettyAE' (AELenConst s) = pretty s <> pretty "_len"
     specPrettyAE' (AEInt i) = pretty i
-    specPrettyAE' (AEGet ne) = pretty "Some" <> parens (parens (pretty "*loc." <> rustifyName' (pretty ne)) <> pretty ".view()")
+    specPrettyAE' (AEGet ne) = parens (pretty "*loc." <> rustifyName' (pretty ne)) <> pretty ".view()"
     specPrettyAE' (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
     specPrettyAE' (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
     specPrettyAE' (AEPackIdx s a) = specPrettyAE a
