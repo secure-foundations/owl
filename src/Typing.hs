@@ -650,8 +650,10 @@ isSubtype t1 t2 = do
     t2' <- normalizeTy t2
     isSubtype' t1' t2'
 
+
+
 assertSubtype :: Ty -> Ty -> Check ()
-assertSubtype t1 t2 = do
+assertSubtype t1 t2 = laxAssertion $ do
     tyc <- view tyContext
     debug $ pretty "Asserting subtype " <> pretty t1 <> pretty " <= " <> pretty t2 <> pretty "Under context: " <> prettyTyContext tyc
     t1' <- normalizeTy t1
@@ -661,7 +663,7 @@ assertSubtype t1 t2 = do
 
 typeProtectsLabel' :: Label -> Ty -> Check ()
 typeProtectsLabel' l t0 =
-    case t0^.val of
+    laxAssertion $ case t0^.val of
       (TData l' _) -> flowCheck (t0^.spanOf) l l'
       (TDataWithLength l' _) -> flowCheck (t0^.spanOf) l l'
       (TOption t) -> flowCheck (t0^.spanOf) l advLbl
@@ -693,7 +695,7 @@ typeProtectsLabel' l t0 =
           error ("Unimp: typeProtectsLabel'" ++ show (pretty l <> pretty ", " <> pretty t))
 
 typeProtectsLabel :: Label -> Ty -> Check ()
-typeProtectsLabel l t = do
+typeProtectsLabel l t = laxAssertion $ do
     debug $ pretty "Checking if label " <> pretty l <> pretty " is protected by type " <> pretty t
     t' <- normalizeTy t
     typeProtectsLabel' l t'
@@ -957,7 +959,7 @@ nameExpIsLocal ne =
 
 
 localROCheck :: Ignore Position -> [AExpr] -> Check ()
-localROCheck pos aes = do
+localROCheck pos aes = laxAssertion $ do
     ts <- mapM inferAExpr aes
     bs <- forM ts $ \t ->
         case t^.val of
@@ -1026,7 +1028,7 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
 
 checkROUnique :: Ignore Position -> [AExpr] -> Check ()
-checkROUnique pos es = do
+checkROUnique pos es = laxAssertion $ do
     ro_vals <- view $ curMod . randomOracle
     (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map (\(s, (a, _)) -> a) ro_vals) es 
     assert pos "RO uniqueness check failed" b
@@ -1195,7 +1197,7 @@ tyLenLbl t =
 
 
 checkTyPubLen :: Ty -> Check ()
-checkTyPubLen t0 = do
+checkTyPubLen t0 = laxAssertion $ do
     l <- tyLenLbl t0
     flowCheck (ignore def) l advLbl
 
@@ -1280,7 +1282,7 @@ decideProp p = do
     return r
 
 flowCheck :: Ignore Position -> Label -> Label -> Check ()
-flowCheck sp l1 l2 = do
+flowCheck sp l1 l2 = laxAssertion $ do
     b <- flowsTo sp l1 l2
     assert sp (show $ ErrFlowCheck l1 l2) b
 

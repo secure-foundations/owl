@@ -17,8 +17,8 @@ import Test
 import qualified Extraction as E
 
 mkFlags :: String -> String -> String -> CmdArgs -> Flags
-mkFlags contents path bname (CmdArgs d logsmt _ _ _) =
-    Flags d logsmt path bname contents
+mkFlags contents path bname (CmdArgs d logsmt _ _ lax _) =
+    Flags d logsmt path bname lax contents
 
 typeCheckWith :: String -> IO Env
 typeCheckWith fn = do
@@ -28,7 +28,7 @@ typeCheckWith fn = do
             putStrLn $ "parse error: " ++ show err
             error "Parse error"
         Right ast -> do
-                res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) (CmdArgs False False False False (Just fn))) ast
+                res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) (CmdArgs False False False False False (Just fn))) ast
                 case res of
                   Left e -> return e
                   Right e -> return e

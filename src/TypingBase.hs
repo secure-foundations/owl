@@ -43,6 +43,7 @@ data Flags = Flags {
     _fLogSMT :: Bool,
     _fFileLoc :: String,
     _fFilename :: String,
+    _fLax :: Bool,
     _fFileContents :: String
                    }
 
@@ -299,6 +300,11 @@ addVars xs g = g ++ xs
     
 assert :: Ignore Position -> String -> Bool -> Check ()
 assert pos m b = if b then return () else typeError pos m 
+
+laxAssertion :: Check () -> Check ()
+laxAssertion k = do
+    l <- view $ envFlags . fLax
+    if l then return () else k
 
 -- withVars xs k = add xs to the typing environment, continue as k with extended
 -- envrionment
