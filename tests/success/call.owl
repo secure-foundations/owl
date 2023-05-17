@@ -14,5 +14,5 @@ def alice2<i> () @ alice : Unit
     assert (happened(alice2<i>()));
     let x = call alice1<i>(get(blah)) in 
     assert (happened(alice1<i>(get(blah))));
-    let c = samp enc(get(k<i>), x) in
+    let c = aenc(get(k<i>), x) in
     output c to endpoint(alice)

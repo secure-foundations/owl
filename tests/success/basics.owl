@@ -13,10 +13,10 @@ func parse
 
 def alice1 () @ alice : Data<adv> =
     input i, s1 in 
-    let c1 = samp enc(get(k), get(x)) in 
+    let c1 = aenc(get(k), get(x)) in 
     let _ = output c1 in  
     corr_case k in
-    let c : if sec(k) then Option t else Option Data<adv> = dec(get(k), parse(i)) in 
+    let c : if sec(k) then Option t else Option Data<adv> = adec(get(k), parse(i)) in 
     (case c 
      | Some x => 
        let res : Data<adv> = () in res

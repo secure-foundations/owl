@@ -146,7 +146,7 @@ def Alice_main<i> (
     corr_case KA in
 
     unpack j, _ = () in
-    let encm:Data<adv> | cipherlen((4 * |nonce|) + |tag|) | = samp enc(kA, pack<i>(pack<j>(mA1<idx i, idx j>(kA_message_1<idx i>(nA, M, A, B))))) in
+    let encm:Data<adv> | cipherlen((4 * |nonce|) + |tag|) | = aenc(kA, pack<i>(pack<j>(mA1<idx i, idx j>(kA_message_1<idx i>(nA, M, A, B))))) in
 
     let _ = output msg1_AtoB(M, A, B, mA1_enc(encm)) to endpoint(Bob) in
 
@@ -155,7 +155,7 @@ def Alice_main<i> (
 
     // let _ = check_session_identifier(M') in
 
-    begin case dec(kA, x1') 
+    begin case adec(kA, x1') 
         | None => pack<j>(alice_None<idx i, idx j>())
         | Some res =>
             unpack i', res' = res in
@@ -210,7 +210,7 @@ def Bob_main<i> (
                 let v'':encd_kA_message = mA1_enc(v') in
 
                 // let temp:kB_message_1<idx i> = kB_message_1<idx i>(nB, M', A', B) in // adding the annotation gets rid of the length...
-                let encm = samp enc(kB, pack<i>(pack<j>(mB1<idx i, idx j>(kB_message_1<idx i>(nB, M', A', B))))) in
+                let encm = aenc(kB, pack<i>(pack<j>(mB1<idx i, idx j>(kB_message_1<idx i>(nB, M', A', B))))) in
                 
                 let _ = output msg2_BToS(M', A', B, v') to endpoint(AS) in
                 let _ = output mB1_enc(encm) to endpoint(AS) in
@@ -220,7 +220,7 @@ def Bob_main<i> (
 
                 // let _ = check_session_identifier(M') in
 
-                begin case dec(kB, x2') 
+                begin case adec(kB, x2') 
                     | None => let _ = output "" to endpoint(Alice) in pack<j>(bob_None<idx i, idx j>())
                     | Some res =>
                         unpack i', res' = res in
@@ -270,7 +270,7 @@ def AS_main<i> () @ AS
         case x1 
         | mA2_enc _ => ()
         | mA1_enc x1' => 
-            begin case dec(kA, x1')
+            begin case adec(kA, x1')
                 | None => ()
                 | Some resA =>
                     unpack j1, resA' = resA in
@@ -281,7 +281,7 @@ def AS_main<i> () @ AS
                             begin case x2
                                 | mB2_enc =>  let _ = output "" to endpoint(Bob) in ()
                                 | mB1_enc =>
-                                    begin case dec(kB, x2)
+                                    begin case adec(kB, x2)
                                         | None =>  let _ = output "" to endpoint(Bob) in ()
                                         | Some resB =>
                                             unpack j3, resB' = resB in
@@ -292,8 +292,8 @@ def AS_main<i> () @ AS
                                                     // let _ = check_equal(B, _BA<idx j1>(msg1A), _BB<idx j3>(msg1B)) in
                                                     // let _ = check_equal(M, _mA<idx j1>(msg1A), _mB<idx j3>(msg1B)) in
 
-                                                    let encmA = samp enc(kA, pack<j1>(pack<i>(mA2<idx j1, idx i>(kA_message_2<idx j1, idx i>(_nA1<idx j1>(msg1A), kab))))) in
-                                                    let encmB = samp enc(kB, pack<j3>(pack<i>(mB2<idx j3, idx i>(kB_message_2<idx j3, idx i>(_nB1<idx j3>(msg1B), kab))))) in
+                                                    let encmA = aenc(kA, pack<j1>(pack<i>(mA2<idx j1, idx i>(kA_message_2<idx j1, idx i>(_nA1<idx j1>(msg1A), kab))))) in
+                                                    let encmB = aenc(kB, pack<j3>(pack<i>(mB2<idx j3, idx i>(kB_message_2<idx j3, idx i>(_nB1<idx j3>(msg1B), kab))))) in
                                                     let _ = output msg3_StoB(M, encmA, encmB) to endpoint(Bob)
                                                     in ()
                                                 | mB2 _ => let _ = output "" to endpoint(Bob) in ()

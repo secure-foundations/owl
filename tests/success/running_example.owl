@@ -11,21 +11,21 @@ enum Result<j> {
 }  
 
 def alice<@j>() @ alice : if sec(msg<@j>) then Result<idx j> else Data<adv> = 
-  let c = samp enc(get(psk<@j>), get(k_data<@j>)) in
+  let c = aenc(get(psk<@j>), get(k_data<@j>)) in
   output c;
   input i in
   corr_case k_data<@j> in
   corr_case msg<@j> in
-  case dec(get(k_data<@j>), i)
+  case adec(get(k_data<@j>), i)
   | Some o => Ok<idx j>(o)
   | None => Err<idx j>()
 
 def bob<@j>() @ bob<j> : Unit =
     input i in
     corr_case psk<@j> in
-    case dec(get(psk<@j>), i)
+    case adec(get(psk<@j>), i)
     | Some k => 
-      let c = samp enc(k, get(msg<@j>)) in 
+      let c = aenc(k, get(msg<@j>)) in 
       output c
     | None => ()
 

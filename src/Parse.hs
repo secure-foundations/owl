@@ -23,7 +23,7 @@ owlStyle   = emptyDef
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey", "mackey", "sec", "let", "DH", "nonce", "samp", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -799,20 +799,11 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
-        reserved "hash"
-        symbol "<"
-        p <- parsePath
-        oi <- optionMaybe $ do
-            symbol ","
-            many1 digit
-        symbol ">"
+        cop <- parseCryptOp
         symbol "("
         as <- parseArgs
         symbol ")"
-        let i = case oi of
-                  Just x -> read x
-                  Nothing -> 0
-        return $ ECrypt (CHash p i) as
+        return $ ECrypt cop as
     )
     <|>
     (parseSpanned $ do 
@@ -867,14 +858,6 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
-        reserved "samp"
-        x <- identifier
-        symbol "("
-        args <- parseArgs
-        symbol ")"
-        return $ ESamp x args)
-    <|>
-    (parseSpanned $ do
         reserved "unpack"
         i <- identifier
         symbol ","
@@ -905,7 +888,7 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "case"
-        x <- parseAExpr
+        x <- parseExpr
         xs <- many1 $ do
           symbol "|"
           c <- identifier
@@ -975,6 +958,45 @@ parseExprTerm =
 parseArgs :: Parser [AExpr]
 parseArgs = 
     parseAExpr `sepBy` (reservedOp ",")
+
+parseCryptOp :: Parser CryptOp
+parseCryptOp = 
+    (do
+        reserved "hash"
+        symbol "<"
+        p <- parsePath
+        oi <- optionMaybe $ do
+            symbol ","
+            many1 digit
+        symbol ">"
+        return $ case oi of
+                   Just x -> CHash p (read x)
+                   Nothing -> CHash p 0
+    )
+    <|>
+    (do
+        reserved "prf"
+        symbol "<"
+        x <- identifier
+        symbol ">"
+        return $ CPRF x
+    )
+    <|>
+    (reserved "aenc" >> return CAEnc)
+    <|>
+    (reserved "adec" >> return CADec)
+    <|>
+    (reserved "pkenc" >> return CPKEnc)
+    <|>
+    (reserved "pkdec" >> return CPKDec)
+    <|>
+    (reserved "mac" >> return CMac)
+    <|>
+    (reserved "mac_vrfy" >> return CMacVrfy)
+    <|>
+    (reserved "sign" >> return CSign)
+    <|>
+    (reserved "vrfy" >> return CSigVrfy)
 
 parseParam :: Parser FuncParam
 parseParam = 

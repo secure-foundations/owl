@@ -35,7 +35,7 @@ name skB : pkekey nsl_alice_message @ bob
 def alice_main () @ alice : if sec(nA) /\ sec(nB) then
 nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  = 
     let pkB = get_encpk(skB) in
-    let c = samp pkenc(pkB, Msg1(get(nA))) in
+    let c = pkenc(pkB, Msg1(get(nA))) in
     let _ = output c to endpoint(bob) in
     input i in
     corr_case skA in
@@ -49,7 +49,7 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
     let b2 = eq(length(nB'), |nonce|) in 
     if b1 && b2 then 
         false_elim in 
-        let c' = samp pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
+        let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
         let _ = output c' to endpoint(bob) in
         let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
         res
@@ -68,7 +68,7 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
     | Msg1 nA' =>  
         if eq(length(nA'), |nonce|) then 
             let p = nsl_bob_message(nA', get(nB)) in 
-            let c = samp pkenc(pkA, p) in
+            let c = pkenc(pkA, p) in
             output c to endpoint(alice);
             input i' in
             let m' = pkdec(get(skB), i) in

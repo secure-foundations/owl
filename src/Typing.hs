@@ -42,7 +42,7 @@ emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty memp
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs initDistrs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -208,108 +208,6 @@ initDetFuncs = withNormalizedTys $ [
                 (NT_DH, NT_DH) -> return $ TSS n m
                 _ -> trivialTypeOf $ args
           _ -> trivialTypeOf $ args,
-    mkSimpleFunc "sign" 2 $ \args ->
-        case args of
-          [t1, t] | Just sk <- extractNameFromType t1 -> do
-              nt <- local (set tcScope TcGhost) $  getNameType sk
-              case nt^.val of
-                NT_Sig t' -> do
-                    assertSubtype t t'
-                    l <- coveringLabel t'
-                    return $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
-                _ -> trivialTypeOf $ args
-          _ -> trivialTypeOf $ args,
-    mkSimpleFunc "pkdec" 2 $ \args -> do
-        case args of
-          [t1, t] | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope TcGhost) $  getNameType k
-              case nt^.val of
-                NT_PKE t' -> do
-                    l <- coveringLabel t
-                    b1 <- flowsTo (ignore def) l advLbl
-                    b2 <- flowsTo (ignore def) (nameLbl k) advLbl
-                    if b1 && (not b2) then do
-                        -- TODO HIGH PRIORITY: fix this
-                        return $ TData advLbl advLbl -- TUnion t' (tData advLbl advLbl), 
-                    else do
-                        let l_corr = joinLbl (nameLbl k) l
-                        return $ TData l_corr l_corr,
-    mkSimpleFunc "dec" 2 $ \args -> do
-        debug $ pretty "Type checking decryption"
-        case args of
-          [t1, t] | Just k <- extractNameFromType t1 -> do
-              debug $ pretty "Trying nontrivial dec"
-              nt <-  local (set tcScope TcGhost) $ getNameType k
-              l <- coveringLabel t
-              case nt^.val of
-                NT_Enc t' -> do
-                    b2 <- flowsTo (ignore def) (nameLbl k) advLbl
-                    if ((not b2)) then do
-                        -- Honest
-                        debug $ pretty "Honest dec"
-                        return $ TOption t'
-                    else do
-                        debug $ pretty "Corrupt dec"
-                        -- Corrupt
-                        let l_corr = joinLbl (nameLbl k) l
-                        debug $ pretty "joinLbl succeeded"
-                        return $ TOption $ tData l_corr l_corr
-                _ -> typeError (ignore def) $ show $  ErrWrongNameType k "encryption key" nt
-          _ -> do
-              l <- coveringLabelOf args
-              debug $ pretty "Trivial dec"
-              return $ TOption $ tData l l,
-    mkSimpleFunc "vrfy" 3 $ \args ->
-        case args of
-          [t1, x, t] | Just k <- extractVKFromType t1 -> do
-              nt <-  local (set tcScope TcGhost) $ getNameType k
-              case nt^.val of
-                NT_Sig t' -> do
-                    debug $ pretty "Checking vrfy: " <> pretty args
-                    l1 <- coveringLabel x
-                    l2 <- coveringLabel t
-                    b1 <- flowsTo (ignore def) l1 advLbl
-                    b2 <- flowsTo (ignore def) l2 advLbl
-                    b3 <- flowsTo (ignore def) (nameLbl k) advLbl
-                    if (b1 && b2 && (not b3)) then return (TOption t')
-                                              else do
-                                               let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2)
-                                               return $ TOption (tData l_corr l_corr)
-                _ -> typeError (ignore def) $ show $ ErrWrongNameType k "sig" nt
-          _ -> do
-              l <- coveringLabelOf $ args
-              return $ TOption $ tData l l,
-    mkSimpleFunc "mac" 2 $ \args ->
-        case args of
-          [t1, t] | Just k <- extractNameFromType t1 -> do
-              nt <-  local (set tcScope TcGhost) $ getNameType k
-              case nt^.val of
-                NT_MAC t' -> do
-                    assertSubtype t t'
-                    l <- coveringLabel t'
-                    return $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
-                _ -> trivialTypeOf $ args
-          _ -> trivialTypeOf $ args,
-    ("mac_vrfy", (3, \ps args ->
-        case (ps, args) of
-          ([], [(xt1, t1), (m, mt), (xt, t)]) | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope TcGhost) $ getNameType k
-              case nt^.val of
-                NT_MAC t' -> do
-                    l1 <- coveringLabel mt
-                    l2 <- coveringLabel t
-                    b1 <- flowsTo (ignore def) l1 advLbl
-                    b2 <- flowsTo (ignore def) l2 advLbl
-                    b3 <- flowsTo (ignore def) (nameLbl k) advLbl
-                    if (b1 && b2 && (not b3)) then
-                      return $ TOption (tRefined t' $ bind (s2n ".res") (pEq (aeVar ".res") m))
-                    else
-                      let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
-                      return $ TOption (tData l_corr l_corr)
-          ([], _) -> do
-              l <- coveringLabelOf $ map snd args
-              return $ TOption $ tData l l
-          _ -> typeError (ignore def) $ "params in mac_vrfy")),
     ("checknonce", (2, \ps args ->
         case (ps, args) of
           ([], [(x, t1), (y, t2)]) ->
@@ -342,80 +240,8 @@ initDetFuncs = withNormalizedTys $ [
                   l <- coveringLabelOf $ map snd args
                   return $ TBool l
           _ -> typeError (ignore def) $ "Wrong parameters to checknonce"
-    )),
-    ("prf", (2, \ps args ->
-        case (ps, args) of
-          ([ParamStr s], [(_, t1), (a, _)]) -> do
-              case (stripRefinements t1)^.val of
-                TName n -> do
-                    nt <-  local (set tcScope TcGhost) $ getNameType n
-                    case nt^.val of
-                        NT_PRF aes -> do
-                          case L.find (\p -> fst p == s) aes of
-                            Just (_, (ae, nt')) -> do
-                                  (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel [ae] [a]
-                                  -- FL CHECK HERE 
-                                  corr <- flowsTo (ignore def) (nameLbl n) advLbl
-                                  if (not corr) && b then return (TName $ prfName n s) else trivialTypeOf (map snd args)
-                            _ -> typeError (ignore def) $ show $ ErrUnknownPRF n s
-                        _ -> typeError (ignore def) $ show $ ErrWrongNameType n "prf" nt
-                _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)
-          _ -> typeError (ignore def) $ show $ ErrBadArgs "prf" (map snd args)))--,
-    --("H", (1, \ps args ->
-    --    case (ps, args) of
-    --      ([ParamStr s], [(a, t)]) -> do
-    --          ro <- view $ randomOracle
-    --          case lookup s ro of
-    --            Nothing -> typeError (ignore def) $ show $ pretty "Unknown RO lbl: " <> pretty s
-    --            Just (ae, _) -> do
-    --              (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel ae a
-    --              -- Either must be unsolvable, or flow to adv
-    --              uns <- unsolvability ae
-    --              b <- decideProp uns
-    --              case b of
-    --                Just True -> return $ TName $ roName s
-    --                _ -> do
-    --                    lt <- coveringLabel t
-    --                    flowCheck (t^.spanOf) lt advLbl
-    --                    return $ TData advLbl advLbl
-    --      (_, _) -> typeError (ignore def) $ "Wrong params or args to H"
-    --))
+    ))
     ]
-
-
-initDistrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX)
-initDistrs = [
-    ("enc", (2, \args -> do
-        case args of
-          [(_, t1), (x, t)] | Just k <- extractNameFromType t1 -> do
-              nt <- local (set tcScope TcGhost) $  getNameType k
-              case nt^.val of
-                NT_Enc t' -> do
-                    debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
-                    b1 <- isSubtype t t'
-                    if b1 then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
-                    else
-                        trivialTypeOf $ map snd args
-                _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
-          _ -> do
-              debug $ pretty "Got extremely wrong case: " <> pretty args
-              trivialTypeOf $ map snd args)),
-    ("pkenc", (2, \args -> do
-        case args of
-          [(_, t1), (x, t)] | Just k <- extractEncPKFromType t1 -> do
-              nt <- local (set tcScope TcGhost) $  getNameType k
-              case nt^.val of
-                NT_PKE t' -> do
-                    b <- isSubtype t t'
-                    if (b) then
-                        return $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
-                    else
-                        trivialTypeOf $ map snd args
-                _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
-          _ -> trivialTypeOf $ map snd args
-            ))
-                        ]
 
 interpUserFunc :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 interpUserFunc pos pth md (StructConstructor tv) = do
@@ -872,6 +698,7 @@ checkDecl d cont =
                         Just bdy' -> do
                           bdy'' <- ANF.anf bdy'
                           debug $ pretty "Checking def body " <> pretty n
+                          debug $ pretty "Result of anf: "  <> pretty bdy''
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
@@ -1439,20 +1266,12 @@ checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = do
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
-      (ECrypt (CHash p i) aes) -> do 
-          (aes', nts) <- getRO (e^.spanOf) p
-          assert (e^.spanOf) ("RO index out of bounds") $ i < length nts
-          debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
-          (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
-          uns <- unsolvability aes'
-          b <- decideProp uns
-          case b of
-            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
-            _ -> do 
-                ts <- mapM inferAExpr aes
-                lt <- coveringLabelOf ts 
-                flowCheck (e^.spanOf) lt advLbl
-                getOutTy ot $ mkSpanned $ TData advLbl advLbl
+      ECrypt cop aes -> do
+          args <- forM aes $ \a -> do
+              t <- inferAExpr a
+              t' <- normalizeTy t
+              return (a, t')
+          checkCryptoOp (e^.spanOf) ot cop args
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
           withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
@@ -1549,15 +1368,6 @@ checkExpr ot e = do
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
-      (ESamp d args) -> do
-          ts <- mapM inferAExpr args
-          ts <- mapM normalizeTy ts
-          dE <- view distrs
-          case lookup d dE of
-            Just (ar, k) -> do
-                assert (e^.spanOf) (show $ pretty "Wrong arity for " <> pretty d) $ length ts == ar
-                getOutTy ot =<< mkSpanned <$> (k $ zip args ts)
-            Nothing -> typeError (e^.spanOf) $ show (ErrUnknownDistr d)
       (ETLookup pth@(PRes (PDot p n)) a) -> do
           md <- openModule (e^.spanOf) p
           case lookup n (md^.tableEnv) of 
@@ -1652,9 +1462,9 @@ checkExpr ot e = do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
               if b then getOutTy ot tAdmit else checkExpr ot e 
           return $ mkSpanned $ TCase (mkSpanned $ PFlow (nameLbl n) advLbl) t1 t2
-      (ECase a cases) -> do
+      (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
-          t <- inferAExpr a
+          t <- checkExpr Nothing e1
           debug $ pretty "Inferred type " <> pretty t <> pretty "for argument"
           t <- normalizeTy t
           let t' = stripRefinements t
@@ -1668,7 +1478,7 @@ checkExpr ot e = do
                                       bdy <- extractEnum (t'^.spanOf) ps (show s) b
                                       return (advLbl, Right bdy)
           assert (e^.spanOf) (show $ pretty "Empty cases on case expression") $ length cases > 0
-          flowCheck (t'^.spanOf) l advLbl
+          flowCheck (e1^.spanOf) l advLbl
           branch_tys <- 
               case otcases of
                 Left td -> do
@@ -1699,6 +1509,188 @@ checkExpr ot e = do
                 let t = head branch_tys
                 forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
                 return t
+
+checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
+checkCryptoOp pos ot cop args = do
+    debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
+    case cop of
+      CHash p i -> do                            
+          let aes = map fst args
+          (aes', nts) <- getRO pos p
+          assert pos ("RO index out of bounds") $ i < length nts
+          debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
+          (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
+          uns <- unsolvability aes'
+          b <- decideProp uns
+          case b of
+            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
+            _ -> do 
+                let ts = map snd args
+                lt <- coveringLabelOf ts 
+                flowCheck pos lt advLbl
+                getOutTy ot $ mkSpanned $ TData advLbl advLbl
+      CPRF s -> do
+          assert pos ("Wrong number of arguments to prf") $ length args == 2
+          let [(_, t1), (a, t)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Just k -> do
+                nt <-  local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_PRF aes -> do
+                      case L.find (\p -> fst p == s) aes of
+                        Nothing -> typeError pos $ "Unknown PRF label: " ++ s
+                        Just (_, (ae, nt')) -> do
+                            (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel [ae] [a]
+                            corr <- flowsTo (ignore def) (nameLbl k) advLbl
+                            if (not corr) && b then return (mkSpanned $ TName $ prfName k s) else mkSpanned <$> trivialTypeOf [t1, t]
+                  _ -> typeError pos $ "Wrong name type for PRF"
+      CAEnc -> do
+          assert pos ("Wrong number of arguments to encryption") $ length args == 2
+          let [(_, t1), (x, t)] = args
+          case extractNameFromType t1 of
+            Just k -> do
+                nt <- local (set tcScope TcGhost) $  getNameType k
+                case nt^.val of
+                  NT_Enc t' -> do
+                      debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
+                      b1 <- isSubtype t t'
+                      if b1 then
+                          return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+                      else
+                          mkSpanned <$> trivialTypeOf [t1, t]
+                  _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
+            _ -> do
+                debug $ pretty "Got extremely wrong case: " <> pretty args
+                mkSpanned <$> trivialTypeOf [t1, t]
+      CADec -> do 
+          assert pos ("Wrong number of arguments to decryption") $ length args == 2
+          let [(_, t1), (_, t)] = args
+          case extractNameFromType t1 of
+            Just k -> do
+                debug $ pretty "Trying nontrivial dec"
+                nt <-  local (set tcScope TcGhost) $ getNameType k
+                l <- coveringLabel t
+                case nt^.val of
+                  NT_Enc t' -> do
+                      b2 <- flowsTo (ignore def) (nameLbl k) advLbl
+                      if ((not b2)) then do
+                          -- Honest
+                          debug $ pretty "Honest dec"
+                          return $ mkSpanned $ TOption t'
+                      else do
+                          debug $ pretty "Corrupt dec"
+                          -- Corrupt
+                          let l_corr = joinLbl (nameLbl k) l
+                          debug $ pretty "joinLbl succeeded"
+                          return $ tData l_corr l_corr -- Change here
+                  _ -> typeError (ignore def) $ show $  ErrWrongNameType k "encryption key" nt
+            _ -> do
+                l <- coveringLabelOf [t1, t]
+                debug $ pretty "Trivial dec"
+                return $ tData l l -- Change here
+      CPKDec -> do 
+          assert pos ("Wrong number of arguments to pk decryption") $ length args == 2
+          let [(_, t1), (_, t)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Just k -> do
+              nt <- local (set tcScope TcGhost) $  getNameType k
+              case nt^.val of
+                NT_PKE t' -> do
+                    l <- coveringLabel t
+                    b1 <- flowsTo (ignore def) l advLbl
+                    b2 <- flowsTo (ignore def) (nameLbl k) advLbl
+                    if b1 && (not b2) then do
+                        -- TODO HIGH PRIORITY: is this complete?
+                        return $ mkSpanned $ TData advLbl advLbl -- TUnion t' (tData advLbl advLbl), 
+                    else do
+                        let l_corr = joinLbl (nameLbl k) l
+                        return $ mkSpanned $ TData l_corr l_corr
+      CPKEnc -> do 
+          assert pos ("Wrong number of arguments to pk encryption") $ length args == 2
+          let [(_, t1), (x, t)] = args
+          case extractEncPKFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Just k -> do
+                nt <- local (set tcScope TcGhost) $  getNameType k
+                case nt^.val of
+                  NT_PKE t' -> do
+                      b <- isSubtype t t'
+                      if (b) then
+                          return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
+                      else
+                          mkSpanned <$> trivialTypeOf [t1, t] 
+                  _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
+      CMac -> do
+          assert pos ("Wrong number of arguments to mac") $ length args == 2
+          let [(_, t1), (_, t)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Just k -> do 
+                nt <-  local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_MAC t' -> do
+                      assertSubtype t t'
+                      l <- coveringLabel t'
+                      return $ mkSpanned $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
+                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+      CMacVrfy -> do
+          assert pos ("Wrong number of arguments to mac_vrfy") $ length args == 3
+          let [(xt1, t1), (m, mt), (xt, t)] = args
+          case extractNameFromType t1 of
+            Nothing -> do
+                l <- coveringLabelOf [t1, mt, t] 
+                return $ tData l l -- Change here
+            Just k -> do
+                nt <- local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_MAC t' -> do
+                      l1 <- coveringLabel mt
+                      l2 <- coveringLabel t
+                      b1 <- flowsTo (ignore def) l1 advLbl
+                      b2 <- flowsTo (ignore def) l2 advLbl
+                      b3 <- flowsTo (ignore def) (nameLbl k) advLbl
+                      if (b1 && b2 && (not b3)) then
+                        return $ mkSpanned $ TOption (tRefined t' $ bind (s2n ".res") (pEq (aeVar ".res") m))
+                      else
+                        let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
+                        return $ mkSpanned $ (TData l_corr l_corr) -- Change here
+      CSign -> do
+          assert pos ("Wrong number of arguments to sign") $ length args == 2
+          let [(_, t1), (_, t)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Just sk -> do
+                nt <- local (set tcScope TcGhost) $  getNameType sk
+                case nt^.val of
+                  NT_Sig t' -> do
+                      assertSubtype t t'
+                      l <- coveringLabel t'
+                      return $ mkSpanned $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
+                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+      CSigVrfy -> do
+          assert pos ("Wrong number of arguments to vrfy") $ length args == 3
+          let [(_, t1), (_, x), (_, t)] = args
+          case extractVKFromType t1 of
+            Nothing -> do
+                l <- coveringLabelOf [t1, x, t]
+                return $ mkSpanned $ TData l l -- Change here
+            Just k -> do 
+                nt <-  local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_Sig t' -> do
+                      debug $ pretty "Checking vrfy: " <> pretty args
+                      l1 <- coveringLabel x
+                      l2 <- coveringLabel t
+                      b1 <- flowsTo (ignore def) l1 advLbl
+                      b2 <- flowsTo (ignore def) l2 advLbl
+                      b3 <- flowsTo (ignore def) (nameLbl k) advLbl
+                      if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
+                                                else do
+                                                 let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2)
+                                                 return $ mkSpanned $ (TData l_corr l_corr) -- Change here
+                  _ -> typeError (ignore def) $ show $ ErrWrongNameType k "sig" nt
 
 unsolvability :: [AExpr] -> Check Prop
 unsolvability aes = local (set tcScope TcGhost) $ do

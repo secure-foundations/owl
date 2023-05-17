@@ -8,7 +8,7 @@ module Transp (P : Params, K : KE(P)) : TRANSP(P) = {
                 input i in
                 corr_case K.k in
                 corr_case P.data in
-                dec(get(K.k), i)
+                adec(get(K.k), i)
 
             def client(x : Name(P.data)) @ P.Client: Unit = 
                     corr_case K.k in
@@ -16,6 +16,6 @@ module Transp (P : Params, K : KE(P)) : TRANSP(P) = {
                     case o 
                      | None => ()
                      | Some k => 
-                        let c = samp enc(k, x) in 
+                        let c =  aenc(k, x) in 
                         output c to endpoint(P.Server)
 }

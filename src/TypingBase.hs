@@ -130,7 +130,6 @@ instance Subst ResolvedPath ModBody
 data Env = Env { 
     _envFlags :: Flags,
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
-    _distrs :: Map String (Int, [(AExpr, Ty)] -> Check TyX),
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
     _localAssumptions :: [SymAdvAssms],
@@ -168,7 +167,6 @@ data TypeError =
       | ErrUnknownPRF NameExp String
       | ErrAssertionFailed (Maybe String) Prop
       | ErrDuplicateVarName DataVar
-      | ErrUnknownDistr String
       | ErrUnknownFunc (Path)
       | ErrFlowCheck Label Label
       | ErrUnknownVar  DataVar
@@ -195,8 +193,6 @@ instance Pretty (TypeError) where
         pretty "Assertion failed: " <> pretty p <> pretty " from " <> pretty fn
     pretty (ErrUnknownName s) =  
         pretty "Unknown name: " <> pretty s
-    pretty (ErrUnknownDistr s) =  
-        pretty "Unknown distr: " <> pretty s
     pretty (ErrUnknownFunc s) =  
         pretty "Unknown func: " <> pretty s
     pretty (ErrUnknownVar s) =  
@@ -249,6 +245,9 @@ instance Fresh Check where
         liftIO $ writeIORef r (n + 1)
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
+
+instance MonadFail Check where
+    fail s = error s
 
 typeError :: Ignore Position -> String -> Check a
 typeError pos msg = do

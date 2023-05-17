@@ -5,14 +5,14 @@ module PSK_KE (P : Params) : KE(P) = {
         name shared_key : enckey Name(k) @ P.Server, P.Client
 
         def ke_Server() @ P.Server : Unit =
-            let c = samp enc(get(shared_key), get(k)) in
+            let c =  aenc(get(shared_key), get(k)) in
             output c to endpoint(P.Client)
 
         def ke_Client () @ P.Client : Option (if sec(k) then Name(k) else Data<adv>) = 
             input i in
             corr_case shared_key in
             corr_case k in
-            dec(get(shared_key), i)
+            adec(get(shared_key), i)
 
 }
 

@@ -13,13 +13,13 @@ def client_main () @ client
     let username = get(uname) in
     let _ = output username to endpoint(authserver) in
 
-    // i = tgt, enc(K, AK)
+    // i = tgt, aenc(K, AK)
     input i in 
 
     let tgt = _authserver_msg_1(i) in
     if eq(length(tgt), cipherlen(|enckey|)) then 
         corr_case K in
-        case dec(get(K), _authserver_msg_2(i)) 
+        case adec(get(K), _authserver_msg_2(i)) 
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
@@ -33,9 +33,9 @@ def authserver_main () @ authserver
     if eq(i, get(uname)) then
 
         // make & send TGT = (AK)_kT, m = (AK)_K
-        let tgt = samp enc(get(kT), get(AK)) in
+        let tgt =  aenc(get(kT), get(AK)) in
 
-        let m = samp enc(get(K), get(AK)) in
+        let m =  aenc(get(K), get(AK)) in
         let p = authserver_msg(tgt, m) in
 
         let _ = output p to endpoint(client) in ()

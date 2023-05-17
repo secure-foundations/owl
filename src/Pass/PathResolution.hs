@@ -445,13 +445,29 @@ resolveAExpr a =
       AELenConst _ -> return a
       AEInt _ -> return a
 
+resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
+resolveCryptOp pos cop = 
+    case cop of
+      CHash p i -> do
+          p' <- resolvePath pos PTRO p
+          return $ CHash p' i
+      CAEnc -> return CAEnc
+      CADec -> return CADec
+      CPKDec -> return CPKDec
+      CPKEnc -> return CPKEnc
+      CMac -> return CMac
+      CMacVrfy -> return CMacVrfy
+      CSign -> return CSign
+      CSigVrfy -> return CSigVrfy
+      CPRF x -> return $ CPRF x
+
 resolveExpr :: Expr -> Resolve Expr
 resolveExpr e = 
     case e^.val of
-      ECrypt (CHash p i) xs -> do
-          p' <- resolvePath (e^.spanOf) PTRO p
+      ECrypt cop xs -> do
+          cop' <- resolveCryptOp (e^.spanOf) cop
           xs' <- mapM resolveAExpr xs
-          return $ Spanned (e^.spanOf) $ ECrypt (CHash p' i) xs'
+          return $ Spanned (e^.spanOf) $ ECrypt cop' xs'
       EInput xk -> do
           (x, k) <- unbind xk
           k' <- resolveExpr k
@@ -476,9 +492,6 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EUnpack a' (bind x k')
-      ESamp s as -> do
-          as' <- mapM resolveAExpr as
-          return $ Spanned (e^.spanOf) $ ESamp s as'
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
@@ -502,7 +515,7 @@ resolveExpr e =
           as' <- mapM resolveAExpr as
           return $ Spanned (e^.spanOf) $ ECall p' is as' 
       ECase a cases -> do
-          a' <- resolveAExpr a
+          a' <- resolveExpr a
           cases' <- forM cases $ \(s, lr) -> do
               case lr of
                 Left e1 -> do { e1' <- resolveExpr e1; return (s, Left e1') }

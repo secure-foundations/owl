@@ -94,7 +94,6 @@ anf e =
           ixe' <- anfBind ixe
           ea <- anfAExpr a
           elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
-      ESamp ds args -> anfAExprList (e^.spanOf) args $ \xs -> Spanned (e^.spanOf) $ ESamp ds xs
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
@@ -116,8 +115,8 @@ anf e =
           anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECrypt p xs 
       ECall s is as -> 
           anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECall s is xs
-      ECase a cases -> do
-          ea <- anfAExpr a
+      ECase e1 cases -> do
+          e1' <- anf e1
           cases' <- forM cases $ \(s, o) ->
               case o of
                 Left e1 -> do
@@ -126,7 +125,7 @@ anf e =
                 Right (c, be) -> do
                     be' <- anfBind be
                     return $ (s, Right (c, be'))
-          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (aevar (a^.spanOf) y) cases'
+          elet e1' Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) y) cases'
       ECorrCase ne k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ ECorrCase ne k'

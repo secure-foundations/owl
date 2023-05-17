@@ -89,11 +89,10 @@ data CExpr =
     | CInput (Bind (DataVar, EndpointVar) CExpr)
     | COutput AExpr (Maybe Endpoint)
     | CLet CExpr (Bind DataVar CExpr)
-    | CSamp DistrName [AExpr]
     | CIf AExpr CExpr CExpr
     | CRet AExpr
     | CCall Path ([Idx], [Idx]) [AExpr]
-    | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
+    | CCase CExpr [(String, Either CExpr (Bind DataVar CExpr))]
     | CTLookup Path AExpr
     | CTWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)
@@ -122,7 +121,6 @@ concretify e =
           ((i, x), k) <- unbind ixk
           k' <- concretify k
           return $ subst x a k' -- i is dangling here, but that shouldn't matter
-      ESamp x y -> return $ CSamp x y
       EIf a e1 e2 -> do
           c1 <- concretify e1
           c2 <- concretify e2
@@ -134,6 +132,7 @@ concretify e =
       EAdmit -> error "Concretify on admit"
       ECall a b c -> return $ CCall a b c
       ECase a cases -> do
+          a' <- concretify a
           cases' <- forM cases $ \(c, o) ->
               case o of
                 Left e -> do
@@ -143,7 +142,7 @@ concretify e =
                     let (x, k) = unsafeUnbind xk
                     k' <- concretify k
                     return (c, Right $ bind x k')
-          return $ CCase a cases'
+          return $ CCase a' cases'
       ECorrCase _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
@@ -189,7 +188,6 @@ instance Pretty CExpr where
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
         pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
-    pretty (CSamp d xs) = pretty "samp" <+> pretty d <> tupled (map pretty xs)
     pretty (CIf a e1 e2) =
         pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
     pretty (CRet a) = pretty "ret " <> pretty a

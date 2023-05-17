@@ -834,17 +834,17 @@ extractExpr loc binds (CLet e xk) = do
             _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> ePrettied <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
-extractExpr loc binds (CSamp distr owlArgs) = do
-    fs <- use funcs
-    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
-    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
-    let args = map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? distr of
-      Nothing -> do
-        throwError $ UndefinedSymbol distr
-      Just (rt, f) -> do
-        str <- f args
-        return (binds, VecU8, preArgs, pretty str)
+--extractExpr loc binds (CSamp distr owlArgs) = do
+--    fs <- use funcs
+--    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
+--    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
+--    let args = map (\(r, _, p) -> (r, show p)) argsPretties
+--    case fs M.!? distr of
+--      Nothing -> do
+--        throwError $ UndefinedSymbol distr
+--      Just (rt, f) -> do
+--        str <- f args
+--        return (binds, VecU8, preArgs, pretty str)
 extractExpr loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preeT, eTPrettied) <- extractExpr loc binds eT
@@ -864,78 +864,78 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
       Just (rt, f) -> do
         str <- f args
         return (binds, rt, preArgs, pretty str)
-extractExpr loc binds (CCase ae cases) = do
-    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    case rt of
-      Option rt' -> do
-        casesPrettiedRts <- forM cases $ \(c, o) ->
-                case o of
-                    Left e -> do
-                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
-                        return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
-                    Right xk -> do
-                        let (x, k) = unsafeUnbind xk
-                        let rustX = rustifyName . show $ x
-                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
-                        let eWrapped = case rt' of
-                                VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
-                                RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
-                                _ -> pretty "temp_" <> pretty rustX
-                        return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
-                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
-        branchRt <- case casesPrettiedRts of
-          [] -> throwError $ TypeError "case on Option type with no cases"
-          (b, _) : _ -> return b
-        let casesPrettied = map snd casesPrettiedRts
-        return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
-      _ -> do -- We are casing on an Owl ADT
-        es <- use enums
-        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
-          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
-          Just s -> return s
-        ts <- use typeLayouts
-        enumLayout <- case ts M.!? rustifyName enumOwlName of
-          Just (LEnum n c) -> return c
-          _ -> throwError $ UndefinedSymbol enumOwlName
-        let tagByteOf = \c -> do
-                case enumLayout M.!? (rustifyName c) of
-                        Nothing -> throwError $ ErrSomethingFailed "enum case not found"
-                        Just (b,_) -> return b
-        casesPrettiedRts <- forM cases $ \(c, o) ->
-                case o of
-                    Left e -> do
-                        b <- tagByteOf c
-                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
-                        return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
-                    Right xk -> do
-                        b <- tagByteOf c
-                        let (x, k) = unsafeUnbind xk
-                        let rustX = rustifyName . show $ x
-                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
-                        let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
-                        return (rt'', pretty b <+> pretty "=>"
-                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
-        branchRt <- case casesPrettiedRts of
-          [] -> throwError $ TypeError "case on enum with no cases"
-          (b, _) : _ -> return b
-        let defaultCase = case branchRt of
-              VecU8 -> pretty "vec![0]"
-              RcVecU8 -> pretty "Rc::new(vec![0])"
-              Bool -> pretty "/* arbitrarily autogenerated */ false"
-              Number -> pretty "/* arbitrarily autogenerated */ 0"
-              String -> pretty "/* arbitrarily autogenerated */ \"\""
-              Unit -> pretty "()"
-              ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
-              Option _ -> pretty "/* arbitrarily autogenerated */ None"
-        let casesPrettied = map snd casesPrettiedRts
-        return (binds, branchRt, pretty "", preAe <> braces (
-                pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
-                pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
-                pretty "match caser_tmp.0[0]" <+> braces (
-                    vsep casesPrettied <> line <>
-                    pretty "_ =>" <+> defaultCase <> comma
-                ))
-            )
+--extractExpr loc binds (CCase ae cases) = do
+--    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
+--    case rt of
+--      Option rt' -> do
+--        casesPrettiedRts <- forM cases $ \(c, o) ->
+--                case o of
+--                    Left e -> do
+--                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+--                        return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+--                    Right xk -> do
+--                        let (x, k) = unsafeUnbind xk
+--                        let rustX = rustifyName . show $ x
+--                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
+--                        let eWrapped = case rt' of
+--                                VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+--                                RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
+--                                _ -> pretty "temp_" <> pretty rustX
+--                        return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
+--                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+--        branchRt <- case casesPrettiedRts of
+--          [] -> throwError $ TypeError "case on Option type with no cases"
+--          (b, _) : _ -> return b
+--        let casesPrettied = map snd casesPrettiedRts
+--        return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
+--      _ -> do -- We are casing on an Owl ADT
+--        es <- use enums
+--        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
+--          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
+--          Just s -> return s
+--        ts <- use typeLayouts
+--        enumLayout <- case ts M.!? rustifyName enumOwlName of
+--          Just (LEnum n c) -> return c
+--          _ -> throwError $ UndefinedSymbol enumOwlName
+--        let tagByteOf = \c -> do
+--                case enumLayout M.!? (rustifyName c) of
+--                        Nothing -> throwError $ ErrSomethingFailed "enum case not found"
+--                        Just (b,_) -> return b
+--        casesPrettiedRts <- forM cases $ \(c, o) ->
+--                case o of
+--                    Left e -> do
+--                        b <- tagByteOf c
+--                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+--                        return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+--                    Right xk -> do
+--                        b <- tagByteOf c
+--                        let (x, k) = unsafeUnbind xk
+--                        let rustX = rustifyName . show $ x
+--                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
+--                        let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
+--                        return (rt'', pretty b <+> pretty "=>"
+--                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+--        branchRt <- case casesPrettiedRts of
+--          [] -> throwError $ TypeError "case on enum with no cases"
+--          (b, _) : _ -> return b
+--        let defaultCase = case branchRt of
+--              VecU8 -> pretty "vec![0]"
+--              RcVecU8 -> pretty "Rc::new(vec![0])"
+--              Bool -> pretty "/* arbitrarily autogenerated */ false"
+--              Number -> pretty "/* arbitrarily autogenerated */ 0"
+--              String -> pretty "/* arbitrarily autogenerated */ \"\""
+--              Unit -> pretty "()"
+--              ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
+--              Option _ -> pretty "/* arbitrarily autogenerated */ None"
+--        let casesPrettied = map snd casesPrettiedRts
+--        return (binds, branchRt, pretty "", preAe <> braces (
+--                pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
+--                pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
+--                pretty "match caser_tmp.0[0]" <+> braces (
+--                    vsep casesPrettied <> line <>
+--                    pretty "_ =>" <+> defaultCase <> comma
+--                ))
+--            )
 extractExpr loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of

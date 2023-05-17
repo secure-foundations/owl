@@ -26,13 +26,13 @@
 
     k : enckey t          c : adv         [k] !<= adv
     -------------------------------
-    dec(k, c) : option t
+    adec(k, c) : option t
 
 
 
     k : enckey t          c : adv         [k] <= adv
     -------------------------------
-    dec(k, c) : option adv
+    adec(k, c) : option adv
 
 
 */
@@ -55,11 +55,11 @@ enum Result {
 
 def alice () @ alice
      : if sec(k_data) then (x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob())}) else Data<adv> = 
-    let c = samp enc(get(shared_key), get(k_data)) in
+    let c = aenc(get(shared_key), get(k_data)) in
     let _ = output c in 
     input i, _ in 
     corr_case k_data in
-    case dec(get(k_data), i)
+    case adec(get(k_data), i)
      | Some j => 
        assert(sec(k_data) ==> happened(bob()));
        SomeResult(j)
@@ -70,10 +70,10 @@ def bob () @ bob
     input i, _ in 
     // i : Data<adv>
     corr_case shared_key in
-    case dec(get(shared_key), i) 
+    case adec(get(shared_key), i) 
      | Some k => 
         assert (sec(shared_key) ==> happened(alice()));
-        let c = samp enc(k, get(x)) in
+        let c = aenc(k, get(x)) in
         output c;
         true
      | None => false

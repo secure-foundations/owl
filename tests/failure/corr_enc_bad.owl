@@ -11,6 +11,6 @@ def alice (vkB : vk(skB)) @ alice
     input t in
     input m in
     let k' = m in // Using an adversarial key without verifying the signature
-    let c = samp enc(k', get(x)) in
+    let c =  aenc(k', get(x)) in
     output c // Leaks x
 

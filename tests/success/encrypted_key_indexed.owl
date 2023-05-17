@@ -25,11 +25,11 @@ enum Result {
 
 def alice () @ alice
      : if sec(k_data) then Result else Data<adv> = 
-    let c = samp enc(get(shared_key), get(k_data)) in
+    let c = aenc(get(shared_key), get(k_data)) in
     let _ = output c in 
     input i in 
     corr_case k_data in
-    case dec(get(k_data), i) 
+    case adec(get(k_data), i) 
      | Some j => Ok(j)
      | None => Err()
     
@@ -37,9 +37,9 @@ def bob<i> () @ bob
     : Unit = 
     input i in 
     corr_case shared_key in
-    case dec(get(shared_key), i) 
+    case adec(get(shared_key), i) 
      | Some k => 
         let msg : x:Name(x<i>){happened(bob<i>())} = get(x<i>) in 
-        let c = samp enc(k, pack<i>(msg)) in
+        let c = aenc(k, pack<i>(msg)) in
         output c
      | None => ()

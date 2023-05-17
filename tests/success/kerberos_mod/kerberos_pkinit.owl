@@ -100,7 +100,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                         | Some k =>
                             // finally, decrypt AK using k
                             corr_case K in
-                            begin case dec(k, enc_ak) 
+                            begin case adec(k, enc_ak) 
                                 | Some ak =>
                                     if eq(length(tgt), cipherlen(|enckey|)) then 
                                         let tgt' : Data<adv> |cipherlen(|enckey|)| = tgt in
@@ -159,10 +159,10 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                                     // TODO: check that a signed timestamp is still fresh
                                     if eq(username, get(P.uname)) then
                                         // sign/encrypt/send outputs to client
-                                        let tgt = samp enc(get(P.kT), get(P.AK)) in
+                                        let tgt =  aenc(get(P.kT), get(P.AK)) in
                                         output tgt to endpoint(P.client);
                                         
-                                        let enc_ak = samp enc(get(K), get(P.AK)) in
+                                        let enc_ak =  aenc(get(K), get(P.AK)) in
                                         output enc_ak to endpoint(P.client);
                                         
                                         // bundle msg and encrypt with pubkeyC
@@ -177,7 +177,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                                             // let field4 : Data<adv>||signature|| = signed_k in 
                                             let field4 = signed_k in 
                                             let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
-                                            let msg = samp pkenc(pkC, str) in
+                                            let msg =  pkenc(pkC, str) in
                                             output msg to endpoint(P.client); ()
                                         else ()
                                     else ()

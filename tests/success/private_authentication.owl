@@ -1,6 +1,6 @@
 /*
-* A -> B : enc(<pkA,n0>,r0,pkB)
-* B -> A : enc(<n0,n>,r,pkA)
+* A -> B : aenc(<pkA,n0>,r0,pkB)
+* B -> A : aenc(<n0,n>,r,pkA)
 */
 
 
@@ -38,7 +38,7 @@ def A_main<i> () @ A
     let msg_to_enc        = m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))) in
     let msg_to_enc_packed = pack<i>(msg_to_enc) in
     let pubKeyB           = get_encpk(pkB) in
-    let encm              = samp pkenc(pubKeyB, msg_to_enc_packed) in
+    let encm              = pkenc(pubKeyB, msg_to_enc_packed) in
     let _ = output encm to endpoint(B) in
 
     input inp in
@@ -68,7 +68,7 @@ def B_main<j> () @ B
                 let msg_to_enc        = m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)) in
                 let msg_to_enc_packed = (pack<j>(msg_to_enc)) in
                 let pubKeyA = get_encpk(pkA) in
-                let encm = samp pkenc(pubKeyA, msg_to_enc_packed) in
+                let encm = pkenc(pubKeyA, msg_to_enc_packed) in
                 let _ = output encm to endpoint(A) in
                 ()
             else

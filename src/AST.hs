@@ -28,7 +28,6 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
 -- localities are like "alice", "bob", "alice, bob", ...
-type DistrName = String -- For probabilistic functions eg senc
 type DefName = String -- For process definitions eg alice(..)
 type ConstrName = String
 type TableName = String
@@ -356,7 +355,6 @@ data ExprX =
     | ELet Expr (Maybe Ty) String (Bind DataVar Expr) -- The string is the name for the var
     | EUnionCase AExpr (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
-    | ESamp DistrName [AExpr]
     | EIf AExpr Expr Expr
     | ERet AExpr
     | EDebug DebugCommand
@@ -365,7 +363,7 @@ data ExprX =
     | EAdmit
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
-    | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
+    | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | ECorrCase NameExp Expr
     | EFalseElim Expr
     | ETLookup Path AExpr
@@ -376,6 +374,15 @@ type Expr = Spanned ExprX
 
 data CryptOp = 
     CHash Path Int
+      | CPRF String
+      | CAEnc 
+      | CADec 
+      | CPKEnc
+      | CPKDec
+      | CMac
+      | CMacVrfy
+      | CSign
+      | CSigVrfy
     deriving (Show, Generic, Typeable)
 
 
@@ -620,9 +627,23 @@ instance Pretty AExprX where
     pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
+instance Pretty CryptOp where
+    pretty (CHash p i) = 
+        pretty "RO" <+> pretty p <+> pretty i
+    pretty (CPRF x) = 
+        pretty "PRF" <+> pretty x 
+    pretty (CAEnc) = pretty "aenc"
+    pretty (CADec) = pretty "adec"
+    pretty CPKEnc = pretty "pkenc"
+    pretty CPKDec = pretty "pkdec"
+    pretty CMac = pretty "mac"
+    pretty CMacVrfy = pretty "mac_vrfy"
+    pretty CSign = pretty "sign"
+    pretty CSigVrfy = pretty "vrfy"
+
 instance Pretty ExprX where 
-    pretty (ECrypt (CHash p i) a) = do
-        pretty "RO" <+> pretty p <+> pretty a <+> pretty i
+    pretty (ECrypt cop as) = 
+        pretty cop <> (mconcat (map pretty as))
     pretty (EInput k) = 
         let ((x, i), e) = unsafeUnbind k in
         pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e
@@ -640,7 +661,6 @@ instance Pretty ExprX where
         let (x, k) = prettyBind xk in
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
     pretty (EUnpack a k) = pretty "unpack a .... TODO"
-    pretty (ESamp d as) = pretty "samp" <+> pretty d <> tupled (map pretty as)
     pretty (EIf t e1 e2) = 
         pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
     pretty (ERet ae) = pretty ae
