@@ -7,7 +7,7 @@
 module Typing where
 import AST
 import qualified Data.Map.Strict as M
-import Error.Diagnose.Position (Position)
+import Error.Diagnose.Position
 import Data.Default (Default, def)
 import qualified Data.Map.Ordered as OM
 import qualified Data.Set as S
@@ -641,6 +641,14 @@ inferModuleExp me =
             Just b -> return b
             Nothing ->  typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
       _ -> error $ "Unknown case: " ++ show me
+
+singleLineSpan :: Ignore Position -> Ignore Position
+singleLineSpan i = 
+    ignore $ go $ unignore i
+        where
+            go (Position b e i) = Position b (f b) i
+            f b = (fst b, 100)
+
                   
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = 
@@ -669,7 +677,7 @@ checkDecl d cont =
             Just mt -> do
               mdt <- inferModuleExp mt
               assert (d^.spanOf) ("Expected module type: " ++ show (pretty mt)) $ modDefKind mdt == ModType
-              moduleMatches (d^.spanOf) md mdt
+              moduleMatches (singleLineSpan $ d^.spanOf) md mdt
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
