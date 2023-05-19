@@ -75,6 +75,8 @@ anfBind xk = do
 anf :: Fresh m => Expr -> m Expr
 anf e = 
     case e^.val of 
+      EGetCtr _ _ -> return e
+      EIncCtr _ _ -> return e
       EInput xek -> do
           xek' <- anfBind xek
           return $ Spanned (e^.spanOf) $ EInput xek'

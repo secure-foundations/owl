@@ -40,6 +40,7 @@ data PathType =
       | PTTbl
       | PTRO
       | PTMod
+      | PTCounter
       deriving Eq
 
 instance Show PathType where
@@ -51,6 +52,7 @@ instance Show PathType where
     show PTDef = "def"
     show PTTbl = "table"
     show PTMod = "module"
+    show PTCounter = "counter"
 
 data ResolveEnv = ResolveEnv { 
     _flags :: T.Flags,
@@ -63,6 +65,7 @@ data ResolveEnv = ResolveEnv {
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
+    _ctrPaths :: T.Map String ResolvedPath,
     _modPaths :: T.Map String (Bool, ResolvedPath), -- Bool is whether the module is bound
     _freshCtr :: IORef Integer
                              }
@@ -90,7 +93,7 @@ freshModVar s = do
 emptyResolveEnv :: T.Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] r
 
 runResolve :: T.Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -116,6 +119,13 @@ resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
     case d^.val of
+      DeclCounter s isloc -> do
+          (is, loc) <- unbind isloc
+          loc' <- resolveLocality (d^.spanOf) loc
+          let d' = Spanned (d^.spanOf) $ DeclCounter s $ bind is loc'
+          p <- view curPath
+          ds' <- local (over ctrPaths $ T.insert s p) $ resolveDecls ds
+          return (d' : ds')
       DeclName s ixs -> do
           (is, o) <- unbind ixs
           d' <- case o of
@@ -255,6 +265,9 @@ resolveModuleExp pos me =
           me' <- local (over modPaths $ T.insert s (True, PPathVar (ClosedPathVar $ ignore s) v)) $ resolveModuleExp pos me 
           return $ Spanned (me^.spanOf) $ ModuleFun $ bind (v, s, embed t') me' 
 
+resolveNoncePattern :: NoncePattern -> Resolve NoncePattern
+resolveNoncePattern NPHere = return NPHere
+
 resolveNameType :: NameType -> Resolve NameType
 resolveNameType e = do
     e' <- go $ e^.val
@@ -268,6 +281,11 @@ resolveNameType e = do
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
+                  NT_EncWithNonce t p np -> do
+                      t' <- resolveTy t
+                      p' <- resolvePath (e^.spanOf) PTCounter p
+                      np' <- resolveNoncePattern np
+                      return $ NT_EncWithNonce t' p' np' 
                   NT_PRF xs -> do
                       xs' <- forM xs $ \(x, (y, z)) -> do
                           y' <- resolveAExpr y
@@ -379,6 +397,7 @@ resolvePath' pos pt p =
                       PTDef -> view defPaths
                       PTRO -> view roPaths
                       PTTbl -> view tablePaths
+                      PTCounter -> view ctrPaths
               case lookup s mp of
                 Just p -> return $ PRes $ PDot p s
                 Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
@@ -452,7 +471,11 @@ resolveCryptOp pos cop =
           p' <- resolvePath pos PTRO p
           return $ CHash p' i
       CAEnc -> return CAEnc
+      CAEncWithNonce p is -> do
+          p' <- resolvePath pos PTCounter p
+          return $ CAEncWithNonce p' is
       CADec -> return CADec
+      CADecWithNonce -> return CADecWithNonce
       CPKDec -> return CPKDec
       CPKEnc -> return CPKEnc
       CMac -> return CMac
@@ -500,6 +523,12 @@ resolveExpr e =
       ERet a -> do
           a' <- resolveAExpr a
           return $ Spanned (e^.spanOf) $ ERet a'
+      EGetCtr p ps -> do
+          p' <- resolvePath (e^.spanOf) PTCounter p
+          return $ Spanned (e^.spanOf) $ EGetCtr p' ps
+      EIncCtr p ps -> do
+          p' <- resolvePath (e^.spanOf) PTCounter p
+          return $ Spanned (e^.spanOf) $ EIncCtr p' ps
       EDebug dc -> do
           dc' <- resolveDebugCommand dc
           return $ Spanned (e^.spanOf) $ EDebug dc' 

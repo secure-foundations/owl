@@ -117,6 +117,7 @@ symLenConst s = do
 nameTypeLength :: NameType -> Sym SExp
 nameTypeLength nt = 
     symLenConst $ case nt^.val of
+                    NT_EncWithNonce _ _ _ -> "enckey"
                     NT_Nonce -> "nonce"
                     NT_DH -> "DH"
                     NT_Enc _ -> "enckey"

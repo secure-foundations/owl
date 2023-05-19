@@ -119,6 +119,7 @@ data ModBody = ModBody {
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
+    _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
     _randomOracle :: Map String ([AExpr], [NameType]),
     _modules :: Map String ModDef
 }
@@ -420,6 +421,26 @@ getModDef pos rp = do
             case lookup s (md^.modules) of
               Just b -> return b
               Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
+
+checkCounterIsLocal :: Ignore Position -> Path -> ([Idx], [Idx]) -> Check ()
+checkCounterIsLocal pos p0@(PRes (PDot p s)) (vs1, vs2) = do
+    md <- openModule pos p
+    case lookup s (md^.ctrEnv) of
+      Just r -> do
+          forM_ vs1 checkIdxSession
+          forM_ vs2 checkIdxPId
+          ((is1, is2), l) <- unbind r
+          when ((length vs1, length vs2) /= (length is1, length is2)) $ 
+              typeError pos $ "Wrong index arity for counter " ++ show p0
+          let l' = substs (zip is1 vs1) $ substs (zip is2 vs2) $ l
+          tc <- view tcScope
+          case tc of
+            TcGhost -> typeError pos $ "Must be in a def for the counter"
+            TcDef l2 -> do
+                l1' <- normLocality pos l'
+                l2' <- normLocality pos l2
+                assert pos ("Wrong locality for counter") $ l1' `aeq` l2'
+      Nothing -> typeError pos $ "Unknown counter: " ++ show p0
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do

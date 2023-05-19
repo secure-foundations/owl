@@ -36,7 +36,7 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -662,6 +662,12 @@ checkDecl d cont =
                   Nothing -> typeError (d^.spanOf) $ "Unknown locality: " ++ show pth
                   Just _ -> local (over (curMod . localities) $ insert n (Right pth)) $ cont
       DeclInclude _ -> error "Include found during type inference"
+      DeclCounter n isloc -> do
+          ((is1, is2), loc) <- unbind isloc
+          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
+              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+                  normLocality (d^.spanOf) loc
+          local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclName n o -> do
         ((is1, is2), ntnlsOpt) <- unbind o
         case ntnlsOpt of
@@ -886,10 +892,28 @@ checkNameType nt =
         checkTy t
         debug $ pretty "Checking if type " <> pretty t <> pretty " has public lengths "
         checkTyPubLen t
+      NT_EncWithNonce t p np -> do
+          checkTy t
+          checkTyPubLen t
+          checkNoncePattern np
+          checkCounter (nt^.spanOf) p
       NT_PKE t -> do
           checkTy t
           checkTyPubLen t
       NT_MAC t -> checkTy t
+
+checkNoncePattern :: NoncePattern -> Check ()
+checkNoncePattern NPHere = return ()
+
+checkCounter :: Ignore Position -> Path -> Check ()
+checkCounter pos p@(PRes (PDot p0 s)) = do
+    p' <- curModName
+    assert pos ("Counter must be local: " ++ (show p)) $ p0 `aeq` p'
+    md <- openModule pos p0
+    case lookup s (md^.ctrEnv) of
+      Just _ -> return ()
+      Nothing -> typeError pos $ "Unknown counter: " ++ show p
+
 
 checkParam :: FuncParam -> Check ()
 checkParam (ParamAExpr a) = do
@@ -1283,6 +1307,12 @@ checkExpr ot e = do
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
           withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
+      (EGetCtr p iargs) -> do 
+          checkCounterIsLocal (e^.spanOf) p iargs
+          getOutTy ot $ tData advLbl advLbl
+      (EIncCtr p iargs) -> do
+          checkCounterIsLocal (e^.spanOf) p iargs
+          getOutTy ot $ tUnit
       (EOutput a ep) -> do
           case ep of
             Nothing -> return ()
@@ -1518,6 +1548,74 @@ checkExpr ot e = do
                 forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
                 return t
 
+data EncKeyKind = 
+    AEnc
+    | AEnc_Ctr
+    deriving Eq
+   
+
+doAEnc encKeyKind pos t1 x t args =
+  case extractNameFromType t1 of
+    Just k -> do
+        nt <- local (set tcScope TcGhost) $  getNameType k
+        case nt^.val of
+          NT_EncWithNonce t' _ _ | encKeyKind == AEnc_Ctr -> do
+              debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
+              b1 <- isSubtype t t'
+              if b1 then
+                  return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+              else
+                  mkSpanned <$> trivialTypeOf [t1, t]
+          NT_Enc t' | encKeyKind == AEnc -> do
+              debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
+              b1 <- isSubtype t t'
+              if b1 then
+                  return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+              else
+                  mkSpanned <$> trivialTypeOf [t1, t]
+          _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
+    _ -> do
+        debug $ pretty "Got extremely wrong case: " <> pretty args
+        mkSpanned <$> trivialTypeOf [t1, t]
+
+doADec encKeyKind pos t1 t args = 
+    case extractNameFromType t1 of
+      Just k -> do
+          debug $ pretty "Trying nontrivial dec"
+          nt <-  local (set tcScope TcGhost) $ getNameType k
+          l <- coveringLabel t
+          case nt^.val of
+            NT_EncWithNonce t' _ _ | encKeyKind == AEnc_Ctr -> do 
+                b2 <- flowsTo (ignore def) (nameLbl k) advLbl
+                if ((not b2)) then do
+                    -- Honest
+                    debug $ pretty "Honest dec"
+                    return $ mkSpanned $ TOption t'
+                else do
+                    debug $ pretty "Corrupt dec"
+                    -- Corrupt
+                    let l_corr = joinLbl (nameLbl k) l
+                    debug $ pretty "joinLbl succeeded"
+                    return $ tData l_corr l_corr -- Change here
+            NT_Enc t' | encKeyKind == AEnc -> do
+                b2 <- flowsTo (ignore def) (nameLbl k) advLbl
+                if ((not b2)) then do
+                    -- Honest
+                    debug $ pretty "Honest dec"
+                    return $ mkSpanned $ TOption t'
+                else do
+                    debug $ pretty "Corrupt dec"
+                    -- Corrupt
+                    let l_corr = joinLbl (nameLbl k) l
+                    debug $ pretty "joinLbl succeeded"
+                    return $ tData l_corr l_corr -- Change here
+            _ -> typeError (ignore def) $ show $  ErrWrongNameType k "encryption key" nt
+      _ -> do
+          l <- coveringLabelOf [t1, t]
+          debug $ pretty "Trivial dec"
+          return $ tData l l -- Change here
+
+
 checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
@@ -1556,47 +1654,21 @@ checkCryptoOp pos ot cop args = do
       CAEnc -> do
           assert pos ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
-          case extractNameFromType t1 of
-            Just k -> do
-                nt <- local (set tcScope TcGhost) $  getNameType k
-                case nt^.val of
-                  NT_Enc t' -> do
-                      debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
-                      b1 <- isSubtype t t'
-                      if b1 then
-                          return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
-                      else
-                          mkSpanned <$> trivialTypeOf [t1, t]
-                  _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
-            _ -> do
-                debug $ pretty "Got extremely wrong case: " <> pretty args
-                mkSpanned <$> trivialTypeOf [t1, t]
+          doAEnc AEnc pos t1 x t args
       CADec -> do 
           assert pos ("Wrong number of arguments to decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
-          case extractNameFromType t1 of
-            Just k -> do
-                debug $ pretty "Trying nontrivial dec"
-                nt <-  local (set tcScope TcGhost) $ getNameType k
-                l <- coveringLabel t
-                case nt^.val of
-                  NT_Enc t' -> do
-                      b2 <- flowsTo (ignore def) (nameLbl k) advLbl
-                      if ((not b2)) then do
-                          -- Honest
-                          debug $ pretty "Honest dec"
-                          return $ mkSpanned $ TOption t'
-                      else do
-                          debug $ pretty "Corrupt dec"
-                          -- Corrupt
-                          let l_corr = joinLbl (nameLbl k) l
-                          debug $ pretty "joinLbl succeeded"
-                          return $ tData l_corr l_corr -- Change here
-                  _ -> typeError (ignore def) $ show $  ErrWrongNameType k "encryption key" nt
-            _ -> do
-                l <- coveringLabelOf [t1, t]
-                debug $ pretty "Trivial dec"
-                return $ tData l l -- Change here
+          doADec AEnc pos t1 t args
+      CAEncWithNonce p iargs -> do
+          checkCounterIsLocal pos p iargs
+          assert pos ("Wrong number of arguments to encryption") $ length args == 2
+          let [(_, t1), (x, t)] = args
+          doAEnc AEnc_Ctr pos t1 x t args
+      CADecWithNonce -> do 
+          assert pos ("Wrong number of arguments to decryption") $ length args == 3
+          let [(_, t1), (_, tnonce), (_, t)] = args
+          assertSubtype tnonce $ tData advLbl advLbl
+          doADec AEnc_Ctr pos t1 t args
       CPKDec -> do 
           assert pos ("Wrong number of arguments to pk decryption") $ length args == 2
           let [(_, t1), (_, t)] = args

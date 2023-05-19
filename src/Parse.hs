@@ -23,7 +23,7 @@ owlStyle   = emptyDef
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -429,6 +429,9 @@ parsePropTable = [
          return $ \x y -> mkSpannedWith  (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (PImpl x y)) AssocLeft 
      ] ]
 
+parseNoncePattern = 
+    (symbol "*" >> return NPHere)
+
 parseNameType = 
     (parseSpanned $ do
         reserved "DH"
@@ -447,6 +450,16 @@ parseNameType =
         reserved "enckey"
         t <- parseTy
         return $ NT_Enc t)
+    <|>
+    (parseSpanned $ do
+        reserved "enckey_with_nonce"
+        t <- parseTy
+        reserved "nonce"
+        p <- parsePath
+        reserved "nonce_pattern"
+        np <- parseNoncePattern
+        return $ NT_EncWithNonce t p np
+    )
     <|>
     (parseSpanned $ do
         reserved "pkekey"
@@ -510,6 +523,15 @@ parseDecls =
         char '"'
         whiteSpace
         return $ DeclInclude s
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "counter"
+        x <- identifier
+        inds <- parseIdxParamBinds
+        symbol "@"
+        l <- parseLocality
+        return $ DeclCounter x (bind inds l)
     )
     <|>
     (try $ parseSpanned $ do
@@ -799,6 +821,20 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
+        reserved "get_counter"
+        p <- parsePath
+        ps <- parseIdxParams
+        return $ EGetCtr p ps
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "inc_counter"
+        p <- parsePath
+        ps <- parseIdxParams
+        return $ EIncCtr p ps
+    )
+    <|>
+    (parseSpanned $ do
         cop <- parseCryptOp
         symbol "("
         as <- parseArgs
@@ -985,6 +1021,17 @@ parseCryptOp =
     (reserved "aenc" >> return CAEnc)
     <|>
     (reserved "adec" >> return CADec)
+    <|>
+    (do
+        reserved "aenc_with_nonce"
+        symbol "<"
+        p <- parsePath
+        inds <- parseIdxParams
+        symbol ">"
+        return $ CAEncWithNonce p inds
+    )
+    <|>
+    (reserved "adec_with_nonce" >> return CADecWithNonce)
     <|>
     (reserved "pkenc" >> return CPKEnc)
     <|>

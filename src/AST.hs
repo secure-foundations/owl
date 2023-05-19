@@ -223,6 +223,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce
     | NT_Enc Ty
+    | NT_EncWithNonce Ty Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_PRF [(String, (AExpr, NameType))]
@@ -230,6 +231,9 @@ data NameTypeX =
 
 
 type NameType = Spanned NameTypeX
+
+data NoncePattern = NPHere
+    deriving (Show, Generic, Typeable)
 
 data TyX = 
     TData Label Label
@@ -302,6 +306,7 @@ data DeclX =
                         ))
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
+    | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
@@ -357,6 +362,8 @@ data ExprX =
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | EIf AExpr Expr Expr
     | ERet AExpr
+    | EGetCtr Path ([Idx], [Idx])
+    | EIncCtr Path ([Idx], [Idx])
     | EDebug DebugCommand
     | EAssert Prop
     | EAssume Prop
@@ -377,6 +384,8 @@ data CryptOp =
       | CPRF String
       | CAEnc 
       | CADec 
+      | CAEncWithNonce Path ([Idx], [Idx])
+      | CADecWithNonce 
       | CPKEnc
       | CPKDec
       | CMac
@@ -450,6 +459,11 @@ instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
 instance Subst ResolvedPath NameTypeX
+
+instance Alpha NoncePattern
+instance Subst Idx NoncePattern
+instance Subst AExpr NoncePattern
+instance Subst ResolvedPath NoncePattern
 
 instance Alpha FuncParam
 instance Subst Idx FuncParam
@@ -608,6 +622,7 @@ instance Pretty PropX where
 
 instance Pretty NameTypeX where
     pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
+    pretty (NT_EncWithNonce ty p pat) = pretty "enc_with_nonce" <+> pretty ty <+> pretty p
     pretty (NT_Enc ty) = pretty "enc" <+> pretty ty
     pretty (NT_PKE ty) = pretty "pke" <+> pretty ty
     pretty (NT_MAC ty) = pretty "mac" <+> pretty ty
