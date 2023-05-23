@@ -592,10 +592,15 @@ parseDecls =
         es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
         nts <- parseNameType `sepBy1` (symbol "||")
-        return $ DeclRandOrcl l es nts)
+        oadm <- optionMaybe $ do
+            reserved "admit_uniqueness"
+        let ad = case oadm of
+                   Just _ -> AdmitUniqueness
+                   Nothing -> NoAdmitUniqueness
+        return $ DeclRandOrcl l es nts ad)
     <|>
     (parseSpanned $ do
-        reserved "func"
+        reserved "func"                  
         x <- identifier
         reserved "arity"
         whiteSpace

@@ -7,7 +7,7 @@ module type Spec = {
 
 module T : Spec = { 
     locality bob = alice
-    // name k<@i> : nonce @ bob<i>
+    name k<@i> : nonce @ bob<i>
     name k2<@i> : nonce @ bob<i>
 }
 

@@ -213,10 +213,10 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclRandOrcl x zs ws -> do
+      DeclRandOrcl x zs ws adm -> do
           zs' <- mapM resolveAExpr zs
           ws' <- mapM resolveNameType ws
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x zs' ws'
+          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x zs' ws' adm
           p <- view curPath
           ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')

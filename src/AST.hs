@@ -311,7 +311,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String [AExpr] [NameType]
+    | DeclRandOrcl String [AExpr] [NameType] AdmitUniquenessCheck
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
@@ -322,9 +322,16 @@ type Decl = Spanned DeclX
 data IsModuleType = ModType | ModConcrete
     deriving (Show, Generic, Typeable, Eq)
 
+data AdmitUniquenessCheck = NoAdmitUniqueness | AdmitUniqueness
+    deriving (Show, Generic, Typeable, Eq)
+
 instance Alpha IsModuleType
 instance Subst AExpr IsModuleType
 instance Subst ResolvedPath IsModuleType
+
+instance Alpha AdmitUniquenessCheck
+instance Subst AExpr AdmitUniquenessCheck
+instance Subst ResolvedPath AdmitUniquenessCheck
 
 data DetFuncOps =
     UninterpFunc

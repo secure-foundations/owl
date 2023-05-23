@@ -774,7 +774,7 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s aes nts) -> do
+      (DeclRandOrcl s aes nts adm) -> do
         -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
         assert (d^.spanOf) ("Empty random oracle declaration") $ length nts > 0
         _ <- mapM inferAExpr aes
@@ -782,7 +782,9 @@ checkDecl d cont =
             checkNameType nt
             checkROName nt
         localROCheck (d^.spanOf) aes
-        checkROUnique (d^.spanOf) aes
+        case adm of
+          AdmitUniqueness -> return ()
+          NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
         ro <- view $ curMod . randomOracle
         assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
         local (over (curMod . randomOracle) $ insert s (aes, nts)) cont 
