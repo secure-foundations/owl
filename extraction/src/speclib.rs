@@ -126,97 +126,94 @@ pub mod itree {
     // Macro to parse pretty-printed Owl code into an ITree
     #[macro_export]
     macro_rules! owl_spec {
-        (($($tt:tt)*)) => { owl_spec!($($tt)*) };
-        ({$($tt:tt)*}) => { owl_spec!($($tt)*) }; // NB: this one has curly braces {}, above has parens (), don't delete!
-        ((input ($var:ident, $evar:ident)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, $evar| {owl_spec!($($next)*)})))
+        ($cont:ident, ($($tt:tt)*)) => { owl_spec!($cont, $($tt)*) };
+        ($cont:ident, {$($tt:tt)*}) => { owl_spec!($cont, $($tt)*) }; // NB: this one has curly braces {}, above has parens (), don't delete!
+        ($cont:ident, (input ($var:ident, $evar:ident)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|$var, $evar| {owl_spec!($cont, $($next)*)})))
         };
-        ((input ($var:ident, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, _evar| {owl_spec!($($next)*)})))
+        ($cont:ident, (input ($var:ident, _)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|$var, _evar| {owl_spec!($cont, $($next)*)})))
         };
-        ((input (_, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|_var, _evar| {owl_spec!($($next)*)})))
+        ($cont:ident, (input (_, _)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|_var, _evar| {owl_spec!($cont, $($next)*)})))
         };
-        // ((output ($($e:tt)*)) in $($next:tt)*) => {
-        //     (ITree::Output($($e)*, Box::new(owl_spec!($($next)*))))
-        // };
-        ((output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => {
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($($next)*))))
+        ($cont:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => {
+            (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($cont, $($next)*))))
         };
         // vvv check this
-        (output ($($e:tt)*) to ($($endpoint:tt)*)) => {
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(()))))
+        ($cont:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => {
+            (ITree::Output($($e)*, $($endpoint)*, Box::new($cont(()))))
         };
-        ((sample($n:expr, $f:ident($($arg:expr),*), $var:ident)) in $($next:tt)*) => {
-            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!(let $var = (ret($f($($arg),*, coins))) in $($next)*)})))
+        ($cont:ident, (sample($n:expr, $f:ident($($arg:expr),*), $var:ident)) in $($next:tt)*) => {
+            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!($cont, let $var = (ret($f($($arg),*, coins))) in $($next)*)})))
         };
-        (ret ($($e:tt)*)) => {
-            ITree::Ret($($e)*)
+        ($cont:ident, ret ($($e:tt)*)) => {
+            $cont($($e)*)
         };
-        (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => {
+        ($cont:ident, case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => {
             match $e {
-                $($pattern => { owl_spec!($($branch)*) })*
+                $($pattern => { owl_spec!($cont, $($branch)*) })*
             }
         };
-        (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => {
+        ($cont:ident, if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => {
             if $e {
-                owl_spec!($($e1)*)
+                owl_spec!($cont, $($e1)*)
             } else {
-                owl_spec!($($e2)*)
+                owl_spec!($cont, $($e2)*)
             }
         };
-        (let _ = ($($e:tt)*) in $($next:tt)+) => {
-            owl_spec!(($($e)*) in $($next)+)
+        ($cont:ident, let _ = ($($e:tt)*) in $($next:tt)+) => {
+            owl_spec!($cont, ($($e)*) in $($next)+)
         };
-        (let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
+        ($cont:ident, let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
             // Re-merge the trailing tt* into a single tt
-            owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
+            owl_spec!($cont, @@internal merged_let $var = ($($e)*) in { $($next)+ })
         };
-        (let $var:ident = { ($($e:tt)*) in $($next:tt)* }) => {
+        ($cont:ident, let $var:ident = { ($($e:tt)*) in $($next:tt)* }) => {
             // Re-merge the trailing tt* into a single tt
             // Duplicated to descend under { } added by previous rules
-            owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)* })
+            owl_spec!($cont, @@internal merged_let $var = ($($e)*) in { $($next)* })
         };
-        (@@internal merged_let $var:ident = (ret $($e:tt)*) in $next:tt) => {
-            { let $var = $($e)*; owl_spec!($next) }
+        ($cont:ident, @@internal merged_let $var:ident = (ret $($e:tt)*) in $next:tt) => {
+            { let $var = $($e)*; owl_spec!($cont, $next) }
         };
-        (@@internal pushed_let $var:ident = (ret ($e:expr)) in $next:tt) => {
-            { let $var = $e; owl_spec!($next) }
+        ($cont:ident, @@internal pushed_let $var:ident = (ret ($e:expr)) in $next:tt) => {
+            { let $var = $e; owl_spec!($cont, $next) }
         };
-        (@@internal merged_let $var:ident = (input ($($e:tt)*)) in $next:tt) => {
-            owl_spec!((input ($($e)*)) in let $var = $next)
+        ($cont:ident, @@internal merged_let $var:ident = (input ($($e:tt)*)) in $next:tt) => {
+            owl_spec!($cont, (input ($($e)*)) in let $var = $next)
         };
-        (@@internal merged_let $var:ident = (output ($($e:tt)*) to ($($endpoint:tt)*)) in $next:tt) => {
-            owl_spec!((output ($($e)*) to ($($endpoint)*)) in let $var = $next)
+        ($cont:ident, @@internal merged_let $var:ident = (output ($($e:tt)*) to ($($endpoint:tt)*)) in $next:tt) => {
+            owl_spec!($cont, (output ($($e)*) to ($($endpoint)*)) in let $var = $next)
         };
-        (@@internal merged_let $var:ident = (sample($n:expr, $f:ident($($arg:expr),*), $cvar:ident)) in $next:tt) => {
-            owl_spec!((sample($n, $f($($arg),*), $cvar)) in let $var = $next)
+        ($cont:ident, @@internal merged_let $var:ident = (sample($n:expr, $f:ident($($arg:expr),*), $cvar:ident)) in $next:tt) => {
+            owl_spec!($cont, (sample($n, $f($($arg),*), $cvar)) in let $var = $next)
         };
-        (@@internal merged_let $var:ident = (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) in $next:tt) => {
+        ($cont:ident, @@internal merged_let $var:ident = (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) in $next:tt) => {
             match $e {
                 $($pattern => {
-                    owl_spec!(@@internal pushed_let $var = ($($branch)*) in $next)
+                    owl_spec!($cont, @@internal pushed_let $var = ($($branch)*) in $next)
                 })*
             }
         };
-        (@@internal merged_let $var:ident = (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) in $next:tt) => {
+        ($cont:ident, @@internal merged_let $var:ident = (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) in $next:tt) => {
             if $e {
-                owl_spec!(@@internal pushed_let $var = ($($e1)*) in $next)
+                owl_spec!($cont, @@internal pushed_let $var = ($($e1)*) in $next)
             } else {
-                owl_spec!(@@internal pushed_let $var = ($($e2)*) in $next)
+                owl_spec!($cont, @@internal pushed_let $var = ($($e2)*) in $next)
             }
         };
         // (@@internal pushed_let $var:ident = ($e:expr) in $($next:tt)+) => {
         //     {
-        //         owl_spec!(let $var = $($e)*); owl_spec!($($next)+)
+        //         owl_spec!($cont, let $var = $($e)*); owl_spec!($cont, $($next)+)
         //     }
         // };
-        (@@internal pushed_let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
+        ($cont:ident, @@internal pushed_let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
             {
-                owl_spec!(let $var = $($e)* in $($next)+)
+                owl_spec!($cont, let $var = $($e)* in $($next)+)
             }
         };
-        ($($tt:tt)*) => {
+        ($cont:ident, $($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }
     }

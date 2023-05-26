@@ -1142,12 +1142,14 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
-        specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
+        -- specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
         genFuncDecl name sidArgs owlArgs rt = do
-            let itree = pretty "itree: &mut Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
+            let itree = pretty "itree: &mut Tracked<ITreeToken<K, Endpoint>>" 
+            let cont = pretty "cont: Ghost<FnSpec" <> parens (pretty (specTyOf rt)) <+> pretty "-> ITree<K, Endpoint>" <> pretty ">"
             let argsPrettied =
                     pretty "&mut self," <+> 
                     itree <> comma <+>
+                    cont <> comma <+>
                     (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> pretty rt)
             let viewRes = case rt of
@@ -1155,14 +1157,17 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
                     ADT _ -> pretty "res.data.view()"
                     _ -> pretty "res.view()"
             let defReqEns =
-                    pretty "requires old(itree)@@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
-                    pretty "ensures  itree@@.results_in" <> parens viewRes <> line 
-            return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
+                    pretty "requires old(itree)@@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self), cont@") <> line <>
+                    pretty "ensures  itree@@ === cont@" <> parens viewRes <> line 
+            return $ pretty "pub fn" <+> pretty name <> pretty "<K>" <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         genDefSpec (Locality lname _) body owlArgs specRt = do
-            let argsPrettied = pretty "loc:" <+> pretty (locName lname) <> (hsep . punctuate comma . map extractArg $ owlArgs)
-            let rtPrettied = pretty "-> ITree" <> specRtPrettied specRt
-            return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-                pretty "owl_spec!" <> parens (line <>
+            let argsPrettied = hsep . punctuate comma $ 
+                    pretty "loc:" <+> pretty (locName lname) 
+                    : pretty "cont:" <+> pretty "FnSpec" <> parens (pretty specRt) <+> pretty "-> ITree<K, Endpoint>" 
+                    : map extractArg owlArgs
+            let rtPrettied = pretty "-> ITree<K, Endpoint>"
+            return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec<K>" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+                pretty "owl_spec!" <> parens (pretty "cont," <+> line <>
                     pretty body
                 <> line) <> line <>
                 rbrace
@@ -1459,7 +1464,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty loc <> pretty "_main() ...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled (pretty "todo!(/* itree token */)" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
+            pretty "// let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled (pretty "todo!(/* itree token */)" : pretty "todo!(/* cont */)"  : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"

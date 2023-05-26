@@ -218,7 +218,7 @@ specName s = "owlSpec_" ++ replacePrimes s
 
 specPrettyAE :: AExpr -> Doc ann
 specPrettyAE ae = specPrettyAE' (ae ^. val) where
-    specPrettyAE' (AEVar s n) = pretty (unignore s)
+    specPrettyAE' (AEVar s n) = pretty . replacePrimes . unignore $ s
     specPrettyAE' (AEApp f _ as) = pretty f <> tupled (map specPrettyAE as)
     specPrettyAE' (AEString s) = pretty "\"" <> pretty s <> pretty "\""
     specPrettyAE' (AELenConst s) = pretty s <> pretty "_len"
@@ -232,21 +232,21 @@ instance Pretty CExpr where
     pretty CSkip = pretty "skip"
     pretty (CInput xsk) =
         let (x, sk) = prettyBind xsk in
-        parens (pretty "input" <+> x) <+> pretty "in" <> line <> sk
+        parens (pretty "input" <+> replacePrimes' x) <+> pretty "in" <> line <> sk
     pretty (COutput a l) = parens $ pretty "output " <> parens (specPrettyAE a) <+> (case l of
        Nothing -> pretty ""
        Just s -> pretty "to" <+> parens (prettyEndpoint s))
     -- Special case for `let _ = samp _ in ...` which is special-cased in the ITree syntax
     pretty (CLet (CSamp d xs) xk) =
         let (x, k) = prettyBind xk in
-        parens (pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map specPrettyAE xs) <> comma <+> x)) <+>
+        parens (pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map specPrettyAE xs) <> comma <+> replacePrimes' x)) <+>
         pretty "in" <> line <> k
     pretty (CLet (COutput a l) xk) =
         let (x, k) = prettyBind xk in
         pretty (COutput a l) <+> pretty "in" <> line <> k
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
-        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
+        pretty "let" <+> replacePrimes' x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
     pretty (CSamp d xs) = pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map specPrettyAE xs))
     pretty (CIf a e1 e2) = parens $
         pretty "if" <+> parens (specPrettyAE a) <+> pretty "then" <+> parens (pretty e1) <+> pretty "else" <+> parens (pretty e2)
@@ -262,9 +262,9 @@ instance Pretty CExpr where
                 map (\(c, o) ->
                     case o of
                       Left e -> pretty c <+> pretty "=>" <+> braces (pretty e) <> comma
-                      Right xe -> let (x, e) = prettyBind xe in pretty c <+> parens x <+> pretty "=>" <+> braces e <> comma
+                      Right xe -> let (x, e) = prettyBind xe in pretty c <+> parens (replacePrimes' x) <+> pretty "=>" <+> braces e <> comma
                     ) xs in
         parens $ pretty "case" <+> parens (specPrettyAE a) <> line <> braces (vsep pcases)
-    pretty (CTLookup n a) = pretty "lookup" <> tupled [specPrettyAE a]
-    pretty (CTWrite n a a') = pretty "write" <> tupled [specPrettyAE a, specPrettyAE a']
+    pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty n, specPrettyAE a]
+    pretty (CTWrite n a a') = pretty "write" <> tupled [pretty n, specPrettyAE a, specPrettyAE a']
 
