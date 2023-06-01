@@ -245,8 +245,9 @@ initDetFuncs = withNormalizedTys $ M.fromList [
               l <- coveringLabel t
               case nt^.val of
                 NT_Enc t' -> do
+                    b1 <- flowsTo (ignore def) l advLbl
                     b2 <- flowsTo (ignore def) (nameLbl k) advLbl
-                    if ((not b2)) then do
+                    if (b1 && (not b2)) then do
                         -- Honest
                         debug $ pretty "Honest dec"
                         return $ TOption t'
