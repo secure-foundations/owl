@@ -77,7 +77,7 @@ instance Subst ResolvedPath Def
 data DefSpec = DefSpec {
     _isAbstract :: Ignore Bool, 
     _defLocality :: Locality,
-    _preReq_retTy :: Bind [(DataVar, Embed Ty)] (Prop, Ty)
+    _preReq_retTy_body :: Bind [(DataVar, Embed Ty)] (Prop, Ty, Ignore (Maybe Expr))
 }
     deriving (Show, Generic, Typeable)
 

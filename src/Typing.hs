@@ -698,7 +698,7 @@ checkDecl d cont =
           let preReq = case opreReq of
                          Nothing -> pTrue
                          Just p -> p
-          is_abs <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
+          abs_or_body <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality (d^.spanOf) l
                   forM_ xs $ \(x, t) -> checkTy $ unembed t
@@ -708,7 +708,7 @@ checkDecl d cont =
                       let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
                       x <- freshVar
                       case bdy of
-                        Nothing -> return $ ignore True
+                        Nothing -> return $ Nothing
                         Just bdy' -> do
                           bdy'' <- ANF.anf bdy'
                           debug $ pretty "Checking def body " <> pretty n
@@ -720,8 +720,11 @@ checkDecl d cont =
                               -- let p2 = atomicCaseSplits tyAnn
                               -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
                               -- withAllSplits ps $ assertSubtype t tyAnn
-                              return $ ignore False
-          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn))
+                              return $ Just bdy''
+          let is_abs = ignore $ case abs_or_body of
+                         Nothing -> True
+                         Just _ -> False
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, ignore $ abs_or_body))
           addDef (d^.spanOf) n df $ cont
       (DeclCorr l1 l2) -> do
           checkLabel l1
@@ -1454,7 +1457,7 @@ checkExpr ot e = do
                 fl' <- normLocality (e^.spanOf) fl
                 curr_locality' <- normLocality (e^.spanOf) curr_locality
                 assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
-                (xts, (pr, rt)) <- unbind o
+                (xts, (pr, rt, _)) <- unbind o
                 assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
                 argTys <- mapM inferAExpr args
                 forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
@@ -1804,6 +1807,9 @@ typeCheckDecls f ds = do
 
 
 ---- Module stuff ----
+
+instance Pretty a => Pretty (Ignore a) where
+    pretty x = pretty (unignore x)
 
 defMatches :: Ignore Position -> String -> Maybe Def -> Def -> Check ()
 defMatches pos s d1 d2 = 
