@@ -62,11 +62,12 @@ pub mod itree {
             (#[trigger] Bind(ITree::Output(x, f), k)) == ITree::Output(x, Box::new(Bind(*f, k)))
     { }
 
-    #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_bind<A, B, C>(f: ITree<A>, g : FnSpec(A) -> ITree<B>, h : FnSpec(B) -> ITree<C>) 
-        ensures (#[trigger] Bind(Bind(f, g), h)) == Bind(f, |x| Bind(g(x), h)) 
-    { }
+    // // TODO: In general, do we need this?
+    // #[verifier(external_body)]
+    // #[verifier(broadcast_forall)]
+    // pub proof fn axiom_bind_bind<A, B, C>(f: ITree<A>, g : FnSpec(A) -> ITree<B>, h : FnSpec(B) -> ITree<C>) 
+    //     ensures (#[trigger] Bind(Bind(f, g), h)) == Bind(f, |x| Bind(g(x), h)) 
+    // { }
 
     // #[verifier(external_body)]
     // #[verifier(broadcast_forall)]
@@ -166,7 +167,7 @@ pub open spec fn alice_main(owl_k_data: Seq<u8>, owl_shared_key: Seq<u8>) -> ITr
      */ 
     
     Bind(ITree::Ret(enc(owl_shared_key, owl_k_data)), |c|
-    ITree::Output(c, Box::new(
+    Bind(ITree::Output(c, Box::new(ITree::Ret(()))), |u|
     Bind(ITree::Input(|ii| ITree::Ret(ii)), |i|
     Bind(            
         match dec(owl_k_data, i) {
@@ -176,7 +177,7 @@ pub open spec fn alice_main(owl_k_data: Seq<u8>, owl_shared_key: Seq<u8>) -> ITr
             None => ITree::Ret(None)
         }, |result|
     ITree::Ret(result)
-    )))))
+    ))))
 }
 
 #[verifier(external_body)]
