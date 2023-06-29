@@ -190,7 +190,7 @@ pub mod itree {
 
     pub struct ITreeToken<T> {
         token: UnforgeableAux,
-        inner: (T,)
+        inner: T
     }
 
     impl<T> ITreeToken<T> {
@@ -236,7 +236,7 @@ pub open spec fn view_option(v: Option<Vec<u8>>) -> Option<Seq<u8>>
         None    => None
     }
 }
-/// Clones a Vec<u8> (because currently Verus doesn't support this natively)
+// Clones a Vec<u8> (because currently Verus doesn't support this natively)
 #[verifier(external_body)]
 pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
     ensures v@ == res@
@@ -325,16 +325,6 @@ pub exec fn alice_subroutine_impl(Tracked(itree): Tracked<ITreeToken<Seq<u8>>>, 
     (foo_impl(&y), Tracked(itree))
 }
 
-// pub open spec fn elim_bind<A,B>(itree: & Tracked<ITreeToken<B>>, f: ITree<A>) -> (k: (FnSpec(A) -> ITree<B>))
-//     // requires exists |cont| (itree@@ == #[trigger] bind::<A,B>(f, cont))
-//     // ensures  (itree@@ == bind::<A,B>(f, k))
-// {
-//     choose |cont| (itree@@ == #[trigger] bind::<A,B>(f, cont))
-// }
-
-#[verifier(external_body)]
-pub exec fn blank_token<A>() -> Tracked<ITreeToken<A>>
-{ unimplemented!() }
 
 // Hack because I seem to be unable to return `FnSpec`s
 type FnSpecAlias<A,B> = FnSpec(A) -> B;
@@ -357,6 +347,21 @@ pub proof fn join_bind<A,B>(s: ITree<B>, tracked st: ITreeToken<B>, tracked kt: 
 { unimplemented!() }
 
 
+// TODO: Rust macros don't want to match the `@` character?
+macro_rules! owl_call {
+    ($itree:ident, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
+        {
+            let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+            let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
+            let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
+            (res, Tracked($itree))
+        }
+    };
+    ($($tt:tt)*) => {
+        compile_error!(concat!($("`", stringify!($tt), "`, "),*))
+    }
+}
+
 pub exec fn alice_main_impl(Tracked(itree): Tracked<ITreeToken<Option<Seq<u8>>>>, owl_k_data: Vec<u8>, owl_shared_key: Vec<u8>) -> (res: (Option<Vec<u8>>, Tracked<ITreeToken<Option<Seq<u8>>>>))
     requires itree@ == alice_main(owl_k_data@, owl_shared_key@)
     ensures  (res.1)@@.results_in(view_option(res.0))
@@ -368,9 +373,10 @@ pub exec fn alice_main_impl(Tracked(itree): Tracked<ITreeToken<Option<Seq<u8>>>>
 
     match dec_impl(&owl_k_data, &i) {
         Some(x) => {
-            let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind(itree, alice_subroutine(x@));  
-            let (y, Tracked(call_token)) = alice_subroutine_impl(Tracked(call_token), &x);
-            let tracked Tracked(itree) = join_bind(alice_subroutine(x@), call_token, cont_token, y@);
+            let (y, Tracked(itree)) = owl_call!(itree, alice_subroutine(x.view()), alice_subroutine_impl(&x));
+            // let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind(itree, alice_subroutine(x@));  
+            // let (y, Tracked(call_token)) = alice_subroutine_impl(Tracked(call_token), &x);
+            // let tracked Tracked(itree) = join_bind(alice_subroutine(x@), call_token, cont_token, y@);
 
             (Some(y), Tracked(itree))
         },
