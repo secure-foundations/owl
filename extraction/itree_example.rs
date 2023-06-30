@@ -348,13 +348,33 @@ pub proof fn join_bind<A,B>(s: ITree<B>, tracked st: ITreeToken<B>, tracked kt: 
 
 
 // TODO: Rust macros don't want to match the `@` character?
+#[allow(unused_macros)]
 macro_rules! owl_call {
-    ($itree:ident, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
+    ($tok:expr, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
         {
-            let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
-            let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
-            let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
-            (res, Tracked($itree))
+            #[verus::internal(proof)] let mut call_token;
+            #[verus::internal(proof)] let mut cont_token;
+            #[verifier::proof_block] {
+                #[verus::internal(proof)] let (tmp_call_token, tmp_cont_token) = split_bind($tok, $spec($($specarg),*));
+                call_token = tmp_call_token.get();
+                cont_token = tmp_cont_token.get();
+            }
+            let (res, verus_tmp_call_token) =
+                $exec(#[verifier::ghost_wrapper] ::builtin::tracked_exec(#[verifier::tracked_block_wrapped] call_token), $($execarg),*);
+            
+            #[verifier::proof_block] { call_token = verus_tmp_call_token.get(); };
+
+            #[verus::internal(proof)] let mut tok;
+            #[verifier::proof_block] {
+                #[verus::internal(proof)] let tmp = join_bind($spec($($specarg),*), call_token, cont_token, res.view());
+                tok = tmp.get();
+            };
+            (res, #[verifier::ghost_wrapper] ::builtin::tracked_exec(#[verifier::tracked_block_wrapped] tok))
+
+            // let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+            // let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
+            // let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
+            // (res, Tracked($itree))
         }
     };
     ($($tt:tt)*) => {
@@ -371,17 +391,21 @@ pub exec fn alice_main_impl(Tracked(itree): Tracked<ITreeToken<Option<Seq<u8>>>>
     output::<Option<Seq<u8>>>(&c, Tracked(&mut itree));
     let i = input::<Option<Seq<u8>>>(Tracked(&mut itree));
 
-    match dec_impl(&owl_k_data, &i) {
+    let (res, Tracked(itree)): (Option<Vec<u8>>, Tracked<ITreeToken<Option<Seq<u8>>>>) = match dec_impl(&owl_k_data, &i) {
         Some(x) => {
-            let (y, Tracked(itree)) = owl_call!(itree, alice_subroutine(x.view()), alice_subroutine_impl(&x));
-            // let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind(itree, alice_subroutine(x@));  
-            // let (y, Tracked(call_token)) = alice_subroutine_impl(Tracked(call_token), &x);
-            // let tracked Tracked(itree) = join_bind(alice_subroutine(x@), call_token, cont_token, y@);
+            let (y, Tracked(itree)) : (Vec<u8>, Tracked<ITreeToken<Option<Seq<u8>>>>) = // owl_call!(itree, alice_subroutine(x.view()), alice_subroutine_impl(&x));
+            {
+                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind(itree, alice_subroutine(x@));
+                let (res, Tracked(call_token)) = alice_subroutine_impl(Tracked(call_token), &x);
+                let tracked Tracked(res_token) = join_bind(alice_subroutine(x@), call_token, cont_token, res@);
+                (res, Tracked(res_token))
+            };
 
             (Some(y), Tracked(itree))
         },
         None => (None, Tracked(itree))
-    }
+    };
+    (res, Tracked(itree))
 
     // let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind(itree, alice_subroutine(r@));  
     // let (rr, Tracked(call_token)) = alice_subroutine_impl(Tracked(call_token), &r);
