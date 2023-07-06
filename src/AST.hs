@@ -232,6 +232,7 @@ data NameTypeX =
 
 type NameType = Spanned NameTypeX
 
+-- Nonce patterns are injective contexts
 data NoncePattern = NPHere
     deriving (Show, Generic, Typeable)
 
