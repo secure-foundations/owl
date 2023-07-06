@@ -65,22 +65,6 @@ trivialTypeOf ts = do
     l <- coveringLabelOf ts
     return $ TData l l
 
-symCases :: Ty -> (Ty -> Check TyX) -> Check TyX
-symCases t k =
-    case t^.val of
-      TCase p t1 t2 -> do
-          t1' <- symCases t1 k
-          t2' <- symCases t2 k
-          return $ TCase p (mkSpanned t1') (mkSpanned t2')
-      _ -> k t
-
-mkSymCheck :: [Ty] -> ([Ty] -> Check TyX) -> Check TyX
-mkSymCheck [] k = k []
-mkSymCheck (t:ts) k =
-    symCases t $ \t' ->
-        mkSymCheck ts $ \ts' ->
-            k (t' : ts')
-
 extractNameFromType :: Ty -> Maybe NameExp
 extractNameFromType t =
     case (stripRefinements t)^.val of
@@ -106,7 +90,7 @@ extractVKFromType t =
       _ ->  Nothing
 
 mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (String, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
-mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
+mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> k (map snd args)))) 
 
 withNormalizedTys :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
     Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
@@ -118,6 +102,9 @@ withNormalizedTys mp =
             y a b
             ) in
     map (\(k, v) -> (k, f v)) mp
+
+mkRefined :: Ty -> (AExpr -> Prop) -> TyX              
+mkRefined t p = TRefined t (bind (s2n ".res") $ p $ aeVar ".res")
 
 initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
@@ -133,8 +120,9 @@ initDetFuncs = withNormalizedTys $ [
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
               l2 <- coveringLabel t2
-              let tr = aeApp (topLevelPath $ "TRUE") [] []
-              return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
+              let true = aeApp (topLevelPath $ "TRUE") [] []
+              return $ mkRefined (mkSpanned $ TBool $ joinLbl l1 l2) $ \x ->
+                    pImpl (pEq x true) (pEq a1 a2)
            )),
     ("Some", (1, \ps args -> do
         case (ps, args) of
