@@ -803,9 +803,30 @@ nameExpIsLocal ne =
           return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
 
+ensureOnlyLocalNames :: AExpr -> Check ()
+ensureOnlyLocalNames ae = do
+    case ae^.val of
+      AEVar _ _ -> return ()
+      AEApp _ _ aes -> forM_ aes ensureOnlyLocalNames
+      AEString _ -> return ()
+      AEGet n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEGetEncPK n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEGetVK n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEPackIdx _ a -> ensureOnlyLocalNames a
+      AELenConst _ -> return ()
+      AEInt _ -> return ()
 
 localROCheck :: Ignore Position -> [AExpr] -> Check ()
 localROCheck pos aes = laxAssertion $ do
+    -- Locality check
+    forM_ aes $ ensureOnlyLocalNames
+    -- Injectivity check
     ts <- mapM inferAExpr aes
     bs <- forM ts $ \t ->
         case t^.val of
