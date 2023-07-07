@@ -1,0 +1,13 @@
+locality alice
+
+name n : nonce @ alice
+name m : nonce @ alice
+
+random_oracle L : get(n) -> nonce
+
+def tst() @ alice : Unit = 
+    let x = hash<L>(get(m)) in 
+    let y = hash<L>("hi") in 
+    output x;
+    output y
+    

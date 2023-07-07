@@ -604,6 +604,20 @@ symAssert p = do
     emitComment $ "Proving prop " ++ show (pretty p)
     emitToProve b
 
+symDecideNotInRO :: [AExpr] -> Check Bool
+symDecideNotInRO aes = do
+    if length aes == 0 then return True else do
+        res <- fromSMT smtSetup $ do
+            vs <- mapM interpretAExp aes
+            ros <- liftCheck $ collectRO
+            bs <- forM ros $ \(_, (aes', _)) -> do
+                vs' <- mapM interpretAExp aes'
+                return $ sNot $ sEq (sConcats vs) (sConcats vs')
+            emitToProve $ sAnd bs
+        if snd res then return True else return False
+
+
+
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do
     b1 <- fromSMT smtSetup $ do

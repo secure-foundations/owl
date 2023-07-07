@@ -1645,10 +1645,14 @@ checkCryptoOp pos ot cop args = do
           case b of
             Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
             _ -> do 
-                let ts = map snd args
-                lt <- coveringLabelOf ts 
-                flowCheck pos lt advLbl
-                getOutTy ot $ mkSpanned $ TData advLbl advLbl
+                noCollision <- SMT.symDecideNotInRO aes
+                if noCollision then 
+                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
+                else do 
+                    let ts = map snd args
+                    lt <- coveringLabelOf ts 
+                    flowCheck pos lt advLbl
+                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args
