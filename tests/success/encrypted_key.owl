@@ -56,7 +56,7 @@ enum Result {
 def alice () @ alice
      : if sec(k_data) then (x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob())}) else Data<adv> = 
     let c = aenc(get(shared_key), get(k_data)) in
-    let _ = output c in 
+    let _ = output c to endpoint(bob) in 
     input i, _ in 
     corr_case k_data in
     case adec(get(k_data), i)
@@ -74,7 +74,7 @@ def bob () @ bob
      | Some k => 
         assert (sec(shared_key) ==> happened(alice()));
         let c = aenc(k, get(x)) in
-        output c;
+        output c to endpoint(alice);
         true
      | None => false
         

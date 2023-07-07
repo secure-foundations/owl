@@ -304,8 +304,11 @@ initFuncs = M.fromList [
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
         )),
         ("UNIT", (Unit, \_ -> return "()")),
+        ("Top_UNIT", (Unit, \_ -> do debugPrint "check Top_UNIT hack"; return "()")),
         ("TRUE", (Bool, \_ -> return "true")),
+        ("Top_TRUE", (Bool, \_ -> return "true")),
         ("FALSE", (Bool, \_ -> return "false")),
+        ("Top_FALSE", (Bool, \_ -> return "false")),
         ("Some", (Option VecU8, \args -> case args of
                 [(_,x)] -> return $ "Some(" ++ x ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for Some"
@@ -812,7 +815,8 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                             case unspanned of
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
                                 _ -> throwError $ TypeError "got wrong number of args to dhpk"
-                        else
+                        else do
+                            debugPrint $ rustifyPath owlFn
                             throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
