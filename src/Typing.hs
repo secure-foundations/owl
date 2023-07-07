@@ -720,7 +720,7 @@ checkDecl d cont =
                               -- let p2 = atomicCaseSplits tyAnn
                               -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
                               -- withAllSplits ps $ assertSubtype t tyAnn
-                              return $ Just bdy''
+                              return $ Just bdy'
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
                          Just _ -> False

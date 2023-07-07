@@ -92,9 +92,10 @@ data CExpr =
     | CIf AExpr CExpr CExpr
     | CRet AExpr
     | CCall Path ([Idx], [Idx]) [AExpr]
-    | CCase CExpr [(String, Either CExpr (Bind DataVar CExpr))]
+    | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
     | CTLookup Path AExpr
     | CTWrite Path AExpr AExpr
+    | CCrypt CryptOp [AExpr]
     deriving (Show, Generic, Typeable)
 
 instance Alpha CExpr
@@ -142,15 +143,17 @@ concretify e =
                     let (x, k) = unsafeUnbind xk
                     k' <- concretify k
                     return (c, Right $ bind x k')
-          return $ CCase a' cases'
+          avar <- fresh $ s2n "caseval"
+          return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
       ECorrCase _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
+      ECrypt op args -> return $ CCrypt op args
+      e -> error $ "TODO: unimplemented case for concretify: " ++ show e
 
--- doConcretify :: Expr -> CExpr
--- doConcretify = runFreshM . concretify
-
+doConcretify :: Expr -> CExpr
+doConcretify = runFreshM . concretify
 
 instance Pretty CTy where
     pretty CTData = pretty "Data"
@@ -207,4 +210,5 @@ instance Pretty CExpr where
         pretty "case" <+> pretty a <> line <> vsep pcases
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
+    pretty (CCrypt cop as) = pretty cop <> tupled (map pretty as)
 

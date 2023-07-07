@@ -15,6 +15,7 @@ import Text.Printf
 import ModuleFlattening
 import Test
 import qualified Extraction as E
+import Control.Lens
 
 mkFlags :: String -> String -> String -> CmdArgs -> Flags
 mkFlags contents path bname (CmdArgs d logsmt _ _ lax _) =
@@ -42,7 +43,7 @@ main = do
             putStrLn "Need input file!"
             putStrLn getHelpMessage
         Just fn -> do
-          start <- getCPUTime
+          -- start <- getCPUTime
           s <- readFile fn
           case (P.parse parseFile (takeFileName fn) s) of
             Left err -> putStrLn $ "parse error: " ++ show err
@@ -51,19 +52,21 @@ main = do
                     res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) args) ast
                     case res of
                       Left _ -> return ()
-                      Right _ -> do
-                          end <- getCPUTime
-                          let diff = fromIntegral (end - start) / (10^12)
-                          printf "Typechecking success! Time to typecheck: %0.5f seconds\n" (diff :: Double)
+                      Right tcEnv -> do
+                          -- end <- getCPUTime
+                          -- let diff = fromIntegral (end - start) / (10^12)
+                          printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
                           if extract args then do
                               let extfn = "extraction/src/main.rs"
-                              res <- E.extract (takeDirectory fn) ast
+                              let modBody = doFlattening tcEnv
+                              res <- E.extract (takeDirectory fn) modBody
                               case res of
                                 Left err -> E.printErr err
                                 Right rust_code -> do
-                                  writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
-                                  appendFile extfn $ show rust_code
-                                  callProcess "rustfmt" [extfn]
-                                  putStrLn $ "Successfully extracted to file " ++ extfn
-                                  return ()
+                                  putStrLn $ show rust_code
+                                  -- writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
+                                  -- appendFile extfn $ show rust_code
+                                  -- callProcess "rustfmt" [extfn]
+                                  -- putStrLn $ "Successfully extracted to file " ++ extfn
+                                  -- return ()
                           else return ()

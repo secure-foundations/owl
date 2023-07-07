@@ -48,7 +48,7 @@ instance Semigroup ModBody where
                 (md1^.modules <> md2^.modules)
 
 globalName :: ResolvedPath -> String
-globalName PTop = ""
+globalName PTop = "Top"
 globalName (PDot p s) = globalName p ++ "_" ++ s
 globalName _ = error "globalName : Got path var"
 

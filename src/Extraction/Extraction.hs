@@ -34,6 +34,7 @@ import System.IO
 import qualified Text.Parsec as P
 import qualified Parse as OwlP
 import System.FilePath (takeFileName, (</>))
+import qualified TypingBase as TB
 
 newtype ExtractionMonad a = ExtractionMonad (StateT Env (ExceptT ExtractionError IO) a)
     deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO)
@@ -136,8 +137,16 @@ replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
+rustifyResolvedPath :: ResolvedPath -> String
+rustifyResolvedPath PTop = "Top"
+rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
+rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
+rustifyResolvedPath (PPathVar OpenPathVar s) = show s
+rustifyResolvedPath (PDot x y) = show x ++ "_" ++ y
+
 rustifyPath :: Path -> String
 rustifyPath (PUnresolvedVar s) = show s
+rustifyPath (PRes rp) = rustifyResolvedPath rp
 rustifyPath p = error $ "bad path: " ++ show p
 
 locName :: String -> String
@@ -254,38 +263,38 @@ initFuncs = M.fromList [
                 [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
-        ("enc", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for enc"
-        )),
-        ("dec", (Option VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        )),
-        ("mac", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_mac(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for mac"
-        )),
-        ("mac_vrfy", (Option VecU8, \args -> case args of
-                [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        )),
-        ("pkenc", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_pkenc(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for pkenc"
-        )),
-        ("pkdec", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_pkdec(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for pkdec"
-        )),
-        ("sign", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_sign(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for sign"
-        )),
-        ("vrfy", (Option VecU8, \args -> case args of
-                [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
-        )),
+        -- ("enc", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for enc"
+        -- )),
+        -- ("dec", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
+        -- )),
+        -- ("mac", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_mac(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for mac"
+        -- )),
+        -- ("mac_vrfy", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
+        -- )),
+        -- ("pkenc", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkenc(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for pkenc"
+        -- )),
+        -- ("pkdec", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkdec(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for pkdec"
+        -- )),
+        -- ("sign", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_sign(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for sign"
+        -- )),
+        -- ("vrfy", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
+        -- )),
         -- ("dhpk", (VecU8, \args -> case args of
         --         [(_,x)] -> return $ "pk_" ++ x
         --         _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
@@ -733,6 +742,28 @@ extractEnum owlName owlCases' = do
 -------------------------------------------------------------------------------------------
 -- Code generation
 
+extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, Doc ann, Doc an)
+extractCryptOp binds op owlArgs = do
+    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
+    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
+    let args = map (\(r, _, p) -> (r, show p)) argsPretties
+    (rt, str) <- case (op, args) of
+        (CHash p n, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CAEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_enc(&" ++ k ++ ")")
+        (CADec, [(_,k), (_,x)]) -> do return (Option VecU8, x ++ ".owl_dec(&" ++ k ++ ")")
+        (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CPKEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkenc(&" ++ k ++ ")")
+        (CPKDec, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkdec(&" ++ k ++ ")")
+        (CMac, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_mac(&" ++ k ++ ")")
+        (CMacVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (CSign, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_sign(&" ++ k ++ ")")
+        (CSigVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op
+    return (rt, preArgs, pretty str)
+
+
 extractAExpr :: M.Map String RustTy -> AExprX -> ExtractionMonad (RustTy, Doc ann, Doc ann)
 extractAExpr binds (AEVar _ owlV) = do
     let v = rustifyName . show $ owlV
@@ -834,17 +865,6 @@ extractExpr loc binds (CLet e xk) = do
             _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> ePrettied <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
---extractExpr loc binds (CSamp distr owlArgs) = do
---    fs <- use funcs
---    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
---    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
---    let args = map (\(r, _, p) -> (r, show p)) argsPretties
---    case fs M.!? distr of
---      Nothing -> do
---        throwError $ UndefinedSymbol distr
---      Just (rt, f) -> do
---        str <- f args
---        return (binds, VecU8, preArgs, pretty str)
 extractExpr loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preeT, eTPrettied) <- extractExpr loc binds eT
@@ -864,78 +884,78 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
       Just (rt, f) -> do
         str <- f args
         return (binds, rt, preArgs, pretty str)
---extractExpr loc binds (CCase ae cases) = do
---    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
---    case rt of
---      Option rt' -> do
---        casesPrettiedRts <- forM cases $ \(c, o) ->
---                case o of
---                    Left e -> do
---                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
---                        return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
---                    Right xk -> do
---                        let (x, k) = unsafeUnbind xk
---                        let rustX = rustifyName . show $ x
---                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
---                        let eWrapped = case rt' of
---                                VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
---                                RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
---                                _ -> pretty "temp_" <> pretty rustX
---                        return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
---                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
---        branchRt <- case casesPrettiedRts of
---          [] -> throwError $ TypeError "case on Option type with no cases"
---          (b, _) : _ -> return b
---        let casesPrettied = map snd casesPrettiedRts
---        return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
---      _ -> do -- We are casing on an Owl ADT
---        es <- use enums
---        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
---          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
---          Just s -> return s
---        ts <- use typeLayouts
---        enumLayout <- case ts M.!? rustifyName enumOwlName of
---          Just (LEnum n c) -> return c
---          _ -> throwError $ UndefinedSymbol enumOwlName
---        let tagByteOf = \c -> do
---                case enumLayout M.!? (rustifyName c) of
---                        Nothing -> throwError $ ErrSomethingFailed "enum case not found"
---                        Just (b,_) -> return b
---        casesPrettiedRts <- forM cases $ \(c, o) ->
---                case o of
---                    Left e -> do
---                        b <- tagByteOf c
---                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
---                        return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
---                    Right xk -> do
---                        b <- tagByteOf c
---                        let (x, k) = unsafeUnbind xk
---                        let rustX = rustifyName . show $ x
---                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
---                        let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
---                        return (rt'', pretty b <+> pretty "=>"
---                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
---        branchRt <- case casesPrettiedRts of
---          [] -> throwError $ TypeError "case on enum with no cases"
---          (b, _) : _ -> return b
---        let defaultCase = case branchRt of
---              VecU8 -> pretty "vec![0]"
---              RcVecU8 -> pretty "Rc::new(vec![0])"
---              Bool -> pretty "/* arbitrarily autogenerated */ false"
---              Number -> pretty "/* arbitrarily autogenerated */ 0"
---              String -> pretty "/* arbitrarily autogenerated */ \"\""
---              Unit -> pretty "()"
---              ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
---              Option _ -> pretty "/* arbitrarily autogenerated */ None"
---        let casesPrettied = map snd casesPrettiedRts
---        return (binds, branchRt, pretty "", preAe <> braces (
---                pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
---                pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
---                pretty "match caser_tmp.0[0]" <+> braces (
---                    vsep casesPrettied <> line <>
---                    pretty "_ =>" <+> defaultCase <> comma
---                ))
---            )
+extractExpr loc binds (CCase ae cases) = do
+   (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
+   case rt of
+     Option rt' -> do
+       casesPrettiedRts <- forM cases $ \(c, o) ->
+               case o of
+                   Left e -> do
+                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                   Right xk -> do
+                       let (x, k) = unsafeUnbind xk
+                       let rustX = rustifyName . show $ x
+                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
+                       let eWrapped = case rt' of
+                               VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+                               RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
+                               _ -> pretty "temp_" <> pretty rustX
+                       return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
+                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+       branchRt <- case casesPrettiedRts of
+         [] -> throwError $ TypeError "case on Option type with no cases"
+         (b, _) : _ -> return b
+       let casesPrettied = map snd casesPrettiedRts
+       return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
+     _ -> do -- We are casing on an Owl ADT
+       es <- use enums
+       enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
+         Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
+         Just s -> return s
+       ts <- use typeLayouts
+       enumLayout <- case ts M.!? rustifyName enumOwlName of
+         Just (LEnum n c) -> return c
+         _ -> throwError $ UndefinedSymbol enumOwlName
+       let tagByteOf = \c -> do
+               case enumLayout M.!? (rustifyName c) of
+                       Nothing -> throwError $ ErrSomethingFailed "enum case not found"
+                       Just (b,_) -> return b
+       casesPrettiedRts <- forM cases $ \(c, o) ->
+               case o of
+                   Left e -> do
+                       b <- tagByteOf c
+                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                   Right xk -> do
+                       b <- tagByteOf c
+                       let (x, k) = unsafeUnbind xk
+                       let rustX = rustifyName . show $ x
+                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
+                       let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
+                       return (rt'', pretty b <+> pretty "=>"
+                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+       branchRt <- case casesPrettiedRts of
+         [] -> throwError $ TypeError "case on enum with no cases"
+         (b, _) : _ -> return b
+       let defaultCase = case branchRt of
+             VecU8 -> pretty "vec![0]"
+             RcVecU8 -> pretty "Rc::new(vec![0])"
+             Bool -> pretty "/* arbitrarily autogenerated */ false"
+             Number -> pretty "/* arbitrarily autogenerated */ 0"
+             String -> pretty "/* arbitrarily autogenerated */ \"\""
+             Unit -> pretty "()"
+             ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
+             Option _ -> pretty "/* arbitrarily autogenerated */ None"
+       let casesPrettied = map snd casesPrettiedRts
+       return (binds, branchRt, pretty "", preAe <> braces (
+               pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
+               pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
+               pretty "match caser_tmp.0[0]" <+> braces (
+                   vsep casesPrettied <> line <>
+                   pretty "_ =>" <+> defaultCase <> comma
+               ))
+           )
 extractExpr loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
@@ -944,6 +964,9 @@ extractExpr loc binds (CTLookup tbl ae) = do
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
     let tblName = rustifyName $ rustifyPath tbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
+extractExpr loc binds (CCrypt cryptOp args) = do
+    (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
+    return (binds, rt, pre, opPrettied)
 extractExpr loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
@@ -989,10 +1012,11 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     return ()
 
 
-extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
-extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
+extractDef' :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
+extractDef' owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
+    debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
@@ -1001,8 +1025,22 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
     where
         genFuncDecl name sidArgs owlArgs rt = do
-            let argsPrettied = pretty "&mut self," <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
+            let argsPrettied = 
+                    pretty "&mut self," 
+                    <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) 
+                    <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
+
+extractDef :: Locality -> String -> [IdxVar]  -> TB.DefSpec -> ExtractionMonad (Doc ann)
+extractDef loc owlName sidArgs defspec = do
+    if unignore $ defspec ^. TB.isAbstract then return $ pretty "" 
+    else if not ((defspec ^. TB.defLocality) `aeq` loc) then throwError $ ErrSomethingFailed "mismatched localities" 
+    else do
+        debugPrint $ "Extracting def " ++ owlName
+        let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) in
+            case unignore body of
+                Nothing -> return $ pretty ""
+                Just e  -> extractDef' owlName loc sidArgs args retTy e
 
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
@@ -1136,7 +1174,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     case find (\(n,_,sids,as,_,_) -> (n == loc ++ "_main") && null as) defs of
         Just (_,_,sids,_,_,_) -> do
             initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
-            fns <- mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
+            fns <- mapM (\(n, l, sids, as, t, e) -> extractDef' n l sids as t e) defs
             return $ (length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
@@ -1509,5 +1547,67 @@ extractDecls ds = do
                 "}"
             ]
 
-extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann))
-extract path dcls = runExtractionMonad (initEnv path) $ extractDecls dcls
+-- debug hack
+instance Pretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
+    pretty b =
+        let (ivars, opt) = prettyBind b in
+        angles ivars <> pretty "@" <> opt
+
+instance Pretty (Either Int ResolvedPath) where
+    pretty (Left i) = pretty "Left" <+> pretty i
+    pretty (Right rp) = pretty "Right" <+> pretty rp
+
+instance Pretty (Ignore (Maybe Expr)) where
+    pretty x = pretty (unignore x)
+
+instance Pretty (Embed Ty) where
+    pretty t = pretty (unembed t)
+
+instance Pretty TB.DefSpec where
+    pretty ds = 
+        let abs = if unignore $ ds ^. TB.isAbstract then pretty "abstract" else pretty "" in
+        let loc = pretty (ds ^. TB.defLocality) in
+        let (args, (req, retTy, body)) = unsafeUnbind (ds ^. TB.preReq_retTy_body) in
+        let body' = case (unignore body) of
+                Nothing -> pretty ""
+                Just e  -> pretty $ doConcretify e
+        in
+        abs <> pretty "@" <> loc <> pretty ":" <+> pretty args <> pretty "->" <> pretty retTy <+> pretty "=" <> line <> body'
+        
+
+instance Pretty TB.Def where
+    pretty (TB.DefHeader x) = 
+        let (ivars, loc) = prettyBind x in
+        pretty "DefHeader:" <+> angles ivars <> pretty "@" <> loc
+    pretty (TB.Def x) =
+        let (ivars, defspec) = prettyBind x in
+        pretty "Def:" <+> angles ivars <> defspec
+
+prettyMap :: Pretty a => String -> TB.Map String a -> Doc ann
+prettyMap s m = 
+    pretty s <> pretty ":::" <+> lbracket <> line <>
+    foldr (\(k, a) acc -> 
+        acc <> 
+        pretty k <> pretty "::" <> line <> 
+        pretty "   " <> pretty a <+> comma <> line) (pretty "") m
+    <> line <> rbracket <> line
+
+extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
+extractModBody mb = do
+    extractedDefs <- mapM f (mb ^. TB.defs)
+    return $ vsep $ 
+        [ prettyMap "nameEnv" (mb ^. TB.nameEnv) 
+        , prettyMap "localities" (mb ^. TB.localities)
+        -- , prettyMap "tyDefs" (mb ^. TB.tyDefs)
+        , prettyMap "defs" (mb ^. TB.defs)
+        ] ++ extractedDefs
+    where 
+        f (_, TB.DefHeader _) = return $ pretty ""
+        f (owlName, TB.Def idxs_defSpec) = do
+            let ((sids, _), defSpec) = unsafeUnbind idxs_defSpec in
+                extractDef (defSpec ^. TB.defLocality) owlName sids defSpec
+
+-- TODO: Convert all of the ModBody structures to ModBody structures indexed by locality
+
+extract :: String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
+extract path modbody = runExtractionMonad (initEnv path) $ extractModBody modbody
