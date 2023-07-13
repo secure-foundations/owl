@@ -311,8 +311,11 @@
 (assert (distinct TRUE FALSE UNIT))
 
 (assert (forall ((n1 Name) (n2 Name) (n3 Name) (n4 Name)) (!
-    (=> (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2))
-                    (dh_combine (dhpk (ValueOf n3)) (ValueOf n4))))
+    (=> (and (HasNameKind n1 DHkey) (HasNameKind n2 DHkey)
+             (HasNameKind n3 DHkey) (HasNameKind n4 DHkey)
+             (distinct n1 n2 n3 n4)
+        (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2))
+                    (dh_combine (dhpk (ValueOf n3)) (ValueOf n4)))))
         (and (= n1 n3) (= n2 n4)))
     :pattern (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2))
                  (dh_combine (dhpk (ValueOf n3)) (ValueOf n4)))
