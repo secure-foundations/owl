@@ -12,9 +12,13 @@ import Control.Monad
 import Data.Maybe
 import Data.IORef
 import System.Process
+import System.Exit
+import Data.Default (Default, def)
 import System.Directory
 import System.FilePath
 import Control.Lens
+import Control.Concurrent
+import Control.Concurrent.MVar
 import qualified Data.List as L
 import Control.Monad.Except
 import Control.Monad.Trans
@@ -45,7 +49,7 @@ instance Show SExp where
     show (SOption x y) = ":" ++ x ++ " " ++ y
 
 bitstringSort :: SExp
-bitstringSort = SAtom "BS"
+bitstringSort = SAtom "Bits"
 
 bitstringListSort :: SExp
 bitstringListSort = SAtom "BSList"
@@ -54,7 +58,7 @@ nameSort :: SExp
 nameSort = SAtom "Name"
 
 labelSort :: SExp
-labelSort = SAtom "Lbl"
+labelSort = SAtom "Label"
 
 indexSort :: SExp
 indexSort = SAtom "Index"
@@ -194,53 +198,76 @@ emitToProve e = do
     trivialVC .= False
     emitAssertion $ sNot e
 
-
-smtPrelude :: Sym ()
-smtPrelude = do
-    emit $ SApp [SAtom "set-option", SOption "auto_config" "false"]
-    emit $ SApp [SAtom "set-option", SOption "smt.mbqi" "false"]
-    emit $ SApp [SAtom "set-option", SOption "smt.case_split" "3"]
-    emit $ SApp [SAtom "set-option", SOption "smt.qi.eager_threshold" "100.0"]
-    emit $ SApp [SAtom "set-option", SOption "smt.delay_units" "true"]
-    emit $ SApp [SAtom "declare-sort", nameSort]
-    emit $ SApp [SAtom "declare-sort", bitstringSort]
-    emit $ SApp [SAtom "declare-sort", SAtom "BSList"]
-    emit $ SApp [SAtom "declare-sort", indexSort]
-    emit $ SApp [SAtom "declare-sort", SAtom "IdxList"]
-    emit $ SApp [SAtom "declare-sort", SAtom "LblBase"]
-    emit $ SApp [SAtom "declare-sort", labelSort]
-    emitRaw $ "(declare-fun Value (Name) BS)"
-    emitRaw $ "(declare-fun LblOf (Name) Lbl)"
-    emitRaw $ "(declare-fun ROName (String Int) Name)"
-    emitRaw $ "(declare-fun HashSelect (BS Int) BS)"
-    emitRaw $ "(declare-fun PRFName (Name String) Name)"
-    emitRaw $ "(declare-fun Happened (String IdxList BSList) Bool)"
-    emitRaw $ "(declare-fun BSListNil () BSList)"
-    emitRaw $ "(declare-fun BSListCons (BS BSList) BSList)"
-    emitRaw $ "(declare-fun IdxListNil () IdxList)"
-    emitRaw $ "(declare-fun IdxListCons (Index IdxList) IdxList)"
-
-fromSMT :: Sym () -> Sym () -> Check (Maybe String, Bool)
-fromSMT setup k = do
+getSMTQuery :: Sym () -> Sym () -> Check (Maybe String) -- Returns Nothing if trivially true
+getSMTQuery setup k = do
     env <- ask
     res <- liftIO $ runExceptT $ runStateT (runReaderT (unSym go) env) initSolverEnv
     case res of
       Left _ -> Check $ lift $ throwError env
       Right (_, e) -> do
-        if e^.trivialVC then return (Nothing, True) else do
-                let query = intercalate "\n" $ map (filter (\x -> x /= '\n')) $ map show $ reverse $ (SApp [SAtom "check-sat"]) : e^.smtLog
-                b <- view $ envFlags . fLogSMT
-                -- debug $ line <> line <> pretty "===============" <> pretty "QUERYING SMT" <> pretty "===============" <> line <> pretty query <> line <> line <> pretty "==============="
-                fn <- if b then Just <$> logSMT query else return Nothing
-                resp <- liftIO $ readProcess "z3" ["-smt2", "-in"] query
-                case resp of
-                  "unsat\n" -> return (fn, True)
-                  _ -> return (fn, False)
+          if e^.trivialVC then return Nothing else do
+                prelude <- liftIO $ readFile "prelude.smt2"
+                let query = prelude ++ "\n" ++ (intercalate "\n" $ map (filter (\x -> x /= '\n')) $ map show $ reverse $ (SApp [SAtom "check-sat"]) : e^.smtLog)
+                return $ Just query
     where
-        go :: Sym ()
         go = do
             setup
             k
+
+
+fromSMT :: Sym () -> Sym () -> Check (Maybe String, Bool)
+fromSMT setup k = do
+    oq <- getSMTQuery setup k
+    case oq of
+      Nothing -> return (Nothing, True)
+      Just q -> do 
+          b <- view $ envFlags . fLogSMT
+          fn <- if b then Just <$> logSMT q else return Nothing
+          resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q
+          case resp of
+              (ExitSuccess, "unsat\n", _) -> return (fn, True)
+              (ExitSuccess, _, _) -> return (fn, False)
+              (_, err, _) -> typeError (ignore def) $ "Z3 error: " ++ err   
+              
+raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
+raceSMT setup k1 k2 = do
+    oq1 <- getSMTQuery setup k1
+    oq2 <- getSMTQuery setup k2
+    case (oq1, oq2) of
+      (Nothing, _) -> return (Nothing, Just False)
+      (_, Nothing) -> return (Nothing, Just True)
+      (Just q1, Just q2) -> do 
+          b <- view $ envFlags . fLogSMT
+          fn1 <- if b then Just <$> logSMT q1 else return Nothing
+          fn2 <- if b then Just <$> logSMT q2 else return Nothing
+          sem <- liftIO $ newEmptyMVar 
+          p1 <- liftIO $ forkIO $ do 
+              resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q1
+              case resp of
+                  (ExitSuccess, "unsat\n", _) -> putMVar sem $ Just (fn1, False)
+                  (ExitSuccess, _, _) -> putMVar sem Nothing
+                  (_, err, _) -> error $ "Z3 error: " ++ err   
+          p2 <- liftIO $ forkIO $ do 
+              resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q2
+              case resp of
+                  (ExitSuccess, "unsat\n", _) -> putMVar sem $ Just (fn2, True)
+                  (ExitSuccess, _, _) -> putMVar sem Nothing 
+                  (_, err, _) -> error $ "Z3 error: " ++ err   
+          o1 <- liftIO $ takeMVar sem
+          case o1 of
+            Just (fn, b) -> do
+                liftIO $ killThread p1
+                liftIO $ killThread p2
+                return (fn, Just b)                        
+            Nothing -> do 
+                o2 <- liftIO $ takeMVar sem
+                liftIO $ killThread p1
+                liftIO $ killThread p2
+                case o2 of
+                  Nothing -> return (Nothing, Nothing)
+                  Just (fn, b) -> return (fn, Just b)
+
+
 
 sAnd :: [SExp] -> SExp
 sAnd xs = 
@@ -268,8 +295,13 @@ sImpl x y = SApp [SAtom "implies", x, y]
 sNot :: SExp -> SExp
 sNot x = SApp [SAtom "not", x]
 
+sNotIn :: SExp -> [SExp] -> SExp
+sNotIn x [] = sTrue
+sNotIn x (y:ys) = sAnd [sEq (SAtom "FALSE") (SApp [SAtom "eq", x, y]), sNotIn x ys]
+
 sDistinct :: [SExp] -> SExp
-sDistinct es = SApp $ [SAtom "distinct"] ++ es
+sDistinct [] = sTrue
+sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
 sApp :: SExp -> [SExp] -> SExp
 sApp f vs = 
@@ -336,7 +368,7 @@ sForall vs bdy pats =
 
 
 sValue :: SExp -> SExp
-sValue n = SApp [SAtom "Value", n]
+sValue n = SApp [SAtom "ValueOf", n]
 
 -- Construct name expression out of base name and index arguments
 sBaseName :: SExp -> [SExp] -> SExp
@@ -346,7 +378,7 @@ sBaseName n is =
       _ -> SApp $ n : is
 
 sLblOf :: SExp -> SExp
-sLblOf n = SApp [SAtom "LblOf", n]
+sLblOf n = SApp [SAtom "LabelOf", n]
 
 sROName :: String -> Int -> SExp
 sROName s i = SApp [SAtom "ROName", SAtom $ "\"" ++ s ++ "\"", SAtom (show i)]

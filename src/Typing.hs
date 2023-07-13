@@ -159,6 +159,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "plus" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "mult" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "zero" 0 $ \args -> trivialTypeOf args,
+    mkSimpleFunc "is_group_elem" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, -- Used for RO
     mkSimpleFunc "cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "pk_cipherlen" 1 $ \args -> trivialTypeOf args,
@@ -1136,6 +1137,7 @@ flowsTo osp l1' l2' = do
     tyc <- view tyContext
     debug $ pretty "Checking " <> pretty l1 <+> pretty "<=" <+> pretty l2
     (fn, b) <- SMT.checkFlows l1 l2
+    return b
     case b of
       Just r -> do
         debug $ pretty "Got " <> pretty b <> pretty " from " <> pretty fn

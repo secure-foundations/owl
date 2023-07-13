@@ -360,7 +360,7 @@ aeLenConst s = mkSpanned $ AELenConst s
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp (topLevelPath "true") [] [])
+aeTrue = mkSpanned (AEApp (topLevelPath "TRUE") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)

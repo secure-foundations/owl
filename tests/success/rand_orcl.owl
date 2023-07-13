@@ -8,6 +8,7 @@ name W : DH @ alice
 // random_oracle l1 : concat(get(X), get(Y)) -> enckey Name(d)
 // random_oracle l2 : get(X) -> enckey Name(d)
 
+// TODO: fix tomorrow
 random_oracle l3 : dh_combine(dhpk(get(X)), get(Y)) -> enckey Name(d)
 random_oracle l4 : dh_combine(dhpk(get(Z)), get(W)) -> enckey Name(d)
 

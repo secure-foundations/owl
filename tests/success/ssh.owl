@@ -48,7 +48,11 @@ name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
 // name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
 name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
 corr [skPDIS] ==> [b]
+corr [b] ==> [skPDIS]
+corr [b1] ==> [skPDIS]
 corr [skPDIS] ==> [a]
+corr [skPDIS] ==> [b1]
+corr [skPDIS] ==> [c]
 name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
 corr [skSDIS] ==> [b1]
 corr [skSDIS] ==> [c]
