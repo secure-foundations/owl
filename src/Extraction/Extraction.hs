@@ -142,7 +142,7 @@ rustifyResolvedPath PTop = "Top"
 rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
 rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
 rustifyResolvedPath (PPathVar OpenPathVar s) = show s
-rustifyResolvedPath (PDot x y) = show x ++ "_" ++ y
+rustifyResolvedPath (PDot x y) = rustifyResolvedPath x ++ "_" ++ y
 
 rustifyPath :: Path -> String
 rustifyPath (PUnresolvedVar s) = show s
@@ -1186,7 +1186,7 @@ sortModBody mb = do
     let (locs, locAliases) = sortLocs $ mb ^. TB.localities
     let lookupLoc = lookupLoc' locs locAliases
     let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
-    locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs) 
+    locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
     (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
     -- TODO random oracles, counters
@@ -1727,27 +1727,12 @@ prettyMap s m =
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
-    debugPrint $ prettyMap "userFuncs" (mb ^. TB.userFuncs)
     (locMap, sharedNames, pubKeys) <- sortModBody mb
     tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
     (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap
     p <- preamble
     ep <- entryPoint locMap sharedNames pubKeys sidArgMap
     return $ p <> line <> tyDefsExtracted <> line <> locsExtracted <> line <> ep
-
-
-    -- extractedDefs <- mapM f (mb ^. TB.defs)
-    -- return $ vsep $ 
-    --     [ prettyMap "nameEnv" (mb ^. TB.nameEnv) 
-    --     , prettyMap "localities" (mb ^. TB.localities)
-    --     , prettyMap "defs" (mb ^. TB.defs)
-    --     ] ++ extractedDefs
-    -- where 
-    --     f (_, TB.DefHeader _) = return $ pretty ""
-    --     f (owlName, TB.Def idxs_defSpec) = do
-    --         let ((sids, _), defSpec) = unsafeUnbind idxs_defSpec in
-    --             extractDef' (defSpec ^. TB.defLocality) owlName sids defSpec
-
 
 extract :: String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
 extract path modbody = runExtractionMonad (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody
