@@ -63,10 +63,10 @@ main = do
                               case res of
                                 Left err -> E.printErr err
                                 Right rust_code -> do
-                                  putStrLn $ show rust_code
-                                  -- writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
-                                  -- appendFile extfn $ show rust_code
-                                  -- callProcess "rustfmt" [extfn]
-                                  -- putStrLn $ "Successfully extracted to file " ++ extfn
+                                  -- putStrLn $ show rust_code
+                                  writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
+                                  appendFile extfn $ show rust_code
+                                  callProcess "rustfmt" [extfn]
+                                  putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           else return ()

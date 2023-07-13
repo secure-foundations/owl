@@ -59,6 +59,7 @@ data Env = Env {
     _path :: String,
     _aeadCipherMode :: AEADCipherMode,
     _hmacMode :: HMACMode,
+    _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String), -- return type, how to print
     _adtFuncs :: M.Map String (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)),
     _typeLayouts :: M.Map String Layout,
@@ -347,8 +348,8 @@ initFuncs = M.fromList [
         ))
     ]
 
-initEnv :: String -> Env
-initEnv path = Env path defaultCipher defaultHMACMode initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
+initEnv :: String -> TB.Map String TB.UserFunc -> Env
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -359,6 +360,17 @@ lookupTyLayout n = do
             debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show ls
             throwError $ UndefinedSymbol n
 
+lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)))
+lookupAdtFunc fn = do
+    ufs <- use owlUserFuncs
+    adtfs <- use adtFuncs
+    case lookup fn ufs of
+        -- special handling for struct constructors, since their names are path-scoped
+        Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
+        Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
+        Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
+        Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
+        Nothing -> do debugPrint "failed"; return Nothing
 
 flattenNameExp :: NameExp -> String
 flattenNameExp n = case n ^. val of
@@ -785,8 +797,9 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
             str <- f args
             return (rt, preArgs, pretty str)
         Nothing -> do
-            adtfs <- use adtFuncs
-            case adtfs M.!? (rustifyPath owlFn) of
+            -- adtfs <- use adtFuncs
+            adtf <- lookupAdtFunc (rustifyPath owlFn)
+            case adtf of
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
                     let s = case argvaropt of
@@ -815,7 +828,6 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
                                 _ -> throwError $ TypeError "got wrong number of args to dhpk"
                         else do
-                            debugPrint $ rustifyPath owlFn
                             throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
@@ -851,9 +863,9 @@ extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
-        Just (EndpointLocality (Locality lname _)) -> return $ pretty "&" <> pretty lname <> pretty "_addr"
+        Just (EndpointLocality (Locality lname _)) -> return $ pretty "&" <> pretty (rustifyPath lname) <> pretty "_addr"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev)
-    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty myLname <> pretty "_addr") <> pretty ";")
+    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty (rustifyPath myLname) <> pretty "_addr") <> pretty ";")
 extractExpr loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
@@ -865,7 +877,7 @@ extractExpr loc binds (CLet e xk) = do
             _ -> pretty "temp_" <> pretty rustX
     let letbinding = case e of
             CSkip -> pretty ""
-            _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> ePrettied <> pretty ";" <> line <>
+            _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
 extractExpr loc binds (CIf ae eT eF) = do
@@ -1019,6 +1031,7 @@ extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> E
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
+    debugPrint $ "Extracting def " ++ owlName
     debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
@@ -1427,6 +1440,28 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 -------------------------------------------------------------------------------------------
 -- Decl extraction
 
+
+extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (Doc ann)
+extractTyDefs [] = return $ pretty ""
+extractTyDefs ((tv, td):ds) = do
+    dExtracted <- extractTyDef tv td
+    dsExtracted <- extractTyDefs ds
+    return $ dExtracted <> line <> line <> dsExtracted
+    where
+        extractTyDef name (TB.EnumDef cases) = do
+            let (_, cases') = unsafeUnbind cases
+            extractEnum name cases'
+        extractTyDef name (TB.StructDef fields) = do
+            let (_, fields') = unsafeUnbind fields
+            extractStruct name fields'
+        extractTyDef name (TB.TyAbbrev t) = do
+            lct <- layoutCTy . doConcretifyTy $ t
+            typeLayouts %= M.insert (rustifyName name) lct
+            return $ pretty ""
+        extractTyDef name TB.TyAbstract = do
+            typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
+            return $ pretty ""
+
 extractDecl :: Decl -> ExtractionMonad (Doc ann)
 extractDecl dcl =
     case dcl^.val of
@@ -1462,45 +1497,47 @@ extractDecls ds = do
     p <- preamble
     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
     return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
+        
+preamble :: ExtractionMonad (Doc ann)        
+preamble = do
+    c <- showAEADCipher
+    h <- showHMACMode
+    return $ vsep $ map pretty
+        [   "#![allow(non_camel_case_types)]",
+            "#![allow(non_snake_case)]",
+            "#![allow(non_upper_case_globals)]",
+            "pub use std::rc::Rc;",
+            "pub use std::io::{self, Write, BufRead};",
+            "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
+            "pub use std::thread;",
+            "pub use std::str;",
+            "pub use std::fs;",
+            "pub use std::time::Duration;",
+            "pub use serde::{Serialize, Deserialize};",
+            "pub use std::env;",
+            "pub use std::collections::HashMap;",
+            "pub use std::time::Instant;",
+            "pub use owl_crypto_primitives::owl_aead;",
+            "pub use owl_crypto_primitives::owl_hmac;",
+            "pub use owl_crypto_primitives::owl_pke;",
+            "pub use owl_crypto_primitives::owl_util;",
+            "pub use owl_crypto_primitives::owl_dhke;",
+            "pub use owl_crypto_primitives::owl_hkdf;",
+            "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
+            "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
+            "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
+            "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
+            "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
+        ] ++
+        [   owlOpsTraitDef,
+            owlOpsTraitImpls,
+            owl_msgDef,
+            owl_outputDef,
+            owl_inputDef,
+            owl_miscFns,
+            pretty ""
+        ]
     where
-        preamble = do
-            c <- showAEADCipher
-            h <- showHMACMode
-            return $ vsep $ map pretty
-                [   "#![allow(non_camel_case_types)]",
-                    "#![allow(non_snake_case)]",
-                    "#![allow(non_upper_case_globals)]",
-                    "pub use std::rc::Rc;",
-                    "pub use std::io::{self, Write, BufRead};",
-                    "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
-                    "pub use std::thread;",
-                    "pub use std::str;",
-                    "pub use std::fs;",
-                    "pub use std::time::Duration;",
-                    "pub use serde::{Serialize, Deserialize};",
-                    "pub use std::env;",
-                    "pub use std::collections::HashMap;",
-                    "pub use std::time::Instant;",
-                    "pub use owl_crypto_primitives::owl_aead;",
-                    "pub use owl_crypto_primitives::owl_hmac;",
-                    "pub use owl_crypto_primitives::owl_pke;",
-                    "pub use owl_crypto_primitives::owl_util;",
-                    "pub use owl_crypto_primitives::owl_dhke;",
-                    "pub use owl_crypto_primitives::owl_hkdf;",
-                    "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
-                    "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
-                    "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
-                    "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
-                    "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
-                ] ++
-                [   owlOpsTraitDef,
-                    owlOpsTraitImpls,
-                    owl_msgDef,
-                    owl_outputDef,
-                    owl_inputDef,
-                    owl_miscFns,
-                    pretty "// -------- START LINE COUNTING HERE --------"
-                ]
         owlOpsTraitDef = vsep $ map pretty [
                 "trait OwlOps {",
                     "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> ();",
@@ -1676,6 +1713,9 @@ instance Pretty TB.Def where
         let (ivars, defspec) = prettyBind x in
         pretty "Def:" <+> angles ivars <> defspec
 
+instance Pretty TB.UserFunc where
+    pretty u = pretty $ show u
+
 prettyMap :: Pretty a => String -> TB.Map String a -> Doc ann
 prettyMap s m = 
     pretty s <> pretty ":::" <+> lbracket <> line <>
@@ -1687,19 +1727,27 @@ prettyMap s m =
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
-    extractedDefs <- mapM f (mb ^. TB.defs)
-    return $ vsep $ 
-        [ prettyMap "nameEnv" (mb ^. TB.nameEnv) 
-        , prettyMap "localities" (mb ^. TB.localities)
-        , prettyMap "defs" (mb ^. TB.defs)
-        ] ++ extractedDefs
-    where 
-        f (_, TB.DefHeader _) = return $ pretty ""
-        f (owlName, TB.Def idxs_defSpec) = do
-            let ((sids, _), defSpec) = unsafeUnbind idxs_defSpec in
-                extractDef' (defSpec ^. TB.defLocality) owlName sids defSpec
+    debugPrint $ prettyMap "userFuncs" (mb ^. TB.userFuncs)
+    (locMap, sharedNames, pubKeys) <- sortModBody mb
+    tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
+    (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap
+    p <- preamble
+    ep <- entryPoint locMap sharedNames pubKeys sidArgMap
+    return $ p <> line <> tyDefsExtracted <> line <> locsExtracted <> line <> ep
 
--- TODO: Convert all of the ModBody structures to ModBody structures indexed by locality
+
+    -- extractedDefs <- mapM f (mb ^. TB.defs)
+    -- return $ vsep $ 
+    --     [ prettyMap "nameEnv" (mb ^. TB.nameEnv) 
+    --     , prettyMap "localities" (mb ^. TB.localities)
+    --     , prettyMap "defs" (mb ^. TB.defs)
+    --     ] ++ extractedDefs
+    -- where 
+    --     f (_, TB.DefHeader _) = return $ pretty ""
+    --     f (owlName, TB.Def idxs_defSpec) = do
+    --         let ((sids, _), defSpec) = unsafeUnbind idxs_defSpec in
+    --             extractDef' (defSpec ^. TB.defLocality) owlName sids defSpec
+
 
 extract :: String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
-extract path modbody = runExtractionMonad (initEnv path) $ extractModBody modbody
+extract path modbody = runExtractionMonad (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody
