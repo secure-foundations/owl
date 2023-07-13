@@ -68,5 +68,5 @@ main = do
                                   -- appendFile extfn $ show rust_code
                                   -- callProcess "rustfmt" [extfn]
                                   -- putStrLn $ "Successfully extracted to file " ++ extfn
-                                  -- return ()
+                                  return ()
                           else return ()

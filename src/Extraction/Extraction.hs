@@ -29,7 +29,6 @@ import Data.Typeable (Typeable)
 import AST
 import qualified ANFPass as ANF
 import ConcreteAST
-import Debug.Trace
 import System.IO
 import qualified Text.Parsec as P
 import qualified Parse as OwlP
@@ -1016,8 +1015,8 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     return ()
 
 
-extractDef' :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
-extractDef' owlName loc sidArgs owlArgs owlRetTy owlBody = do
+extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
+extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
     debugPrint $ pretty concreteBody
@@ -1035,16 +1034,16 @@ extractDef' owlName loc sidArgs owlArgs owlRetTy owlBody = do
                     <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
 
-extractDef :: Locality -> String -> [IdxVar]  -> TB.DefSpec -> ExtractionMonad (Doc ann)
-extractDef loc owlName sidArgs defspec = do
+extractDef' :: Locality -> String -> [IdxVar]  -> TB.DefSpec -> ExtractionMonad (Doc ann)
+extractDef' loc owlName sidArgs defspec = do
     if unignore $ defspec ^. TB.isAbstract then return $ pretty "" 
     else if not ((defspec ^. TB.defLocality) `aeq` loc) then throwError $ ErrSomethingFailed "mismatched localities" 
     else do
         debugPrint $ "Extracting def " ++ owlName
-        let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) in
-            case unignore body of
-                Nothing -> return $ pretty ""
-                Just e  -> extractDef' owlName loc sidArgs args retTy e
+        let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
+        case unignore body of
+            Nothing -> return $ pretty ""
+            Just e  -> extractDef owlName loc sidArgs args retTy e
 
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
@@ -1064,7 +1063,7 @@ nameInit s nt = case nt^.val of
 type LocalityName = String
 type NameData = (String, NameType, Int, Int) -- name, type, number of sessionID indices, number of processID indices
 type DefData = (String, Locality, [IdxVar], [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, sessionID arguments, arguments, return type, body
-type LocalityData =  (Int, [NameData], [NameData], [DefData], [(String, Ty)]) -- number of locality indices, local state, shared state, defs, table names and codomains
+type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)]) -- number of locality indices, local state, shared state, defs, table names and codomains
 
 preprocessIncludes :: Decl -> ExtractionMonad [Decl]
 preprocessIncludes d =
@@ -1168,6 +1167,96 @@ sortDecls dcls = do
         DeclInclude fn -> throwError $ ErrSomethingFailed "messed up"
 
 
+-- returns (locality stuff, shared names, public keys)
+sortModBody :: TB.ModBody -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
+sortModBody mb = do
+    let (locs, locAliases) = sortLocs $ mb ^. TB.localities
+    let lookupLoc = lookupLoc' locs locAliases
+    let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
+    locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs) 
+    locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
+    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
+    -- TODO random oracles, counters
+    return (locMap, shared, pubkeys)
+    where
+        sortLocs ls = foldl' (\(locs, locAliases) (locName, locType) -> 
+                                case locType of 
+                                    Left i -> (M.insert locName i locs, locAliases)
+                                    Right p -> (locs, M.insert locName (rustifyResolvedPath p) locAliases)) 
+                             (M.empty, M.empty) ls
+
+        lookupLoc' :: M.Map LocalityName Int -> M.Map LocalityName LocalityName -> LocalityName -> ExtractionMonad LocalityName
+        lookupLoc' locs locAliases l = do
+                case locs M.!? l of
+                    Just _ -> return l
+                    Nothing -> 
+                        case locAliases M.!? l of
+                            Just l' -> lookupLoc' locs locAliases l'
+                            Nothing -> throwError $ ErrSomethingFailed $ "couldn't lookup locality alias " ++ show l
+
+        sortDef :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, TB.Def) -> ExtractionMonad (M.Map LocalityName LocalityData)
+        sortDef _ m (_, TB.DefHeader _) = return m
+        sortDef lookupLoc m (owlName, TB.Def idxs_defSpec) = do
+                let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
+                let loc@(Locality locP _) = defspec ^. TB.defLocality
+                locName <- lookupLoc (rustifyPath locP)
+                let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
+                case unignore body of
+                    Nothing -> return m
+                    Just e  -> do
+                        let f (i, l, s, d, t) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t)
+                        return $ M.adjust f locName m
+        
+        sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
+        sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
+            locName <- lookupLoc (rustifyPath locP)
+            let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
+            return $ M.adjust f locName locMap
+
+        sortName :: (LocalityName -> ExtractionMonad LocalityName) 
+                    -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+                    -> (String, (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
+                    -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+        sortName lookupLoc (locMap, shared, pubkeys) (name, binds) = do
+            let ((sids, pids), ntnlOpt) = unsafeUnbind binds
+            case ntnlOpt of
+              Nothing -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
+              Just (nt, loc) -> do
+                nameLen <- case nt ^. val of
+                    NT_Nonce -> do useAeadNonceSize
+                    NT_Enc _ -> do
+                        keySize <- useAeadKeySize
+                        ivSize <- useAeadNonceSize
+                        return $ keySize + ivSize
+                    NT_MAC _ -> do useHmacKeySize
+                    NT_PKE _ -> do return pkeKeySize
+                    NT_Sig _ -> do return sigKeySize
+                    NT_DH -> return dhSize
+                    _ -> do
+                        throwError $ UnsupportedNameType nt
+                let nsids = length sids
+                let npids = length pids
+                typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
+                let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
+                let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
+                let locNames = map (\(Locality lname _) -> rustifyPath lname) loc
+                let locNameCounts = map (\(Locality lname lidxs) -> (rustifyPath lname, length lidxs)) loc
+                case nt ^.val of
+                    -- public keys must be shared, so pub/priv key pairs are generated by the initializer
+                    NT_PKE _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    NT_Sig _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    NT_DH ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    _ -> if length loc /= 1 then
+                            -- name is shared among multiple localities
+                            return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys)
+                        else
+                            -- name is local and can be locally generated
+                            return (foldl gPriv locMap locNames, shared, pubkeys)
+
+
 -- return number of arguments to main and the print of the locality
 extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Int, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
@@ -1178,7 +1267,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     case find (\(n,_,sids,as,_,_) -> (n == loc ++ "_main") && null as) defs of
         Just (_,_,sids,_,_,_) -> do
             initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
-            fns <- mapM (\(n, l, sids, as, t, e) -> extractDef' n l sids as t e) defs
+            fns <- mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
             return $ (length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
@@ -1602,14 +1691,13 @@ extractModBody mb = do
     return $ vsep $ 
         [ prettyMap "nameEnv" (mb ^. TB.nameEnv) 
         , prettyMap "localities" (mb ^. TB.localities)
-        -- , prettyMap "tyDefs" (mb ^. TB.tyDefs)
         , prettyMap "defs" (mb ^. TB.defs)
         ] ++ extractedDefs
     where 
         f (_, TB.DefHeader _) = return $ pretty ""
         f (owlName, TB.Def idxs_defSpec) = do
             let ((sids, _), defSpec) = unsafeUnbind idxs_defSpec in
-                extractDef (defSpec ^. TB.defLocality) owlName sids defSpec
+                extractDef' (defSpec ^. TB.defLocality) owlName sids defSpec
 
 -- TODO: Convert all of the ModBody structures to ModBody structures indexed by locality
 
