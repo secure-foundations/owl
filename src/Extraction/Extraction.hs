@@ -1271,17 +1271,17 @@ sortModBody mb = do
 
 
 -- return number of arguments to main and the print of the locality
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Int, Doc ann)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     let sfs = stateFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
     indexedNameGetters <- mapM genIndexedNameGetter localNames
     let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
-    case find (\(n,_,sids,as,_,_) -> (n == loc ++ "_main") && null as) defs of
-        Just (_,_,sids,_,_,_) -> do
+    case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
+        Just (mainName,_,sids,_,_,_) -> do
             initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
             fns <- mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
-            return $ (length sids,
+            return (rustifyName mainName, length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
                 pretty "impl" <+> pretty (locName loc) <+> braces (initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)))
@@ -1346,22 +1346,22 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                     ) <>
                 rbrace
 
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName Int, Doc ann)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     (sidArgMap, ps) <- foldM (go pubkeys) (M.empty, []) $ M.assocs locMap
     return (sidArgMap, addrs <> line <> vsep ps)
     where
         go pubKeys (m, ps) (lname, ldata) = do
-            (nSidArgs, p) <- extractLoc pubKeys (lname, ldata)
-            return (M.insert lname nSidArgs m, ps ++ [p])
+            (mainName, nSidArgs, p) <- extractLoc pubKeys (lname, ldata)
+            return (M.insert lname (mainName, nSidArgs) m, ps ++ [p])
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
             pretty "pub const" <+> pretty l <> pretty "_addr: &str =" <+> dquotes (pretty "127.0.0.1:" <> pretty (9001 + n)) <> pretty ";" <> line <>
             mkAddrs (n+1) locs
 
-entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName Int -> ExtractionMonad (Doc ann)
+entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName (String, Int) -> ExtractionMonad (Doc ann)
 entryPoint locMap sharedNames pubKeys sidArgMap = do
     let allLocs = M.keys locMap
     sharedNameInits <- mapM genSharedNameInit sharedNames
@@ -1373,7 +1373,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
     allLocsSidArgs <- mapM (\l -> do
                                     let nSidArgs = sidArgMap M.!? l
                                     case nSidArgs of
-                                        Just n -> return (l, n)
+                                        Just (m, n) -> return (l, m, n)
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsSidArgs
@@ -1420,18 +1420,18 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                                 <> pretty ".expect(\"Can't write config file\");" <>
             (if npids == 0 then pretty "" else rbrace)
 
-        genRunLoc (loc, nSidArgs) =
-            let body = genRunLocBody loc nSidArgs in
+        genRunLoc (loc, mainName, nSidArgs) =
+            let body = genRunLocBody loc mainName nSidArgs in
             pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
                 braces body <> pretty "else"
-        genRunLocBody loc nSidArgs =
+        genRunLocBody loc mainName nSidArgs =
             pretty "let mut s =" <+> pretty (locName loc) <> pretty "::init_" <> pretty (locName loc) <>
                 parens (pretty "&args[3]") <> pretty ";" <> line <>
             pretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
-            pretty "println!(\"Running" <+> pretty loc <> pretty "_main() ...\");" <> line <>
+            pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
+            pretty "let res = s." <> pretty mainName <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned {:?}") <> pretty "," <+> pretty "res") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
@@ -1727,6 +1727,9 @@ prettyMap s m =
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
+    debugPrint $ prettyMap "locs" (mb ^. TB.localities)
+    debugPrint $ pretty (map fst (mb ^. TB.defs))
+    debugPrint $ prettyMap "defs" (mb ^. TB.defs)
     (locMap, sharedNames, pubKeys) <- sortModBody mb
     tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
     (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap

@@ -15,7 +15,16 @@ module Full(P : Params, K : functor (Q : Params) => KE(Q)) = {
 
 }
 
-module FullDH (P : Params) = Full(P, DH_KE)
+module DHFunctor (P : Params) = Full(P, DH_KE)
 
-module FullPSK (P : Params) = Full(P, PSK_KE)
+module PSKFunctor (P : Params) = Full(P, PSK_KE)
+
+module tstParams : Params = { 
+    locality Client
+    locality Server
+    name data : nonce @ Client
+}
+
+module FullDH = DHFunctor(tstParams)
+module FullPSK = PSKFunctor(tstParams)
 
