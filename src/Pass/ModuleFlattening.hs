@@ -31,6 +31,8 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
 import TypingBase
+import Debug.Trace
+import System.IO.Unsafe
 
 instance Semigroup ModBody where
     md1 <> md2 = 
@@ -57,15 +59,17 @@ globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalName p0 ++ "_" ++ x, y)) mp
 
 flattenModules :: Fresh m => ResolvedPath -> ModBody -> m ModBody
 flattenModules p0 md = do
-    let ms = md^.modules
+    --traceM $ "Flattening " ++ show p0 ++ " with localities " ++ show (md ^. localities)
     mbs <- forM (md^.modules) $ \(s, md) ->
         case md of
           MFun _ _ _ -> return []
           MBody xb -> do
               (x, bdy) <- unbind xb
-              let bdy' = subst x (PDot p0 s) bdy
-              bdy'' <- flattenModules (PDot p0 s) bdy'
-              return [bdy'']
+              if bdy ^. isModuleType == ModConcrete then do
+                let bdy' = subst x (PDot p0 s) bdy
+                bdy'' <- flattenModules (PDot p0 s) bdy'
+                return [bdy'']
+              else return []
     let md' = 
             ModBody
                 ModConcrete
@@ -80,11 +84,16 @@ flattenModules p0 md = do
                 (globalizeMap p0 $ md^.ctrEnv)
                 (globalizeMap p0 $ md^.randomOracle)
                 []
-    return $ sconcat $ md' :| concat mbs
+    --traceM $ "---------> " ++ show p0 ++ " with localities " ++ show (md' ^. localities)            
+    let res = sconcat $ md' :| concat mbs
+    -- traceM $ "|||||||||> " ++ show p0 ++ " with localities " ++ show (res ^. localities)            
+    -- return $ traceShow ("end  ", p0, res ^. localities) res
+    return res
 
 doFlattening :: Env -> ModBody
 doFlattening e = 
-    runFreshM $ flattenModules PTop (e^.curMod)
+    runFreshM $ flattenModules PTop (e^.curMod) 
+    
 
 
 

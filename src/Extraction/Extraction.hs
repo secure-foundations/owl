@@ -126,7 +126,7 @@ instance Pretty ExtractionError where
         pretty "Extraction failed with message:" <+> pretty s
 
 printErr :: ExtractionError -> IO ()
-printErr e = print $ pretty e
+printErr e = print $ pretty "Extraction error:" <+> pretty e
 
 debugPrint :: Show s => s -> ExtractionMonad ()
 debugPrint = liftIO . hPrint stderr
@@ -1181,8 +1181,8 @@ sortDecls dcls = do
 
 
 -- returns (locality stuff, shared names, public keys)
-sortModBody :: TB.ModBody -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
-sortModBody mb = do
+preprocessModBody :: TB.ModBody -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
+preprocessModBody mb = do
     let (locs, locAliases) = sortLocs $ mb ^. TB.localities
     let lookupLoc = lookupLoc' locs locAliases
     let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
@@ -1727,10 +1727,10 @@ prettyMap s m =
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
-    debugPrint $ prettyMap "locs" (mb ^. TB.localities)
+    -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
     debugPrint $ pretty (map fst (mb ^. TB.defs))
-    debugPrint $ prettyMap "defs" (mb ^. TB.defs)
-    (locMap, sharedNames, pubKeys) <- sortModBody mb
+    -- debugPrint $ prettyMap "defs" (mb ^. TB.defs)
+    (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
     (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap
     p <- preamble
