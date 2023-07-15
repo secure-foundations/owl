@@ -1,17 +1,14 @@
 locality alice
-name d : nonce @ alice
-name X : DH @ alice
-name Y : DH @ alice
-name Z : DH @ alice
-name W : DH @ alice
+name n<i> : nonce @ alice
+name m<i> : nonce @ alice
+name k : nonce @ alice
 
-// random_oracle l1 : concat(get(X), get(Y)) -> enckey Name(d)
-// random_oracle l2 : get(X) -> enckey Name(d)
+random_oracle l<i> : get(n<i>) -> nonce
+random_oracle l2<i> : get(m<i>) -> nonce
+random_oracle l3 : get(k) -> nonce
 
-// TODO: fix tomorrow
-random_oracle l3 : dh_combine(dhpk(get(X)), get(Y)) -> enckey Name(d)
-random_oracle l4 : dh_combine(dhpk(get(Z)), get(W)) -> enckey Name(d)
-
-def alice () @ alice : Unit = 
+def alice<i>() @ alice : Unit = 
+    corr_case n<i> in 
+    let x = hash<l, i>(get(n<i>)) in 
     ()
 

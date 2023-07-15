@@ -85,6 +85,13 @@ parseNameExp =
             reserved "RO"
             symbol "<"
             p <- parsePath
+            ps_ <- optionMaybe $ do
+                symbol ","
+                xs <- parseIdx `sepBy` (symbol ",")               
+                return xs 
+            let ps = case ps_ of
+                       Just ps -> ps
+                       Nothing -> []
             oi <- optionMaybe $ do
                 symbol ","
                 many1 digit
@@ -92,7 +99,7 @@ parseNameExp =
             let i = case oi of
                       Just x -> read x
                       Nothing -> 0
-            return $ ROName p i)
+            return $ ROName p ps i)
         <|>
         (do
             reserved "PRF"
@@ -588,6 +595,7 @@ parseDecls =
     (parseSpanned $ do
         reserved "random_oracle"
         l <- identifier
+        pb <- parseIdxParamBinds1
         symbol ":"
         es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
@@ -597,7 +605,7 @@ parseDecls =
         let ad = case oadm of
                    Just _ -> AdmitUniqueness
                    Nothing -> NoAdmitUniqueness
-        return $ DeclRandOrcl l es nts ad)
+        return $ DeclRandOrcl l (bind pb (es, nts)) ad)
     <|>
     (parseSpanned $ do
         reserved "func"                  
@@ -1006,13 +1014,19 @@ parseCryptOp =
         reserved "hash"
         symbol "<"
         p <- parsePath
+        idxs_  <- optionMaybe $ do
+            symbol ","
+            parseIdx `sepBy` (symbol ",")
+        let idxs = case idxs_ of
+                     Nothing -> []
+                     Just xs -> xs
         oi <- optionMaybe $ do
             symbol ","
             many1 digit
         symbol ">"
         return $ case oi of
-                   Just x -> CHash p (read x)
-                   Nothing -> CHash p 0
+                   Just x -> CHash p idxs (read x)
+                   Nothing -> CHash p idxs 0
     )
     <|>
     (do

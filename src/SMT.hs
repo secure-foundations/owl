@@ -134,14 +134,33 @@ setupNameEnvRO = do
                let v2 = sBaseName (SAtom $ "%name_" ++ sn2) (take ar2 ivs2)
                emitAssertion $ sForall (map (\i -> (i, indexSort)) (ivs1 ++ ivs2)) (sNot $ sEq v1 v2) [v1, v2]
     ros <- liftCheck $ collectRO
-    forM_ ros $ \(s, (ae, nts)) -> do
-        forM_ [0 .. (length nts - 1)] $ \i -> do
-            lAxs <- nameDefFlows (roName (PRes s) i) (nts !! i)
-            sAxs <- forM lAxs $ \(l1, l2) -> do
-                vl1 <- symLabel l1
-                vl2 <- symLabel l2
-                return $ SApp [SAtom "Flows", vl1, vl2]
-            emitAssertion $ sAnd sAxs
+    forM_ ros $ \(s, bnd) -> do
+        (is, (ae, nts)) <- liftCheck $ unbind bnd
+        sn <- smtName s
+        let sname = SAtom $ "%ro_" ++ sn
+        addSymName sn sname
+        let ar = length is
+        emit $ SApp [SAtom "declare-fun", sname, SApp (replicate ar (indexSort) ++ [SAtom "Int"]), nameSort]
+    forM_ ros $ \(s, bnd) -> do
+        sn <- smtName s
+        let sname = SAtom $ "%ro_" ++ sn
+        (is, (ae, nts)) <- liftCheck $ unbind bnd
+        let ivs = map (\i -> SAtom (show i)) is
+        emitComment $ "nameDefFlows for RO " ++ sn ++ " : " ++ show (length ivs)
+        sIE <- use symIndexEnv
+        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do 
+            forM_ [0 .. (length nts - 1)] $ \i -> do
+                lAxs <- nameDefFlows (roName (PRes s) (map (IVar (ignore def)) is) i) (nts !! i)
+                sAxs <- forM lAxs $ \(l1, l2) -> do
+                    vl1 <- symLabel l1
+                    vl2 <- symLabel l2
+                    return $ SApp [SAtom "Flows", vl1, vl2]
+                emitAssertion $ sForall
+                    (map (\i -> (i, indexSort)) ivs)
+                    (sAnd sAxs)
+                    [sROName sname ivs i]
+        symIndexEnv .= sIE
 
 nameKindOf :: NameType -> Sym SExp
 nameKindOf nt = 
@@ -479,13 +498,23 @@ emitFuncAxioms = do
     emitComment $ "RO equality axioms"
     ros <- liftCheck $ collectRO
     let sConcat a b = SApp [SAtom "concat", a, b]
-    forM_ ros $ \(s, (aes, nts)) -> do
-        vs <- mapM interpretAExp aes
-        let v = foldr sConcat (head vs) (tail vs) 
-        sn <- smtName s
-        forM_ [0 .. (length nts - 1)] $ \i -> do
-            emitAssertion $ sEq (sValue $ sROName sn i) (sHashSelect v i)
-
+    forM_ ros $ \(s, bnd) -> do 
+        (is, (aes, nts)) <- liftCheck $ unbind bnd
+        let ivs = map (\i -> SAtom (show i)) is
+        sIE <- use symIndexEnv
+        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do  
+            vs <- mapM interpretAExp aes
+            let v = foldr sConcat (head vs) (tail vs) 
+            sn <- smtName s
+            let sname = SAtom $ "%ro_" ++ sn
+            forM_ [0 .. (length nts - 1)] $ \i -> do
+                emitAssertion $ 
+                    sForall 
+                        (map (\i -> (i, indexSort)) ivs)
+                        (sEq (sValue $ sROName sname ivs i) (sHashSelect v i))
+                        [sValue $ sROName sname ivs i]
+        symIndexEnv .= sIE
     
 subTypeCheck :: Ty -> Ty -> Sym ()
 subTypeCheck t1 t2 = do
@@ -504,16 +533,23 @@ sConcats vs =
 
 
 
-symROUnique :: [[AExpr]] -> [AExpr] -> Sym ()
-symROUnique ess e = do
-    liftCheck $ debug $ pretty "symROUnique with " <+> pretty ess <+> pretty e
-    emitComment $ "Proving ROUnique with es = " ++ show (pretty ess) ++ " and e = " ++ show (pretty e)
-    vs <- forM ess $ \es -> do
-        vs <- mapM interpretAExp es
-        return $ sConcats vs
-    v <- sConcats <$> mapM interpretAExp  e
-    forM_ vs $ \v' -> 
-        emitToProve $ sNot $ sEq (SAtom "TRUE") $ SApp [SAtom "eq", v, v']
+symROUnique :: (Map String (Bind [IdxVar] ([AExpr], [NameType]))) -> [AExpr] -> Sym ()
+symROUnique ro e = do
+    v <- sConcats <$> mapM interpretAExp e
+    bs <- forM ro $ \(_, bnd) -> do
+        (is, (aes, _)) <- liftCheck $ unbind bnd
+        let ivs = map (\i -> SAtom (show i)) is
+        sIE <- use symIndexEnv
+        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+        b <- local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do  
+            vs <- mapM interpretAExp aes
+            return $ sForall
+                (map (\i -> (i, indexSort)) ivs)
+                (sNot $ sEq (SAtom "TRUE") $ SApp [SAtom "eq", sConcats vs, v])
+                []
+        symIndexEnv .= sIE
+        return b
+    emitToProve $ sAnd bs
 
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
@@ -554,9 +590,19 @@ symDecideNotInRO aes = do
         res <- fromSMT smtSetup $ do
             vs <- mapM interpretAExp aes
             ros <- liftCheck $ collectRO
-            bs <- forM ros $ \(_, (aes', _)) -> do
-                vs' <- mapM interpretAExp aes'
-                return $ sNot $ sEq (sConcats vs) (sConcats vs')
+            bs <- forM ros $ \(_, bs) -> do 
+                (is, (aes', _)) <- unbind bs 
+                let ivs = map (\i -> SAtom (show i)) is
+                sIE <- use symIndexEnv
+                symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+                b <- local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do  
+                    vs' <- mapM interpretAExp aes'
+                    return $ sForall
+                        (map (\i -> (i, indexSort)) ivs)
+                        (sNot $ sEq (sConcats vs) (sConcats vs'))
+                        []
+                symIndexEnv .= sIE
+                return b
             emitToProve $ sAnd bs
         if snd res then return True else return False
 

@@ -349,9 +349,17 @@ getSymName ne =
                     vs1 <- mapM symIndex is1
                     vs2 <- mapM symIndex is2
                     return $ SApp $ f : vs1 ++ vs2
-      ROName s i -> do
+      ROName s is i -> do
+          nEnv <- use symNameEnv
           sn <- smtName s
-          return $ SApp [SAtom "ROName", SAtom $ "\"" ++ sn ++ "\"", SAtom (show i)] 
+          case M.lookup sn nEnv of
+              Nothing -> error $ "UNKNOWN SYM RO NAME: " ++ show s
+              Just f -> do
+                  case is of
+                    [] -> return $ SApp $ [f, SAtom (show i)]
+                    _ -> do
+                        vs <- mapM symIndex is
+                        return $ SApp $ [f] ++ vs ++ [SAtom $ show i]
       PRFName ne s -> do
           n <- getSymName ne
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
@@ -380,8 +388,11 @@ sBaseName n is =
 sLblOf :: SExp -> SExp
 sLblOf n = SApp [SAtom "LabelOf", n]
 
-sROName :: String -> Int -> SExp
-sROName s i = SApp [SAtom "ROName", SAtom $ "\"" ++ s ++ "\"", SAtom (show i)]
+sROName :: SExp -> [SExp] -> Int -> SExp
+sROName n is i = 
+    case is of
+      [] -> SApp $ n : [SAtom $ show i] 
+      _ -> SApp $ n : (is ++ [SAtom $ show i])
 
 sHashSelect :: SExp -> Int -> SExp
 sHashSelect s i = SApp [SAtom "HashSelect", s, SAtom (show i)]

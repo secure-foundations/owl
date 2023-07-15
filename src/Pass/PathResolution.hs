@@ -213,10 +213,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclRandOrcl x zs ws adm -> do
+      DeclRandOrcl x iws adm -> do
+          (is, (zs, ws)) <- unbind iws
           zs' <- mapM resolveAExpr zs
           ws' <- mapM resolveNameType ws
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x zs' ws' adm
+          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (bind is (zs', ws')) adm
           p <- view curPath
           ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
@@ -344,9 +345,9 @@ resolveNameExp ne =
         BaseName s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ BaseName s p'
-        ROName p i -> do 
+        ROName p ps i -> do 
             p' <- resolvePath (ne^.spanOf) PTRO p
-            return $ Spanned (ne^.spanOf) $ ROName p' i
+            return $ Spanned (ne^.spanOf) $ ROName p' ps i
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s
@@ -467,9 +468,9 @@ resolveAExpr a =
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
-      CHash p i -> do
+      CHash p is i -> do
           p' <- resolvePath pos PTRO p
-          return $ CHash p' i
+          return $ CHash p' is i
       CAEnc -> return CAEnc
       CAEncWithNonce p is -> do
           p' <- resolvePath pos PTCounter p

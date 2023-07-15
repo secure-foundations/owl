@@ -120,7 +120,7 @@ data ModBody = ModBody {
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
     _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
-    _randomOracle :: Map String ([AExpr], [NameType]),
+    _randomOracle :: Map String (Bind [IdxVar] ([AExpr], [NameType])),
     _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
@@ -461,10 +461,14 @@ getNameInfo ne = do
                     when ((length vs1, length vs2) /= (length is, length ps)) $ 
                         typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
                     return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
-     ROName (PRes (PDot p s)) i -> do
+     ROName (PRes (PDot p s)) ps i -> do
         md <- openModule (ne^.spanOf) p 
         case lookup s (md^.randomOracle) of 
-          Just (_, nts) -> 
+          Just (bents) -> do 
+              (bs, (_, nts_)) <- unbind bents
+              when (length ps /= length bs) $ 
+                  typeError (ne^.spanOf) $ "Wrong index arity for random oracle " ++ show (pretty ne) ++ ": got " ++ show (length ps) ++ ", expected " ++ show (length bs)
+              let nts = substs (zip bs ps) nts_              
               if i < length nts then 
                   return $ Just (nts !! i, Nothing)
               else
@@ -483,7 +487,7 @@ getNameInfo ne = do
             _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (pretty ne)
 
-getRO :: Ignore Position -> Path -> Check ([AExpr], [NameType])
+getRO :: Ignore Position -> Path -> Check (Bind [IdxVar] ([AExpr], [NameType]))
 getRO pos (PRes (PDot p s)) = do
         md <- openModule pos p 
         case lookup s (md^.randomOracle) of 
@@ -767,7 +771,7 @@ collectEnvAxioms f = do
 collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
 collectNameEnv = collectEnvInfo (_nameEnv)
 
-collectRO :: Check (Map ResolvedPath ([AExpr], [NameType]))
+collectRO :: Check (Map ResolvedPath (Bind [IdxVar] ([AExpr], [NameType])))
 collectRO = collectEnvInfo (_randomOracle)
 
 collectFlowAxioms :: Check ([(Label, Label)])

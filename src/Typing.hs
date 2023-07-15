@@ -766,20 +766,22 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s aes nts adm) -> do
+      (DeclRandOrcl s bnd adm) -> do
+        (is, (aes, nts)) <- unbind bnd
         -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
         assert (d^.spanOf) ("Empty random oracle declaration") $ length nts > 0
-        _ <- mapM inferAExpr aes
-        forM_ nts $ \nt -> do
-            checkNameType nt
-            checkROName nt
-        localROCheck (d^.spanOf) aes
-        case adm of
-          AdmitUniqueness -> return ()
-          NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
-        ro <- view $ curMod . randomOracle
-        assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (curMod . randomOracle) $ insert s (aes, nts)) cont 
+        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+            _ <- mapM inferAExpr aes
+            forM_ nts $ \nt -> do
+                checkNameType nt
+                checkROName nt
+            localROCheck (d^.spanOf) aes
+            case adm of
+              AdmitUniqueness -> return ()
+              NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
+            ro <- view $ curMod . randomOracle
+            assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
+        local (over (curMod . randomOracle) $ insert s bnd) cont 
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -787,7 +789,7 @@ nameExpIsLocal ne =
       BaseName _ (PRes (PDot p s)) -> do
           p' <- curModName
           return $ p `aeq` p'
-      ROName (PRes (PDot p s)) i -> do
+      ROName (PRes (PDot p s)) _ i -> do
           p' <- curModName
           return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
@@ -886,7 +888,7 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 checkROUnique :: Ignore Position -> [AExpr] -> Check ()
 checkROUnique pos es = laxAssertion $ do
     ro_vals <- view $ curMod . randomOracle
-    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map (\(s, (a, _)) -> a) ro_vals) es 
+    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique ro_vals es 
     assert pos "RO uniqueness check failed" b
     return ()
 
@@ -1636,16 +1638,22 @@ checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Chec
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
-      CHash p i -> do                            
+      CHash p is i -> do                            
+          local (set tcScope TcGhost) $ forM_ is checkIdx
           let aes = map fst args
-          (aes', nts) <- getRO pos p
-          assert pos ("RO index out of bounds") $ i < length nts
+          bnd <- getRO pos p
+          (ixs, (aes'_, nts_)) <- unbind bnd
+          assert pos ("RO index out of bounds") $ i < length nts_
+          assert pos ("Wrong index arity for RO") $ length is == length ixs
+          let aes' = substs (zip ixs is) aes'_
+          let nts = substs (zip ixs is) nts_
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
-          (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
+          (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           uns <- unsolvability aes'
           b <- decideProp uns
-          case b of
-            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
+          debug $ pretty "Decision result: " <> pretty b
+          case (b_eq, b) of
+            (True, Just True) -> getOutTy ot $ mkSpanned $ TName $ roName p is i
             _ -> do 
                 noCollision <- SMT.symDecideNotInRO aes
                 if noCollision then 

@@ -127,7 +127,7 @@ type AExpr = Spanned AExprX
 
 data NameExpX = 
     BaseName ([Idx], [Idx]) Path
-    | ROName Path Int
+    | ROName Path [Idx] Int
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
 
@@ -141,8 +141,8 @@ data Locality = Locality Path [Idx]
 
 
 
-roName :: Path -> Int -> NameExp
-roName s i = mkSpanned (ROName s i)
+roName :: Path -> [Idx] -> Int -> NameExp
+roName s is i = mkSpanned (ROName s is i)
 
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
@@ -312,7 +312,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String [AExpr] [NameType] AdmitUniquenessCheck
+    | DeclRandOrcl String (Bind [IdxVar] ([AExpr], [NameType])) AdmitUniquenessCheck
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
@@ -388,7 +388,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-    CHash Path Int
+    CHash Path [Idx] Int
       | CPRF String
       | CAEnc 
       | CADec 
@@ -539,7 +539,7 @@ instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
 instance Pretty NameExpX where
-    pretty (ROName s i) = pretty "RO<" <> pretty s <> pretty "," <> pretty i <> pretty ">" 
+    pretty (ROName s is i) = pretty "RO<" <> pretty s <> pretty "," <> pretty is <> pretty "," <> pretty i <> pretty ">" 
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
     pretty (BaseName vs n) = 
         case vs of
@@ -651,8 +651,8 @@ instance Pretty AExprX where
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty CryptOp where
-    pretty (CHash p i) = 
-        pretty "RO" <+> pretty p <+> pretty i
+    pretty (CHash p is i) = 
+        pretty "RO" <+> pretty p <+> pretty is <+> pretty i
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
     pretty (CAEnc) = pretty "aenc"
