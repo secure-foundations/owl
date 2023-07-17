@@ -1132,6 +1132,11 @@ parseParam =
         return $ ParamIdx i)
     <|>
     (try $ do
+        reserved "name"
+        i <- parseNameExp
+        return $ ParamName i)
+    <|>
+    (try $ do
         s <- identifier
         return $ ParamStr s)
 

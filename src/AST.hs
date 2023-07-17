@@ -426,6 +426,7 @@ data FuncParam =
       | ParamLbl Label
       | ParamTy Ty
       | ParamIdx Idx
+      | ParamName NameExp
       deriving (Show, Generic, Typeable)
 
 
@@ -743,6 +744,7 @@ instance Pretty FuncParam where
     pretty (ParamLbl l) = pretty l
     pretty (ParamTy t) = pretty t
     pretty (ParamIdx i) = pretty i
+    pretty (ParamName ne) = pretty ne
 
 instance Pretty Endpoint where
     pretty (Endpoint  x) = pretty x

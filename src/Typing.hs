@@ -188,15 +188,26 @@ initDetFuncs = withNormalizedTys $ [
                 NT_PKE _ -> return $ TEnc_PK n
                 _ -> trivialTypeOf args
           _ -> trivialTypeOf args,
-    mkSimpleFunc "dh_combine" 2 $ \args ->
-        case args of
-          [t1, t2] | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
+    ("dh_combine", (2, \ps args ->
+        case (ps, args) of
+          ([], [(_, t1), (_, t2)]) | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
               nt_n <-  local (set tcScope TcGhost) $ getNameType n
               nt_m <-  local (set tcScope TcGhost) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
                 (NT_DH, NT_DH) -> return $ TSS n m
-                _ -> trivialTypeOf $ args
-          _ -> trivialTypeOf $ args,
+                _ -> trivialTypeOf $ map snd args
+          ([], _) -> trivialTypeOf $ map snd args
+          ([ParamName n, ParamName m], [(x, t1), (_, t2)]) -> do 
+              nt_n <-  local (set tcScope TcGhost) $ getNameType n
+              nt_m <-  local (set tcScope TcGhost) $ getNameType m
+              case (nt_n^.val, nt_m^.val) of
+                (NT_DH, NT_DH) -> do
+                  b1 <- isSubtype t1 (mkSpanned $ TDH_PK n)
+                  b2 <- isSubtype t2 (tName m)
+                  if b1 && b2 then return $ TSS n m else trivialTypeOf $ map snd args
+                _ -> typeError (x^.spanOf) $ "Wrong name types for dh_combine"
+          _ -> typeError (ignore def) $ "Bad params to dh_combine: expected two name params"
+                   )),
     ("checknonce", (2, \ps args ->
         case (ps, args) of
           ([], [(x, t1), (y, t2)]) ->
@@ -372,6 +383,11 @@ normalizeLabel l = do
 
 isSubtype' t1 t2 =
     case (t1^.val, t2^.val) of
+      _ | isSingleton t2 -> do 
+          debug $ pretty "Trying singleton query: " <> pretty t2
+          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          debug $ pretty "Singleton query: " <> pretty t1 <> pretty "<=" <> pretty t2 <> pretty ": " <> pretty b
+          return b 
       (TCase p t1' t2', _) -> do
           debug $ pretty "Checking subtype for TCase: " <> pretty t1 <> pretty " <= " <> pretty t2
           r <- decideProp p
@@ -390,17 +406,6 @@ isSubtype' t1 t2 =
               b2 <- isSubtype' t1 t2'
               return $ b1 && b2
       (TAdmit, _) -> return True
-      (t, TDataWithLength l a) -> do
-          debug $ pretty "Checking TDataWithLength with " <> pretty t1 <> pretty " <= " <> pretty t2
-          b1 <- isSubtype' t1 (tData l l)
-          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
-          return $ b1 && b
-      (t, TData l1 l2) -> do
-        l1' <- coveringLabel t1
-        l2' <- tyLenLbl t1
-        b1 <- flowsTo (t1^.spanOf) l1' l1
-        b2 <- flowsTo (t1^.spanOf) l2' l2
-        return $ b1 && b2
       (t1', t2') | t1' `aeq` t2' -> return True
       (TOption t1, TOption t2) -> isSubtype' t1 t2
       (TRefined t1' p1, TRefined t2' p2) -> do
@@ -411,7 +416,10 @@ isSubtype' t1 t2 =
         x' <- freshVar
         isSubtype' (tRefined tUnit (bind (s2n "_x") pTrue)) t2
       (TRefined t _, t') | (t^.val) `aeq` t' -> return True
-      (TRefined t _, _) -> isSubtype' t t2
+      (_, TRefined t p) -> do
+          b1 <- isSubtype' t1 t
+          (_, b2) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          return $ b1 && b2
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
         isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (topLevelPath $ "UNIT") [] []))) t2
@@ -443,10 +451,6 @@ isSubtype' t1 t2 =
           b1 <- isSubtype' t1 t1'
           b2 <- isSubtype' t1 t2'
           return $ b1 || b2
-      (_, TRefined t p) -> do
-          b1 <- isSubtype' t1 t
-          (_, b2) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
-          return $ b1 && b2
       (TName n, TName m) ->
           case (n^.val, m^.val) of
             (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
@@ -455,7 +459,39 @@ isSubtype' t1 t2 =
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert p
               return b
             _ -> return False
+      (t, TDataWithLength l a) -> do
+          debug $ pretty "Checking TDataWithLength with " <> pretty t1 <> pretty " <= " <> pretty t2
+          b1 <- isSubtype' t1 (tData l l)
+          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          return $ b1 && b
+      (t, TData l1 l2) -> do
+        l2' <- tyLenLbl t1
+        b1 <- tyFlowsTo t1 l1 
+        b2 <- flowsTo (t1^.spanOf) l2' l2
+        return $ b1 && b2
+      (TRefined t _, _) -> isSubtype' t t2
       _ -> return False
+
+isSingleton :: Ty -> Bool
+isSingleton t = 
+    case t^.val of
+      TName _ -> True
+      TVK _ -> True
+      TDH_PK _ -> True
+      TEnc_PK _ -> True
+      TSS _ _ -> True
+      _ -> False
+
+tyFlowsTo :: Ty -> Label -> Check Bool
+tyFlowsTo t l = 
+    case t^.val of
+      TSS n m -> do
+          b1 <- flowsTo (t^.spanOf) (joinLbl (nameLbl n) advLbl) l
+          b2 <- flowsTo (t^.spanOf) (joinLbl (nameLbl m) advLbl) l
+          return $ b1 || b2
+      _ -> do
+          l1 <- coveringLabel t
+          flowsTo (t^.spanOf) l1 l
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
@@ -463,7 +499,9 @@ isSubtype t1 t2 = do
     debug $ pretty (unignore $ t1^.spanOf) <> pretty (unignore $ t2^.spanOf) <> pretty "Checking subtype of " <> pretty t1 <> pretty " and " <> pretty t2
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
-    isSubtype' t1' t2'
+    b <- isSubtype' t1' t2'
+    debug $ pretty "Subtype of " <> pretty t1 <> pretty " and " <> pretty t2 <> pretty ": " <> pretty b
+    return b
 
 
 
@@ -913,6 +951,7 @@ checkParam (ParamStr s) = return ()
 checkParam (ParamLbl l) =  checkLabel l
 checkParam (ParamTy t) =  checkTy t
 checkParam (ParamIdx i) = local (set tcScope TcGhost) $ checkIdx i
+checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()
 checkTy t =
@@ -1665,9 +1704,7 @@ checkCryptoOp pos ot cop args = do
                     getOutTy ot $ mkSpanned $ TData advLbl advLbl
                 else do 
                     let ts = map snd args
-                    lt <- coveringLabelOf ts 
-                    debug $ pretty "Cannot prove hash no collision; checking if " <+> pretty lt <+> pretty "flows to adv" 
-                    flowCheck pos lt advLbl
+                    forM_ ts $ \t -> tyFlowsTo t advLbl
                     getOutTy ot $ mkSpanned $ TData advLbl advLbl
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
@@ -1810,7 +1847,7 @@ unsolvability :: [AExpr] -> Check Prop
 unsolvability aes = local (set tcScope TcGhost) $ do
     bs <- forM aes $ \ae -> 
         case ae^.val of
-          AEApp f [] [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
+          AEApp f _ [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
               t1 <- inferAExpr x
               t2 <- inferAExpr y
               case (t1^.val, t2^.val) of

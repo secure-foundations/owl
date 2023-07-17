@@ -359,6 +359,7 @@ resolveFuncParam f =
       ParamStr s -> return f
       ParamLbl l -> ParamLbl <$> resolveLabel l
       ParamTy l -> ParamTy <$> resolveTy l
+      ParamName n -> ParamName <$> resolveNameExp n
       ParamIdx _ -> return f
 
 
