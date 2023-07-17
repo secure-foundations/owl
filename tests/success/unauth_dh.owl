@@ -1,13 +1,13 @@
 locality client : 1
 locality server 
 name X<@i> : DH @ client<i>
+name Z<@i> : DH @ client<i>
 name Y : DH @ server
 
 random_oracle L<i> : dh_combine(dhpk(get(X<@i>)), get(Y)) -> nonce
 
 def server_main() @ server : Unit = 
     input h in 
-    assume (is_group_elem(h));
     pcase (exists j:idx. h = dhpk(get(X<@j>))) in 
     choose_idx j | h = dhpk(get(X<@j>)) in
     corr_case Y in 
