@@ -184,10 +184,14 @@ data PropX =
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
+    | PQuantIdx Quant  (Bind IdxVar Prop)
     deriving (Show, Generic, Typeable)
 
 
 type Prop = Spanned PropX
+
+data Quant = Forall | Exists
+    deriving (Show, Generic, Typeable)
 
 pAnd :: Prop -> Prop -> Prop
 pAnd p1 p2 = mkSpanned (PAnd p1 p2)
@@ -368,6 +372,7 @@ data ExprX =
     | ELet Expr (Maybe Ty) String (Bind DataVar Expr) -- The string is the name for the var
     | EUnionCase AExpr (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
+    | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
@@ -379,7 +384,7 @@ data ExprX =
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | ECorrCase NameExp Expr
+    | EPCase Prop Expr
     | EFalseElim Expr
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -513,6 +518,11 @@ instance Subst Idx PropX
 instance Subst AExpr PropX
 instance Subst ResolvedPath PropX
 
+instance Alpha Quant
+instance Subst Idx Quant
+instance Subst AExpr Quant
+instance Subst ResolvedPath Quant
+
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
@@ -606,6 +616,9 @@ instance Pretty TyX where
     pretty (TUnion t1 t2) =
         pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
 
+instance Pretty Quant where
+    pretty Forall = pretty "forall"
+    pretty Exists = pretty "exists"
 
 instance Pretty PropX where 
     pretty PTrue = pretty "true"
@@ -617,6 +630,9 @@ instance Pretty PropX where
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
+    pretty (PQuantIdx q b) = 
+        let (x, p) = prettyBind b in
+        pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
     pretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -702,14 +718,15 @@ instance Pretty ExprX where
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
         pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (ECorrCase n e) = 
-        pretty "corr_case" <+> pretty n <+> pretty "in" <+> pretty e
+    pretty (EPCase p e) = 
+        pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc
     pretty (EAssert p) = pretty "assert" <+> pretty p
     pretty (EAssume p) = pretty "assume" <+> pretty p
     pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k
     pretty (ETLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (ETWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
+    pretty _ = pretty "unimp"
 
 instance Pretty DebugCommand where
     pretty (DebugPrintTyOf ae) = pretty "debugPrintTyOf(" <> pretty ae <> pretty ")"

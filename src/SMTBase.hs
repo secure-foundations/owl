@@ -371,8 +371,23 @@ sForall vs bdy pats =
       [] -> bdy
       _ -> 
         let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
-        let bdy' = SApp [SAtom "!", bdy, SPat (SApp pats)] in 
+        let bdy' = case pats of
+                     [] -> SApp [SAtom "!", bdy] 
+                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats)] 
+        in
         SApp [SAtom "forall", v_sorts, bdy']
+
+sExists :: [(SExp, SExp)] -> SExp -> [SExp] -> SExp
+sExists vs bdy pats = 
+    case vs of
+      [] -> bdy
+      _ -> 
+        let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
+        let bdy' = case pats of
+                     [] -> SApp [SAtom "!", bdy] 
+                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats)] 
+        in
+        SApp [SAtom "exists", v_sorts, bdy']
 
 
 sValue :: SExp -> SExp

@@ -477,6 +477,15 @@ interpretProp p =
           return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
+      (PQuantIdx q ip) -> do
+          (i, p') <- liftCheck $ unbind ip
+          sIE <- use symIndexEnv
+          symIndexEnv  %= (M.insert i (SAtom $ show i))
+          v <- local (over inScopeIndices $ TypingBase.insert i IdxGhost) $ interpretProp p'
+          symIndexEnv .= sIE
+          case q of
+            Forall -> return $ sForall [(SAtom $ show i, indexSort)] v []
+            Exists -> return $ sExists [(SAtom $ show i, indexSort)] v []
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1

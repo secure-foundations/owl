@@ -705,10 +705,6 @@ checkDecl d cont =
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
-                              -- let p1 = atomicCaseSplits t
-                              -- let p2 = atomicCaseSplits tyAnn
-                              -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
-                              -- withAllSplits ps $ assertSubtype t tyAnn
                               return $ Just bdy''
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
@@ -839,29 +835,6 @@ checkROName nt =
       NT_Enc _ -> return ()
       NT_MAC _ -> return ()
       _ -> typeError (nt^.spanOf) $ "Bad RO Name: " ++ show (pretty nt)
-
-atomicProps :: Prop -> S.Set (AlphaOrd Prop)
-atomicProps p =
-    case p^.val of
-      PAnd p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      POr p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      PImpl p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      PNot p -> atomicProps p
-      PTrue -> S.empty
-      PFalse -> S.empty
-      PEq _ _-> S.singleton (AlphaOrd p)
-      PEqIdx _ _ -> S.singleton (AlphaOrd p)
-      PFlow _ _ -> S.singleton (AlphaOrd p)
-      PHappened _ _ _ -> S.singleton (AlphaOrd p)
-
-atomicCaseSplits :: Ty -> S.Set (AlphaOrd Prop)
-atomicCaseSplits t =
-    case t^.val of
-      TCase p t1 t2 -> atomicProps p `S.union` (atomicCaseSplits t1 `S.union` atomicCaseSplits t2)
-      TOption t -> atomicCaseSplits t
-      TRefined t _ -> atomicCaseSplits t
-      TUnion t1 t2 -> atomicCaseSplits t1 `S.union` atomicCaseSplits t2
-      _ -> S.empty
 
 withAllSplits :: [Prop] -> Check () -> Check ()
 withAllSplits [] k = k
@@ -1116,6 +1089,9 @@ checkProp p =
               checkLabel l1
               checkLabel l2
               return ()
+          (PQuantIdx _ ip) -> do
+              (i, p) <- unbind ip
+              local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
               _ <- mapM inferAExpr xs
@@ -1228,6 +1204,10 @@ stripProp x p =
               return $ pImpl p1 p2'
       PFlow l1 l2 -> do
           if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
+      PQuantIdx q ip -> do
+          (i, p') <- unbind ip
+          p'' <- stripProp x p'
+          return $ mkSpanned $ PQuantIdx q (bind i p'')
       PHappened s _ xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
 
@@ -1405,6 +1385,24 @@ checkExpr ot e = do
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, t1))] (checkExpr ot e')
           stripTy x t2
+      (EChooseIdx ip ik) -> do
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
+          (i, k) <- unbind ik
+          case b of
+            Just True -> do
+                (ix, p) <- unbind ip
+                x <- freshVar
+                let tx = tLemma (subst ix (mkIVar i) p) 
+                to <- local (over inScopeIndices $ insert i IdxGhost) $ do
+                    withVars [(s2n x, (ignore x, tx))] $ checkExpr ot k
+                if i `elem` getTyIdxVars to then
+                    return (tExistsIdx (bind i to))
+                else return to
+            _ -> do
+                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ checkExpr ot k
+                if i `elem` getTyIdxVars t' then
+                    return (tExistsIdx (bind i t'))
+                else return t'
       (EUnpack a ixk) -> do
           t <- inferAExpr a
           ((i, x), e) <- unbind ixk
@@ -1508,16 +1506,16 @@ checkExpr ot e = do
       (EFalseElim e) -> do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
         if b then getOutTy ot tAdmit else checkExpr ot e
-      (ECorrCase n e) -> do
-          _ <- local (set tcScope TcGhost) $ getNameTypeOpt n
+      (EPCase p e) -> do
+          _ <- local (set tcScope TcGhost) $ checkProp p
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, tLemma (pFlow (nameLbl n) advLbl)))] $ do
+          t1 <- withVars [(s2n x, (ignore x, tLemma p))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
               if b then getOutTy ot tAdmit else checkExpr ot e
-          t2 <- withVars [(s2n x, (ignore x, tLemma (pNot $ pFlow (nameLbl n) advLbl)))] $ do
+          t2 <- withVars [(s2n x, (ignore x, tLemma (pNot p)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then getOutTy ot tAdmit else checkExpr ot e 
-          return $ mkSpanned $ TCase (mkSpanned $ PFlow (nameLbl n) advLbl) t1 t2
+              if b then getOutTy ot tAdmit else checkExpr ot e
+          return $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1
@@ -1633,6 +1631,11 @@ doADec encKeyKind pos t1 t args =
           debug $ pretty "Trivial dec"
           return $ tData l l -- Change here
 
+prettyMaybe :: Pretty a => Maybe a -> Doc ann
+prettyMaybe x = 
+    case x of
+      Nothing -> pretty "Nothing"
+      Just x -> pretty "Just" <+> pretty x
 
 checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp pos ot cop args = do
@@ -1651,7 +1654,9 @@ checkCryptoOp pos ot cop args = do
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           uns <- unsolvability aes'
           b <- decideProp uns
-          debug $ pretty "Decision result: " <> pretty b
+          debug $ pretty "Decision result for hash: " 
+          debug $ pretty "equals expected hash:" <+> pretty b_eq
+          debug $ pretty "unsolvability:" <+> prettyMaybe b
           case (b_eq, b) of
             (True, Just True) -> getOutTy ot $ mkSpanned $ TName $ roName p is i
             _ -> do 
@@ -1661,6 +1666,7 @@ checkCryptoOp pos ot cop args = do
                 else do 
                     let ts = map snd args
                     lt <- coveringLabelOf ts 
+                    debug $ pretty "Cannot prove hash no collision; checking if " <+> pretty lt <+> pretty "flows to adv" 
                     flowCheck pos lt advLbl
                     getOutTy ot $ mkSpanned $ TData advLbl advLbl
       CPRF s -> do

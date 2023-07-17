@@ -516,6 +516,12 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EUnpack a' (bind x k')
+      EChooseIdx ip ik -> do
+          (i, k) <- unbind ik
+          (i', p) <- unbind ip                         
+          k' <- resolveExpr k
+          p' <- resolveProp p
+          return $ Spanned (e^.spanOf) $ EChooseIdx (bind i' p') (bind i k')
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
@@ -551,10 +557,10 @@ resolveExpr e =
                 Left e1 -> do { e1' <- resolveExpr e1; return (s, Left e1') }
                 Right (s1, xk) -> do { (x, k) <- unbind xk; k' <- resolveExpr k; return (s, Right (s1, bind x k') ) }
           return $ Spanned (e^.spanOf) $ ECase a' cases'
-      ECorrCase ne k -> do
-          ne' <- resolveNameExp ne
+      EPCase p k -> do
+          p' <- resolveProp p
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ECorrCase ne' k'
+          return $ Spanned (e^.spanOf) $ EPCase p' k'
       EFalseElim k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EFalseElim k'
@@ -614,6 +620,10 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
+      PQuantIdx q ip -> do
+          (i, p') <- unbind ip
+          p''  <- resolveProp p'
+          return $ Spanned (p^.spanOf) $ PQuantIdx q $ bind i p''
 
 
                                             

@@ -23,7 +23,7 @@ owlStyle   = emptyDef
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf", "forall", "bv", "pcase", "choose_idx"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -410,12 +410,40 @@ parsePropTerm =
             return $ PHappened s inds xs
         )
         <|>
+        (parseSpanned $ do
+            q <- parseQuant
+            i <- identifier
+            parseQuantBody q i
+        )
+        <|>
         (parseSpanned $ try $ do
             e <- parseAExpr
             return $ PEq e (builtinFunc "TRUE" []) 
         )
 
+parseQuant = 
+    (do
+        reserved "forall"
+        return $ Forall
+    )
+    <|>
+    (do
+        reserved "exists"
+        return $ Exists
+    )
 
+parseQuantBody q i = do
+    symbol ":"
+    (parseIdxQuant q i <|> parseBVQuant q i)
+        where
+            parseIdxQuant q i = do
+                reserved "idx"
+                symbol "."
+                p <- parseProp
+                return $ PQuantIdx q $ bind (s2n i) p
+            parseBVQuant q i = do
+                reserved "bv"
+                error "Parse error: bv unsupported with forall"
 
 parsePropTable = [ 
     [ Prefix (do
@@ -918,6 +946,15 @@ parseExprTerm =
         return $ EUnpack a $ bind (s2n i, s2n x) e)
     <|>
     (parseSpanned $ do
+        reserved "choose_idx"
+        i <- identifier
+        symbol "|"
+        p <- parseProp
+        reserved "in"
+        k <- parseExpr
+        return $ EChooseIdx (bind (s2n i) p) $ bind (s2n i) k)
+    <|>
+    (parseSpanned $ do
         reserved "call"
         x <- parsePath
         inds <- parseIdxParams
@@ -967,7 +1004,15 @@ parseExprTerm =
         n <- parseNameExp
         reserved "in"
         e <- parseExpr
-        return $ ECorrCase n e
+        return $ EPCase (pFlow (nameLbl n) advLbl) e
+        )
+    <|>
+    (parseSpanned $ do
+        reserved "pcase"
+        p <- parseProp
+        reserved "in"
+        e <- parseExpr
+        return $ EPCase p e
         )
     <|>
     (parseSpanned $ do
