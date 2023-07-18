@@ -85,6 +85,11 @@ data Layout =
   | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
     deriving (Show, Eq, Generic, Typeable)
 
+instance Pretty Layout where
+    pretty (LBytes i) = pretty "bytes" <> parens (pretty i)
+    pretty (LStruct name fields) = pretty "struct" <+> pretty name <> pretty ":" <+> pretty fields
+    pretty (LEnum name cases) = pretty "enum" <+> pretty name <> pretty ":" <+> pretty (M.keys cases)
+
 data ExtractionError =
       CantLayoutType CTy
     | TypeError String
@@ -358,7 +363,7 @@ lookupTyLayout n = do
     case ls M.!? n of
         Just l -> return l
         Nothing -> do
-            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show ls
+            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show (M.keys ls)
             throwError $ UndefinedSymbol n
 
 lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> ExtractionMonad String))
@@ -401,27 +406,30 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp f _ [inner] | f `aeq` (PUnresolvedVar $ "cipherlen") -> do
-                tagSz <- useAeadTagSize
-                li <- helper inner
-                case li of
-                    (LBytes ni) -> return $ LBytes (ni + tagSz)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f `aeq` (PUnresolvedVar $ "plus") -> do
-                la <- helper a
-                lb <- helper b
-                case (la, lb) of
-                    (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ [a, b] | f `aeq` (PUnresolvedVar $ "mult") -> do
-                la <- helper a
-                lb <- helper b
-                case (la, lb) of
-                    (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp f _ _ | f `aeq` (PUnresolvedVar $ "zero") -> return $ LBytes 0
-            AEApp fn _ [] -> do
-                lookupTyLayout . rustifyName . rustifyPath $ fn -- func name used as a length constant
+            AEApp fpath _ args -> do
+                fn <- tailPath fpath
+                case (fn, args) of
+                    ("cipherlen", [inner]) -> do
+                        tagSz <- useAeadTagSize
+                        li <- helper inner
+                        case li of
+                            (LBytes ni) -> return $ LBytes (ni + tagSz)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("plus", [a, b]) -> do
+                        la <- helper a
+                        lb <- helper b
+                        case (la, lb) of
+                            (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("mult", [a, b]) -> do
+                        la <- helper a
+                        lb <- helper b
+                        case (la, lb) of
+                            (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("zero", _) -> return $ LBytes 0
+                    (_, []) -> do
+                        lookupTyLayout . rustifyName $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
     in
     helper aexp
@@ -1050,13 +1058,13 @@ extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> E
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
-    debugPrint $ "Extracting def " ++ owlName
-    debugPrint $ pretty concreteBody
+    -- debugPrint $ "Extracting def " ++ owlName
+    -- debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
-    funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
+    -- funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
     where
         genFuncDecl name sidArgs owlArgs rt = do
@@ -1238,6 +1246,7 @@ preprocessModBody mb = do
                     Nothing -> return m
                     Just e  -> do
                         let f (i, l, s, d, t) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t)
+                        makeFunc owlName loc sids args retTy
                         return $ M.adjust f locName m
         
         sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
@@ -1761,11 +1770,12 @@ prettyMap s m =
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
     -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
-    debugPrint $ pretty (map fst (mb ^. TB.defs))
-    debugPrint $ pretty (map fst (mb ^. TB.nameEnv))
+    -- debugPrint $ pretty (map fst (mb ^. TB.defs))
+    -- debugPrint $ pretty (map fst (mb ^. TB.tyDefs))
     -- debugPrint $ prettyMap "defs" (mb ^. TB.defs)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
-    tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
+    -- We get the list of tyDefs in reverse order of declaration, so reverse again
+    tyDefsExtracted <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap
     p <- preamble
     ep <- entryPoint locMap sharedNames pubKeys sidArgMap
