@@ -177,8 +177,18 @@ mod tests {
             assert_eq!(alice_ss, bob_ss);
         }
 
+        fn check_ecdh_dhpk() {
+            let (sk, pk) = gen_ecdh_key_pair();
+            let dhpk_pk = ecdh_dhpk(&sk[..]);
+            assert_eq!(dhpk_pk, pk);
+        }
+
         for _ in 0..20 {
             check_ecdh();
+        }
+
+        for _ in 0..20 {
+            check_ecdh_dhpk();
         }
     }
 }

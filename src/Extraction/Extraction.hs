@@ -103,7 +103,7 @@ instance Pretty ExtractionError where
     pretty (CantLayoutType ct) =
         pretty "Can't make a layout for type:" <+> pretty ct
     pretty (TypeError s) =
-        pretty "Type error during extraction (this probably means a bug in Owl typechecking):" <+> pretty s
+        pretty "Type error during extraction:" <+> pretty s
     pretty (UndefinedSymbol s) =
         pretty "Undefined symbol: " <+> pretty s
     pretty OutputWithUnknownDestination =
@@ -143,6 +143,10 @@ rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
 rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
 rustifyResolvedPath (PPathVar OpenPathVar s) = show s
 rustifyResolvedPath (PDot x y) = rustifyResolvedPath x ++ "_" ++ y
+
+tailPath :: Path -> ExtractionMonad String
+tailPath (PRes (PDot _ y)) = return y
+tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
 
 rustifyPath :: Path -> String
 rustifyPath (PUnresolvedVar s) = show s
@@ -295,20 +299,17 @@ initFuncs = M.fromList [
         --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
         --         _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
         -- )),
-        -- ("dhpk", (VecU8, \args -> case args of
-        --         [(_,x)] -> return $ "pk_" ++ x
-        --         _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
-        -- )),
+        ("dhpk", (VecU8, \args -> case args of
+                [(_,x)] -> return $ x ++ ".owl_dhpk()"
+                _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
+        )),
         ("dh_combine", (VecU8, \args -> case args of
                 [(_,pk), (_,sk)] -> return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
         )),
         ("UNIT", (Unit, \_ -> return "()")),
-        ("Top_UNIT", (Unit, \_ -> do debugPrint "check Top_UNIT hack"; return "()")),
         ("TRUE", (Bool, \_ -> return "true")),
-        ("Top_TRUE", (Bool, \_ -> return "true")),
         ("FALSE", (Bool, \_ -> return "false")),
-        ("Top_FALSE", (Bool, \_ -> return "false")),
         ("Some", (Option VecU8, \args -> case args of
                 [(_,x)] -> return $ "Some(" ++ x ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for Some"
@@ -360,6 +361,13 @@ lookupTyLayout n = do
             debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show ls
             throwError $ UndefinedSymbol n
 
+lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> ExtractionMonad String))
+lookupFunc fpath = do
+    fs <- use funcs
+    f <- tailPath fpath
+    return $ fs M.!? f
+    
+
 lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)))
 lookupAdtFunc fn = do
     ufs <- use owlUserFuncs
@@ -370,7 +378,7 @@ lookupAdtFunc fn = do
         Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
         Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
         Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
-        Nothing -> do debugPrint "failed"; return Nothing
+        Nothing -> return Nothing
 
 flattenNameExp :: NameExp -> String
 flattenNameExp n = case n ^. val of
@@ -478,6 +486,7 @@ genOwlOpsImpl name = pretty
         "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.0[..]).owl_sign(privkey) }",
         "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_vrfy(pubkey, signature) } ",
         "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.0[..]).owl_dh_combine(others_pk) }",
+        "fn owl_dhpk(&self) -> Vec<u8> { (&self.0[..]).owl_dhpk() }",
         "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.0[..]).owl_extract_expand_to_len(salt, len) }",
         "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0[..]).owl_xor(other) }"
     ])
@@ -762,7 +771,13 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
-        (CHash p n, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CHash p n, [(_,x)]) -> do 
+            let roname = rustifyPath p 
+            orcls <- use oracles
+            case orcls M.!? roname of
+                Nothing -> throwError $ TypeError "unrecognized random oracle"
+                Just outLen -> do
+                    return (VecU8, x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_enc(&" ++ k ++ ")")
         (CADec, [(_,k), (_,x)]) -> do return (Option VecU8, x ++ ".owl_dec(&" ++ k ++ ")")
@@ -774,7 +789,7 @@ extractCryptOp binds op owlArgs = do
         (CMacVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
         (CSign, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_sign(&" ++ k ++ ")")
         (CSigVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
-        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op
+        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     return (rt, preArgs, pretty str)
 
 
@@ -792,7 +807,8 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? (rustifyPath owlFn) of
+    fdef <- lookupFunc owlFn
+    case fdef of
         Just (rt, f) -> do
             str <- f args
             return (rt, preArgs, pretty str)
@@ -822,13 +838,16 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn `aeq` (PUnresolvedVar $ "dhpk") then
-                            let unspanned = map (view val) owlArgs in
-                            case unspanned of
-                                [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
-                                _ -> throwError $ TypeError "got wrong number of args to dhpk"
-                        else do
-                            throwError $ UndefinedSymbol $ show owlFn
+                        -- -- if owlFn `aeq` (PUnresolvedVar $ "dhpk") then
+                        -- if rustifyPath owlFn == "Top_dhpk" then
+                        --     let unspanned = map (view val) owlArgs in
+                        --     case unspanned of
+                        --         [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
+                        --         _ -> do
+                        --             debugPrint $ unspanned
+                        --             throwError $ TypeError "got wrong number of args to dhpk"
+                        -- else do                            
+                        throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
@@ -1189,14 +1208,15 @@ preprocessModBody mb = do
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
     (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
+    mapM_ sortOrcl $ (mb ^. TB.randomOracle)
     -- TODO random oracles, counters
     return (locMap, shared, pubkeys)
     where
-        sortLocs ls = foldl' (\(locs, locAliases) (locName, locType) -> 
+        sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
                                 case locType of 
                                     Left i -> (M.insert locName i locs, locAliases)
                                     Right p -> (locs, M.insert locName (rustifyResolvedPath p) locAliases)) 
-                             (M.empty, M.empty) ls
+                             (M.empty, M.empty)
 
         lookupLoc' :: M.Map LocalityName Int -> M.Map LocalityName LocalityName -> LocalityName -> ExtractionMonad LocalityName
         lookupLoc' locs locAliases l = do
@@ -1268,6 +1288,14 @@ preprocessModBody mb = do
                         else
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
+
+        sortOrcl :: (String, ([AExpr], [NameType])) -> ExtractionMonad ()
+        sortOrcl (n, (args, rtys)) = do
+            rtlen <- case (map (view val) rtys) of
+                [NT_Nonce] -> return "NONCE_SIZE"
+                [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
+                _ -> throwError $ UnsupportedOracleReturnType n
+            oracles %= M.insert n rtlen
 
 
 -- return number of arguments to main and the print of the locality
@@ -1462,41 +1490,41 @@ extractTyDefs ((tv, td):ds) = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
             return $ pretty ""
 
-extractDecl :: Decl -> ExtractionMonad (Doc ann)
-extractDecl dcl =
-    case dcl^.val of
-        DeclStruct name fields -> do
-            let (_, fields') = unsafeUnbind fields
-            extractStruct name fields'
-        DeclEnum name cases -> do
-            let (_, cases') = unsafeUnbind cases
-            extractEnum name cases'
-        DeclTy name topt -> do
-            case topt of
-              Nothing -> do
-                typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
-                return $ pretty ""
-              Just t -> do
-                lct <- layoutCTy . doConcretifyTy $ t
-                typeLayouts %= M.insert (rustifyName name) lct
-                return $ pretty ""
-        _ -> return $ pretty "" -- Other decls are handled elsewhere
+-- extractDecl :: Decl -> ExtractionMonad (Doc ann)
+-- extractDecl dcl =
+--     case dcl^.val of
+--         DeclStruct name fields -> do
+--             let (_, fields') = unsafeUnbind fields
+--             extractStruct name fields'
+--         DeclEnum name cases -> do
+--             let (_, cases') = unsafeUnbind cases
+--             extractEnum name cases'
+--         DeclTy name topt -> do
+--             case topt of
+--               Nothing -> do
+--                 typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
+--                 return $ pretty ""
+--               Just t -> do
+--                 lct <- layoutCTy . doConcretifyTy $ t
+--                 typeLayouts %= M.insert (rustifyName name) lct
+--                 return $ pretty ""
+--         _ -> return $ pretty "" -- Other decls are handled elsewhere
 
-extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
-extractDecls' [] = return $ pretty ""
-extractDecls' (d:ds) = do
-    dExtracted <- extractDecl d
-    dsExtracted <- extractDecls' ds
-    return $ dExtracted <> line <> line <> dsExtracted
+-- extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
+-- extractDecls' [] = return $ pretty ""
+-- extractDecls' (d:ds) = do
+--     dExtracted <- extractDecl d
+--     dsExtracted <- extractDecls' ds
+--     return $ dExtracted <> line <> line <> dsExtracted
 
-extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
-extractDecls ds = do
-    (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
-    globalsExtracted <- extractDecls' globalDecls
-    (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
-    p <- preamble
-    ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
-    return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
+-- extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
+-- extractDecls ds = do
+--     (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
+--     globalsExtracted <- extractDecls' globalDecls
+--     (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
+--     p <- preamble
+--     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
+--     return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
         
 preamble :: ExtractionMonad (Doc ann)        
 preamble = do
@@ -1556,6 +1584,7 @@ preamble = do
                     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8>;",
                     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>>;",
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8>;",
+                    "fn owl_dhpk(&self) -> Vec<u8>;",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8>;",
                     "fn owl_xor(&self, other: &[u8]) -> Vec<u8>;",
                 "}"
@@ -1615,6 +1644,9 @@ preamble = do
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> {",
                         "owl_dhke::ecdh_combine(self, &others_pk[..])",
                     "}",
+                    "fn owl_dhpk(&self) -> Vec<u8> {",
+                        "owl_dhke::ecdh_dhpk(self)",
+                    "}",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> {",
                         "owl_hkdf::extract_expand_to_len(self, salt, len)",
                     "}",
@@ -1635,6 +1667,7 @@ preamble = do
                     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self[..]).owl_sign(privkey) }",
                     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self[..]).owl_vrfy(pubkey, signature) } ",
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self[..]).owl_dh_combine(others_pk) }",
+                    "fn owl_dhpk(&self) -> Vec<u8> { (&self[..]).owl_dhpk() }",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self[..]).owl_extract_expand_to_len(salt, len) }",
                     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self[..]).owl_xor(&other[..]) }",
                 "}"
@@ -1729,6 +1762,7 @@ extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann)
 extractModBody mb = do
     -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
     debugPrint $ pretty (map fst (mb ^. TB.defs))
+    debugPrint $ pretty (map fst (mb ^. TB.nameEnv))
     -- debugPrint $ prettyMap "defs" (mb ^. TB.defs)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     tyDefsExtracted <- extractTyDefs (mb ^. TB.tyDefs)
