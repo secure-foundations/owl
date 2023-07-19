@@ -29,7 +29,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H" ]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem" ]
 
 data PathType = 
     PTName
@@ -213,10 +213,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclRandOrcl x zs ws adm -> do
+      DeclRandOrcl x iws adm -> do
+          (is, (zs, ws)) <- unbind iws
           zs' <- mapM resolveAExpr zs
           ws' <- mapM resolveNameType ws
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x zs' ws' adm
+          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (bind is (zs', ws')) adm
           p <- view curPath
           ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
@@ -344,9 +345,9 @@ resolveNameExp ne =
         BaseName s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ BaseName s p'
-        ROName p i -> do 
+        ROName p ps i -> do 
             p' <- resolvePath (ne^.spanOf) PTRO p
-            return $ Spanned (ne^.spanOf) $ ROName p' i
+            return $ Spanned (ne^.spanOf) $ ROName p' ps i
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s
@@ -358,6 +359,7 @@ resolveFuncParam f =
       ParamStr s -> return f
       ParamLbl l -> ParamLbl <$> resolveLabel l
       ParamTy l -> ParamTy <$> resolveTy l
+      ParamName n -> ParamName <$> resolveNameExp n
       ParamIdx _ -> return f
 
 
@@ -467,9 +469,9 @@ resolveAExpr a =
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
-      CHash p i -> do
+      CHash p is i -> do
           p' <- resolvePath pos PTRO p
-          return $ CHash p' i
+          return $ CHash p' is i
       CAEnc -> return CAEnc
       CAEncWithNonce p is -> do
           p' <- resolvePath pos PTCounter p
@@ -515,6 +517,12 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EUnpack a' (bind x k')
+      EChooseIdx ip ik -> do
+          (i, k) <- unbind ik
+          (i', p) <- unbind ip                         
+          k' <- resolveExpr k
+          p' <- resolveProp p
+          return $ Spanned (e^.spanOf) $ EChooseIdx (bind i' p') (bind i k')
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
@@ -550,10 +558,10 @@ resolveExpr e =
                 Left e1 -> do { e1' <- resolveExpr e1; return (s, Left e1') }
                 Right (s1, xk) -> do { (x, k) <- unbind xk; k' <- resolveExpr k; return (s, Right (s1, bind x k') ) }
           return $ Spanned (e^.spanOf) $ ECase a' cases'
-      ECorrCase ne k -> do
-          ne' <- resolveNameExp ne
+      EPCase p k -> do
+          p' <- resolveProp p
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ECorrCase ne' k'
+          return $ Spanned (e^.spanOf) $ EPCase p' k'
       EFalseElim k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EFalseElim k'
@@ -613,6 +621,10 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
+      PQuantIdx q ip -> do
+          (i, p') <- unbind ip
+          p''  <- resolveProp p'
+          return $ Spanned (p^.spanOf) $ PQuantIdx q $ bind i p''
 
 
                                             

@@ -8,6 +8,8 @@ module A = {
             _x : Name(n)
         }
     }
+
+    def bob_main() @ bob : Unit = ()
 }
 
 module X = A.B
@@ -39,7 +41,7 @@ module M = {
 
 module N = M
 
-def alice() @ alice : Unit = 
+def alice_main() @ alice : Unit = 
     let x = get(N.k) in 
     let y : N.s = N.s(x) in 
     let z : N.s = call N.foo() in 

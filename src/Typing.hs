@@ -65,22 +65,6 @@ trivialTypeOf ts = do
     l <- coveringLabelOf ts
     return $ TData l l
 
-symCases :: Ty -> (Ty -> Check TyX) -> Check TyX
-symCases t k =
-    case t^.val of
-      TCase p t1 t2 -> do
-          t1' <- symCases t1 k
-          t2' <- symCases t2 k
-          return $ TCase p (mkSpanned t1') (mkSpanned t2')
-      _ -> k t
-
-mkSymCheck :: [Ty] -> ([Ty] -> Check TyX) -> Check TyX
-mkSymCheck [] k = k []
-mkSymCheck (t:ts) k =
-    symCases t $ \t' ->
-        mkSymCheck ts $ \ts' ->
-            k (t' : ts')
-
 extractNameFromType :: Ty -> Maybe NameExp
 extractNameFromType t =
     case (stripRefinements t)^.val of
@@ -106,7 +90,7 @@ extractVKFromType t =
       _ ->  Nothing
 
 mkSimpleFunc :: String -> Int -> ([Ty] -> Check TyX) -> (String, (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX))
-mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> mkSymCheck (map snd args) k)))
+mkSimpleFunc s i k = (s, (i, withNoParams s (\args -> k (map snd args)))) 
 
 withNormalizedTys :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)  ->
     Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
@@ -118,6 +102,9 @@ withNormalizedTys mp =
             y a b
             ) in
     map (\(k, v) -> (k, f v)) mp
+
+mkRefined :: Ty -> (AExpr -> Prop) -> TyX              
+mkRefined t p = TRefined t (bind (s2n ".res") $ p $ aeVar ".res")
 
 initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
@@ -133,8 +120,9 @@ initDetFuncs = withNormalizedTys $ [
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
               l2 <- coveringLabel t2
-              let tr = aeApp (topLevelPath $ "TRUE") [] []
-              return $ TRefined (mkSpanned $ TBool $ joinLbl l1 l2) (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pEq a1 a2))
+              let true = aeApp (topLevelPath $ "TRUE") [] []
+              return $ mkRefined (mkSpanned $ TBool $ joinLbl l1 l2) $ \x ->
+                    pImpl (pEq x true) (pEq a1 a2)
            )),
     ("Some", (1, \ps args -> do
         case (ps, args) of
@@ -171,6 +159,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "plus" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "mult" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "zero" 0 $ \args -> trivialTypeOf args,
+    mkSimpleFunc "is_group_elem" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, -- Used for RO
     mkSimpleFunc "cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "pk_cipherlen" 1 $ \args -> trivialTypeOf args,
@@ -199,15 +188,26 @@ initDetFuncs = withNormalizedTys $ [
                 NT_PKE _ -> return $ TEnc_PK n
                 _ -> trivialTypeOf args
           _ -> trivialTypeOf args,
-    mkSimpleFunc "dh_combine" 2 $ \args ->
-        case args of
-          [t1, t2] | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
+    ("dh_combine", (2, \ps args ->
+        case (ps, args) of
+          ([], [(_, t1), (_, t2)]) | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
               nt_n <-  local (set tcScope TcGhost) $ getNameType n
               nt_m <-  local (set tcScope TcGhost) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
                 (NT_DH, NT_DH) -> return $ TSS n m
-                _ -> trivialTypeOf $ args
-          _ -> trivialTypeOf $ args,
+                _ -> trivialTypeOf $ map snd args
+          ([], _) -> trivialTypeOf $ map snd args
+          ([ParamName n, ParamName m], [(x, t1), (_, t2)]) -> do 
+              nt_n <-  local (set tcScope TcGhost) $ getNameType n
+              nt_m <-  local (set tcScope TcGhost) $ getNameType m
+              case (nt_n^.val, nt_m^.val) of
+                (NT_DH, NT_DH) -> do
+                  b1 <- isSubtype t1 (mkSpanned $ TDH_PK n)
+                  b2 <- isSubtype t2 (tName m)
+                  if b1 && b2 then return $ TSS n m else trivialTypeOf $ map snd args
+                _ -> typeError (x^.spanOf) $ "Wrong name types for dh_combine"
+          _ -> typeError (ignore def) $ "Bad params to dh_combine: expected two name params"
+                   )),
     ("checknonce", (2, \ps args ->
         case (ps, args) of
           ([], [(x, t1), (y, t2)]) ->
@@ -383,6 +383,11 @@ normalizeLabel l = do
 
 isSubtype' t1 t2 =
     case (t1^.val, t2^.val) of
+      _ | isSingleton t2 -> do 
+          debug $ pretty "Trying singleton query: " <> pretty t2
+          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          debug $ pretty "Singleton query: " <> pretty t1 <> pretty "<=" <> pretty t2 <> pretty ": " <> pretty b
+          return b 
       (TCase p t1' t2', _) -> do
           debug $ pretty "Checking subtype for TCase: " <> pretty t1 <> pretty " <= " <> pretty t2
           r <- decideProp p
@@ -401,17 +406,6 @@ isSubtype' t1 t2 =
               b2 <- isSubtype' t1 t2'
               return $ b1 && b2
       (TAdmit, _) -> return True
-      (t, TDataWithLength l a) -> do
-          debug $ pretty "Checking TDataWithLength with " <> pretty t1 <> pretty " <= " <> pretty t2
-          b1 <- isSubtype' t1 (tData l l)
-          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
-          return $ b1 && b
-      (t, TData l1 l2) -> do
-        l1' <- coveringLabel t1
-        l2' <- tyLenLbl t1
-        b1 <- flowsTo (t1^.spanOf) l1' l1
-        b2 <- flowsTo (t1^.spanOf) l2' l2
-        return $ b1 && b2
       (t1', t2') | t1' `aeq` t2' -> return True
       (TOption t1, TOption t2) -> isSubtype' t1 t2
       (TRefined t1' p1, TRefined t2' p2) -> do
@@ -422,7 +416,10 @@ isSubtype' t1 t2 =
         x' <- freshVar
         isSubtype' (tRefined tUnit (bind (s2n "_x") pTrue)) t2
       (TRefined t _, t') | (t^.val) `aeq` t' -> return True
-      (TRefined t _, _) -> isSubtype' t t2
+      (_, TRefined t p) -> do
+          b1 <- isSubtype' t1 t
+          (_, b2) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          return $ b1 && b2
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
         isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (topLevelPath $ "UNIT") [] []))) t2
@@ -454,10 +451,6 @@ isSubtype' t1 t2 =
           b1 <- isSubtype' t1 t1'
           b2 <- isSubtype' t1 t2'
           return $ b1 || b2
-      (_, TRefined t p) -> do
-          b1 <- isSubtype' t1 t
-          (_, b2) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
-          return $ b1 && b2
       (TName n, TName m) ->
           case (n^.val, m^.val) of
             (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
@@ -466,7 +459,39 @@ isSubtype' t1 t2 =
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert p
               return b
             _ -> return False
+      (t, TDataWithLength l a) -> do
+          debug $ pretty "Checking TDataWithLength with " <> pretty t1 <> pretty " <= " <> pretty t2
+          b1 <- isSubtype' t1 (tData l l)
+          (_, b) <- SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2
+          return $ b1 && b
+      (t, TData l1 l2) -> do
+        l2' <- tyLenLbl t1
+        b1 <- tyFlowsTo t1 l1 
+        b2 <- flowsTo (t1^.spanOf) l2' l2
+        return $ b1 && b2
+      (TRefined t _, _) -> isSubtype' t t2
       _ -> return False
+
+isSingleton :: Ty -> Bool
+isSingleton t = 
+    case t^.val of
+      TName _ -> True
+      TVK _ -> True
+      TDH_PK _ -> True
+      TEnc_PK _ -> True
+      TSS _ _ -> True
+      _ -> False
+
+tyFlowsTo :: Ty -> Label -> Check Bool
+tyFlowsTo t l = 
+    case t^.val of
+      TSS n m -> do
+          b1 <- flowsTo (t^.spanOf) (joinLbl (nameLbl n) advLbl) l
+          b2 <- flowsTo (t^.spanOf) (joinLbl (nameLbl m) advLbl) l
+          return $ b1 || b2
+      _ -> do
+          l1 <- coveringLabel t
+          flowsTo (t^.spanOf) l1 l
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
@@ -474,7 +499,9 @@ isSubtype t1 t2 = do
     debug $ pretty (unignore $ t1^.spanOf) <> pretty (unignore $ t2^.spanOf) <> pretty "Checking subtype of " <> pretty t1 <> pretty " and " <> pretty t2
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
-    isSubtype' t1' t2'
+    b <- isSubtype' t1' t2'
+    debug $ pretty "Subtype of " <> pretty t1 <> pretty " and " <> pretty t2 <> pretty ": " <> pretty b
+    return b
 
 
 
@@ -716,10 +743,6 @@ checkDecl d cont =
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
-                              -- let p1 = atomicCaseSplits t
-                              -- let p2 = atomicCaseSplits tyAnn
-                              -- let ps = map _unAlphaOrd $ S.toList $ p1 `S.union` p2
-                              -- withAllSplits ps $ assertSubtype t tyAnn
                               return $ Just bdy'
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
@@ -777,20 +800,22 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s aes nts adm) -> do
+      (DeclRandOrcl s bnd adm) -> do
+        (is, (aes, nts)) <- unbind bnd
         -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
         assert (d^.spanOf) ("Empty random oracle declaration") $ length nts > 0
-        _ <- mapM inferAExpr aes
-        forM_ nts $ \nt -> do
-            checkNameType nt
-            checkROName nt
-        localROCheck (d^.spanOf) aes
-        case adm of
-          AdmitUniqueness -> return ()
-          NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
-        ro <- view $ curMod . randomOracle
-        assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (curMod . randomOracle) $ insert s (aes, nts)) cont 
+        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+            _ <- mapM inferAExpr aes
+            forM_ nts $ \nt -> do
+                checkNameType nt
+                checkROName nt
+            localROCheck (d^.spanOf) aes
+            case adm of
+              AdmitUniqueness -> return ()
+              NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
+            ro <- view $ curMod . randomOracle
+            assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
+        local (over (curMod . randomOracle) $ insert s bnd) cont 
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -798,14 +823,35 @@ nameExpIsLocal ne =
       BaseName _ (PRes (PDot p s)) -> do
           p' <- curModName
           return $ p `aeq` p'
-      ROName (PRes (PDot p s)) i -> do
+      ROName (PRes (PDot p s)) _ i -> do
           p' <- curModName
           return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
 
+ensureOnlyLocalNames :: AExpr -> Check ()
+ensureOnlyLocalNames ae = do
+    case ae^.val of
+      AEVar _ _ -> return ()
+      AEApp _ _ aes -> forM_ aes ensureOnlyLocalNames
+      AEString _ -> return ()
+      AEGet n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEGetEncPK n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEGetVK n -> do
+          b <- nameExpIsLocal n
+          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+      AEPackIdx _ a -> ensureOnlyLocalNames a
+      AELenConst _ -> return ()
+      AEInt _ -> return ()
 
 localROCheck :: Ignore Position -> [AExpr] -> Check ()
 localROCheck pos aes = laxAssertion $ do
+    -- Locality check
+    forM_ aes $ ensureOnlyLocalNames
+    -- Injectivity check
     ts <- mapM inferAExpr aes
     bs <- forM ts $ \t ->
         case t^.val of
@@ -827,29 +873,6 @@ checkROName nt =
       NT_Enc _ -> return ()
       NT_MAC _ -> return ()
       _ -> typeError (nt^.spanOf) $ "Bad RO Name: " ++ show (pretty nt)
-
-atomicProps :: Prop -> S.Set (AlphaOrd Prop)
-atomicProps p =
-    case p^.val of
-      PAnd p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      POr p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      PImpl p1 p2 -> S.union (atomicProps p1) (atomicProps p2)
-      PNot p -> atomicProps p
-      PTrue -> S.empty
-      PFalse -> S.empty
-      PEq _ _-> S.singleton (AlphaOrd p)
-      PEqIdx _ _ -> S.singleton (AlphaOrd p)
-      PFlow _ _ -> S.singleton (AlphaOrd p)
-      PHappened _ _ _ -> S.singleton (AlphaOrd p)
-
-atomicCaseSplits :: Ty -> S.Set (AlphaOrd Prop)
-atomicCaseSplits t =
-    case t^.val of
-      TCase p t1 t2 -> atomicProps p `S.union` (atomicCaseSplits t1 `S.union` atomicCaseSplits t2)
-      TOption t -> atomicCaseSplits t
-      TRefined t _ -> atomicCaseSplits t
-      TUnion t1 t2 -> atomicCaseSplits t1 `S.union` atomicCaseSplits t2
-      _ -> S.empty
 
 withAllSplits :: [Prop] -> Check () -> Check ()
 withAllSplits [] k = k
@@ -876,7 +899,7 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 checkROUnique :: Ignore Position -> [AExpr] -> Check ()
 checkROUnique pos es = laxAssertion $ do
     ro_vals <- view $ curMod . randomOracle
-    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique (map (\(s, (a, _)) -> a) ro_vals) es 
+    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique ro_vals es 
     assert pos "RO uniqueness check failed" b
     return ()
 
@@ -928,6 +951,7 @@ checkParam (ParamStr s) = return ()
 checkParam (ParamLbl l) =  checkLabel l
 checkParam (ParamTy t) =  checkTy t
 checkParam (ParamIdx i) = local (set tcScope TcGhost) $ checkIdx i
+checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()
 checkTy t =
@@ -1104,6 +1128,9 @@ checkProp p =
               checkLabel l1
               checkLabel l2
               return ()
+          (PQuantIdx _ ip) -> do
+              (i, p) <- unbind ip
+              local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
               _ <- mapM inferAExpr xs
@@ -1127,6 +1154,7 @@ flowsTo osp l1' l2' = do
     tyc <- view tyContext
     debug $ pretty "Checking " <> pretty l1 <+> pretty "<=" <+> pretty l2
     (fn, b) <- SMT.checkFlows l1 l2
+    return b
     case b of
       Just r -> do
         debug $ pretty "Got " <> pretty b <> pretty " from " <> pretty fn
@@ -1215,6 +1243,10 @@ stripProp x p =
               return $ pImpl p1 p2'
       PFlow l1 l2 -> do
           if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
+      PQuantIdx q ip -> do
+          (i, p') <- unbind ip
+          p'' <- stripProp x p'
+          return $ mkSpanned $ PQuantIdx q (bind i p'')
       PHappened s _ xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
 
@@ -1392,6 +1424,24 @@ checkExpr ot e = do
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, t1))] (checkExpr ot e')
           stripTy x t2
+      (EChooseIdx ip ik) -> do
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
+          (i, k) <- unbind ik
+          case b of
+            Just True -> do
+                (ix, p) <- unbind ip
+                x <- freshVar
+                let tx = tLemma (subst ix (mkIVar i) p) 
+                to <- local (over inScopeIndices $ insert i IdxGhost) $ do
+                    withVars [(s2n x, (ignore x, tx))] $ checkExpr ot k
+                if i `elem` getTyIdxVars to then
+                    return (tExistsIdx (bind i to))
+                else return to
+            _ -> do
+                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ checkExpr ot k
+                if i `elem` getTyIdxVars t' then
+                    return (tExistsIdx (bind i t'))
+                else return t'
       (EUnpack a ixk) -> do
           t <- inferAExpr a
           ((i, x), e) <- unbind ixk
@@ -1495,16 +1545,16 @@ checkExpr ot e = do
       (EFalseElim e) -> do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
         if b then getOutTy ot tAdmit else checkExpr ot e
-      (ECorrCase n e) -> do
-          _ <- local (set tcScope TcGhost) $ getNameTypeOpt n
+      (EPCase p e) -> do
+          _ <- local (set tcScope TcGhost) $ checkProp p
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, tLemma (pFlow (nameLbl n) advLbl)))] $ do
+          t1 <- withVars [(s2n x, (ignore x, tLemma p))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
               if b then getOutTy ot tAdmit else checkExpr ot e
-          t2 <- withVars [(s2n x, (ignore x, tLemma (pNot $ pFlow (nameLbl n) advLbl)))] $ do
+          t2 <- withVars [(s2n x, (ignore x, tLemma (pNot p)))] $ do
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then getOutTy ot tAdmit else checkExpr ot e 
-          return $ mkSpanned $ TCase (mkSpanned $ PFlow (nameLbl n) advLbl) t1 t2
+              if b then getOutTy ot tAdmit else checkExpr ot e
+          return $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1
@@ -1620,26 +1670,42 @@ doADec encKeyKind pos t1 t args =
           debug $ pretty "Trivial dec"
           return $ tData l l -- Change here
 
+prettyMaybe :: Pretty a => Maybe a -> Doc ann
+prettyMaybe x = 
+    case x of
+      Nothing -> pretty "Nothing"
+      Just x -> pretty "Just" <+> pretty x
 
 checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
-      CHash p i -> do                            
+      CHash p is i -> do                            
+          local (set tcScope TcGhost) $ forM_ is checkIdx
           let aes = map fst args
-          (aes', nts) <- getRO pos p
-          assert pos ("RO index out of bounds") $ i < length nts
+          bnd <- getRO pos p
+          (ixs, (aes'_, nts_)) <- unbind bnd
+          assert pos ("RO index out of bounds") $ i < length nts_
+          assert pos ("Wrong index arity for RO") $ length is == length ixs
+          let aes' = substs (zip ixs is) aes'_
+          let nts = substs (zip ixs is) nts_
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
-          (_, b) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
+          (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           uns <- unsolvability aes'
           b <- decideProp uns
-          case b of
-            Just True -> getOutTy ot $ mkSpanned $ TName $ roName p i
+          debug $ pretty "Decision result for hash: " 
+          debug $ pretty "equals expected hash:" <+> pretty b_eq
+          debug $ pretty "unsolvability:" <+> prettyMaybe b
+          case (b_eq, b) of
+            (True, Just True) -> getOutTy ot $ mkSpanned $ TName $ roName p is i
             _ -> do 
-                let ts = map snd args
-                lt <- coveringLabelOf ts 
-                flowCheck pos lt advLbl
-                getOutTy ot $ mkSpanned $ TData advLbl advLbl
+                noCollision <- SMT.symDecideNotInRO aes
+                if noCollision then 
+                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
+                else do 
+                    let ts = map snd args
+                    forM_ ts $ \t -> tyFlowsTo t advLbl
+                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args
@@ -1781,7 +1847,7 @@ unsolvability :: [AExpr] -> Check Prop
 unsolvability aes = local (set tcScope TcGhost) $ do
     bs <- forM aes $ \ae -> 
         case ae^.val of
-          AEApp f [] [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
+          AEApp f _ [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
               t1 <- inferAExpr x
               t2 <- inferAExpr y
               case (t1^.val, t2^.val) of

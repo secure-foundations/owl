@@ -127,7 +127,7 @@ type AExpr = Spanned AExprX
 
 data NameExpX = 
     BaseName ([Idx], [Idx]) Path
-    | ROName Path Int
+    | ROName Path [Idx] Int
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
 
@@ -141,8 +141,8 @@ data Locality = Locality Path [Idx]
 
 
 
-roName :: Path -> Int -> NameExp
-roName s i = mkSpanned (ROName s i)
+roName :: Path -> [Idx] -> Int -> NameExp
+roName s is i = mkSpanned (ROName s is i)
 
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
@@ -184,10 +184,14 @@ data PropX =
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
+    | PQuantIdx Quant  (Bind IdxVar Prop)
     deriving (Show, Generic, Typeable)
 
 
 type Prop = Spanned PropX
+
+data Quant = Forall | Exists
+    deriving (Show, Generic, Typeable)
 
 pAnd :: Prop -> Prop -> Prop
 pAnd p1 p2 = mkSpanned (PAnd p1 p2)
@@ -232,6 +236,7 @@ data NameTypeX =
 
 type NameType = Spanned NameTypeX
 
+-- Nonce patterns are injective contexts
 data NoncePattern = NPHere
     deriving (Show, Generic, Typeable)
 
@@ -311,7 +316,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String [AExpr] [NameType] AdmitUniquenessCheck
+    | DeclRandOrcl String (Bind [IdxVar] ([AExpr], [NameType])) AdmitUniquenessCheck
     | DeclCorr Label Label 
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
@@ -359,7 +364,7 @@ aeLenConst s = mkSpanned $ AELenConst s
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp (topLevelPath "true") [] [])
+aeTrue = mkSpanned (AEApp (topLevelPath "TRUE") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)
@@ -367,6 +372,7 @@ data ExprX =
     | ELet Expr (Maybe Ty) String (Bind DataVar Expr) -- The string is the name for the var
     | EUnionCase AExpr (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
+    | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
@@ -378,7 +384,7 @@ data ExprX =
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | ECorrCase NameExp Expr
+    | EPCase Prop Expr
     | EFalseElim Expr
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -387,7 +393,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-    CHash Path Int
+    CHash Path [Idx] Int
       | CPRF String
       | CAEnc 
       | CADec 
@@ -420,6 +426,7 @@ data FuncParam =
       | ParamLbl Label
       | ParamTy Ty
       | ParamIdx Idx
+      | ParamName NameExp
       deriving (Show, Generic, Typeable)
 
 
@@ -512,6 +519,11 @@ instance Subst Idx PropX
 instance Subst AExpr PropX
 instance Subst ResolvedPath PropX
 
+instance Alpha Quant
+instance Subst Idx Quant
+instance Subst AExpr Quant
+instance Subst ResolvedPath Quant
+
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
@@ -538,7 +550,7 @@ instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
 instance Pretty NameExpX where
-    pretty (ROName s i) = pretty "RO<" <> pretty s <> pretty "," <> pretty i <> pretty ">" 
+    pretty (ROName s is i) = pretty "RO<" <> pretty s <> pretty "," <> pretty is <> pretty "," <> pretty i <> pretty ">" 
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
     pretty (BaseName vs n) = 
         case vs of
@@ -605,6 +617,9 @@ instance Pretty TyX where
     pretty (TUnion t1 t2) =
         pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
 
+instance Pretty Quant where
+    pretty Forall = pretty "forall"
+    pretty Exists = pretty "exists"
 
 instance Pretty PropX where 
     pretty PTrue = pretty "true"
@@ -616,6 +631,9 @@ instance Pretty PropX where
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
+    pretty (PQuantIdx q b) = 
+        let (x, p) = prettyBind b in
+        pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
     pretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -650,8 +668,8 @@ instance Pretty AExprX where
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty CryptOp where
-    pretty (CHash p i) = 
-        pretty "RO" <+> pretty p <+> pretty i
+    pretty (CHash p is i) = 
+        pretty "RO" <+> pretty p <+> pretty is <+> pretty i
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
     pretty (CAEnc) = pretty "aenc"
@@ -701,14 +719,15 @@ instance Pretty ExprX where
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
         pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (ECorrCase n e) = 
-        pretty "corr_case" <+> pretty n <+> pretty "in" <+> pretty e
+    pretty (EPCase p e) = 
+        pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc
     pretty (EAssert p) = pretty "assert" <+> pretty p
     pretty (EAssume p) = pretty "assume" <+> pretty p
     pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k
     pretty (ETLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (ETWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
+    pretty _ = pretty "unimp"
 
 instance Pretty DebugCommand where
     pretty (DebugPrintTyOf ae) = pretty "debugPrintTyOf(" <> pretty ae <> pretty ")"
@@ -725,6 +744,7 @@ instance Pretty FuncParam where
     pretty (ParamLbl l) = pretty l
     pretty (ParamTy t) = pretty t
     pretty (ParamIdx i) = pretty i
+    pretty (ParamName ne) = pretty ne
 
 instance Pretty Endpoint where
     pretty (Endpoint  x) = pretty x

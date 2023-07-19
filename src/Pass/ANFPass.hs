@@ -96,6 +96,9 @@ anf e =
           ixe' <- anfBind ixe
           ea <- anfAExpr a
           elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
+      EChooseIdx p ixe -> do
+          ixe' <- anfBind ixe
+          return $ Spanned (e^.spanOf) $ EChooseIdx p ixe'
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
@@ -128,9 +131,9 @@ anf e =
                     be' <- anfBind be
                     return $ (s, Right (c, be'))
           elet e1' Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) y) cases'
-      ECorrCase ne k -> do 
+      EPCase p k -> do 
          k' <- anf k
-         return $ Spanned (e^.spanOf) $ ECorrCase ne k'
+         return $ Spanned (e^.spanOf) $ EPCase p k'
       EFalseElim k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ EFalseElim k'

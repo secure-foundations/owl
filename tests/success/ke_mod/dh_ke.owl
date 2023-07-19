@@ -23,6 +23,7 @@ module DH_KE (P : Params) : KE(P) = {
             corr [skS] ==> [k]
             corr [C] ==> [k]
             corr [S] ==> [k]
+            corr [S] ==> [skC]
             corr [skS] ==> [S]
             corr [skS] ==> [C]
             corr [k] ==> [skS]

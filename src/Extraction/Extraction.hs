@@ -34,6 +34,7 @@ import qualified Text.Parsec as P
 import qualified Parse as OwlP
 import System.FilePath (takeFileName, (</>))
 import qualified TypingBase as TB
+import Debug.Trace
 
 newtype ExtractionMonad a = ExtractionMonad (StateT Env (ExceptT ExtractionError IO) a)
     deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO)
@@ -143,18 +144,26 @@ rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
 rustifyResolvedPath :: ResolvedPath -> String
+
+--rustifyResolvedPath PTop = trace "Top" "Top"
+rustifyResolvedPath (PDot (PPathVar OpenPathVar x) s) = trace ("OpenPathVar " ++ show x ++ " " ++ s) s
+rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = trace ("ClosedPathVar " ++ unignore s) $ unignore s
+rustifyResolvedPath (PPathVar OpenPathVar s) = trace ("OpenPathVar " ++ show s) $ show s
+--rustifyResolvedPath (PDot x y) = trace ("PDot " ++ show x ++ " " ++ show y) $ rustifyResolvedPath x ++ "_" ++ y
+
 rustifyResolvedPath PTop = "Top"
-rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
-rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
-rustifyResolvedPath (PPathVar OpenPathVar s) = show s
+-- rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
+-- rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
+-- rustifyResolvedPath (PPathVar OpenPathVar s) = show s
 rustifyResolvedPath (PDot x y) = rustifyResolvedPath x ++ "_" ++ y
+
 
 tailPath :: Path -> ExtractionMonad String
 tailPath (PRes (PDot _ y)) = return y
 tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
 
 rustifyPath :: Path -> String
-rustifyPath (PUnresolvedVar s) = show s
+-- rustifyPath (PUnresolvedVar s) = show s
 rustifyPath (PRes rp) = rustifyResolvedPath rp
 rustifyPath p = error $ "bad path: " ++ show p
 
@@ -377,6 +386,7 @@ lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, Str
 lookupAdtFunc fn = do
     ufs <- use owlUserFuncs
     adtfs <- use adtFuncs
+    debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
     case lookup fn ufs of
         -- special handling for struct constructors, since their names are path-scoped
         Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
@@ -779,7 +789,7 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
-        (CHash p n, [(_,x)]) -> do 
+        (CHash p _ n, [(_,x)]) -> do 
             let roname = rustifyPath p 
             orcls <- use oracles
             case orcls M.!? roname of
@@ -954,7 +964,7 @@ extractExpr loc binds (CCase ae cases) = do
        es <- use enums
        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
-         Just s -> return s
+         Just s -> do debugPrint $ pretty "enum casing on" <+> pretty s; return s
        ts <- use typeLayouts
        enumLayout <- case ts M.!? rustifyName enumOwlName of
          Just (LEnum n c) -> return c
@@ -1058,8 +1068,8 @@ extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> E
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
-    -- debugPrint $ "Extracting def " ++ owlName
-    -- debugPrint $ pretty concreteBody
+    debugPrint $ "Extracting def " ++ owlName
+    debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
@@ -1073,17 +1083,6 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
                     <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) 
                     <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
-
-extractDef' :: Locality -> String -> [IdxVar]  -> TB.DefSpec -> ExtractionMonad (Doc ann)
-extractDef' loc owlName sidArgs defspec = do
-    if unignore $ defspec ^. TB.isAbstract then return $ pretty "" 
-    else if not ((defspec ^. TB.defLocality) `aeq` loc) then throwError $ ErrSomethingFailed "mismatched localities" 
-    else do
-        debugPrint $ "Extracting def " ++ owlName
-        let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
-        case unignore body of
-            Nothing -> return $ pretty ""
-            Just e  -> extractDef owlName loc sidArgs args retTy e
 
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
@@ -1298,8 +1297,9 @@ preprocessModBody mb = do
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
 
-        sortOrcl :: (String, ([AExpr], [NameType])) -> ExtractionMonad ()
-        sortOrcl (n, (args, rtys)) = do
+        sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
+        sortOrcl (n, b) = do
+            let (_, (args, rtys)) = unsafeUnbind b
             rtlen <- case (map (view val) rtys) of
                 [NT_Nonce] -> return "NONCE_SIZE"
                 [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
@@ -1770,8 +1770,9 @@ prettyMap s m =
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
     -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
-    -- debugPrint $ pretty (map fst (mb ^. TB.defs))
-    -- debugPrint $ pretty (map fst (mb ^. TB.tyDefs))
+    debugPrint $ pretty (map fst (mb ^. TB.defs))
+    debugPrint $ pretty (map fst (mb ^. TB.nameEnv))
+    debugPrint $ pretty (map fst (mb ^. TB.tyDefs))
     -- debugPrint $ prettyMap "defs" (mb ^. TB.defs)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again

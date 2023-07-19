@@ -122,6 +122,10 @@ concretify e =
           ((i, x), k) <- unbind ixk
           k' <- concretify k
           return $ subst x a k' -- i is dangling here, but that shouldn't matter
+      EChooseIdx _ ixk -> do
+          (i, k) <- unbind ixk
+          k' <- concretify k
+          return k' -- i is free here; irrelevant
       EIf a e1 e2 -> do
           c1 <- concretify e1
           c2 <- concretify e2
@@ -145,7 +149,7 @@ concretify e =
                     return (c, Right $ bind x k')
           avar <- fresh $ s2n "caseval"
           return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
-      ECorrCase _ k -> concretify k
+      EPCase _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2

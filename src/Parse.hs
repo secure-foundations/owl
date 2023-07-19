@@ -23,7 +23,7 @@ owlStyle   = emptyDef
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf", "forall", "bv", "pcase", "choose_idx"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -85,6 +85,13 @@ parseNameExp =
             reserved "RO"
             symbol "<"
             p <- parsePath
+            ps_ <- optionMaybe $ do
+                symbol ","
+                xs <- parseIdx `sepBy` (symbol ",")               
+                return xs 
+            let ps = case ps_ of
+                       Just ps -> ps
+                       Nothing -> []
             oi <- optionMaybe $ do
                 symbol ","
                 many1 digit
@@ -92,7 +99,7 @@ parseNameExp =
             let i = case oi of
                       Just x -> read x
                       Nothing -> 0
-            return $ ROName p i)
+            return $ ROName p ps i)
         <|>
         (do
             reserved "PRF"
@@ -403,12 +410,40 @@ parsePropTerm =
             return $ PHappened s inds xs
         )
         <|>
+        (parseSpanned $ do
+            q <- parseQuant
+            i <- identifier
+            parseQuantBody q i
+        )
+        <|>
         (parseSpanned $ try $ do
             e <- parseAExpr
             return $ PEq e (builtinFunc "TRUE" []) 
         )
 
+parseQuant = 
+    (do
+        reserved "forall"
+        return $ Forall
+    )
+    <|>
+    (do
+        reserved "exists"
+        return $ Exists
+    )
 
+parseQuantBody q i = do
+    symbol ":"
+    (parseIdxQuant q i <|> parseBVQuant q i)
+        where
+            parseIdxQuant q i = do
+                reserved "idx"
+                symbol "."
+                p <- parseProp
+                return $ PQuantIdx q $ bind (s2n i) p
+            parseBVQuant q i = do
+                reserved "bv"
+                error "Parse error: bv unsupported with forall"
 
 parsePropTable = [ 
     [ Prefix (do
@@ -588,6 +623,7 @@ parseDecls =
     (parseSpanned $ do
         reserved "random_oracle"
         l <- identifier
+        pb <- parseIdxParamBinds1
         symbol ":"
         es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
@@ -597,7 +633,7 @@ parseDecls =
         let ad = case oadm of
                    Just _ -> AdmitUniqueness
                    Nothing -> NoAdmitUniqueness
-        return $ DeclRandOrcl l es nts ad)
+        return $ DeclRandOrcl l (bind pb (es, nts)) ad)
     <|>
     (parseSpanned $ do
         reserved "func"                  
@@ -792,7 +828,7 @@ parseExpr = buildExpressionParser parseExprTable parseExprTerm
 parseExprTable = 
     [ [ Infix (do
     symbol ";" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 (Just (Spanned (ignore def) TUnit)) "_" (bind (s2n "_") e2))
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing "_" (bind (s2n "_") e2))
               )
     AssocLeft ] ]
 
@@ -910,6 +946,15 @@ parseExprTerm =
         return $ EUnpack a $ bind (s2n i, s2n x) e)
     <|>
     (parseSpanned $ do
+        reserved "choose_idx"
+        i <- identifier
+        symbol "|"
+        p <- parseProp
+        reserved "in"
+        k <- parseExpr
+        return $ EChooseIdx (bind (s2n i) p) $ bind (s2n i) k)
+    <|>
+    (parseSpanned $ do
         reserved "call"
         x <- parsePath
         inds <- parseIdxParams
@@ -959,7 +1004,15 @@ parseExprTerm =
         n <- parseNameExp
         reserved "in"
         e <- parseExpr
-        return $ ECorrCase n e
+        return $ EPCase (pFlow (nameLbl n) advLbl) e
+        )
+    <|>
+    (parseSpanned $ do
+        reserved "pcase"
+        p <- parseProp
+        reserved "in"
+        e <- parseExpr
+        return $ EPCase p e
         )
     <|>
     (parseSpanned $ do
@@ -1006,13 +1059,19 @@ parseCryptOp =
         reserved "hash"
         symbol "<"
         p <- parsePath
+        idxs_  <- optionMaybe $ do
+            symbol ","
+            parseIdx `sepBy` (symbol ",")
+        let idxs = case idxs_ of
+                     Nothing -> []
+                     Just xs -> xs
         oi <- optionMaybe $ do
             symbol ","
             many1 digit
         symbol ">"
         return $ case oi of
-                   Just x -> CHash p (read x)
-                   Nothing -> CHash p 0
+                   Just x -> CHash p idxs (read x)
+                   Nothing -> CHash p idxs 0
     )
     <|>
     (do
@@ -1071,6 +1130,11 @@ parseParam =
         reserved "idx"
         i <- parseIdx
         return $ ParamIdx i)
+    <|>
+    (try $ do
+        reserved "name"
+        i <- parseNameExp
+        return $ ParamName i)
     <|>
     (try $ do
         s <- identifier
