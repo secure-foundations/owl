@@ -1240,7 +1240,7 @@ preprocessModBody mb = do
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc (rustifyPath locP)
                 let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
-                case unignore body of
+                case body of
                     Nothing -> return m
                     Just e  -> do
                         let f (i, l, s, d, t) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t)
@@ -1718,60 +1718,15 @@ preamble = do
                 "}"
             ]
 
--- debug hack
-instance Pretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
-    pretty b =
-        let (ivars, opt) = prettyBind b in
-        angles ivars <> pretty ":" <> opt
 
-instance Pretty (Either Int ResolvedPath) where
-    pretty (Left i) = pretty "Left" <+> pretty i
-    pretty (Right rp) = pretty "Right" <+> pretty rp
 
-instance Pretty (Ignore (Maybe Expr)) where
-    pretty x = pretty (unignore x)
-
-instance Pretty (Embed Ty) where
-    pretty t = pretty (unembed t)
-
-instance Pretty TB.DefSpec where
-    pretty ds = 
-        let abs = if unignore $ ds ^. TB.isAbstract then pretty "abstract" else pretty "" in
-        let loc = pretty (ds ^. TB.defLocality) in
-        let (args, (req, retTy, body)) = unsafeUnbind (ds ^. TB.preReq_retTy_body) in
-        let body' = case (unignore body) of
-                Nothing -> pretty ""
-                Just e  -> pretty $ doConcretify e
-        in
-        abs <> pretty "@" <> loc <> pretty ":" <+> pretty args <> pretty "->" <> pretty retTy <+> pretty "=" <> line <> body'
-        
-
-instance Pretty TB.Def where
-    pretty (TB.DefHeader x) = 
-        let (ivars, loc) = prettyBind x in
-        pretty "DefHeader:" <+> angles ivars <> pretty "@" <> loc
-    pretty (TB.Def x) =
-        let (ivars, defspec) = prettyBind x in
-        pretty "Def:" <+> angles ivars <> defspec
-
-instance Pretty TB.UserFunc where
-    pretty u = pretty $ show u
-
-prettyMap :: Pretty a => String -> TB.Map String a -> Doc ann
-prettyMap s m = 
-    pretty s <> pretty ":::" <+> lbracket <> line <>
-    foldr (\(k, a) acc -> 
-        acc <> 
-        pretty k <> pretty "::" <> line <> 
-        pretty "   " <> pretty a <+> comma <> line) (pretty "") m
-    <> line <> rbracket <> line
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
     -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
     debugPrint $ pretty "Ty defs:" <+> pretty (map fst (mb ^. TB.tyDefs))
-    debugPrint $ prettyMap "defs" (mb ^. TB.defs)
-    debugPrint $ prettyMap "nameEnv" (mb ^. TB.nameEnv)
+    debugPrint $ TB.prettyMap "defs" (mb ^. TB.defs)
+    debugPrint $ TB.prettyMap "nameEnv" (mb ^. TB.nameEnv)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     tyDefsExtracted <- extractTyDefs $ reverse (mb ^. TB.tyDefs)

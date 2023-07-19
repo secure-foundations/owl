@@ -57,20 +57,21 @@ globalName _ = error "globalName : Got path var"
 globalizeMap :: ResolvedPath -> Map String a -> Map String a
 globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalName p0 ++ "_" ++ x, y)) mp
 
-flattenModules :: Fresh m => ResolvedPath -> ModBody -> m ModBody
+flattenModules :: ResolvedPath -> ModBody -> FreshMT IO ([(Name ResolvedPath, ResolvedPath)], ModBody)
 flattenModules p0 md = do
     -- traceM $ "Flattening " ++ show p0 ++ " with nameEnv " ++ show (Prelude.map fst $ md ^. nameEnv)
-    mbs <- forM (md^.modules) $ \(s, md) ->
+    sbts_mbs <- forM (md^.modules) $ \(s, md) ->
         case md of
-          MFun _ _ _ -> return []
+          MFun _ _ _ -> return ([], [])
           MBody xb -> do
               (x, bdy) <- unbind xb
               if bdy ^. isModuleType == ModConcrete then do
-                let bdy' = subst x (PDot p0 s) bdy
                 -- traceM $ "Mods: " ++ (show $ Prelude.map fst (bdy' ^. modules))
-                bdy'' <- flattenModules (PDot p0 s) bdy'
-                return [bdy'']
-              else return []
+                (sbts, mb) <- flattenModules (PDot p0 s) bdy
+                return ((x, PDot p0 s) : sbts, [mb])
+              else return ([], [])
+    let sbts = Prelude.concat $ Prelude.map fst sbts_mbs
+    let mbs = Prelude.concat $ Prelude.map snd sbts_mbs
     let md' = 
             ModBody
                 ModConcrete
@@ -85,15 +86,13 @@ flattenModules p0 md = do
                 (globalizeMap p0 $ md^.ctrEnv)
                 (globalizeMap p0 $ md^.randomOracle)
                 []
-    --traceM $ "---------> " ++ show p0 ++ " with localities " ++ show (md' ^. localities)            
-    let res = sconcat $ md' :| concat mbs
-    -- traceM $ "|||||||||> " ++ show p0 ++ " with localities " ++ show (res ^. localities)            
-    -- return $ traceShow ("end  ", p0, res ^. localities) res
-    return res
+    let res = sconcat $ md' :| mbs
+    return (sbts, res)
 
-doFlattening :: Env -> ModBody
-doFlattening e = 
-    runFreshM $ flattenModules PTop (e^.curMod) 
+doFlattening :: Env -> IO ModBody
+doFlattening e = do 
+    (x, y) <- runFreshMT $ flattenModules PTop (e^.curMod) 
+    return $ substs x y
     
 
 

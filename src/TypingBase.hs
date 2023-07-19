@@ -77,7 +77,7 @@ instance Subst ResolvedPath Def
 data DefSpec = DefSpec {
     _isAbstract :: Ignore Bool, 
     _defLocality :: Locality,
-    _preReq_retTy_body :: Bind [(DataVar, Embed Ty)] (Prop, Ty, Ignore (Maybe Expr))
+    _preReq_retTy_body :: Bind [(DataVar, Embed Ty)] (Prop, Ty, Maybe Expr)
 }
     deriving (Show, Generic, Typeable)
 
@@ -815,6 +815,57 @@ normLocalityPath pos (PRes loc@(PDot p s)) = do
       Just (Left ar) -> return ar
       Just (Right p) -> normLocalityPath pos (PRes p)
 
+getModDefFVs :: ModDef -> [Name ResolvedPath]
+getModDefFVs = toListOf fv
+
+getModBodyFVs :: ModBody -> [Name ResolvedPath]
+getModBodyFVs = toListOf fv
+
+prettyMap :: Pretty a => String -> Map String a -> Doc ann
+prettyMap s m = 
+    pretty s <> pretty ":::" <+> lbracket <> line <>
+    foldr (\(k, a) acc -> 
+        acc <> 
+        pretty k <> pretty "::" <> line <> 
+        pretty "   " <> pretty a <+> comma <> line) (pretty "") m
+    <> line <> rbracket <> line
+
+
+instance Pretty Def where
+    pretty (DefHeader x) = 
+        let (ivars, loc) = prettyBind x in
+        pretty "DefHeader:" <+> angles ivars <> pretty "@" <> loc
+    pretty (Def x) =
+        let (ivars, defspec) = prettyBind x in
+        pretty "Def:" <+> angles ivars <> defspec
+
+instance Pretty UserFunc where
+    pretty u = pretty $ show u
+
+-- debug hack
+instance Pretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
+    pretty b =
+        let (ivars, opt) = prettyBind b in
+        angles ivars <> pretty ":" <> opt
+
+instance Pretty (Either Int ResolvedPath) where
+    pretty (Left i) = pretty "Left" <+> pretty i
+    pretty (Right rp) = pretty "Right" <+> pretty rp
+
+instance Pretty (Embed Ty) where
+    pretty t = pretty (unembed t)
+
+instance Pretty DefSpec where
+    pretty ds = 
+        let abs = if unignore $ ds ^. isAbstract then pretty "abstract" else pretty "" in
+        let loc = pretty (ds ^. defLocality) in
+        let (args, (req, retTy, body)) = unsafeUnbind (ds ^. preReq_retTy_body) in
+        let body' = case body of
+                Nothing -> pretty ""
+                Just e  -> pretty e
+        in
+        abs <> pretty "@" <> loc <> pretty ":" <+> pretty args <> pretty "->" <> pretty retTy <+> pretty "=" <> line <> body'
+        
 -- Subroutines for type checking determistic functions. Currently only has
 -- special cases for () (constant empty bitstring). Will contain code for
 -- checking: sdec, pk, sign, vrfy 

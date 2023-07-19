@@ -58,7 +58,7 @@ main = do
                           printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
                           if extract args then do
                               let extfn = "extraction/src/main.rs"
-                              let modBody = doFlattening tcEnv
+                              modBody <- doFlattening tcEnv
                               res <- E.extract (takeDirectory fn) modBody
                               case res of
                                 Left err -> E.printErr err

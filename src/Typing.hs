@@ -575,7 +575,7 @@ addDef pos n df cont = do
           (_, DefSpec abs2 _ _) <- unbind isdp'
           assert pos ("Duplicate abstract def: " ++ n) $ not (unignore abs1) 
           assert pos ("Def already defined: " ++ n) $ unignore abs2
-          assert pos ("Concrete def mismatch with abstract def: " ++ n) $ isdp `aeq` isdp'
+          defMatches pos n (Just $ Def isdp) (Def isdp') 
           local (over (curMod . defs) $ insert n df) $ cont
 
 
@@ -747,7 +747,7 @@ checkDecl d cont =
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
                          Just _ -> False
-          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, ignore $ abs_or_body))
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, abs_or_body))
           addDef (d^.spanOf) n df $ cont
       (DeclCorr l1 l2) -> do
           checkLabel l1
@@ -1209,6 +1209,7 @@ getTyDataVars p = toListOf fv p
 
 getTyIdxVars :: Ty -> [IdxVar]
 getTyIdxVars p = toListOf fv p
+
 
 -- get strongest type that doesn't mention x
 -- t <= stripTy x t
@@ -1888,12 +1889,11 @@ defMatches pos s d1 d2 =
           (is1, DefSpec ab l1 pty) <- unbind blspec
           (is', DefSpec ab' l1' pty') <- unbind blspec'
           assert pos ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
-          (args, pty_bdy) <- unbind pty
-          (args', pty_bdy') <- unbind pty'
-          debug $ pretty "Headers:"
-          debug $ pretty pty_bdy
-          debug $ pretty pty_bdy'
-          assert pos ("Def mismatch: " ++ s) $ blspec `aeq` blspec'
+          (args, (pr1, t1, _)) <- unbind pty
+          (args', (pr2, t2, _)) <- unbind pty'
+          assert pos ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
+          assert pos ("Def prereq mismatch") $ (bind is1 $ bind args pr1) `aeq` (bind is' $ bind args' pr2)
+          assert pos ("Def return ty mismatch") $ (bind is1 $ bind args t1) `aeq` (bind is' $ bind args' t2)
       (Nothing, _) -> typeError pos $ "Missing def: " ++ s
 
 tyDefMatches :: Ignore Position -> String -> TyDef -> TyDef -> Check ()

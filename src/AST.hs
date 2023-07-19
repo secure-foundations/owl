@@ -89,9 +89,9 @@ instance Show Path where
 
 instance Show ResolvedPath where
     show PTop = "Top"
-    show (PDot (PPathVar OpenPathVar _) s) = s
-    show (PPathVar (ClosedPathVar s) _) = unignore s
-    show (PPathVar OpenPathVar s) = show s
+    show (PDot (PPathVar OpenPathVar x) s) = "open(" ++ show x ++ ")." ++ s
+    show (PPathVar (ClosedPathVar s) x) = "closed(" ++ unignore s ++ ", " ++ show x ++ ")"
+    show (PPathVar OpenPathVar s) = "open(" ++ show s ++ ")"
     show (PDot x y) = show x ++ "." ++ y
 
 
@@ -536,10 +536,14 @@ instance Subst ResolvedPath Locality
 
 instance Alpha ExprX
 instance Subst AExpr ExprX
+instance Subst Idx ExprX
+instance Subst Idx Endpoint
+instance Subst Idx DebugCommand
 instance Subst ResolvedPath ExprX
 
 instance Alpha CryptOp
 instance Subst AExpr CryptOp
+instance Subst Idx CryptOp
 instance Subst ResolvedPath CryptOp
 --- Pretty instances ---
 
