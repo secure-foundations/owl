@@ -59,7 +59,7 @@ globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalName p0 ++ "_" ++ x, y)) mp
 
 flattenModules :: Fresh m => ResolvedPath -> ModBody -> m ModBody
 flattenModules p0 md = do
-    traceM $ "Flattening " ++ show p0 ++ " with nameEnv " ++ show (Prelude.map fst $ md ^. nameEnv)
+    -- traceM $ "Flattening " ++ show p0 ++ " with nameEnv " ++ show (Prelude.map fst $ md ^. nameEnv)
     mbs <- forM (md^.modules) $ \(s, md) ->
         case md of
           MFun _ _ _ -> return []
@@ -67,7 +67,7 @@ flattenModules p0 md = do
               (x, bdy) <- unbind xb
               if bdy ^. isModuleType == ModConcrete then do
                 let bdy' = subst x (PDot p0 s) bdy
-                traceM $ "Mods: " ++ (show $ Prelude.map fst (bdy' ^. modules))
+                -- traceM $ "Mods: " ++ (show $ Prelude.map fst (bdy' ^. modules))
                 bdy'' <- flattenModules (PDot p0 s) bdy'
                 return [bdy'']
               else return []

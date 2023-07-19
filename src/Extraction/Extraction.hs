@@ -144,11 +144,10 @@ rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
 rustifyResolvedPath :: ResolvedPath -> String
-
 --rustifyResolvedPath PTop = trace "Top" "Top"
-rustifyResolvedPath (PDot (PPathVar OpenPathVar x) s) = trace ("OpenPathVar " ++ show x ++ " " ++ s) s
-rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = trace ("ClosedPathVar " ++ unignore s) $ unignore s
-rustifyResolvedPath (PPathVar OpenPathVar s) = trace ("OpenPathVar " ++ show s) $ show s
+rustifyResolvedPath (PDot (PPathVar OpenPathVar x) s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show x ++ " " ++ s) s
+rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = trace ("rustifyResolvedPath of ClosedPathVar " ++ unignore s) $ unignore s
+rustifyResolvedPath (PPathVar OpenPathVar s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show s) $ show s
 --rustifyResolvedPath (PDot x y) = trace ("PDot " ++ show x ++ " " ++ show y) $ rustifyResolvedPath x ++ "_" ++ y
 
 rustifyResolvedPath PTop = "Top"
@@ -386,7 +385,7 @@ lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, Str
 lookupAdtFunc fn = do
     ufs <- use owlUserFuncs
     adtfs <- use adtFuncs
-    debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
+    -- debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
     case lookup fn ufs of
         -- special handling for struct constructors, since their names are path-scoped
         Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
@@ -1068,8 +1067,8 @@ extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> E
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
-    debugPrint $ "Extracting def " ++ owlName
-    debugPrint $ pretty concreteBody
+    -- debugPrint $ "Extracting def " ++ owlName
+    -- debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
@@ -1723,7 +1722,7 @@ preamble = do
 instance Pretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
     pretty b =
         let (ivars, opt) = prettyBind b in
-        angles ivars <> pretty "@" <> opt
+        angles ivars <> pretty ":" <> opt
 
 instance Pretty (Either Int ResolvedPath) where
     pretty (Left i) = pretty "Left" <+> pretty i
@@ -1770,10 +1769,9 @@ prettyMap s m =
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
     -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
-    debugPrint $ pretty (map fst (mb ^. TB.defs))
-    debugPrint $ pretty (map fst (mb ^. TB.nameEnv))
-    debugPrint $ pretty (map fst (mb ^. TB.tyDefs))
-    -- debugPrint $ prettyMap "defs" (mb ^. TB.defs)
+    debugPrint $ pretty "Ty defs:" <+> pretty (map fst (mb ^. TB.tyDefs))
+    debugPrint $ prettyMap "defs" (mb ^. TB.defs)
+    debugPrint $ prettyMap "nameEnv" (mb ^. TB.nameEnv)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     tyDefsExtracted <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
