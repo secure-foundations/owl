@@ -75,6 +75,8 @@ anfBind xk = do
 anf :: Fresh m => Expr -> m Expr
 anf e = 
     case e^.val of 
+      EGetCtr _ _ -> return e
+      EIncCtr _ _ -> return e
       EInput xek -> do
           xek' <- anfBind xek
           return $ Spanned (e^.spanOf) $ EInput xek'
@@ -94,7 +96,9 @@ anf e =
           ixe' <- anfBind ixe
           ea <- anfAExpr a
           elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
-      ESamp ds args -> anfAExprList (e^.spanOf) args $ \xs -> Spanned (e^.spanOf) $ ESamp ds xs
+      EChooseIdx p ixe -> do
+          ixe' <- anfBind ixe
+          return $ Spanned (e^.spanOf) $ EChooseIdx p ixe'
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
@@ -112,10 +116,12 @@ anf e =
       EAssert _ -> return e
       EAssume _ -> return e
       EAdmit -> return e
+      ECrypt p as ->
+          anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECrypt p xs 
       ECall s is as -> 
           anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECall s is xs
-      ECase a cases -> do
-          ea <- anfAExpr a
+      ECase e1 cases -> do
+          e1' <- anf e1
           cases' <- forM cases $ \(s, o) ->
               case o of
                 Left e1 -> do
@@ -124,10 +130,10 @@ anf e =
                 Right (c, be) -> do
                     be' <- anfBind be
                     return $ (s, Right (c, be'))
-          elet ea Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (aevar (a^.spanOf) y) cases'
-      ECorrCase ne k -> do 
+          elet e1' Nothing Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) y) cases'
+      EPCase p k -> do 
          k' <- anf k
-         return $ Spanned (e^.spanOf) $ ECorrCase ne k'
+         return $ Spanned (e^.spanOf) $ EPCase p k'
       EFalseElim k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ EFalseElim k'

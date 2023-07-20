@@ -17,6 +17,17 @@ pub fn gen_ecdh_key_pair() -> (Vec<u8>, Vec<u8>) {
     (sk_bytes, pk_bytes)
 }
 
+pub fn ecdh_dhpk(sk: &[u8]) -> Vec<u8> {
+    let sk_decoded = SecretKey::from_sec1_der(sk).unwrap();
+    let pk_bytes = sk_decoded
+        .public_key()
+        .to_public_key_der()
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    pk_bytes
+}
+
 pub fn ecdh_combine(sk: &[u8], others_pk: &[u8]) -> Vec<u8> {
     let sk_decoded = SecretKey::from_sec1_der(sk).unwrap();
     let pk_decoded = PublicKey::from_public_key_der(others_pk).unwrap();

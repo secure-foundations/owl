@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances, DeriveGeneric, ScopedTypeVariables #-}
 module LabelChecking where 
 import qualified Data.Map.Strict as M
 import qualified Data.Map.Ordered as OM
@@ -25,79 +25,62 @@ sFlows x y = SApp [SAtom "Flows", x, y]
 sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
-nameDefFlows :: NameExp -> NameType -> Sym SExp
+nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do
-    sn <- symLbl (nameLbl n)
+    liftCheck $ debug $ pretty "nameDefFlows for" <+> pretty nt
     case nt^.val of 
+      NT_Nonce -> return []
+      NT_DH -> return []
       NT_Enc t -> do
           l <- liftCheck $ coveringLabel' t
-          sl <- symLbl l
-          return (sFlows sl sn)
+          return $ [(l, mkSpanned $ LName n)]
+      NT_EncWithNonce t _ _ -> do
+          l <- liftCheck $ coveringLabel' t
+          return $ [(l, mkSpanned $ LName n)]
       NT_PKE t -> do
           l <- liftCheck $ coveringLabel' t
-          sl <- symLbl l
-          return (sFlows sl sn)
+          return $ [(l, mkSpanned $ LName n)]
       NT_Sig t -> do
           l <- liftCheck $ coveringLabel' t
-          sl <- symLbl l
-          return (sFlows sl sn)
+          return $ [(l, mkSpanned $ LName n)]
       NT_MAC t -> do
           l <- liftCheck $ coveringLabel' t
-          sl <- symLbl l
-          return (sFlows sl sn)
+          return $ [(l, mkSpanned $ LName n)]
       NT_PRF xs -> do
           ys <- mapM (\(s, (a, nt)) -> nameDefFlows (prfName n s) nt) xs
-          xs <- mapM (\p -> do
-                x <- symLbl $ nameLbl $ prfName n $ fst p
-                return $ sFlows x sn
-                     ) xs
-          return $ sAnd $ xs ++ ys 
-      _ -> return sTrue
+          let zs  = map (\p -> nameLbl $ prfName n $ fst p) xs
+          return $ (concat ys) ++ [(foldr joinLbl zeroLbl zs, mkSpanned (LName n))]
 
 
 smtLabelSetup :: Sym ()
 smtLabelSetup = do
-    emitRaw "(declare-fun InLbl (LblBase Lbl) Bool)"
-    emitRaw "(declare-fun Flows (Lbl Lbl) Bool)"
-    emitRaw "(assert (forall ((x Lbl) (y Lbl)) (! (= (Flows x y) (forall ((b LblBase)) (=> (InLbl b x) (InLbl b y)) )) :pattern (Flows x y) )))"
-    emitRaw "(declare-fun Join (Lbl Lbl) Lbl)"
-    emitRaw "(assert (forall ((x Lbl) (y Lbl) (b LblBase)) (! (= (or (InLbl b x) (InLbl b y)) (InLbl b (Join x y)) ) :pattern (InLbl b (Join x y)) )))"
-    emitRaw "(declare-fun %zeroLbl () Lbl)"
-    emitRaw "(assert (forall ((b LblBase)) (! (not (InLbl b %zeroLbl)) :pattern (InLbl b %zeroLbl) )))"
-    emitRaw "(assert (forall ((l Lbl)) (! (= (Flows l %zeroLbl) (= l %zeroLbl)) :pattern (Flows l %zeroLbl) )))"
-    emit $ SApp [SAtom "declare-const", SAtom "%adv", SAtom "Lbl"]
-
-    emitNameDefAssms
-    x <- freshSMTName
-    emitAssertion $ sForall [(SAtom x, nameSort)] (sNot $ sFlows (SApp [SAtom "LblOf", SAtom x]) (SAtom "%zeroLbl")) [(SApp [SAtom "LblOf", SAtom x])] 
-
     -- Flow axioms for abstract types
-    fas <- view flowAxioms
+    fas <- liftCheck $ collectFlowAxioms
     forM_ fas $ \(l1, l2) -> do
-        v1 <- symLbl l1
-        v2 <- symLbl l2
+        v1 <- symLabel l1
+        v2 <- symLabel l2
         emitComment $ "Flow decl: " ++ show (pretty l1) ++ " <= " ++ show (pretty l2)
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv
-    afcs <- view advCorrConstraints
+    afcs <- liftCheck $ collectAdvCorrConstraints 
     forM_ afcs $ \(l1, l2) -> do
-        v1 <- symLbl l1
-        v2 <- symLbl l2
-        ladv <- symLbl advLbl
+        v1 <- symLabel l1
+        v2 <- symLabel l2
+        ladv <- symLabel advLbl
         emitAssertion $ sImpl (sFlows v1 ladv) (sFlows v2 ladv)
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l
 
 -- Simplify the label, floating /\ above /\_i, removing /\_i if i is not used
-simplLabel :: Fresh m => Label -> m Label
+simplLabel :: Label -> Check Label
 simplLabel l = 
     case l^.val of
       LName _ -> return l
       LZero -> return l
       LAdv -> return l
-      LVar _ -> return l
+      LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
       LRangeIdx il -> do
           (i, l') <- unbind il
@@ -115,7 +98,7 @@ simplLabel l =
 -- Canonizes the label, assuming it has been simplified
 -- 
 canonLabel :: Label -> Sym CanonLabel
-canonLabel l = 
+canonLabel l = do
     case l^.val of
       LJoin l1 l2 -> do
           (CanonAnd c1) <- canonLabel l1
@@ -124,7 +107,7 @@ canonLabel l =
       LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
       LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
       LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
-      LVar s -> return $ CanonAnd [CanonNoBig $ CanonVar s]
+      LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
           (is, l) <- canonRange [i] l'
@@ -139,7 +122,7 @@ canonRange is l =
           canonRange (i : is) l'
       LZero -> return (is, CanonZero)
       LAdv -> return (is, CanonAdv)
-      LVar s -> return (is, CanonVar s)
+      LConst s -> return (is, CanonConst s)
       LName ne -> return (is, CanonLName ne)
 
 
@@ -160,7 +143,7 @@ symCanonBig c = do
                   (is, l) <- liftCheck $ unbind il -- All the i's must be relevant here
                   x <- freshSMTName
                   emitComment $ "label for " ++ show (pretty c)
-                  emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Lbl"]
+                  emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
                   ivs <- mapM (\_ -> freshSMTIndexName) is
                   iEnv <- use symIndexEnv
                   forM_ ivs $ \iv -> 
@@ -180,74 +163,47 @@ symCanonAtom c =
     case c of
       CanonLName ne -> do
         n <- getSymName ne
-        return $ SApp [SAtom "LblOf", n]
+        return $ SApp [SAtom "LabelOf", n]
       CanonZero -> return $ SAtom "%zeroLbl"
       CanonAdv -> return $ SAtom "%adv"
-      CanonVar s -> getSymLblVar s
+      CanonConst s -> getSymLblConst s
 
-getSymLblVar :: String -> Sym SExp
-getSymLblVar p = do
+getSymLblConst :: LblConst -> Sym SExp
+getSymLblConst (TyLabelVar n@(PRes p)) = do
     e <- use symLabelVarEnv
-    case M.lookup p e of
+    case M.lookup (AlphaOrd p) e of
       Just res -> return res
       Nothing -> do
-          let sname = SAtom $ "%lvar_" ++ (show $ pretty p)
-          emit $ SApp [SAtom "declare-fun", sname, SApp [], SAtom "Lbl"]
+          sp <- smtName p
+          let sname = SAtom $ "%lvar_" ++ sp
+          emit $ SApp [SAtom "declare-fun", sname, SApp [], SAtom "Label"]
           emitAssertion $ sFlows (SAtom "%adv") sname
-          symLabelVarEnv %= (M.insert p sname)
+          symLabelVarEnv %= (M.insert (AlphaOrd p) sname)
           return sname
 
 
-symLbl :: Label -> Sym SExp
-symLbl l = do
-    l' <- simplLabel l
+symLabel :: Label -> Sym SExp
+symLabel l = do
+    liftCheck $ debug $ pretty "symLabel for " <+> pretty l
+    l' <- liftCheck $ simplLabel l
     c <- canonLabel l'
     symCanonLabel c
 
-emitNameDefAssms :: Sym ()
-emitNameDefAssms = do
-    nE <- view nameEnv
-    forM_ (OM.assocs nE) $ \(n, o) -> do 
-        ((is1, is2), _) <- liftCheck $ unbind o
-        ivs1 <- forM [1..length is1] $ \_ -> freshSMTIndexName
-        ivs2 <- forM [1..length is2] $ \_ -> freshSMTIndexName
-        sIE <- use symIndexEnv
-        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs1)
-        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (s2n i, SAtom i)) ivs2)
-        local (over inScopeIndices $ M.union $ M.fromList $ map (\i -> (s2n i, IdxSession)) ivs1) $ 
-            local (over inScopeIndices $ M.union $ M.fromList $ map (\i -> (s2n i, IdxPId)) ivs2) $ do
-                let ne = mkSpanned $ BaseName (map (mkIVar . s2n) ivs1, map (mkIVar . s2n) ivs2) n
-                liftCheck $ debug $ pretty "nameDefAssms for " <> pretty ne
-                ntOpt <- liftCheck $ getNameTypeOpt ne
-                assms <- case ntOpt of 
-                    Just nt -> nameDefFlows ne nt
-                    Nothing -> return sTrue
-                emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) (ivs1 ++ ivs2)) assms []
-        symIndexEnv .= sIE
-    ro <- view randomOracle
-    forM_ (M.assocs ro) $ \(s, (ae, nt)) -> do
-        assm <- nameDefFlows (roName s) nt
-        emitAssertion assm
-
-
-
-
-
 data SymLbl = 
     SName NameExp
-      | SVar String
+      | SConst LblConst
       | SAdv
       | SRange (Bind IdxVar SymLbl)
       deriving (Show, Generic, Typeable)
 
 instance Alpha SymLbl
 
-mkSymLbl :: Label -> FreshM (S.Set (AlphaOrd SymLbl))
+mkSymLbl :: Label -> Check (S.Set (AlphaOrd SymLbl))
 mkSymLbl l = 
     case l^.val of
       LZero -> return S.empty
       LName n -> return $ S.singleton $ AlphaOrd $ SName n
-      LVar s -> return $ S.singleton $ AlphaOrd $ SVar s
+      LConst s -> return $ S.singleton $ AlphaOrd $ SConst s
       LAdv -> return $ S.singleton $ AlphaOrd SAdv
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeIdx xl -> do
@@ -258,24 +214,24 @@ mkSymLbl l =
           else mkSymLbl l
 
 
-lblFromSym :: SymLbl -> FreshM Label
+lblFromSym :: SymLbl -> Check Label
 lblFromSym s = 
     case s of
       SName n -> return $ nameLbl n
       SAdv -> return advLbl
-      SVar n -> return $ varLbl n
+      SConst n -> return $ lblConst n
       SRange xl -> do
           (x, l) <- unbind xl
           l' <- lblFromSym l
           return $ mkSpanned $ LRangeIdx $ bind x l'
 
-lblFromSym' :: S.Set (AlphaOrd SymLbl) -> FreshM Label
+lblFromSym' :: S.Set (AlphaOrd SymLbl) -> Check Label
 lblFromSym' s = do
     xs <- mapM lblFromSym $ map _unAlphaOrd $ S.toList s
     return $ foldr joinLbl zeroLbl xs
 
-normLabel :: Label -> Label
-normLabel l = runFreshM $ do
+normLabel :: Label -> Check Label
+normLabel l = do
     l' <- simplLabel l
     s <- mkSymLbl l'
     lblFromSym' s

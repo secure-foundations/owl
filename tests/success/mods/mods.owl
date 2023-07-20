@@ -1,0 +1,54 @@
+locality alice
+
+module A = { 
+    locality bob
+    module B = { 
+        name n : nonce @ bob
+        struct s { 
+            _x : Name(n)
+        }
+    }
+
+    def bob_main() @ bob : Unit = ()
+}
+
+module X = A.B
+
+def foo0() @ A.bob : Unit =
+    let x : X.s = X.s(get(X.n)) in 
+    ()
+
+module M = {
+    name k : nonce @ alice
+    name k2 : enckey Name(k) @ alice
+    struct s { 
+        _x : Name(k)
+    }
+
+    enum t {
+        | Ok
+        | Bad
+    }
+
+    def foo() @ alice : s = 
+        s(get(k))
+
+    def bar(x : t) @ alice : Unit = 
+        case x 
+        | Ok => ()
+        | Bad => ()
+}
+
+module N = M
+
+def alice_main() @ alice : Unit = 
+    let x = get(N.k) in 
+    let y : N.s = N.s(x) in 
+    let z : N.s = call N.foo() in 
+    let w : N.t = N.Ok() in 
+    call N.bar(w);
+    case w
+        | Ok => ()
+        | Bad => ()
+
+

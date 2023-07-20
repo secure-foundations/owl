@@ -21,7 +21,7 @@ def bob() @ A
     input inp in
     let k = get(K) in
     corr_case K in
-    (case dec(k, inp)
+    (case adec(k, inp)
         | None => ()
         | Some r =>
             unpack j1, r' = r in

@@ -181,19 +181,19 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     : Unit = 
     corr_case AK in
     corr_case kC in
-    let m = samp enc(ak, ClientRequest()) in
+    let m = aenc(ak, ClientRequest()) in
     let p = client_to_ticketserver_msg(tgt, m) in
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
     let service_ticket = _ticketserver_msg_1(i') in
-    (case dec(ak, _ticketserver_msg_2(i')) 
+    (case adec(ak, _ticketserver_msg_2(i')) 
         | None => ()
         | Some res =>
             (case res 
                 | ClientRequest => () 
                 | TicketResponse sk => 
-                let m' = samp enc(sk, username) in
+                let m' = aenc(sk, username) in
                 let p' = client_to_service_msg(service_ticket, m') in
                 let _ = output p' to endpoint(service) in 
                 // wait for service's response
@@ -204,19 +204,19 @@ Data<adv>, username : Data<adv>) @ client
     : Unit = 
     corr_case AK in
     corr_case K in
-    let m = samp enc(ak, ClientRequest()) in
+    let m = aenc(ak, ClientRequest()) in
     let p = client_to_ticketserver_msg(tgt, m) in
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
     let service_ticket = _ticketserver_msg_1(i') in
-    (case dec(ak, _ticketserver_msg_2(i')) 
+    (case adec(ak, _ticketserver_msg_2(i')) 
         | None => ()
         | Some res =>
             (case res 
                 | ClientRequest => () 
                 | TicketResponse sk => 
-                let m' = samp enc(sk, username) in
+                let m' = aenc(sk, username) in
                 let p' = client_to_service_msg(service_ticket, m') in
                 let _ = output p' to endpoint(service) in 
                 // wait for service's response
@@ -266,7 +266,7 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
                         // finally, decrypt AK using k
                         corr_case K in
                         (
-                        case dec(k, enc_ak) 
+                        case adec(k, enc_ak) 
                             | Some ak =>
                                 call client_kerberos_tmpcopy(ak, tgt, username)
                             | None => ()
@@ -284,14 +284,14 @@ def client_main () @ client
     let username = get(uname) in
     let _ = output username to endpoint(authserver) in
 
-    // i = tgt, enc(kC, AK)
+    // i = tgt, aenc(kC, AK)
     input i in 
 
     let tgt = _authserver_msg_1(i) in
     let b = eq(length(tgt), cipherlen(|enckey|)) in
     if b then 
         corr_case kC in
-        case dec(get(kC), _authserver_msg_2(i)) 
+        case adec(get(kC), _authserver_msg_2(i)) 
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
@@ -306,9 +306,9 @@ def authserver_main () @ authserver
     if eq(i, get(uname)) then
 
         // make & send TGT = (AK)_kT, m = (AK)_kC
-        let tgt = samp enc(get(kT), get(AK)) in
+        let tgt = aenc(get(kT), get(AK)) in
 
-        let m = samp enc(get(kC), get(AK)) in
+        let m = aenc(get(kC), get(AK)) in
         let p = authserver_msg(tgt, m) in
 
         let _ = output p to endpoint(client) in ()
@@ -322,15 +322,15 @@ def ticketserver_main () @ ticketserver
     input i in 
     
     corr_case kT in
-    case dec(get(kT), _client_to_ticketserver_msg_1(i)) 
+    case adec(get(kT), _client_to_ticketserver_msg_1(i)) 
          | None => ()
          | Some ak =>
          
              corr_case AK in
-             (case dec(ak, _client_to_ticketserver_msg_2(i)) 
+             (case adec(ak, _client_to_ticketserver_msg_2(i)) 
                  | Some ClientRequest =>
-                     let st = samp enc(get(kS), get(SK)) in
-                     let m = samp enc(ak, TicketResponse(get(SK))) in
+                     let st = aenc(get(kS), get(SK)) in
+                     let m = aenc(ak, TicketResponse(get(SK))) in
                      let p = ticketserver_msg(st, m) in
                      let _ = output p to endpoint(client) in ()
                  | None => ())
@@ -343,11 +343,11 @@ def service_main () @ service
     input i in
     
     corr_case kS in
-    case dec(get(kS), _client_to_service_msg_1(i)) 
+    case adec(get(kS), _client_to_service_msg_1(i)) 
          | None => ()
          | Some sk =>
              corr_case SK in
-             (case dec(sk, _client_to_service_msg_2(i)) 
+             (case adec(sk, _client_to_service_msg_2(i)) 
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
@@ -388,10 +388,10 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
                              if eq(username, get(uname)) then
 
                                 // sign/encrypt/send outputs to client
-                                let tgt = samp enc(get(kT), get(AK)) in
+                                let tgt = aenc(get(kT), get(AK)) in
                                 output tgt to endpoint(client);
                                 
-                                let enc_ak = samp enc(get(K), get(AK)) in
+                                let enc_ak = aenc(get(K), get(AK)) in
                                 output enc_ak to endpoint(client);
                                 
                                 // bundle msg and encrypt with pubkeyC
@@ -407,7 +407,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
                                     // let field4 : Data<adv>||signature|| = signed_k in 
                                     let field4 = signed_k in 
                                     let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
-                                    let msg = samp pkenc(pkC, str) in
+                                    let msg = pkenc(pkC, str) in
                                     output msg to endpoint(client); ()
                                 else ()
                              else ()

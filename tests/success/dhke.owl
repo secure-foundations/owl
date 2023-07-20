@@ -49,8 +49,8 @@ def alice_main () @ alice
        corr_case Y in
        corr_case d in
        let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv /\ [X] /\ [Y])> = dh_combine(bobs_pk, get(X)) in
-       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = H<l>(ss) in
-       let c = samp enc(k, get(d)) in
+       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = hash<l>(ss) in
+       let c = aenc(k, get(d)) in
        let _ = output c to endpoint(bob) in 
        ()
      | None => ()
@@ -72,10 +72,10 @@ def bob_main () @ bob
        let pkX : if sec(skA) then dhpk(X) else Data<adv> = m in
        let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = dh_combine(pkX, get(Y)) in
        let ss_swap : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = ss in 
-       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = H<l> (ss_swap) in
+       let k : if sec(X) /\ sec(Y) then Name(RO<l>) else Data<adv> = hash<l> (ss_swap) in
        input ii, _ in 
        corr_case RO<l> in
-       (case dec(k, ii) 
+       (case adec(k, ii) 
        | None => ()
        | Some dd => 
          let ddd : if sec(X) /\ sec(Y) /\ sec(RO<l>) then

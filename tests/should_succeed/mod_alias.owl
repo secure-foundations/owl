@@ -1,0 +1,27 @@
+locality alice
+
+module M = {
+    name k : nonce @ alice
+
+    def alice_main() @ alice : Name(k) = 
+        get(k)
+}
+
+module N = M
+
+def tst () @ alice : Name(N.k) = 
+    get(N.k)
+
+/*
+Expected output:
+
+defs = [
+    Top_M_alice_main @ alice : () -> Name(Top.M.k) = 
+        get(Top.M.k)
+]
+
+nameEnv = [
+    Top_M_k : nonce @ Top.alice
+]
+
+*/

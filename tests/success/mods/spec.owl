@@ -1,0 +1,14 @@
+locality alice : 1
+
+module type Spec = {
+    locality bob : 1
+    name k<@i> : nonce @ bob<i>
+}
+
+module T : Spec = { 
+    locality bob = alice
+    name k<@i> : nonce @ bob<i>
+    name k2<@i> : nonce @ bob<i>
+}
+
+

@@ -33,6 +33,8 @@ struct h1_t<i> {
 }
 
 
+def T_main<i> @ T
+
 name K<i> : mackey (t:h1_t<idx i>{happened(T_main<i>())}) @ T, R
 
 struct m1_t {

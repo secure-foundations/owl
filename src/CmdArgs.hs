@@ -9,6 +9,7 @@ data CmdArgs = CmdArgs
         logSmt :: Bool,
         extract :: Bool,
         doTests :: Bool,
+        laxCheck :: Bool,
         fileName :: Maybe String
     }
     deriving (Show)
@@ -28,6 +29,9 @@ parseArgs = CmdArgs
       <*>
           switch
           ( long "test" <> help "Do tests")
+      <*>
+          switch
+          ( long "lax" <> help "Lax checking (skip some SMT queries)" )
       <*> argument (Just <$> str) (value Nothing <> metavar "FILE")
 
 doParseArgs :: IO CmdArgs

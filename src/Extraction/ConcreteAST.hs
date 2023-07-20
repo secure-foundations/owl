@@ -29,7 +29,7 @@ data CTy =
     CTData
     | CTDataWithLength AExpr
     | CTOption CTy
-    | CTVar TyName
+    | CTConst (Path)
     | CTBool
     -- | CTUnion CTy CTy
     | CTUnit
@@ -60,7 +60,7 @@ concretifyTy t =
         (cct, CTData) -> return cct
         (CTData, cct') -> return cct'
         _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TCase failed"
-    TVar s _ -> return $ CTVar s
+    TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
     TUnion t t' -> do
       ct <- concretifyTy t
@@ -89,13 +89,13 @@ data CExpr =
     | CInput (Bind (DataVar, EndpointVar) CExpr)
     | COutput AExpr (Maybe Endpoint)
     | CLet CExpr (Bind DataVar CExpr)
-    | CSamp DistrName [AExpr]
     | CIf AExpr CExpr CExpr
     | CRet AExpr
-    | CCall String ([Idx], [Idx]) [AExpr]
+    | CCall Path ([Idx], [Idx]) [AExpr]
     | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
-    | CTLookup String AExpr
-    | CTWrite String AExpr AExpr
+    | CTLookup Path AExpr
+    | CTWrite Path AExpr AExpr
+    | CCrypt CryptOp [AExpr]
     deriving (Show, Generic, Typeable)
 
 instance Alpha CExpr
@@ -122,7 +122,10 @@ concretify e =
           ((i, x), k) <- unbind ixk
           k' <- concretify k
           return $ subst x a k' -- i is dangling here, but that shouldn't matter
-      ESamp x y -> return $ CSamp x y
+      EChooseIdx _ ixk -> do
+          (i, k) <- unbind ixk
+          k' <- concretify k
+          return k' -- i is free here; irrelevant
       EIf a e1 e2 -> do
           c1 <- concretify e1
           c2 <- concretify e2
@@ -134,6 +137,7 @@ concretify e =
       EAdmit -> error "Concretify on admit"
       ECall a b c -> return $ CCall a b c
       ECase a cases -> do
+          a' <- concretify a
           cases' <- forM cases $ \(c, o) ->
               case o of
                 Left e -> do
@@ -143,15 +147,17 @@ concretify e =
                     let (x, k) = unsafeUnbind xk
                     k' <- concretify k
                     return (c, Right $ bind x k')
-          return $ CCase a cases'
-      ECorrCase _ k -> concretify k
+          avar <- fresh $ s2n "caseval"
+          return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
+      EPCase _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
+      ECrypt op args -> return $ CCrypt op args
+      e -> error $ "TODO: unimplemented case for concretify: " ++ show e
 
--- doConcretify :: Expr -> CExpr
--- doConcretify = runFreshM . concretify
-
+doConcretify :: Expr -> CExpr
+doConcretify = runFreshM . concretify
 
 instance Pretty CTy where
     pretty CTData = pretty "Data"
@@ -163,7 +169,7 @@ instance Pretty CTy where
             pretty "Data " <+> pretty "|" <> pretty a <> pretty "|"
     pretty (CTOption t) =
             pretty "Option" <> pretty t
-    pretty (CTVar n) =
+    pretty (CTConst n) =
             pretty n
     pretty (CTName n) =
             pretty "Name(" <> pretty n <> pretty ")"
@@ -189,7 +195,6 @@ instance Pretty CExpr where
     pretty (CLet e xk) =
         let (x, k) = prettyBind xk in
         pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
-    pretty (CSamp d xs) = pretty "samp" <+> pretty d <> tupled (map pretty xs)
     pretty (CIf a e1 e2) =
         pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
     pretty (CRet a) = pretty "ret " <> pretty a
@@ -209,4 +214,5 @@ instance Pretty CExpr where
         pretty "case" <+> pretty a <> line <> vsep pcases
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
+    pretty (CCrypt cop as) = pretty cop <> tupled (map pretty as)
 

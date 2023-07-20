@@ -14,7 +14,7 @@ def alice (vkB : vk(skB)) @ alice
     case vrfy(vkB, t, m) 
     | Some k' => 
         let k'' : if sec(skB) then Name(k) else Data<adv> = k' in
-        let c : if sec(skB) then Data<static> else Data<adv> = samp enc(k'', get(x)) in
+        let c : if sec(skB) then Data<static> else Data<adv> = aenc(k'', get(x)) in
         output c
     | None => ()
     )

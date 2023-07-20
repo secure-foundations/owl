@@ -29,17 +29,26 @@ import Data.Typeable (Typeable)
 import AST
 import qualified ANFPass as ANF
 import ConcreteAST
-import Debug.Trace
 import System.IO
 import qualified Text.Parsec as P
 import qualified Parse as OwlP
 import System.FilePath (takeFileName, (</>))
+import qualified TypingBase as TB
+import Debug.Trace
 
-newtype ExtractionMonad a = ExtractionMonad (StateT Env (ExceptT ExtractionError IO) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO)
+newtype ExtractionMonad a = ExtractionMonad (ReaderT TB.Env (StateT Env (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader TB.Env)
 
-runExtractionMonad :: Env -> ExtractionMonad a -> IO (Either ExtractionError a)
-runExtractionMonad env (ExtractionMonad m) = runExceptT . evalStateT m $ env
+runExtractionMonad :: TB.Env -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
+
+liftCheck :: TB.Check a -> ExtractionMonad a
+liftCheck c = do
+    e <- ask
+    o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope TB.TcGhost) c) e
+    case o of 
+      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "RustifyPath error: " 
+      Right i -> return i
 
 -- Number can be any integer type, ADT means one of our struct/enum representations, VecU8 also includes &[u8], [u8; const len], etc
 data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
@@ -59,6 +68,7 @@ data Env = Env {
     _path :: String,
     _aeadCipherMode :: AEADCipherMode,
     _hmacMode :: HMACMode,
+    _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String), -- return type, how to print
     _adtFuncs :: M.Map String (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)),
     _typeLayouts :: M.Map String Layout,
@@ -84,6 +94,11 @@ data Layout =
   | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
     deriving (Show, Eq, Generic, Typeable)
 
+instance Pretty Layout where
+    pretty (LBytes i) = pretty "bytes" <> parens (pretty i)
+    pretty (LStruct name fields) = pretty "struct" <+> pretty name <> pretty ":" <+> pretty fields
+    pretty (LEnum name cases) = pretty "enum" <+> pretty name <> pretty ":" <+> pretty (M.keys cases)
+
 data ExtractionError =
       CantLayoutType CTy
     | TypeError String
@@ -102,7 +117,7 @@ instance Pretty ExtractionError where
     pretty (CantLayoutType ct) =
         pretty "Can't make a layout for type:" <+> pretty ct
     pretty (TypeError s) =
-        pretty "Type error during extraction (this probably means a bug in Owl typechecking):" <+> pretty s
+        pretty "Type error during extraction:" <+> pretty s
     pretty (UndefinedSymbol s) =
         pretty "Undefined symbol: " <+> pretty s
     pretty OutputWithUnknownDestination =
@@ -125,7 +140,7 @@ instance Pretty ExtractionError where
         pretty "Extraction failed with message:" <+> pretty s
 
 printErr :: ExtractionError -> IO ()
-printErr e = print $ pretty e
+printErr e = print $ pretty "Extraction error:" <+> pretty e
 
 debugPrint :: Show s => s -> ExtractionMonad ()
 debugPrint = liftIO . hPrint stderr
@@ -135,6 +150,31 @@ replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
+
+rustifyResolvedPath :: ResolvedPath -> String
+--rustifyResolvedPath PTop = trace "Top" "Top"
+rustifyResolvedPath (PDot (PPathVar OpenPathVar x) s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show x ++ " " ++ s) s
+rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = trace ("rustifyResolvedPath of ClosedPathVar " ++ unignore s) $ unignore s
+rustifyResolvedPath (PPathVar OpenPathVar s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show s) $ show s
+--rustifyResolvedPath (PDot x y) = trace ("PDot " ++ show x ++ " " ++ show y) $ rustifyResolvedPath x ++ "_" ++ y
+
+rustifyResolvedPath PTop = "Top"
+-- rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
+-- rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
+-- rustifyResolvedPath (PPathVar OpenPathVar s) = show s
+rustifyResolvedPath (PDot x y) = rustifyResolvedPath x ++ "_" ++ y
+
+
+tailPath :: Path -> ExtractionMonad String
+tailPath (PRes (PDot _ y)) = return y
+tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
+
+rustifyPath :: Path -> ExtractionMonad String
+-- rustifyPath (PUnresolvedVar s) = show s
+rustifyPath (PRes rp) = do
+    rp' <- liftCheck $ TB.normResolvedPath rp
+    return $ rustifyResolvedPath rp'
+rustifyPath p = error $ "bad path: " ++ show p
 
 locName :: String -> String
 locName x = "loc_" ++ replacePrimes x
@@ -250,42 +290,42 @@ initFuncs = M.fromList [
                 [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
-        ("enc", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for enc"
-        )),
-        ("dec", (Option VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        )),
-        ("mac", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_mac(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for mac"
-        )),
-        ("mac_vrfy", (Option VecU8, \args -> case args of
-                [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        )),
-        ("pkenc", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_pkenc(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for pkenc"
-        )),
-        ("pkdec", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_pkdec(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for pkdec"
-        )),
-        ("sign", (VecU8, \args -> case args of
-                [(_,k), (_,x)] -> return $ x ++ ".owl_sign(&" ++ k ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for sign"
-        )),
-        ("vrfy", (Option VecU8, \args -> case args of
-                [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
-        )),
-        -- ("dhpk", (VecU8, \args -> case args of
-        --         [(_,x)] -> return $ "pk_" ++ x
-        --         _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
+        -- ("enc", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for enc"
         -- )),
+        -- ("dec", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
+        -- )),
+        -- ("mac", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_mac(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for mac"
+        -- )),
+        -- ("mac_vrfy", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
+        -- )),
+        -- ("pkenc", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkenc(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for pkenc"
+        -- )),
+        -- ("pkdec", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkdec(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for pkdec"
+        -- )),
+        -- ("sign", (VecU8, \args -> case args of
+        --         [(_,k), (_,x)] -> return $ x ++ ".owl_sign(&" ++ k ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for sign"
+        -- )),
+        -- ("vrfy", (Option VecU8, \args -> case args of
+        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
+        --         _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
+        -- )),
+        ("dhpk", (VecU8, \args -> case args of
+                [(_,x)] -> return $ x ++ ".owl_dhpk()"
+                _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
+        )),
         ("dh_combine", (VecU8, \args -> case args of
                 [(_,pk), (_,sk)] -> return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
@@ -332,8 +372,8 @@ initFuncs = M.fromList [
         ))
     ]
 
-initEnv :: String -> Env
-initEnv path = Env path defaultCipher defaultHMACMode initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
+initEnv :: String -> TB.Map String TB.UserFunc -> Env
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -341,13 +381,34 @@ lookupTyLayout n = do
     case ls M.!? n of
         Just l -> return l
         Nothing -> do
-            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show ls
+            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show (M.keys ls)
             throwError $ UndefinedSymbol n
 
+lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> ExtractionMonad String))
+lookupFunc fpath = do
+    fs <- use funcs
+    f <- tailPath fpath
+    return $ fs M.!? f
+    
 
-flattenNameExp :: NameExp -> String
+lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)))
+lookupAdtFunc fn = do
+    ufs <- use owlUserFuncs
+    adtfs <- use adtFuncs
+    -- debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
+    case lookup fn ufs of
+        -- special handling for struct constructors, since their names are path-scoped
+        Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
+        Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
+        Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
+        Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
+        Nothing -> return Nothing
+
+flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  BaseName _ s -> rustifyName s
+  BaseName _ s -> do
+      p <- rustifyPath s
+      return $ rustifyName p
 
 -------------------------------------------------------------------------------------------
 -- Data representation
@@ -366,45 +427,49 @@ layoutCTy (CTDataWithLength aexp) =
             AELenConst s -> do
                 lookupTyLayout . rustifyName $ s
             AEInt n -> return $ LBytes n
-            AEApp "cipherlen" _ [inner] -> do
-                tagSz <- useAeadTagSize
-                li <- helper inner
-                case li of
-                    (LBytes ni) -> return $ LBytes (ni + tagSz)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "plus" _ [a, b] -> do
-                la <- helper a
-                lb <- helper b
-                case (la, lb) of
-                    (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "mult" _ [a, b] -> do
-                la <- helper a
-                lb <- helper b
-                case (la, lb) of
-                    (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
-                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
-            AEApp "zero" _ _ -> return $ LBytes 0
-            AEApp fn _ [] -> do
-                lookupTyLayout . rustifyName $ fn -- func name used as a length constant
+            AEApp fpath _ args -> do
+                fn <- tailPath fpath
+                case (fn, args) of
+                    ("cipherlen", [inner]) -> do
+                        tagSz <- useAeadTagSize
+                        li <- helper inner
+                        case li of
+                            (LBytes ni) -> return $ LBytes (ni + tagSz)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("plus", [a, b]) -> do
+                        la <- helper a
+                        lb <- helper b
+                        case (la, lb) of
+                            (LBytes na, LBytes nb) -> return $ LBytes (na + nb)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("mult", [a, b]) -> do
+                        la <- helper a
+                        lb <- helper b
+                        case (la, lb) of
+                            (LBytes na, LBytes nb) -> return $ LBytes (na * nb)
+                            _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
+                    ("zero", _) -> return $ LBytes 0
+                    (_, []) -> do
+                        lookupTyLayout . rustifyName $ fn -- func name used as a length constant
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
     in
     helper aexp
 layoutCTy (CTOption ct) = do
     lct <- layoutCTy ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
-layoutCTy (CTVar s) = do
-    lookupTyLayout . rustifyName $ s
+layoutCTy (CTConst p) = do
+    p' <- rustifyPath p
+    lookupTyLayout . rustifyName $ p'
 layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
 layoutCTy CTUnit = return $ LBytes 1
 layoutCTy (CTName n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTVK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTDH_PK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTEnc_PK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
 
 layoutStruct :: String -> [(String, CTy)] -> ExtractionMonad Layout
@@ -451,6 +516,7 @@ genOwlOpsImpl name = pretty
         "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.0[..]).owl_sign(privkey) }",
         "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_vrfy(pubkey, signature) } ",
         "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.0[..]).owl_dh_combine(others_pk) }",
+        "fn owl_dhpk(&self) -> Vec<u8> { (&self.0[..]).owl_dhpk() }",
         "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.0[..]).owl_extract_expand_to_len(salt, len) }",
         "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0[..]).owl_xor(other) }"
     ])
@@ -729,6 +795,34 @@ extractEnum owlName owlCases' = do
 -------------------------------------------------------------------------------------------
 -- Code generation
 
+extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, Doc ann, Doc an)
+extractCryptOp binds op owlArgs = do
+    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
+    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
+    let args = map (\(r, _, p) -> (r, show p)) argsPretties
+    (rt, str) <- case (op, args) of
+        (CHash p _ n, [(_,x)]) -> do 
+            roname <- rustifyPath p 
+            orcls <- use oracles
+            case orcls M.!? roname of
+                Nothing -> throwError $ TypeError "unrecognized random oracle"
+                Just outLen -> do
+                    return (VecU8, x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
+        (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CAEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_enc(&" ++ k ++ ")")
+        (CADec, [(_,k), (_,x)]) -> do return (Option VecU8, x ++ ".owl_dec(&" ++ k ++ ")")
+        (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CPKEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkenc(&" ++ k ++ ")")
+        (CPKDec, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkdec(&" ++ k ++ ")")
+        (CMac, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_mac(&" ++ k ++ ")")
+        (CMacVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (CSign, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_sign(&" ++ k ++ ")")
+        (CSigVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
+    return (rt, preArgs, pretty str)
+
+
 extractAExpr :: M.Map String RustTy -> AExprX -> ExtractionMonad (RustTy, Doc ann, Doc ann)
 extractAExpr binds (AEVar _ owlV) = do
     let v = rustifyName . show $ owlV
@@ -743,13 +837,15 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? owlFn of
+    fdef <- lookupFunc owlFn
+    case fdef of
         Just (rt, f) -> do
             str <- f args
             return (rt, preArgs, pretty str)
         Nothing -> do
-            adtfs <- use adtFuncs
-            case adtfs M.!? owlFn of
+            -- adtfs <- use adtFuncs
+            adtf <- lookupAdtFunc =<< rustifyPath owlFn
+            case adtf of
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
                     let s = case argvaropt of
@@ -759,7 +855,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                 pretty "parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
                     return (rt, preArgs <> s, pretty str)
                 Nothing ->
-                    if owlFn == "H" then
+                    if owlFn `aeq` (PUnresolvedVar $ "H") then
                         -- special case for the random oracle function
                         let unspanned = map (view val) owlArgs in
                         case (fparams, unspanned) of
@@ -772,22 +868,33 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else do
-                        if owlFn == "dhpk" then
-                            let unspanned = map (view val) owlArgs in
-                            case unspanned of
-                                [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
-                                _ -> throwError $ TypeError "got wrong number of args to dhpk"
-                        else
-                            throwError $ UndefinedSymbol owlFn
+                        -- -- if owlFn `aeq` (PUnresolvedVar $ "dhpk") then
+                        -- if rustifyPath owlFn == "Top_dhpk" then
+                        --     let unspanned = map (view val) owlArgs in
+                        --     case unspanned of
+                        --         [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
+                        --         _ -> do
+                        --             debugPrint $ unspanned
+                        --             throwError $ TypeError "got wrong number of args to dhpk"
+                        -- else do                            
+                        throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of
-        BaseName ([], _) s -> return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (flattenNameExp nameExp)))
-        BaseName (sidxs, _) s -> return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName s) <> tupled (map (pretty . sidName . show . pretty) sidxs))
+        BaseName ([], _) s -> do
+            fnameExp <- flattenNameExp nameExp
+            return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (fnameExp)))
+        BaseName (sidxs, _) s -> do
+            ps <- rustifyPath s
+            return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
-extractAExpr binds (AEGetEncPK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
-extractAExpr binds (AEGetVK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
+extractAExpr binds (AEGetEncPK nameExp) = do
+    fnameExp <- flattenNameExp nameExp
+    return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty fnameExp))
+extractAExpr binds (AEGetVK nameExp) = do
+    fnameExp <- flattenNameExp nameExp
+    return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty fnameExp))
 extractAExpr binds (AEPackIdx idx ae) = extractAExpr binds (ae^.val)
 extractAExpr binds (AELenConst s) = do
     lcs <- use lenConsts
@@ -813,9 +920,12 @@ extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
-        Just (EndpointLocality (Locality lname _)) -> return $ pretty "&" <> pretty lname <> pretty "_addr"
+        Just (EndpointLocality (Locality lname _)) -> do
+            plname <- rustifyPath lname
+            return $ pretty "&" <> pretty plname <> pretty "_addr"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev)
-    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty myLname <> pretty "_addr") <> pretty ";")
+    pmyLname <- rustifyPath myLname
+    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty (pmyLname) <> pretty "_addr") <> pretty ";")
 extractExpr loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
@@ -827,20 +937,9 @@ extractExpr loc binds (CLet e xk) = do
             _ -> pretty "temp_" <> pretty rustX
     let letbinding = case e of
             CSkip -> pretty ""
-            _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> ePrettied <> pretty ";" <> line <>
+            _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
-extractExpr loc binds (CSamp distr owlArgs) = do
-    fs <- use funcs
-    argsPretties <- mapM (extractAExpr binds . view val) owlArgs
-    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
-    let args = map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? distr of
-      Nothing -> do
-        throwError $ UndefinedSymbol distr
-      Just (rt, f) -> do
-        str <- f args
-        return (binds, VecU8, preArgs, pretty str)
 extractExpr loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preeT, eTPrettied) <- extractExpr loc binds eT
@@ -854,92 +953,97 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\sid -> (Number, sidName . show . pretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? owlFn of
+    powlFn <- rustifyPath owlFn
+    case fs M.!? (powlFn) of
       Nothing -> do
-        throwError $ UndefinedSymbol owlFn
+        throwError $ UndefinedSymbol (powlFn)
       Just (rt, f) -> do
         str <- f args
         return (binds, rt, preArgs, pretty str)
 extractExpr loc binds (CCase ae cases) = do
-    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    case rt of
-      Option rt' -> do
-        casesPrettiedRts <- forM cases $ \(c, o) ->
-                case o of
-                    Left e -> do
-                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
-                        return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
-                    Right xk -> do
-                        let (x, k) = unsafeUnbind xk
-                        let rustX = rustifyName . show $ x
-                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
-                        let eWrapped = case rt' of
-                                VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
-                                RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
-                                _ -> pretty "temp_" <> pretty rustX
-                        return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
-                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
-        branchRt <- case casesPrettiedRts of
-          [] -> throwError $ TypeError "case on Option type with no cases"
-          (b, _) : _ -> return b
-        let casesPrettied = map snd casesPrettiedRts
-        return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
-      _ -> do -- We are casing on an Owl ADT
-        es <- use enums
-        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
-          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
-          Just s -> return s
-        ts <- use typeLayouts
-        enumLayout <- case ts M.!? rustifyName enumOwlName of
-          Just (LEnum n c) -> return c
-          _ -> throwError $ UndefinedSymbol enumOwlName
-        let tagByteOf = \c -> do
-                case enumLayout M.!? (rustifyName c) of
-                        Nothing -> throwError $ ErrSomethingFailed "enum case not found"
-                        Just (b,_) -> return b
-        casesPrettiedRts <- forM cases $ \(c, o) ->
-                case o of
-                    Left e -> do
-                        b <- tagByteOf c
-                        (_, rt'', preE, ePrettied) <- extractExpr loc binds e
-                        return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
-                    Right xk -> do
-                        b <- tagByteOf c
-                        let (x, k) = unsafeUnbind xk
-                        let rustX = rustifyName . show $ x
-                        (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
-                        let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
-                        return (rt'', pretty b <+> pretty "=>"
-                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
-        branchRt <- case casesPrettiedRts of
-          [] -> throwError $ TypeError "case on enum with no cases"
-          (b, _) : _ -> return b
-        let defaultCase = case branchRt of
-              VecU8 -> pretty "vec![0]"
-              RcVecU8 -> pretty "Rc::new(vec![0])"
-              Bool -> pretty "/* arbitrarily autogenerated */ false"
-              Number -> pretty "/* arbitrarily autogenerated */ 0"
-              String -> pretty "/* arbitrarily autogenerated */ \"\""
-              Unit -> pretty "()"
-              ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
-              Option _ -> pretty "/* arbitrarily autogenerated */ None"
-        let casesPrettied = map snd casesPrettiedRts
-        return (binds, branchRt, pretty "", preAe <> braces (
-                pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
-                pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
-                pretty "match caser_tmp.0[0]" <+> braces (
-                    vsep casesPrettied <> line <>
-                    pretty "_ =>" <+> defaultCase <> comma
-                ))
-            )
+   (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
+   case rt of
+     Option rt' -> do
+       casesPrettiedRts <- forM cases $ \(c, o) ->
+               case o of
+                   Left e -> do
+                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                   Right xk -> do
+                       let (x, k) = unsafeUnbind xk
+                       let rustX = rustifyName . show $ x
+                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
+                       let eWrapped = case rt' of
+                               VecU8 -> pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+                               RcVecU8 -> pretty "Rc::clone" <> parens (pretty "&temp_" <> pretty rustX)
+                               _ -> pretty "temp_" <> pretty rustX
+                       return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
+                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+       branchRt <- case casesPrettiedRts of
+         [] -> throwError $ TypeError "case on Option type with no cases"
+         (b, _) : _ -> return b
+       let casesPrettied = map snd casesPrettiedRts
+       return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
+     _ -> do -- We are casing on an Owl ADT
+       es <- use enums
+       enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
+         Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
+         Just s -> do debugPrint $ pretty "enum casing on" <+> pretty s; return s
+       ts <- use typeLayouts
+       enumLayout <- case ts M.!? rustifyName enumOwlName of
+         Just (LEnum n c) -> return c
+         _ -> throwError $ UndefinedSymbol enumOwlName
+       let tagByteOf = \c -> do
+               case enumLayout M.!? (rustifyName c) of
+                       Nothing -> throwError $ ErrSomethingFailed "enum case not found"
+                       Just (b,_) -> return b
+       casesPrettiedRts <- forM cases $ \(c, o) ->
+               case o of
+                   Left e -> do
+                       b <- tagByteOf c
+                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                   Right xk -> do
+                       b <- tagByteOf c
+                       let (x, k) = unsafeUnbind xk
+                       let rustX = rustifyName . show $ x
+                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
+                       let eWrapped = pretty "Rc::new(caser_tmp.0[1..].to_vec())"
+                       return (rt'', pretty b <+> pretty "=>"
+                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+       branchRt <- case casesPrettiedRts of
+         [] -> throwError $ TypeError "case on enum with no cases"
+         (b, _) : _ -> return b
+       let defaultCase = case branchRt of
+             VecU8 -> pretty "vec![0]"
+             RcVecU8 -> pretty "Rc::new(vec![0])"
+             Bool -> pretty "/* arbitrarily autogenerated */ false"
+             Number -> pretty "/* arbitrarily autogenerated */ 0"
+             String -> pretty "/* arbitrarily autogenerated */ \"\""
+             Unit -> pretty "()"
+             ADT s -> pretty "{ let mut tmp = (Rc::new(vec![])," <+> pretty s <> pretty "_ParsingOutcome::Failure); parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
+             Option _ -> pretty "/* arbitrarily autogenerated */ None"
+       let casesPrettied = map snd casesPrettiedRts
+       return (binds, branchRt, pretty "", preAe <> braces (
+               pretty "let mut caser_tmp" <+> pretty "=" <+> parens (aePrettied <> comma <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
+               pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
+               pretty "match caser_tmp.0[0]" <+> braces (
+                   vsep casesPrettied <> line <>
+                   pretty "_ =>" <+> defaultCase <> comma
+               ))
+           )
 extractExpr loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
             RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty "[..]"
             VecU8 -> return $ pretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
-    let tblName = rustifyName tbl
+    ptbl <- rustifyPath tbl
+    let tblName = rustifyName ptbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
+extractExpr loc binds (CCrypt cryptOp args) = do
+    (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
+    return (binds, rt, pre, opPrettied)
 extractExpr loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
@@ -965,8 +1069,8 @@ rustifyArgTy :: CTy -> ExtractionMonad RustTy
 rustifyArgTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyArgTy (CTVar n) = do
-    l <- lookupTyLayout . rustifyName $ n
+rustifyArgTy (CTConst (PUnresolvedVar n)) = do
+    l <- lookupTyLayout . rustifyName $ show n
     return $ case l of
         LBytes _ -> VecU8
         LStruct s _ -> ADT s
@@ -989,15 +1093,20 @@ extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> E
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let name = rustifyName owlName
     concreteBody <- ANF.anf owlBody >>= concretify
+    -- debugPrint $ "Extracting def " ++ owlName
+    -- debugPrint $ pretty concreteBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
-    funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
+    -- funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
     where
         genFuncDecl name sidArgs owlArgs rt = do
-            let argsPrettied = pretty "&mut self," <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) <+> (hsep . punctuate comma . map extractArg $ owlArgs)
+            let argsPrettied = 
+                    pretty "&mut self," 
+                    <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) 
+                    <+> (hsep . punctuate comma . map extractArg $ owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
 
 
@@ -1018,7 +1127,7 @@ nameInit s nt = case nt^.val of
 type LocalityName = String
 type NameData = (String, NameType, Int, Int) -- name, type, number of sessionID indices, number of processID indices
 type DefData = (String, Locality, [IdxVar], [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, sessionID arguments, arguments, return type, body
-type LocalityData =  (Int, [NameData], [NameData], [DefData], [(String, Ty)]) -- number of locality indices, local state, shared state, defs, table names and codomains
+type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)]) -- number of locality indices, local state, shared state, defs, table names and codomains
 
 preprocessIncludes :: Decl -> ExtractionMonad [Decl]
 preprocessIncludes d =
@@ -1045,6 +1154,8 @@ sortDecls dcls = do
     preprocessed <- mapM preprocessIncludes dcls
     foldM go ([], M.empty, [], []) $ concat preprocessed
     where
+    go :: ([Decl], M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) -> Decl -> 
+        ExtractionMonad ([Decl], M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
     go (gDecls, locMap, shared, pubkeys) d = case d^.val of
         DeclName name binds -> do
             let ((sids, pids), ntnlOpt) = unsafeUnbind binds
@@ -1068,8 +1179,10 @@ sortDecls dcls = do
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
                 let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
                 let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
-                let locNames = map (\(Locality lname _) -> lname) loc
-                let locNameCounts = map (\(Locality lname lidxs) -> (lname, length lidxs)) loc
+                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
+                locNameCounts <- mapM (\(Locality lname lidxs) -> do
+                    plname <- rustifyPath lname
+                    return (plname, length lidxs)) loc
                 case nt ^.val of
                     -- public keys must be shared, so pub/priv key pairs are generated by the initializer
                     NT_PKE _ ->
@@ -1084,52 +1197,159 @@ sortDecls dcls = do
                         else
                             -- name is local and can be locally generated
                             return (gDecls, foldl gPriv locMap locNames, shared, pubkeys)
+        DeclDefHeader _ _ -> return (gDecls, locMap, shared, pubkeys)
         DeclDef name binds -> do
             let ((sids, pids), (Locality loc lidxs, binds')) = unsafeUnbind binds
             let (args, (_, retTy, obody)) = unsafeUnbind binds'
             case obody of
               Just body -> do
                 let f (i, l, s, d, t) = (i, l, s, d ++ [(name, Locality loc lidxs, sids, args, retTy, body)], t)
-                return (gDecls, M.adjust f loc locMap, shared, pubkeys)
+                ploc <- rustifyPath loc
+                return (gDecls, M.adjust f ploc locMap, shared, pubkeys)
               Nothing -> do -- Def is abstract, predeclare it
                   makeFunc name (Locality loc lidxs) sids args retTy
                   return (gDecls, locMap, shared, pubkeys)
         DeclEnum n c -> return (gDecls ++ [d], locMap, shared, pubkeys)
         DeclStruct n f -> return (gDecls ++ [d], locMap, shared, pubkeys)
-        DeclLocality l idxs -> do
-            if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
-            else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
-        DeclRandOrcl n _ (arg, rty) -> do
-            rtlen <- case rty ^. val of
-                NT_Nonce -> return "NONCE_SIZE"
-                NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"
-                _ -> throwError $ UnsupportedOracleReturnType n
-            oracles %= M.insert n rtlen
-            return (gDecls, locMap, shared, pubkeys)
+        DeclLocality l idxs -> error "TODO fix"
+            --if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
+            --else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
+        -- TODO
+        --DeclRandOrcl n (arg, rty) -> do
+        --    rtlen <- case rty ^. val of
+        --        NT_Nonce -> return "NONCE_SIZE"
+        --        NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"
+        --        _ -> throwError $ UnsupportedOracleReturnType n
+        --    oracles %= M.insert n rtlen
+        --    return (gDecls, locMap, shared, pubkeys)
         DeclCorr _ _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
         DeclDetFunc name _ _ ->
             if name == "xor" then return (gDecls, locMap, shared, pubkeys) -- We do support xor if needed
             else throwError $ UnsupportedDecl "can't use uninterpreted functions in extracted protocols"
         DeclTable name ty (Locality lname _) -> do
             let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
-            return (gDecls, M.adjust f lname locMap, shared, pubkeys)
+            plname <- rustifyPath lname
+            return (gDecls, M.adjust f plname locMap, shared, pubkeys)
         DeclTy name topt -> do
             return (gDecls ++ [d], locMap, shared, pubkeys)
         DeclInclude fn -> throwError $ ErrSomethingFailed "messed up"
 
 
+-- returns (locality stuff, shared names, public keys)
+preprocessModBody :: TB.ModBody -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
+preprocessModBody mb = do
+    let (locs, locAliases) = sortLocs $ mb ^. TB.localities
+    let lookupLoc = lookupLoc' locs locAliases
+    let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
+    locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
+    locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
+    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
+    mapM_ sortOrcl $ (mb ^. TB.randomOracle)
+    -- TODO random oracles, counters
+    return (locMap, shared, pubkeys)
+    where
+        sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
+                                case locType of 
+                                    Left i -> (M.insert locName i locs, locAliases)
+                                    Right p -> (locs, M.insert locName (rustifyResolvedPath p) locAliases)) 
+                             (M.empty, M.empty)
+
+        lookupLoc' :: M.Map LocalityName Int -> M.Map LocalityName LocalityName -> LocalityName -> ExtractionMonad LocalityName
+        lookupLoc' locs locAliases l = do
+                case locs M.!? l of
+                    Just _ -> return l
+                    Nothing -> 
+                        case locAliases M.!? l of
+                            Just l' -> lookupLoc' locs locAliases l'
+                            Nothing -> throwError $ ErrSomethingFailed $ "couldn't lookup locality alias " ++ show l
+
+        sortDef :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, TB.Def) -> ExtractionMonad (M.Map LocalityName LocalityData)
+        sortDef _ m (_, TB.DefHeader _) = return m
+        sortDef lookupLoc m (owlName, TB.Def idxs_defSpec) = do
+                let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
+                let loc@(Locality locP _) = defspec ^. TB.defLocality
+                locName <- lookupLoc =<< rustifyPath locP
+                let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
+                case body of
+                    Nothing -> return m
+                    Just e  -> do
+                        let f (i, l, s, d, t) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t)
+                        makeFunc owlName loc sids args retTy
+                        return $ M.adjust f locName m
+        
+        sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
+        sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
+            locName <- lookupLoc =<< rustifyPath locP
+            let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
+            return $ M.adjust f locName locMap
+
+        sortName :: (LocalityName -> ExtractionMonad LocalityName) 
+                    -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+                    -> (String, (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
+                    -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+        sortName lookupLoc (locMap, shared, pubkeys) (name, binds) = do
+            let ((sids, pids), ntnlOpt) = unsafeUnbind binds
+            case ntnlOpt of
+              Nothing -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
+              Just (nt, loc) -> do
+                nameLen <- case nt ^. val of
+                    NT_Nonce -> do useAeadNonceSize
+                    NT_Enc _ -> do
+                        keySize <- useAeadKeySize
+                        ivSize <- useAeadNonceSize
+                        return $ keySize + ivSize
+                    NT_MAC _ -> do useHmacKeySize
+                    NT_PKE _ -> do return pkeKeySize
+                    NT_Sig _ -> do return sigKeySize
+                    NT_DH -> return dhSize
+                    _ -> do
+                        throwError $ UnsupportedNameType nt
+                let nsids = length sids
+                let npids = length pids
+                typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
+                let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
+                let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
+                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
+                locNameCounts <- mapM (\(Locality lname lidxs) -> do
+                    plname <- rustifyPath lname
+                    return (plname, length lidxs)) loc
+                case nt ^.val of
+                    -- public keys must be shared, so pub/priv key pairs are generated by the initializer
+                    NT_PKE _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    NT_Sig _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    NT_DH ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                    _ -> if length loc /= 1 then
+                            -- name is shared among multiple localities
+                            return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys)
+                        else
+                            -- name is local and can be locally generated
+                            return (foldl gPriv locMap locNames, shared, pubkeys)
+
+        sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
+        sortOrcl (n, b) = do
+            let (_, (args, rtys)) = unsafeUnbind b
+            rtlen <- case (map (view val) rtys) of
+                [NT_Nonce] -> return "NONCE_SIZE"
+                [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
+                _ -> throwError $ UnsupportedOracleReturnType n
+            oracles %= M.insert n rtlen
+
+
 -- return number of arguments to main and the print of the locality
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Int, Doc ann)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     let sfs = stateFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
     indexedNameGetters <- mapM genIndexedNameGetter localNames
     let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
-    case find (\(n,_,sids,as,_,_) -> (n == loc ++ "_main") && null as) defs of
-        Just (_,_,sids,_,_,_) -> do
+    case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
+        Just (mainName,_,sids,_,_,_) -> do
             initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
             fns <- mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
-            return $ (length sids,
+            return (rustifyName mainName, length sids,
                 pretty "#[derive(Serialize, Deserialize, Debug)]" <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
                 pretty "impl" <+> pretty (locName loc) <+> braces (initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)))
@@ -1194,22 +1414,22 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                     ) <>
                 rbrace
 
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName Int, Doc ann)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     (sidArgMap, ps) <- foldM (go pubkeys) (M.empty, []) $ M.assocs locMap
     return (sidArgMap, addrs <> line <> vsep ps)
     where
         go pubKeys (m, ps) (lname, ldata) = do
-            (nSidArgs, p) <- extractLoc pubKeys (lname, ldata)
-            return (M.insert lname nSidArgs m, ps ++ [p])
+            (mainName, nSidArgs, p) <- extractLoc pubKeys (lname, ldata)
+            return (M.insert lname (mainName, nSidArgs) m, ps ++ [p])
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
             pretty "pub const" <+> pretty l <> pretty "_addr: &str =" <+> dquotes (pretty "127.0.0.1:" <> pretty (9001 + n)) <> pretty ";" <> line <>
             mkAddrs (n+1) locs
 
-entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName Int -> ExtractionMonad (Doc ann)
+entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName (String, Int) -> ExtractionMonad (Doc ann)
 entryPoint locMap sharedNames pubKeys sidArgMap = do
     let allLocs = M.keys locMap
     sharedNameInits <- mapM genSharedNameInit sharedNames
@@ -1221,7 +1441,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
     allLocsSidArgs <- mapM (\l -> do
                                     let nSidArgs = sidArgMap M.!? l
                                     case nSidArgs of
-                                        Just n -> return (l, n)
+                                        Just (m, n) -> return (l, m, n)
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsSidArgs
@@ -1268,18 +1488,18 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                                 <> pretty ".expect(\"Can't write config file\");" <>
             (if npids == 0 then pretty "" else rbrace)
 
-        genRunLoc (loc, nSidArgs) =
-            let body = genRunLocBody loc nSidArgs in
+        genRunLoc (loc, mainName, nSidArgs) =
+            let body = genRunLocBody loc mainName nSidArgs in
             pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
                 braces body <> pretty "else"
-        genRunLocBody loc nSidArgs =
+        genRunLocBody loc mainName nSidArgs =
             pretty "let mut s =" <+> pretty (locName loc) <> pretty "::init_" <> pretty (locName loc) <>
                 parens (pretty "&args[3]") <> pretty ";" <> line <>
             pretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
-            pretty "println!(\"Running" <+> pretty loc <> pretty "_main() ...\");" <> line <>
+            pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty (rustifyName loc) <> pretty "_main" <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
+            pretty "let res = s." <> pretty mainName <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned {:?}") <> pretty "," <+> pretty "res") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
@@ -1288,80 +1508,104 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 -------------------------------------------------------------------------------------------
 -- Decl extraction
 
-extractDecl :: Decl -> ExtractionMonad (Doc ann)
-extractDecl dcl =
-    case dcl^.val of
-        DeclStruct name fields -> do
-            let (_, fields') = unsafeUnbind fields
-            extractStruct name fields'
-        DeclEnum name cases -> do
+
+extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (Doc ann)
+extractTyDefs [] = return $ pretty ""
+extractTyDefs ((tv, td):ds) = do
+    dExtracted <- extractTyDef tv td
+    dsExtracted <- extractTyDefs ds
+    return $ dExtracted <> line <> line <> dsExtracted
+    where
+        extractTyDef name (TB.EnumDef cases) = do
             let (_, cases') = unsafeUnbind cases
             extractEnum name cases'
-        DeclTy name topt -> do
-            case topt of
-              Nothing -> do
-                typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
-                return $ pretty ""
-              Just t -> do
-                lct <- layoutCTy . doConcretifyTy $ t
-                typeLayouts %= M.insert (rustifyName name) lct
-                return $ pretty ""
-        _ -> return $ pretty "" -- Other decls are handled elsewhere
+        extractTyDef name (TB.StructDef fields) = do
+            let (_, fields') = unsafeUnbind fields
+            extractStruct name fields'
+        extractTyDef name (TB.TyAbbrev t) = do
+            lct <- layoutCTy . doConcretifyTy $ t
+            typeLayouts %= M.insert (rustifyName name) lct
+            return $ pretty ""
+        extractTyDef name TB.TyAbstract = do
+            typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
+            return $ pretty ""
 
-extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
-extractDecls' [] = return $ pretty ""
-extractDecls' (d:ds) = do
-    dExtracted <- extractDecl d
-    dsExtracted <- extractDecls' ds
-    return $ dExtracted <> line <> line <> dsExtracted
+-- extractDecl :: Decl -> ExtractionMonad (Doc ann)
+-- extractDecl dcl =
+--     case dcl^.val of
+--         DeclStruct name fields -> do
+--             let (_, fields') = unsafeUnbind fields
+--             extractStruct name fields'
+--         DeclEnum name cases -> do
+--             let (_, cases') = unsafeUnbind cases
+--             extractEnum name cases'
+--         DeclTy name topt -> do
+--             case topt of
+--               Nothing -> do
+--                 typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
+--                 return $ pretty ""
+--               Just t -> do
+--                 lct <- layoutCTy . doConcretifyTy $ t
+--                 typeLayouts %= M.insert (rustifyName name) lct
+--                 return $ pretty ""
+--         _ -> return $ pretty "" -- Other decls are handled elsewhere
 
-extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
-extractDecls ds = do
-    (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
-    globalsExtracted <- extractDecls' globalDecls
-    (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
-    p <- preamble
-    ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
-    return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
+-- extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
+-- extractDecls' [] = return $ pretty ""
+-- extractDecls' (d:ds) = do
+--     dExtracted <- extractDecl d
+--     dsExtracted <- extractDecls' ds
+--     return $ dExtracted <> line <> line <> dsExtracted
+
+-- extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
+-- extractDecls ds = do
+--     (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
+--     globalsExtracted <- extractDecls' globalDecls
+--     (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
+--     p <- preamble
+--     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
+--     return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
+        
+preamble :: ExtractionMonad (Doc ann)        
+preamble = do
+    c <- showAEADCipher
+    h <- showHMACMode
+    return $ vsep $ map pretty
+        [   "#![allow(non_camel_case_types)]",
+            "#![allow(non_snake_case)]",
+            "#![allow(non_upper_case_globals)]",
+            "pub use std::rc::Rc;",
+            "pub use std::io::{self, Write, BufRead};",
+            "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
+            "pub use std::thread;",
+            "pub use std::str;",
+            "pub use std::fs;",
+            "pub use std::time::Duration;",
+            "pub use serde::{Serialize, Deserialize};",
+            "pub use std::env;",
+            "pub use std::collections::HashMap;",
+            "pub use std::time::Instant;",
+            "pub use owl_crypto_primitives::owl_aead;",
+            "pub use owl_crypto_primitives::owl_hmac;",
+            "pub use owl_crypto_primitives::owl_pke;",
+            "pub use owl_crypto_primitives::owl_util;",
+            "pub use owl_crypto_primitives::owl_dhke;",
+            "pub use owl_crypto_primitives::owl_hkdf;",
+            "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
+            "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
+            "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
+            "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
+            "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
+        ] ++
+        [   owlOpsTraitDef,
+            owlOpsTraitImpls,
+            owl_msgDef,
+            owl_outputDef,
+            owl_inputDef,
+            owl_miscFns,
+            pretty ""
+        ]
     where
-        preamble = do
-            c <- showAEADCipher
-            h <- showHMACMode
-            return $ vsep $ map pretty
-                [   "#![allow(non_camel_case_types)]",
-                    "#![allow(non_snake_case)]",
-                    "#![allow(non_upper_case_globals)]",
-                    "pub use std::rc::Rc;",
-                    "pub use std::io::{self, Write, BufRead};",
-                    "pub use std::net::{TcpListener, TcpStream, ToSocketAddrs, SocketAddr};",
-                    "pub use std::thread;",
-                    "pub use std::str;",
-                    "pub use std::fs;",
-                    "pub use std::time::Duration;",
-                    "pub use serde::{Serialize, Deserialize};",
-                    "pub use std::env;",
-                    "pub use std::collections::HashMap;",
-                    "pub use std::time::Instant;",
-                    "pub use owl_crypto_primitives::owl_aead;",
-                    "pub use owl_crypto_primitives::owl_hmac;",
-                    "pub use owl_crypto_primitives::owl_pke;",
-                    "pub use owl_crypto_primitives::owl_util;",
-                    "pub use owl_crypto_primitives::owl_dhke;",
-                    "pub use owl_crypto_primitives::owl_hkdf;",
-                    "const CIPHER: owl_aead::Mode = " ++ c ++ ";",
-                    "const KEY_SIZE: usize = owl_aead::key_size(CIPHER);",
-                    "const TAG_SIZE: usize = owl_aead::tag_size(CIPHER);",
-                    "const NONCE_SIZE: usize = owl_aead::nonce_size(CIPHER);",
-                    "const HMAC_MODE: owl_hmac::Mode = " ++ h ++ ";"
-                ] ++
-                [   owlOpsTraitDef,
-                    owlOpsTraitImpls,
-                    owl_msgDef,
-                    owl_outputDef,
-                    owl_inputDef,
-                    owl_miscFns,
-                    pretty "// -------- START LINE COUNTING HERE --------"
-                ]
         owlOpsTraitDef = vsep $ map pretty [
                 "trait OwlOps {",
                     "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) -> ();",
@@ -1380,6 +1624,7 @@ extractDecls ds = do
                     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8>;",
                     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>>;",
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8>;",
+                    "fn owl_dhpk(&self) -> Vec<u8>;",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8>;",
                     "fn owl_xor(&self, other: &[u8]) -> Vec<u8>;",
                 "}"
@@ -1439,6 +1684,9 @@ extractDecls ds = do
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> {",
                         "owl_dhke::ecdh_combine(self, &others_pk[..])",
                     "}",
+                    "fn owl_dhpk(&self) -> Vec<u8> {",
+                        "owl_dhke::ecdh_dhpk(self)",
+                    "}",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> {",
                         "owl_hkdf::extract_expand_to_len(self, salt, len)",
                     "}",
@@ -1459,6 +1707,7 @@ extractDecls ds = do
                     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self[..]).owl_sign(privkey) }",
                     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self[..]).owl_vrfy(pubkey, signature) } ",
                     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self[..]).owl_dh_combine(others_pk) }",
+                    "fn owl_dhpk(&self) -> Vec<u8> { (&self[..]).owl_dhpk() }",
                     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self[..]).owl_extract_expand_to_len(salt, len) }",
                     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self[..]).owl_xor(&other[..]) }",
                 "}"
@@ -1501,5 +1750,22 @@ extractDecls ds = do
                 "}"
             ]
 
-extract :: String -> [Decl] -> IO (Either ExtractionError (Doc ann))
-extract path dcls = runExtractionMonad (initEnv path) $ extractDecls dcls
+
+
+
+extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
+extractModBody mb = do
+    -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
+    debugPrint $ pretty "Ty defs:" <+> pretty (map fst (mb ^. TB.tyDefs))
+    debugPrint $ TB.prettyMap "defs" (mb ^. TB.defs)
+    debugPrint $ TB.prettyMap "nameEnv" (mb ^. TB.nameEnv)
+    (locMap, sharedNames, pubKeys) <- preprocessModBody mb
+    -- We get the list of tyDefs in reverse order of declaration, so reverse again
+    tyDefsExtracted <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
+    (sidArgMap, locsExtracted) <- extractLocs pubKeys locMap
+    p <- preamble
+    ep <- entryPoint locMap sharedNames pubKeys sidArgMap
+    return $ p <> line <> tyDefsExtracted <> line <> locsExtracted <> line <> ep
+
+extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
+extract tcEnv path modbody = runExtractionMonad tcEnv (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody

@@ -99,7 +99,7 @@ def Alice_main<i> () @ Alice
     input inp1 in
     let tkt1, tkt2 = msg3_tkt1(inp1), msg3_tkt2(inp1) in   
 
-    begin case dec(kA, tkt1) 
+    begin case adec(kA, tkt1) 
         | None => 
             unpack j, _ = () in
             pack<j>(alice_None<idx i, idx j>())
@@ -112,8 +112,8 @@ def Alice_main<i> () @ Alice
             let nB'  = _nB_kA<idx j>(res') in
             // let _ = check_nonce(nA, nA') in
 
-            // let encm = samp enc(kAB', nB_packed') in
-            let encm = samp enc(kAB', nB') in
+            // let encm =  aenc(kAB', nB_packed') in
+            let encm = aenc(kAB', nB') in
             // case tkt2' 
             // | e1 _ => pack<j>(alice_None<idx i, idx j>())
             // | e2 tkt2 =>
@@ -148,7 +148,7 @@ def Bob_main<i> () @ Bob
     if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) then
         let temp_packed = pack<i>(pack<j_>(mB1<idx i, idx j_>(kB_message_1<idx i>(A', nA', nB)))) in
 
-        let encm = samp enc(kB, temp_packed) in
+        let encm = aenc(kB, temp_packed) in
         let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
         
         input inp2 in
@@ -157,7 +157,7 @@ def Bob_main<i> () @ Bob
         case tkt' 
         | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
         | e2 tkt =>
-            begin case dec(kB, tkt) 
+            begin case adec(kB, tkt) 
                 | None => pack<j_>(bob_None<idx i, idx j_>())
                 | Some res =>
                     unpack i', res' = res in
@@ -173,7 +173,7 @@ def Bob_main<i> () @ Bob
                             if checknonce(nB', nB) then 
                                 assert(sec(KB) ==> (i =idx i'));
                                 corr_case KAB<j'> in
-                                (case dec(kAB', x) 
+                                (case adec(kAB', x) 
                                     | None => pack<j'>(bob_None<idx i, idx j'>())
                                     | Some res2 =>
                                         // unpack j'', nB' = res2 in
@@ -204,7 +204,7 @@ def AS_main<i> () @ AS
         case x' 
             | e2 _ => ()
             | e1 x'' => 
-                begin case dec(kB, x'') 
+                begin case adec(kB, x'') 
                     | None => ()
                     | Some res =>
                         unpack i1, res' = res in
@@ -219,8 +219,8 @@ def AS_main<i> () @ AS
 
                                 if eq(length(nA'), |nonce|) && eq(length(nB'), |nonce|) && eq(length(A'), |nonce|)  then
                                         // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
-                                        let encmA = samp enc(kA, pack<i>(kA_message<idx i>(B', kAB, nA', nB'))) in
-                                        let encmB = samp enc(kB, pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB'))))) in
+                                        let encmA = aenc(kA, pack<i>(kA_message<idx i>(B', kAB, nA', nB'))) in
+                                        let encmB = aenc(kB, pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB'))))) in
                                         let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
                                         ()
                                 else ()

@@ -1,0 +1,25 @@
+locality alice
+
+module type S = { 
+    name x : nonce @ alice
+}
+
+module Srefined = {
+    name x : nonce @ alice
+    name z : nonce @ alice
+} 
+
+module M = functor (X : S) => {
+    module Z = X
+    name k : enckey Name(Z.x) @ alice
+    def alice_main() @ alice : Name(Z.x) = 
+        let x = get(Z.x) in 
+        x
+}
+    
+module Main = M(Srefined)
+
+
+// def blah() @ alice : Name(Srefined.x) =
+//     let x = call Main.alice_main() in
+//     x

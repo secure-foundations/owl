@@ -1,6 +1,6 @@
 /*
-* A -> B : enc(<pkA,n0>,r0,pkB)
-* B -> A : enc(<n0,n>,r,pkA)
+* A -> B : aenc(<pkA,n0>,r0,pkB)
+* B -> A : aenc(<n0,n>,r,pkA)
 */
 
 
@@ -37,16 +37,16 @@ name pkB : pkekey Name(hybrid_skA) @ B
 def A_main<i> () @ A
 : Unit =
     let hybridKA          = get(hybrid_skA) in
-    let enc_hybridKA      = samp pkenc(get_encpk(pkB), hybridKA) in
+    let enc_hybridKA      =  pkenc(get_encpk(pkB), hybridKA) in
     let _ = output enc_hybridKA to endpoint(B) in
-    let encm              = samp enc(hybridKA, pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))))) in
+    let encm              =  aenc(hybridKA, pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))))) in
     let _ = output encm to endpoint(B) in
 
     input enc_hybridKB in
     input inp in
     corr_case pkA in
     let hybridKB = pkdec(get(pkA), enc_hybridKB) in
-    case dec(hybridKB, inp)
+    case adec(hybridKB, inp)
     | None => ()
     | Some _ => ()
 
@@ -60,7 +60,7 @@ def B_main<j> () @ B
     input inp in
     let hybridKA = pkdec(privKey, enc_hybridKA) in
     // union_case hybridKA = hybridKA' in
-    case dec(hybridKA, inp)
+    case adec(hybridKA, inp)
     | None => ()
     | Some m => 
         unpack i, m' = m in
@@ -70,10 +70,10 @@ def B_main<j> () @ B
         | m1_pkA_tag m1_pkA =>
             if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
                 let hybridKB          = get(hybrid_skB) in
-                let enc_hybridKB      = samp pkenc(get_encpk(pkA), hybridKB) in
+                let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in
                 let _ = output enc_hybridKB to endpoint(A) in
                 let pubKeyA = get_encpk(pkA) in
-                let encm = samp enc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
+                let encm =  aenc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
                 let _ = output encm to endpoint(A) in
                 ()
             else ()

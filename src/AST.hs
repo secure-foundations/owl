@@ -3,6 +3,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -27,12 +28,10 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
 -- localities are like "alice", "bob", "alice, bob", ...
-type FuncName = String -- For deterministic functions eg xor(*, *), 
-type DistrName = String -- For probabilistic functions eg senc
 type DefName = String -- For process definitions eg alice(..)
 type ConstrName = String
-type TyName = String
 type TableName = String
+type TyVar = String
 
 data Spanned a = Spanned { 
     _spanOf :: Ignore Position,
@@ -55,6 +54,47 @@ mkSpannedWith s x = Spanned (ignore s) x
 type DataVar = Name AExpr
 type IdxVar = Name Idx
 
+-- Paths are used for localities, defs, names, and types
+data Path = 
+    PUnresolvedVar String
+      | PUnresolvedPath String [String]
+      | PRes ResolvedPath
+    deriving (Generic, Typeable)
+
+data PathVarType = OpenPathVar | ClosedPathVar (Ignore String)
+    deriving (Show, Generic, Typeable)
+
+instance Alpha PathVarType
+instance Subst ResolvedPath PathVarType
+instance Subst Idx PathVarType
+instance Subst AExpr PathVarType
+
+data ResolvedPath =
+      PTop
+      | PPathVar PathVarType (Name ResolvedPath) 
+      | PDot ResolvedPath String
+    deriving (Generic, Typeable)
+
+topLevelPath :: String -> Path
+topLevelPath s = PRes $ PDot PTop s
+
+instance Show Path where
+    show (PUnresolvedVar s) = "?" ++ s
+    show (PUnresolvedPath s xs) = "?" ++ s ++ go xs
+        where
+            go [] = ""
+            go (x:xs) = "." ++ x ++ go xs
+    show (PRes p) = show p
+
+
+instance Show ResolvedPath where
+    show PTop = "Top"
+    show (PDot (PPathVar OpenPathVar x) s) = "open(" ++ show x ++ ")." ++ s
+    show (PPathVar (ClosedPathVar s) x) = "closed(" ++ unignore s ++ ", " ++ show x ++ ")"
+    show (PPathVar OpenPathVar s) = "open(" ++ show s ++ ")"
+    show (PDot x y) = show x ++ "." ++ y
+
+
 data Idx = IVar (Ignore Position) IdxVar
     deriving (Show, Generic, Typeable)
 
@@ -72,7 +112,7 @@ type EndpointVar = Name Endpoint
 
 data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
-    | AEApp FuncName [FuncParam] [AExpr]
+    | AEApp (Path) [FuncParam] [AExpr]
     | AEString String
     | AEGet NameExp
     | AEGetEncPK NameExp
@@ -86,23 +126,23 @@ type AExpr = Spanned AExprX
 
 
 data NameExpX = 
-    BaseName ([Idx], [Idx]) String
-    | ROName String
+    BaseName ([Idx], [Idx]) Path
+    | ROName Path [Idx] Int
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
 
 
 type NameExp = Spanned NameExpX
 
-data Locality = Locality String [Idx]
+data Locality = Locality Path [Idx]
     deriving (Show, Generic, Typeable)
 
 
 
 
 
-roName :: String -> NameExp
-roName s = mkSpanned (ROName s)
+roName :: Path -> [Idx] -> Int -> NameExp
+roName s is i = mkSpanned (ROName s is i)
 
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
@@ -112,8 +152,12 @@ data LabelX =
     | LZero
     | LAdv 
     | LJoin Label Label 
-    | LVar String -- Used Internally?
+    | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
+    deriving (Show, Generic, Typeable)
+
+data LblConst = 
+    TyLabelVar (Path)
     deriving (Show, Generic, Typeable)
 
 
@@ -128,8 +172,8 @@ advLbl = mkSpanned LAdv
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)
 
-varLbl :: String -> Label
-varLbl s = mkSpanned (LVar s)
+lblConst :: LblConst -> Label
+lblConst s = mkSpanned (LConst s)
 
 
 data PropX = 
@@ -139,11 +183,15 @@ data PropX =
     | PEqIdx Idx Idx
     | PImpl Prop Prop
     | PFlow Label Label 
-    | PHappened String ([Idx], [Idx]) [AExpr]
+    | PHappened Path ([Idx], [Idx]) [AExpr]
+    | PQuantIdx Quant  (Bind IdxVar Prop)
     deriving (Show, Generic, Typeable)
 
 
 type Prop = Spanned PropX
+
+data Quant = Forall | Exists
+    deriving (Show, Generic, Typeable)
 
 pAnd :: Prop -> Prop -> Prop
 pAnd p1 p2 = mkSpanned (PAnd p1 p2)
@@ -169,7 +217,7 @@ pNot p = mkSpanned $ PNot p
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2
 
-pHappened :: String -> ([Idx], [Idx]) -> [AExpr] -> Prop
+pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
 
@@ -179,6 +227,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce
     | NT_Enc Ty
+    | NT_EncWithNonce Ty Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_PRF [(String, (AExpr, NameType))]
@@ -187,13 +236,17 @@ data NameTypeX =
 
 type NameType = Spanned NameTypeX
 
+-- Nonce patterns are injective contexts
+data NoncePattern = NPHere
+    deriving (Show, Generic, Typeable)
+
 data TyX = 
     TData Label Label
     | TDataWithLength Label AExpr
     | TRefined Ty (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TVar TyName [FuncParam]
+    | TConst (Path) [FuncParam]
     | TBool Label
     | TUnion Ty Ty
     | TUnit
@@ -234,9 +287,19 @@ tExistsIdx t = mkSpanned (TExistsIdx t)
 -- tRefined :: Ty -> Var -> Prop -> Ty
 -- tRefined t x p = mkSpanned $ TRefined t x p
 
+data ModuleExpX = 
+    ModuleBody IsModuleType (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
+      | ModuleVar Path
+      | ModuleApp ModuleExp Path
+      | ModuleFun (Bind (Name ResolvedPath, String, Embed ModuleExp) ModuleExp)
+      deriving (Show, Generic, Typeable)
+
+type ModuleExp = Spanned ModuleExpX
+
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
                          Bind [(DataVar, Embed Ty)]
@@ -248,18 +311,36 @@ data DeclX =
                         ))
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
+    | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String [String] (AExpr, NameType)
+    | DeclRandOrcl String (Bind [IdxVar] ([AExpr], [NameType])) AdmitUniquenessCheck
     | DeclCorr Label Label 
-    | DeclLocality String Int
+    | DeclLocality String (Either Int Path)
+    | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
+    deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
 
+data IsModuleType = ModType | ModConcrete
+    deriving (Show, Generic, Typeable, Eq)
+
+data AdmitUniquenessCheck = NoAdmitUniqueness | AdmitUniqueness
+    deriving (Show, Generic, Typeable, Eq)
+
+instance Alpha IsModuleType
+instance Subst AExpr IsModuleType
+instance Subst ResolvedPath IsModuleType
+
+instance Alpha AdmitUniquenessCheck
+instance Subst AExpr AdmitUniquenessCheck
+instance Subst ResolvedPath AdmitUniquenessCheck
+
 data DetFuncOps =
     UninterpFunc
+    deriving (Show, Generic, Typeable)
 
 
 
@@ -269,18 +350,21 @@ aeVar s = mkSpanned (AEVar (ignore s) (s2n s))
 aeVar' :: DataVar -> AExpr
 aeVar' v = mkSpanned $ AEVar (ignore $ show v) v
 
-aeApp :: FuncName -> [FuncParam] -> [AExpr] -> AExpr
+aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
+builtinFunc :: String -> [AExpr] -> AExpr
+builtinFunc s xs = aeApp (PRes $ PDot PTop s) [] xs
+
 aeLength :: AExpr -> AExpr
-aeLength x = aeApp "length" [] [x]
+aeLength x = aeApp (PRes $ PDot PTop "length") [] [x]
 
 aeLenConst :: String -> AExpr
 aeLenConst s = mkSpanned $ AELenConst s 
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp "true" [] [])
+aeTrue = mkSpanned (AEApp (topLevelPath "TRUE") [] [])
 
 data ExprX = 
     EInput (Bind (DataVar, EndpointVar) Expr)
@@ -288,22 +372,41 @@ data ExprX =
     | ELet Expr (Maybe Ty) String (Bind DataVar Expr) -- The string is the name for the var
     | EUnionCase AExpr (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
-    | ESamp DistrName [AExpr]
+    | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | ERet AExpr
+    | EGetCtr Path ([Idx], [Idx])
+    | EIncCtr Path ([Idx], [Idx])
     | EDebug DebugCommand
     | EAssert Prop
     | EAssume Prop
     | EAdmit
-    | ECall String ([Idx], [Idx]) [AExpr]
-    | ECase AExpr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | ECorrCase NameExp Expr
+    | ECrypt CryptOp [AExpr]
+    | ECall Path ([Idx], [Idx]) [AExpr]
+    | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
+    | EPCase Prop Expr
     | EFalseElim Expr
-    | ETLookup TableName AExpr
-    | ETWrite TableName AExpr AExpr
+    | ETLookup Path AExpr
+    | ETWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)
 
 type Expr = Spanned ExprX
+
+data CryptOp = 
+    CHash Path [Idx] Int
+      | CPRF String
+      | CAEnc 
+      | CADec 
+      | CAEncWithNonce Path ([Idx], [Idx])
+      | CADecWithNonce 
+      | CPKEnc
+      | CPKDec
+      | CMac
+      | CMacVrfy
+      | CSign
+      | CSigVrfy
+    deriving (Show, Generic, Typeable)
+
 
 
 data DebugCommand = 
@@ -314,6 +417,7 @@ data DebugCommand =
       | DebugPrintTyContext
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
+      | DebugPrintModules
     deriving (Show, Generic, Typeable)
 
 data FuncParam = 
@@ -322,6 +426,7 @@ data FuncParam =
       | ParamLbl Label
       | ParamTy Ty
       | ParamIdx Idx
+      | ParamName NameExp
       deriving (Show, Generic, Typeable)
 
 
@@ -340,11 +445,21 @@ instance Alpha Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ v) = Just (SubstName v)
 instance Subst AExpr Idx
+instance Subst ResolvedPath Idx
 
 instance Subst AExpr Endpoint
+instance Subst ResolvedPath Endpoint
+
+
+instance Alpha DeclX
+instance Subst ResolvedPath DeclX
+
+instance Alpha ModuleExpX
+instance Subst ResolvedPath ModuleExpX
 
 instance Alpha AExprX
 instance Subst Idx AExprX
+instance Subst ResolvedPath AExprX
 instance Subst AExpr AExprX where
     isCoerceVar (AEVar _ v) = Just (SubstCoerce v (\x -> Just (_val x)))
     isCoerceVar _ = Nothing
@@ -352,37 +467,84 @@ instance Subst AExpr AExprX where
 instance Alpha NameExpX
 instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
+instance Subst ResolvedPath NameExpX
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
+instance Subst ResolvedPath NameTypeX
+
+instance Alpha NoncePattern
+instance Subst Idx NoncePattern
+instance Subst AExpr NoncePattern
+instance Subst ResolvedPath NoncePattern
 
 instance Alpha FuncParam
 instance Subst Idx FuncParam
 instance Subst AExpr FuncParam
+instance Subst ResolvedPath FuncParam
 
 instance Alpha LabelX
 instance Subst Idx LabelX
 instance Subst AExpr LabelX
+instance Subst ResolvedPath LabelX
+
+instance Alpha LblConst
+instance Subst Idx LblConst
+instance Subst AExpr LblConst
+instance Subst ResolvedPath LblConst
+
+instance Alpha DetFuncOps
+instance Subst ResolvedPath DetFuncOps
+
+instance Alpha Path
+instance Subst Idx Path
+instance Subst AExpr Path
+instance Subst ResolvedPath Path where
+
+instance Alpha ResolvedPath
+instance Subst ResolvedPath ResolvedPath where
+    isvar (PPathVar _ v) = Just (SubstName v)
+    isvar _ = Nothing
+instance Subst AExpr ResolvedPath
+instance Subst Idx ResolvedPath
 
 instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
+instance Subst ResolvedPath TyX
 
 instance Alpha PropX
 instance Subst Idx PropX
 instance Subst AExpr PropX
+instance Subst ResolvedPath PropX
+
+instance Alpha Quant
+instance Subst Idx Quant
+instance Subst AExpr Quant
+instance Subst ResolvedPath Quant
 
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
+instance Subst ResolvedPath DebugCommand
 
 instance Alpha Locality
 instance Subst Idx Locality
 instance Subst AExpr Locality
+instance Subst ResolvedPath Locality
 
 instance Alpha ExprX
 instance Subst AExpr ExprX
+instance Subst Idx ExprX
+instance Subst Idx Endpoint
+instance Subst Idx DebugCommand
+instance Subst ResolvedPath ExprX
+
+instance Alpha CryptOp
+instance Subst AExpr CryptOp
+instance Subst Idx CryptOp
+instance Subst ResolvedPath CryptOp
 --- Pretty instances ---
 
 instance Pretty (Name a) where
@@ -392,7 +554,7 @@ instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
 instance Pretty NameExpX where
-    pretty (ROName s) = pretty "RO<" <> pretty s <> pretty ">"
+    pretty (ROName s is i) = pretty "RO<" <> pretty s <> pretty "," <> pretty is <> pretty "," <> pretty i <> pretty ">" 
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
     pretty (BaseName vs n) = 
         case vs of
@@ -408,16 +570,21 @@ prettyBind b =
     let (x, y) = unsafeUnbind b in
     (pretty x, pretty y)
 
+instance Pretty LblConst where
+    pretty (TyLabelVar s) = pretty s
 
 instance Pretty LabelX where
     pretty (LName n) = pretty "[" <> pretty n <> pretty "]"
     pretty LZero = pretty "static"
     pretty (LAdv) = pretty "adv"
     pretty (LJoin v1 v2) = pretty v1 <+> pretty "/\\" <+> pretty v2
-    pretty (LVar s) = pretty s
+    pretty (LConst s) = pretty s
     pretty (LRangeIdx l) = 
         let (b, l') = prettyBind l in
         pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
+
+instance Pretty (Path) where
+    pretty x = pretty $ show x
 
 instance Pretty TyX where
     pretty TUnit =
@@ -435,7 +602,7 @@ instance Pretty TyX where
             pretty "Option" <+> pretty t
     pretty (TCase p t1 t2) = 
             pretty "if" <+> pretty p <+> pretty "then" <+> pretty t1 <> pretty " else " <> pretty t2 
-    pretty (TVar n ps) =
+    pretty (TConst n ps) =
             pretty n <> pretty "<" <> pretty (intercalate "," (map (show . pretty) ps)) <> pretty ">"
     pretty (TName n) =
             pretty "Name(" <> pretty n <> pretty ")"
@@ -454,6 +621,9 @@ instance Pretty TyX where
     pretty (TUnion t1 t2) =
         pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
 
+instance Pretty Quant where
+    pretty Forall = pretty "forall"
+    pretty Exists = pretty "exists"
 
 instance Pretty PropX where 
     pretty PTrue = pretty "true"
@@ -465,6 +635,9 @@ instance Pretty PropX where
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
+    pretty (PQuantIdx q b) = 
+        let (x, p) = prettyBind b in
+        pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
     pretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -478,6 +651,7 @@ instance Pretty PropX where
 
 instance Pretty NameTypeX where
     pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
+    pretty (NT_EncWithNonce ty p pat) = pretty "enc_with_nonce" <+> pretty ty <+> pretty p
     pretty (NT_Enc ty) = pretty "enc" <+> pretty ty
     pretty (NT_PKE ty) = pretty "pke" <+> pretty ty
     pretty (NT_MAC ty) = pretty "mac" <+> pretty ty
@@ -497,7 +671,23 @@ instance Pretty AExprX where
     pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
+instance Pretty CryptOp where
+    pretty (CHash p is i) = 
+        pretty "RO" <+> pretty p <+> pretty is <+> pretty i
+    pretty (CPRF x) = 
+        pretty "PRF" <+> pretty x 
+    pretty (CAEnc) = pretty "aenc"
+    pretty (CADec) = pretty "adec"
+    pretty CPKEnc = pretty "pkenc"
+    pretty CPKDec = pretty "pkdec"
+    pretty CMac = pretty "mac"
+    pretty CMacVrfy = pretty "mac_vrfy"
+    pretty CSign = pretty "sign"
+    pretty CSigVrfy = pretty "vrfy"
+
 instance Pretty ExprX where 
+    pretty (ECrypt cop as) = 
+        pretty cop <> (mconcat (map pretty as))
     pretty (EInput k) = 
         let ((x, i), e) = unsafeUnbind k in
         pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e
@@ -515,7 +705,6 @@ instance Pretty ExprX where
         let (x, k) = prettyBind xk in
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
     pretty (EUnpack a k) = pretty "unpack a .... TODO"
-    pretty (ESamp d as) = pretty "samp" <+> pretty d <> tupled (map pretty as)
     pretty (EIf t e1 e2) = 
         pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
     pretty (ERet ae) = pretty ae
@@ -534,14 +723,15 @@ instance Pretty ExprX where
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
         pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (ECorrCase n e) = 
-        pretty "corr_case" <+> pretty n <+> pretty "in" <+> pretty e
+    pretty (EPCase p e) = 
+        pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc
     pretty (EAssert p) = pretty "assert" <+> pretty p
     pretty (EAssume p) = pretty "assume" <+> pretty p
     pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k
     pretty (ETLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (ETWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
+    pretty _ = pretty "unimp"
 
 instance Pretty DebugCommand where
     pretty (DebugPrintTyOf ae) = pretty "debugPrintTyOf(" <> pretty ae <> pretty ")"
@@ -558,6 +748,7 @@ instance Pretty FuncParam where
     pretty (ParamLbl l) = pretty l
     pretty (ParamTy t) = pretty t
     pretty (ParamIdx i) = pretty i
+    pretty (ParamName ne) = pretty ne
 
 instance Pretty Endpoint where
     pretty (Endpoint  x) = pretty x
@@ -565,6 +756,17 @@ instance Pretty Endpoint where
 
 instance Pretty Locality where
     pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
+
+instance Pretty DeclX where
+    pretty d = pretty (show d)
+
+instance Pretty ModuleExpX where
+    pretty (ModuleBody _ nk) = 
+        let (n, k) = prettyBind nk in
+        angles (n <> pretty "." <> k)
+    pretty (ModuleVar p) = pretty p
+    pretty x = pretty $ show x
+
 
 -- Wrapper datatype for native comparison up to alpha equivalence. Used for
 -- indexing maps by ASTs 
@@ -579,3 +781,4 @@ instance Alpha a => Ord (AlphaOrd a) where
 
 tLemma :: Prop -> Ty
 tLemma p = tRefined tUnit (bind (s2n "._") p)
+

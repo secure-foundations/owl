@@ -3,6 +3,10 @@
 locality alice
 locality bob
 
+
+def alice_main @ alice
+def bob_main @ bob
+
 name x : nonce @ bob
 name k_data : enckey (z:Name(x){happened(bob_main())}) @ alice
 name shared_key : enckey (z:Name(k_data){happened(alice_main())}) @ alice, bob
@@ -20,11 +24,11 @@ def bob_main () @ bob
 
 def alice_main () @ alice
      : if sec(k_data) then x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob_main())} else Data<adv> = 
-    let c = samp enc(get(shared_key), get(k_data)) in
+    let c = aenc(get(shared_key), get(k_data)) in
     let _ = output c to endpoint(bob) in 
     input i, _ in 
     corr_case k_data in
-    case dec(get(k_data), i) 
+    case adec(get(k_data), i) 
      | Some j => 
        assert(sec(k_data) ==> happened(bob_main()));
        SomeResult(j)
@@ -35,10 +39,10 @@ def bob_main () @ bob
     input i, _ in 
     // i : Data<adv>
     corr_case shared_key in
-    case dec(get(shared_key), i) 
+    case adec(get(shared_key), i) 
      | Some k => 
         assert (sec(shared_key) ==> happened(alice_main()));
-        let c = samp enc(k, get(x)) in
+        let c = aenc(k, get(x)) in
         output c to endpoint(alice);
         true
      | None => false

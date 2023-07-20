@@ -30,8 +30,8 @@ doSingleTest fileName f tt = do
               putStrLn $ show $ pretty "TEST FAILURE: " <> pretty fileName <> pretty " expected to type check"
               return False
           (Left err, ExpectFailure) -> return True
-          (Right (), ExpectSuccess) -> return True
-          (Right (), ExpectFailure) -> do
+          (Right _, ExpectSuccess) -> return True
+          (Right _, ExpectFailure) -> do
               putStrLn $ show $ pretty "TEST FAILURE: " <> pretty fileName <> pretty " expected to fail, but type checking succeeded"
               return False
 

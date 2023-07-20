@@ -7,8 +7,8 @@ endif
 
 syn keyword owlConditional case if then else pack unpack
 syn keyword owlCommand input output requires ensures
-syn keyword owlDecl name func def flow locality enum struct table
-syn keyword owlKeyword let in return 
+syn keyword owlDecl name func def locality enum struct table module type corr counter
+syn keyword owlKeyword let in return get_counter inc_counter aenc adec aenc_with_nonce adec_with_nonce sign vrfy mac mac_vrfy
 
 syn keyword owlTypeName Data Name Option
 syn region owlCommentLine                                                  start="//"                      end="$" 

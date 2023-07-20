@@ -16,6 +16,9 @@ name NT<@i> : nonce @ T<i>
 // name username<j> : nonce @ T
 corr adv ==> /\_i [NT<@i>]
 
+def T_main<@i> () @ T<i>
+: Unit 
+
 name K<@i> : mackey (t:Name(NT<@i>){happened(T_main<@i>())}) @ T<i>, R
 
 struct s {

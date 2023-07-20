@@ -15,7 +15,8 @@ name k : mackey Name(d) @ A, B
 def A_main () @ A 
     requires corr(d) : Unit = 
     let _ = output get(d) to endpoint(B) in
-    output mac(get(k), get(d)) to endpoint(B)
+    let t = mac(get(k), get(d)) in 
+    output t to endpoint(B)
 
 def B_main () @ B : Unit = 
     input i in 

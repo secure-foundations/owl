@@ -91,7 +91,7 @@ def client_pkinit (certC : Data<adv> ||signature||) @ client
                     | Some k =>
                         // finally, decrypt AK using k
                         corr_case K in
-                        begin case dec(k, enc_ak) 
+                        begin case adec(k, enc_ak) 
                             | Some ak =>
                                 if eq(length(tgt), cipherlen(|enckey|)) then 
                                     let tgt' : Data<adv> |cipherlen(|enckey|)| = tgt in
@@ -149,10 +149,10 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
                                 // TODO: check that a signed timestamp is still fresh
                                 if eq(username, get(uname)) then
                                     // sign/encrypt/send outputs to client
-                                    let tgt = samp enc(get(kT), get(AK)) in
+                                    let tgt =  aenc(get(kT), get(AK)) in
                                     output tgt to endpoint(client);
                                     
-                                    let enc_ak = samp enc(get(K), get(AK)) in
+                                    let enc_ak =  aenc(get(K), get(AK)) in
                                     output enc_ak to endpoint(client);
                                     
                                     // bundle msg and encrypt with pubkeyC
@@ -167,7 +167,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
                                         // let field4 : Data<adv>||signature|| = signed_k in 
                                         let field4 = signed_k in 
                                         let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
-                                        let msg = samp pkenc(pkC, str) in
+                                        let msg =  pkenc(pkC, str) in
                                         output msg to endpoint(client); ()
                                     else ()
                                 else ()

@@ -1,0 +1,78 @@
+include "kerberos_stage1.owli"
+
+module Kerberos_Stage23 (P : Params, Stage1 : Kerberos_Stage1(P)) = { 
+
+    // Only stage 2,3
+    def ticketserver_main () @ P.ticketserver
+        : Unit =
+
+        // i = (AK)_kT, (ClientRequest)_AK 
+        input i in 
+        
+        corr_case P.kT in
+        case adec(get(P.kT), P._client_to_ticketserver_msg_1(i)) 
+             | None => ()
+             | Some ak =>
+                 corr_case P.AK in
+                 (case adec(ak, P._client_to_ticketserver_msg_2(i)) 
+                     | Some ClientRequest =>
+                         let st =  aenc(get(P.kS), get(P.SK)) in
+                         let m =  aenc(ak, P.TicketResponse(get(P.SK))) in
+                         let p = P.ticketserver_msg(st, m) in
+                         let _ = output p to endpoint(P.client) in ()
+                     | None => ())
+
+    // Only stage 2,3
+    def service_main () @ P.service
+        : Unit =
+
+        // i = (SK)_kS, ("client")_SK
+        input i in
+        
+        corr_case P.kS in
+        case adec(get(P.kS), P._client_to_service_msg_1(i)) 
+             | None => ()
+             | Some sk =>
+                 corr_case P.SK in
+                 (case adec(sk, P._client_to_service_msg_2(i)) 
+                     | None => ()
+                     | Some u =>
+                         if eq(u, get(P.uname)) then
+                             let _ = output "" to endpoint(P.client) in ()
+                         else ())
+
+    def authserver_main() @ P.authserver : Unit = call Stage1.authserver_main()
+
+    def client_main (ak: if sec(Stage1.K) then Name(P.AK) else Data<adv> ||enckey||, tgt : Data<adv>
+    |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ P.client
+        requires [P.AK] <= [Stage1.K]
+        : Unit = 
+        corr_case P.AK in
+        corr_case Stage1.K in
+        let o = call Stage1.client_stage1() in
+        case o
+        | None => ()
+        | Some x => 
+        begin
+            let m =  aenc(ak, P.ClientRequest()) in
+            let p = P.client_to_ticketserver_msg(tgt, m) in
+            let _ = output p to endpoint(P.ticketserver) in
+
+            input i' in 
+            let service_ticket = P._ticketserver_msg_1(i') in
+            (case adec(ak, P._ticketserver_msg_2(i')) 
+                | None => ()
+                | Some res =>
+                    (case res 
+                        | ClientRequest => () 
+                        | TicketResponse sk => 
+                        let m' =  aenc(sk, username) in
+                        let p' = P.client_to_service_msg(service_ticket, m') in
+                        let _ = output p' to endpoint(P.service) in 
+                        // wait for service's response
+                        input _ in () ))
+        end
+
+}
+
+// TODO: compose protocols here

@@ -13,6 +13,6 @@ def main(b : Bool<adv>)@alice : Unit =
 
 def main2(x : Data<adv>) @ alice : Option (if sec(k) then Name(n) else Data<adv>) = 
     corr_case k in
-    dec(get(k), x)
+    adec(get(k), x)
 
     

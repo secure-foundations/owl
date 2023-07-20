@@ -82,7 +82,7 @@ def alice (
   input i in
   corr_case KA in
   corr_case KAB in
-  (case dec(kA, i) 
+  (case adec(kA, i) 
     | None => alice_None()
     | Some res =>
         let res' = res in 
@@ -91,12 +91,12 @@ def alice (
         let _ = output m1 in
 
         input i in
-        (case dec(kAB, i) 
+        (case adec(kAB, i) 
             | None => alice_None()
             | Some res2 =>
                 // let nB':Name(NB) = some_func(res) in
                 let nB' = res2 in
-                let encm = samp enc(kAB, nB') in
+                let encm = aenc(kAB, nB') in
                 let _ = output encm in
                 alice_Some(kAB)
         )
@@ -118,10 +118,10 @@ def server () @ AS
     let kB  = get(KB) in
 
     let m1 : kB_message = kB_message(kAB, A') in
-    let encm1 = samp enc(kB, m1) in
+    let encm1 = aenc(kB, m1) in
 
     let m2 = kA_message(nA', kAB, B', encm1) in
-    let encm2 = samp enc(kA, m2) in
+    let encm2 = aenc(kA, m2) in
     let _ = output encm2 in ()
 // ************************************************************************
 
@@ -139,17 +139,17 @@ def bob () @ Bob
     corr_case KB in
     corr_case KAB in
     input i in
-    (case dec(kB, i) 
+    (case adec(kB, i) 
         | None => bob_None()
         | Some res =>
             let A' = _A(res) in
             let kAB' : if sec(KB) then Name(KAB) else Data<adv> = _kAB1(res) in
             let nB = get(NB) in
-            let encm = samp enc(kAB', nonceB(nB)) in
+            let encm = aenc(kAB', nonceB(nB)) in
             output encm;
 
             input i2 in
-            (case dec(kAB', i2) 
+            (case adec(kAB', i2) 
                 | None => bob_None()
                 | Some res =>
                     let _ = check_nonce(res, nB) in

@@ -22,6 +22,9 @@
 locality T
 locality R
 
+
+def T_main<i> @ T
+
 name NR<i> : nonce @ R
 corr adv ==> /\_i [NR<i>]
 name K<i> : enckey (x:Data<adv>{happened(T_main<i>())}) @ T, R
@@ -32,7 +35,7 @@ def T_main<i>() @ T
 : Unit =
     let k = get(K<i>) in
     input inp in
-    let encm = samp enc(k, inp) in
+    let encm = aenc(k, inp) in
     output encm to endpoint(R)
 
 enum reader_response<i> {
@@ -56,7 +59,7 @@ def R_main<j>() @ R
         | Some k_packed =>
             unpack i, k = k_packed in
             corr_case K<i> in
-            begin case dec(k, inp) 
+            begin case adec(k, inp) 
                 | None => pack<i>(No<idx i>())
                 | Some nR' => 
                     // let b = eq(length(inp), cipherlen(|nonce|)) in
@@ -82,7 +85,7 @@ def R_main<j>() @ R
 //     let _ = output nR in
 
 //     input inp in
-//     (case dec(k, inp) 
+//     (case adec(k, inp) 
 //         | None => No<idx i, idx j>()
 //         | Some nR' => 
 //             Ok<idx i, idx j>(inp)

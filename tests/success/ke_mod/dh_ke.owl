@@ -1,0 +1,82 @@
+include "ke.owli"
+
+module DH_KE (P : Params) : KE(P) = {
+            name k : enckey Name(P.data) @ P.Server
+            name S : DH @ P.Server
+            name C : DH @ P.Client
+            name skS : sigkey (dhpk(S)) @ P.Server
+            name skC : sigkey (dhpk(C)) @ P.Client
+            random_oracle l : dh_combine(dhpk(get(C)), get(S)) -> enckey Name(k) 
+
+            struct server_msg {
+                _s1: dhpk(S),
+                _s2: Data<adv> ||signature||
+            }
+
+            struct client_msg {
+                _c1: dhpk(C),
+                _c2: Data<adv> ||signature||
+            }
+
+            // todo: make these smaller
+            corr [skC] ==> [k]
+            corr [skS] ==> [k]
+            corr [C] ==> [k]
+            corr [S] ==> [k]
+            corr [S] ==> [skC]
+            corr [skS] ==> [S]
+            corr [skS] ==> [C]
+            corr [k] ==> [skS]
+
+            def ke_Server () @ P.Server
+            : Unit = 
+                let vkC: vk(skC) = get_vk(skC) in
+                let signed_s = sign(get(skS), dhpk(get(S))) in
+                let a = server_msg(dhpk(get(S)), signed_s) in
+                let _ = output a to endpoint(P.Client) in
+                input i, _ in 
+                corr_case skC in
+                case vrfy(vkC, _c1(i), _c2(i)) 
+                 | Some m => 
+                   let client_pk : if sec(skC) then dhpk(C) else Data<adv> = m in
+                   corr_case S in 
+                   corr_case C in 
+                   let ss : if sec(skC) then shared_secret(C, S) else Data<(adv /\ [S])> = dh_combine(client_pk, get(S)) in
+                   let dhk : if sec(C) /\ sec(S) then Name(RO<l>) else Data<adv> = hash<l>(ss) in
+                   let c =  aenc(dhk, get(k)) in
+                   corr_case k in
+                   false_elim in
+                   assert (([skC] <= adv) ==> ([k] <= adv)); 
+                   let _ = output c to endpoint(P.Client) in 
+                   ()
+                 | None => ()
+
+
+            def ke_Client () @ P.Client
+            :  Option (if sec(k) then Name(k) else Data<adv>) = 
+                let vkS: vk(skS) = get_vk(skS) in
+                let signed_c = sign(get(skC), dhpk(get(C))) in
+                let b = client_msg(dhpk(get(C)), signed_c) in
+                let _ = output b to endpoint(P.Server) in
+                input i, _ in 
+                corr_case skS in
+                case vrfy(vkS, _s1(i), _s2(i)) 
+                 | Some m => 
+                   let server_pk : if sec(skS) then dhpk(S) else Data<adv> = m in
+                   let ss : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = dh_combine(server_pk, get(C)) in
+                   let ss_swap : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = ss in 
+                   let dhk : if sec(skS) then Name(RO<l>) else Data<adv> = hash<l> (ss_swap) in
+                   input ii, _ in 
+                   corr_case RO<l> in
+                   corr_case k in 
+                   false_elim in
+                   (case adec(dhk, ii) 
+                   | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
+                   | Some dd => 
+                     let ddd : if sec(k) then Name(k) else Data<adv> = dd in
+                     // Some(ddd)
+                     None<ty: if sec(k) then Name(k) else Data<adv> >()
+                     )
+                 | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
+}
+

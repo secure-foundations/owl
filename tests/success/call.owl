@@ -7,10 +7,12 @@ name blah : nonce @ alice
 def alice1<i> (b: Name(blah)) @ alice : Name(d<i>)
     = get(d<i>)
 
+def alice2<i> @ alice
+
 def alice2<i> () @ alice : Unit
     = 
     assert (happened(alice2<i>()));
     let x = call alice1<i>(get(blah)) in 
     assert (happened(alice1<i>(get(blah))));
-    let c = samp enc(get(k<i>), x) in
+    let c = aenc(get(k<i>), x) in
     output c to endpoint(alice)

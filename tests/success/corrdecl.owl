@@ -1,0 +1,12 @@
+locality alice
+
+name n : nonce @ alice
+name m<i> : nonce @ alice
+
+corr adv ==> [n]
+corr adv ==> /\_i [m<i>]
+
+def alice<i>() @ alice : Unit = 
+    output get(n);
+    output (get(m<i>));
+    ()

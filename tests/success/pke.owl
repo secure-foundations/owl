@@ -6,7 +6,7 @@ name skA : pkekey Name(d) @ alice
 
 def bob_main () @ bob : Unit = 
     let pkA : encpk(skA) = get_encpk(skA) in 
-    let c = samp pkenc(pkA, get(d)) in 
+    let c = pkenc(pkA, get(d)) in 
     output c to endpoint(alice);
     ()
 

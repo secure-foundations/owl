@@ -96,7 +96,7 @@ def Alice_main<i> (
 
     corr_case KA in
     input inp in
-    begin case dec(kA, inp) 
+    begin case adec(kA, inp) 
         | None => 
             unpack j, _ = () in // arbitrary j
             pack<j>(alice_None<idx i, idx j>())
@@ -111,11 +111,11 @@ def Alice_main<i> (
 
             input inp2 in
             assert (corr(KA) ==> corr(KAB<j>));
-            begin case dec(kAB', inp2) 
+            begin case adec(kAB', inp2) 
                 | None => pack<j>(alice_None<idx i, idx j>())
                 | Some res2 =>
                     let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
-                    let encm = samp enc(kAB', nB') in // some_func(nB')
+                    let encm = aenc(kAB', nB') in // some_func(nB')
                     let _ = output encm to endpoint(Bob) in
                     pack<j>(alice_Some<idx i, idx j>(kAB'))
             end
@@ -135,8 +135,8 @@ def AS_main<i> () @ AS
     let kB  = get(KB) in
 
     if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) && eq(length(B'), |nonce|) then
-        let encm1 = samp enc(kB, kB_message(kAB', A')) in
-        let encm2 = samp enc(kA, kA_message(nA', kAB', B', encm1)) in
+        let encm1 = aenc(kB, kB_message(kAB', A')) in
+        let encm2 = aenc(kA, kA_message(nA', kAB', B', encm1)) in
         let _ = output encm2 to endpoint(Alice) in ()
     else let _ = output "" to endpoint(Alice) in ()    
 // ************************************************************************
@@ -154,7 +154,7 @@ def Bob_main<i> () @ Bob
     let kB : Name(KB) = get(KB) in
     corr_case KB in
     input inp in 
-    begin case dec(kB, inp) 
+    begin case adec(kB, inp) 
         | None => 
           unpack j, _ = () in // arbitrary j
           pack<j>(bob_None<idx i, idx j>())
@@ -164,11 +164,11 @@ def Bob_main<i> () @ Bob
             unpack j, kAB' = kAB in
             corr_case KAB<j> in 
 
-            let encm = samp enc(kAB', pack<i>(nonceB<idx i>(get(NB<i>)))) in
+            let encm = aenc(kAB', pack<i>(nonceB<idx i>(get(NB<i>)))) in
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in
-            begin case dec(kAB', inp2) 
+            begin case adec(kAB', inp2) 
                 | None => pack<j>(bob_None<idx i, idx j>())
                 | Some res2 =>
                     // let _ = check_nonce(res2, nB) in
