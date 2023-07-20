@@ -15,16 +15,32 @@ module Full(P : Params, K : functor (Q : Params) => KE(Q)) = {
 
 }
 
-module DHFunctor (P : Params) = Full(P, DH_KE)
-
-module PSKFunctor (P : Params) = Full(P, PSK_KE)
-
 module tstParams : Params = { 
     locality Client
     locality Server
     name data : nonce @ Client
 }
 
+/*
+the below type checks but does not extract
+
+module DHFunctor (P : Params) = Full(P, DH_KE)
+
+module PSKFunctor (P : Params) = Full(P, PSK_KE)
+
 module FullDH = DHFunctor(tstParams)
 module FullPSK = PSKFunctor(tstParams)
+*/
+
+
+module FullDH = {
+    module Inner_KE = DH_KE(tstParams)
+    module P = Full(tstParams, Inner_KE)
+}
+
+module FullPSK = {
+    module Inner_KE = PSK_KE(tstParams)
+    module P = Full(tstParams, Inner_KE)
+}
+
 
