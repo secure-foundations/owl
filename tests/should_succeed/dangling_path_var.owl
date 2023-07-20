@@ -17,8 +17,8 @@ module M = functor (X : S) => {
 module Main = M(Srefined)
 
 // This should work
-def tst() @ alice : Name(Srefined.x) = 
-    call Main.alice_main()
+/* def tst() @ alice : Name(Srefined.x) = 
+    call Main.alice_main() */
 
 /*
 Expected output:

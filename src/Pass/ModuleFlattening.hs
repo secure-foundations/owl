@@ -63,6 +63,7 @@ flattenModules p0 md = do
     sbts_mbs <- forM (md^.modules) $ \(s, md) ->
         case md of
           MFun _ _ _ -> return ([], [])
+          MAlias _ -> return ([], [])
           MBody xb -> do
               (x, bdy) <- unbind xb
               if bdy ^. isModuleType == ModConcrete then do

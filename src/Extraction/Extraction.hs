@@ -36,11 +36,19 @@ import System.FilePath (takeFileName, (</>))
 import qualified TypingBase as TB
 import Debug.Trace
 
-newtype ExtractionMonad a = ExtractionMonad (StateT Env (ExceptT ExtractionError IO) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO)
+newtype ExtractionMonad a = ExtractionMonad (ReaderT TB.Env (StateT Env (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader TB.Env)
 
-runExtractionMonad :: Env -> ExtractionMonad a -> IO (Either ExtractionError a)
-runExtractionMonad env (ExtractionMonad m) = runExceptT . evalStateT m $ env
+runExtractionMonad :: TB.Env -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
+
+liftCheck :: TB.Check a -> ExtractionMonad a
+liftCheck c = do
+    e <- ask
+    o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope TB.TcGhost) c) e
+    case o of 
+      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "RustifyPath error: " 
+      Right i -> return i
 
 -- Number can be any integer type, ADT means one of our struct/enum representations, VecU8 also includes &[u8], [u8; const len], etc
 data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
@@ -161,9 +169,11 @@ tailPath :: Path -> ExtractionMonad String
 tailPath (PRes (PDot _ y)) = return y
 tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
 
-rustifyPath :: Path -> String
+rustifyPath :: Path -> ExtractionMonad String
 -- rustifyPath (PUnresolvedVar s) = show s
-rustifyPath (PRes rp) = rustifyResolvedPath rp
+rustifyPath (PRes rp) = do
+    rp' <- liftCheck $ TB.normResolvedPath rp
+    return $ rustifyResolvedPath rp'
 rustifyPath p = error $ "bad path: " ++ show p
 
 locName :: String -> String
@@ -394,9 +404,11 @@ lookupAdtFunc fn = do
         Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
         Nothing -> return Nothing
 
-flattenNameExp :: NameExp -> String
+flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  BaseName _ s -> rustifyName (rustifyPath s)
+  BaseName _ s -> do
+      p <- rustifyPath s
+      return $ rustifyName p
 
 -------------------------------------------------------------------------------------------
 -- Data representation
@@ -446,17 +458,18 @@ layoutCTy (CTOption ct) = do
     lct <- layoutCTy ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
 layoutCTy (CTConst p) = do
-    lookupTyLayout . rustifyName . rustifyPath $ p
+    p' <- rustifyPath p
+    lookupTyLayout . rustifyName $ p'
 layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
 layoutCTy CTUnit = return $ LBytes 1
 layoutCTy (CTName n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTVK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTDH_PK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTEnc_PK n) = do
-    lookupTyLayout . flattenNameExp $ n
+    lookupTyLayout =<< flattenNameExp n
 layoutCTy (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
 
 layoutStruct :: String -> [(String, CTy)] -> ExtractionMonad Layout
@@ -789,7 +802,7 @@ extractCryptOp binds op owlArgs = do
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
         (CHash p _ n, [(_,x)]) -> do 
-            let roname = rustifyPath p 
+            roname <- rustifyPath p 
             orcls <- use oracles
             case orcls M.!? roname of
                 Nothing -> throwError $ TypeError "unrecognized random oracle"
@@ -831,7 +844,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
             return (rt, preArgs, pretty str)
         Nothing -> do
             -- adtfs <- use adtFuncs
-            adtf <- lookupAdtFunc (rustifyPath owlFn)
+            adtf <- lookupAdtFunc =<< rustifyPath owlFn
             case adtf of
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
@@ -869,11 +882,19 @@ extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of
-        BaseName ([], _) s -> return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (flattenNameExp nameExp)))
-        BaseName (sidxs, _) s -> return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName $ rustifyPath s) <> tupled (map (pretty . sidName . show . pretty) sidxs))
+        BaseName ([], _) s -> do
+            fnameExp <- flattenNameExp nameExp
+            return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (fnameExp)))
+        BaseName (sidxs, _) s -> do
+            ps <- rustifyPath s
+            return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
-extractAExpr binds (AEGetEncPK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
-extractAExpr binds (AEGetVK nameExp) = return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty (flattenNameExp nameExp)))
+extractAExpr binds (AEGetEncPK nameExp) = do
+    fnameExp <- flattenNameExp nameExp
+    return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty fnameExp))
+extractAExpr binds (AEGetVK nameExp) = do
+    fnameExp <- flattenNameExp nameExp
+    return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self.pk_" <> pretty fnameExp))
 extractAExpr binds (AEPackIdx idx ae) = extractAExpr binds (ae^.val)
 extractAExpr binds (AELenConst s) = do
     lcs <- use lenConsts
@@ -899,9 +920,12 @@ extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
-        Just (EndpointLocality (Locality lname _)) -> return $ pretty "&" <> pretty (rustifyPath lname) <> pretty "_addr"
+        Just (EndpointLocality (Locality lname _)) -> do
+            plname <- rustifyPath lname
+            return $ pretty "&" <> pretty plname <> pretty "_addr"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev)
-    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty (rustifyPath myLname) <> pretty "_addr") <> pretty ";")
+    pmyLname <- rustifyPath myLname
+    return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty (pmyLname) <> pretty "_addr") <> pretty ";")
 extractExpr loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
@@ -929,9 +953,10 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\sid -> (Number, sidName . show . pretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
-    case fs M.!? (rustifyPath owlFn) of
+    powlFn <- rustifyPath owlFn
+    case fs M.!? (powlFn) of
       Nothing -> do
-        throwError $ UndefinedSymbol (rustifyPath owlFn)
+        throwError $ UndefinedSymbol (powlFn)
       Just (rt, f) -> do
         str <- f args
         return (binds, rt, preArgs, pretty str)
@@ -1013,7 +1038,8 @@ extractExpr loc binds (CTLookup tbl ae) = do
             RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty "[..]"
             VecU8 -> return $ pretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
-    let tblName = rustifyName $ rustifyPath tbl
+    ptbl <- rustifyPath tbl
+    let tblName = rustifyName ptbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
 extractExpr loc binds (CCrypt cryptOp args) = do
     (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
@@ -1153,8 +1179,10 @@ sortDecls dcls = do
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
                 let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
                 let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
-                let locNames = map (\(Locality lname _) -> rustifyPath lname) loc
-                let locNameCounts = map (\(Locality lname lidxs) -> (rustifyPath lname, length lidxs)) loc
+                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
+                locNameCounts <- mapM (\(Locality lname lidxs) -> do
+                    plname <- rustifyPath lname
+                    return (plname, length lidxs)) loc
                 case nt ^.val of
                     -- public keys must be shared, so pub/priv key pairs are generated by the initializer
                     NT_PKE _ ->
@@ -1176,7 +1204,8 @@ sortDecls dcls = do
             case obody of
               Just body -> do
                 let f (i, l, s, d, t) = (i, l, s, d ++ [(name, Locality loc lidxs, sids, args, retTy, body)], t)
-                return (gDecls, M.adjust f (rustifyPath loc) locMap, shared, pubkeys)
+                ploc <- rustifyPath loc
+                return (gDecls, M.adjust f ploc locMap, shared, pubkeys)
               Nothing -> do -- Def is abstract, predeclare it
                   makeFunc name (Locality loc lidxs) sids args retTy
                   return (gDecls, locMap, shared, pubkeys)
@@ -1199,7 +1228,8 @@ sortDecls dcls = do
             else throwError $ UnsupportedDecl "can't use uninterpreted functions in extracted protocols"
         DeclTable name ty (Locality lname _) -> do
             let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
-            return (gDecls, M.adjust f (rustifyPath lname) locMap, shared, pubkeys)
+            plname <- rustifyPath lname
+            return (gDecls, M.adjust f plname locMap, shared, pubkeys)
         DeclTy name topt -> do
             return (gDecls ++ [d], locMap, shared, pubkeys)
         DeclInclude fn -> throwError $ ErrSomethingFailed "messed up"
@@ -1238,7 +1268,7 @@ preprocessModBody mb = do
         sortDef lookupLoc m (owlName, TB.Def idxs_defSpec) = do
                 let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
-                locName <- lookupLoc (rustifyPath locP)
+                locName <- lookupLoc =<< rustifyPath locP
                 let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
                 case body of
                     Nothing -> return m
@@ -1249,7 +1279,7 @@ preprocessModBody mb = do
         
         sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
         sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
-            locName <- lookupLoc (rustifyPath locP)
+            locName <- lookupLoc =<< rustifyPath locP
             let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
             return $ M.adjust f locName locMap
 
@@ -1279,8 +1309,10 @@ preprocessModBody mb = do
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
                 let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
                 let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
-                let locNames = map (\(Locality lname _) -> rustifyPath lname) loc
-                let locNameCounts = map (\(Locality lname lidxs) -> (rustifyPath lname, length lidxs)) loc
+                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
+                locNameCounts <- mapM (\(Locality lname lidxs) -> do
+                    plname <- rustifyPath lname
+                    return (plname, length lidxs)) loc
                 case nt ^.val of
                     -- public keys must be shared, so pub/priv key pairs are generated by the initializer
                     NT_PKE _ ->
@@ -1735,5 +1767,5 @@ extractModBody mb = do
     ep <- entryPoint locMap sharedNames pubKeys sidArgMap
     return $ p <> line <> tyDefsExtracted <> line <> locsExtracted <> line <> ep
 
-extract :: String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
-extract path modbody = runExtractionMonad (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody
+extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
+extract tcEnv path modbody = runExtractionMonad tcEnv (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody

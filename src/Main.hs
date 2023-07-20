@@ -59,7 +59,7 @@ main = do
                           if extract args then do
                               let extfn = "extraction/src/main.rs"
                               modBody <- doFlattening tcEnv
-                              res <- E.extract (takeDirectory fn) modBody
+                              res <- E.extract tcEnv (takeDirectory fn) modBody
                               case res of
                                 Left err -> E.printErr err
                                 Right rust_code -> do

@@ -131,7 +131,9 @@ class SmtName a where
     smtName :: a -> Sym String
 
 instance SmtName ResolvedPath where
-    smtName p = return $ go p
+    smtName p = do
+        p' <- liftCheck $ normResolvedPath p
+        return $ go p'
         where
             go :: ResolvedPath -> String
             go (PDot PTop a) = a 

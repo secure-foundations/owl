@@ -9,6 +9,9 @@ module M = {
 
 module N = M
 
+def tst () @ alice : Name(N.k) = 
+    get(N.k)
+
 /*
 Expected output:
 

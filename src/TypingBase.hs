@@ -101,6 +101,7 @@ instance Subst ResolvedPath UserFunc
 
 data ModDef = 
     MBody (Bind (Name ResolvedPath) ModBody)
+    | MAlias ResolvedPath -- Only aliases for modules, not functors
     | MFun String ModDef (Bind (Name ResolvedPath) ModDef)
     deriving (Show, Generic, Typeable)
 
@@ -224,11 +225,15 @@ makeLenses ''Env
 
 makeLenses ''ModBody
 
-modDefKind :: ModDef -> IsModuleType
+modDefKind :: ModDef -> Check IsModuleType
 modDefKind (MBody xd) =
-    let (_, d) = unsafeUnbind xd in _isModuleType d
+    let (_, d) = unsafeUnbind xd in return $ _isModuleType d
 modDefKind (MFun _ _ xd) = 
     let (_, d) = unsafeUnbind xd in modDefKind d
+modDefKind (MAlias p) = do
+    md <- getModDef (ignore def) p
+    modDefKind md
+
 
 makeModDefConcrete :: ModDef -> Check ModDef
 makeModDefConcrete (MBody xd) = do
@@ -238,6 +243,9 @@ makeModDefConcrete (MFun s t xk) = do
     (x, k) <- unbind xk
     k' <- makeModDefConcrete k
     return $ MFun s t $ bind x k'
+makeModDefConcrete (MAlias p) = do
+    md <- getModDef (ignore def) p
+    makeModDefConcrete md
 
 instance Fresh Check where
     fresh (Fn s _) = do
@@ -393,11 +401,13 @@ openModule pos rp = do
               Just (MBody xmb) -> do
                   (x, mb) <- unbind xmb
                   return $ subst x p0 mb 
+              Just (MAlias p) -> go p
               Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
               Nothing -> typeError pos $ "Unknown module or functor (functor argument, openModule): " ++ show p0
         go p0@(PDot p' s) = do
             md <- go p'
             case lookup s (md^.modules) of
+              Just (MAlias p) -> go p
               Just (MBody xmb) -> do
                   (x, mb) <- unbind xmb
                   return $ subst x p0 mb
@@ -722,6 +732,7 @@ collectEnvInfo f = do
     res' <- forM mc $ \(x, md) -> do
         case md of
           MFun _ _ _ -> return []
+          MAlias _ -> return []
           MBody xmb -> do
               let p = PPathVar (ClosedPathVar (ignore $ show x)) x
               (y, mb) <- unbind xmb
@@ -734,6 +745,7 @@ collectEnvInfo f = do
                 fs' <- forM (mb^.modules) $ \(s, md) -> do
                     case md of
                       MFun _ _ _ -> return []
+                      MAlias _ -> return []
                       MBody xmb -> do
                         (x, mb) <- unbind xmb
                         go f (PDot p s) (subst x (PDot p s) mb)
@@ -752,6 +764,7 @@ collectEnvAxioms f = do
     res' <- forM mc $ \(x, md) -> do
         case md of
           MFun _ _ _ -> return []
+          MAlias _ -> return []
           MBody xmb -> do
               let p = PPathVar (ClosedPathVar $ ignore $ show x) x
               (y, mb) <- unbind xmb
@@ -763,6 +776,7 @@ collectEnvAxioms f = do
                 ys <- forM (md^.modules) $ \(s, md) -> do
                     case md of
                       MFun _ _ _ -> return []
+                      MAlias _ -> return []
                       MBody xmb -> do
                         (x, mb) <- unbind xmb
                         go f (PDot p s) (subst x (PDot p s) mb)
@@ -814,6 +828,26 @@ normLocalityPath pos (PRes loc@(PDot p s)) = do
       Nothing -> typeError pos $ "Unknown locality: " ++ show loc
       Just (Left ar) -> return ar
       Just (Right p) -> normLocalityPath pos (PRes p)
+
+normModulePath :: ResolvedPath -> Check ResolvedPath
+normModulePath PTop = return PTop
+normModulePath p@(PPathVar OpenPathVar _) = return p
+normModulePath p = do
+    md <- getModDef (ignore def) p
+    case md of
+      MAlias p' -> normModulePath p'
+      _ -> return p
+
+normResolvedPath :: ResolvedPath -> Check ResolvedPath
+normResolvedPath (PDot p' s) = do
+    debug $ pretty "normResolvedPath: " <> (pretty (PDot p' s))
+    p'' <- normModulePath p'
+    return $ PDot p'' s
+normResolvedPath p = normModulePath p
+
+normalizePath :: Path -> Check Path
+normalizePath (PRes p) = PRes <$> normResolvedPath p
+normalizePath _ = error "normalizePath: unresolved path"
 
 getModDefFVs :: ModDef -> [Name ResolvedPath]
 getModDefFVs = toListOf fv

@@ -637,7 +637,8 @@ inferModuleExp me =
           ((x, s, t), k) <- unbind xe
           p <- curModName
           t1 <- inferModuleExp $ unembed t 
-          assert (me^.spanOf) (show $ pretty "Not a module type: " <> pretty (unembed t)) $ (modDefKind t1) == ModType
+          kind_t1 <- modDefKind t1
+          assert (me^.spanOf) (show $ pretty "Not a module type: " <> pretty (unembed t)) $ kind_t1 == ModType
           t1Concrete <- makeModDefConcrete t1
           r <- local (over modContext $ insert x t1Concrete) $ 
                   inferModuleExp k
@@ -648,7 +649,8 @@ inferModuleExp me =
             MBody _ -> typeError (me^.spanOf) $ "Not a functor: " ++ show e1
             MFun _ s xd -> do
               argd <- getModDef (me^.spanOf) argp
-              assert (me^.spanOf) ("Not a module: " ++ show argp) $ (modDefKind argd) == ModConcrete
+              kind_argd <- modDefKind argd
+              assert (me^.spanOf) ("Not a module: " ++ show argp) $ kind_argd == ModConcrete
               moduleMatches (me^.spanOf) argd s 
               (x, d) <- unbind xd
               return $ subst x argp d
@@ -701,15 +703,19 @@ checkDecl d cont =
           Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
           Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
       DeclModule n imt me omt -> do
-          md <- inferModuleExp me
+          md <- case me^.val of
+                  ModuleVar (PRes p) -> return $ MAlias p 
+                  _ -> inferModuleExp me
+          kind_md <- modDefKind md
           case imt of
-            ModConcrete -> assert (d^.spanOf) ("Expected module, got module type: " ++ show (pretty me)) $ modDefKind md == imt
-            ModType -> assert (d^.spanOf) ("Expected module type, got module: " ++ show (pretty me)) $ modDefKind md == imt
+            ModConcrete -> assert (d^.spanOf) ("Expected module, got module type: " ++ show (pretty me)) $ kind_md == imt
+            ModType -> assert (d^.spanOf) ("Expected module type, got module: " ++ show (pretty me)) $ kind_md == imt
           case omt of
             Nothing -> return ()
             Just mt -> do
               mdt <- inferModuleExp mt
-              assert (d^.spanOf) ("Expected module type: " ++ show (pretty mt)) $ modDefKind mdt == ModType
+              kind_mdt <- modDefKind mdt
+              assert (d^.spanOf) ("Expected module type: " ++ show (pretty mt)) $ kind_mdt == ModType
               moduleMatches (singleLineSpan $ d^.spanOf) md mdt
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
@@ -1925,6 +1931,12 @@ nameMatches pos s xn1 xn2 = do
 moduleMatches :: Ignore Position -> ModDef -> ModDef -> Check ()
 moduleMatches pos md1 md2 = 
     case (md1, md2) of 
+      (MAlias p, _) -> do
+          d <- getModDef pos p
+          moduleMatches pos d md2
+      (_, MAlias p) -> do
+          d <- getModDef pos p
+          moduleMatches pos md1 d 
       (MBody _, MFun _ _ _) -> typeError pos $ "Expected functor, but got module"
       (MFun _ _ _, MBody _) -> typeError pos $ "Expected module, but got functor"
       (MFun s t1 xmd1, MFun _ t2 ymd2) -> do
