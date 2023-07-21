@@ -315,63 +315,67 @@ interpUserFunc pos pth md (UninterpUserFunc f ar) = do
 -- Normalize a type expression. Only nontrivial computations are to normalize a
 -- nested refinement, and to normalize a case whether a name n is honest.
 normalizeTy :: Ty -> Check Ty
-normalizeTy t0 =
+normalizeTy t0 = do
+    debug $ pretty "normalizeTy: " <> pretty t0
     case t0^.val of
-    TUnit -> return tUnit
-    (TCase p t1 t2) -> do
-        ob <- decideProp p
-        t1' <- normalizeTy t1
-        t2' <- normalizeTy t2
-        case ob of
-          Nothing -> do
-              b1 <- isSubtype t1 t2
-              b2 <- isSubtype t2 t1
-              if (b1 && b2) then return t1 else return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
-          Just b -> return $ if b then t1' else t2'
-    (TOption t) -> do
-        t' <- normalizeTy t
-        return $ Spanned (t0^.spanOf) $ TOption t'
-    (TRefined (Spanned _ (TRefined t xp1)) yp2) -> do  -- x:(y:t{p1}){p2} --> x:t{p1 /\ p2}
-        (x, p1) <- unbind xp1
-        (y, p2) <- unbind yp2
-        normalizeTy $ Spanned (t0^.spanOf) $ TRefined t $ bind (s2n "_x") $ pAnd (subst x (aeVar "_x") p1) (subst y (aeVar "_x") p2)
-    (TRefined t p) -> do
-        t' <- normalizeTy t
-        return $ Spanned (t0^.spanOf) $ TRefined t' p
-    (TUnion t1 t2) -> do
-        t1' <- normalizeTy t1
-        t2' <- normalizeTy t2
-        return $ Spanned (t0^.spanOf) $ TUnion t1' t2'
-    (TData l1 l2) -> do
-        l1' <- normalizeLabel l1
-        l2' <- normalizeLabel l2
-        return $ Spanned (t0^.spanOf) $ TData l1' l2'
-    (TDataWithLength l a) -> do
-        l' <- normalizeLabel l
-        return $ Spanned (t0^.spanOf) $ TDataWithLength l' a
-    (TBool l) -> do
-        l' <- normalizeLabel l
-        return $ Spanned (t0^.spanOf) $ TBool l'
-    (TName n) -> return t0
-    (TVK n) -> return t0
-    (TDH_PK n) -> return t0
-    (TEnc_PK n) -> return t0
-    (TSS n m) -> return t0
-    TConst s ps -> do
-        td <- getTyDef (t0^.spanOf) s
-        case td of
-          TyAbstract -> return t0
-          TyAbbrev t -> normalizeTy t
-          StructDef _ -> return t0
-          EnumDef _ ->
-              case ps of
-                ps' -> do
-                    return $ Spanned (t0^.spanOf) $ TConst s (ps')
-    (TExistsIdx xt) -> do
-        (x, t) <- unbind xt
-        t' <- local (over (inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
-        return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
-    TAdmit -> return t0
+        TUnit -> return tUnit
+        (TCase p t1 t2) -> do
+            ob <- decideProp p
+            t1' <- normalizeTy t1
+            t2' <- normalizeTy t2
+            case ob of
+              Nothing -> do
+                  b1 <- isSubtype t1 t2
+                  b2 <- isSubtype t2 t1
+                  if (b1 && b2) then return t1' else return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
+              Just b -> return $ if b then t1' else t2'
+        (TOption t) -> do
+            t' <- normalizeTy t
+            return $ Spanned (t0^.spanOf) $ TOption t'
+        (TRefined (Spanned _ (TRefined t xp1)) yp2) -> do  -- x:(y:t{p1}){p2} --> x:t{p1 /\ p2}
+            (x, p1) <- unbind xp1
+            (y, p2) <- unbind yp2
+            normalizeTy $ Spanned (t0^.spanOf) $ TRefined t $ bind (s2n "_x") $ pAnd (subst x (aeVar "_x") p1) (subst y (aeVar "_x") p2)
+        (TRefined t p) -> do
+            t' <- normalizeTy t
+            return $ Spanned (t0^.spanOf) $ TRefined t' p
+        (TUnion t1 t2) -> do
+            t1' <- normalizeTy t1
+            t2' <- normalizeTy t2
+            return $ Spanned (t0^.spanOf) $ TUnion t1' t2'
+        (TData l1 l2) -> do
+            l1' <- normalizeLabel l1
+            l2' <- normalizeLabel l2
+            return $ Spanned (t0^.spanOf) $ TData l1' l2'
+        (TDataWithLength l a) -> do
+            l' <- normalizeLabel l
+            return $ Spanned (t0^.spanOf) $ TDataWithLength l' a
+        (TBool l) -> do
+            l' <- normalizeLabel l
+            return $ Spanned (t0^.spanOf) $ TBool l'
+        (TName n) -> return t0
+        (TVK n) -> return t0
+        (TDH_PK n) -> return t0
+        (TEnc_PK n) -> return t0
+        (TSS n m) -> return t0
+        TConst s ps -> do
+            td <- getTyDef (t0^.spanOf) s
+            case td of
+              TyAbstract -> return t0
+              TyAbbrev t -> normalizeTy t
+              StructDef _ -> return t0
+              EnumDef _ ->
+                  case ps of
+                    ps' -> do
+                        return $ Spanned (t0^.spanOf) $ TConst s (ps')
+        (TExistsIdx xt) -> do
+            debug $ pretty "Normalizing " <> pretty t0
+            (x, t) <- unbind xt
+            if x `elem` getTyIdxVars t then do
+                t' <- local (over (inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
+                return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
+            else normalizeTy t
+        TAdmit -> return t0
 
 normalizeLabel :: Label -> Check Label
 normalizeLabel l = do                
@@ -517,10 +521,8 @@ assertSubtype :: Ty -> Ty -> Check ()
 assertSubtype t1 t2 = laxAssertion $ do
     tyc <- view tyContext
     debug $ pretty "Asserting subtype " <> pretty t1 <> pretty " <= " <> pretty t2 <> pretty "Under context: " <> prettyTyContext tyc
-    t1' <- normalizeTy t1
-    t2' <- normalizeTy t2
-    b <- isSubtype' t1' t2'
-    assert (t1^.spanOf) (show $ ErrCannotProveSubtype t1' t2') b
+    b <- isSubtype t1 t2
+    assert (t1^.spanOf) (show $ ErrCannotProveSubtype t1 t2) b
 
 typeProtectsLabel' :: Label -> Ty -> Check ()
 typeProtectsLabel' l t0 =
