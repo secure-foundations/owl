@@ -30,15 +30,10 @@ smtSetup :: Sym ()
 smtSetup = do
             emitComment $ "SMT SETUP for typing query"
             setupAllFuncs 
-            liftCheck $ debug $ pretty $ "Index env"
             setupIndexEnv
-            liftCheck $ debug $ pretty $ "Setup name env and RO"
             setupNameEnvRO
-            liftCheck $ debug $ pretty $ "Label setup"
             smtLabelSetup 
-            liftCheck $ debug $ pretty $ "Setup ty env"
             setupTyEnv 
-            liftCheck $ debug $ pretty $ "Func axioms"
             emitFuncAxioms
 
 smtTypingQuery = fromSMT smtSetup
@@ -62,7 +57,6 @@ sZero = SAtom "zero"
 
 addSymName :: String -> SExp -> Sym ()
 addSymName s e = do
-    liftCheck $ debug $ pretty $ "Adding sym name " ++ s
     symNameEnv %= M.insert s e
 
 
@@ -76,7 +70,6 @@ setupNameEnvRO = do
         addSymName sn sname
         let ar = length is1 + length is2
         emit $ SApp [SAtom "declare-fun", sname, SApp (replicate ar (indexSort)), nameSort]
-    liftCheck $ debug $ pretty "Adding name kind axioms"
     forM_ nE $ \(n, o) -> do 
         ((is1, is2), ntLclsOpt) <- liftCheck $ unbind o
         let ntOpt = case ntLclsOpt of
@@ -98,7 +91,6 @@ setupNameEnvRO = do
             sIE <- use symIndexEnv
             symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is1)
             symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is2)
-            liftCheck $ debug $ pretty "Adding name def flows"
             local (over (inScopeIndices) $ (++) $ map (\i -> (i, IdxSession)) is1) $ 
                 local (over (inScopeIndices)  $ (++) $ map (\i -> (i, IdxPId)) is2) $ do
                     let nexp = mkSpanned $ BaseName (map (IVar (ignore def)) is1, map (IVar (ignore def)) is2) (PRes n)
@@ -442,7 +434,6 @@ interpretAExp ae =
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
       AEGet ne -> do
-          liftCheck $ debug $ pretty "Evaluating get" <+> parens (pretty ne)
           symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
@@ -493,7 +484,6 @@ interpretProp p =
           sn <- smtName s
           return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ sn ++ "\""), mkSList "Index" (ivs ++ ivs'), mkSList "Bits" vs]
       (PFlow l1 l2 ) -> do
-        liftCheck $ debug $ pretty "Interpreting prop " <> pretty l1 <+> pretty "<=" <+> pretty l2
         x <- symLabel l1
         y <- symLabel l2
         return $ SApp [SAtom "Flows", x, y]
@@ -527,7 +517,6 @@ emitFuncAxioms = do
     
 subTypeCheck :: Ty -> Ty -> Sym ()
 subTypeCheck t1 t2 = do
-    liftCheck $ debug $ pretty "Checking subtype " <> pretty t1 <+> pretty "<=" <+> pretty t2
     v <- mkTy Nothing t1
     c <- tyConstraints t2 v
     emitComment $ "Checking subtype " ++ show (pretty t1) ++ " <= " ++ show (pretty t2)
@@ -562,7 +551,6 @@ symROUnique ro e = do
 
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
-    liftCheck $ debug $ pretty "symListUniq with " <+> pretty es
     vs <- mapM interpretAExp es
     emitComment $ "Proving symListUniq with es = " ++ show (pretty es)
     emitToProve $ sDistinct vs
@@ -571,7 +559,6 @@ symListUniq es = do
 ---- First AExpr is in the top level (ie, only names), second is regular
 symCheckEqTopLevel :: [AExpr] -> [AExpr] -> Sym ()
 symCheckEqTopLevel eghosts es = do
-    liftCheck $ debug $ pretty "symCheckEqTopLevel for " <> pretty eghosts <+> pretty " and " <+> pretty es
     if length eghosts /= length es then emitToProve sFalse else do
         vE <- use varVals
         v_es <- mapM interpretAExp es
@@ -587,14 +574,12 @@ symCheckEqTopLevel eghosts es = do
 
 symAssert :: Prop -> Sym ()
 symAssert p = do
-    liftCheck $ debug $ pretty "symAssert for " <> pretty p
     b <- interpretProp p
     emitComment $ "Proving prop " ++ show (pretty p)
     emitToProve b
 
 symDecideNotInRO :: [AExpr] -> Check Bool
 symDecideNotInRO aes = do
-    debug $ pretty "symDecideNotInRO for " <> pretty aes
     if length aes == 0 then return True else do
         res <- fromSMT smtSetup $ do
             vs <- mapM interpretAExp aes
@@ -618,7 +603,6 @@ symDecideNotInRO aes = do
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do
-    debug $ pretty "symDecideProp for " <> pretty p
     let k1 = do {
         emitComment $ "Trying to prove prop " ++ show (pretty p);
         b <- interpretProp p;
@@ -633,7 +617,6 @@ symDecideProp p = do
 
 checkFlows :: Label -> Label -> Check (Maybe String, Maybe Bool)
 checkFlows l1 l2 = do
-    debug $ pretty "checkFlows for " <> pretty l1 <+> pretty "and" <+> pretty l2
     let k1 = do {
         emitComment $ "Trying to prove " ++ show (pretty l1) ++ " <= " ++ show (pretty l2);
         x <- symLabel l1;

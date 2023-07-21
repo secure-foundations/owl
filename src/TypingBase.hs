@@ -840,7 +840,6 @@ normModulePath p = do
 
 normResolvedPath :: ResolvedPath -> Check ResolvedPath
 normResolvedPath (PDot p' s) = do
-    debug $ pretty "normResolvedPath: " <> (pretty (PDot p' s))
     p'' <- normModulePath p'
     return $ PDot p'' s
 normResolvedPath p = normModulePath p
@@ -900,6 +899,108 @@ instance Pretty DefSpec where
         in
         abs <> pretty "@" <> loc <> pretty ":" <+> pretty args <> pretty "->" <> pretty retTy <+> pretty "=" <> line <> body'
         
--- Subroutines for type checking determistic functions. Currently only has
--- special cases for () (constant empty bitstring). Will contain code for
--- checking: sdec, pk, sign, vrfy 
+
+--class NormPaths a where
+--    normPaths :: a -> Check a
+--
+--instance NormPaths NameExp where
+--    normPaths ne = 
+--        case ne^.val of
+--          BaseName is p -> do
+--              p' <- normalizePath p
+--              return $ Spanned (ne^.spanOf) $ BaseName is p'
+--          ROName p is i -> do
+--              p' <- normalizePath p
+--              return $ Spanned (ne^.spanOf) $ ROName p' is i
+--          PRFName ne' s -> do 
+--              ne2 <- normPaths ne'
+--              return $ Spanned (ne^.spanOf) $ PRFName ne2 s
+--
+--instance NormPaths Label where
+--    normPaths l =
+--        case l^.val of
+--          LName ne -> do
+--              ne' <- normPaths ne
+--              return $ Spanned (l^.spanOf) $ LName ne'
+--          LZero -> return l
+--          LAdv -> return l
+--          LJoin l1 l2 -> do
+--              l1' <- normPaths l1
+--              l2' <- normPaths l2
+--              return $ Spanned (l^.spanOf) $ LJoin l1' l2'
+--          LConst (TyLabelVar p) -> do
+--              p' <- normalizePath p
+--              return $ Spanned (l^.spanOf) $ LConst (TyLabelVar p')
+--          LRangeIdx il -> do
+--              (i, l) <- unbind il
+--              l' <- normPaths l
+--              return $ Spanned (l^.spanOf) $ LRangeIdx $ bind i l'
+--
+--instance NormPaths Ty where
+--    normPaths t = 
+--        case t^.val of
+--          TData l1 l2 -> do
+--              l1 <- normPaths l1
+--              l2 <- normPaths l2
+--              return $ Spanned (t^.spanOf) $ TData l1 l2
+--          TDataWithLength l a -> do
+--              l' <- normPaths l
+--              a' <- normPaths a
+--              return $ Spanned (t^.spanOf) $ TDataWithLength l' a'
+--          TRefined t xp -> do
+--              t' <- normPaths t
+--              (x, p) <- unbind xp
+--              p' <- normPaths p
+--              return $ Spanned (t^.spanOf) $ TRefined t' $ bind x p'
+--          TOption t -> do
+--              t' <- normPaths t
+--              return $ Spanned (t^.spanOf) $ TOption t'
+--          TCase p t1 t2 -> do
+--              p' <- normPaths p
+--              t1' <- normPaths t1
+--              t2' <- normPaths t2
+--              return $ Spanned (t^.spanOf) $ TCase p' t1' t2'
+--          TConst p fps -> do
+--              p' <- normalizePath p
+--              fps' <- mapM normPaths fps
+--              return $ Spanned (t^.spanOf) $ TConst p' fps'
+--          TBool l -> do
+--              l' <- normPaths l
+--              return $ Spanned (t^.spanOf) $ TBool l'
+--          TUnion t1 t2 -> do
+--              t1' <- normPaths t1
+--              t2' <- normPaths t2
+--              return $ Spanned (t^.spanOf) $ TUnion t1' t2'
+--          TUnit -> return t
+--          TName n -> do
+--              n' <- normPaths n
+--              return $ Spanned (t^.spanOf) $ TName n'
+--          TVK n -> do
+--              n' <- normPaths n
+--              return $ Spanned (t^.spanOf) $ TVK n'
+--          TDH_PK n -> do
+--              n' <- normPaths n
+--              return $ Spanned (t^.spanOf) $ TDH_PK n'
+--          TEnc_PK n -> do
+--              n' <- normPaths n
+--              return $ Spanned (t^.spanOf) $ TEnc_PK n'
+--          TSS n1 n2 -> do
+--              n1' <- normPaths n1
+--              n2' <- normPaths n2
+--              return $ Spanned (t^.spanOf) $ TSS n1' n2'
+--          TAdmit -> return t
+--          TExistsIdx it -> do
+--              (i, t) <- unbind it
+--              t' <- normPaths t
+--              return $ Spanned (t^.spanOf) $ TExistsIdx $ bind i t'
+--
+--instance NormPaths AExpr where
+--    normPaths a = 
+--        case a^.val of
+--          AEVar _ _ -> return a
+--          AEApp p fps as -> do
+--              p' <- normalizePath p
+
+
+
+

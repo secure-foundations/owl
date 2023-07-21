@@ -27,7 +27,6 @@ sJoin x y = SApp [SAtom "Join", x, y]
 
 nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do
-    liftCheck $ debug $ pretty "nameDefFlows for" <+> pretty nt
     case nt^.val of 
       NT_Nonce -> return []
       NT_DH -> return []
@@ -192,7 +191,6 @@ getSymLblConst (TyLabelVar n@(PRes p)) = do
 
 symLabel :: Label -> Sym SExp
 symLabel l = do
-    liftCheck $ debug $ pretty "symLabel for " <+> pretty l
     l' <- liftCheck $ simplLabel l
     c <- canonLabel l'
     symCanonLabel c

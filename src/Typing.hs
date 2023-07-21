@@ -379,9 +379,10 @@ normalizeLabel l = do
     normLabel l
 
 
+
 -- Subtype checking, assuming the types are normalized
 
-isSubtype' t1 t2 =
+isSubtype' t1 t2 = do
     case (t1^.val, t2^.val) of
       _ | isSingleton t2 -> do 
           debug $ pretty "Trying singleton query: " <> pretty t2
@@ -423,15 +424,19 @@ isSubtype' t1 t2 =
       (_, TUnit) -> snd <$> (SMT.smtTypingQuery $ SMT.subTypeCheck t1 t2)
       (TUnit,  _) -> do
         isSubtype' (tRefined (tData zeroLbl zeroLbl) $ bind (s2n "_x") (pEq (aeVar "_x") (aeApp (topLevelPath $ "UNIT") [] []))) t2
-      (TBool l1, TBool l2) -> flowsTo (t1^.spanOf) l1 l2
-      (TConst x ps1, TConst y ps2) | (x `aeq` y) -> do
+      (TBool l1, TBool l2) -> do
+          ob <- tryFlowsTo (t1^.spanOf) l1 l2
+          case ob of
+            Nothing -> return False
+            Just b -> return b
+      (TConst x ps1, TConst y ps2) -> do
+          x' <- normalizePath x
+          y' <- normalizePath y
           td <- getTyDef (t1^.spanOf) x
-          case td of
-            EnumDef _ -> do
-                case (ps1, ps2) of
-                  (ParamLbl l1 : ps1', ParamLbl l2 : ps2') | ps1' `aeq` ps2' -> flowsTo (t1^.spanOf) l1 l2
-                  _ -> return False
-            StructDef _ -> do
+          debug $ pretty "Alpha equivalence between TConsts: " <> pretty (aeq x' y')
+          case (aeq x' y', td) of
+            (True, EnumDef _) -> return $ aeq ps1 ps2 
+            (True, StructDef _) -> do
                 assert (t1^.spanOf) (show $ pretty "Func param arity mismatch on struct") $ length ps1 == length ps2
                 qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
                     case (p1, p2) of
@@ -467,8 +472,10 @@ isSubtype' t1 t2 =
       (t, TData l1 l2) -> do
         l2' <- tyLenLbl t1
         b1 <- tyFlowsTo t1 l1 
-        b2 <- flowsTo (t1^.spanOf) l2' l2
-        return $ b1 && b2
+        ob2 <- tryFlowsTo (t1^.spanOf) l2' l2
+        case ob2 of
+          Nothing -> return False
+          Just b2 -> return $ b1 && b2
       (TRefined t _, _) -> isSubtype' t t2
       _ -> return False
 
@@ -486,12 +493,13 @@ tyFlowsTo :: Ty -> Label -> Check Bool
 tyFlowsTo t l = 
     case t^.val of
       TSS n m -> do
-          b1 <- flowsTo (t^.spanOf) (joinLbl (nameLbl n) advLbl) l
-          b2 <- flowsTo (t^.spanOf) (joinLbl (nameLbl m) advLbl) l
-          return $ b1 || b2
+          ob1 <- tryFlowsTo (t^.spanOf) (joinLbl (nameLbl n) advLbl) l
+          ob2 <- tryFlowsTo (t^.spanOf) (joinLbl (nameLbl m) advLbl) l
+          return $ (ob1 == Just True) || (ob2 == Just True)
       _ -> do
           l1 <- coveringLabel t
-          flowsTo (t^.spanOf) l1 l
+          ob <- tryFlowsTo (t^.spanOf) l1 l
+          return $ ob == Just True
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
@@ -1074,12 +1082,14 @@ tyLenLbl t =
                       Just t' -> tyLenLbl t'
                       Nothing -> return zeroLbl
                 return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
-      (TCase _ _ _) -> do
+      (TCase _ t1 t2) -> do
           t' <- normalizeTy t
           case t'^.val of
             TCase p _ _ -> do
-                debug $ pretty "Got inconclusive prop on TCase"
-                typeError (t^.spanOf) $ show $ pretty "Inconclusive: " <> pretty p
+                l1 <- tyLenLbl t1
+                l2 <- tyLenLbl t2
+                debug $ pretty "tyLenLbl for " <> pretty t1 <> pretty " = " <> pretty (joinLbl l1 l2)
+                return $ joinLbl l1 l2    
             _ -> tyLenLbl t'
       (TUnion t1 t2) -> do
           l1 <- tyLenLbl t1
@@ -1164,7 +1174,6 @@ flowsTo osp l1' l2' = do
     tyc <- view tyContext
     debug $ pretty "Checking " <> pretty l1 <+> pretty "<=" <+> pretty l2
     (fn, b) <- SMT.checkFlows l1 l2
-    return b
     case b of
       Just r -> do
         debug $ pretty "Got " <> pretty b <> pretty " from " <> pretty fn
@@ -1172,6 +1181,14 @@ flowsTo osp l1' l2' = do
       Nothing -> typeError osp $ show $ pretty "Inconclusive: " <> pretty l1 <+> pretty "<=" <+> pretty l2 
       -- <> line <> pretty "Under context: " <> prettyTyContext tyc  <> pretty fn
 
+tryFlowsTo :: Ignore Position -> Label -> Label -> Check (Maybe Bool)
+tryFlowsTo osp l1' l2' = do
+    l1 <- normalizeLabel l1'
+    l2 <- normalizeLabel l2'
+    tyc <- view tyContext
+    debug $ pretty "tryFlowsTo: Checking " <> pretty l1 <+> pretty "<=" <+> pretty l2
+    (fn, b) <- SMT.checkFlows l1 l2
+    return b
 
 decideProp :: Prop -> Check (Maybe Bool)
 decideProp p = do
@@ -1629,14 +1646,14 @@ doAEnc encKeyKind pos t1 x t args =
               debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
               b1 <- isSubtype t t'
               if b1 then
-                  return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+                  return $ mkSpanned $ TRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
               else
                   mkSpanned <$> trivialTypeOf [t1, t]
           NT_Enc t' | encKeyKind == AEnc -> do
               debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
               b1 <- isSubtype t t'
               if b1 then
-                  return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+                  return $ mkSpanned $ TRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
               else
                   mkSpanned <$> trivialTypeOf [t1, t]
           _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -1780,7 +1797,7 @@ checkCryptoOp pos ot cop args = do
                   NT_PKE t' -> do
                       b <- isSubtype t t'
                       if (b) then
-                          return $ mkSpanned $ TRefined (tData zeroLbl zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
+                          return $ mkSpanned $ TRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
                       else
                           mkSpanned <$> trivialTypeOf [t1, t] 
                   _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
@@ -1795,7 +1812,7 @@ checkCryptoOp pos ot cop args = do
                   NT_MAC t' -> do
                       assertSubtype t t'
                       l <- coveringLabel t'
-                      return $ mkSpanned $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
+                      return $ mkSpanned $ TRefined (tData l advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
                   _ -> mkSpanned <$> trivialTypeOf [t1, t]
       CMacVrfy -> do
           assert pos ("Wrong number of arguments to mac_vrfy") $ length args == 3
@@ -1829,7 +1846,7 @@ checkCryptoOp pos ot cop args = do
                   NT_Sig t' -> do
                       assertSubtype t t'
                       l <- coveringLabel t'
-                      return $ mkSpanned $ TRefined (tData l zeroLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
+                      return $ mkSpanned $ TRefined (tData l advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
                   _ -> mkSpanned <$> trivialTypeOf [t1, t]
       CSigVrfy -> do
           assert pos ("Wrong number of arguments to vrfy") $ length args == 3

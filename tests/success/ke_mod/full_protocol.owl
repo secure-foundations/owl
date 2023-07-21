@@ -2,9 +2,8 @@ include "psk_ke.owl"
 include "dh_ke.owl" 
 include "transp.owl"
 
-module Full(P : Params, K : functor (Q : Params) => KE(Q)) = { 
-    module KE = K(P)
-    module T = Transp(P, KE)
+module Full(P : Params, K : KE(P)) = {
+    module T = Transp(P, K)
     def Server_main () @ P.Server 
         : Option (if sec(P.data) then Name(P.data) else Data<adv>) 
         = corr_case P.data in call T.server()
