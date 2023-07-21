@@ -770,6 +770,8 @@ checkDecl d cont =
               forM_ xs $ \(x, t) -> do
                   checkTy t
                   assert (d^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
+                  llbl <- tyLenLbl t
+                  flowCheck (t^.spanOf) llbl advLbl
           let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
           local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
