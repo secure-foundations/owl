@@ -1222,7 +1222,7 @@ sortDecls dcls = do
         --        _ -> throwError $ UnsupportedOracleReturnType n
         --    oracles %= M.insert n rtlen
         --    return (gDecls, locMap, shared, pubkeys)
-        DeclCorr _ _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
+        DeclCorr _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
         DeclDetFunc name _ _ ->
             if name == "xor" then return (gDecls, locMap, shared, pubkeys) -- We do support xor if needed
             else throwError $ UnsupportedDecl "can't use uninterpreted functions in extracted protocols"

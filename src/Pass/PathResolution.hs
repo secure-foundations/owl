@@ -221,10 +221,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
-      DeclCorr l1 l2 -> do
+      DeclCorr ils -> do
+          (is, (l1, l2)) <- unbind ils
           l1' <- resolveLabel l1
           l2' <- resolveLabel l2
-          let d' = Spanned (d^.spanOf) $ DeclCorr l1' l2' 
+          let d' = Spanned (d^.spanOf) $ DeclCorr $ bind is (l1', l2')
           ds' <- resolveDecls ds
           return (d' : ds')
       DeclLocality s dc -> do

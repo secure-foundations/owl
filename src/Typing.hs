@@ -755,10 +755,12 @@ checkDecl d cont =
                          Just _ -> False
           let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, abs_or_body))
           addDef (d^.spanOf) n df $ cont
-      (DeclCorr l1 l2) -> do
-          checkLabel l1
-          checkLabel l2
-          local (over (curMod . advCorrConstraints) $ \xs -> (l1, l2) : xs ) $ cont
+      (DeclCorr ils) -> do
+          (is, (l1, l2)) <- unbind ils
+          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+              checkLabel l1
+              checkLabel l2
+          local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
       (DeclStruct n ixs) -> do
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
@@ -1390,7 +1392,7 @@ checkExpr ot e = do
           t' <- normalizeTy t
           e <- ask
           tyc <- view tyContext
-          liftIO $ putStrLn $ show $ pretty "Type for " <> pretty a <> pretty ": " <> pretty t <> line <> pretty "Normalized: " <> pretty t' <> line <> pretty "Under context: " <> prettyTyContext tyc
+          liftIO $ putStrLn $ show $ pretty "Type for " <> pretty a <> pretty ": " <> pretty t <> line <> pretty "Normalized: " <> pretty t' 
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
@@ -1981,7 +1983,9 @@ moduleMatches pos md1 md2 =
           -- advCorrConstraints 
           forM_ (md2^.advCorrConstraints) $ \ax -> 
               case L.find (aeq ax) (md1^.advCorrConstraints) of 
-                Nothing -> typeError pos $ "corr constraint mismatch " ++ show (pretty ax)
+                Nothing -> do
+                    let (is, ps) = prettyBind ax
+                    typeError pos $ "corr constraint mismatch: " ++ show ps
                 Just _ -> return ()
           -- tyDefs 
           forM_ (md2^.tyDefs) $ \(s, td) -> 

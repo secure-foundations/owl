@@ -116,7 +116,7 @@ data ModBody = ModBody {
     _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
-    _advCorrConstraints :: [(Label, Label)],
+    _advCorrConstraints :: [Bind [IdxVar] (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
@@ -791,7 +791,7 @@ collectRO = collectEnvInfo (_randomOracle)
 collectFlowAxioms :: Check ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 
-collectAdvCorrConstraints :: Check ([(Label, Label)])
+collectAdvCorrConstraints :: Check ([Bind [IdxVar] (Label, Label)])
 collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
 
 collectUserFuncs :: Check (Map ResolvedPath UserFunc)

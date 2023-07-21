@@ -64,11 +64,19 @@ smtLabelSetup = do
     
     -- Constraints on the adv
     afcs <- liftCheck $ collectAdvCorrConstraints 
-    forM_ afcs $ \(l1, l2) -> do
-        v1 <- symLabel l1
-        v2 <- symLabel l2
-        ladv <- symLabel advLbl
-        emitAssertion $ sImpl (sFlows v1 ladv) (sFlows v2 ladv)
+    ladv <- symLabel advLbl
+    forM_ afcs $ \ils -> do 
+        (is, (l1, l2)) <- liftCheck $ unbind ils
+        sIE <- use symIndexEnv
+        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do 
+            v1 <- symLabel l1
+            v2 <- symLabel l2
+            emitAssertion $ sForall 
+                (map (\i -> (SAtom $ show i, indexSort)) is)
+                (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
+                []
+        symIndexEnv .= sIE
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l

@@ -614,10 +614,11 @@ parseDecls =
     <|>
     (parseSpanned $ do
         reserved "corr"
+        pb <- parseIdxParamBinds1
         l1 <- parseLabel
         symbol "==>"
         l2 <- parseLabel
-        return $ DeclCorr l1 l2
+        return $ DeclCorr $ bind pb (l1, l2)
     )
     <|>
     (parseSpanned $ do
