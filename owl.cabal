@@ -33,5 +33,6 @@ executable owl
                        unbound-generics,
                        dir-traverse,
                        diagnose == 2.4.0,
-                       data-default
+                       data-default,
+                       hashable
 

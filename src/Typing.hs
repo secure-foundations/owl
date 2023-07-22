@@ -28,6 +28,7 @@ import Prettyprinter
 import Control.Lens
 import LabelChecking
 import TypingBase
+import qualified Data.Map.Strict as M
 import qualified SMT as SMT
 import qualified SMTBase as SMT
 import Unbound.Generics.LocallyNameless
@@ -42,7 +43,8 @@ emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty memp
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r
+    m <- newIORef $ M.empty
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()

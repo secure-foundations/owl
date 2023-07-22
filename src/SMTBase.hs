@@ -24,6 +24,7 @@ import Control.Monad.Except
 import Control.Monad.Trans
 import Control.Monad.State
 import Control.Monad.Reader
+import Data.Hashable
 import qualified Data.Map.Strict as M
 import qualified Data.Map.Ordered as OM
 import Control.Lens
@@ -216,6 +217,24 @@ getSMTQuery setup k = do
             setup
             k
 
+queryZ3 :: IORef (M.Map Int Bool) -> String -> IO (Either String Bool)
+queryZ3 mp q = do
+    let hq = hash q 
+    m <- readIORef mp
+    case M.lookup hq m of
+      Just res -> return $ Right res
+      Nothing -> do 
+          resp <- readProcessWithExitCode "z3" ["-smt2", "-in"] q
+          case resp of
+            (ExitSuccess, "unsat\n", _) -> do
+                atomicModifyIORef' mp $ \m -> (M.insert hq True m, ())
+                return (Right True)
+            (ExitSuccess, _, _) -> do
+                atomicModifyIORef' mp $ \m -> (M.insert hq False m, ())
+                return $ Right False
+            (_, err, _) -> do
+                return (Left err)
+
 
 fromSMT :: Sym () -> Sym () -> Check (Maybe String, Bool)
 fromSMT setup k = do
@@ -225,11 +244,11 @@ fromSMT setup k = do
       Just q -> do 
           b <- view $ envFlags . fLogSMT
           fn <- if b then Just <$> logSMT q else return Nothing
-          resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q
+          z3mp <- view smtCache
+          resp <- liftIO $ queryZ3 z3mp q
           case resp of
-              (ExitSuccess, "unsat\n", _) -> return (fn, True)
-              (ExitSuccess, _, _) -> return (fn, False)
-              (_, err, _) -> typeError (ignore def) $ "Z3 error: " ++ err   
+            Right b -> return (fn, b)
+            Left err -> typeError (ignore def) $ "Z3 error: " ++ err   
               
 raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
 raceSMT setup k1 k2 = do
@@ -243,18 +262,19 @@ raceSMT setup k1 k2 = do
           fn1 <- if b then Just <$> logSMT q1 else return Nothing
           fn2 <- if b then Just <$> logSMT q2 else return Nothing
           sem <- liftIO $ newEmptyMVar 
+          z3mp <- view smtCache
           p1 <- liftIO $ forkIO $ do 
-              resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q1
+              resp <- queryZ3 z3mp q1 
               case resp of
-                  (ExitSuccess, "unsat\n", _) -> putMVar sem $ Just (fn1, False)
-                  (ExitSuccess, _, _) -> putMVar sem Nothing
-                  (_, err, _) -> error $ "Z3 error: " ++ err   
+                  Right True -> putMVar sem $ Just (fn1, False)
+                  Right False -> putMVar sem Nothing
+                  Left err -> error $ "Z3 error: " ++ err   
           p2 <- liftIO $ forkIO $ do 
-              resp <- liftIO $ readProcessWithExitCode "z3" ["-smt2", "-in"] q2
+              resp <- queryZ3 z3mp q2
               case resp of
-                  (ExitSuccess, "unsat\n", _) -> putMVar sem $ Just (fn2, True)
-                  (ExitSuccess, _, _) -> putMVar sem Nothing 
-                  (_, err, _) -> error $ "Z3 error: " ++ err   
+                  Right True -> putMVar sem $ Just (fn2, True)
+                  Right False -> putMVar sem Nothing 
+                  Left err -> error $ "Z3 error: " ++ err   
           o1 <- liftIO $ takeMVar sem
           case o1 of
             Just (fn, b) -> do

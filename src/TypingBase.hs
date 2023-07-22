@@ -15,6 +15,7 @@ import Data.Maybe
 import Data.IORef
 import Control.Monad
 import qualified Data.List as L
+import qualified Data.Map.Strict as M
 import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.Cont
@@ -141,7 +142,8 @@ data Env = Env {
     _modContext :: Map (Name ResolvedPath) ModDef,
     _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
-    _freshCtr :: IORef Integer
+    _freshCtr :: IORef Integer,
+    _smtCache :: IORef (M.Map Int Bool)
 }
 
 
