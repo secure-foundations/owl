@@ -3,6 +3,7 @@ import Parse
 import AST
 import System.Environment
 import Typing
+import CmdArgs
 import Control.Monad
 import System.Directory
 import System.Directory.Recursive
@@ -42,8 +43,8 @@ doAllTests f = do
     let failureDir = testDir </> "failure"
     toSucceed <- getFilesRecursive successDir
     toFail <- getFilesRecursive failureDir
-    res1 <- forM toSucceed $ \s -> doSingleTest (s) (set fFilename s $ set fFileLoc (takeDirectory s) $ f) ExpectSuccess
-    res2 <- forM toFail $ \s -> doSingleTest (s) (set fFilename s $ set fFileLoc (takeDirectory s) $ f) ExpectFailure
+    res1 <- forM toSucceed $ \s -> doSingleTest (s) (set fFilePath s f) ExpectSuccess
+    res2 <- forM toFail $ \s -> doSingleTest (s) (set fFilePath s f) ExpectFailure
     let totalTests = length $ res1 ++ res2
     let failureTests = filter (\(b, _) -> not b) $ zip (res1 ++ res2) (toSucceed ++ toFail) 
     putStrLn $ "Result: " ++ show (totalTests - length failureTests) ++ " tests succeeded out of " ++ show totalTests ++ " total"

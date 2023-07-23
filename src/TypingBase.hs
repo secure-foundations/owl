@@ -19,6 +19,8 @@ import qualified Data.Map.Strict as M
 import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.Cont
+import CmdArgs
+import System.FilePath
 import Prettyprinter
 import Control.Lens
 import Control.Lens.At
@@ -38,17 +40,6 @@ insert k v xs = (k, v) : (filter (\p -> k /= (fst p)) xs)
 
 insertMany :: Eq a => [(a, b)] -> [(a, b)] -> [(a, b)]
 insertMany kvs xs = kvs ++ filter (\p -> not (fst p `elem` map fst kvs)) xs 
-
-data Flags = Flags { 
-    _fDebug :: Bool,
-    _fLogSMT :: Bool,
-    _fFileLoc :: String,
-    _fFilename :: String,
-    _fLax :: Bool,
-    _fFileContents :: String
-                   }
-
-makeLenses ''Flags
 
 data TcScope = 
       TcGhost 
@@ -262,8 +253,8 @@ instance MonadFail Check where
 
 typeError :: Ignore Position -> String -> Check a
 typeError pos msg = do
-    fn <- view $ envFlags . fFilename
-    fl <- view $ envFlags . fFileLoc
+    fn <- takeFileName <$> (view $ envFlags . fFilePath)
+    fl <- takeDirectory <$> (view $ envFlags . fFilePath)
     f <- view $ envFlags . fFileContents
     tyc <- view tyContext
     let rep = Err Nothing msg [(unignore pos, This msg)] [Note $ show $ prettyTyContext tyc]

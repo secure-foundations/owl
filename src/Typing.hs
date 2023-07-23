@@ -11,6 +11,7 @@ import Error.Diagnose.Position
 import Data.Default (Default, def)
 import qualified Data.Map.Ordered as OM
 import qualified Data.Set as S
+import CmdArgs
 import Data.Maybe
 import Data.Either
 import Data.IORef

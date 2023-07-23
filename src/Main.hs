@@ -17,46 +17,29 @@ import Test
 import qualified Extraction as E
 import Control.Lens
 
-mkFlags :: String -> String -> String -> CmdArgs -> Flags
-mkFlags contents path bname (CmdArgs d logsmt _ _ lax _) =
-    Flags d logsmt path bname lax contents
-
-typeCheckWith :: String -> IO Env
-typeCheckWith fn = do
-      s <- readFile fn
-      case (P.parse parseFile (takeFileName fn) s) of
-        Left err -> do
-            putStrLn $ "parse error: " ++ show err
-            error "Parse error"
-        Right ast -> do
-                res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) (CmdArgs False False False False False (Just fn))) ast
-                case res of
-                  Left e -> return e
-                  Right e -> return e
-
 main :: IO ()
 main = do
   args <- doParseArgs
-  if doTests args then doAllTests (mkFlags "" "" "" args) else do
-      case fileName args of
-        Nothing -> do
+  if args^.fDoTests then doAllTests args else do
+      case args^.fFilePath of
+        "" -> do
             putStrLn "Need input file!"
             putStrLn getHelpMessage
-        Just fn -> do
+        fn -> do
           -- start <- getCPUTime
           s <- readFile fn
           case (P.parse parseFile (takeFileName fn) s) of
             Left err -> putStrLn $ "parse error: " ++ show err
             Right ast -> do
                 do
-                    res <- typeCheckDecls (mkFlags s (takeDirectory fn) (takeFileName fn) args) ast
+                    res <- typeCheckDecls (set fFileContents s args) ast
                     case res of
                       Left _ -> return ()
                       Right tcEnv -> do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
-                          if extract args then do
+                          if args^.fExtract then do
                               let extfn = "extraction/src/main.rs"
                               modBody <- doFlattening tcEnv
                               res <- E.extract tcEnv (takeDirectory fn) modBody

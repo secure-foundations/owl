@@ -1,22 +1,27 @@
+{-# LANGUAGE TemplateHaskell #-} 
 module CmdArgs where
 
 import Options.Applicative
 import Data.Semigroup ((<>))
+import qualified Data.Map.Strict as M
+import Control.Lens
+import System.Directory
 
-data CmdArgs = CmdArgs
-    { 
-        debugFlag :: Bool,
-        logSmt :: Bool,
-        extract :: Bool,
-        doTests :: Bool,
-        laxCheck :: Bool,
-        fileName :: Maybe String
-    }
-    deriving (Show)
+data Flags = Flags { 
+    _fDebug :: Bool,
+    _fLogSMT :: Bool,
+    _fExtract :: Bool,
+    _fDoTests :: Bool,
+    _fLax :: Bool,
+    _fFilePath :: String, 
+    _fFileContents :: String
+                   }
 
-parseArgs :: Parser CmdArgs
-parseArgs = CmdArgs
-      <$>
+makeLenses ''Flags
+
+parseArgs :: Parser Flags
+parseArgs = 
+      Flags <$> 
           switch
           ( long "debug" <> short 'd' <> help "Print debugging messages" )
       <*>
@@ -32,9 +37,10 @@ parseArgs = CmdArgs
       <*>
           switch
           ( long "lax" <> help "Lax checking (skip some SMT queries)" )
-      <*> argument (Just <$> str) (value Nothing <> metavar "FILE")
+      <*> Options.Applicative.argument (str) (value "" <> metavar "FILE")
+      <*> (pure "")
 
-doParseArgs :: IO CmdArgs
+doParseArgs :: IO Flags
 doParseArgs = execParser $ info (parseArgs <**> helper) (fullDesc <> progDesc "OWL")
 
 getHelpMessage :: String

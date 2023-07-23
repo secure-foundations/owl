@@ -11,6 +11,8 @@ import AST
 import Error.Diagnose.Position (Position)
 import Control.Lens
 import Control.Monad
+import CmdArgs
+import System.FilePath
 import qualified Data.Set as S
 import Control.Monad.Reader
 import Control.Monad.Except
@@ -55,7 +57,7 @@ instance Show PathType where
     show PTCounter = "counter"
 
 data ResolveEnv = ResolveEnv { 
-    _flags :: T.Flags,
+    _flags :: Flags,
     _includes :: S.Set String,
     _curPath :: ResolvedPath,
     _namePaths :: T.Map String ResolvedPath,
@@ -90,21 +92,21 @@ freshModVar s = do
     liftIO $ writeIORef r (i + 1)
     return $ s2n $ "_MOD_" ++ s ++ show i
 
-emptyResolveEnv :: T.Flags -> IO ResolveEnv
+emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
     return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] r
 
-runResolve :: T.Flags -> Resolve a -> IO (Either () a) 
+runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
     e <- emptyResolveEnv f
     runExceptT $ runReaderT k e
 
 resolveError :: Ignore Position -> String -> Resolve a
 resolveError pos msg = do
-    fn <- view $ flags . T.fFilename
-    fl <- view $ flags . T.fFileLoc
-    f <- view $ flags . T.fFileContents
+    fn <- takeFileName <$> (view $ flags . fFilePath)
+    fl <- takeDirectory <$> (view $ flags . fFilePath)
+    f <- view $ flags . fFileContents
     let rep = Err Nothing msg [(unignore pos, This ("Resolution error: " ++ msg))] []
     let diag = addFile (addReport def rep) (fn) f  
     printDiagnostic stdout True True 4 defaultStyle diag 
@@ -112,7 +114,7 @@ resolveError pos msg = do
 
 debug :: Doc ann -> Resolve ()
 debug d = do
-    b <- view $ flags . T.fDebug
+    b <- view $ flags . fDebug
     when b $ liftIO $ putStrLn $ show d
 
 resolveDecls :: [Decl] -> Resolve [Decl]
@@ -177,7 +179,7 @@ resolveDecls (d:ds) =
               incls <- view includes
               if S.member fn incls then resolveDecls ds else do
                   fl <- view flags
-                  let fn' = (T._fFileLoc fl) </> fn
+                  let fn' = (takeDirectory $ fl^.fFilePath) </> fn
                   s <- liftIO $ readFile fn'
                   case P.parse P.parseFile (takeFileName fn') s of
                     Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err

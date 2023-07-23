@@ -13,6 +13,7 @@ import Data.Maybe
 import Data.IORef
 import System.Process
 import System.Exit
+import CmdArgs
 import Data.Default (Default, def)
 import System.Directory
 import System.FilePath
@@ -333,7 +334,7 @@ sApp f vs =
 
 logSMT :: String -> Check String
 logSMT s = do
-    f <- view $ envFlags . fFilename
+    f <- takeFileName <$> (view $ envFlags . fFilePath)
     liftIO $ createDirectoryIfMissing False ".owl-log"
     fn <- liftIO $ findGoodFileName f
     liftIO $ writeFile fn s
