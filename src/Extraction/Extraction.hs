@@ -123,7 +123,7 @@ instance Pretty ExtractionError where
     pretty OutputWithUnknownDestination =
         pretty "Found a call to `output` without a destination specified. For extraction, all outputs must have a destination locality specified."
     pretty (LocalityWithNoMain s) =
-        pretty "Locality" <+> pretty s <+> pretty "does not have a defined main function. For extraction, there should be a defined entry point function: def" <+> pretty s <> pretty "_main () @" <+> pretty s
+        pretty "Locality" <+> pretty s <+> pretty "does not have a defined main function. For extraction, there should be a defined entry point function that must not take arguments: def" <+> pretty s <> pretty "_main () @" <+> pretty s
     pretty (UnsupportedOracleReturnType s) =
         pretty "Oracle" <+> pretty s <+> pretty "does not return a supported oracle return type for extraction."
     pretty (UnsupportedNameExp ne) =
@@ -290,38 +290,6 @@ initFuncs = M.fromList [
                 [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
-        -- ("enc", (VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_enc(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for enc"
-        -- )),
-        -- ("dec", (Option VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_dec(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        -- )),
-        -- ("mac", (VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_mac(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for mac"
-        -- )),
-        -- ("mac_vrfy", (Option VecU8, \args -> case args of
-        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for dec"
-        -- )),
-        -- ("pkenc", (VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkenc(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for pkenc"
-        -- )),
-        -- ("pkdec", (VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_pkdec(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for pkdec"
-        -- )),
-        -- ("sign", (VecU8, \args -> case args of
-        --         [(_,k), (_,x)] -> return $ x ++ ".owl_sign(&" ++ k ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for sign"
-        -- )),
-        -- ("vrfy", (Option VecU8, \args -> case args of
-        --         [(_,k), (_,x), (_,v)] -> return $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")"
-        --         _ -> throwError $ TypeError $ "got wrong number of args for vrfy"
-        -- )),
         ("dhpk", (VecU8, \args -> case args of
                 [(_,x)] -> return $ x ++ ".owl_dhpk()"
                 _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
@@ -867,17 +835,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                         return (VecU8, pretty "", (pretty . rustifyName . unignore $ owlV) <>
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
-                    else do
-                        -- -- if owlFn `aeq` (PUnresolvedVar $ "dhpk") then
-                        -- if rustifyPath owlFn == "Top_dhpk" then
-                        --     let unspanned = map (view val) owlArgs in
-                        --     case unspanned of
-                        --         [(AEGet nameExp)] -> return (VecU8, pretty "", pretty "&self.pk_" <> pretty (flattenNameExp nameExp))
-                        --         _ -> do
-                        --             debugPrint $ unspanned
-                        --             throwError $ TypeError "got wrong number of args to dhpk"
-                        -- else do                            
-                        throwError $ UndefinedSymbol $ show owlFn
+                    else throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
@@ -1099,7 +1057,6 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
-    -- funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
     return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
     where
         genFuncDecl name sidArgs owlArgs rt = do
@@ -1147,92 +1104,6 @@ preprocessIncludes d =
                         preprocessed <- mapM preprocessIncludes dcls
                         return $ concat preprocessed
         d' -> return $ [d]
-
-
-sortDecls :: [Decl] -> ExtractionMonad ([Decl], M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
-sortDecls dcls = do
-    preprocessed <- mapM preprocessIncludes dcls
-    foldM go ([], M.empty, [], []) $ concat preprocessed
-    where
-    go :: ([Decl], M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) -> Decl -> 
-        ExtractionMonad ([Decl], M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
-    go (gDecls, locMap, shared, pubkeys) d = case d^.val of
-        DeclName name binds -> do
-            let ((sids, pids), ntnlOpt) = unsafeUnbind binds
-            case ntnlOpt of
-              Nothing -> return (gDecls, locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
-              Just (nt, loc) -> do
-                nameLen <- case nt ^. val of
-                    NT_Nonce -> do useAeadNonceSize
-                    NT_Enc _ -> do
-                        keySize <- useAeadKeySize
-                        ivSize <- useAeadNonceSize
-                        return $ keySize + ivSize
-                    NT_MAC _ -> do useHmacKeySize
-                    NT_PKE _ -> do return pkeKeySize
-                    NT_Sig _ -> do return sigKeySize
-                    NT_DH -> return dhSize
-                    _ -> do
-                        throwError $ UnsupportedNameType nt
-                let nsids = length sids
-                let npids = length pids
-                typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
-                let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
-                let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
-                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
-                locNameCounts <- mapM (\(Locality lname lidxs) -> do
-                    plname <- rustifyPath lname
-                    return (plname, length lidxs)) loc
-                case nt ^.val of
-                    -- public keys must be shared, so pub/priv key pairs are generated by the initializer
-                    NT_PKE _ ->
-                        return (gDecls, foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
-                    NT_Sig _ ->
-                        return (gDecls, foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
-                    NT_DH ->
-                        return (gDecls, foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
-                    _ -> if length loc /= 1 then
-                            -- name is shared among multiple localities
-                            return (gDecls, foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys)
-                        else
-                            -- name is local and can be locally generated
-                            return (gDecls, foldl gPriv locMap locNames, shared, pubkeys)
-        DeclDefHeader _ _ -> return (gDecls, locMap, shared, pubkeys)
-        DeclDef name binds -> do
-            let ((sids, pids), (Locality loc lidxs, binds')) = unsafeUnbind binds
-            let (args, (_, retTy, obody)) = unsafeUnbind binds'
-            case obody of
-              Just body -> do
-                let f (i, l, s, d, t) = (i, l, s, d ++ [(name, Locality loc lidxs, sids, args, retTy, body)], t)
-                ploc <- rustifyPath loc
-                return (gDecls, M.adjust f ploc locMap, shared, pubkeys)
-              Nothing -> do -- Def is abstract, predeclare it
-                  makeFunc name (Locality loc lidxs) sids args retTy
-                  return (gDecls, locMap, shared, pubkeys)
-        DeclEnum n c -> return (gDecls ++ [d], locMap, shared, pubkeys)
-        DeclStruct n f -> return (gDecls ++ [d], locMap, shared, pubkeys)
-        DeclLocality l idxs -> error "TODO fix"
-            --if idxs >= 2 then throwError $ ErrSomethingFailed "we don't support multiple-arity party IDs at the moment"
-            --else return (gDecls, M.insert l (idxs, [],[],[], []) locMap, shared, pubkeys)
-        -- TODO
-        --DeclRandOrcl n (arg, rty) -> do
-        --    rtlen <- case rty ^. val of
-        --        NT_Nonce -> return "NONCE_SIZE"
-        --        NT_Enc _ -> return "KEY_SIZE + NONCE_SIZE"
-        --        _ -> throwError $ UnsupportedOracleReturnType n
-        --    oracles %= M.insert n rtlen
-        --    return (gDecls, locMap, shared, pubkeys)
-        DeclCorr _ -> return (gDecls, locMap, shared, pubkeys) -- purely ghost
-        DeclDetFunc name _ _ ->
-            if name == "xor" then return (gDecls, locMap, shared, pubkeys) -- We do support xor if needed
-            else throwError $ UnsupportedDecl "can't use uninterpreted functions in extracted protocols"
-        DeclTable name ty (Locality lname _) -> do
-            let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
-            plname <- rustifyPath lname
-            return (gDecls, M.adjust f plname locMap, shared, pubkeys)
-        DeclTy name topt -> do
-            return (gDecls ++ [d], locMap, shared, pubkeys)
-        DeclInclude fn -> throwError $ ErrSomethingFailed "messed up"
 
 
 -- returns (locality stuff, shared names, public keys)
@@ -1530,42 +1401,6 @@ extractTyDefs ((tv, td):ds) = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
             return $ pretty ""
 
--- extractDecl :: Decl -> ExtractionMonad (Doc ann)
--- extractDecl dcl =
---     case dcl^.val of
---         DeclStruct name fields -> do
---             let (_, fields') = unsafeUnbind fields
---             extractStruct name fields'
---         DeclEnum name cases -> do
---             let (_, cases') = unsafeUnbind cases
---             extractEnum name cases'
---         DeclTy name topt -> do
---             case topt of
---               Nothing -> do
---                 typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
---                 return $ pretty ""
---               Just t -> do
---                 lct <- layoutCTy . doConcretifyTy $ t
---                 typeLayouts %= M.insert (rustifyName name) lct
---                 return $ pretty ""
---         _ -> return $ pretty "" -- Other decls are handled elsewhere
-
--- extractDecls' :: [Decl] -> ExtractionMonad (Doc ann)
--- extractDecls' [] = return $ pretty ""
--- extractDecls' (d:ds) = do
---     dExtracted <- extractDecl d
---     dsExtracted <- extractDecls' ds
---     return $ dExtracted <> line <> line <> dsExtracted
-
--- extractDecls :: [Decl] -> ExtractionMonad (Doc ann)
--- extractDecls ds = do
---     (globalDecls, locDecls, sharedNames, pubKeys) <- sortDecls ds
---     globalsExtracted <- extractDecls' globalDecls
---     (sidArgMap, locsExtracted) <- extractLocs pubKeys locDecls
---     p <- preamble
---     ep <- entryPoint locDecls sharedNames pubKeys sidArgMap
---     return $ p <> line <> globalsExtracted <> line <> locsExtracted <> line <> ep
-        
 preamble :: ExtractionMonad (Doc ann)        
 preamble = do
     c <- showAEADCipher
@@ -1755,10 +1590,6 @@ preamble = do
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
 extractModBody mb = do
-    -- debugPrint $ prettyMap "locs" (mb ^. TB.localities)
-    debugPrint $ pretty "Ty defs:" <+> pretty (map fst (mb ^. TB.tyDefs))
-    debugPrint $ TB.prettyMap "defs" (mb ^. TB.defs)
-    debugPrint $ TB.prettyMap "nameEnv" (mb ^. TB.nameEnv)
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     tyDefsExtracted <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
