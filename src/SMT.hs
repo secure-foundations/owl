@@ -106,25 +106,6 @@ setupNameEnvRO = do
                         [sBaseName sname ivs] 
             symIndexEnv .= sIE
 
-    -- Disjointness across names
-    emitComment $ "Disjointness across names"
-    when (not $ null nE) $ do
-           let different_pairs = [(x, y) | (x : ys) <- tails nE, y <- ys]
-           forM_ different_pairs $ \((n1, o1), (n2, o2)) -> do
-               ((is1, is2), _) <- liftCheck $ unbind o1
-               ((is1', is2'), _) <- liftCheck $ unbind o2
-               let ar1 = length is1 + length is2
-               let ar2 = length is1' + length is2'
-               sn1 <- smtName n1
-               sn2 <- smtName n2
-               emitComment $ "Disjointness " ++ sn1 ++ " <-> " ++ sn2
-               ivs1' <- forM [1..ar1] $ \_ -> freshSMTIndexName
-               ivs2' <- forM [1..ar2] $ \_ -> freshSMTIndexName
-               let ivs1 = map SAtom ivs1'
-               let ivs2 = map SAtom ivs2'
-               let v1 = sBaseName (SAtom $ "%name_" ++ sn1) (take ar1 ivs1)
-               let v2 = sBaseName (SAtom $ "%name_" ++ sn2) (take ar2 ivs2)
-               emitAssertion $ sForall (map (\i -> (i, indexSort)) (ivs1 ++ ivs2)) (sNot $ sEq v1 v2) [v1, v2]
     ros <- liftCheck $ collectRO
     forM_ ros $ \(s, bnd) -> do
         (is, (ae, nts)) <- liftCheck $ unbind bnd
@@ -133,6 +114,29 @@ setupNameEnvRO = do
         addSymName sn sname
         let ar = length is
         emit $ SApp [SAtom "declare-fun", sname, SApp (replicate ar (indexSort) ++ [SAtom "Int"]), nameSort]
+
+    emitComment $ "Disjointness across names"
+    let nE_ro = map Left nE ++ map Right ros 
+    let different_pairs = [(x, y) | (x : ys) <- tails nE_ro, y <- ys]
+    forM_ different_pairs $ \(x, y) -> do 
+        let go z = case z of
+                     Left (n, o) -> do 
+                         ((is1, is2), _) <- liftCheck $ unbind o
+                         let ar = length is1 + length is2
+                         sn <- smtName n
+                         let v = sBaseName (SAtom $ "%name_" ++ sn) (map (SAtom . show) $ is1 ++ is2)
+                         return (map (\i -> (SAtom $ show i, indexSort)) (is1 ++ is2), v)
+                     Right (s, bnd) -> do 
+                         sn <- smtName s
+                         let sname = SAtom $ "%ro_" ++ sn
+                         (is, _) <- liftCheck $ unbind bnd
+                         i <- SAtom <$> freshSMTIndexName
+                         let v = sROName sname (map (SAtom . show) is) i
+                         return (map (\i -> (SAtom $ show i, indexSort)) is ++ [(SAtom $ show i, SAtom "Int")], v)
+        (quants1, v1) <- go x                        
+        (quants2, v2) <- go y                        
+        emitAssertion $ sForall (quants1 ++ quants2) (sNot $ sEq v1 v2) [v1, v2]
+
     forM_ ros $ \(s, bnd) -> do
         sn <- smtName s
         let sname = SAtom $ "%ro_" ++ sn
@@ -151,7 +155,7 @@ setupNameEnvRO = do
                 emitAssertion $ sForall
                     (map (\i -> (i, indexSort)) ivs)
                     (sAnd sAxs)
-                    [sROName sname ivs i]
+                    [sROName sname ivs (SAtom $ show i)]
         symIndexEnv .= sIE
 
 nameKindOf :: NameType -> Sym SExp
@@ -511,8 +515,8 @@ emitFuncAxioms = do
                 emitAssertion $ 
                     sForall 
                         (map (\i -> (i, indexSort)) ivs)
-                        (sEq (sValue $ sROName sname ivs i) (sHashSelect v i))
-                        [sValue $ sROName sname ivs i]
+                        (sEq (sValue $ sROName sname ivs (SAtom $ show i)) (sHashSelect v i))
+                        [sValue $ sROName sname ivs (SAtom $ show i)]
         symIndexEnv .= sIE
     
 subTypeCheck :: Ty -> Ty -> Sym ()
@@ -526,9 +530,6 @@ sConcats :: [SExp] -> SExp
 sConcats vs = 
     let sConcat a b = SApp [SAtom "concat", a, b] in
     foldr sConcat (head vs) (tail vs) 
-
-
-
 
 
 symROUnique :: (Map String (Bind [IdxVar] ([AExpr], [NameType]))) -> [AExpr] -> Sym ()

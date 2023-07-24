@@ -426,11 +426,11 @@ sBaseName n is =
 sLblOf :: SExp -> SExp
 sLblOf n = SApp [SAtom "LabelOf", n]
 
-sROName :: SExp -> [SExp] -> Int -> SExp
+sROName :: SExp -> [SExp] -> SExp -> SExp
 sROName n is i = 
     case is of
-      [] -> SApp $ n : [SAtom $ show i] 
-      _ -> SApp $ n : (is ++ [SAtom $ show i])
+      [] -> SApp $ [n, i]
+      _ -> SApp $ n : (is ++ [i])
 
 sHashSelect :: SExp -> Int -> SExp
 sHashSelect s i = SApp [SAtom "HashSelect", s, SAtom (show i)]

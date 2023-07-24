@@ -587,7 +587,10 @@ inferAExpr ae = do
             Just (_, ls) -> do
                 ls' <- case ls of
                         Just xs -> mapM (normLocality (ae^.spanOf)) xs
-                        Nothing -> typeError (ae^.spanOf) $ show $ pretty "Name not base: " <> pretty ne
+                        Nothing -> do
+                            case ts of
+                              TcGhost -> return []
+                              TcDef _ -> typeError (ae^.spanOf) $ show $ pretty "Calling get on name " <> pretty ne <> pretty " in non-ghost context"
                 case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality (ae^.spanOf) curr_locality
