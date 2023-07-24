@@ -1737,7 +1737,9 @@ checkCryptoOp pos ot cop args = do
                     getOutTy ot $ mkSpanned $ TData advLbl advLbl
                 else do 
                     let ts = map snd args
-                    forM_ ts $ \t -> tyFlowsTo t advLbl
+                    forM_ ts $ \t -> do
+                        b <- tyFlowsTo t advLbl
+                        assert pos ("Type " ++ show (pretty t) ++ " does not flow to adv") $ b
                     getOutTy ot $ mkSpanned $ TData advLbl advLbl
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
