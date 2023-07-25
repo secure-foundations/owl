@@ -34,349 +34,9 @@ import qualified Text.Parsec as P
 import qualified Parse as OwlP
 import System.FilePath (takeFileName, (</>))
 import qualified TypingBase as TB
-import Debug.Trace
+import ExtractionBase
+import qualified SpecExtraction as Spec
 
-newtype ExtractionMonad a = ExtractionMonad (ReaderT TB.Env (StateT Env (ExceptT ExtractionError IO)) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader TB.Env)
-
-runExtractionMonad :: TB.Env -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
-runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
-
-liftCheck :: TB.Check a -> ExtractionMonad a
-liftCheck c = do
-    e <- ask
-    o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope TB.TcGhost) c) e
-    case o of 
-      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "RustifyPath error: " 
-      Right i -> return i
-
--- Number can be any integer type, ADT means one of our struct/enum representations, VecU8 also includes &[u8], [u8; const len], etc
-data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
-    deriving (Show, Eq, Generic, Typeable)
-
-instance Pretty RustTy where
-  pretty VecU8 = pretty "Vec<u8>"
-  pretty RcVecU8 = pretty "Rc<Vec<u8>>"
-  pretty Bool = pretty "bool"
-  pretty Number = pretty "usize" --should just work
-  pretty String = pretty "String"
-  pretty Unit = pretty "()"
-  pretty (ADT s) = pretty s
-  pretty (Option r) = pretty "Option" <> angles (pretty r)
-
-data Env = Env {
-    _path :: String,
-    _aeadCipherMode :: AEADCipherMode,
-    _hmacMode :: HMACMode,
-    _owlUserFuncs :: [(String, TB.UserFunc)],
-    _funcs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String), -- return type, how to print
-    _adtFuncs :: M.Map String (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)),
-    _typeLayouts :: M.Map String Layout,
-    _lenConsts :: M.Map String Int,
-    _enums :: M.Map (S.Set String) String,
-    _oracles :: M.Map String String, -- how to print the output length
-    _includes :: S.Set String, -- files we have included so far
-    _freshCtr :: Integer
-}
-
-data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
-
-data HMACMode = Sha1 | Sha256 | Sha384 | Sha512 deriving (Show, Eq, Generic, Typeable)
-
-defaultCipher :: AEADCipherMode
-defaultCipher = Chacha20Poly1305
-
-defaultHMACMode :: HMACMode
-defaultHMACMode = Sha512
-data Layout =
-  LBytes Int -- number of bytes
-  | LStruct String [(String, Layout)] -- field, layout
-  | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
-    deriving (Show, Eq, Generic, Typeable)
-
-instance Pretty Layout where
-    pretty (LBytes i) = pretty "bytes" <> parens (pretty i)
-    pretty (LStruct name fields) = pretty "struct" <+> pretty name <> pretty ":" <+> pretty fields
-    pretty (LEnum name cases) = pretty "enum" <+> pretty name <> pretty ":" <+> pretty (M.keys cases)
-
-data ExtractionError =
-      CantLayoutType CTy
-    | TypeError String
-    | UndefinedSymbol String
-    | OutputWithUnknownDestination
-    | LocalityWithNoMain String
-    | UnsupportedOracleReturnType String
-    | UnsupportedNameExp NameExp
-    | UnsupportedNameType NameType
-    | UnsupportedDecl String
-    | UnsupportedSharedIndices String
-    | CouldntParseInclude String
-    | ErrSomethingFailed String
-
-instance Pretty ExtractionError where
-    pretty (CantLayoutType ct) =
-        pretty "Can't make a layout for type:" <+> pretty ct
-    pretty (TypeError s) =
-        pretty "Type error during extraction:" <+> pretty s
-    pretty (UndefinedSymbol s) =
-        pretty "Undefined symbol: " <+> pretty s
-    pretty OutputWithUnknownDestination =
-        pretty "Found a call to `output` without a destination specified. For extraction, all outputs must have a destination locality specified."
-    pretty (LocalityWithNoMain s) =
-        pretty "Locality" <+> pretty s <+> pretty "does not have a defined main function. For extraction, there should be a defined entry point function that must not take arguments: def" <+> pretty s <> pretty "_main () @" <+> pretty s
-    pretty (UnsupportedOracleReturnType s) =
-        pretty "Oracle" <+> pretty s <+> pretty "does not return a supported oracle return type for extraction."
-    pretty (UnsupportedNameExp ne) =
-        pretty "Name expression" <+> pretty ne <+> pretty "is unsupported for extraction."
-    pretty (UnsupportedNameType nt) =
-        pretty "Name type" <+> pretty nt <+> pretty "is unsupported for extraction."
-    pretty (UnsupportedDecl s) =
-        pretty "Unsupported decl type for extraction:" <+> pretty s
-    pretty (UnsupportedSharedIndices s) =
-        pretty "Unsupported sharing of indexed name:" <+> pretty s
-    pretty (CouldntParseInclude s) =
-        pretty "Couldn't parse included file:" <+> pretty s
-    pretty (ErrSomethingFailed s) =
-        pretty "Extraction failed with message:" <+> pretty s
-
-printErr :: ExtractionError -> IO ()
-printErr e = print $ pretty "Extraction error:" <+> pretty e
-
-debugPrint :: Show s => s -> ExtractionMonad ()
-debugPrint = liftIO . hPrint stderr
-
-replacePrimes :: String -> String
-replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
-
-rustifyName :: String -> String
-rustifyName s = "owl_" ++ replacePrimes s
-
-rustifyResolvedPath :: ResolvedPath -> String
---rustifyResolvedPath PTop = trace "Top" "Top"
-rustifyResolvedPath (PDot (PPathVar OpenPathVar x) s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show x ++ " " ++ s) s
-rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = trace ("rustifyResolvedPath of ClosedPathVar " ++ unignore s) $ unignore s
-rustifyResolvedPath (PPathVar OpenPathVar s) = trace ("rustifyResolvedPath of OpenPathVar " ++ show s) $ show s
---rustifyResolvedPath (PDot x y) = trace ("PDot " ++ show x ++ " " ++ show y) $ rustifyResolvedPath x ++ "_" ++ y
-
-rustifyResolvedPath PTop = "Top"
--- rustifyResolvedPath (PDot (PPathVar OpenPathVar _) s) = s
--- rustifyResolvedPath (PPathVar (ClosedPathVar s) _) = unignore s
--- rustifyResolvedPath (PPathVar OpenPathVar s) = show s
-rustifyResolvedPath (PDot x y) = rustifyResolvedPath x ++ "_" ++ y
-
-
-tailPath :: Path -> ExtractionMonad String
-tailPath (PRes (PDot _ y)) = return y
-tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
-
-rustifyPath :: Path -> ExtractionMonad String
--- rustifyPath (PUnresolvedVar s) = show s
-rustifyPath (PRes rp) = do
-    rp' <- liftCheck $ TB.normResolvedPath rp
-    return $ rustifyResolvedPath rp'
-rustifyPath p = error $ "bad path: " ++ show p
-
-locName :: String -> String
-locName x = "loc_" ++ replacePrimes x
-
-sidName :: String -> String
-sidName x = "sid_" ++ replacePrimes x
-
-makeLenses ''Env
-
-instance Fresh ExtractionMonad where
-    fresh (Fn s _) = do
-        n <- use freshCtr
-        freshCtr %= (+) 1
-        return $ Fn s n
-    fresh nm@(Bn {}) = return nm
-
-showAEADCipher :: ExtractionMonad String
-showAEADCipher = do
-    c <- use aeadCipherMode
-    return $ case c of
-        Aes128Gcm -> "owl_aead::Mode::Aes128Gcm"
-        Aes256Gcm -> "owl_aead::Mode::Aes256Gcm"
-        Chacha20Poly1305 -> "owl_aead::Mode::Chacha20Poly1305"
-
-showHMACMode :: ExtractionMonad String
-showHMACMode = do
-    h <- use hmacMode
-    return $ case h of
-        Sha1 -> "owl_hmac::Mode::Sha1"
-        Sha256 -> "owl_hmac::Mode::Sha256"
-        Sha384 -> "owl_hmac::Mode::Sha384"
-        Sha512 -> "owl_hmac::Mode::Sha512"
-
-aeadKeySize :: AEADCipherMode -> Int
-aeadKeySize c = case c of
-       Aes128Gcm -> 16
-       Aes256Gcm -> 32
-       Chacha20Poly1305 -> 32
-
-useAeadKeySize :: ExtractionMonad Int
-useAeadKeySize = do
-    c <- use aeadCipherMode
-    return $ aeadKeySize c
-
-aeadTagSize :: AEADCipherMode -> Int
-aeadTagSize c = case c of
-       Aes128Gcm -> 16
-       Aes256Gcm -> 16
-       Chacha20Poly1305 -> 16
-
-useAeadTagSize :: ExtractionMonad Int
-useAeadTagSize = do
-    c <- use aeadCipherMode
-    return $ aeadTagSize c
-
-aeadNonceSize :: AEADCipherMode -> Int
-aeadNonceSize c = case c of
-       Aes128Gcm -> 12
-       Aes256Gcm -> 12
-       Chacha20Poly1305 -> 12
-
-useAeadNonceSize :: ExtractionMonad Int
-useAeadNonceSize = do
-    c <- use aeadCipherMode
-    return $ aeadNonceSize c
-
-hmacKeySize :: Int
-hmacKeySize = 64
-
-useHmacKeySize :: ExtractionMonad Int
-useHmacKeySize = return hmacKeySize
-
-pkeKeySize :: Int
-pkeKeySize = 1219
-
-sigKeySize :: Int
-sigKeySize = 1219
-
-vkSize :: Int
-vkSize = 1219
-
-dhSize :: Int
-dhSize = 91
-
-hmacLen :: Int
-hmacLen = 64
-
-initLenConsts :: M.Map String Int
-initLenConsts = M.fromList [
-        ("owl_signature", 256),
-        ("owl_enckey", aeadKeySize defaultCipher + aeadNonceSize defaultCipher),
-        ("owl_nonce", aeadNonceSize defaultCipher),
-        ("owl_mackey", hmacKeySize),
-        ("owl_maclen", hmacLen),
-        ("owl_pkekey", pkeKeySize),
-        ("owl_sigkey", sigKeySize),
-        ("owl_vk", vkSize),
-        ("owl_DH", dhSize),
-        ("owl_tag", 1)
-    ]
-
-initTypeLayouts :: M.Map String Layout
-initTypeLayouts = M.map LBytes initLenConsts
-
--- NB: Owl puts the key first in enc and dec, Rust puts the plaintext/ciphertext first
-initFuncs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String)
-initFuncs = M.fromList [
-        ("eq", (Bool, \args -> case args of
-                [(Bool, x), (Bool, y)] -> return $ x ++ " == " ++ y
-                [(Number, x), (Number, y)] -> return $ x ++ " == " ++ y
-                [(String, x), (String, y)] -> return $ x ++ " == " ++ y
-                [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
-                [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
-                _ -> throwError $ TypeError $ "got wrong args for eq"
-        )),
-        ("dhpk", (VecU8, \args -> case args of
-                [(_,x)] -> return $ x ++ ".owl_dhpk()"
-                _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
-        )),
-        ("dh_combine", (VecU8, \args -> case args of
-                [(_,pk), (_,sk)] -> return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
-        )),
-        ("UNIT", (Unit, \_ -> return "()")),
-        ("TRUE", (Bool, \_ -> return "true")),
-        ("FALSE", (Bool, \_ -> return "false")),
-        ("Some", (Option VecU8, \args -> case args of
-                [(_,x)] -> return $ "Some(" ++ x ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for Some"
-        )),
-        ("None", (Option VecU8, \_ -> return "Option::<Vec<u8>>::None")),
-        ("length", (Number, \args -> case args of
-                [(_,x)] -> return $ x ++ ".owl_length()"
-                _ -> throwError $ TypeError $ "got wrong number of args for length"
-        )),
-        ("zero", (Number, \_ -> return "0")),
-        ("plus", (Number, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ " + " ++ y
-                _ -> throwError $ TypeError $ "got wrong number of args for plus"
-        )),
-        ("mult", (Number, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ " * " ++ y
-                _ -> throwError $ TypeError $ "got wrong number of args for mult"
-        )),
-        ("cipherlen", (Number, \args -> case args of
-                [(_,x)] -> do
-                    tsz <- useAeadTagSize
-                    return $ x ++ " + " ++ show tsz
-                _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
-        )),
-        ("checknonce", (Bool, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
-                _ -> throwError $ TypeError $ "got wrong args for eq"
-        )),
-        ("xor", (VecU8, \args -> case args of
-            [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
-            [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
-            _ -> throwError $ TypeError $ "got wrong args for xor"
-        )),
-        ("andb", (Bool, \args -> case args of
-            [(_,x), (_,y)] -> return $ x ++ " && " ++ y
-            _ -> throwError $ TypeError $ "got wrong args for andb"
-        ))
-    ]
-
-initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
-
-lookupTyLayout :: String -> ExtractionMonad Layout
-lookupTyLayout n = do
-    ls <- use typeLayouts
-    case ls M.!? n of
-        Just l -> return l
-        Nothing -> do
-            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show (M.keys ls)
-            throwError $ UndefinedSymbol n
-
-lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> ExtractionMonad String))
-lookupFunc fpath = do
-    fs <- use funcs
-    f <- tailPath fpath
-    return $ fs M.!? f
-    
-
-lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)))
-lookupAdtFunc fn = do
-    ufs <- use owlUserFuncs
-    adtfs <- use adtFuncs
-    -- debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
-    case lookup fn ufs of
-        -- special handling for struct constructors, since their names are path-scoped
-        Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
-        Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
-        Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
-        Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
-        Nothing -> return Nothing
-
-flattenNameExp :: NameExp -> ExtractionMonad String
-flattenNameExp n = case n ^. val of
-  BaseName _ s -> do
-      p <- rustifyPath s
-      return $ rustifyName p
 
 -------------------------------------------------------------------------------------------
 -- Data representation
@@ -419,6 +79,7 @@ layoutCTy (CTDataWithLength aexp) =
                     ("zero", _) -> return $ LBytes 0
                     (_, []) -> do
                         lookupTyLayout . rustifyName $ fn -- func name used as a length constant
+                    _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
     in
     helper aexp
@@ -426,7 +87,7 @@ layoutCTy (CTOption ct) = do
     lct <- layoutCTy ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
 layoutCTy (CTConst p) = do
-    p' <- rustifyPath p
+    p' <- flattenPath p
     lookupTyLayout . rustifyName $ p'
 layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
 layoutCTy CTUnit = return $ LBytes 1
@@ -770,7 +431,7 @@ extractCryptOp binds op owlArgs = do
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
         (CHash p _ n, [(_,x)]) -> do 
-            roname <- rustifyPath p 
+            roname <- flattenPath p 
             orcls <- use oracles
             case orcls M.!? roname of
                 Nothing -> throwError $ TypeError "unrecognized random oracle"
@@ -812,7 +473,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
             return (rt, preArgs, pretty str)
         Nothing -> do
             -- adtfs <- use adtFuncs
-            adtf <- lookupAdtFunc =<< rustifyPath owlFn
+            adtf <- lookupAdtFunc =<< flattenPath owlFn
             case adtf of
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
@@ -844,7 +505,7 @@ extractAExpr binds (AEGet nameExp) =
             fnameExp <- flattenNameExp nameExp
             return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (fnameExp)))
         BaseName (sidxs, _) s -> do
-            ps <- rustifyPath s
+            ps <- flattenPath s
             return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
 extractAExpr binds (AEGetEncPK nameExp) = do
@@ -879,10 +540,10 @@ extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
         Just (EndpointLocality (Locality lname _)) -> do
-            plname <- rustifyPath lname
+            plname <- flattenPath lname
             return $ pretty "&" <> pretty plname <> pretty "_addr"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev)
-    pmyLname <- rustifyPath myLname
+    pmyLname <- flattenPath myLname
     return $ (binds, Unit, preAe, pretty "&" <> aePrettied <> pretty ".owl_output" <> parens (l <> comma <+> pretty "&" <> pretty (pmyLname) <> pretty "_addr") <> pretty ";")
 extractExpr loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
@@ -911,7 +572,7 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\sid -> (Number, sidName . show . pretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
-    powlFn <- rustifyPath owlFn
+    powlFn <- flattenPath owlFn
     case fs M.!? (powlFn) of
       Nothing -> do
         throwError $ UndefinedSymbol (powlFn)
@@ -996,7 +657,7 @@ extractExpr loc binds (CTLookup tbl ae) = do
             RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty "[..]"
             VecU8 -> return $ pretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
-    ptbl <- rustifyPath tbl
+    ptbl <- flattenPath tbl
     let tblName = rustifyName ptbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
 extractExpr loc binds (CCrypt cryptOp args) = do
@@ -1047,12 +708,15 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     return ()
 
 
+-- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
+    debugPrint $ "Extracting def " ++ owlName
     let name = rustifyName owlName
-    concreteBody <- ANF.anf owlBody >>= concretify
-    -- debugPrint $ "Extracting def " ++ owlName
+    concreteBody <- concretify =<< ANF.anf owlBody
     -- debugPrint $ pretty concreteBody
+    specBody <- Spec.extractExpr =<< concretify owlBody
+    debugPrint $ specBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) concreteBody
@@ -1122,7 +786,7 @@ preprocessModBody mb = do
         sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
                                 case locType of 
                                     Left i -> (M.insert locName i locs, locAliases)
-                                    Right p -> (locs, M.insert locName (rustifyResolvedPath p) locAliases)) 
+                                    Right p -> (locs, M.insert locName (flattenResolvedPath p) locAliases)) 
                              (M.empty, M.empty)
 
         lookupLoc' :: M.Map LocalityName Int -> M.Map LocalityName LocalityName -> LocalityName -> ExtractionMonad LocalityName
@@ -1139,7 +803,7 @@ preprocessModBody mb = do
         sortDef lookupLoc m (owlName, TB.Def idxs_defSpec) = do
                 let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
-                locName <- lookupLoc =<< rustifyPath locP
+                locName <- lookupLoc =<< flattenPath locP
                 let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
                 case body of
                     Nothing -> return m
@@ -1150,7 +814,7 @@ preprocessModBody mb = do
         
         sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
         sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
-            locName <- lookupLoc =<< rustifyPath locP
+            locName <- lookupLoc =<< flattenPath locP
             let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
             return $ M.adjust f locName locMap
 
@@ -1180,9 +844,9 @@ preprocessModBody mb = do
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
                 let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
                 let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
-                locNames <- mapM (\(Locality lname _) -> rustifyPath lname) loc
+                locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
                 locNameCounts <- mapM (\(Locality lname lidxs) -> do
-                    plname <- rustifyPath lname
+                    plname <- flattenPath lname
                     return (plname, length lidxs)) loc
                 case nt ^.val of
                     -- public keys must be shared, so pub/priv key pairs are generated by the initializer
@@ -1377,7 +1041,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 
 
 -------------------------------------------------------------------------------------------
--- Decl extraction
+--- Entry point of extraction
 
 
 extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (Doc ann)

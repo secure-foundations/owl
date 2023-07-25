@@ -17,7 +17,7 @@ executable owl
   hs-source-dirs:      src, src/Extraction, src/Pass
   main-is:             Main.hs
   default-language:    Haskell2010
-  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass, PathResolution ModuleFlattening
+  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass, PathResolution, ModuleFlattening, ExtractionBase, SpecExtraction
   build-depends:       base >= 4.7 && < 5,
                        parsec,
                        containers,

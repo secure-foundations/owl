@@ -15,6 +15,7 @@ import Text.Printf
 import ModuleFlattening
 import Test
 import qualified Extraction as E
+import qualified ExtractionBase as EB
 import Control.Lens
 
 main :: IO ()
@@ -44,7 +45,7 @@ main = do
                               modBody <- doFlattening tcEnv
                               res <- E.extract tcEnv (takeDirectory fn) modBody
                               case res of
-                                Left err -> E.printErr err
+                                Left err -> EB.printErr err
                                 Right rust_code -> do
                                   -- putStrLn $ show rust_code
                                   writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
