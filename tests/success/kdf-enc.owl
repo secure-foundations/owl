@@ -1,14 +1,25 @@
 locality alice
+locality bob
 
 name alice1 : nonce @ alice
 name alice2 : nonce @ alice
 name alice3 : nonce @ alice
 
-name k1 : enckey Name(alice1) @ alice         
+name k1 : enckey Name(alice1) @ alice, bob         
 random_oracle k2 : get(k1) -> enckey Name(alice2) 
 random_oracle k3 : get(RO<k2>) -> enckey Name(alice3) 
 
-def tst() @ alice : Unit = 
+def flows()  @ alice : Unit = 
+    assert (sec(RO<k3>) ==> sec(RO<k2>) /\ sec(k1));
+    assert (corr(RO<k3>) ==> corr(alice3));
+    assert (corr(k1) ==> corr(RO<k2>));
+    assert (corr(RO<k2>) ==> corr(alice2));
+    assert (corr(RO<k2>) ==> corr(RO<k3>));
+    assert (corr(k1) ==> (corr(alice1) /\ corr(alice2) /\ corr(alice3)));
+    ()
+
+
+def alice_main() @ alice : Unit = 
     let c = aenc(get(k1), get(alice1)) in 
     output c;
     let k2 = hash<k2>(get(k1)) in
@@ -16,3 +27,30 @@ def tst() @ alice : Unit =
     output c2;
     ()
 
+def bob_main() @ bob : Unit = 
+    input c1 in
+    corr_case k1 in 
+    case adec(get(k1), c1)
+    | None => ()
+    | Some m1 => begin 
+        input c2 in 
+        let k2 = hash<k2>(get(k1)) in
+        corr_case RO<k2> in
+        case adec(k2, c2)
+        | None => ()
+        | Some m2 => begin
+            input c3 in 
+            let k3 = hash<k3>(k2) in
+            corr_case RO<k3> in
+            case adec(k3, c3)
+            | None => ()
+            | Some m3 => begin
+                assert (sec(RO<k3>) ==> (m1 = get(alice1) /\ m2 = get(alice2) /\ m3 = get(alice3)));
+                assert (sec(RO<k2>) ==> (m1 = get(alice1) /\ m2 = get(alice2)));
+                assert (sec(k1) ==> (m1 = get(alice1)));
+                ()
+                end
+            end
+    end
+
+        
