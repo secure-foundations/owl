@@ -1,0 +1,18 @@
+locality alice
+
+name alice1 : nonce @ alice
+name alice2 : nonce @ alice
+name alice3 : nonce @ alice
+
+name k1 : enckey Name(alice1) @ alice         
+random_oracle k2 : get(k1) -> enckey Name(alice2) 
+random_oracle k3 : get(RO<k2>) -> enckey Name(alice3) 
+
+def tst() @ alice : Unit = 
+    let c = aenc(get(k1), get(alice1)) in 
+    output c;
+    let k2 = hash<k2>(get(k1)) in
+    let c2 = aenc(k2, get(alice2)) in 
+    output c2;
+    ()
+
