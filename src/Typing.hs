@@ -1724,23 +1724,13 @@ checkCryptoOp pos ot cop args = do
           let nts = substs (zip ixs is) nts_
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
-          uns <- unsolvability aes'
-          b <- decideProp uns
-          debug $ pretty "Decision result for hash: " 
-          debug $ pretty "equals expected hash:" <+> pretty b_eq
-          debug $ pretty "unsolvability:" <+> prettyMaybe b
-          case (b_eq, b) of
-            (True, Just True) -> getOutTy ot $ mkSpanned $ TName $ roName p is i
-            _ -> do 
-                noCollision <- SMT.symDecideNotInRO aes
-                if noCollision then 
-                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
-                else do 
-                    let ts = map snd args
-                    forM_ ts $ \t -> do
-                        b <- tyFlowsTo t advLbl
-                        assert pos ("Type " ++ show (pretty t) ++ " does not flow to adv") $ b
-                    getOutTy ot $ mkSpanned $ TData advLbl advLbl
+          if b_eq then getOutTy ot $ mkSpanned $ TName $ roName p is i
+                  else do
+                      noCollision <- SMT.symDecideNotInRO aes
+                      if noCollision then getOutTy ot $ mkSpanned $ TData advLbl advLbl
+                                     else do
+                                        l <- coveringLabelOf $ map snd args
+                                        getOutTy ot $ mkSpanned $ TData l l
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args
@@ -1877,23 +1867,6 @@ checkCryptoOp pos ot cop args = do
                                                  let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2)
                                                  return $ mkSpanned $ (TData l_corr l_corr) -- Change here
                   _ -> typeError (ignore def) $ show $ ErrWrongNameType k "sig" nt
-
-unsolvability :: [AExpr] -> Check Prop
-unsolvability aes = local (set tcScope TcGhost) $ do
-    bs <- forM aes $ \ae -> 
-        case ae^.val of
-          AEApp f _ [x, y] | f `aeq` (topLevelPath $ "dh_combine")-> do
-              t1 <- inferAExpr x
-              t2 <- inferAExpr y
-              case (t1^.val, t2^.val) of
-                (TDH_PK n, TName m) -> return $ pAnd (pNot $ pFlow (nameLbl n) advLbl) (pNot $ pFlow (nameLbl m) advLbl)
-                _ -> return pFalse
-          _ -> do
-              t <- inferAExpr ae
-              case t^.val of
-                TName n -> return $ pNot $ pFlow (nameLbl n) advLbl
-                _ -> return pFalse
-    return $ foldr pOr pFalse bs
 
 ---- Entry point ----
 

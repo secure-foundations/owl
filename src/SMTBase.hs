@@ -303,6 +303,9 @@ sAnd2 x y = sAnd [x, y]
 sOr :: SExp -> SExp -> SExp
 sOr x y = SApp [SAtom "or", x, y]
 
+sOrs :: [SExp] -> SExp
+sOrs xs = SApp $ [SAtom "or"] ++ xs
+
 sTrue :: SExp
 sTrue = SAtom "true"
 

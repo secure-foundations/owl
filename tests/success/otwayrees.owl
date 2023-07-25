@@ -142,6 +142,7 @@ def alice (
                     let b = checknonce(_nA2(msg2), nA) in
                     if b then
                         let kab:if sec(KA) then Name(kAB) else Data<adv> = _kABA(msg2) in
+                        false_elim in 
                         alice_Some(kab)
                     else
                         alice_None()

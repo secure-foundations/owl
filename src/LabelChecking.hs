@@ -25,6 +25,37 @@ sFlows x y = SApp [SAtom "Flows", x, y]
 sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
+
+-- If the random oracle value is a secret, then one of the arguments is a
+-- secret.
+-- N.B.: this list does _not_ have to be exhaustive. It is only used to
+-- prune impossible paths
+solvabilityAxioms :: ResolvedPath -> Bind [IdxVar] ([AExpr], [NameType]) -> Sym SExp
+solvabilityAxioms n bnd = do
+    sname <- smtName n
+    ladv <- symLabel advLbl
+    (is, (aes, nts)) <- liftCheck $ unbind bnd
+    sIE <- use symIndexEnv
+    symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
+    res <- local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do
+        -- The labels which must be secret for the RO to be secret
+        lss <- forM aes $ \ae -> do
+            t <- liftCheck $ inferAExpr ae
+            case t^.val of
+              TName n -> return [nameLbl n]
+              TSS n m -> return [nameLbl n, nameLbl m]
+              _ -> return []
+        lvs <- mapM symLabel $ concat lss
+        i <- SAtom <$> freshSMTName
+        let vro = sROName (SAtom $ "%ro_" ++ sname) (map (SAtom . show) is) i
+        let vro_sec = map (\l -> sNot $ sFlows l ladv) lvs
+        return $ sForall ((i, SAtom "Int") : map (\i -> (SAtom $ show i, indexSort)) is)
+                         (sImpl (sNot $ sFlows (SApp [SAtom "LabelOf", vro]) ladv)
+                         (sAnd vro_sec))
+                         [vro]
+    symIndexEnv .= sIE
+    return res
+
 nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do
     case nt^.val of 
@@ -76,6 +107,13 @@ smtLabelSetup = do
                 (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
                 []
         symIndexEnv .= sIE
+
+    -- Solvability constraints for RO
+    emitComment $ "Solvability axioms for RO"
+    ros <- liftCheck $ collectRO
+    forM_ ros $ \(n, bnd) -> do
+        ax <- solvabilityAxioms n bnd
+        emitAssertion ax
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l
