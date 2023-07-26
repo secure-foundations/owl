@@ -16,3 +16,6 @@ def alice2<i> () @ alice : Unit
     assert (happened(alice1<i>(get(blah))));
     let c = aenc(get(k<i>), x) in
     output c to endpoint(alice)
+
+def alice_main<i> () @ alice : Unit =
+    call alice2<i>()

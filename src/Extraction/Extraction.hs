@@ -711,7 +711,8 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann)
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
-    debugPrint $ "Extracting def " ++ owlName
+    debugPrint $ pretty ""
+    debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     concreteBody <- concretify =<< ANF.anf owlBody
     -- debugPrint $ pretty concreteBody
@@ -724,10 +725,10 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     return $ decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace
     where
         genFuncDecl name sidArgs owlArgs rt = do
-            let argsPrettied = 
-                    pretty "&mut self," 
-                    <+> (hsep . punctuate comma . map (\(a,_) -> pretty a <+> pretty ": usize") $ sidArgs) 
-                    <+> (hsep . punctuate comma . map extractArg $ owlArgs)
+            let argsPrettied = hsep . punctuate comma $ 
+                    pretty "&mut self"
+                    : (map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs) 
+                    ++ (map extractArg owlArgs)
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> pretty "->" <+> pretty rt
 
 
