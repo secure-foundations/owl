@@ -1,15 +1,11 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
-pub use vstd::{modes::*, prelude::*, seq::*, vec::*, *};
+pub use vstd::{modes::*, prelude::*, seq::*, *};
 
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////// CRYPTO ETC LIBRARY ///////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 verus! {
-
-pub spec const KEY_SIZE: usize = 32;
-pub spec const TAG_SIZE: usize = 16;
-pub spec const NONCE_SIZE: usize = 12;
 
 // Macro version of the stdlib's Option::and
 #[macro_export]
@@ -154,7 +150,7 @@ pub mod itree {
 
         pub open spec fn bind<B>(&self, next: FnSpec(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
             decreases self
-        {  
+        {
             match self {
                 ITree::Input(k) => {
                     ITree::Input(|x, e| (k(x, e)).bind(next))
@@ -165,10 +161,10 @@ pub mod itree {
                 ITree::Sample(n, k) => {
                     ITree::Sample(*n, |coins| k(coins).bind(next))
                 }
-                ITree::Ret(a) => { 
-                    next(*a) 
+                ITree::Ret(a) => {
+                    next(*a)
                 }
-            }            
+            }
         }
     }
 
@@ -207,9 +203,9 @@ pub mod itree {
     // // triggering hack
     // pub open spec fn trig<A>(x: A) -> bool { true }
 
-    // pub open spec fn is_equal<A>(x : ITree<A, Endpoint>, y : ITree<A, Endpoint>) -> bool 
+    // pub open spec fn is_equal<A>(x : ITree<A, Endpoint>, y : ITree<A, Endpoint>) -> bool
     //     decreases x, y
-    // { 
+    // {
     //     match (x, y) {
     //         (ITree::Ret(a), ITree::Ret(b)) => x == y,
     //         (ITree::Input(kx), ITree::Input(ky)) => forall|v| #[trigger] trig(v) ==> is_equal(kx(v), ky(v)),
@@ -244,7 +240,7 @@ pub mod itree {
     //     requires is_equal(x, y)
     //     ensures  x =~~= y
     // {}
-    
+
     // pub proof fn eq_is_equal<A>(x: ITree<A, Endpoint>, y: ITree<A, Endpoint>)
     //     requires x =~~= y
     //     ensures  is_equal(x, y)
@@ -299,6 +295,56 @@ pub mod itree {
     {}
 
 
+    //////////////////////////////////////////////////////
+    ///// Handling subroutine calls //////////////////////
+    //////////////////////////////////////////////////////
+
+    // Hack because I seem to be unable to return `FnSpec`s
+    type FnSpecAlias<A,B> = FnSpec(A) -> B;
+
+
+    pub open spec fn itree_conts_match<A,B>(k: FnSpec(A) -> ITree<B, Endpoint>, kt: FnSpec(A) -> ITreeToken<B, Endpoint>) -> bool
+    {
+        forall |v: A| ((#[trigger] kt(v))@ == k(v))
+    }
+
+    #[verifier(external_body)]
+    pub proof fn split_bind<A,B>(tracked t: ITreeToken<A, Endpoint>, s: ITree<B, Endpoint>) -> (tracked st_kt: (Tracked<ITreeToken<B, Endpoint>>, Tracked<FnSpecAlias<B, ITreeToken<A, Endpoint>>>))
+        requires exists |k| (t@ == #[trigger] s.bind::<A>(k))
+        ensures  forall |k| (t@ == #[trigger] s.bind::<A>(k)) ==> ((st_kt.0)@@ == s && itree_conts_match(k, (st_kt.1)@))
+    { unimplemented!() }
+
+    #[verifier(external_body)]
+    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: FnSpecAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: Tracked<ITreeToken<A, Endpoint>>)
+        requires st@.results_in(v),
+        ensures  t@ == kt(v)
+    { unimplemented!() }
+
+    #[allow(unused_macros)]
+    #[macro_export]
+    macro_rules! owl_call {
+        [$($tail:tt)*] => {
+            ::builtin_macros::verus_exec_macro_exprs!{
+                owl_call_internal!($($tail)*)
+            }
+        };
+    }
+
+    #[allow(unused_macros)]
+    macro_rules! owl_call_internal {
+        ($itree:ident, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
+            ::builtin_macros::verus_exec_expr! {{
+                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+                let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
+                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
+                (res, Tracked($itree))
+            }}
+        };
+        ($($tt:tt)*) => {
+            compile_error!(concat!($("`", stringify!($tt), "`, "),*))
+        }
+    }
+
     struct UnforgeableAux;
 
     pub struct ITreeToken<T,Endpoint> {
@@ -312,7 +358,10 @@ pub mod itree {
 
 
 
-    // Macro to parse pretty-printed Owl code into an ITree
+    //////////////////////////////////////////////////////
+    ///// Parsing Owl code into an ITree /////////////////
+    //////////////////////////////////////////////////////
+
     #[macro_export]
     macro_rules! owl_spec {
         (($($tt:tt)*)) => { owl_spec!($($tt)*) };
@@ -411,8 +460,6 @@ pub mod itree {
     } // verus!
 } // mod itree
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////// FOR TESTING ONLY /////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -454,45 +501,45 @@ pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
 }
 
 
-pub closed spec fn foo(x: Seq<u8>) -> Seq<u8>;
+// pub closed spec fn foo(x: Seq<u8>) -> Seq<u8>;
 
 
 // #[verifier(external_body)]
-// pub exec fn enc_impl(k: &Vec<u8>, x: &Vec<u8>) -> (c: Vec<u8>) 
+// pub exec fn enc_impl(k: &Vec<u8>, x: &Vec<u8>) -> (c: Vec<u8>)
 //     ensures c@ == enc(k@, x@)
 // { unimplemented!() }
 
 // #[verifier(external_body)]
-// pub exec fn dec_impl(k: &Vec<u8>, c: &Vec<u8>) -> (x: Option<Vec<u8>>) 
+// pub exec fn dec_impl(k: &Vec<u8>, c: &Vec<u8>) -> (x: Option<Vec<u8>>)
 //     ensures options_match(dec(k@, c@), x)
 // { unimplemented!() }
 
 // #[verifier(external_body)]
-// pub exec fn foo_impl(x: &Vec<u8>) -> (y: Vec<u8>) 
+// pub exec fn foo_impl(x: &Vec<u8>) -> (y: Vec<u8>)
 //     ensures y@ == foo(x@)
 // { unimplemented!() }
 
 
-pub open spec fn test(k: Seq<u8>) -> ITree<Seq<u8>, Endpoint> {   
-    /*  
-        input x in
-        let y = enc(k, x) in 
-        foo(x)
-     */ 
-    
-    owl_spec! (
-        (input (i7, ev6)) in
-        let caseval78 = (ret (dec(((*loc.owl_Top_shared_key).view(), i)))) in
-        (case (caseval78)
-        {Some (k8) => {let foo9 = (ret (Top_t( (*loc.owl_Top_x).view()
-        , (*loc.owl_Top_y).view() ))) in
-        let c10 = (ret (enc((k, foo)))) in
-        (output (c) to (ev6))},
-        None => {(ret (Top_UNIT()))},})
-    )
-}
+// pub open spec fn test(k: Seq<u8>) -> ITree<Seq<u8>, Endpoint> {
+//     /*
+//         input x in
+//         let y = enc(k, x) in
+//         foo(x)
+//      */
 
-// pub exec fn alice_subroutine_impl(Tracked(itree): Tracked<ITreeToken<Seq<u8>, Endpoint>>, k: &Vec<u8>) -> (res: (Vec<u8>, Tracked<ITreeToken<Seq<u8>, Endpoint>>)) 
+//     owl_spec! (
+//         (input (i7, ev6)) in
+//         let caseval78 = (ret (dec(((*loc.owl_Top_shared_key).view(), i7)))) in
+//         (case (caseval78)
+//         {Some (k8) => {let foo9 = (ret (Top_t( (*loc.owl_Top_x).view()
+//         , (*loc.owl_Top_y).view() ))) in
+//         let c10 = (ret (enc((k8, foo9)))) in
+//         (output (c10) to (ev6))},
+//         None => {(ret (Top_UNIT()))},})
+//     )
+// }
+
+// pub exec fn alice_subroutine_impl(Tracked(itree): Tracked<ITreeToken<Seq<u8>, Endpoint>>, k: &Vec<u8>) -> (res: (Vec<u8>, Tracked<ITreeToken<Seq<u8>, Endpoint>>))
 //     requires itree@ == alice_subroutine(k@)
 //     ensures  (res.1)@@.results_in(res.0@)
 // {
@@ -504,6 +551,3 @@ pub open spec fn test(k: Seq<u8>) -> ITree<Seq<u8>, Endpoint> {
 
 
 }
-
-
-fn main() {}

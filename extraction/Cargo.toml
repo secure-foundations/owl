@@ -3,9 +3,9 @@ name = "extraction-temp"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "owl_crypto_primitives"
-path = "src/lib.rs"
+# [lib]
+# name = "owl_crypto_primitives"
+# path = "src/lib.rs"
 
 [[bin]]
 name = "extraction-temp"

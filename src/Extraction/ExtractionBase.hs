@@ -44,7 +44,6 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
--- Number can be any integer type, ADT means one of our struct/enum representations, VecU8 also includes &[u8], [u8; const len], etc
 data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
     deriving (Show, Eq, Generic, Typeable)
 
@@ -57,6 +56,18 @@ instance Pretty RustTy where
   pretty Unit = pretty "()"
   pretty (ADT s) = pretty s
   pretty (Option r) = pretty "Option" <> angles (pretty r)
+
+data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
+    deriving (Show, Eq, Generic, Typeable)
+
+instance Pretty SpecTy where
+  pretty SpecSeqU8 = pretty "Seq<u8>"
+  pretty SpecBool = pretty "bool"
+  pretty SpecNumber = pretty "usize"
+  pretty SpecString = pretty "String"
+  pretty SpecUnit = pretty "()"
+  pretty (SpecADT s) = pretty s
+  pretty (SpecOption r) = pretty "Option" <> angles (pretty r)
 
 data Env = Env {
     _path :: String,
@@ -150,6 +161,9 @@ rustifyName s = "owl_" ++ replacePrimes s
 
 rustifyName' :: Doc ann -> Doc ann
 rustifyName' = pretty . rustifyName . show
+
+unrustifyName :: String -> String
+unrustifyName = drop 4
 
 specName :: String -> String
 specName s = "owlSpec_" ++ replacePrimes s
@@ -273,6 +287,16 @@ initLenConsts = M.fromList [
 initTypeLayouts :: M.Map String Layout
 initTypeLayouts = M.map LBytes initLenConsts
 
+printOwlArg :: (RustTy, String) -> String
+printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ")[..]"
+printOwlArg (VecU8, s) = "&" ++ s ++ "[..]"
+printOwlArg (ADT _, s) = "&(*" ++ s ++ ".data)[..]"
+printOwlArg (_, s) = s
+
+printOwlOp :: String -> [(RustTy, String)] -> String
+printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
+
+
 -- NB: Owl puts the key first in enc and dec, Rust puts the plaintext/ciphertext first
 initFuncs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String)
 initFuncs = M.fromList [
@@ -371,3 +395,37 @@ flattenNameExp n = case n ^. val of
   BaseName _ s -> do
       p <- flattenPath s
       return $ rustifyName p
+
+
+rustifyArgTy :: CTy -> ExtractionMonad RustTy
+rustifyArgTy (CTOption ct) = do
+    rt <- rustifyArgTy ct
+    return $ Option rt
+rustifyArgTy (CTConst (PUnresolvedVar n)) = do
+    l <- lookupTyLayout . rustifyName $ show n
+    return $ case l of
+        LBytes _ -> VecU8
+        LStruct s _ -> ADT s
+        LEnum s _ -> ADT s
+rustifyArgTy CTBool = return Bool
+rustifyArgTy CTUnit = return Unit
+rustifyArgTy _ = return VecU8
+
+specTyOf :: RustTy -> SpecTy
+specTyOf VecU8 = SpecSeqU8
+specTyOf RcVecU8 = SpecSeqU8
+specTyOf Bool = SpecBool
+specTyOf Number = SpecNumber
+specTyOf String = SpecString
+specTyOf Unit = SpecUnit
+specTyOf (ADT _) = SpecSeqU8 -- TODO nesting?
+specTyOf (Option rt) = SpecOption (specTyOf rt)
+
+rustifySpecTy :: CTy -> ExtractionMonad SpecTy
+rustifySpecTy ct = do
+    rt <- rustifyArgTy ct
+    return $ specTyOf rt
+
+
+rcClone :: Doc ann
+rcClone = pretty "rc_clone"
