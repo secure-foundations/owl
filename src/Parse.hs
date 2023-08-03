@@ -1067,7 +1067,7 @@ parseCryptOp =
                      Nothing -> []
                      Just xs -> xs
         oi <- optionMaybe $ do
-            symbol ","
+            symbol ";"
             many1 digit
         symbol ">"
         return $ case oi of
