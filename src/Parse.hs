@@ -569,38 +569,11 @@ parseDecls =
         return $ DeclCounter x (bind inds l)
     )
     <|>
-    (try $ parseSpanned $ do
-        reserved "def"
-        n <- identifier
-        inds <- parseIdxParamBinds
-        symbol "("
-        args <- (do
-            x <- identifier
-            symbol ":"
-            t <- parseTy
-            return $ (s2n x, embed t)
-            ) `sepBy` (symbol ",")
-        symbol ")"
-        symbol "@"
-        nl <- parseLocality
-        preReq <- optionMaybe $ do 
-            reserved "requires"
-            parseProp
-        symbol ":"
-        tyAnn <- parseTy
-        oe <- optionMaybe $ do
-            symbol "="
-            parseExpr
-        return $ DeclDef n (bind inds $ (nl, bind args (preReq, tyAnn, oe)))
-    )
-    <|>
     (parseSpanned $ do
         reserved "def"
         n <- identifier
         inds <- parseIdxParamBinds
-        symbol "@"
-        nl <- parseLocality
-        return $ DeclDefHeader n (bind inds nl)
+        parseRegularDef n inds <|> parseHeader n inds
     )
     <|>
     (parseSpanned $ do
@@ -698,6 +671,33 @@ parseDecls =
         let (bdy, otype) = mkModuleBinders modArgs me omt 
         return $ DeclModule n imt bdy otype 
     )
+
+parseRegularDef n inds = do
+    symbol "("
+    args <- (do
+        x <- identifier
+        symbol ":"
+        t <- parseTy
+        return $ (s2n x, embed t)
+        ) `sepBy` (symbol ",")
+    symbol ")"
+    symbol "@"
+    nl <- parseLocality
+    preReq <- optionMaybe $ do 
+        reserved "requires"
+        parseProp
+    symbol ":"
+    tyAnn <- parseTy
+    oe <- optionMaybe $ do
+        symbol "="
+        parseExpr
+    return $ DeclDef n (bind inds $ (nl, bind args (preReq, tyAnn, oe)))
+
+parseHeader n inds = do 
+    symbol "@"
+    nl <- parseLocality
+    return $ DeclDefHeader n (bind inds nl)
+
 
 mkModuleBinders :: Maybe [(String, ModuleExp)] -> ModuleExp -> Maybe ModuleExp -> (ModuleExp, Maybe ModuleExp)
 mkModuleBinders Nothing me omt = (me, omt)
