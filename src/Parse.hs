@@ -603,21 +603,6 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
-        reserved "random_oracle"
-        l <- identifier
-        pb <- parseIdxParamBinds
-        symbol ":"
-        es <- (parseAExpr) `sepBy1` (symbol "||")
-        symbol "->"
-        nts <- parseNameType `sepBy1` (symbol "||")
-        oadm <- optionMaybe $ do
-            reserved "admit_uniqueness"
-        let ad = case oadm of
-                   Just _ -> AdmitUniqueness
-                   Nothing -> NoAdmitUniqueness
-        return $ DeclRandOrcl l (bind pb (es, nts)) ad)
-    <|>
-    (parseSpanned $ do
         reserved "func"                  
         x <- identifier
         reserved "arity"

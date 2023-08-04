@@ -37,13 +37,13 @@ name E_resp : DH @ Responder
 name S_init : DH @ Initiator
 name S_resp : DH @ Responder
 
-random_oracle msg1_C1 : /* todo Construction */ dhpk(get(E_init)) -> nonce
+name msg1_C1 : RO /* todo Construction */ dhpk(get(E_init)) -> nonce
     admit_uniqueness
 // TODO enckey_with_nonce
-random_oracle msg1_C2 : get(RO<msg1_C1>) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
+name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
     admit_uniqueness
 // TODO enckey_with_nonce
-random_oracle msg1_C3 : get(RO<msg1_C2>) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Data<adv> |12|
+name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Data<adv> |12|
     admit_uniqueness
 
 ////////////////////////////

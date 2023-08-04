@@ -245,6 +245,7 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
+      _ -> error $ "Unimp: " ++ show d
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
