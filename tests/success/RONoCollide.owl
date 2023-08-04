@@ -3,7 +3,7 @@ locality alice
 name n : DH @ alice
 name m : DH @ alice
 
-random_oracle L : dh_combine(dhpk(get(n)), get(m)) -> nonce
+name L : RO dh_combine(dhpk(get(n)), get(m)) -> nonce
 
 def tst() @ alice : Unit = 
     input h in 

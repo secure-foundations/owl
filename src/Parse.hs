@@ -1,12 +1,13 @@
 module Parse where
 
+import Debug.Trace
 import Text.Parsec
-import Text.Parsec.String
 import Text.Parsec.Language
 import Text.Parsec.Expr
 import Data.Default (Default, def)
 import qualified Text.Parsec.Token as P
 import System.Environment
+import Control.Monad.IO.Class
 import Control.Lens ((^.))
 import qualified Data.Map.Strict as M
 import Error.Diagnose.Position
@@ -15,15 +16,19 @@ import qualified Data.Set as S
 import Unbound.Generics.LocallyNameless
 import AST
 
-owlStyle  :: P.LanguageDef st
-owlStyle   = emptyDef
+type Parser = ParsecT String () IO 
+
+owlStyle  :: P.GenLanguageDef String st IO
+owlStyle   = P.LanguageDef
                 { P.commentStart   = "/*"
                 , P.commentEnd     = "*/"
                 , P.commentLine    = "//"
                 , P.nestedComments = True
                 , P.identStart     = letter <|> char '_'
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf", "forall", "bv", "pcase", "choose_idx"]
+                , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
+                , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -79,42 +84,25 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
-parseNameExp =
-    parseSpanned $ 
-        (do
-            reserved "RO"
-            symbol "<"
-            p <- parsePath
-            ps_ <- optionMaybe $ do
-                symbol ","
-                xs <- parseIdx `sepBy` (symbol ",")               
-                return xs 
-            let ps = case ps_ of
-                       Just ps -> ps
-                       Nothing -> []
-            oi <- optionMaybe $ do
-                symbol ","
-                many1 digit
-            symbol ">"
-            let i = case oi of
-                      Just x -> read x
-                      Nothing -> 0
-            return $ ROName p ps i)
-        <|>
-        (do
-            reserved "PRF"
-            symbol "<"
-            n <- parseNameExp
-            symbol ","
-            p <- identifier
-            symbol ">"
-            return $ PRFName n p)
-        <|>
-        (do
-            i <- parsePath
-            inds <- parseIdxParams
-            return $ BaseName inds i
-        )
+parseNameExp = 
+    (parseSpanned $ do
+        reserved "PRF"
+        symbol "<"
+        n <- parseNameExp
+        symbol ","
+        p <- identifier
+        symbol ">"
+        return $ PRFName n p)
+    <|>
+    (parseSpanned $ do
+        i <- parsePath
+        ps <- parseIdxParams 
+        oi <- optionMaybe $ do
+            symbol "["
+            i <- many1 digit
+            symbol "]"
+            return $ read i
+        return $ NameConst ps i oi)
 
 parsePath :: Parser Path
 parsePath = 
@@ -530,21 +518,41 @@ parseLocality = do
         symbol ">"
         return is
     return $ Locality x $ concat ys 
+
+parseNameDecl = 
+    parseSpanned $ do
+        reserved "name"
+        n <- identifier
+        inds <- parseIdxParamBinds
+        namedecl_body <- parseNameDeclBody
+        return $ DeclName n $ bind inds namedecl_body
+
+parseNameDeclBody =
+    (do
+        symbol ":"
+        ((do
+            reserved "RO"
+            es <- parseAExpr `sepBy1` (symbol "||")
+            symbol "->"
+            nts <- parseNameType `sepBy1` (symbol "||")
+            oadm <- optionMaybe $ reserved "admit_uniqueness"
+            let ad = case oadm of
+                       Just _ -> AdmitUniqueness
+                       Nothing -> NoAdmitUniqueness
+            return $ DeclRO es nts ad)
+         <|>
+         (do
+             nt <- parseNameType
+             symbol "@"
+             nl <- parseLocality `sepBy1` (symbol ",")
+             return $ DeclBaseName nt nl)))
+    <|>
+    (return $ DeclAbstractName)
+    
  
 parseDecls = 
     many $ 
-    (parseSpanned $ do
-    reserved "name"
-    n <- identifier
-    inds <- parseIdxParamBinds
-    ntnl <- optionMaybe $ do
-        symbol ":"
-        nt <- parseNameType
-        symbol "@"
-        nl <- parseLocality `sepBy` (symbol ",")
-        return (nt, nl)
-    return $ DeclName n (bind inds ntnl)
-    )
+    parseNameDecl 
     <|>
     parseEnum
     <|>
@@ -597,7 +605,7 @@ parseDecls =
     (parseSpanned $ do
         reserved "random_oracle"
         l <- identifier
-        pb <- parseIdxParamBinds1
+        pb <- parseIdxParamBinds
         symbol ":"
         es <- (parseAExpr) `sepBy1` (symbol "||")
         symbol "->"
@@ -697,7 +705,6 @@ parseHeader n inds = do
     symbol "@"
     nl <- parseLocality
     return $ DeclDefHeader n (bind inds nl)
-
 
 mkModuleBinders :: Maybe [(String, ModuleExp)] -> ModuleExp -> Maybe ModuleExp -> (ModuleExp, Maybe ModuleExp)
 mkModuleBinders Nothing me omt = (me, omt)
@@ -1060,12 +1067,12 @@ parseCryptOp =
         reserved "hash"
         symbol "<"
         p <- parsePath
-        idxs_  <- optionMaybe $ do
+        oixs <- optionMaybe $ do
             symbol ","
-            parseIdx `sepBy` (symbol ",")
-        let idxs = case idxs_ of
-                     Nothing -> []
-                     Just xs -> xs
+            parseIdxParamsNoAngles
+        let idxs = case oixs of
+                    Nothing -> ([], [])
+                    Just v -> v
         oi <- optionMaybe $ do
             symbol ","
             many1 digit
@@ -1157,6 +1164,18 @@ parseIdxParams = do
             symbol "@"
             parseIdx `sepBy` symbol ","
         symbol ">"
+        return (is, concat ps)
+    return $ case inds of
+               Nothing -> ([], [])
+               Just (xs, ys) -> (xs, ys)
+
+parseIdxParamsNoAngles :: Parser ([Idx], [Idx])
+parseIdxParamsNoAngles = do
+    inds <- optionMaybe $ do
+        is <- parseIdx `sepBy` symbol ","
+        ps <- optionMaybe $ do
+            symbol "@"
+            parseIdx `sepBy` symbol ","
         return (is, concat ps)
     return $ case inds of
                Nothing -> ([], [])

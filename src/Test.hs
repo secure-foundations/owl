@@ -20,7 +20,8 @@ doSingleTest :: String -> Flags -> TestType -> IO Bool
 doSingleTest fileName f tt = do
     putStrLn $ "Testing " ++ fileName ++ "..."
     s <- readFile fileName
-    case (P.parse parseFile "" s) of
+    pres <- P.runParserT parseFile () "" s
+    case pres of
       Left perr -> do
           putStrLn $ show $ pretty "PARSE FAILURE: " <> pretty fileName <> pretty (show perr)
           return False

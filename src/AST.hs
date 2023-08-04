@@ -126,11 +126,9 @@ type AExpr = Spanned AExprX
 
 
 data NameExpX = 
-    BaseName ([Idx], [Idx]) Path
-    | ROName Path [Idx] Int
+    NameConst ([Idx], [Idx]) Path (Maybe Int)
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
-
 
 type NameExp = Spanned NameExpX
 
@@ -138,11 +136,6 @@ data Locality = Locality Path [Idx]
     deriving (Show, Generic, Typeable)
 
 
-
-
-
-roName :: Path -> [Idx] -> Int -> NameExp
-roName s is i = mkSpanned (ROName s is i)
 
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
@@ -298,7 +291,7 @@ type ModuleExp = Spanned ModuleExpX
 
 -- Decls are surface syntax
 data DeclX = 
-    DeclName String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    DeclName String (Bind ([IdxVar], [IdxVar]) NameDecl) 
     | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
@@ -316,13 +309,19 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String (Bind [IdxVar] ([AExpr], [NameType])) AdmitUniquenessCheck
+    | DeclRandOrcl String (Bind ([IdxVar], [IdxVar]) ([AExpr], [NameType])) AdmitUniquenessCheck
     | DeclCorr (Bind [IdxVar] (Label, Label))
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
+
+data NameDecl = 
+    DeclBaseName NameType [Locality]
+      | DeclRO [AExpr] [NameType] AdmitUniquenessCheck
+      | DeclAbstractName
+      deriving (Show, Generic, Typeable)
 
 data IsModuleType = ModType | ModConcrete
     deriving (Show, Generic, Typeable, Eq)
@@ -337,6 +336,7 @@ instance Subst ResolvedPath IsModuleType
 instance Alpha AdmitUniquenessCheck
 instance Subst AExpr AdmitUniquenessCheck
 instance Subst ResolvedPath AdmitUniquenessCheck
+
 
 data DetFuncOps =
     UninterpFunc
@@ -393,7 +393,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-    CHash Path [Idx] Int
+    CHash Path ([Idx], [Idx]) Int
       | CPRF String
       | CAEnc 
       | CADec 
@@ -450,6 +450,9 @@ instance Subst ResolvedPath Idx
 instance Subst AExpr Endpoint
 instance Subst ResolvedPath Endpoint
 
+instance Alpha NameDecl
+instance Subst AExpr NameDecl
+instance Subst ResolvedPath NameDecl
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
@@ -554,16 +557,21 @@ instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
 instance Pretty NameExpX where
-    pretty (ROName s is i) = pretty "RO<" <> pretty s <> pretty "," <> pretty is <> pretty "," <> pretty i <> pretty ">" 
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
-    pretty (BaseName vs n) = 
-        case vs of
-          ([], []) -> pretty n
-          (vs1, vs2) -> pretty n <> pretty "<" <> 
-              pretty (intercalate "," (map (show . pretty) vs1)) <> 
-              pretty "@" <>
-              pretty (intercalate "," (map (show . pretty) vs2)) <> 
-              pretty ">"
+    pretty (NameConst vs n oi) = 
+        let pi = case oi of
+                   Nothing -> mempty
+                   Just i -> pretty "[" <> pretty i <> pretty "]"
+        in
+        let p = case vs of
+              ([], []) -> pretty n
+              (vs1, vs2) -> pretty n <> pretty "<" <> 
+                  pretty (intercalate "," (map (show . pretty) vs1)) <> 
+                  pretty "@" <>
+                  pretty (intercalate "," (map (show . pretty) vs2)) <> 
+                  pretty ">"
+        in
+        p <> pi
 
 prettyBind :: (Alpha a, Alpha b, Pretty a, Pretty b) => Bind b a -> (Doc ann, Doc ann)
 prettyBind b = 
@@ -672,8 +680,8 @@ instance Pretty AExprX where
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
 instance Pretty CryptOp where
-    pretty (CHash p is i) = 
-        pretty "RO" <+> pretty p <+> pretty is <+> pretty i
+    pretty (CHash p (is, ps) i) = 
+        pretty "RO" <+> pretty p <+> pretty is <+> pretty ps <+> pretty i
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
     pretty (CAEnc) = pretty "aenc"

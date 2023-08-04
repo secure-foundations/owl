@@ -38,7 +38,7 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -219,7 +219,7 @@ initDetFuncs = withNormalizedTys $ [
                   debug $ pretty "Checking name " <> pretty n <> pretty " against " <> pretty m
                   if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])))
                   else case (n^.val, m^.val) of
-                       (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
+                       (NameConst (is1, is1') a oi1, NameConst (is2, is2') b oi2) | (a, oi1) `aeq` (b, oi2) -> do
                            let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
                            return $ TRefined (mkSpanned $ TBool advLbl) (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "TRUE") [] [])) p))
                        _ -> do
@@ -356,11 +356,22 @@ normalizeTy t0 = do
         (TBool l) -> do
             l' <- normalizeLabel l
             return $ Spanned (t0^.spanOf) $ TBool l'
-        (TName n) -> return t0
-        (TVK n) -> return t0
-        (TDH_PK n) -> return t0
-        (TEnc_PK n) -> return t0
-        (TSS n m) -> return t0
+        (TName n) -> do
+            n' <- normalizeNameExp n
+            return $ Spanned (t0^.spanOf) $ TName n'
+        (TVK n) -> do
+            n' <- normalizeNameExp n
+            return $ Spanned (t0^.spanOf) $ TVK n'
+        (TDH_PK n) -> do
+            n' <- normalizeNameExp n
+            return $ Spanned (t0^.spanOf) $ TDH_PK n'
+        (TEnc_PK n) -> do
+            n' <- normalizeNameExp n
+            return $ Spanned (t0^.spanOf) $ TEnc_PK n'
+        (TSS n m) -> do
+            n' <- normalizeNameExp n
+            m' <- normalizeNameExp m
+            return $ Spanned (t0^.spanOf) $ TSS n' m'
         TConst s ps -> do
             td <- getTyDef (t0^.spanOf) s
             case td of
@@ -463,14 +474,6 @@ isSubtype' t1 t2 = do
           b1 <- isSubtype' t1 t1'
           b2 <- isSubtype' t1 t2'
           return $ b1 || b2
-      (TName n, TName m) ->
-          case (n^.val, m^.val) of
-            (BaseName (is1, is1') a, BaseName (is2, is2') b) | a `aeq` b -> do
-              debug $ pretty "Equality query on indices " <> pretty (is1 ++ is1') <> pretty " and " <> pretty (is2 ++ is2')
-              let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2 ++ is2')
-              (_, b) <- SMT.smtTypingQuery $ SMT.symAssert p
-              return b
-            _ -> return False
       (t, TDataWithLength l a) -> do
           debug $ pretty "Checking TDataWithLength with " <> pretty t1 <> pretty " <= " <> pretty t2
           b1 <- isSubtype' t1 (tData l l)
@@ -617,14 +620,14 @@ addTyDef s td k = do
 addNameDef :: String -> ([IdxVar], [IdxVar]) -> (NameType, [Locality]) -> Check a -> Check a
 addNameDef n (is1, is2) (nt, nls) k = do
     md <- view curMod
-    _ <- case lookup n (md ^. nameEnv) of
+    _ <- case lookup n (md ^. nameDefs) of
       Nothing -> return ()
       Just o -> do
-        ((is1', is2'), ntnlsOpt') <- unbind o
-        case ntnlsOpt' of
-          Nothing -> assert (nt^.spanOf) (show $ pretty "Indices on abstract and concrete def of name" <+> pretty n <+> pretty "do not match") $
-                        (length is1 == length is1' && length is2 == length is2')
-          Just _ -> typeError (ignore def) $ "Duplicate name: " ++ n
+        ((is1', is2'), nd) <- unbind o
+        case nd of
+          AbstractName -> do
+              assert (nt^.spanOf) (show $ pretty "Indices on abstract and concrete def of name" <+> pretty n <+> pretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
+          _ -> typeError (ignore def) $ "Duplicate name: " ++ n
     assert (nt^.spanOf) (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
     local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
         local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
@@ -632,7 +635,7 @@ addNameDef n (is1, is2) (nt, nls) k = do
             forM_ nls (normLocality (nt^.spanOf))
             debug $ pretty "done"
             checkNameType nt
-    local (over (curMod . nameEnv) $ insert n (bind (is1, is2) (Just (nt, nls)))) $ k
+    local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (BaseDef (nt, nls)))) $ k
 
 sumOfLengths :: [AExpr] -> AExpr
 sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
@@ -711,10 +714,24 @@ checkDecl d cont =
                   normLocality (d^.spanOf) loc
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclName n o -> do
-        ((is1, is2), ntnlsOpt) <- unbind o
-        case ntnlsOpt of
-          Nothing ->  local (over (curMod . nameEnv) $ insert n (bind (is1, is2) Nothing)) $ cont
-          Just (nt, nls) -> addNameDef n (is1, is2) (nt, nls) $ cont
+        ((is1, is2), ndecl) <- unbind o
+        case ndecl of 
+          DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
+          DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
+          DeclRO aes nts adm -> do
+              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
+                  local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
+                      _ <- mapM inferAExpr aes
+                      forM_ nts $ \nt -> do
+                          checkNameType nt
+                          checkROName nt
+                      localROCheck (d^.spanOf) aes
+                      case adm of
+                        AdmitUniqueness -> return ()
+                        NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
+                      nds <- view $ curMod . nameDefs
+                      assert (d^.spanOf) (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
+              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef (aes, nts)) cont 
       DeclModule n imt me omt -> do
           md <- case me^.val of
                   ModuleVar (PRes p) -> return $ MAlias p 
@@ -823,30 +840,11 @@ checkDecl d cont =
         assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-      (DeclRandOrcl s bnd adm) -> do
-        (is, (aes, nts)) <- unbind bnd
-        -- assert (d^.spanOf) (show $ pretty "TODO: params") $ length ps == 0
-        assert (d^.spanOf) ("Empty random oracle declaration") $ length nts > 0
-        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
-            _ <- mapM inferAExpr aes
-            forM_ nts $ \nt -> do
-                checkNameType nt
-                checkROName nt
-            localROCheck (d^.spanOf) aes
-            case adm of
-              AdmitUniqueness -> return ()
-              NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
-            ro <- view $ curMod . randomOracle
-            assert (d^.spanOf) (show $ pretty "Duplicate RO lbl: " <> pretty s) $ not $ member s ro
-        local (over (curMod . randomOracle) $ insert s bnd) cont 
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
     case ne^.val of
-      BaseName _ (PRes (PDot p s)) -> do
-          p' <- curModName
-          return $ p `aeq` p'
-      ROName (PRes (PDot p s)) _ i -> do
+      NameConst _ (PRes (PDot p s)) _ -> do
           p' <- curModName
           return $ p `aeq` p'
       PRFName ne _ -> nameExpIsLocal ne
@@ -921,8 +919,8 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
 checkROUnique :: Ignore Position -> [AExpr] -> Check ()
 checkROUnique pos es = laxAssertion $ do
-    ro_vals <- view $ curMod . randomOracle
-    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique ro_vals es 
+    roPres <- collectLocalROPreimages
+    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique roPres es 
     assert pos "RO uniqueness check failed" b
     return ()
 
@@ -1713,20 +1711,22 @@ checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Chec
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
-      CHash p is i -> do                            
+      CHash p (is, ps) i -> do                            
           local (set tcScope TcGhost) $ forM_ is checkIdx
           let aes = map fst args
           bnd <- getRO pos p
-          (ixs, (aes'_, nts_)) <- unbind bnd
+          ((ixs, ixps), (aes'_, nts_)) <- unbind bnd
           assert pos ("RO index out of bounds") $ i < length nts_
           assert pos ("Wrong index arity for RO") $ length is == length ixs
-          let aes' = substs (zip ixs is) aes'_
-          let nts = substs (zip ixs is) nts_
+          assert pos ("Wrong index arity for RO") $ length ps == length ixps
+          let (aes', nts) = substs (zip ixs is) $ substs (zip ixps ps) (aes'_, nts_)
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
-          if b_eq then getOutTy ot $ mkSpanned $ TName $ roName p is i
+          debug $ pretty $ "symCheckEqTopLevel: " ++ show b_eq
+          if b_eq then getOutTy ot $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
                   else do
                       noCollision <- SMT.symDecideNotInRO aes
+                      debug $ pretty $ "symDecideNotInRO: " ++ show noCollision
                       if noCollision then getOutTy ot $ mkSpanned $ TData advLbl advLbl
                                      else do
                                         l <- coveringLabelOf $ map snd args
@@ -1914,19 +1914,20 @@ tyDefMatches pos s td1 td2 =
 userFuncMatches :: Ignore Position -> String -> UserFunc -> UserFunc -> Check ()
 userFuncMatches pos s f1 f2 = assert pos ("Func mismatch: " ++ s) $ f1 == f2
 
-nameMatches :: Ignore Position -> String -> 
-    Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])) -> 
-    Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])) -> 
+nameDefMatches :: Ignore Position -> String -> 
+    Bind ([IdxVar], [IdxVar]) NameDef -> 
+    Bind ([IdxVar], [IdxVar]) NameDef -> 
     Check ()
-nameMatches pos s xn1 xn2 = do
+nameDefMatches pos s xn1 xn2 = do
     ((is1, is2), on1) <- unbind xn1
     ((is1', is2'), on2) <- unbind xn2
     case (substs (zip is1 (map mkIVar is1')) $ substs (zip is2 (map mkIVar is2')) $ on1, on2) of
-      (_, Nothing) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
-      (Nothing, Just _) -> typeError pos $ "Name should be concrete: " ++ show s
-      (Just (nt1, ls1), Just (nt2, ls2)) -> do
+      (_, AbstractName) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
+      (AbstractName, _) -> typeError pos $ "Name should be concrete: " ++ show s
+      (BaseDef (nt1, ls1), BaseDef (nt2, ls2)) -> do
           assert pos ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert pos ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
+      _ -> typeError pos $ "Unhandled name def matches case"
 
 
 moduleMatches :: Ignore Position -> ModDef -> ModDef -> Check ()
@@ -1995,10 +1996,10 @@ moduleMatches pos md1 md2 =
                 Nothing -> typeError pos $ "Func missing: " ++ s
                 Just f' -> userFuncMatches pos s f' f
           -- nameEnv
-          forM_ (md2^.nameEnv) $ \(s, n) -> 
-              case lookup s (md1^.nameEnv) of 
+          forM_ (md2^.nameDefs) $ \(s, n) -> 
+              case lookup s (md1^.nameDefs) of 
                 Nothing -> typeError pos $ "Name missing: " ++ s
-                Just n' -> nameMatches pos s n' n
+                Just n' -> nameDefMatches pos s n' n
           -- modules
           forM_ (md2^.modules) $ \(s, m1) ->
               case lookup s (md1^.modules) of

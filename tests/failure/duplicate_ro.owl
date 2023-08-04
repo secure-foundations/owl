@@ -3,6 +3,6 @@ name d : nonce @ alice
 name X : DH @ alice
 name Y : DH @ alice
 
-random_oracle l1 : (pair(X, Y)) -> enckey Name(d)
-random_oracle l2 : (pair(X, Y)) -> enckey Name(d)
+name l1 : RO (pair(X, Y)) -> enckey Name(d)
+name l2 : RO (pair(X, Y)) -> enckey Name(d)
 

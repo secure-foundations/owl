@@ -1,14 +1,14 @@
 locality alice
-name n<i> : nonce @ alice
-name m<i> : nonce @ alice
-name k : nonce @ alice
+name k1 : nonce @ alice
+name k2 : nonce @ alice
 
-random_oracle l<i> : get(n<i>) -> nonce
-random_oracle l2<i> : get(m<i>) -> nonce
-random_oracle l3 : get(k) -> nonce
+name l : RO get(k1) || get(k2) -> nonce 
 
-def alice<i>() @ alice : Unit = 
-    corr_case n<i> in 
-    let x = hash<l, i>(get(n<i>)) in 
+def alice() @ alice : Unit = 
+    let x : Name (l) = hash<l>(get(k1), get(k2)) in
+    let y : Name (l[0]) = x in
+    let z : Name (l) = y in 
+    assert true;
     ()
+
 

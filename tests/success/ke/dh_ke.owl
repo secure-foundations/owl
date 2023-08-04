@@ -4,7 +4,7 @@ name S : DH @ Server
 name C : DH @ Client
 name skS : sigkey (dhpk(S)) @ Server
 name skC : sigkey (dhpk(C)) @ Client
-random_oracle l : dh_combine(dhpk(get(C)), get(S)) -> enckey Name(k) 
+name l : RO dh_combine(dhpk(get(C)), get(S)) -> enckey Name(k) 
 
 struct server_msg {
     _s1: dhpk(S),
@@ -40,7 +40,7 @@ def ke_Server () @ Server
        corr_case S in 
        corr_case C in 
        let ss : if sec(skC) then shared_secret(C, S) else Data<(adv /\ [S])> = dh_combine(client_pk, get(S)) in
-       let dhk : if sec(C) /\ sec(S) then Name(RO<l>) else Data<adv> = hash<l>(ss) in
+       let dhk : if sec(C) /\ sec(S) then Name(l) else Data<adv> = hash<l>(ss) in
        let c =  aenc(dhk, get(k)) in
        corr_case k in
        false_elim in
@@ -64,9 +64,9 @@ def ke_Client () @ Client
        let server_pk : if sec(skS) then dhpk(S) else Data<adv> = m in
        let ss : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = dh_combine(server_pk, get(C)) in
        let ss_swap : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = ss in 
-       let dhk : if sec(skS) then Name(RO<l>) else Data<adv> = hash<l> (ss_swap) in
+       let dhk : if sec(skS) then Name(l) else Data<adv> = hash<l> (ss_swap) in
        input ii, _ in 
-       corr_case RO<l> in
+       corr_case l in
        corr_case k in 
        false_elim in
        (case adec(dhk, ii) 

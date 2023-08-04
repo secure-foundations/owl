@@ -7,25 +7,25 @@ name data<@i> : nonce @ client<i>
 corr<i> [X<@i>] ==> [data<@i>]
 corr<i> [Y] ==> [data<@i>]
 
-random_oracle L<i> : dh_combine(dhpk(get(X<@i>)), get(Y)) -> enckey Name(data<@i>)
+name L<@i> : RO dh_combine(dhpk(get(X<@i>)), get(Y)) -> enckey Name(data<@i>)
 
 def client_main<@i>(pky : dhpk(Y)) @ client<i> : Unit = 
     let h = dhpk(get(X<@i>)) in
     output h;
-    let y = hash<L, i>(dh_combine(pky, get(X<@i>))) in 
+    let y = hash<L, @i>(dh_combine(pky, get(X<@i>))) in 
     let c = aenc(y, get(data<@i>)) in 
     output c
 
-def server_getkey() @ server : Option (Union<Data<adv>, (exists j. Name(RO<L, j>))>) = 
+def server_getkey() @ server : Option (Union<Data<adv>, (exists j. Name(L<@j>))>) = 
     input h in 
     if is_group_elem(h) then
     begin
         pcase (exists j:idx. h = dhpk(get(X<@j>))) in 
         choose_idx j | h = dhpk(get(X<@j>)) in
-        let y = hash<L, j>(dh_combine<name X<@j>, name Y>(h, get(Y))) in 
+        let y = hash<L, @j>(dh_combine<name X<@j>, name Y>(h, get(Y))) in 
         Some(pack<j>(y))
     end
-    else None<type Union<Data<adv>, (exists j. Name(RO<L, j>))>>()
+    else None<type Union<Data<adv>, (exists j. Name(L<@j>))>>()
 
 def server_main() @ server :
 Unit = 
@@ -36,7 +36,7 @@ Unit =
         union_case x_ = u_ in 
         unpack j, x = x_ in 
         input c in 
-        (corr_case RO<L, j> in 
+        (corr_case L<@j> in 
         case adec(x, c)
         | Some m => 
             let c = aenc(x, m) in 

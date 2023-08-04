@@ -32,6 +32,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
 
+
 member :: Eq a => a -> [(a, b)] -> Bool
 member k xs = elem k $ map fst xs
 
@@ -97,10 +98,18 @@ data ModDef =
     | MFun String ModDef (Bind (Name ResolvedPath) ModDef)
     deriving (Show, Generic, Typeable)
 
-
-
 instance Alpha ModDef
 instance Subst ResolvedPath ModDef
+
+data NameDef = 
+    BaseDef (NameType, [Locality])
+      | AbstractName
+      | RODef ([AExpr], [NameType])
+      deriving (Show, Generic, Typeable)
+
+instance Alpha NameDef
+instance Subst ResolvedPath NameDef
+instance Subst Idx NameDef
 
 data ModBody = ModBody { 
     _isModuleType :: IsModuleType,
@@ -111,9 +120,8 @@ data ModBody = ModBody {
     _advCorrConstraints :: [Bind [IdxVar] (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
-    _nameEnv :: Map String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))),
+    _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
     _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
-    _randomOracle :: Map String (Bind [IdxVar] ([AExpr], [NameType])),
     _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
@@ -449,34 +457,32 @@ getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
     case ne^.val of 
-     BaseName (vs1, vs2) pth@(PRes (PDot p n)) -> do
+     NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
          md <- openModule (ne^.spanOf) p
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
-         case lookup n (md^.nameEnv)  of
+         case lookup n (md^.nameDefs)  of
            Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName pth
-           Just int -> do
-               ((is, ps), ntLclsOpt) <- unbind int
-               case ntLclsOpt of
-                 Nothing -> return Nothing
-                 Just (nt, lcls) -> do
-                    when ((length vs1, length vs2) /= (length is, length ps)) $ 
-                        typeError (ne^.spanOf) $ show $ pretty "Wrong index arity for name " <> pretty n <> pretty ": got " <> pretty (length vs1, length vs2) <> pretty ", expected " <> pretty (length is, length ps)
-                    return $ substs (zip is vs1) $ substs (zip ps vs2) $ Just (nt, Just lcls)
-     ROName (PRes (PDot p s)) ps i -> do
-        md <- openModule (ne^.spanOf) p 
-        case lookup s (md^.randomOracle) of 
-          Just (bents) -> do 
-              (bs, (_, nts_)) <- unbind bents
-              when (length ps /= length bs) $ 
-                  typeError (ne^.spanOf) $ "Wrong index arity for random oracle " ++ show (pretty ne) ++ ": got " ++ show (length ps) ++ ", expected " ++ show (length bs)
-              let nts = substs (zip bs ps) nts_              
-              if i < length nts then 
-                  return $ Just (nts !! i, Nothing)
-              else
-                  typeError (ne^.spanOf) $ "Random oracle index out of bounds: " ++ show (pretty ne)
-          Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownRO p
+           Just b_nd -> do
+               ((is, ps), nd') <- unbind b_nd
+               assert (ne^.spanOf) ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+               let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
+               case nd of
+                 AbstractName -> do
+                     assert (ne^.spanOf) ("Cannot use hash select on abstract name") $ oi == Nothing 
+                     return Nothing
+                 BaseDef (nt, lcls) -> do
+                     assert (ne^.spanOf) ("Cannot use hash select on base name") $ oi == Nothing 
+                     return $ Just (nt, Just lcls) 
+                 RODef (as, nts) -> 
+                     case oi of
+                       Nothing -> do
+                           assert (ne^.spanOf) ("Missing hash select parameter for RO name") $ length nts == 1
+                           return $ Just (nts !! 0, Nothing)
+                       Just i -> do
+                           assert (ne^.spanOf) ("Hash select parameter for RO name out of bounds") $ i < length nts
+                           return $ Just (nts !! i, Nothing)
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
          case ntLclsOpt of
@@ -490,11 +496,15 @@ getNameInfo ne = do
             _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (pretty ne)
 
-getRO :: Ignore Position -> Path -> Check (Bind [IdxVar] ([AExpr], [NameType]))
-getRO pos (PRes (PDot p s)) = do
+getRO :: Ignore Position -> Path -> Check (Bind ([IdxVar], [IdxVar]) ([AExpr], [NameType]))
+getRO pos p0@(PRes (PDot p s)) = do
         md <- openModule pos p 
-        case lookup s (md^.randomOracle) of 
-          Just r -> return r
+        case lookup s (md^.nameDefs) of 
+          Just ind -> do
+              (ps, nd) <- unbind ind
+              case nd of
+                RODef res -> return $ bind ps res
+                _ -> typeError pos $ "Not an RO name: " ++ show (pretty p0)
           Nothing -> typeError pos $ show $ ErrUnknownRO p
 getRO pos pth = typeError pos $ "Unknown path: " ++ show pth
 
@@ -600,8 +610,8 @@ inferAExpr ae = do
                     _ -> return $ tName ne
       (AEGetEncPK ne) -> do
           case ne^.val of
-            BaseName ([], []) _ -> return ()
-            BaseName _ _ -> typeError (ae^.spanOf) $ "Cannot call get_encpk on indexed name"
+            NameConst ([], []) _ _ -> return ()
+            NameConst _ _ _ -> typeError (ae^.spanOf) $ "Cannot call get_encpk on indexed name"
             _ -> typeError (ae^.spanOf) $ "Cannot call get_encpk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -612,8 +622,8 @@ inferAExpr ae = do
                     _ -> typeError (ae^.spanOf) $ show $ pretty "Expected encryption sk: " <> pretty ne
       (AEGetVK ne) -> do
           case ne^.val of
-            BaseName ([], []) _ -> return ()
-            BaseName _ _ -> typeError (ae^.spanOf) $ "Cannot call get_vk on indexed name"
+            NameConst ([], []) _ _ -> return ()
+            NameConst _ _ _ -> typeError (ae^.spanOf) $ "Cannot call get_vk on indexed name"
             _ -> typeError (ae^.spanOf) $ "Cannot call get_vk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -710,6 +720,29 @@ prettyContext :: Env -> Doc ann
 prettyContext e =
     vsep [prettyIndices (e^.inScopeIndices), prettyTyContext (e^.tyContext)]
 
+isNameDefRO :: Path -> Check Bool
+isNameDefRO (PRes (PDot p n)) = do 
+    md <- openModule (ignore def) p
+    case lookup n (md^.nameDefs) of
+        Nothing -> typeError (ignore def) $ "SMT error"
+        Just b_nd -> do 
+            case snd (unsafeUnbind b_nd) of
+              RODef _ -> return True
+              _ -> return False
+
+normalizeNameExp :: NameExp -> Check NameExp
+normalizeNameExp ne = 
+    case ne^.val of
+      NameConst ips p oi -> do
+          case oi of
+            Just _ -> return ne
+            Nothing -> do
+              isRO <- isNameDefRO p
+              if isRO then return (Spanned (ne^.spanOf) $ NameConst ips p (Just 0))
+                      else return ne
+      PRFName ne1 s -> do
+          ne' <- normalizeNameExp ne1
+          return $ Spanned (ne^.spanOf) $ PRFName ne' s
 
 -- Traversing modules to collect global info
 
@@ -778,11 +811,9 @@ collectEnvAxioms f = do
                         go f (PDot p s) (subst x (PDot p s) mb)
                 return $ xs ++ concat ys
 
-collectNameEnv :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
-collectNameEnv = collectEnvInfo (_nameEnv)
 
-collectRO :: Check (Map ResolvedPath (Bind [IdxVar] ([AExpr], [NameType])))
-collectRO = collectEnvInfo (_randomOracle)
+collectNameDefs :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef))
+collectNameDefs = collectEnvInfo (_nameDefs)
 
 collectFlowAxioms :: Check ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
@@ -795,6 +826,33 @@ collectUserFuncs = collectEnvInfo (_userFuncs)
 
 collectTyDefs :: Check (Map ResolvedPath TyDef)
 collectTyDefs = collectEnvInfo _tyDefs
+
+
+collectROPreimages :: Check [Bind ([IdxVar], [IdxVar]) [AExpr]]
+collectROPreimages = do
+    xs <- collectNameDefs
+    ps <- mapM go (map snd xs)
+    return $ concat ps
+        where
+            go b = do
+                (is, nd) <- unbind b
+                case nd of
+                  RODef (x, _) -> return [bind is x]
+                  _ -> return []
+
+
+collectLocalROPreimages :: Check [Bind ([IdxVar], [IdxVar]) [AExpr]]
+collectLocalROPreimages =  do
+    xs <- view $ curMod . nameDefs
+    ps <- mapM go (map snd xs)
+    return $ concat ps
+        where
+            go b = do
+                (is, nd) <- unbind b
+                case nd of
+                  RODef (x, _) -> return [bind is x]
+                  _ -> return []
+
 
 pathPrefix :: ResolvedPath -> ResolvedPath
 pathPrefix (PDot p _) = p

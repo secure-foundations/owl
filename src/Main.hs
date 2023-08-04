@@ -28,7 +28,8 @@ main = do
         fn -> do
           -- start <- getCPUTime
           s <- readFile fn
-          case (P.parse parseFile (takeFileName fn) s) of
+          pres <- P.runParserT parseFile () (takeFileName fn) s
+          case pres of
             Left err -> putStrLn $ "parse error: " ++ show err
             Right ast -> do
                 do

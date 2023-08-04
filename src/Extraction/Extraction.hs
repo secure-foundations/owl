@@ -374,7 +374,7 @@ lookupAdtFunc fn = do
 
 flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  BaseName _ s -> do
+  NameConst _ s _ -> do
       p <- rustifyPath s
       return $ rustifyName p
 
@@ -840,10 +840,10 @@ extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of
-        BaseName ([], _) s -> do
+        NameConst ([], _) s Nothing -> do
             fnameExp <- flattenNameExp nameExp
             return (RcVecU8, pretty "", pretty "Rc::clone" <> parens (pretty "&self." <> pretty (fnameExp)))
-        BaseName (sidxs, _) s -> do
+        NameConst (sidxs, _) s Nothing -> do
             ps <- rustifyPath s
             return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
@@ -1098,7 +1098,8 @@ preprocessIncludes d =
                 let fn' = p </> fn
                 debugPrint $ "Including decls from " ++ fn'
                 s <- liftIO $ readFile fn'
-                case P.parse OwlP.parseFile (takeFileName fn') s of
+                pres <- liftIO $ P.runParserT OwlP.parseFile () (takeFileName fn') s
+                case pres of
                     Left err -> throwError $ CouldntParseInclude $ "parse error: " ++ show err
                     Right dcls -> do
                         preprocessed <- mapM preprocessIncludes dcls
@@ -1114,8 +1115,8 @@ preprocessModBody mb = do
     let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
-    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
-    mapM_ sortOrcl $ (mb ^. TB.randomOracle)
+    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameDefs)
+    mapM_ processOrcls $ (mb ^. TB.nameDefs)
     -- TODO random oracles, counters
     return (locMap, shared, pubkeys)
     where
@@ -1156,13 +1157,14 @@ preprocessModBody mb = do
 
         sortName :: (LocalityName -> ExtractionMonad LocalityName) 
                     -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
-                    -> (String, (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
+                    -> (String, (Bind ([IdxVar], [IdxVar]) TB.NameDef))
                     -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
         sortName lookupLoc (locMap, shared, pubkeys) (name, binds) = do
-            let ((sids, pids), ntnlOpt) = unsafeUnbind binds
-            case ntnlOpt of
-              Nothing -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
-              Just (nt, loc) -> do
+            let ((sids, pids), nd) = unsafeUnbind binds
+            case nd of
+              TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
+              TB.RODef _ -> return (locMap, shared, pubkeys) -- ignore RO defs
+              TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize
                     NT_Enc _ -> do
@@ -1199,14 +1201,17 @@ preprocessModBody mb = do
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
 
-        sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
-        sortOrcl (n, b) = do
-            let (_, (args, rtys)) = unsafeUnbind b
-            rtlen <- case (map (view val) rtys) of
-                [NT_Nonce] -> return "NONCE_SIZE"
-                [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
-                _ -> throwError $ UnsupportedOracleReturnType n
-            oracles %= M.insert n rtlen
+        processOrcls :: (String, (Bind ([IdxVar], [IdxVar]) TB.NameDef)) -> ExtractionMonad ()
+        processOrcls (n, b) = do
+            let (_, nd) = unsafeUnbind b
+            case nd of
+              TB.RODef (args, rtys) -> do
+                rtlen <- case (map (view val) rtys) of
+                    [NT_Nonce] -> return "NONCE_SIZE"
+                    [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
+                    _ -> throwError $ UnsupportedOracleReturnType n
+                oracles %= M.insert n rtlen
+              _ -> return ()
 
 
 -- return number of arguments to main and the print of the locality

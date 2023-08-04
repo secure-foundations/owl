@@ -67,8 +67,8 @@ corr [b1] ==> [c]
 corr [a] ==> [b]
 corr [b] ==> [a]
 
-random_oracle l1 : dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
-random_oracle l2 : dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> // TODO: Enum of sign request and answer
+name l1 : RO dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
+name l2 : RO dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> // TODO: Enum of sign request and answer
 
 struct PFA_msg {
     _pfa1: dhpk(a),
@@ -90,14 +90,13 @@ struct SDIS_msg {
     _sdis2: Data<adv> ||signature||
 }
 
-def PFA_FW (k11: if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PFA
-    // requires sec(a) /\ sec(b) // /\ ([skPDIS] <= [RO<l1>]) /\ ([RO<l1>] <= [skPDIS])
+def PFA_FW (k11: if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PFA
 : Unit =
     input inp in // from PDIS (actual non-KE)
     corr_case skPDIS in
     corr_case a in
     corr_case b in
-    corr_case RO<l1> in
+    corr_case l1 in
     case adec(k11, inp)
         | None => ()
         | Some m' =>
@@ -108,7 +107,7 @@ def PFA_FW (k11: if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PFA
                 let msg_to_send_PDIS = aenc(k11, _res(_res(signed))) in
                 let _ = output msg_to_send_PDIS to endpoint(PDIS) in ()
 
-def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
+def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
 : Unit =
     corr_case skPFA in
     corr_case a in
@@ -127,7 +126,7 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
             let ss     :if sec(skSDIS) then shared_secret(b1, c) else Data<adv> = dh_combine(g_pow_c, get(b1)) in
             corr_case b1 in 
             corr_case c in 
-            let k      :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = hash<l2>(ss) in 
+            let k      :if sec(b1) /\ sec(c) then Name(l2) else Data<adv> = hash<l2>(ss) in 
             
             // request PFA to sign
             let request = _req("a") in // TODO: "a" is the hash
@@ -136,7 +135,7 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv>) @ PDIS
 
             // get its input
             input inp2 in
-            corr_case RO<l1> in
+            corr_case l1 in
             case adec(k11, inp2)
                 | None => ()
                 | Some m' =>
@@ -168,10 +167,10 @@ def SDIS_actual () @ SDIS
                     corr_case c in 
                     let g_pow_b1:if sec(skPDIS) then dhpk(b1) else Data<adv> = m' in
                     let ss      :if sec(skPDIS) then shared_secret(b1, c) else Data<adv /\ [c]> = dh_combine(g_pow_b1, get(c)) in
-                    let k       :if sec(b1) /\ sec(c) then Name(RO<l2>) else Data<adv> = hash<l2>(ss) in
+                    let k       :if sec(b1) /\ sec(c) then Name(l2) else Data<adv> = hash<l2>(ss) in
                     
                     input inp2 in
-                    corr_case RO<l2> in
+                    corr_case l2 in
                     case adec(k, inp2) 
                         | None => ()
                         | Some m'' =>
@@ -180,7 +179,6 @@ def SDIS_actual () @ SDIS
 
 
 def PFA_KE () @ PFA
-// : if sec(skPDIS) then Name(RO<l1>) else Data<adv> =
 : Unit =
     let g_pow_a = dhpk(get(a)) in
     let signed_g_pow_a = sign(get(skPFA), _signed_by_PFA_g_pow_a(g_pow_a)) in
@@ -199,7 +197,7 @@ def PFA_KE () @ PFA
                 corr_case a in 
                 corr_case b in 
                 let ss     :if sec(skPDIS) then shared_secret(b, a) else Data<adv /\ [a]> = dh_combine(g_pow_b, get(a)) in
-                let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = hash<l1>(ss) in
+                let k11    :if sec(a) /\ sec(b) then Name(l1) else Data<adv> = hash<l1>(ss) in
                 call PFA_FW (k11)
 
 
@@ -223,7 +221,7 @@ def PDIS_KE () @ PDIS
                     corr_case b in
                     let ss     :if sec(skPFA) then shared_secret(b, a) else Data<adv /\ [b]> = dh_combine(g_pow_a, get(b)) in
                     // ss_swap?
-                    let k11    :if sec(a) /\ sec(b) then Name(RO<l1>) else Data<adv> = hash<l1>(ss) in
+                    let k11    :if sec(a) /\ sec(b) then Name(l1) else Data<adv> = hash<l1>(ss) in
                     let _ = output "" to endpoint(SDIS) in // TODO: The hash stuff
                     call PDIS_actual(k11)
 

@@ -1,7 +1,7 @@
 locality alice
 name n<i> : nonce @ alice
 name m<i> : nonce @ alice
-random_oracle L<i> : get(n<i>) -> nonce
+name L<i> : RO get(n<i>) -> nonce
 
 def tst() @ alice : Unit = 
     input h in 

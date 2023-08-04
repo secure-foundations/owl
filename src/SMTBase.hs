@@ -33,6 +33,7 @@ import Prettyprinter
 import TypingBase
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name
+import Unbound.Generics.LocallyNameless.Unsafe
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
@@ -102,7 +103,6 @@ data SolverEnv = SolverEnv {
     _constants :: M.Map String SExp,
     _lengthConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
-    _symNameEnv :: M.Map String SExp,
     _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
@@ -114,7 +114,7 @@ data SolverEnv = SolverEnv {
 
 makeLenses ''SolverEnv
 
-initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
+initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
 
 newtype Sym a = Sym {unSym :: ReaderT Env (StateT SolverEnv (ExceptT String IO)) a }
     deriving (Functor, Applicative, Monad, MonadReader Env, MonadState SolverEnv, MonadIO)
@@ -292,6 +292,15 @@ raceSMT setup k1 k2 = do
 
 
 
+-- Smart app
+sApp :: [SExp] -> SExp
+sApp [x] = x
+sApp [] = error "Empty sApp"
+sApp xs = SApp xs
+
+sInt :: Int -> SExp
+sInt i = SAtom $ show i
+
 sAnd :: [SExp] -> SExp
 sAnd xs = 
     if length xs > 0 then 
@@ -329,9 +338,21 @@ sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
-sApp :: SExp -> [SExp] -> SExp
-sApp f vs = 
-    if length vs == 0 then f else (SApp $ f : vs)
+sName :: Bool -> String -> [SExp] -> Maybe Int -> SExp
+sName isRO n ivs oi = 
+    let vn = case oi of
+               Nothing -> if isRO then (SAtom $ "%name_" ++ n ++ "_0") else (SAtom $ "%name_" ++ n)
+               Just i -> SAtom $ "%name_" ++ n ++ "_" ++ (show i)
+    in
+    sApp $ vn : ivs 
+
+withIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
+withIndices xs k = do
+    sIE <- use symIndexEnv
+    symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ show i)) xs) 
+    res <- local (over inScopeIndices $ (++) xs) k
+    symIndexEnv .= sIE
+    return res
 
 ---- Helpers for logging 
 
@@ -352,42 +373,48 @@ logSMT s = do
                      else return $ ".owl-log" </> (s ++ show i ++ ".smt2")
 
 symIndex :: Idx -> Sym SExp
-symIndex (IVar ispan v) = do
+symIndex idx@(IVar ispan v) = do
     iEnv <- use symIndexEnv
     case M.lookup v iEnv of 
       Just i -> return i
       Nothing -> do
           indices <- view $ inScopeIndices
+          liftIO $ putStrLn $ "Unknown index: " ++ show v
           liftCheck $ typeError ispan (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
+
+flattenNameDefs :: Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef) ->
+                   Sym (Map (ResolvedPath, Maybe Int) (Bind ([IdxVar], [IdxVar]) NameDef))
+flattenNameDefs xs = do
+    ys <- forM xs $ \(n, b) -> do
+        ((is, ps), nd) <- liftCheck $ unbind b
+        case nd of
+          BaseDef _ -> return [((n, Nothing), b)]
+          AbstractName -> return [((n, Nothing), b)]
+          RODef (as, nts) ->
+              return $ map (\i -> ((n, Just i), bind (is, ps) $ RODef (as, [nts !! i]))) [0 .. (length nts - 1)]
+    return $ concat ys
+
+smtNameOfFlattenedName :: (ResolvedPath, Maybe Int) -> Sym SExp
+smtNameOfFlattenedName (n, oi) = do
+    sn <- smtName n
+    case oi of
+      Nothing -> return $ SAtom $ "%name_" ++ sn
+      Just i -> return $ SAtom $ "%name_" ++ sn ++ "_" ++ (show i)
+
             
 getSymName :: NameExp -> Sym SExp
-getSymName ne = 
-    case ne^.val of
-      BaseName (is1, is2) s -> do
-        nEnv <- use symNameEnv
+getSymName ne = do 
+    liftCheck $ debug $ pretty "getSymName" <+> pretty ne
+    ne' <- liftCheck $ normalizeNameExp ne
+    case ne'^.val of
+      NameConst (is1, is2) s oi -> do
         sn <- smtName s
-        case M.lookup sn nEnv of
-          Nothing -> error $ "UNKNOWN SYM NAME: " ++ show s
-          Just f -> do
-              case (is1, is2) of
-                ([], []) -> return f
-                _ -> do
-                    vs1 <- mapM symIndex is1
-                    vs2 <- mapM symIndex is2
-                    return $ SApp $ f : vs1 ++ vs2
-      ROName s is i -> do
-          nEnv <- use symNameEnv
-          sn <- smtName s
-          case M.lookup sn nEnv of
-              Nothing -> error $ "UNKNOWN SYM RO NAME: " ++ show s
-              Just f -> do
-                  case is of
-                    [] -> return $ SApp $ [f, SAtom (show i)]
-                    _ -> do
-                        vs <- mapM symIndex is
-                        return $ SApp $ [f] ++ vs ++ [SAtom $ show i]
-      PRFName ne s -> do
-          n <- getSymName ne
+        vs1 <- mapM symIndex is1
+        vs2 <- mapM symIndex is2
+        isRO <- liftCheck $ isNameDefRO s
+        return $ sName isRO sn (vs1 ++ vs2) oi
+      PRFName ne1 s -> do
+          n <- getSymName ne1
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
 
 
@@ -419,18 +446,11 @@ sExists vs bdy pats =
 sValue :: SExp -> SExp
 sValue n = SApp [SAtom "ValueOf", n]
 
--- Construct name expression out of base name and index arguments
-sBaseName :: SExp -> [SExp] -> SExp
-sBaseName n is = 
-    case is of
-      [] -> n
-      _ -> SApp $ n : is
-
 sLblOf :: SExp -> SExp
 sLblOf n = SApp [SAtom "LabelOf", n]
 
 sROName :: SExp -> [SExp] -> SExp -> SExp
-sROName n is i = 
+sROName n is i =
     case is of
       [] -> SApp $ [n, i]
       _ -> SApp $ n : (is ++ [i])

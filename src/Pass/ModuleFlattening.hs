@@ -44,9 +44,8 @@ instance Semigroup ModBody where
                 (md1^.advCorrConstraints <> md2^.advCorrConstraints)
                 (md1^.tyDefs <> md2^.tyDefs)
                 (md1^.userFuncs <> md2^.userFuncs)
-                (md1^.nameEnv <> md2^.nameEnv)
+                (md1^.nameDefs <> md2^.nameDefs)
                 (md1^.ctrEnv <> md2^.ctrEnv)
-                (md1^.randomOracle <> md2^.randomOracle)
                 (md1^.modules <> md2^.modules)
 
 globalName :: ResolvedPath -> String
@@ -83,9 +82,8 @@ flattenModules p0 md = do
                 (md^.advCorrConstraints)
                 (globalizeMap p0 $ md^.tyDefs)
                 (globalizeMap p0 $ md^.userFuncs)
-                (globalizeMap p0 $ md^.nameEnv)
+                (globalizeMap p0 $ md^.nameDefs)
                 (globalizeMap p0 $ md^.ctrEnv)
-                (globalizeMap p0 $ md^.randomOracle)
                 []
     let res = sconcat $ md' :| mbs
     return (sbts, res)

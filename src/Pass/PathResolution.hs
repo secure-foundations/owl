@@ -40,7 +40,6 @@ data PathType =
       | PTLoc
       | PTDef
       | PTTbl
-      | PTRO
       | PTMod
       | PTCounter
       deriving Eq
@@ -50,11 +49,13 @@ instance Show PathType where
     show PTTy = "type"
     show PTFunc = "function"
     show PTLoc = "locality"
-    show PTRO = "RO"
     show PTDef = "def"
     show PTTbl = "table"
     show PTMod = "module"
     show PTCounter = "counter"
+
+data IsNameRO = IsRO | NotRO
+    deriving Eq
 
 data ResolveEnv = ResolveEnv { 
     _flags :: Flags,
@@ -63,7 +64,6 @@ data ResolveEnv = ResolveEnv {
     _namePaths :: T.Map String ResolvedPath,
     _tyPaths :: T.Map String ResolvedPath,
     _funcPaths :: T.Map String ResolvedPath,
-    _roPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
@@ -95,7 +95,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -129,16 +129,21 @@ resolveDecls (d:ds) =
           ds' <- local (over ctrPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
       DeclName s ixs -> do
-          (is, o) <- unbind ixs
-          d' <- case o of
-                    Nothing -> return d
-                    Just (nt, ls) -> do
-                        nt' <- resolveNameType nt
-                        ls' <- mapM (resolveLocality (d^.spanOf)) ls
-                        return $ Spanned (d^.spanOf) $ DeclName s $ bind is (Just (nt', ls'))
+          (is, ndecl) <- unbind ixs
+          ndecl' <- case ndecl of
+                      DeclAbstractName -> return DeclAbstractName
+                      DeclBaseName nt ls -> do
+                          nt' <- resolveNameType nt
+                          ls' <- mapM (resolveLocality (d^.spanOf)) ls
+                          return $ DeclBaseName nt' ls'
+                      DeclRO aes nts adm -> do
+                          aes' <- mapM resolveAExpr aes
+                          nts' <- mapM resolveNameType nts
+                          return $ DeclRO aes' nts' adm
           p <- view curPath
+          let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
-          return (d' : ds')
+          return $ d' : ds'
       DeclDefHeader s isl -> do
           (is, l) <- unbind isl
           l' <- resolveLocality (d^.spanOf) l
@@ -181,7 +186,8 @@ resolveDecls (d:ds) =
                   fl <- view flags
                   let fn' = (takeDirectory $ fl^.fFilePath) </> fn
                   s <- liftIO $ readFile fn'
-                  case P.parse P.parseFile (takeFileName fn') s of
+                  pres <- liftIO $ P.runParserT P.parseFile () (takeFileName fn') s
+                  case pres of
                     Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
                     Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
             _ -> resolveError (d^.spanOf) $ "include statements only allowed at top level"
@@ -214,14 +220,6 @@ resolveDecls (d:ds) =
           let d' = Spanned (d^.spanOf) $ DeclTable s t' l'
           p <- view curPath
           ds' <- local (over tablePaths $ T.insert s p) $ resolveDecls ds
-          return (d' : ds')
-      DeclRandOrcl x iws adm -> do
-          (is, (zs, ws)) <- unbind iws
-          zs' <- mapM resolveAExpr zs
-          ws' <- mapM resolveNameType ws
-          let d' = Spanned (d^.spanOf) $ DeclRandOrcl x (bind is (zs', ws')) adm
-          p <- view curPath
-          ds' <- local (over roPaths $ T.insert x p) $ resolveDecls ds
           return (d' : ds')
       DeclCorr ils -> do
           (is, (l1, l2)) <- unbind ils
@@ -345,12 +343,9 @@ resolveTy e = do
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
-        BaseName s p -> do
+        NameConst s p oi -> do
             p' <- resolvePath (ne^.spanOf) PTName p
-            return $ Spanned (ne^.spanOf) $ BaseName s p'
-        ROName p ps i -> do 
-            p' <- resolvePath (ne^.spanOf) PTRO p
-            return $ Spanned (ne^.spanOf) $ ROName p' ps i
+            return $ Spanned (ne^.spanOf) $ NameConst s p' oi
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s
@@ -393,14 +388,14 @@ resolvePath' pos pt p =
                              Nothing -> resolveError pos $ "Unknown " ++ show pt ++ ": " ++ s
                              Just (b, p) -> do
                                  if b then return (PRes p) else return (PRes (PDot p s))
-          else do
+                           else
+          do
               mp <- case pt of
                       PTName -> view namePaths
                       PTTy -> view tyPaths
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
                       PTDef -> view defPaths
-                      PTRO -> view roPaths
                       PTTbl -> view tablePaths
                       PTCounter -> view ctrPaths
               case lookup s mp of
@@ -473,7 +468,7 @@ resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
       CHash p is i -> do
-          p' <- resolvePath pos PTRO p
+          p' <- resolvePath pos PTName p
           return $ CHash p' is i
       CAEnc -> return CAEnc
       CAEncWithNonce p is -> do
