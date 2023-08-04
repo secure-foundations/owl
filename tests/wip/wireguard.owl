@@ -1,0 +1,95 @@
+/*
+
+type := 0x1 (1 byte) 
+reserved := 0^3 (3 bytes)
+sender := I_i (4 bytes)
+ephemeral (32 bytes)
+static (32 bytes)
+timestamp (12 bytes)
+mac1 (16 bytes) 
+mac2 (16 bytes)
+
+*/
+
+/*
+TODOs: 
+- model collision resistance for the blake2s hash
+- specify authenticated data values for the AEAD names generated from msg1_C2 and msg1_C3 (new primitive for aenc)
+- synchronized enckey_with_nonce counters across multiple localities
+- think about timestamp() --- indexed nonce?
+
+*/
+
+
+// TODO collision resistance ?
+func blake2s
+    arity 2
+
+
+locality Initiator
+locality Responder
+
+// Ephemeral Diffie-Hellman keys
+name E_init : DH @ Initiator
+name E_resp : DH @ Responder
+
+// Static Diffie-Hellman keys (public keys should be preshared)
+name S_init : DH @ Initiator
+name S_resp : DH @ Responder
+
+random_oracle msg1_C1 : /* todo Construction */ dhpk(get(E_init)) -> nonce
+    admit_uniqueness
+// TODO enckey_with_nonce
+random_oracle msg1_C2 : get(RO<msg1_C1>) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
+    admit_uniqueness
+// TODO enckey_with_nonce
+random_oracle msg1_C3 : get(RO<msg1_C2>) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Data<adv> |12|
+    admit_uniqueness
+
+////////////////////////////
+// Message formats
+
+struct msg1_payload {
+      _sender : Data<adv> |4| // bytes??
+    , _ephemeral : dhpk(E_init)
+    , _static : Data<adv> | cipherlen(length(dhpk(get(S_init)))) |
+    , _timestamp: Data<adv> | cipherlen(12) |
+    // TODO cookie mechanism
+    // , _mac1: Data<adv> | |maclen| |
+    // , _mac2: Data<adv> | |maclen| |
+}
+
+enum msg {
+    | msg1 msg1_payload
+}
+
+def get_sender () @ Initiator : Data<adv> |4|
+def timestamp () @ Initiator : Data<adv> |12|
+
+def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg =
+    let C0 = blake2s("", "construction") in
+    let H0 = blake2s(C0, "identifier") in 
+    let H1 = blake2s(H0, dhpk_S_resp) in
+    let C1 = hash<msg1_C1>(dhpk(get(E_init))) in 
+    let msg1_ephemeral = dhpk(get(E_init)) in
+    let H2 = blake2s(H1, msg1_ephemeral) in
+    let C2 = hash<msg1_C2;0>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
+    let k0 = hash<msg1_C2;1>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
+    let msg1_static : Data<adv> |cipherlen(length(dhpk(get(S_init))))| = aenc(k0, dhpk(get(S_init))) in // TODO specify AD
+    let H3 = blake2s(H2, msg1_static) in
+    let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
+    let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
+    let timestamp = call timestamp() in
+    let msg1_timestamp : Data<adv> |cipherlen(12)| = aenc(k1, timestamp) in // TODO specify AD
+    let H4 = blake2s(H3, timestamp) in
+
+    let msg1_sender : Data<adv> |4| = call get_sender() in
+
+    let msg1_payload_value = msg1_payload(msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp) in
+
+    let res = msg1(msg1_payload_value) in
+    let _ = output res in res
+
+
+
+
