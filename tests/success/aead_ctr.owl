@@ -1,28 +1,32 @@
-locality alice
+locality alice : 1
+locality bob : 1
 
 func f 
     arity 0
 
-name x : nonce @ alice
-counter N @ alice
-name k : st_aead Name(x)
+name X<@i> : nonce @ alice<i>
+counter N<@i> @ alice<i>
+counter M<@i> @ bob<i>
+name k<@i> : st_aead Name(X<@i>)
     aad x. (x == f())
     nonce N
     nonce_pattern *
-    @ alice
+    @ alice<i>
 
-def tst() @ alice : Unit = 
-    inc_counter N;
-    let x = get_counter N in 
-    let c = st_aead_enc<N>(get(k), get(x), f()) in 
+def tst<@i>() @ alice<i> : Unit = 
+    inc_counter N<@i>;
+    let x = get_counter N<@i> in 
+    let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), f()) in 
     output c;
-    corr_case k in
+    corr_case k<@i> in
     input h in 
-    case st_aead_dec(get(k), c, h, x)
+    case st_aead_dec(get(k<@i>), c, h, x)
      | None => ()
      | Some _y => 
-        let y : if sec(k) then (_:Name(x){h == f()}) else Data<adv> = _y in
+        let y : if sec(k<@i>) then (_:Name(X<@i>){h == f()}) else Data<adv> = _y in
         ()
+
+    
 
 
 

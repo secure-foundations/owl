@@ -1742,7 +1742,10 @@ checkCryptoOp pos ot cop args = do
             Just k -> do
                 nt <- local (set tcScope TcGhost) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad _ _ -> do
+                  NT_StAEAD tm xaad p' _ -> do
+                      pnorm <- normalizePath p
+                      pnorm' <- normalizePath p'
+                      assert pos ("Wrong counter for AEAD: expected " ++ show (pretty p') ++ " but got " ++ show (pretty p)) $ pnorm `aeq` pnorm'
                       b1 <- isSubtype t tm
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) xaad
                       if b1 && b2 then return $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
