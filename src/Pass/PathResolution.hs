@@ -284,11 +284,13 @@ resolveNameType e = do
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
-                  NT_EncWithNonce t p np -> do
+                  NT_StAEAD t xpr p np -> do
                       t' <- resolveTy t
+                      (x, pr) <- unbind xpr
+                      pr' <- resolveProp pr
                       p' <- resolvePath (e^.spanOf) PTCounter p
                       np' <- resolveNoncePattern np
-                      return $ NT_EncWithNonce t' p' np' 
+                      return $ NT_StAEAD t' (bind x pr') p' np' 
                   NT_PRF xs -> do
                       xs' <- forM xs $ \(x, (y, z)) -> do
                           y' <- resolveAExpr y
@@ -472,11 +474,11 @@ resolveCryptOp pos cop =
           p' <- resolvePath pos PTName p
           return $ CHash p' is i
       CAEnc -> return CAEnc
-      CAEncWithNonce p is -> do
+      CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p
-          return $ CAEncWithNonce p' is
+          return $ CEncStAEAD p' is
+      CDecStAEAD -> return CDecStAEAD
       CADec -> return CADec
-      CADecWithNonce -> return CADecWithNonce
       CPKDec -> return CPKDec
       CPKEnc -> return CPKEnc
       CMac -> return CMac

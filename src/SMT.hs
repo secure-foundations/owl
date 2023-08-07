@@ -122,7 +122,7 @@ nameKindOf nt =
     return $ case nt^.val of
       NT_DH -> SAtom "DHkey"
       NT_Enc _ -> SAtom "Enckey"
-      NT_EncWithNonce _ _ _ -> SAtom "Enckey"
+      NT_StAEAD _ _ _ _ -> SAtom "Enckey"
       NT_PKE _ -> SAtom "PKEkey"
       NT_Sig _ -> SAtom "Sigkey"
       NT_PRF _ -> SAtom "PRFkey"

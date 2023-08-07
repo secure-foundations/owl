@@ -20,8 +20,8 @@ def server_getkey() @ server : Option (Union<Data<adv>, (exists j. Name(L<@j>))>
     input h in 
     if is_group_elem(h) then
     begin
-        pcase (exists j:idx. h = dhpk(get(X<@j>))) in 
-        choose_idx j | h = dhpk(get(X<@j>)) in
+        pcase (exists j:idx. h == dhpk(get(X<@j>))) in 
+        choose_idx j | h == dhpk(get(X<@j>)) in
         let y = hash<L, @j>(dh_combine<name X<@j>, name Y>(h, get(Y))) in 
         Some(pack<j>(y))
     end

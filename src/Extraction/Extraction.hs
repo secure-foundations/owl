@@ -779,8 +779,8 @@ extractCryptOp binds op owlArgs = do
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_enc(&" ++ k ++ ")")
         (CADec, [(_,k), (_,x)]) -> do return (Option VecU8, x ++ ".owl_dec(&" ++ k ++ ")")
-        (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CEncStAEAD p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CDecStAEAD, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CPKEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkenc(&" ++ k ++ ")")
         (CPKDec, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_pkdec(&" ++ k ++ ")")
         (CMac, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_mac(&" ++ k ++ ")")

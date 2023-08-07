@@ -28,8 +28,8 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "enckey_with_nonce", "nonce_pattern", "mackey", "sec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx"]
-                , P.reservedOpNames= ["(", ")", "->", ":", "=", "!", "~=", "*", "|-", "+x"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx"]
+                , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
 
@@ -369,9 +369,17 @@ parsePropTerm =
         <|>
         (try $ parseSpanned $ do
             t <- parseAExpr
-            symbol "="
+            symbol "=="
             t2 <- parseAExpr
             return $ PEq t t2)
+        <|>
+        (try $ parseSpanned $ do
+            pbegin <- getPosition
+            t <- parseAExpr
+            symbol "!="
+            t2 <- parseAExpr
+            pend <- getPosition
+            return $ PNot $ Spanned (ignore $ mkPos pbegin pend) $ PEq t t2)
         <|>
         (try $ parseSpanned $ do
             t <-  parseIdx
@@ -475,13 +483,17 @@ parseNameType =
         return $ NT_Enc t)
     <|>
     (parseSpanned $ do
-        reserved "enckey_with_nonce"
+        reserved "st_aead"
         t <- parseTy
+        symbol "aad"
+        x <- identifier
+        symbol "."
+        pr <- parseProp
         reserved "nonce"
         p <- parsePath
         reserved "nonce_pattern"
         np <- parseNoncePattern
-        return $ NT_EncWithNonce t p np
+        return $ NT_StAEAD t (bind (s2n x) pr) p np
     )
     <|>
     (parseSpanned $ do
@@ -1080,15 +1092,15 @@ parseCryptOp =
     (reserved "adec" >> return CADec)
     <|>
     (do
-        reserved "aenc_with_nonce"
+        reserved "st_aead_enc"
         symbol "<"
         p <- parsePath
         inds <- parseIdxParams
         symbol ">"
-        return $ CAEncWithNonce p inds
+        return $ CEncStAEAD p inds
     )
     <|>
-    (reserved "adec_with_nonce" >> return CADecWithNonce)
+    (reserved "st_aead_dec" >> return CDecStAEAD)
     <|>
     (reserved "pkenc" >> return CPKEnc)
     <|>

@@ -1,8 +1,12 @@
 locality alice
 
+func f 
+    arity 0
+
 name x : nonce @ alice
 counter N @ alice
-name k : enckey_with_nonce Name(x)
+name k : st_aead Name(x)
+    aad x. (x == f())
     nonce N
     nonce_pattern *
     @ alice
@@ -10,13 +14,14 @@ name k : enckey_with_nonce Name(x)
 def tst() @ alice : Unit = 
     inc_counter N;
     let x = get_counter N in 
-    let c = aenc_with_nonce<N>(get(k), get(x)) in 
+    let c = st_aead_enc<N>(get(k), get(x), f()) in 
     output c;
     corr_case k in
-    case adec_with_nonce(get(k), x, c)
+    input h in 
+    case st_aead_dec(get(k), c, h, x)
      | None => ()
      | Some _y => 
-        let y : if sec(k) then Name(x) else Data<adv> = _y in
+        let y : if sec(k) then (_:Name(x){h == f()}) else Data<adv> = _y in
         ()
 
 

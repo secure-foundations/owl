@@ -52,7 +52,7 @@ nameDefFlows n nt = do
       NT_Enc t -> do
           l <- liftCheck $ coveringLabel' t
           return $ [(l, mkSpanned $ LName n)]
-      NT_EncWithNonce t _ _ -> do
+      NT_StAEAD t _ _ _ -> do
           l <- liftCheck $ coveringLabel' t
           return $ [(l, mkSpanned $ LName n)]
       NT_PKE t -> do

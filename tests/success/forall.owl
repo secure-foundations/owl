@@ -5,8 +5,8 @@ name L<i> : RO get(n<i>) -> nonce
 
 def tst() @ alice : Unit = 
     input h in 
-    assert (forall i : idx. get(n<i>) = get(n<i>));
-    assert (forall i : idx. ! (get(n<i>) = get(m<i>)));
+    assert (forall i : idx. get(n<i>) == get(n<i>));
+    assert (forall i : idx. get(n<i>) != get(m<i>));
     choose_idx i | true in 
-    let lem = assert (get(n<i>) = get(n<i>)) in               
-    assert (exists j:idx. get(n<i>) = get(n<j>))
+    let lem = assert (get(n<i>) == get(n<i>)) in               
+    assert (exists j:idx. get(n<i>) == get(n<j>))

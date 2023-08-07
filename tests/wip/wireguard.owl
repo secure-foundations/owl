@@ -37,8 +37,7 @@ name E_resp : DH @ Responder
 name S_init : DH @ Initiator
 name S_resp : DH @ Responder
 
-name msg1_C1 : RO /* todo Construction */ dhpk(get(E_init)) -> nonce
-    admit_uniqueness
+name msg1_C1 : RO blake2s("", "construction") || dhpk(get(E_init)) -> nonce
 // TODO enckey_with_nonce
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
     admit_uniqueness
@@ -70,7 +69,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg =
     let C0 = blake2s("", "construction") in
     let H0 = blake2s(C0, "identifier") in 
     let H1 = blake2s(H0, dhpk_S_resp) in
-    let C1 = hash<msg1_C1>(dhpk(get(E_init))) in 
+    let C1 = hash<msg1_C1>(C0, dhpk(get(E_init))) in 
     let msg1_ephemeral = dhpk(get(E_init)) in
     let H2 = blake2s(H1, msg1_ephemeral) in
     let C2 = hash<msg1_C2;0>(C1, dh_combine(dhpk_S_resp, get(E_init))) in

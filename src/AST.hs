@@ -220,7 +220,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce
     | NT_Enc Ty
-    | NT_EncWithNonce Ty Path NoncePattern
+    | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_PRF [(String, (AExpr, NameType))]
@@ -397,8 +397,8 @@ data CryptOp =
       | CPRF String
       | CAEnc 
       | CADec 
-      | CAEncWithNonce Path ([Idx], [Idx])
-      | CADecWithNonce 
+      | CEncStAEAD Path ([Idx], [Idx])
+      | CDecStAEAD
       | CPKEnc
       | CPKDec
       | CMac
@@ -659,7 +659,9 @@ instance Pretty PropX where
 
 instance Pretty NameTypeX where
     pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
-    pretty (NT_EncWithNonce ty p pat) = pretty "enc_with_nonce" <+> pretty ty <+> pretty p
+    pretty (NT_StAEAD ty xaad p pat) = 
+        let (x, aad) = prettyBind xaad in
+        pretty "StAEAD" <+> pretty ty <+> pretty "(" <> x <> pretty "." <> aad <> pretty ")" <+> pretty p
     pretty (NT_Enc ty) = pretty "enc" <+> pretty ty
     pretty (NT_PKE ty) = pretty "pke" <+> pretty ty
     pretty (NT_MAC ty) = pretty "mac" <+> pretty ty

@@ -320,5 +320,11 @@
                  (dh_combine (dhpk (ValueOf n3)) (ValueOf n4)))
 )))
 
+(assert (forall ((n1 Name) (n2 Name) (n3 Name)) (!
+    (not (and (HasNameKind n1 DHkey) (HasNameKind n2 DHkey) (HasNameKind n3 DHkey)
+              (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))))
+    :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
+)))
+
 ;(assert false)
 ;(check-sat)

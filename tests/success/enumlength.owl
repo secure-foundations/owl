@@ -10,9 +10,9 @@ name k : enckey tst @ alice
 
 def alice_main(x : Data<adv> | |nonce| |, y : Data<adv> | |enckey| |) @ alice : Unit = 
     let a = A(x) in
-    assert (length(a) = plus(|nonce|, |tag|));
+    assert (length(a) == plus(|nonce|, |tag|));
     let c = aenc(get(k), a) in 
-    assert (length(c) = cipherlen(plus(|nonce|, |tag|)));
+    assert (length(c) == cipherlen(plus(|nonce|, |tag|)));
     ()
     
     

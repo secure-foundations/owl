@@ -49,8 +49,8 @@ def T_main<@i> () @ T<i>
     else ()
 
 enum reader_response {
-    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
-    // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
     | No
 }
 
@@ -81,14 +81,17 @@ def R_main () @ R
                     if eq(length(mm), |nonce|)  then
                         let mmm: if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())}  else Data<adv> ||nonce|| = mm in
                         let m':if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())} 
-                            else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x = get(NT<@j>)) /\ happened(T_main<@j>()))}) 
+                            else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x == get(NT<@j>)) /\ happened(T_main<@j>()))}) 
                             = mmm in
                         
                         // Checking if m is of type Name(NT<j>) as expected
                         //   and if m == x - these two lines can be removed
-                        // let m'': if sec(K<j>) then x:Name(NT<j>){happened(tag<j>())} else (x:Data<adv>{sec(K<j>) ==> ((x = get(NT<j>)) /\ happened(tag<j>()))}) = m' in
-                        // assert(sec(K<j>) ==> m' = nT);                            
-                        let res : (exists i. (x:(Data<adv> ||nonce||){sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
+                        // let m'': if sec(K<j>) then
+                        // x:Name(NT<j>){happened(tag<j>())} else
+                        // (x:Data<adv>{sec(K<j>) ==> ((x == get(NT<j>)) /\ happened(tag<j>()))}) = m' in
+                        // assert(sec(K<j>) ==> m' == nT);                            
+                        let res : (exists i. (x:(Data<adv> ||nonce||){sec(K<@i>)
+                        ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                             = pack<j>(m') in 
                         // assert(eq(length(res), |nonce|));
                         Ok(res)

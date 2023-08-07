@@ -11,19 +11,19 @@ func f
 
 def alice(x : Bool<static>) @ alice : Unit = 
     (if f() then
-        assert (f () = true); ()
+        assert (f () == true); ()
     else
-        assert (! (f () = true)); () 
+        assert (! (f () == true)); () 
     );
     (if x then
-        assert (x = true); ()
+        assert (x == true); ()
      else
-        assert (x = false); ()
+        assert (x == false); ()
     );
     (if eq(get(n), get(m)) then
         assert (False); ()
      else
-         assert (! (get(n) = get(m))); ()
+         assert (! (get(n) == get(m))); ()
     )
 
 

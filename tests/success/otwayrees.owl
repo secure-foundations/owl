@@ -118,8 +118,8 @@ enum alice_result {
 }
 
 def alice (
-    A : (x : Data<static>{(length(x) = username_length())}),
-    B : (x : Data<static>{(length(x) = username_length())}),
+    A : (x : Data<static>{(length(x) == username_length())}),
+    B : (x : Data<static>{(length(x) == username_length())}),
     M  : Name(m), 
     nA : Name(NA)
 ) @ Alice 

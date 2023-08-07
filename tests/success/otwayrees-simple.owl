@@ -112,8 +112,8 @@ enum alice_result {
 }
 
 def alice (
-    A : (x : Data<static>{(length(x) = username_length())}),
-    B : (x : Data<static>{(length(x) = username_length())}),
+    A : (x : Data<static>{(length(x) == username_length())}),
+    B : (x : Data<static>{(length(x) == username_length())}),
     nA : Name(NA)
 ) @ Alice 
     // requires ([m] <= adv) // Notes: since we output M, we need to tell Owl that M is public

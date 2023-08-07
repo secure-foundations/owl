@@ -941,9 +941,11 @@ checkNameType nt =
         checkTy t
         debug $ pretty "Checking if type " <> pretty t <> pretty " has public lengths "
         checkTyPubLen t
-      NT_EncWithNonce t p np -> do
+      NT_StAEAD t xaad p np -> do
           checkTy t
           checkTyPubLen t
+          (x, aad) <- unbind xaad
+          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ checkProp aad
           checkNoncePattern np
           checkCounter (nt^.spanOf) p
       NT_PKE t -> do
@@ -1634,25 +1636,13 @@ checkExpr ot e = do
                 forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
                 return t
 
-data EncKeyKind = 
-    AEnc
-    | AEnc_Ctr
-    deriving Eq
-   
 
-doAEnc encKeyKind pos t1 x t args =
+doAEnc pos t1 x t args =
   case extractNameFromType t1 of
     Just k -> do
         nt <- local (set tcScope TcGhost) $  getNameType k
         case nt^.val of
-          NT_EncWithNonce t' _ _ | encKeyKind == AEnc_Ctr -> do
-              debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
-              b1 <- isSubtype t t'
-              if b1 then
-                  return $ mkSpanned $ TRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
-              else
-                  mkSpanned <$> trivialTypeOf [t1, t]
-          NT_Enc t' | encKeyKind == AEnc -> do
+          NT_Enc t' -> do
               debug $ pretty "Checking encryption for " <> pretty k <> pretty " and " <> pretty t
               b1 <- isSubtype t t'
               if b1 then
@@ -1664,26 +1654,14 @@ doAEnc encKeyKind pos t1 x t args =
         debug $ pretty "Got extremely wrong case: " <> pretty args
         mkSpanned <$> trivialTypeOf [t1, t]
 
-doADec encKeyKind pos t1 t args = 
+doADec pos t1 t args = 
     case extractNameFromType t1 of
       Just k -> do
           debug $ pretty "Trying nontrivial dec"
           nt <-  local (set tcScope TcGhost) $ getNameType k
           l <- coveringLabel t
           case nt^.val of
-            NT_EncWithNonce t' _ _ | encKeyKind == AEnc_Ctr -> do 
-                b2 <- flowsTo (ignore def) (nameLbl k) advLbl
-                if ((not b2)) then do
-                    -- Honest
-                    debug $ pretty "Honest dec"
-                    return $ mkSpanned $ TOption t'
-                else do
-                    debug $ pretty "Corrupt dec"
-                    -- Corrupt
-                    let l_corr = joinLbl (nameLbl k) l
-                    debug $ pretty "joinLbl succeeded"
-                    return $ tData l_corr l_corr -- Change here
-            NT_Enc t' | encKeyKind == AEnc -> do
+            NT_Enc t' -> do
                 b2 <- flowsTo (ignore def) (nameLbl k) advLbl
                 if ((not b2)) then do
                     -- Honest
@@ -1750,21 +1728,46 @@ checkCryptoOp pos ot cop args = do
       CAEnc -> do
           assert pos ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
-          doAEnc AEnc pos t1 x t args
+          doAEnc pos t1 x t args
       CADec -> do 
           assert pos ("Wrong number of arguments to decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
-          doADec AEnc pos t1 t args
-      CAEncWithNonce p iargs -> do
+          doADec pos t1 t args
+      CEncStAEAD p iargs -> do
           checkCounterIsLocal pos p iargs
-          assert pos ("Wrong number of arguments to encryption") $ length args == 2
-          let [(_, t1), (x, t)] = args
-          doAEnc AEnc_Ctr pos t1 x t args
-      CADecWithNonce -> do 
-          assert pos ("Wrong number of arguments to decryption") $ length args == 3
-          let [(_, t1), (_, tnonce), (_, t)] = args
-          assertSubtype tnonce $ tData advLbl advLbl
-          doADec AEnc_Ctr pos t1 t args
+          assert pos ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
+          let [(_, t1), (x, t), (y, t2)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Just k -> do
+                nt <- local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_StAEAD tm xaad _ _ -> do
+                      b1 <- isSubtype t tm
+                      b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) xaad
+                      if b1 && b2 then return $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+                                  else mkSpanned <$> trivialTypeOf (map snd args)
+                  _ -> typeError (ignore def) $ "Wrong name type for StAEAD key: "
+      CDecStAEAD -> do
+          assert pos ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
+          let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Just k -> do
+                nt <- local (set tcScope TcGhost) $ getNameType k
+                case nt^.val of
+                  NT_StAEAD tm xaad _ _ -> do
+                      b1 <- flowsTo (ignore def) (nameLbl k) advLbl
+                      b2 <- isSubtype tnonce $ tData advLbl advLbl 
+                      if (not b1) && b2 then do
+                            (x, aad) <- unbind xaad
+                            return $ mkSpanned $ TOption $ tRefined tm (bind (s2n ".res") $ subst x y aad)
+                      else do
+                            -- Corrupt
+                            l <- coveringLabel t
+                            let l_corr = joinLbl (nameLbl k) l
+                            return $ tData l_corr l_corr
+                  _ -> mkSpanned <$> trivialTypeOf (map snd args)         
       CPKDec -> do 
           assert pos ("Wrong number of arguments to pk decryption") $ length args == 2
           let [(_, t1), (_, t)] = args

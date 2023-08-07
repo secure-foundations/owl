@@ -7,5 +7,5 @@ struct t {
 }
 
 def amain (a : t) @ alice : Unit = 
-    assert (length(a) = 3 * |nonce|);
+    assert (length(a) == 3 * |nonce|);
     ()
