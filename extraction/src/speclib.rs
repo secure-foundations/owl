@@ -170,28 +170,28 @@ pub mod itree {
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_ret<A, B>(x: A, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : FnSpec(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Ret(x).bind(k)) == k(x)
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_input<A, B>(f : FnSpec(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_input<A, B, Endpoint>(f : FnSpec(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: FnSpec(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Input(f).bind(k)) == ITree::Input(|x,e| f(x,e).bind(k))
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_output<A, B>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : FnSpec(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Output(x, e, f).bind(k)) == ITree::Output(x, e, Box::new((*f).bind(k)))
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_sample<A, B>(n : usize, f : FnSpec(Seq<u8>) -> ITree<A, Endpoint>, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : FnSpec(Seq<u8>) -> ITree<A, Endpoint>, k : FnSpec(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
@@ -290,7 +290,7 @@ pub mod itree {
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_assoc<A,B,C>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
+    pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}
 
@@ -382,8 +382,8 @@ pub mod itree {
         (output ($($e:tt)*) to ($($endpoint:tt)*)) => {
             (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(()))))
         };
-        ((sample($n:expr, $f:ident($($arg:expr),*), $var:ident)) in $($next:tt)*) => {
-            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!(let $var = (ret($f($($arg),*, coins))) in $($next)*)})))
+        (sample($n:expr, $f:ident($($arg:expr),*))) => {
+            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!((ret($f($($arg),*, coins))))})))
         };
         (ret ($($e:tt)*)) => {
             ITree::Ret($($e)*)
@@ -400,57 +400,64 @@ pub mod itree {
                 owl_spec!($($e2)*)
             }
         };
-        (let _ = ($($e:tt)*) in $($next:tt)+) => {
-            owl_spec!(($($e)*) in $($next)+)
+        (let _ = ($($e:tt)*) in $($next:tt)*) => {
+            owl_spec!( $($e)* )
+                .bind( closure_to_fn_spec(|_var| owl_spec!($($next)*) ))
         };
-        (let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
-            // Re-merge the trailing tt* into a single tt
-            owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
+        (let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
+            // owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
+            owl_spec!( $($e)* )
+                .bind( closure_to_fn_spec(|$var| owl_spec!($($next)*) ))
         };
-        (let $var:ident = { ($($e:tt)*) in $($next:tt)* }) => {
-            // Re-merge the trailing tt* into a single tt
-            // Duplicated to descend under { } added by previous rules
-            owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)* })
-        };
-        (@@internal merged_let $var:ident = (ret $($e:tt)*) in $next:tt) => {
-            { let $var = $($e)*; owl_spec!($next) }
-        };
-        (@@internal pushed_let $var:ident = (ret ($e:expr)) in $next:tt) => {
-            { let $var = $e; owl_spec!($next) }
-        };
-        (@@internal merged_let $var:ident = (input ($($e:tt)*)) in $next:tt) => {
-            owl_spec!((input ($($e)*)) in let $var = $next)
-        };
-        (@@internal merged_let $var:ident = (output ($($e:tt)*) to ($($endpoint:tt)*)) in $next:tt) => {
-            owl_spec!((output ($($e)*) to ($($endpoint)*)) in let $var = $next)
-        };
-        (@@internal merged_let $var:ident = (sample($n:expr, $f:ident($($arg:expr),*), $cvar:ident)) in $next:tt) => {
-            owl_spec!((sample($n, $f($($arg),*), $cvar)) in let $var = $next)
-        };
-        (@@internal merged_let $var:ident = (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) in $next:tt) => {
-            match $e {
-                $($pattern => {
-                    owl_spec!(@@internal pushed_let $var = ($($branch)*) in $next)
-                })*
-            }
-        };
-        (@@internal merged_let $var:ident = (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) in $next:tt) => {
-            if $e {
-                owl_spec!(@@internal pushed_let $var = ($($e1)*) in $next)
-            } else {
-                owl_spec!(@@internal pushed_let $var = ($($e2)*) in $next)
-            }
-        };
-        // (@@internal pushed_let $var:ident = ($e:expr) in $($next:tt)+) => {
-        //     {
-        //         owl_spec!(let $var = $($e)*); owl_spec!($($next)+)
+        // (($($e:tt)*) in $($next:tt)*) => {
+        //     // owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
+        //     owl_spec!( $($e)* )
+        //         .bind( closure_to_fn_spec(|_var| owl_spec!($($next)*) ))
+        // };
+        // (let $var:ident = { ($($e:tt)*) in $($next:tt)* }) => {
+        //     // Re-merge the trailing tt* into a single tt
+        //     // Duplicated to descend under { } added by previous rules
+        //     owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)* })
+        // };
+        // (@@internal merged_let $var:ident = (ret $($e:tt)*) in $next:tt) => {
+        //     { let $var = $($e)*; owl_spec!($next) }
+        // };
+        // (@@internal pushed_let $var:ident = (ret ($e:expr)) in $next:tt) => {
+        //     { let $var = $e; owl_spec!($next) }
+        // };
+        // (@@internal merged_let $var:ident = (input ($($e:tt)*)) in $next:tt) => {
+        //     owl_spec!((input ($($e)*)) in let $var = $next)
+        // };
+        // (@@internal merged_let $var:ident = (output ($($e:tt)*) to ($($endpoint:tt)*)) in $next:tt) => {
+        //     owl_spec!((output ($($e)*) to ($($endpoint)*)) in let $var = $next)
+        // };
+        // (@@internal merged_let $var:ident = (sample($n:expr, $f:ident($($arg:expr),*), $cvar:ident)) in $next:tt) => {
+        //     owl_spec!((sample($n, $f($($arg),*), $cvar)) in let $var = $next)
+        // };
+        // (@@internal merged_let $var:ident = (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) in $next:tt) => {
+        //     match $e {
+        //         $($pattern => {
+        //             owl_spec!(@@internal pushed_let $var = ($($branch)*) in $next)
+        //         })*
         //     }
         // };
-        (@@internal pushed_let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
-            {
-                owl_spec!(let $var = $($e)* in $($next)+)
-            }
-        };
+        // (@@internal merged_let $var:ident = (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) in $next:tt) => {
+        //     if $e {
+        //         owl_spec!(@@internal pushed_let $var = ($($e1)*) in $next)
+        //     } else {
+        //         owl_spec!(@@internal pushed_let $var = ($($e2)*) in $next)
+        //     }
+        // };
+        // // (@@internal pushed_let $var:ident = ($e:expr) in $($next:tt)+) => {
+        // //     {
+        // //         owl_spec!(let $var = $($e)*); owl_spec!($($next)+)
+        // //     }
+        // // };
+        // (@@internal pushed_let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
+        //     {
+        //         owl_spec!(let $var = $($e)* in $($next)+)
+        //     }
+        // };
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }
@@ -466,14 +473,6 @@ pub mod itree {
 
 verus! {
 use crate::itree::*;
-
-
-#[is_variant]
-#[derive(Copy, Clone)]
-pub enum Endpoint {
-Loc_alice,
-Loc_bob
-}
 
 // #[verifier(external_body)]
 // pub exec fn input<A>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>) -> (i: Vec<u8>)

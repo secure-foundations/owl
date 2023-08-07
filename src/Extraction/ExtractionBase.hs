@@ -169,7 +169,8 @@ specName :: String -> String
 specName s = "owlSpec_" ++ replacePrimes s
 
 flattenResolvedPath :: ResolvedPath -> String
-flattenResolvedPath PTop = "Top"
+flattenResolvedPath PTop = ""
+flattenResolvedPath (PDot PTop y) = y
 flattenResolvedPath (PDot x y) = flattenResolvedPath x ++ "_" ++ y
 flattenResolvedPath s = error $ "failed flattenResolvedPath on " ++ show s
 
@@ -288,9 +289,9 @@ initTypeLayouts :: M.Map String Layout
 initTypeLayouts = M.map LBytes initLenConsts
 
 printOwlArg :: (RustTy, String) -> String
-printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ")[..]"
-printOwlArg (VecU8, s) = "&" ++ s ++ "[..]"
-printOwlArg (ADT _, s) = "&(*" ++ s ++ ".data)[..]"
+printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ").as_slice()"
+printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
+printOwlArg (ADT _, s) = "&(*" ++ s ++ ".data).as_slice()"
 printOwlArg (_, s) = s
 
 printOwlOp :: String -> [(RustTy, String)] -> String

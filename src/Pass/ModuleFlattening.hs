@@ -50,12 +50,17 @@ instance Semigroup ModBody where
                 (md1^.modules <> md2^.modules)
 
 globalName :: ResolvedPath -> String
-globalName PTop = "Top"
+globalName PTop = ""
+globalName (PDot PTop s) = s
 globalName (PDot p s) = globalName p ++ "_" ++ s
 globalName _ = error "globalName : Got path var"
 
+globalNameWith :: ResolvedPath -> String -> String
+globalNameWith PTop s = s
+globalNameWith p s = globalName p ++ "_" ++ s
+
 globalizeMap :: ResolvedPath -> Map String a -> Map String a
-globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalName p0 ++ "_" ++ x, y)) mp
+globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalNameWith p0 x, y)) mp
 
 flattenModules :: ResolvedPath -> ModBody -> FreshMT IO ([(Name ResolvedPath, ResolvedPath)], ModBody)
 flattenModules p0 md = do

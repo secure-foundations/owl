@@ -147,34 +147,42 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEString s) = return $ pretty "\"" <> pretty s <> pretty "\""
     extractAExpr' (AELenConst s) = return $ pretty s <> pretty "_len"
     extractAExpr' (AEInt i) = return $ pretty i
-    extractAExpr' (AEGet ne) = return $ parens (pretty "*loc." <> rustifyName' (pretty ne)) <> pretty ".view()"
-    extractAExpr' (AEGetEncPK ne) = return $ pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
-    extractAExpr' (AEGetVK ne) = return $ pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
+    extractAExpr' (AEGet ne) = do
+        ne' <- flattenNameExp ne
+        return $ parens (pretty "*loc." <> pretty ne') <> pretty ".view()"
+    extractAExpr' (AEGetEncPK ne) = do
+        ne' <- flattenNameExp ne
+        return $ parens (pretty "*loc.pk" <> pretty ne') <> pretty ".view()"
+    extractAExpr' (AEGetVK ne) = do
+        ne' <- flattenNameExp ne
+        return $ parens (pretty "*loc.pk" <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
 
 extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad (Doc ann)
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        (CHash p _ n, [x]) -> do 
-            roname <- flattenPath p 
-            orcls <- use oracles
-            case orcls M.!? roname of
-                Nothing -> throwError $ TypeError "unrecognized random oracle"
-                Just outLen -> do
-                    return $ x <> pretty ".owl_extract_expand_to_len(&self.salt, " <> pretty outLen <> pretty ")"
-        (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CAEnc, [k, x]) -> do return $ pretty "enc" <> tupled [k, x]
-        (CADec, [k, x]) -> do return $ pretty "dec" <> tupled [k, x]
-        (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CPKEnc, [k, x]) -> do return $ x <> pretty ".owl_pkenc(&" <> k <> pretty ")"
-        (CPKDec, [k, x]) -> do return $ x <> pretty ".owl_pkdec(&" <> k <> pretty ")"
-        (CMac, [k, x]) -> do return $ x <> pretty ".owl_mac(&" <> k <> pretty ")"
-        (CMacVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_mac_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
-        (CSign, [k, x]) -> do return $ x <> pretty ".owl_sign(&" <> k <> pretty ")"
-        (CSigVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
-        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
+        -- (CHash p _ n, [x]) -> do 
+        --     roname <- flattenPath p 
+        --     orcls <- use oracles
+        --     case orcls M.!? roname of
+        --         Nothing -> throwError $ TypeError "unrecognized random oracle"
+        --         Just outLen -> do
+        --             return $ x <> pretty ".owl_extract_expand_to_len(&self.salt, " <> pretty outLen <> pretty ")"
+        -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CAEnc, [k, x]) -> do return $ pretty "sample" <> tupled [pretty "NONCE_SIZE", pretty "enc" <> tupled [k, x]]
+        (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
+        -- (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        -- (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        -- (CPKEnc, [k, x]) -> do return $ x <> pretty ".owl_pkenc(&" <> k <> pretty ")"
+        -- (CPKDec, [k, x]) -> do return $ x <> pretty ".owl_pkdec(&" <> k <> pretty ")"
+        -- (CMac, [k, x]) -> do return $ x <> pretty ".owl_mac(&" <> k <> pretty ")"
+        -- (CMacVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_mac_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
+        -- (CSign, [k, x]) -> do return $ x <> pretty ".owl_sign(&" <> k <> pretty ")"
+        -- (CSigVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
+        (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
+    where
+        noSamp name args = pretty "ret" <> parens (pretty name <> tupled args)
 
 
 extractExpr :: CExpr -> ExtractionMonad (Doc ann)
@@ -207,7 +215,7 @@ extractExpr (CLet e xk) = do
     let (x, k) = unsafeUnbind xk 
     e' <- extractExpr e
     k' <- extractExpr k
-    return $ pretty "let" <+> extractVar x <+> pretty "=" <+> e' <+> pretty "in" <> line <> k'
+    return $ pretty "let" <+> extractVar x <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
 -- extractExpr (CSamp d xs) = pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map extractAExpr xs))
 extractExpr (CIf a e1 e2) = do
     a' <- extractAExpr a
@@ -239,9 +247,7 @@ extractExpr (CCase a xs) = do
                 ) xs 
     return $ parens $ pretty "case" <+> parens a' <> line <> braces (vsep pcases)
 extractExpr (CCrypt cop args) = do
-    c <- extractCryptOp cop args
-    -- ITree expects everything to be inside of a `ret`
-    return $ parens $ pretty "ret" <+> parens c
+    parens <$> extractCryptOp cop args
 extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented case for extractExpr:" <+> pretty c
 -- extractExpr (CTLookup n a) = return $ pretty "lookup" <> tupled [pretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ pretty "write" <> tupled [pretty n, extractAExpr a, extractAExpr a']

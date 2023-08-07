@@ -133,21 +133,21 @@ layoutEnum name cases = do
 genOwlOpsImpl :: String -> Doc ann
 genOwlOpsImpl name = pretty ""
     -- "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
-    --     "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) { (&self.0[..]).owl_output(dest_addr, ret_addr) }",
-    --     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self.0[..]).owl_enc(key) }",
-    --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_dec(key) }",
+    --     "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) { (&self.0.as_slice()).owl_output(dest_addr, ret_addr) }",
+    --     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_enc(key) }",
+    --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_dec(key) }",
     --     "fn owl_eq(&self, other: &Self) -> bool { *self.0 == *other.0 }",
     --     "fn owl_length(&self) -> usize { self.0.len() }",
-    --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&self.0[..]).owl_mac(key) }",
-    --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_mac_vrfy(key, value) }",
-    --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&self.0[..]).owl_pkenc(pubkey) }",
-    --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&self.0[..]).owl_pkdec(privkey) }",
-    --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.0[..]).owl_sign(privkey) }",
-    --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.0[..]).owl_vrfy(pubkey, signature) } ",
-    --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.0[..]).owl_dh_combine(others_pk) }",
-    --     "fn owl_dhpk(&self) -> Vec<u8> { (&self.0[..]).owl_dhpk() }",
-    --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.0[..]).owl_extract_expand_to_len(salt, len) }",
-    --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0[..]).owl_xor(other) }"
+    --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_mac(key) }",
+    --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_mac_vrfy(key, value) }",
+    --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_pkenc(pubkey) }",
+    --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_pkdec(privkey) }",
+    --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_sign(privkey) }",
+    --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_vrfy(pubkey, signature) } ",
+    --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_dh_combine(others_pk) }",
+    --     "fn owl_dhpk(&self) -> Vec<u8> { (&self.0.as_slice()).owl_dhpk() }",
+    --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.0.as_slice()).owl_extract_expand_to_len(salt, len) }",
+    --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_xor(other) }"
     -- ])
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
@@ -179,9 +179,9 @@ extractStruct owlName owlFields = do
                 (owlName, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
                         pretty "construct_" <> (pretty . rustifyName) owlName <>
                             (parens . hsep . punctuate comma . map (\(t,a) -> pretty "&" <> (case t of
-                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty "[..]"
-                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty "[..]"
-                                VecU8 -> pretty a <> pretty "[..]"
+                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty ".as_slice()"
+                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty ".as_slice()"
+                                VecU8 -> pretty a <> pretty ".as_slice()"
                                 _ -> pretty a))
                             $ args)
                         ))) :
@@ -248,7 +248,7 @@ extractStruct owlName owlFields = do
             lbrace <> line <>
                 pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
                     pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
-                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data)[..]") <+> lbrace <> line <>
+                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
                         pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <+>
                             pretty "=>" <+> braces (
                                 pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success" <>
@@ -309,8 +309,8 @@ extractStruct owlName owlFields = do
             pretty "parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
             pretty "match arg.parsing_outcome {" <> line <>
             success_pattern <+> pretty "=>" <+>
-                pretty "slice_subrange(&(*arg.data)[..], idx_" <> pretty structIdx <> pretty ", idx_" <> pretty (structIdx + 1) <> pretty ")," <> line <>
-            pretty parsingOutcomeName <> pretty "::Failure => slice_subrange(&(*arg.data)[..]," <+> pretty failOffset <> pretty "," <+> pretty failNextOffset <> pretty ")" <> line <>
+                pretty "slice_subrange(&(*arg.data).as_slice(), idx_" <> pretty structIdx <> pretty ", idx_" <> pretty (structIdx + 1) <> pretty ")," <> line <>
+            pretty parsingOutcomeName <> pretty "::Failure => slice_subrange(&(*arg.data).as_slice()," <+> pretty failOffset <> pretty "," <+> pretty failNextOffset <> pretty ")" <> line <>
             pretty "}" <> line <>
             pretty "}"
 
@@ -345,9 +345,9 @@ extractEnum owlName owlCases' = do
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
                     pretty "construct_" <> (pretty . rustifyName) owlName <> pretty "_" <> (pretty . rustifyName) owlCase <>
                         (parens . hsep . punctuate comma . map (\(t,a) -> pretty "&" <> (case t of
-                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty "[..]"
-                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty "[..]"
-                                VecU8 -> pretty a <> pretty "[..]"
+                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty ".as_slice()"
+                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty ".as_slice()"
+                                VecU8 -> pretty a <> pretty ".as_slice()"
                                 _ -> pretty a)) $ args)
                 )))) $ M.assocs owlCases
 
@@ -394,7 +394,7 @@ extractEnum owlName owlCases' = do
             pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
                 pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
                     pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
-                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data)[..]") <+> lbrace <> line <>
+                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
                             pretty "Some(l)" <+>
                                 pretty "=>" <+> braces (pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success;") <> line <>
                             pretty "None => " <> braces (
@@ -439,7 +439,7 @@ extractEnum owlName owlCases' = do
                         pretty "None => " <> braces failureReturn <> line <>
                         rbrace
                     Nothing ->
-                        pretty "extend_vec_u8(&mut v, &arg[..]);"
+                        pretty "extend_vec_u8(&mut v, &arg.as_slice());"
                 in
             pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> parens (pretty "arg: &[u8]") <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
             pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> parens (pretty "arg@") <> line <>
@@ -470,7 +470,7 @@ extractCryptOp binds op owlArgs = do
         (CAEnc, [k, x]) -> do 
             let genSample = pretty "let coins = owl_sample(itree, nonce_size());"
             let encOp = pretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
-            return (VecU8, braces (genSample <+> encOp))
+            return (VecU8, genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec" [k, x])
         (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
@@ -687,7 +687,7 @@ extractExpr loc binds (CCase ae cases) = do
 extractExpr loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
-            RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty "[..]"
+            RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty ".as_slice()"
             VecU8 -> return $ pretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
     ptbl <- flattenPath tbl
@@ -944,7 +944,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
         genInitLoc loc localNames sharedNames pubKeys tbls = do
             localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames
-            return $ pretty "#[verifier(external_body)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
+            return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
                 pretty "// let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
                 pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
@@ -998,7 +998,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsSidArgs
-    return $ pretty "#[verifier(external_body)]" <> line <> pretty "fn main()" <+> lbrace <> line <>
+    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)]" <> line <> pretty "fn main()" <+> lbrace <> line <>
         pretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
         vsep runLocs <> line <>
         config <>

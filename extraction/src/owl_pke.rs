@@ -3,6 +3,9 @@ use rsa::{
     pkcs8::DecodePrivateKey, pkcs8::DecodePublicKey, pkcs8::EncodePrivateKey,
     pkcs8::EncodePublicKey, PaddingScheme, PublicKey, RsaPrivateKey, RsaPublicKey,
 };
+use vstd::prelude::*;
+
+verus! {
 
 /*  For PKE, we always use OAEP with SHA256 as the padding scheme,
  *  and use PKCS#8 DER to encode/decode keys as byte vectors
@@ -10,7 +13,8 @@ use rsa::{
 
 pub const PRIVATE_KEY_BITS: usize = 2048;
 
-pub fn gen_rand_keys() -> (Vec<u8>, Vec<u8>) {
+#[verifier(external_body)]
+pub fn gen_rand_keys() -> (_:(Vec<u8>, Vec<u8>)) {
     let mut rng = rand::thread_rng();
     let privkey = RsaPrivateKey::new(&mut rng, PRIVATE_KEY_BITS).unwrap();
     let pubkey = RsaPublicKey::from(&privkey);
@@ -19,6 +23,7 @@ pub fn gen_rand_keys() -> (Vec<u8>, Vec<u8>) {
     (privkey_encoded, pubkey_encoded)
 }
 
+#[verifier(external_body)]
 pub fn encrypt(pubkey: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let padding = PaddingScheme::new_oaep::<sha2::Sha256>();
@@ -26,12 +31,14 @@ pub fn encrypt(pubkey: &[u8], msg: &[u8]) -> Vec<u8> {
     pubkey_decoded.encrypt(&mut rng, padding, &msg[..]).unwrap()
 }
 
+#[verifier(external_body)]
 pub fn decrypt(privkey: &[u8], ctxt: &[u8]) -> Vec<u8> {
     let padding = PaddingScheme::new_oaep::<sha2::Sha256>();
     let privkey_decoded = RsaPrivateKey::from_pkcs8_der(privkey).unwrap();
     privkey_decoded.decrypt(padding, &ctxt[..]).unwrap()
 }
 
+#[verifier(external_body)]
 pub fn sign(privkey: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let padding = PaddingScheme::new_pss::<sha2::Sha256>();
@@ -41,6 +48,7 @@ pub fn sign(privkey: &[u8], msg: &[u8]) -> Vec<u8> {
         .unwrap()
 }
 
+#[verifier(external_body)]
 pub fn verify(pubkey: &[u8], signature: &[u8], msg: &[u8]) -> bool {
     let padding = PaddingScheme::new_pss::<sha2::Sha256>();
     let pubkey_decoded = RsaPublicKey::from_public_key_der(pubkey).unwrap();
@@ -49,3 +57,5 @@ pub fn verify(pubkey: &[u8], signature: &[u8], msg: &[u8]) -> bool {
         Err(_) => false,
     }
 }
+
+} // verus!

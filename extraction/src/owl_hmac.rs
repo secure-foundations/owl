@@ -4,6 +4,9 @@ use digest::Mac;
 use hmac::Hmac;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
+use vstd::prelude::*;
+
+verus! {
 
 pub enum Mode {
     Sha1,
@@ -27,12 +30,14 @@ pub fn gen_rand_key(_mode: &Mode) -> Vec<u8> {
     gen_rand_bytes(64)
 }
 
+#[verifier(external_body)]
 pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> Vec<u8> {
     let tag_length = match tag_length {
         Some(v) => v,
         None => tag_size(&mode),
     };
 
+    #[verifier(external_body)]
     fn hmac_inner<H: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
         let mut mac = <H as Mac>::new_from_slice(key).expect("HMAC got invalid length");
         mac.update(data);
@@ -50,6 +55,7 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
     return result;
 }
 
+#[verifier(external_body)]
 pub fn verify(
     mode: Mode,
     key: &[u8],
@@ -60,3 +66,5 @@ pub fn verify(
     let mac = hmac(mode, key, data, tag_length);
     mac == value
 }
+
+} // verus!
