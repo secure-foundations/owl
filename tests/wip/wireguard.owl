@@ -49,23 +49,37 @@ name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) 
 // Message formats
 
 struct msg1_payload {
-      _sender : Data<adv> |4| // bytes??
-    , _ephemeral : dhpk(E_init)
-    , _static : Data<adv> | cipherlen(length(dhpk(get(S_init)))) |
-    , _timestamp: Data<adv> | cipherlen(12) |
+      _msg1_reserved : Data<adv> |3|
+    , _msg1_sender : Data<adv> |4| // bytes??
+    , _msg1_ephemeral : dhpk(E_init)
+    , _msg1_static : Data<adv> | cipherlen(length(dhpk(get(S_init)))) |
+    , _msg1_timestamp: Data<adv> | cipherlen(12) |
     // TODO cookie mechanism
-    // , _mac1: Data<adv> | |maclen| |
-    // , _mac2: Data<adv> | |maclen| |
+    // , _msg1_mac1: Data<adv> | |maclen| |
+    // , _msg1_mac2: Data<adv> | |maclen| |
+}
+
+struct msg2_payload {
+      _msg2_reserved : Data<adv> |3|
+    , _msg2_sender: Data<adv> |4|
+    , _msg2_receiver: Data<adv> |4|
+    , _msg2_ephemeral: dhpk(E_resp)
+    , _msg2_empty: Data<adv> | cipherlen(0) |
+    // TODO cookie mechanism
+    // , _msg2_mac1: Data<adv> | |maclen| |
+    // , _msg2_mac2: Data<adv> | |maclen| |
 }
 
 enum msg {
     | msg1 msg1_payload
+    | msg2 msg2_payload
 }
 
-def get_sender () @ Initiator : Data<adv> |4|
+def get_padding () @ Initiator : Data<adv> |3| // TODO primitive for zero bytes?
+def get_sender () @ Initiator : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp () @ Initiator : Data<adv> |12|
 
-def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg =
+def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == true}) =
     let C0 = blake2s("", "construction") in
     let H0 = blake2s(C0, "identifier") in 
     let H1 = blake2s(H0, dhpk_S_resp) in
@@ -83,8 +97,9 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg =
     let H4 = blake2s(H3, timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender() in
+    let msg1_reserved : Data<adv> |3| = call get_padding() in
 
-    let msg1_payload_value = msg1_payload(msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp) in
+    let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp) in
 
     let res = msg1(msg1_payload_value) in
     let _ = output res in res
