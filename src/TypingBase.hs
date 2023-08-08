@@ -142,7 +142,8 @@ data Env = Env {
     _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
-    _smtCache :: IORef (M.Map Int Bool)
+    _smtCache :: IORef (M.Map Int Bool),
+    _typeCheckLogDepth :: IORef Int
 }
 
 
@@ -524,10 +525,30 @@ getNameType ne = do
         Just nt -> return nt
 
 
-debug :: Doc ann -> Check ()
+debug :: Show a => a -> Check ()
 debug d = do
     b <- view $ envFlags . fDebug
     when b $ liftIO $ putStrLn $ show d
+
+pushLogTypecheckScope :: Check ()
+pushLogTypecheckScope = do
+    r <- view $ typeCheckLogDepth
+    n <- liftIO $ readIORef r
+    liftIO $ writeIORef r (n+1)
+
+popLogTypecheckScope :: Check ()
+popLogTypecheckScope = do
+    r <- view $ typeCheckLogDepth
+    n <- liftIO $ readIORef r
+    liftIO $ writeIORef r (n-1)
+
+logTypecheck :: String -> Check ()
+logTypecheck s = do
+    b <- view $ envFlags . fLogTypecheck
+    when b $ do
+        r <- view $ typeCheckLogDepth
+        n <- liftIO $ readIORef r
+        liftIO $ putStrLn $ replicate (n*2) ' ' ++ s
 
 getTyDef :: Ignore Position -> Path -> Check TyDef
 getTyDef pos (PRes (PDot p s)) = do

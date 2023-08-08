@@ -14,6 +14,7 @@ data Flags = Flags {
     _fDoTests :: Bool,
     _fLax :: Bool,
     _fFilePath :: String, 
+    _fLogTypecheck :: Bool,
     _fFileContents :: String
                    }
 
@@ -38,6 +39,9 @@ parseArgs =
           switch
           ( long "lax" <> help "Lax checking (skip some SMT queries)" )
       <*> Options.Applicative.argument (str) (value "" <> metavar "FILE")
+      <*>
+          switch
+          ( long "log-typecheck" <> help "Log typechecker progress" )
       <*> (pure "")
 
 doParseArgs :: IO Flags

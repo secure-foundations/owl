@@ -44,8 +44,9 @@ emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty memp
 emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
+    r' <- newIORef 0
     m <- newIORef $ M.empty
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m r'
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -777,9 +778,13 @@ checkDecl d cont =
                           bdy'' <- ANF.anf bdy'
                           debug $ pretty "Checking def body " <> pretty n
                           debug $ pretty "Result of anf: "  <> pretty bdy''
+                          logTypecheck $ "Type checking " ++ n
+                          pushLogTypecheckScope
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
+                              popLogTypecheckScope
+                              logTypecheck $ "Finished checking " ++ n
                               return $ Just bdy'
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
@@ -897,17 +902,6 @@ checkROName nt =
       NT_MAC _ -> return ()
       _ -> typeError (nt^.spanOf) $ "Bad RO Name: " ++ show (pretty nt)
 
-withAllSplits :: [Prop] -> Check () -> Check ()
-withAllSplits [] k = k
-withAllSplits (p:ps) k = do
-    x <- freshVar
-    withVars [(s2n x, (ignore x, tLemma p))] $ do
-        (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-        if b then return () else withAllSplits ps k
-    withVars [(s2n x, (ignore x, tLemma $ pNot p))] $ do
-        (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-        if b then return () else withAllSplits ps k
-
 -- We then fold the list of decls, checking later ones after processing the
 -- earlier ones.
 checkDecls :: [Decl] -> Check ()
@@ -922,6 +916,7 @@ checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 checkROUnique :: Ignore Position -> [AExpr] -> Check ()
 checkROUnique pos es = laxAssertion $ do
     roPres <- collectLocalROPreimages
+    logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
     (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique roPres es 
     assert pos "RO uniqueness check failed" b
     return ()
@@ -1441,10 +1436,16 @@ checkExpr ot e = do
           case (stripRefinements t)^.val of
             TUnion t1 t2 -> do
                 debug $ pretty "first case for EUnionCase"
+                logTypecheck $ "First case for EUnionCase: " ++ show (pretty a)
+                pushLogTypecheckScope
                 t1' <- withVars [(x, (ignore $ show x, t1))] $ checkExpr ot e
+                popLogTypecheckScope
                 debug $ pretty "first case got" <+> pretty t1'
                 debug $ pretty "second case for EUnionCase"
+                logTypecheck $ "Second case for EUnionCase: " ++ show (pretty a)
+                pushLogTypecheckScope
                 t2' <- withVars [(x, (ignore $ show x, t2))] $ checkExpr ot e
+                popLogTypecheckScope
                 debug $ pretty "second case got" <+> pretty t2'
                 assertSubtype t1' t2'
                 getOutTy ot =<< stripTy x t2'
@@ -1584,11 +1585,19 @@ checkExpr ot e = do
           _ <- local (set tcScope TcGhost) $ checkProp p
           x <- freshVar
           t1 <- withVars [(s2n x, (ignore x, tLemma p))] $ do
+              logTypecheck $ "Case split: " ++ show (pretty p)
+              pushLogTypecheckScope
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then getOutTy ot tAdmit else checkExpr ot e
+              r <- if b then getOutTy ot tAdmit else checkExpr ot e
+              popLogTypecheckScope
+              return r
           t2 <- withVars [(s2n x, (ignore x, tLemma (pNot p)))] $ do
+              logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
+              pushLogTypecheckScope
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              if b then getOutTy ot tAdmit else checkExpr ot e
+              r <- if b then getOutTy ot tAdmit else checkExpr ot e
+              popLogTypecheckScope
+              return r
           return $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
