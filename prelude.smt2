@@ -156,11 +156,21 @@
 )))
 
 ;; TODO: move this
+(declare-const group_len Bits)
+(declare-const exponent_len Bits)
 (declare-fun dhpk (Bits) Bits)
 (declare-fun IsExponent (Bits) Bool)
 (declare-fun is_group_elem (Bits) Bits)
 (assert (forall ((x Bits)) (!
-    (HasType (is_group_elem x) Bool)
+    (=> (IsExponent x) (= (length x) exponent_len))
+    :pattern (IsExponent x)
+)))
+(assert (forall ((x Bits)) (!
+    (=> (= TRUE (is_group_elem x)) (= (length x) group_len))
+    :pattern (is_group_elem x)
+)))
+(assert (forall ((x Bits)) (!
+    (HasType (is_group_elem x) TBool)
     :pattern ((is_group_elem x) )
 )))
 (assert (forall ((x Bits)) (!
