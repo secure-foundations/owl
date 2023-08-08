@@ -154,22 +154,23 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
         // let msg1_ephemeral = dhpk(get(E_init)) in
         let H2 = crh(concat(H1, msg1_ephemeral)) in
 
-        // assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
-        //     concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
-        //     concat(crh("construction"), dhpk(get(E_init)))
-        // );
-        // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
-        //     concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
-        //     concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
-        // );
-
+        assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+            concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+            concat(crh("construction"), dhpk(get(E_init)))
+        );
+        assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+            concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+            concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
+        );
         // should follow from RO injectivity
         assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
-            C1 != get(msg1_C2[0])
+            concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+            concat(get(msg1_C2[0]), dh_combine(dhpk(get(S_resp)), get(S_init)))        
         );
         // should follow from hash preimage resistance
         assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
-            C1 != "mac1---"
+            concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+            concat("mac1---", dhpk(get(S_resp)))        
         );
 
         let C2 = hash<msg1_C2;0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
@@ -187,20 +188,22 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
                 //     C2 != get(msg1_C2[0])
                 // );
 
-                // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
-                //     concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != concat(crh("construction"), dhpk(get(E_init)))
-                // );
-                // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
-                //     concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != 
-                //     concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
-                // );
+                assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                    concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != concat(crh("construction"), dhpk(get(E_init)))
+                );
+                assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                    concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != 
+                    concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
+                );
                 // should follow from RO injectivity
                 assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
-                    C2 != get(msg1_C2[0])
+                    concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != 
+                    concat(get(msg1_C2[0]), dh_combine(dhpk(get(S_resp)), get(S_init)))
                 );
                 // should follow from hash preimage resistance
                 assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
-                    C2 != "mac1---"
+                    concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != 
+                    concat("mac1---", dhpk(get(S_resp)))        
                 );
 
                 let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
