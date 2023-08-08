@@ -351,3 +351,10 @@
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
 )))
 
+(assert (forall ((x Name) (y Name)) (!
+    (=>
+        (and (HasNameKind x DHkey) (HasNameKind y DHkey)
+             (= TRUE (eq (dhpk (ValueOf x)) (dhpk (ValueOf y)))))
+        (= x y))
+ )))
+

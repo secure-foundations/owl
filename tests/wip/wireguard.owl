@@ -48,6 +48,8 @@ name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) 
             nonce aead_counter_msg1_C3
             nonce_pattern *
 
+name msg1_mac1_key : RO "mac1---" || dhpk(get(S_resp)) -> mackey Data<adv>
+
 ////////////////////////////
 // Message formats
 
@@ -58,7 +60,7 @@ struct msg1_payload {
     , _msg1_static : Data<adv> | cipherlen(length(dhpk(get(S_init)))) |
     , _msg1_timestamp: Data<adv> | cipherlen(12) |
     // TODO cookie mechanism
-    // , _msg1_mac1: Data<adv> | |maclen| |
+    , _msg1_mac1: Data<adv> | |maclen| |
     // , _msg1_mac2: Data<adv> | |maclen| |
 }
 
@@ -103,8 +105,12 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == 
     let msg1_sender : Data<adv> |4| = call get_sender() in
     let msg1_reserved : Data<adv> |3| = call get_padding() in
 
-    let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp) in
-
+    let msg1_mac1_k = hash<msg1_mac1_key>("mac1---", dhpk_S_resp) in 
+    let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
+        concat(msg1_reserved, concat(msg1_sender, concat(msg1_ephemeral,
+        concat(msg1_static, msg1_timestamp))))) in 
+    let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender,
+    msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1) in
     let res = msg1(msg1_payload_value) in
     let _ = output res in res
 
