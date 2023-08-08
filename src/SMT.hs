@@ -80,6 +80,18 @@ setupNameEnvRO = do
         let q2 = map (\i -> (SAtom $ show i, indexSort)) $ is2 ++ ps2
         let v2 = sApp $ sname2 : (map fst q2)
         emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2]
+
+        when (ar1 > 0) $ do
+            q12 <- forM q1 $ \_ -> do
+                x <- freshSMTIndexName
+                return (SAtom x, indexSort)
+            let v12 = sApp $ sname1 : (map fst q12)
+            let q1_eq_q12 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q12 !! i)) [0 .. (length q1 - 1)]
+            let v1_eq_v12 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                                                                             SApp [SAtom "ValueOf", v12]]]
+            emitAssertion $ sForall (q1 ++ q12)
+                (v1_eq_v12 `sImpl` q1_eq_q12)
+                [v1_eq_v12]
     -- Axioms relevant for each def 
     forM_ fdfs $ \(noi, b) -> do 
         ((is, ps), nd) <- liftCheck $ unbind b

@@ -160,6 +160,7 @@ initDetFuncs = withNormalizedTys $ [
               return $ TData l l
           _ -> typeError (ignore def) $ show $ ErrBadArgs "length" args,
     mkSimpleFunc "plus" 2 $ \args -> trivialTypeOf args,
+    mkSimpleFunc "crh" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "mult" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "zero" 0 $ \args -> trivialTypeOf args,
     mkSimpleFunc "is_group_elem" 1 $ \args -> trivialTypeOf args,
@@ -1689,6 +1690,15 @@ checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Chec
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
+      CCRHLemma x y -> do
+          assert pos ("crh_lemma takes no other arguments") $ length args == 0
+          _ <- local (set tcScope TcGhost) $ inferAExpr x
+          _ <- local (set tcScope TcGhost) $ inferAExpr y
+          return $ tRefined tUnit $ bind (s2n "._") $
+              pImpl
+                (pEq (aeApp (topLevelPath "crh") [] [x])
+                     (aeApp (topLevelPath "crh") [] [y]))
+                (pEq x y)
       CHash p (is, ps) i -> do                            
           local (set tcScope TcGhost) $ forM_ is checkIdx
           let aes = map fst args

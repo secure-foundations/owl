@@ -31,7 +31,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem" ]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh"]
 
 data PathType = 
     PTName
@@ -470,6 +470,10 @@ resolveAExpr a =
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
+      CCRHLemma x y -> do
+          x' <- resolveAExpr x
+          y' <- resolveAExpr y
+          return $ CCRHLemma x' y'
       CHash p is i -> do
           p' <- resolvePath pos PTName p
           return $ CHash p' is i

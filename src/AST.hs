@@ -395,6 +395,7 @@ type Expr = Spanned ExprX
 data CryptOp = 
     CHash Path ([Idx], [Idx]) Int
       | CPRF String
+      | CCRHLemma AExpr AExpr
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx])
