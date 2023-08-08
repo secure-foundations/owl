@@ -13,7 +13,6 @@ mac2 (16 bytes)
 
 /*
 TODOs: 
-- model collision resistance for the blake2s hash
 - specify authenticated data values for the AEAD names generated from msg1_C2 and msg1_C3 (new primitive for aenc)
 - synchronized enckey_with_nonce counters across multiple localities
 - think about timestamp() --- indexed nonce?
@@ -21,9 +20,6 @@ TODOs:
 */
 
 
-// TODO collision resistance ?
-func blake2s
-    arity 2
 
 
 locality Initiator
@@ -37,7 +33,7 @@ name E_resp : DH @ Responder
 name S_init : DH @ Initiator
 name S_resp : DH @ Responder
 
-name msg1_C1 : RO blake2s("", "construction") || dhpk(get(E_init)) -> nonce
+name msg1_C1 : RO crh("construction") || dhpk(get(E_init)) -> nonce
 // TODO enckey_with_nonce
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
@@ -87,22 +83,22 @@ def get_sender () @ Initiator : Data<adv> |4| // TODO can we model this as a non
 def timestamp () @ Initiator : Data<adv> |12|
 
 def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == true}) =
-    let C0 = blake2s("", "construction") in
-    let H0 = blake2s(C0, "identifier") in 
-    let H1 = blake2s(H0, dhpk_S_resp) in
+    let C0 = crh("construction") in
+    let H0 = crh(concat(C0, "identifier")) in 
+    let H1 = crh(concat(H0, dhpk_S_resp)) in
     let C1 = hash<msg1_C1>(C0, dhpk(get(E_init))) in 
     let msg1_ephemeral = dhpk(get(E_init)) in
-    let H2 = blake2s(H1, msg1_ephemeral) in
+    let H2 = crh(concat(H1, msg1_ephemeral)) in
     let C2 = hash<msg1_C2;0>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
     let k0 = hash<msg1_C2;1>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
     let msg1_static : Data<adv> |cipherlen(length(dhpk(get(S_init))))| = st_aead_enc<aead_counter_msg1_C2>(k0, dhpk(get(S_init)), H2) in 
-    let H3 = blake2s(H2, msg1_static) in
+    let H3 = crh(concat(H2, msg1_static)) in
     let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
     let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
     let timestamp = call timestamp() in
     let msg1_timestamp : Data<adv> |cipherlen(12)| =
     st_aead_enc<aead_counter_msg1_C3>(k1, timestamp, H3) in 
-    let H4 = blake2s(H3, timestamp) in
+    let H4 = crh(concat(H3, timestamp)) in
 
     let msg1_sender : Data<adv> |4| = call get_sender() in
     let msg1_reserved : Data<adv> |3| = call get_padding() in
