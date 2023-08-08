@@ -892,6 +892,7 @@ checkROName :: NameType -> Check ()
 checkROName nt =  
     case nt^.val of
       NT_Nonce -> return ()
+      NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
       NT_MAC _ -> return ()
       _ -> typeError (nt^.spanOf) $ "Bad RO Name: " ++ show (pretty nt)

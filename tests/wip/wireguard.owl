@@ -39,9 +39,18 @@ name S_resp : DH @ Responder
 
 name msg1_C1 : RO blake2s("", "construction") || dhpk(get(E_init)) -> nonce
 // TODO enckey_with_nonce
-name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
-// TODO enckey_with_nonce
-name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Data<adv> |12|
+counter aead_counter_msg1_C2 @ Initiator
+name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
+    st_aead dhpk(S_init)
+            aad x. true
+            nonce aead_counter_msg1_C2
+            nonce_pattern *
+counter aead_counter_msg1_C3 @ Initiator
+name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
+    st_aead (Data<adv> |12|)
+            aad x.true
+            nonce aead_counter_msg1_C3
+            nonce_pattern *
 
 ////////////////////////////
 // Message formats
@@ -86,12 +95,13 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == 
     let H2 = blake2s(H1, msg1_ephemeral) in
     let C2 = hash<msg1_C2;0>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
     let k0 = hash<msg1_C2;1>(C1, dh_combine(dhpk_S_resp, get(E_init))) in
-    let msg1_static : Data<adv> |cipherlen(length(dhpk(get(S_init))))| = aenc(k0, dhpk(get(S_init))) in // TODO specify AD
+    let msg1_static : Data<adv> |cipherlen(length(dhpk(get(S_init))))| = st_aead_enc<aead_counter_msg1_C2>(k0, dhpk(get(S_init)), H2) in 
     let H3 = blake2s(H2, msg1_static) in
     let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
     let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
     let timestamp = call timestamp() in
-    let msg1_timestamp : Data<adv> |cipherlen(12)| = aenc(k1, timestamp) in // TODO specify AD
+    let msg1_timestamp : Data<adv> |cipherlen(12)| =
+    st_aead_enc<aead_counter_msg1_C3>(k1, timestamp, H3) in 
     let H4 = blake2s(H3, timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender() in
