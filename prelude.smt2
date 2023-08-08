@@ -80,10 +80,10 @@
 (declare-sort Type)
 (declare-fun HasType (Bits Type) Bool)
 
-(declare-const Bool Type)
+(declare-const TBool Type)
 (assert (forall ((x Bits)) (!
-    (= (HasType x Bool) (or (= x TRUE) (= x FALSE)))
-    :pattern (HasType x Bool)
+    (= (HasType x TBool) (or (= x TRUE) (= x FALSE)))
+    :pattern (HasType x TBool)
 )))
 
 (declare-const Data Type)

@@ -308,7 +308,7 @@ smtTy t =
       TDataWithLength _ a -> do
           v <- interpretAExp a
           return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v
-      TBool _ -> return $ SAtom "Bool"  
+      TBool _ -> return $ SAtom "TBool"  
       TRefined t xp -> do
           vt <- smtTy t
           (x, p) <- liftCheck $ unbind xp
