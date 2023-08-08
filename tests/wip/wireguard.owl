@@ -34,7 +34,6 @@ name S_init : DH @ Initiator
 name S_resp : DH @ Responder
 
 name msg1_C1 : RO crh("construction") || dhpk(get(E_init)) -> nonce
-// TODO enckey_with_nonce
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
     st_aead dhpk(S_init)
@@ -48,7 +47,8 @@ name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) 
             nonce aead_counter_msg1_C3
             nonce_pattern *
 
-name msg1_mac1_key : RO "mac1---" || dhpk(get(S_resp)) -> mackey Data<adv>
+// needs to use the crh hash function, rather than kdf
+name msg1_mac1_key : RO "mac1---" || dhpk(get(S_resp)) -> mackey Data<adv> 
 
 ////////////////////////////
 // Message formats
@@ -80,11 +80,29 @@ enum msg {
     | msg2 msg2_payload
 }
 
-def get_padding () @ Initiator : Data<adv> |3| // TODO primitive for zero bytes?
-def get_sender () @ Initiator : Data<adv> |4| // TODO can we model this as a nonce?
-def timestamp () @ Initiator : Data<adv> |12|
+////////////////////////////
+// Primitives
 
-def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == true}) =
+def get_padding_i () @ Initiator : Data<adv> |3| // TODO primitive for zero bytes?
+def get_sender_i  () @ Initiator : Data<adv> |4| // TODO can we model this as a nonce?
+def timestamp_i   () @ Initiator : Data<adv> |12|
+
+def get_padding_r () @ Responder : Data<adv> |3| // TODO primitive for zero bytes?
+def get_sender_r  () @ Responder : Data<adv> |4| // TODO can we model this as a nonce?
+def timestamp_r   () @ Responder : Data<adv> |12|
+
+////////////////////////////
+// Return data
+
+struct msg1_return_val {
+      _msg1_ret_C3 : Name(msg1_C3[0])
+    , _msg1_ret_H4 : Data<adv> // todo
+}
+
+
+
+
+def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg1_return_val =
     let C0 = crh("construction") in
     let H0 = crh(concat(C0, "identifier")) in 
     let H1 = crh(concat(H0, dhpk_S_resp)) in
@@ -97,13 +115,13 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == 
     let H3 = crh(concat(H2, msg1_static)) in
     let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
     let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_resp, get(S_init))) in
-    let timestamp = call timestamp() in
+    let timestamp = call timestamp_i() in
     let msg1_timestamp : Data<adv> |cipherlen(12)| =
     st_aead_enc<aead_counter_msg1_C3>(k1, timestamp, H3) in 
     let H4 = crh(concat(H3, timestamp)) in
 
-    let msg1_sender : Data<adv> |4| = call get_sender() in
-    let msg1_reserved : Data<adv> |3| = call get_padding() in
+    let msg1_sender : Data<adv> |4| = call get_sender_i() in
+    let msg1_reserved : Data<adv> |3| = call get_padding_i() in
 
     let msg1_mac1_k = hash<msg1_mac1_key>("mac1---", dhpk_S_resp) in 
     let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
@@ -111,9 +129,92 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : (x:msg{msg1?(x) == 
         concat(msg1_static, msg1_timestamp))))) in 
     let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender,
     msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1) in
-    let res = msg1(msg1_payload_value) in
-    let _ = output res in res
+    let msg1_output = msg1(msg1_payload_value) in
+    let _ = output msg1_output in 
+    
+    let msg1_retval = msg1_return_val(C3, H4) in
+    msg1_retval
 
 
+def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder 
+    : Option (Union<Data<adv> /* need to refine C3 to be inauthentic in the bad case? */, msg1_return_val>) 
+    =
+    input inp in
+    let msg1_reserved, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1 = _msg1_reserved(inp), _msg1_sender(inp), _msg1_ephemeral(inp), _msg1_static(inp), _msg1_timestamp(inp), _msg1_mac1(inp) in
+    
+    let C0 = crh("construction") in
+    let H0 = crh(concat(C0, "identifier")) in 
+    let H1 = crh(concat(H0, dhpk(get(S_resp)))) in
+    
+    if is_group_elem(msg1_ephemeral) then begin
 
+        pcase (msg1_ephemeral == dhpk(get(E_init))) in
 
+        let C1 = hash<msg1_C1>(C0, msg1_ephemeral) in 
+        // let msg1_ephemeral = dhpk(get(E_init)) in
+        let H2 = crh(concat(H1, msg1_ephemeral)) in
+
+        // assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+        //     concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+        //     concat(crh("construction"), dhpk(get(E_init)))
+        // );
+        // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
+        //     concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != 
+        //     concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
+        // );
+
+        // should follow from RO injectivity
+        assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+            C1 != get(msg1_C2[0])
+        );
+        // should follow from hash preimage resistance
+        assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+            C1 != "mac1---"
+        );
+
+        let C2 = hash<msg1_C2;0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
+        let k0 = hash<msg1_C2;1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
+
+        corr_case msg1_C2[1] in
+        case st_aead_dec(k0, msg1_static, 0, H2) 
+        | None => None<ty:msg1_return_val>()
+        | Some msg1_static_dec => 
+            if eq(msg1_static_dec, dhpk_S_init) then begin 
+
+                let H3 = crh(concat(H2, dhpk_S_init)) in
+
+                // assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                //     C2 != get(msg1_C2[0])
+                // );
+
+                // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                //     concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != concat(crh("construction"), dhpk(get(E_init)))
+                // );
+                // assert (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                //     concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != 
+                //     concat(get(msg1_C1), dh_combine(dhpk(get(S_resp)), get(E_init)))
+                // );
+                // should follow from RO injectivity
+                assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                    C2 != get(msg1_C2[0])
+                );
+                // should follow from hash preimage resistance
+                assume (msg1_ephemeral != dhpk(get(E_init)) ==> 
+                    C2 != "mac1---"
+                );
+
+                let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
+                let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
+                
+                corr_case msg1_C3[1] in
+                case st_aead_dec(k1, msg1_timestamp, 0, H3) 
+                | None => None<ty:msg1_return_val>()
+                | Some msg1_timestamp_dec =>
+                    let H4 = crh(concat(H3, msg1_timestamp_dec)) in
+
+                    let retval = msg1_return_val(C3, H4) in
+                    Some(retval)
+
+            end else None<ty:msg1_return_val>()
+
+    end else None<ty:msg1_return_val>()
