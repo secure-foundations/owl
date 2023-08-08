@@ -40,10 +40,8 @@ name S_resp : DH @ Responder
 name msg1_C1 : RO blake2s("", "construction") || dhpk(get(E_init)) -> nonce
 // TODO enckey_with_nonce
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || enckey dhpk(S_init)
-    admit_uniqueness
 // TODO enckey_with_nonce
 name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Data<adv> |12|
-    admit_uniqueness
 
 ////////////////////////////
 // Message formats

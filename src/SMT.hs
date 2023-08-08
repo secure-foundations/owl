@@ -480,7 +480,7 @@ subTypeCheck t1 t2 = do
 sConcats :: [SExp] -> SExp
 sConcats vs = 
     let sConcat a b = SApp [SAtom "concat", a, b] in
-    foldr sConcat (head vs) (tail vs) 
+    foldl sConcat (head vs) (tail vs) 
 
 
 symROUnique :: [Bind ([IdxVar], [IdxVar]) [AExpr]] -> [AExpr] -> Sym ()

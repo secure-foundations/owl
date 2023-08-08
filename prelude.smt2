@@ -52,6 +52,7 @@
     :pattern ((concat (Prefix x n) (Postfix x n)))
 )))
 
+
 (declare-fun eq (Bits Bits) Bits)
 (declare-fun TRUE () Bits)
 (declare-fun FALSE () Bits)
@@ -76,6 +77,12 @@
 (declare-fun UNIT () Bits)
 (assert (= (length UNIT) (I2B 0)))
 
+(assert (forall ((x Bits) (y Bits) (z Bits) (w Bits)) (!
+    (=> (and (or (= (length x) (length z)) (= (length y) (length w)))
+             (= TRUE (eq (concat x y) (concat z w))))
+        (and (= TRUE (eq x z)) (= TRUE (eq y w))))
+    :pattern ((eq (concat x y) (concat z w)))
+)))
 
 (declare-sort Type)
 (declare-fun HasType (Bits Type) Bool)
@@ -175,10 +182,18 @@
 )))
 (assert (forall ((x Bits)) (!
     (=> (IsExponent x) (= TRUE (is_group_elem (dhpk x))))
-    :pattern (is_group_elem (dhpk x))
+    :pattern (IsExponent x)
 )))
 
+
 (declare-fun dh_combine (Bits Bits) Bits)
+
+(assert (forall ((x Bits) (y Bits)) (!
+    (=> (and (IsExponent y) (= TRUE (is_group_elem x)))
+        (= TRUE (is_group_elem (dh_combine x y))))
+    :pattern (dh_combine x y
+))))
+
 (assert (forall ((x Bits) (y Bits)) (!
     (=> (and (IsExponent x) (IsExponent y))
         (= (dh_combine (dhpk x) y)
@@ -336,5 +351,3 @@
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
 )))
 
-;(assert false)
-;(check-sat)
