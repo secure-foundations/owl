@@ -127,6 +127,12 @@ setupNameEnvRO = do
                   emitComment $ "RO solvability for " ++ show (sApp $ sname : map fst ivs)
                   ax <- solvabilityAxioms as (sApp $ sname : (map fst ivs))
                   emitAssertion $ sForall ivs ax [sApp $ sname : (map fst ivs)]
+
+                  emitComment $ "RO mapsto axiom"
+                  asv <- mapM interpretAExp as
+                  let (Just i) = snd noi
+                  let roAx = SApp [SAtom "RO", sConcats asv, SApp [SAtom "ValueOf", sApp $ sname : (map fst ivs)], SAtom $ show i]
+                  emitAssertion $ sForall ivs roAx []
               _ -> return ()
 
 nameKindOf :: NameType -> Sym SExp
@@ -444,8 +450,15 @@ interpretProp p =
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
           return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
+      (PRO p1 p2 i) -> do
+          v1 <- interpretAExp p1
+          v2 <- interpretAExp p2
+          return $ SApp [SAtom "RO", v1, v2, SAtom $ show i]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
+      (PIsConstant a) -> do
+          v <- interpretAExp a
+          return $ SApp [SAtom "IsConstant", v]
       (PQuantIdx q ip) -> do
           (i, p') <- liftCheck $ unbind ip
           sIE <- use symIndexEnv

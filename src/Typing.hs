@@ -46,7 +46,7 @@ emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
     m <- newIORef $ M.empty
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m r'
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m r'
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -1163,6 +1163,11 @@ checkProp p =
               _ <- inferAExpr x
               _ <- inferAExpr y
               return ()
+          (PRO x y i) -> do
+              _ <- inferAExpr x
+              _ <- inferAExpr y
+              assert (p^.spanOf) ("weird case for PRO i") $ i >= 0
+              return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
               checkIdx i2
@@ -1407,7 +1412,7 @@ checkExpr ot e = do
           liftIO $ putStrLn s
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTyOf a)) -> do
-          t <- inferAExpr a
+          t <- local (set tcScope $ TcGhost) $ inferAExpr a
           t' <- normalizeTy t
           e <- ask
           tyc <- view tyContext
@@ -1696,6 +1701,19 @@ prettyMaybe x =
       Nothing -> pretty "Nothing"
       Just x -> pretty "Just" <+> pretty x
 
+isConstant :: AExpr -> Check Bool
+isConstant a = 
+    case a^.val of
+      AEApp _ _ xs -> do
+          bs <- mapM isConstant xs
+          return $ and bs
+      AEString _ -> return True
+      AEInt _ -> return True
+      AELenConst _ -> return True
+      AEPackIdx _ a -> isConstant a
+      _ -> return False
+
+
 checkCryptoOp :: Ignore Position -> Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
@@ -1721,14 +1739,21 @@ checkCryptoOp pos ot cop args = do
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           debug $ pretty $ "symCheckEqTopLevel: " ++ show b_eq
-          if b_eq then getOutTy ot $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
-                  else do
-                      noCollision <- SMT.symDecideNotInRO aes
-                      debug $ pretty $ "symDecideNotInRO: " ++ show noCollision
-                      if noCollision then getOutTy ot $ mkSpanned $ TData advLbl advLbl
+          retTy <- if b_eq then return $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
+                           else do
+                              noCollision <- SMT.symDecideNotInRO aes
+                              debug $ pretty $ "symDecideNotInRO: " ++ show noCollision
+                              if noCollision then return $ mkSpanned $ TData advLbl advLbl
                                      else do
                                         l <- coveringLabelOf $ map snd args
-                                        getOutTy ot $ mkSpanned $ TData l l
+                                        return $ mkSpanned $ TData l l
+          getOutTy ot $ tRefined retTy $ bind (s2n ".res") $ mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i
+      CConstantLemma x -> do
+          assert pos ("Wrong number of arguments to is_constant_lemma") $ length args == 0
+          _ <- local (set tcScope TcGhost) $ inferAExpr x
+          b <- isConstant x
+          assert pos ("Argument is not a constant: " ++ show (pretty x)) b
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
       CPRF s -> do
           assert pos ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args

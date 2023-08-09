@@ -34,5 +34,6 @@ executable owl
                        dir-traverse,
                        diagnose == 2.4.0,
                        data-default,
-                       hashable
+                       hashable,
+                       cereal
 

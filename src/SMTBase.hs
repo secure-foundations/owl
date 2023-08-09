@@ -455,10 +455,6 @@ sROName n is i =
       [] -> SApp $ [n, i]
       _ -> SApp $ n : (is ++ [i])
 
-sHashSelect :: SExp -> Int -> SExp
-sHashSelect s i = SApp [SAtom "HashSelect", s, SAtom (show i)]
-
-
 instance Pretty CanonLabel where
     pretty (CanonAnd cs) = 
         mconcat $ intersperse (pretty " /\\ ") (map pretty cs) 

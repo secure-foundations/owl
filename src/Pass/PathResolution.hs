@@ -470,6 +470,9 @@ resolveAExpr a =
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
+      CConstantLemma x -> do
+          x' <- resolveAExpr x
+          return $ CConstantLemma x'
       CCRHLemma x y -> do
           x' <- resolveAExpr x
           y' <- resolveAExpr y
@@ -626,6 +629,10 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
+      PRO a b i -> do
+          a' <- resolveAExpr a
+          b' <- resolveAExpr b
+          return $ Spanned (p^.spanOf) $ PRO a' b' i
       PQuantIdx q ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

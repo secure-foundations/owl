@@ -178,6 +178,8 @@ data PropX =
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
     | PQuantIdx Quant  (Bind IdxVar Prop)
+    | PIsConstant AExpr -- Internal use
+    | PRO AExpr AExpr Int
     deriving (Show, Generic, Typeable)
 
 
@@ -396,6 +398,7 @@ data CryptOp =
     CHash Path ([Idx], [Idx]) Int
       | CPRF String
       | CCRHLemma AExpr AExpr
+      | CConstantLemma AExpr
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx])
@@ -644,9 +647,11 @@ instance Pretty PropX where
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
+    pretty (PIsConstant a) = pretty "is_constant(" <> pretty a <> pretty ")"
     pretty (PQuantIdx q b) = 
         let (x, p) = prettyBind b in
         pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
+    pretty (PRO a b i) = pretty "ro(" <> pretty a <> pretty "," <+> pretty b <> pretty "," <+> pretty i <> pretty ")"
     pretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -687,6 +692,7 @@ instance Pretty CryptOp where
         pretty "RO" <+> pretty p <+> pretty is <+> pretty ps <+> pretty i
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
+    pretty (CConstantLemma a) = pretty "is_constant_lemma<" <> pretty a <> pretty ">()"
     pretty (CAEnc) = pretty "aenc"
     pretty (CADec) = pretty "adec"
     pretty CPKEnc = pretty "pkenc"

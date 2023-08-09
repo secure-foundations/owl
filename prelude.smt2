@@ -224,8 +224,6 @@
     :pattern (HasType x (TName n))
 )))
 
-(declare-fun ROName (String Int) Name)
-(declare-fun HashSelect (Bits Int) Bits)
 (declare-fun PRFName (Name String) Name)
 
 (declare-sort NameKind)
@@ -357,4 +355,26 @@
              (= TRUE (eq (dhpk (ValueOf x)) (dhpk (ValueOf y)))))
         (= x y))
  )))
+
+;; RO(a, b, i) means that the _current_ random oracle maps a to b in slot i.
+(declare-fun RO (Bits Bits Int) Bool)
+
+(assert (forall ((x Bits) (x2 Bits) (y1 Bits) (y2 Bits) (i Int)) (!
+    (=> (and (= TRUE (eq y1 y2)) (RO x y1 i) (RO x2 y2 i))
+        (= TRUE (eq x x2)))
+    :pattern ((RO x y1 i) (RO x2 y2 i) (eq y1 y2))
+)))
+
+(assert (forall ((x Bits) (y1 Bits) (y2 Bits) (i Int)) (!
+    (=> (and (RO x y1 i) (RO x y2 i))
+        (= TRUE (eq y1 y2)))
+    :pattern ((RO x y1 i) (RO x y2 i))
+)))
+
+(assert (forall ((x Bits) (y Bits) (i Int) (c Bits)) (!
+    (=> (and (RO x y i) (IsConstant c))
+        (not (= TRUE (eq y c))))
+    :pattern ((eq y c) (RO x y i))
+)))
+
 
