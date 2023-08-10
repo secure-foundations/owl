@@ -46,7 +46,7 @@ emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
     m <- newIORef $ M.empty
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m r'
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty r'
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -1586,6 +1586,8 @@ checkExpr ot e = do
       (EFalseElim e) -> do
         (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
         if b then getOutTy ot tAdmit else checkExpr ot e
+      (ESetOption s1 s2 k) -> do
+        local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
       (EPCase p e) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
           x <- freshVar

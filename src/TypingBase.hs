@@ -143,6 +143,7 @@ data Env = Env {
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
+    _z3Options :: M.Map String String, 
     _typeCheckLogDepth :: IORef Int
 }
 

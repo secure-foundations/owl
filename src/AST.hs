@@ -380,6 +380,7 @@ data ExprX =
     | EGetCtr Path ([Idx], [Idx])
     | EIncCtr Path ([Idx], [Idx])
     | EDebug DebugCommand
+    | ESetOption String String Expr
     | EAssert Prop
     | EAssume Prop
     | EAdmit
@@ -743,6 +744,7 @@ instance Pretty ExprX where
     pretty (EPCase p e) = 
         pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc
+    pretty (ESetOption s1 s2 e) = pretty "set_option" <+> pretty (show s1) <+> pretty "=" <+> pretty (show s2) <+> pretty "in" <+> pretty e                                         
     pretty (EAssert p) = pretty "assert" <+> pretty p
     pretty (EAssume p) = pretty "assume" <+> pretty p
     pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k

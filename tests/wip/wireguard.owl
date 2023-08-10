@@ -139,6 +139,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : msg1_return_val =
 def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder 
     : Option (Union<Data<adv> /* need to refine C3 to be inauthentic in the bad case? */, msg1_return_val>) 
     =
+    set_option ":rlimit" "90000" in 
     input inp in
     let msg1_reserved, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1 = _msg1_reserved(inp), _msg1_sender(inp), _msg1_ephemeral(inp), _msg1_static(inp), _msg1_timestamp(inp), _msg1_mac1(inp) in
     

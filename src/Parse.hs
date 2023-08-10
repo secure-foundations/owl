@@ -925,6 +925,21 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
+        reserved "set_option"
+        char '\"'
+        s1 <- many $ alphaNum <|> oneOf ":_-."
+        char '\"'
+        whiteSpace
+        char '\"'
+        s2 <- many $ alphaNum <|> oneOf ":_-."
+        char '\"'
+        whiteSpace
+        reserved "in"
+        e <- parseExpr
+        return $ ESetOption s1 s2 e
+    )
+    <|>
+    (parseSpanned $ do
         reserved "union_case"
         x <- identifier
         reservedOp "="

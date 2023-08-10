@@ -221,6 +221,9 @@ getSMTQuery setup k = do
             setup
             k
 
+trimnl :: String -> String
+trimnl = reverse . dropWhile (=='\n') . reverse
+
 queryZ3 :: Bool -> String -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
 queryZ3 logsmt filepath mp q = do
     let hq = hash q 
@@ -234,8 +237,10 @@ queryZ3 logsmt filepath mp q = do
                   False -> return Nothing
                   True -> do
                       t1 <- getCurrentTime
-                      b <- logSMT filepath $ "; Query time: " ++ show (diffUTCTime t1 t0) ++ "\n" ++ q
-                      putStrLn $ "Query time for " ++ b ++ ": " ++ show (diffUTCTime t1 t0)
+                      let (_, qres, _) = resp
+                      let timeAnn = "; Query time: " ++ show (diffUTCTime t1 t0) ++ " got " ++ (trimnl qres) 
+                      b <- logSMT filepath $ timeAnn ++ "\n" ++ q 
+                      putStrLn $ b ++ ": " ++ timeAnn
                       return $ Just b
           case resp of
             (ExitSuccess, "unsat\n", _) -> do

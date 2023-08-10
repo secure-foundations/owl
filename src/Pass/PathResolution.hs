@@ -570,6 +570,9 @@ resolveExpr e =
           p' <- resolveProp p
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EPCase p' k'
+      ESetOption s1 s2 k -> do
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
       EFalseElim k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EFalseElim k'

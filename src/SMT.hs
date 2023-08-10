@@ -29,6 +29,7 @@ import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
 smtSetup :: Sym ()
 smtSetup = do
             emitComment $ "SMT SETUP for typing query"
+            setupSMTOptions
             setupAllFuncs 
             setupIndexEnv
             setupNameEnvRO
@@ -36,6 +37,12 @@ smtSetup = do
             setupTyEnv 
 
 smtTypingQuery = fromSMT smtSetup
+
+setupSMTOptions :: Sym ()
+setupSMTOptions = do
+    o <- view $ z3Options
+    forM_ (M.assocs o) $ \(k, v) -> do
+        emit $ SApp [SAtom "set-option", SAtom k, SAtom v]
 
 setupIndexEnv :: Sym ()
 setupIndexEnv = do
