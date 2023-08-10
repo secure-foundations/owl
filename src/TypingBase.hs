@@ -32,6 +32,7 @@ import Unbound.Generics.LocallyNameless.Name
 import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
+import qualified Parse as P
 
 
 member :: Eq a => a -> [(a, b)] -> Bool
@@ -144,6 +145,7 @@ data Env = Env {
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
     _z3Options :: M.Map String String, 
+    _z3Results :: IORef [P.Z3Result],
     _typeCheckLogDepth :: IORef Int
 }
 

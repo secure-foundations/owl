@@ -586,6 +586,19 @@ parseDecls =
     parseStruct
     <|>
     (parseSpanned $ do
+        reserved "set_option"
+        char '\"'
+        s1 <- many $ alphaNum <|> oneOf ":_-."
+        char '\"'
+        whiteSpace
+        char '\"'
+        s2 <- many $ alphaNum <|> oneOf ":_-."
+        char '\"'
+        whiteSpace
+        return $ DeclSMTOption s1 s2
+        )
+    <|>
+    (parseSpanned $ do
         reserved "include"
         whiteSpace
         char '"'
@@ -1395,3 +1408,44 @@ parseFile = do
     whiteSpace
     eof
     return ds
+
+
+-- Parser for Z3 return values
+
+data Z3Result = Z3Result {
+    _isUnsat :: Bool,
+    _rlimitCount :: Int
+                         }
+
+parseZ3Result :: Parser Z3Result
+parseZ3Result = do
+    res <- 
+        (try $ do
+           string "unsat"
+           return True)
+        <|>
+        (do
+           string "sat" <|> string "unknown"
+           return False)
+    whiteSpace
+    xs <- parseStatistics
+    case lookup "rlimit-count" xs of
+      Nothing -> fail $ "rlimit-count not found in statistics: " ++ show xs
+      Just i -> return $ Z3Result res (read i)
+    where
+        parseStatistics = do
+            char '('
+            res <- many $ do
+                char ':'
+                s <- many1 (alphaNum <|> oneOf "-.")
+                whiteSpace
+                t <- many1 (alphaNum <|> oneOf "-.")
+                whiteSpace
+                return (s, t)
+            char ')'
+            return res
+
+
+
+        
+

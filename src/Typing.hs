@@ -46,7 +46,8 @@ emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
     m <- newIORef $ M.empty
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty r'
+    rs <- newIORef []
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty rs r'
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -715,6 +716,8 @@ checkDecl d cont =
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
                   normLocality (d^.spanOf) loc
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
+      DeclSMTOption s1 s2 -> do
+        local (over z3Options $ M.insert s1 s2) $ cont
       DeclName n o -> do
         ((is1, is2), ndecl) <- unbind o
         case ndecl of 

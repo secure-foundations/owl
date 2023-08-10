@@ -121,6 +121,9 @@ resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
     case d^.val of
+      DeclSMTOption s1 s2 -> do
+          ds' <-  resolveDecls ds
+          return (d : ds')
       DeclCounter s isloc -> do
           (is, loc) <- unbind isloc
           loc' <- resolveLocality (d^.spanOf) loc

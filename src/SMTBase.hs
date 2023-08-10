@@ -37,6 +37,8 @@ import Unbound.Generics.LocallyNameless.Name
 import Unbound.Generics.LocallyNameless.Unsafe
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
+import qualified Parse as P
+import qualified Text.Parsec as P
 
 data SExp = 
     SAtom String
@@ -224,34 +226,37 @@ getSMTQuery setup k = do
 trimnl :: String -> String
 trimnl = reverse . dropWhile (=='\n') . reverse
 
-queryZ3 :: Bool -> String -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
-queryZ3 logsmt filepath mp q = do
+queryZ3 :: Bool -> String -> IORef [P.Z3Result] -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
+queryZ3 logsmt filepath z3results mp q = do
     let hq = hash q 
     m <- readIORef mp
     case M.lookup hq m of
       Just res -> return $ Right (res, Nothing)
       Nothing -> do 
           t0 <- getCurrentTime
-          resp <- readProcessWithExitCode "z3" ["-smt2", "-in"] q
-          fn <- case logsmt of 
-                  False -> return Nothing
-                  True -> do
-                      t1 <- getCurrentTime
-                      let (_, qres, _) = resp
-                      let timeAnn = "; Query time: " ++ show (diffUTCTime t1 t0) ++ " got " ++ (trimnl qres) 
-                      b <- logSMT filepath $ timeAnn ++ "\n" ++ q 
-                      putStrLn $ b ++ ": " ++ timeAnn
-                      return $ Just b
+          resp <- readProcessWithExitCode "z3" ["-smt2", "-st", "-in"] q
           case resp of
-            (ExitSuccess, "unsat\n", _) -> do
-                atomicModifyIORef' mp $ \m -> (M.insert hq True m, ())
-                return (Right (True, fn))
-            (ExitSuccess, _, _) -> do
-                atomicModifyIORef' mp $ \m -> (M.insert hq False m, ())
-                return $ Right (False, fn)
-            (_, err, _) -> do
-                return (Left err)
-
+            (ExitSuccess, s, _) -> do                           
+              pres <- P.runParserT P.parseZ3Result () "" s
+              case pres of
+                Left err -> do
+                    putStrLn $ "Z3 parse error on " ++ s
+                    return $ Left $ "Z3 ERROR: " ++ show err
+                Right z3result -> do
+                    fn <- case logsmt of
+                            False -> return Nothing
+                            True -> do
+                              modifyIORef z3results (z3result :)
+                              t1 <- getCurrentTime
+                              let resultAnn = "; Result: " ++ (if P._isUnsat z3result then "unsat" else "unknown")
+                              let timeAnn = "; Query time: " ++ show (diffUTCTime t1 t0)
+                              let rlimitAnn = "; Rlimit: " ++ show (P._rlimitCount z3result)
+                              let ann = resultAnn ++ "\n" ++ timeAnn ++ "\n" ++ rlimitAnn ++ "\n"
+                              b <- logSMT filepath $ ann ++ q
+                              return $ Just b
+                    atomicModifyIORef' mp $ \m -> (M.insert hq (P._isUnsat z3result) m, ())
+                    return $ Right (P._isUnsat z3result, fn)
+            (_, err, _) -> return (Left err)
 
 fromSMT :: Sym () -> Sym () -> Check (Maybe String, Bool)
 fromSMT setup k = do
@@ -262,7 +267,8 @@ fromSMT setup k = do
           logsmt <- view $ envFlags . fLogSMT
           filepath <- view $ envFlags . fFilePath
           z3mp <- view smtCache
-          resp <- liftIO $ queryZ3 logsmt filepath z3mp q
+          z3rs <- view z3Results
+          resp <- liftIO $ queryZ3 logsmt filepath z3rs z3mp q
           case resp of
             Right (b, fn) -> return (fn, b)
             Left err -> typeError (ignore def) $ "Z3 error: " ++ err   
@@ -279,14 +285,15 @@ raceSMT setup k1 k2 = do
           z3mp <- view smtCache
           logsmt <- view $ envFlags . fLogSMT
           filepath <- view $ envFlags . fFilePath
+          z3rs <- view z3Results
           p1 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3mp q1 
+              resp <- queryZ3 logsmt filepath z3rs z3mp q1 
               case resp of
                   Right (True, fn) -> putMVar sem $ Just (fn, False)
                   Right (False, _) -> putMVar sem Nothing
                   Left err -> error $ "Z3 error: " ++ err   
           p2 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3mp q2
+              resp <- queryZ3 logsmt filepath z3rs z3mp q2
               case resp of
                   Right (True, fn) -> putMVar sem $ Just (fn, True)
                   Right (False, _) -> putMVar sem Nothing 

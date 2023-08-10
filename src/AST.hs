@@ -294,6 +294,7 @@ type ModuleExp = Spanned ModuleExpX
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) NameDecl) 
+      | DeclSMTOption String String   
     | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,

@@ -1,8 +1,10 @@
 module Main where
 import Parse
+import Data.IORef
 import AST
 import System.Environment
 import Typing
+import Control.Monad
 import qualified Text.Parsec as P
 import Prettyprinter
 import TypingBase
@@ -40,6 +42,9 @@ main = do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
+                          when (args^.fLogSMT) $ do
+                              z3Results <- readIORef $ tcEnv^.z3Results
+                              reportZ3Results z3Results
                           if args^.fExtract then do
                               let extfn = "extraction/src/main.rs"
                               modBody <- doFlattening tcEnv
@@ -54,3 +59,11 @@ main = do
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           else return ()
+
+reportZ3Results :: [Z3Result] -> IO ()
+reportZ3Results rs = do
+    let unsatRlimits = map _rlimitCount $ filter _isUnsat rs
+    let unknownRlimits = map _rlimitCount $ filter (not . _isUnsat) rs
+    putStrLn $ "Max unsat rlimit:" ++ show (maximum unsatRlimits)
+    putStrLn $ "Max unknown rlimit:" ++ show (maximum unknownRlimits)
+

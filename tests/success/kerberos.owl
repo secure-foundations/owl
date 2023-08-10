@@ -175,6 +175,8 @@ name seckeyCnew : pkekey ClientPKResponse @ client
 // TODO: need support for multiple input keys in at the type-level so we can pass in kC or K
 //       depending on the version of the protocol we're running.
 
+// set_option ":rlimit" "120000"
+
 // for now: temporary copy of stages 2 and 3 pasted below with K instead of kC (only difference)
 def client_kerberos (ak: if sec(kC) then Name(AK) else Data<adv>, tgt :
 Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
@@ -245,7 +247,7 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
     // use pke key seckeyC to decrypt msg
     corr_case seckeyCnew in
     let p' = pkdec(get(seckeyCnew), msg) in
-    corr_case K in
+    // corr_case K in
     let p = p' in 
     // union_case p = p' in
     // p = {certA, verkeyA, [k]_sigkeyA, k}
@@ -363,9 +365,6 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
     input i in 
     let un = _pkinit_client_to_authserver_msg_4(i) in
     let signed_un = _pkinit_client_to_authserver_msg_3(i) in
-    corr_case sigkeyCA in
-    corr_case sigkeyC in
-    corr_case K in 
 
     // check that we got a good certificate
     case _pkinit_client_to_authserver_msg_1(i) // get client vertificate
@@ -373,12 +372,14 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
          
              // check that certC is valid for vkC
              (
+            corr_case sigkeyCA in
              case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) 
                  | None => ()
                  | Some vkC =>
                  
                      // use verkeyC to verify the username
                      (
+                     corr_case sigkeyC in
                      case vrfy(vkC, signed_un, un) 
                          | None => ()
                          | Some username =>
