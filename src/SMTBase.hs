@@ -9,6 +9,7 @@ module SMTBase where
 import AST
 import Data.List
 import Control.Monad
+import Data.Time.Clock
 import Data.Maybe
 import Data.IORef
 import System.Process
@@ -42,6 +43,7 @@ data SExp =
       | SApp [SExp]
       | SComment String
       | SPat SExp
+      | SQid String
       | SOption String String 
 
 instance Show SExp where
@@ -49,6 +51,7 @@ instance Show SExp where
     show (SApp xs) = " (" ++ intercalate " " (map show xs) ++ ") "
     show (SComment s) = "; " ++ s
     show (SPat e) = " :pattern " ++ show e
+    show (SQid s) = " :qid " ++ s
     show (SOption x y) = ":" ++ x ++ " " ++ y
 
 bitstringSort :: SExp
@@ -218,21 +221,34 @@ getSMTQuery setup k = do
             setup
             k
 
-queryZ3 :: IORef (M.Map Int Bool) -> String -> IO (Either String Bool)
-queryZ3 mp q = do
+trimnl :: String -> String
+trimnl = reverse . dropWhile (=='\n') . reverse
+
+queryZ3 :: Bool -> String -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
+queryZ3 logsmt filepath mp q = do
     let hq = hash q 
     m <- readIORef mp
     case M.lookup hq m of
-      Just res -> return $ Right res
+      Just res -> return $ Right (res, Nothing)
       Nothing -> do 
+          t0 <- getCurrentTime
           resp <- readProcessWithExitCode "z3" ["-smt2", "-in"] q
+          fn <- case logsmt of 
+                  False -> return Nothing
+                  True -> do
+                      t1 <- getCurrentTime
+                      let (_, qres, _) = resp
+                      let timeAnn = "; Query time: " ++ show (diffUTCTime t1 t0) ++ " got " ++ (trimnl qres) 
+                      b <- logSMT filepath $ timeAnn ++ "\n" ++ q 
+                      putStrLn $ b ++ ": " ++ timeAnn
+                      return $ Just b
           case resp of
             (ExitSuccess, "unsat\n", _) -> do
                 atomicModifyIORef' mp $ \m -> (M.insert hq True m, ())
-                return (Right True)
+                return (Right (True, fn))
             (ExitSuccess, _, _) -> do
                 atomicModifyIORef' mp $ \m -> (M.insert hq False m, ())
-                return $ Right False
+                return $ Right (False, fn)
             (_, err, _) -> do
                 return (Left err)
 
@@ -243,12 +259,12 @@ fromSMT setup k = do
     case oq of
       Nothing -> return (Nothing, True)
       Just q -> do 
-          b <- view $ envFlags . fLogSMT
-          fn <- if b then Just <$> logSMT q else return Nothing
+          logsmt <- view $ envFlags . fLogSMT
+          filepath <- view $ envFlags . fFilePath
           z3mp <- view smtCache
-          resp <- liftIO $ queryZ3 z3mp q
+          resp <- liftIO $ queryZ3 logsmt filepath z3mp q
           case resp of
-            Right b -> return (fn, b)
+            Right (b, fn) -> return (fn, b)
             Left err -> typeError (ignore def) $ "Z3 error: " ++ err   
               
 raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
@@ -259,22 +275,21 @@ raceSMT setup k1 k2 = do
       (Nothing, _) -> return (Nothing, Just False)
       (_, Nothing) -> return (Nothing, Just True)
       (Just q1, Just q2) -> do 
-          b <- view $ envFlags . fLogSMT
-          fn1 <- if b then Just <$> logSMT q1 else return Nothing
-          fn2 <- if b then Just <$> logSMT q2 else return Nothing
           sem <- liftIO $ newEmptyMVar 
           z3mp <- view smtCache
+          logsmt <- view $ envFlags . fLogSMT
+          filepath <- view $ envFlags . fFilePath
           p1 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 z3mp q1 
+              resp <- queryZ3 logsmt filepath z3mp q1 
               case resp of
-                  Right True -> putMVar sem $ Just (fn1, False)
-                  Right False -> putMVar sem Nothing
+                  Right (True, fn) -> putMVar sem $ Just (fn, False)
+                  Right (False, _) -> putMVar sem Nothing
                   Left err -> error $ "Z3 error: " ++ err   
           p2 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 z3mp q2
+              resp <- queryZ3 logsmt filepath z3mp q2
               case resp of
-                  Right True -> putMVar sem $ Just (fn2, True)
-                  Right False -> putMVar sem Nothing 
+                  Right (True, fn) -> putMVar sem $ Just (fn, True)
+                  Right (False, _) -> putMVar sem Nothing 
                   Left err -> error $ "Z3 error: " ++ err   
           o1 <- liftIO $ takeMVar sem
           case o1 of
@@ -356,12 +371,12 @@ withIndices xs k = do
 
 ---- Helpers for logging 
 
-logSMT :: String -> Check String
-logSMT s = do
-    f <- takeFileName <$> (view $ envFlags . fFilePath)
-    liftIO $ createDirectoryIfMissing False ".owl-log"
-    fn <- liftIO $ findGoodFileName f
-    liftIO $ writeFile fn s
+logSMT :: String -> String -> IO String
+logSMT filepath q = do
+    let f = takeFileName filepath
+    createDirectoryIfMissing False ".owl-log"
+    fn <- findGoodFileName f
+    writeFile fn q
     return fn
         where
             findGoodFileName :: String -> IO String
@@ -418,27 +433,27 @@ getSymName ne = do
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
 
 
-sForall :: [(SExp, SExp)] -> SExp -> [SExp] -> SExp
-sForall vs bdy pats = 
+sForall :: [(SExp, SExp)] -> SExp -> [SExp] -> String -> SExp
+sForall vs bdy pats qid = 
     case vs of
       [] -> bdy
       _ -> 
         let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
         let bdy' = case pats of
-                     [] -> SApp [SAtom "!", bdy] 
-                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats)] 
+                     [] -> SApp [SAtom "!", bdy, SQid qid] 
+                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats), SQid qid] 
         in
         SApp [SAtom "forall", v_sorts, bdy']
 
-sExists :: [(SExp, SExp)] -> SExp -> [SExp] -> SExp
-sExists vs bdy pats = 
+sExists :: [(SExp, SExp)] -> SExp -> [SExp] -> String -> SExp
+sExists vs bdy pats qid = 
     case vs of
       [] -> bdy
       _ -> 
         let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
         let bdy' = case pats of
-                     [] -> SApp [SAtom "!", bdy] 
-                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats)] 
+                     [] -> SApp [SAtom "!", bdy, SQid qid] 
+                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats), SQid qid] 
         in
         SApp [SAtom "exists", v_sorts, bdy']
 
@@ -454,10 +469,6 @@ sROName n is i =
     case is of
       [] -> SApp $ [n, i]
       _ -> SApp $ n : (is ++ [i])
-
-sHashSelect :: SExp -> Int -> SExp
-sHashSelect s i = SApp [SAtom "HashSelect", s, SAtom (show i)]
-
 
 instance Pretty CanonLabel where
     pretty (CanonAnd cs) = 

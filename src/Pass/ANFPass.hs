@@ -134,6 +134,9 @@ anf e =
       EPCase p k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ EPCase p k'
+      ESetOption s1 s2 k -> do
+          k' <- anf k
+          return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
       EFalseElim k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ EFalseElim k'

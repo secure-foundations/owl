@@ -12,12 +12,14 @@
     (=> (>= x 0)
         (= (B2I (I2B x)) x))
     :pattern (I2B x)
+    :qid i2b_b2i
 )))
 (assert (forall ((x Bits)) (!
     (and 
         (= (I2B (B2I x)) x)
         (>= (B2I x) 0))
     :pattern (B2I x)
+    :qid b2i_i2b
 )))
 
 ;; Built-in functions on bits
@@ -25,6 +27,7 @@
 (assert (forall ((x Bits)) (!
     (>= (B2I (length x)) 0)
     :pattern (length x)
+    :qid b2i_length
 )))
 
 
@@ -35,21 +38,28 @@
 (declare-fun Postfix (Bits Int) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
     (= (Prefix (concat x y) (B2I (length x))) x)
-    :pattern ((Prefix (concat x y) (B2I (length x)))
-))))
+    :pattern ((Prefix (concat x y) (B2I (length x))))
+    :qid prefix_concat_length
+)))
+
 (assert (forall ((x Bits) (y Bits)) (!
     (= (Postfix (concat x y) (B2I (length x))) y)
-    :pattern ((Postfix (concat x y) (B2I (length x)))
-))))
+    :pattern ((Postfix (concat x y) (B2I (length x))))
+    :qid postfix_concat_length
+)))
+
 (assert (forall ((x Bits) (y Bits)) (!
     (= (length (concat x y)) (I2B (+ (B2I (length x)) (B2I (length y)))))
     :pattern ((length (concat x y)))
+    :qid length_concat
 )))
+
 (assert (forall ((x Bits) (n Int)) (!
     (=> 
         (and (>= n 0 ) (>= (B2I (length x)) n))
         (= (concat (Prefix x n) (Postfix x n)) x))
     :pattern ((concat (Prefix x n) (Postfix x n)))
+    :qid concat_prefix_postfix
 )))
 
 
@@ -62,17 +72,20 @@
 (assert (forall ((x Bits) (y Bits)) (!
     (= (eq x y) (ite (= x y) TRUE FALSE))
     :pattern (eq x y)
+    :qid eq_def
 )))
 (assert (forall ((x Bits) (y Bits)) (!
     (=> (not (= (length x) (length y)))
         (not (= TRUE (eq x y))))
     :pattern ((eq x y))
+    :qid eq_length_eq
 )))
 (declare-fun And (Bits Bits) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
     (= (And x y) 
        (ite (= x TRUE) (ite (= y TRUE) TRUE FALSE) FALSE))
     :pattern (And x y)
+    :qid and_def
 )))
 (declare-fun UNIT () Bits)
 (assert (= (length UNIT) (I2B 0)))
@@ -82,6 +95,7 @@
              (= TRUE (eq (concat x y) (concat z w))))
         (and (= TRUE (eq x z)) (= TRUE (eq y w))))
     :pattern ((eq (concat x y) (concat z w)))
+    :qid eq_concat
 )))
 
 (declare-sort Type)
@@ -91,23 +105,27 @@
 (assert (forall ((x Bits)) (!
     (= (HasType x TBool) (or (= x TRUE) (= x FALSE)))
     :pattern (HasType x TBool)
+    :qid hastype_tbool
 )))
 
 (declare-const Data Type)
 (assert (forall ((x Bits)) (!
     (= (HasType x Data) true)
     :pattern (HasType x Data)
+    :qid hastype_data
 )))
 
 (declare-const Nat Type)
 (assert (forall ((x Bits)) (!
     (= (HasType x Nat) (>= (B2I x) 0))
     :pattern (HasType x Nat)
+    :qid hastype_nat
 )))
 (declare-fun Refined (Type (Array Bits Bool)) Type)
 (assert (forall ((x Bits) (t Type) (p (Array Bits Bool))) (!
     (= (HasType x (Refined t p)) (and (HasType x t) (select p x)))
     :pattern (HasType x (Refined t p))
+    :qid hastype_refined
 )))
 
 (declare-fun Pair (Type Type) Type)
@@ -118,24 +136,28 @@
             (HasType x1 t1)
             (HasType x2 t2))))
     :pattern (HasType x (Pair t1 t2))
+    :qid hastype_pair
 )))
 
 (declare-fun Unit () Type)
 (assert (forall ((x Bits)) (!
     (= (HasType x Unit) (= x UNIT))
     :pattern (HasType x Unit)
+    :qid hastype_unit
 )))
 
 (declare-fun Union (Type Type) Type)
 (assert (forall ((x Bits) (t1 Type) (t2 Type)) (!
     (= (HasType x (Union t1 t2)) (or (HasType x t1) (HasType x t2)))
     :pattern (HasType x (Union t1 t2))
+    :qid hastype_union
 )))
 
 (declare-fun TCase (Bool Type Type) Type)
 (assert (forall ((x Bits) (b Bool) (t1 Type) (t2 Type)) (!
     (= (HasType x (TCase b t1 t2)) (ite b (HasType x t1) (HasType x t2)))
     :pattern (HasType x (TCase b t1 t2))
+    :qid hastype_tcase
 )))
 
 (declare-fun EnumTag (Int) Bits)
@@ -144,6 +166,7 @@
         (and (= (B2I (length (EnumTag x))) 8)
              (= (B2I (EnumTag x)) x)))
     :pattern (EnumTag x)
+    :qid enumtag_def
 )))
 
 (define-fun TestEnumTag ((x Int) (y Bits)) Bits
@@ -160,6 +183,7 @@
        )
     )
     :pattern (HasType x (Enum ts))
+    :qid hastype_enum
 )))
 
 ;; TODO: move this
@@ -171,18 +195,23 @@
 (assert (forall ((x Bits)) (!
     (=> (IsExponent x) (= (length x) exponent_len))
     :pattern (IsExponent x)
+    :qid is_exponent_length
 )))
+
 (assert (forall ((x Bits)) (!
     (=> (= TRUE (is_group_elem x)) (= (length x) group_len))
     :pattern (is_group_elem x)
+    :qid is_group_elem_def
 )))
 (assert (forall ((x Bits)) (!
     (HasType (is_group_elem x) TBool)
     :pattern ((is_group_elem x) )
+    :qid is_group_elem_bool
 )))
 (assert (forall ((x Bits)) (!
     (=> (IsExponent x) (= TRUE (is_group_elem (dhpk x))))
     :pattern (IsExponent x)
+    :qid is_exponent_def
 )))
 
 
@@ -191,20 +220,23 @@
 (assert (forall ((x Bits) (y Bits)) (!
     (=> (and (IsExponent y) (= TRUE (is_group_elem x)))
         (= TRUE (is_group_elem (dh_combine x y))))
-    :pattern (dh_combine x y
-))))
+    :pattern (dh_combine x y)
+    :qid is_group_elem_dh_combine
+)))
 
 (assert (forall ((x Bits) (y Bits)) (!
     (=> (and (IsExponent x) (IsExponent y))
         (= (dh_combine (dhpk x) y)
            (dh_combine (dhpk y) x)))
     :pattern (dh_combine (dhpk x) y)
+    :qid dh_combine_comm
 )))
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
     (=> (and (IsExponent x) (IsExponent y) (= TRUE (is_group_elem z))
              (= TRUE (eq (dh_combine z x) (dh_combine z y))))
         (= x y))
     :pattern (eq (dh_combine z x) (dh_combine z y))
+    :qid dh_combine_inj_1
 )))
 
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
@@ -212,6 +244,7 @@
              (= TRUE (eq (dh_combine y x) (dh_combine z x))))
         (= y z))
     :pattern (eq (dh_combine y x) (dh_combine z x))
+    :qid dh_combine_inj_2
 )))
 
 
@@ -222,10 +255,9 @@
     (=> (HasType x (TName n))
         (= x (ValueOf n)))
     :pattern (HasType x (TName n))
+    :qid hastype_name
 )))
 
-(declare-fun ROName (String Int) Name)
-(declare-fun HashSelect (Bits Int) Bits)
 (declare-fun PRFName (Name String) Name)
 
 (declare-sort NameKind)
@@ -241,12 +273,14 @@
 (assert (forall ((n Name) (k NameKind)) (!
     (= (HasNameKind n k) (= (I2B (NameKindLength k)) (length (ValueOf n))))
     :pattern (HasNameKind n k)
+    :qid hasnamekind_length
 )))
 
 (assert (forall ((n Name)) (!
     (=> (HasNameKind n DHkey)
         (IsExponent (ValueOf n)))
     :pattern (HasNameKind n DHkey)
+    :qid dhkey_isexponent
 )))
 
 (declare-const SignatureLen Int)
@@ -268,17 +302,20 @@
     (=> (= TRUE (eq (ValueOf n1) (ValueOf n2)))
         (= n1 n2))
     :pattern (eq (ValueOf n1) (ValueOf n2))
+    :qid valueof_name_inj
 )))
 (assert (forall ((x Bits) (n Name)) (!
     (=> (IsConstant x)
         (not (= TRUE (eq x (ValueOf n)))))
     :pattern ((IsConstant x) (eq x (ValueOf n)))
+    :qid isconstant_neq_name
 )))
 
 (declare-fun andb (Bits Bits) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
     (= (andb x y) (ite (= TRUE x) (ite (= TRUE y) TRUE FALSE) FALSE))
     :pattern (andb x y)
+    :qid andb_def
 )))
 
 (define-fun zero () Bits (I2B 0))
@@ -287,11 +324,13 @@
 (assert (forall ((x Bits) (y Bits)) (!
     (= (plus x y) (I2B (+ (B2I x) (B2I y))))
     :pattern (plus x y)
+    :qid plus_def
 )))
 (declare-fun mult (Bits Bits) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
     (= (mult x y) (I2B (* (B2I x) (B2I y))))
     :pattern (mult x y)
+    :qid mult_def
 )))
 
 (declare-sort Label)
@@ -303,30 +342,45 @@
 (define-fun FlowsImpl ((x Label) (y Label)) Bool ((_ partial-order 0) x y))
 (assert (forall ((x Label) (y Label)) (! 
     (= (Flows x y) (FlowsImpl x y))
-    :pattern ((Flows x y)))))
+    :pattern ((Flows x y))
+    :qid flows_def
+)))
+
 (declare-fun Join (Label Label) Label)
 (assert (forall ((x Label) (y Label)) (! 
     (Flows x (Join x y))
-    :pattern ((Join x y)))))
+    :pattern ((Join x y))
+    :qid flows_join_1
+)))
+
 (assert (forall ((x Label) (y Label)) (! 
     (Flows y (Join x y))
-    :pattern ((Join x y)))))
+    :pattern ((Join x y))
+    :qid flows_join_2
+)))
 (assert (forall ((x Label) (y Label) (z Label)) (! 
     (=> (and (Flows x z) (Flows y z)) (Flows (Join x y) z))
-    :pattern ((Flows (Join x y) z)))))
+    :pattern ((Flows (Join x y) z))
+    :qid flows_join_l
+)))
 (declare-const %zeroLbl Label)
 (assert (forall ((x Label)) (! 
     (Flows %zeroLbl x)
-    :pattern ((Flows %zeroLbl x)))))
+    :pattern ((Flows %zeroLbl x))
+    :qid flows_zero_l
+)))
 
 (assert (forall ((x Label)) (!
     (=> (Flows x %zeroLbl) (= x %zeroLbl))
-    :pattern ((Flows x %zeroLbl)))))
+    :pattern ((Flows x %zeroLbl))
+    :qid flows_zero_r
+)))
 
 (declare-fun LabelOf (Name) Label)
 (assert (forall ((n Name)) (!
     (not (Flows (LabelOf n) %zeroLbl))
     :pattern ((LabelOf n))
+    :qid not_flows_name_zero
 )))
 
 (declare-sort Index)
@@ -343,12 +397,14 @@
                     (dh_combine (dhpk (ValueOf n3)) (ValueOf n4))))))
     :pattern (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2))
                  (dh_combine (dhpk (ValueOf n3)) (ValueOf n4)))
+    :qid dh_combine_neq_dh_combine
 )))
 
 (assert (forall ((n1 Name) (n2 Name) (n3 Name)) (!
     (not (and (HasNameKind n1 DHkey) (HasNameKind n2 DHkey) (HasNameKind n3 DHkey)
               (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))))
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
+    :pattern dh_combine_neq_dhpk
 )))
 
 (assert (forall ((x Name) (y Name)) (!
@@ -356,5 +412,32 @@
         (and (HasNameKind x DHkey) (HasNameKind y DHkey)
              (= TRUE (eq (dhpk (ValueOf x)) (dhpk (ValueOf y)))))
         (= x y))
+    :pattern ((eq (dhpk (ValueOf x)) (dhpk (ValueOf y))))
+    :qid dhpk_inj
  )))
+
+;; RO(a, b, i) means that the _current_ random oracle maps a to b in slot i.
+(declare-fun RO (Bits Bits Int) Bool)
+
+(assert (forall ((x Bits) (x2 Bits) (y1 Bits) (y2 Bits) (i Int)) (!
+    (=> (and (= TRUE (eq y1 y2)) (RO x y1 i) (RO x2 y2 i))
+        (= TRUE (eq x x2)))
+    :pattern ((RO x y1 i) (RO x2 y2 i) (eq y1 y2))
+    :qid ro_inj_l
+)))
+
+(assert (forall ((x Bits) (y1 Bits) (y2 Bits) (i Int)) (!
+    (=> (and (RO x y1 i) (RO x y2 i))
+        (= TRUE (eq y1 y2)))
+    :pattern ((RO x y1 i) (RO x y2 i))
+    :qid ro_inj_r
+)))
+
+(assert (forall ((x Bits) (y Bits) (i Int) (c Bits)) (!
+    (=> (and (RO x y i) (IsConstant c))
+        (not (= TRUE (eq y c))))
+    :pattern ((eq y c) (RO x y i))
+    :qid ro_neq_constant
+)))
+
 

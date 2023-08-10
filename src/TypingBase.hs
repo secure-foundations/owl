@@ -12,6 +12,7 @@ import AST
 import Error.Diagnose
 import qualified Data.Set as S
 import Data.Maybe
+import Data.Serialize
 import Data.IORef
 import Control.Monad
 import qualified Data.List as L
@@ -134,7 +135,6 @@ data Env = Env {
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
     _tyContext :: Map DataVar (Ignore String, Ty),
     _tcScope :: TcScope,
-    _localAssumptions :: [SymAdvAssms],
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
     _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
@@ -143,13 +143,10 @@ data Env = Env {
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
+    _z3Options :: M.Map String String, 
     _typeCheckLogDepth :: IORef Int
 }
 
-
-
-data SymAdvAssms =
-    SASec NameExp
 
 data TyDef = 
     EnumDef (Bind [IdxVar] [(String, Maybe Ty)])
@@ -454,6 +451,22 @@ checkCounterIsLocal pos p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert pos ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError pos $ "Unknown counter: " ++ show p0
 
+getROPreimage :: Ignore Position -> Path -> ([Idx], [Idx]) -> Check [AExpr]
+getROPreimage pos pth@(PRes (PDot p n)) (is, ps) = do
+    md <- openModule pos p
+    case lookup n (md^.nameDefs) of
+      Nothing -> typeError pos $ "Unknown name: " ++ n
+      Just b_nd -> do
+          ((ixs, pxs), nd') <- unbind b_nd
+          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
+          case nd of
+            RODef (as, _) -> return as
+            _ -> typeError pos $ "Not an RO name: " ++ n
+
+
+
+    
+
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
@@ -586,6 +599,12 @@ getFuncInfo pos f@(PRes (PDot p s)) = do
                 uf_interp pos p md uf
             Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
 
+mkConcats :: [AExpr] -> AExpr
+mkConcats [] = aeApp (topLevelPath "UNIT") [] []
+mkConcats (x:xs) = 
+    let go x y = aeApp (topLevelPath "concat") [] [x, y] in
+    foldl go x xs
+
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
     debug $ pretty (unignore $ ae^.spanOf) <> pretty "Inferring AExp" <+> pretty ae
@@ -610,7 +629,8 @@ inferAExpr ae = do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
-      (AEGet ne) -> do
+      (AEGet ne_) -> do
+          ne <- normalizeNameExp ne_
           ts <- view tcScope
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -622,13 +642,18 @@ inferAExpr ae = do
                             case ts of
                               TcGhost -> return []
                               TcDef _ -> typeError (ae^.spanOf) $ show $ pretty "Calling get on name " <> pretty ne <> pretty " in non-ghost context"
-                case ts of
+                ot <- case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality (ae^.spanOf) curr_locality
                         assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
+                case ne^.val of
+                  NameConst ips pth (Just i) -> do
+                      aes <- getROPreimage (ae^.spanOf) pth ips 
+                      return $ tRefined ot $ bind (s2n ".res") $ mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i  
+                  _ -> return ot
       (AEGetEncPK ne) -> do
           case ne^.val of
             NameConst ([], []) _ _ -> return ()

@@ -83,7 +83,7 @@ smtLabelSetup = do
     -- Constraints on the adv
     afcs <- liftCheck $ collectAdvCorrConstraints 
     ladv <- symLabel advLbl
-    forM_ afcs $ \ils -> do 
+    forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
         (is, (l1, l2)) <- liftCheck $ unbind ils
         sIE <- use symIndexEnv
         symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
@@ -94,6 +94,7 @@ smtLabelSetup = do
                 (map (\i -> (SAtom $ show i, indexSort)) is)
                 (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
                 []
+                ("advConstraint_" ++ show j)
         symIndexEnv .= sIE
 
 
@@ -177,7 +178,7 @@ symCanonBig c = do
                       symIndexEnv %= (M.insert (s2n iv) (SAtom iv))
                   lv <- symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
                   symIndexEnv .= iEnv
-                  emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) []
+                  emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) [] ("big_" ++ x)
                   return $ SAtom x
         labelVals %= M.insert (AlphaOrd c) v
         return v
