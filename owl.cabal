@@ -35,5 +35,6 @@ executable owl
                        diagnose == 2.4.0,
                        data-default,
                        hashable,
-                       cereal
+                       cereal,
+                       time
 

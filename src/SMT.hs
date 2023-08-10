@@ -79,7 +79,7 @@ setupNameEnvRO = do
         let ar2 = length is2 + length ps2
         let q2 = map (\i -> (SAtom $ show i, indexSort)) $ is2 ++ ps2
         let v2 = sApp $ sname2 : (map fst q2)
-        emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2]
+        emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2] $ "disj_" ++ show (sname1) ++ "_" ++ show (sname2) 
 
         when (ar1 > 0) $ do
             q12 <- forM q1 $ \_ -> do
@@ -92,6 +92,7 @@ setupNameEnvRO = do
             emitAssertion $ sForall (q1 ++ q12)
                 (v1_eq_v12 `sImpl` q1_eq_q12)
                 [v1_eq_v12]
+                ("self_disj_" ++ show (sname1))
     -- Axioms relevant for each def 
     forM_ fdfs $ \(noi, b) -> do 
         ((is, ps), nd) <- liftCheck $ unbind b
@@ -111,6 +112,8 @@ setupNameEnvRO = do
                     ivs
                     (SApp [SAtom "HasNameKind", sApp (sname : (map fst ivs)), nk])
                     [sApp (sname : (map fst ivs))]
+                    ("nameKind_" ++ show (sname))
+
                 let nexp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes (fst noi)) (snd noi)
                 emitComment $ "nameDefFlows for" ++ show (pretty nexp)                                
                 lAxs <- nameDefFlows nexp nt
@@ -122,17 +125,19 @@ setupNameEnvRO = do
                     ivs
                     (sAnd sAxs)
                     [sApp (sname : (map fst ivs))]
+                    ("nameDefFlows_" ++ show (sname))
+
             case nd of
               RODef (as, _) -> do
                   emitComment $ "RO solvability for " ++ show (sApp $ sname : map fst ivs)
                   ax <- solvabilityAxioms as (sApp $ sname : (map fst ivs))
-                  emitAssertion $ sForall ivs ax [sApp $ sname : (map fst ivs)]
+                  emitAssertion $ sForall ivs ax [sApp $ sname : (map fst ivs)] $ "RO_solvability_" ++ show (sname)
 
                   emitComment $ "RO mapsto axiom"
                   asv <- mapM interpretAExp as
                   let (Just i) = snd noi
                   let roAx = SApp [SAtom "RO", sConcats asv, SApp [SAtom "ValueOf", sApp $ sname : (map fst ivs)], SAtom $ show i]
-                  emitAssertion $ sForall ivs roAx []
+                  emitAssertion $ sForall ivs roAx [] $ "RO_mapsto_" ++ show (sname)
               _ -> return ()
 
 nameKindOf :: NameType -> Sym SExp
@@ -466,8 +471,8 @@ interpretProp p =
           v <- local (over inScopeIndices $ TypingBase.insert i IdxGhost) $ interpretProp p'
           symIndexEnv .= sIE
           case q of
-            Forall -> return $ sForall [(SAtom $ show i, indexSort)] v []
-            Exists -> return $ sExists [(SAtom $ show i, indexSort)] v []
+            Forall -> return $ sForall [(SAtom $ show i, indexSort)] v [] $ "forall_" ++ show i
+            Exists -> return $ sExists [(SAtom $ show i, indexSort)] v [] $ "exists_" ++ show i
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1
@@ -499,7 +504,7 @@ sConcats vs =
 symROUnique :: [Bind ([IdxVar], [IdxVar]) [AExpr]] -> [AExpr] -> Sym ()
 symROUnique roPres e = do
     v <- sConcats <$> mapM interpretAExp e
-    bs <- forM roPres $ \bnd -> do
+    bs <- forM (zip roPres [0..(length roPres - 1)]) $ \(bnd, j) -> do
         ((is, ps), aes) <- liftCheck $ unbind bnd
         let ivs = map (\i -> SAtom (show i)) $ is ++ ps
         withIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ do
@@ -508,6 +513,7 @@ symROUnique roPres e = do
                 (map (\i -> (i, indexSort)) ivs)
                 (sNot $ sEq (SAtom "TRUE") $ SApp [SAtom "eq", sConcats vs, v])
                 []
+                ("ro_unique_" ++ show j)
     emitToProve $ sAnd bs
 
 symListUniq :: [AExpr] -> Sym ()
@@ -546,7 +552,7 @@ symDecideNotInRO aes = do
         res <- fromSMT smtSetup $ do
             vs <- mapM interpretAExp aes
             roPres <- liftCheck $ collectROPreimages
-            bs <- forM roPres $ \b -> do 
+            bs <- forM (zip roPres [0 .. (length roPres - 1)]) $ \(b, j) -> do 
                 ((is, ps), aes') <- liftCheck $ unbind b
                 let ivs = map (\i -> SAtom (show i)) $ is ++ ps
                 withIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ do
@@ -555,6 +561,7 @@ symDecideNotInRO aes = do
                         (map (\i -> (i, indexSort)) ivs)
                         (sNot $ sEq (sConcats vs) (sConcats vs'))
                         []
+                        ("not_in_ro_" ++ show j)
             emitToProve $ sAnd bs
         if snd res then return True else return False
 
