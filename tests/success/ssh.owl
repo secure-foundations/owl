@@ -1,3 +1,4 @@
+set_option ":rlimit" "65000"
 /*
  * Excerpt from Squirrel SSH:
 
@@ -109,7 +110,6 @@ def PFA_FW (k11: if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PFA
 
 def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
 : Unit =
-    corr_case skPFA in
     corr_case a in
     corr_case b in
     let g_pow_b1 = dhpk(get(b1)) in

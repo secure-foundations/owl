@@ -6,6 +6,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 module Typing where
 import AST
+import Data.Time.Clock
 import qualified Data.Map.Strict as M
 import Error.Diagnose.Position
 import Data.Default (Default, def)
@@ -782,12 +783,14 @@ checkDecl d cont =
                           debug $ pretty "Checking def body " <> pretty n
                           debug $ pretty "Result of anf: "  <> pretty bdy''
                           logTypecheck $ "Type checking " ++ n
+                          t0 <- liftIO $ getCurrentTime
                           pushLogTypecheckScope
                           local (set tcScope $ TcDef l) $
                               withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
                               popLogTypecheckScope
-                              logTypecheck $ "Finished checking " ++ n
+                              t1 <- liftIO $ getCurrentTime
+                              logTypecheck $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
                               return $ Just bdy'
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True

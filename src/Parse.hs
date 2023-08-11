@@ -1417,6 +1417,9 @@ data Z3Result = Z3Result {
     _z3Stats :: M.Map String String
                          }
 
+smtIdentifier :: Parser String
+smtIdentifier = many1 (alphaNum <|> oneOf "_-.=!")
+
 parseZ3Result :: Parser Z3Result
 parseZ3Result = do
     res <- 
@@ -1435,9 +1438,9 @@ parseZ3Result = do
             char '('
             res <- many $ do
                 char ':'
-                s <- many1 (alphaNum <|> oneOf "-.")
+                s <- smtIdentifier
                 whiteSpace
-                t <- many1 (alphaNum <|> oneOf "-.")
+                t <- smtIdentifier
                 whiteSpace
                 return (s, t)
             char ')'
