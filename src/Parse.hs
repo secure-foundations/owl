@@ -29,7 +29,7 @@ owlStyle   = P.LanguageDef
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma"]
-                , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "!=", "*", "|-", "+x"]
+                , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
 
@@ -407,6 +407,15 @@ parsePropTerm =
             symbol "<="
             l2 <- parseLabel
             return $ PFlow l1 l2
+        )
+        <|>
+        (try $ parseSpanned $ do
+            pbegin <- getPosition
+            l1 <- parseLabel
+            symbol "!<="
+            l2 <- parseLabel
+            pend <- getPosition
+            return $ PNot $ Spanned (ignore $ mkPos pbegin pend) $ PFlow l1 l2
         )
         <|>
         (parseSpanned $ do
