@@ -73,10 +73,10 @@ reportZ3Results fn rs = do
     createDirectoryIfMissing False ".z3log"
     let csvFileName = ".z3log/" ++ takeFileName fn ++ ".csv"
     let columns = ["rlimit-count", "time"] 
-    let csvHeader = "filename, unsat" ++ (mconcat $ map (\c -> ", " ++ c) columns) ++ "\n"
+    let csvHeader = "filename,unsat" ++ (mconcat $ map (\c -> "," ++ c) columns) ++ "\n"
     csvContents <- forM rs $ \(f, r) -> do
-        let cols = concat $ map (\c -> ", " ++ lookupDefault c (_z3Stats r) "undefined") columns
-        return $ takeFileName f ++ ", " ++ show (_isUnsat r) ++ cols ++ "\n"
+        let cols = concat $ map (\c -> "," ++ lookupDefault c (_z3Stats r) "undefined") columns
+        return $ takeFileName f ++ "," ++ show (_isUnsat r) ++ cols ++ "\n"
     putStrLn $ "Writing Z3 results to " ++ csvFileName 
     writeFile csvFileName $ csvHeader ++ mconcat csvContents
 
