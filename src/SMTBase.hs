@@ -226,14 +226,13 @@ getSMTQuery setup k = do
 trimnl :: String -> String
 trimnl = reverse . dropWhile (=='\n') . reverse
 
-queryZ3 :: Bool -> String -> IORef [P.Z3Result] -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
+queryZ3 :: Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> String -> IO (Either String (Bool, Maybe String))
 queryZ3 logsmt filepath z3results mp q = do
     let hq = hash q 
     m <- readIORef mp
     case M.lookup hq m of
       Just res -> return $ Right (res, Nothing)
       Nothing -> do 
-          t0 <- getCurrentTime
           resp <- readProcessWithExitCode "z3" ["-smt2", "-st", "-in"] q
           case resp of
             (ExitSuccess, s, _) -> do                           
@@ -246,13 +245,8 @@ queryZ3 logsmt filepath z3results mp q = do
                     fn <- case logsmt of
                             False -> return Nothing
                             True -> do
-                              modifyIORef z3results (z3result :)
-                              t1 <- getCurrentTime
-                              let resultAnn = "; Result: " ++ (if P._isUnsat z3result then "unsat" else "unknown")
-                              let timeAnn = "; Query time: " ++ show (diffUTCTime t1 t0)
-                              let rlimitAnn = "; Rlimit: " ++ show (P._rlimitCount z3result)
-                              let ann = resultAnn ++ "\n" ++ timeAnn ++ "\n" ++ rlimitAnn ++ "\n"
-                              b <- logSMT filepath $ ann ++ q
+                              b <- logSMT filepath $ q
+                              modifyIORef z3results ((b, z3result) :)
                               return $ Just b
                     atomicModifyIORef' mp $ \m -> (M.insert hq (P._isUnsat z3result) m, ())
                     return $ Right (P._isUnsat z3result, fn)

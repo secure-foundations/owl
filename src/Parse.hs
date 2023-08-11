@@ -1414,7 +1414,7 @@ parseFile = do
 
 data Z3Result = Z3Result {
     _isUnsat :: Bool,
-    _rlimitCount :: Int
+    _z3Stats :: M.Map String String
                          }
 
 parseZ3Result :: Parser Z3Result
@@ -1429,9 +1429,7 @@ parseZ3Result = do
            return False)
     whiteSpace
     xs <- parseStatistics
-    case lookup "rlimit-count" xs of
-      Nothing -> fail $ "rlimit-count not found in statistics: " ++ show xs
-      Just i -> return $ Z3Result res (read i)
+    return $ Z3Result res (M.fromList xs)
     where
         parseStatistics = do
             char '('

@@ -145,7 +145,7 @@ data Env = Env {
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
     _z3Options :: M.Map String String, 
-    _z3Results :: IORef [P.Z3Result],
+    _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int
 }
 
