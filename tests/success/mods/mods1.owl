@@ -1,0 +1,6 @@
+import "mods0.owl" as A
+
+def tst1() @ A.alice : Unit = 
+    let x = get(A.k) in 
+    ()
+

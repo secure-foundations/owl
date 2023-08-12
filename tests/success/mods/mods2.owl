@@ -1,0 +1,4 @@
+import "mods0.owl" as A
+import "mods1.owl" as B
+
+def tst2 () @ A.alice : Unit = call B.tst1()

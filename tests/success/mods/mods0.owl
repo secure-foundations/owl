@@ -1,0 +1,4 @@
+locality alice
+name k : nonce @ alice
+
+def tst0() @ alice : Name(k) = admit
