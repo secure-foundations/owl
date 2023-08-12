@@ -9,9 +9,13 @@ import AST
 import Data.Time.Clock
 import qualified Data.Map.Strict as M
 import Error.Diagnose.Position
+import System.FilePath
 import Data.Default (Default, def)
 import qualified Data.Map.Ordered as OM
 import qualified Data.Set as S
+import qualified Data.ByteString as BS
+import Data.Serialize
+import System.Directory
 import CmdArgs
 import Data.Maybe
 import Data.Either
@@ -42,13 +46,13 @@ emptyModBody :: IsModuleType -> ModBody
 emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
-emptyEnv :: Flags -> IO Env
-emptyEnv f = do
+emptyEnv :: Name ResolvedPath -> Flags -> IO Env
+emptyEnv n f = do
     r <- newIORef 0
     r' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty rs r'
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(n, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty rs r'
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -615,6 +619,8 @@ addTyDef s td k = do
                 return $ foldr joinLbl zeroLbl ls
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError (ignore def) $ show $ pretty "Overlapping abstract types: " <> pretty s
+          -- TODO: len_lbl path below might need to be fixed, possibly with a
+          -- path to a type
           len_lbl' <- tyLenLbl $ mkSpanned $ TConst (topLevelPath s) []
           local (over (curMod . flowAxioms) $ \xs -> (len_lbl, len_lbl') : (len_lbl', len_lbl) : xs ) $
               local (over (curMod . tyDefs) $ insert s td) $
@@ -650,7 +656,7 @@ inferModuleExp me =
     case me^.val of
       ModuleBody imt xds' -> do
           (x, ds') <- unbind xds'
-          m' <- local (over openModules $ insert (Just x) (emptyModBody imt)) $ checkDeclsWithCont ds' $ view curMod
+          m' <- local (over openModules $ insert x (emptyModBody imt)) $ checkDeclsWithCont ds' $ view curMod
           let md = MBody $ bind x m'
           return md
       ModuleFun xe -> do
@@ -681,7 +687,7 @@ inferModuleExp me =
             Nothing -> typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
       ModuleVar pth@(PRes (PPathVar OpenPathVar x)) -> do
           cm <- view openModules
-          case lookup (Just x) cm of
+          case lookup x cm of
               Just md -> return $ MBody $ bind x md
               Nothing -> typeError (me^.spanOf) $ "Unknown module or functor: " ++ show pth
       ModuleVar pth@(PRes (PPathVar (ClosedPathVar _) x)) -> do
@@ -711,6 +717,15 @@ checkDecl d cont =
                   Nothing -> typeError (d^.spanOf) $ "Unknown locality: " ++ show pth
                   Just _ -> local (over (curMod . localities) $ insert n (Right pth)) $ cont
       DeclInclude _ -> error "Include found during type inference"
+      DeclImportAs spath smod -> do
+          f <- view $ envFlags . fFilePath
+          let spath' = (takeDirectory f) </> (spath ++ ".checked")
+          b <- liftIO $ doesFileExist $ spath'
+          assert (d^.spanOf) ("Checked file not found: " ++ spath') b
+          f <- liftIO $ BS.readFile spath'
+          case decode f of
+            Left err -> typeError (d^.spanOf) $ "Error reading checked file: " ++ err
+            Right mb -> local (over (curMod . modules) $ insert smod (MBody mb)) $ cont
       DeclCounter n isloc -> do
           ((is1, is2), loc) <- unbind isloc
           local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
@@ -774,7 +789,8 @@ checkDecl d cont =
                   withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
                       checkProp preReq
                       checkTy tyAnn
-                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
+                      cur_modName <- curModName
+                      let happenedProp = pHappened (PRes $ PDot cur_modName n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
                       x <- freshVar
                       case bdy of
                         Nothing -> return $ Nothing
@@ -886,14 +902,17 @@ localROCheck pos aes = laxAssertion $ do
     forM_ aes $ ensureOnlyLocalNames
     -- Injectivity check
     ts <- mapM inferAExpr aes
-    bs <- forM ts $ \t ->
-        case t^.val of
-          TName ne -> nameExpIsLocal ne
-          TVK ne -> nameExpIsLocal ne
-          TDH_PK ne -> nameExpIsLocal ne
-          TEnc_PK ne -> nameExpIsLocal ne
-          TSS ne ne' -> liftM2 (||) (nameExpIsLocal ne) (nameExpIsLocal ne')
-          _ -> return False
+    bs <- forM ts $ \t -> do
+        let go t = 
+                case t^.val of
+                  TName ne -> nameExpIsLocal ne
+                  TVK ne -> nameExpIsLocal ne
+                  TDH_PK ne -> nameExpIsLocal ne
+                  TEnc_PK ne -> nameExpIsLocal ne
+                  TSS ne ne' -> liftM2 (||) (nameExpIsLocal ne) (nameExpIsLocal ne')
+                  TRefined t1 _ -> go t1
+                  _ -> return False
+        go t
     assert pos ("Random oracle decl must involve a local name") $ or bs
     
 
@@ -1220,11 +1239,6 @@ flowCheck sp l1 l2 = laxAssertion $ do
 
 -- Ensure l flows to LAdv
 
-stripRefinements :: Ty -> Ty
-stripRefinements t =
-    case t^.val of
-      TRefined t _ -> stripRefinements t
-      _ -> t
 
 
 -- TODO: generalize for RO?
@@ -1553,7 +1567,7 @@ checkExpr ot e = do
             TcDef curr_locality -> do
                 fl' <- normLocality (e^.spanOf) fl
                 curr_locality' <- normLocality (e^.spanOf) curr_locality
-                assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
+                assert (e^.spanOf) ("Wrong locality for function call: currently in " ++ show (pretty curr_locality') ++ " but expected " ++ show (pretty fl')) $ fl' `aeq` curr_locality'
                 (xts, (pr, rt, _)) <- unbind o
                 assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
                 argTys <- mapM inferAExpr args
@@ -1929,14 +1943,23 @@ checkCryptoOp pos ot cop args = do
 
 ---- Entry point ----
 
-typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
+typeCheckDecls :: Flags -> [Decl] -> IO (Either () Env)
 typeCheckDecls f ds = do
-    e <- emptyEnv f
-    r <- PR.runResolve f $ PR.resolveDecls ds
+    r <- PR.runResolve f $ PR.resolveDeclsTop ds
     case r of
-      Left () -> return $ Left e
-      Right ds' -> do
-          runExceptT $ runReaderT (unCheck $ checkDeclsWithCont ds' $ ask) e
+      Left () -> return $ Left ()
+      Right (n, ds') -> do
+          e <- emptyEnv n f
+          res <- runExceptT $ runReaderT (unCheck $ checkDeclsWithCont ds' $ ask) e 
+          case res of
+            Left errEnv -> return $ Left ()
+            Right goodEnv -> do
+                let [(n', mb)] = goodEnv^.openModules
+                let mb_encoded = encode $ bind n' mb
+                BS.writeFile (f^.fFilePath ++ ".checked") mb_encoded
+                return $ Right goodEnv
+
+
 
 
 ---- Module stuff ----

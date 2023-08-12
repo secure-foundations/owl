@@ -71,6 +71,7 @@ rec name k<i>
 */
 
 def flows()  @ alice : Unit = 
+    assert (sec(k3) ==> sec(k2));
     assert (sec(k3) ==> sec(k2) /\ sec(k1));
     assert (corr(k3) ==> corr(alice3));
     assert (corr(k1) ==> corr(k2));

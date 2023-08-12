@@ -68,6 +68,9 @@ data Def =
 instance Alpha Def
 instance Subst Idx Def
 instance Subst ResolvedPath Def
+instance Serialize Def
+
+instance Serialize a => Serialize (Embed a)
 
 data DefSpec = DefSpec {
     _isAbstract :: Ignore Bool, 
@@ -79,6 +82,7 @@ data DefSpec = DefSpec {
 instance Alpha DefSpec
 instance Subst Idx DefSpec
 instance Subst ResolvedPath DefSpec
+instance Serialize DefSpec
 
 type Map a b = [(a, b)]
 
@@ -93,6 +97,7 @@ data UserFunc =
 
 instance Alpha UserFunc
 instance Subst ResolvedPath UserFunc
+instance Serialize UserFunc
 
 data ModDef = 
     MBody (Bind (Name ResolvedPath) ModBody)
@@ -102,6 +107,7 @@ data ModDef =
 
 instance Alpha ModDef
 instance Subst ResolvedPath ModDef
+instance Serialize ModDef
 
 data NameDef = 
     BaseDef (NameType, [Locality])
@@ -112,6 +118,7 @@ data NameDef =
 instance Alpha NameDef
 instance Subst ResolvedPath NameDef
 instance Subst Idx NameDef
+instance Serialize NameDef
 
 data ModBody = ModBody { 
     _isModuleType :: IsModuleType,
@@ -130,6 +137,7 @@ data ModBody = ModBody {
 
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
+instance Serialize ModBody
 
 data Env = Env { 
     _envFlags :: Flags,
@@ -138,7 +146,7 @@ data Env = Env {
     _tcScope :: TcScope,
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
-    _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
+    _openModules :: Map (Name ResolvedPath) ModBody, 
     _modContext :: Map (Name ResolvedPath) ModDef,
     _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
@@ -160,6 +168,7 @@ data TyDef =
 instance Alpha TyDef
 instance Subst Idx TyDef
 instance Subst ResolvedPath TyDef
+instance Serialize TyDef
 
 data TypeError =
     ErrWrongNameType NameExp String NameType
@@ -340,15 +349,19 @@ unsafeLookup x = lens gt st
                  Nothing -> error $ "INTERNAL ERROR: Unknown key: " ++ show x
         st m b = insert x b m
 
+stripRefinements :: Ty -> Ty
+stripRefinements t =
+    case t^.val of
+      TRefined t _ -> stripRefinements t
+      _ -> t
+
 curMod :: Lens' Env ModBody
 curMod = openModules . unsafeHead . _2
 
 curModName :: Check ResolvedPath
 curModName = do
-    (k, _) <- head <$> view openModules
-    case k of
-      Nothing -> return PTop
-      Just pv -> return $ PPathVar OpenPathVar pv
+    (pv, _) <- head <$> view openModules
+    return $ PPathVar OpenPathVar pv
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = do
@@ -394,8 +407,8 @@ openModule pos rp = do
     return mb
     where
         go :: ResolvedPath -> Check ModBody
-        go PTop = view $ openModules . unsafeLookup Nothing
-        go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup (Just v)
+        go PTop = typeError pos $ "Got PTop for openModule"
+        go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup v
         go p0@(PPathVar (ClosedPathVar _) v) = do
             mc <- view modContext
             case lookup v mc of
@@ -768,11 +781,11 @@ prettyContext :: Env -> Doc ann
 prettyContext e =
     vsep [prettyIndices (e^.inScopeIndices), prettyTyContext (e^.tyContext)]
 
-isNameDefRO :: Path -> Check Bool
-isNameDefRO (PRes (PDot p n)) = do 
+isNameDefRO :: Ignore Position -> Path -> Check Bool
+isNameDefRO pos pth@(PRes (PDot p n)) = do 
     md <- openModule (ignore def) p
     case lookup n (md^.nameDefs) of
-        Nothing -> typeError (ignore def) $ "SMT error"
+        Nothing -> typeError pos $ "Unknown name: " ++ show (pretty pth)
         Just b_nd -> do 
             case snd (unsafeUnbind b_nd) of
               RODef _ -> return True
@@ -785,7 +798,7 @@ normalizeNameExp ne =
           case oi of
             Just _ -> return ne
             Nothing -> do
-              isRO <- isNameDefRO p
+              isRO <- isNameDefRO (ne^.spanOf) p
               if isRO then return (Spanned (ne^.spanOf) $ NameConst ips p (Just 0))
                       else return ne
       PRFName ne1 s -> do
@@ -800,10 +813,8 @@ instance Pretty ResolvedPath where
 collectEnvInfo :: (ModBody -> Map String a) -> Check (Map ResolvedPath a)
 collectEnvInfo f = do
     cms <- view openModules
-    res <- forM cms $ \(op, mb) -> do
-        let p = case op of
-                  Nothing -> PTop
-                  Just n -> PPathVar OpenPathVar n
+    res <- forM cms $ \(n, mb) -> do
+        let p = PPathVar OpenPathVar n
         go f p mb 
     mc <- view modContext
     res' <- forM mc $ \(x, md) -> do
@@ -832,10 +843,8 @@ collectEnvInfo f = do
 collectEnvAxioms :: (ModBody -> [a]) -> Check [a]
 collectEnvAxioms f = do
     cms <- view openModules
-    res <- forM cms $ \(op, md) -> do
-        let p = case op of
-                  Nothing -> PTop
-                  Just n -> PPathVar OpenPathVar n
+    res <- forM cms $ \(n, md) -> do
+        let p = PPathVar OpenPathVar n
         go f p md 
     mc <- view modContext
     res' <- forM mc $ \(x, md) -> do

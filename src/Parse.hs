@@ -618,6 +618,18 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
+        reserved "import"
+        whiteSpace
+        char '"'
+        s1 <- many (noneOf "\"")
+        char '"'
+        whiteSpace
+        reserved "as"
+        a <- identifier
+        return $ DeclImportAs s1 a
+    )
+    <|>
+    (parseSpanned $ do
         reserved "counter"
         x <- identifier
         inds <- parseIdxParamBinds

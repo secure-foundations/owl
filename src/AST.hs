@@ -14,6 +14,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Default (Default, def)
 import Data.List
+import Data.Serialize
 import Data.Maybe
 import Control.Monad
 import Control.Lens
@@ -63,6 +64,8 @@ data Path =
 
 data PathVarType = OpenPathVar | ClosedPathVar (Ignore String)
     deriving (Show, Generic, Typeable)
+
+instance Serialize PathVarType
 
 instance Alpha PathVarType
 instance Subst ResolvedPath PathVarType
@@ -307,6 +310,7 @@ data DeclX =
                         ))
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
+    | DeclImportAs String String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
     | DeclTy String (Maybe Ty)
@@ -332,13 +336,19 @@ data IsModuleType = ModType | ModConcrete
 data AdmitUniquenessCheck = NoAdmitUniqueness | AdmitUniqueness
     deriving (Show, Generic, Typeable, Eq)
 
+instance (Serialize a, Serialize b) => Serialize (Bind a b)
+instance Serialize (Name a)
+instance Serialize a => Serialize (Ignore a)
+
 instance Alpha IsModuleType
 instance Subst AExpr IsModuleType
 instance Subst ResolvedPath IsModuleType
+instance Serialize IsModuleType
 
 instance Alpha AdmitUniquenessCheck
 instance Subst AExpr AdmitUniquenessCheck
 instance Subst ResolvedPath AdmitUniquenessCheck
+instance Serialize AdmitUniquenessCheck
 
 
 data DetFuncOps =
@@ -439,6 +449,7 @@ data FuncParam =
 -- LocallyNameless instances
 
 $(makeClosedAlpha ''Position)
+instance Serialize Position
 
 instance Subst b Position
 
@@ -446,8 +457,13 @@ instance Alpha a => Alpha (Spanned a)
 
 instance Subst b a => Subst b (Spanned a)
 
+instance Serialize a => Serialize (Spanned a)
+
+
 instance Alpha Idx
+instance Serialize Idx
 instance Alpha Endpoint
+instance Serialize Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ v) = Just (SubstName v)
 instance Subst AExpr Idx
@@ -472,44 +488,54 @@ instance Subst ResolvedPath AExprX
 instance Subst AExpr AExprX where
     isCoerceVar (AEVar _ v) = Just (SubstCoerce v (\x -> Just (_val x)))
     isCoerceVar _ = Nothing
+instance Serialize AExprX
 
 instance Alpha NameExpX
 instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
+instance Serialize NameExpX
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
 instance Subst ResolvedPath NameTypeX
+instance Serialize NameTypeX
+
 
 instance Alpha NoncePattern
 instance Subst Idx NoncePattern
 instance Subst AExpr NoncePattern
 instance Subst ResolvedPath NoncePattern
+instance Serialize NoncePattern
 
 instance Alpha FuncParam
 instance Subst Idx FuncParam
 instance Subst AExpr FuncParam
 instance Subst ResolvedPath FuncParam
+instance Serialize FuncParam
 
 instance Alpha LabelX
 instance Subst Idx LabelX
 instance Subst AExpr LabelX
 instance Subst ResolvedPath LabelX
+instance Serialize LabelX
 
 instance Alpha LblConst
 instance Subst Idx LblConst
 instance Subst AExpr LblConst
 instance Subst ResolvedPath LblConst
+instance Serialize LblConst
 
 instance Alpha DetFuncOps
 instance Subst ResolvedPath DetFuncOps
+instance Serialize DetFuncOps
 
 instance Alpha Path
 instance Subst Idx Path
 instance Subst AExpr Path
 instance Subst ResolvedPath Path where
+instance Serialize Path
 
 instance Alpha ResolvedPath
 instance Subst ResolvedPath ResolvedPath where
@@ -517,31 +543,37 @@ instance Subst ResolvedPath ResolvedPath where
     isvar _ = Nothing
 instance Subst AExpr ResolvedPath
 instance Subst Idx ResolvedPath
+instance Serialize ResolvedPath
 
 instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
 instance Subst ResolvedPath TyX
+instance Serialize TyX
 
 instance Alpha PropX
 instance Subst Idx PropX
 instance Subst AExpr PropX
 instance Subst ResolvedPath PropX
+instance Serialize PropX
 
 instance Alpha Quant
 instance Subst Idx Quant
 instance Subst AExpr Quant
 instance Subst ResolvedPath Quant
+instance Serialize Quant
 
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
 instance Subst ResolvedPath DebugCommand
+instance Serialize DebugCommand
 
 instance Alpha Locality
 instance Subst Idx Locality
 instance Subst AExpr Locality
 instance Subst ResolvedPath Locality
+instance Serialize Locality
 
 instance Alpha ExprX
 instance Subst AExpr ExprX
@@ -549,11 +581,13 @@ instance Subst Idx ExprX
 instance Subst Idx Endpoint
 instance Subst Idx DebugCommand
 instance Subst ResolvedPath ExprX
+instance Serialize ExprX
 
 instance Alpha CryptOp
 instance Subst AExpr CryptOp
 instance Subst Idx CryptOp
 instance Subst ResolvedPath CryptOp
+instance Serialize CryptOp
 --- Pretty instances ---
 
 instance Pretty (Name a) where

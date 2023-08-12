@@ -36,5 +36,6 @@ executable owl
                        data-default,
                        hashable,
                        cereal,
-                       time
+                       time,
+                       bytestring
 

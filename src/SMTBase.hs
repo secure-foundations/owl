@@ -427,7 +427,7 @@ getSymName ne = do
         sn <- smtName s
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
-        isRO <- liftCheck $ isNameDefRO s
+        isRO <- liftCheck $ isNameDefRO (ne^.spanOf) s
         return $ sName isRO sn (vs1 ++ vs2) oi
       PRFName ne1 s -> do
           n <- getSymName ne1

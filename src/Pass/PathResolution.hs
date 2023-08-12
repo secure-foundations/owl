@@ -117,6 +117,14 @@ debug d = do
     b <- view $ flags . fDebug
     when b $ liftIO $ putStrLn $ show d
 
+resolveDeclsTop :: [Decl] -> Resolve (Name ResolvedPath, [Decl])
+resolveDeclsTop ds = do
+    let x = s2n "Top"
+    r <- local (set curPath (PPathVar OpenPathVar x)) $ resolveDecls ds
+    return (x, r)
+
+
+
 resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
@@ -180,20 +188,21 @@ resolveDecls (d:ds) =
                    local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x ++ "?", p)) vs) $ 
                       resolveDecls ds
           return (d' : ds')
+      DeclImportAs s smod -> do
+          p <- view curPath
+          ds' <- local (over modPaths $ T.insert smod (False, p)) $ resolveDecls ds 
+          return (d : ds')
       DeclInclude fn -> do
           p <- view curPath
-          case p of
-            PTop -> do
-              incls <- view includes
-              if S.member fn incls then resolveDecls ds else do
-                  fl <- view flags
-                  let fn' = (takeDirectory $ fl^.fFilePath) </> fn
-                  s <- liftIO $ readFile fn'
-                  pres <- liftIO $ P.runParserT P.parseFile () (takeFileName fn') s
-                  case pres of
-                    Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
-                    Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
-            _ -> resolveError (d^.spanOf) $ "include statements only allowed at top level"
+          incls <- view includes
+          if S.member fn incls then resolveDecls ds else do
+              fl <- view flags
+              let fn' = (takeDirectory $ fl^.fFilePath) </> fn
+              s <- liftIO $ readFile fn'
+              pres <- liftIO $ P.runParserT P.parseFile () (takeFileName fn') s
+              case pres of
+                Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
+                Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
           vs' <- forM vs $ \(s, ot) -> do

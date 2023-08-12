@@ -361,7 +361,8 @@ smtTy t =
           dh_combine <- getTopLevelFunc ("dh_combine")
           return $ sRefined (SAtom "Data") $ \x -> x `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
       TUnit -> return $ SAtom "Unit"
-      TAdmit -> return $ SAtom "Unit"
+      TAdmit -> 
+          return $ SAtom $ "(Refined Unit (lambda ((x Bits)) false))"
       TUnion t1 t2 -> do
           vt1 <- smtTy t1
           vt2 <- smtTy t2
