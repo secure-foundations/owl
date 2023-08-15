@@ -606,7 +606,10 @@ instance Pretty TyX where
     pretty (TBool l) = 
             pretty "Bool<" <+> pretty l <> pretty ">"
     pretty (TData l1 l2) = 
-            pretty "Data <" <> pretty l1 <> pretty ", |" <> pretty l2 <> pretty "|>"
+            if l1 `aeq` l2 then
+                pretty "Data" <+> angles (pretty l1)
+            else
+                pretty "Data <" <> pretty l1 <> pretty ", |" <> pretty l2 <> pretty "|>"
     pretty (TDataWithLength l1 a) = 
             pretty "Data <" <> pretty l1 <> pretty ">" <+> pretty "|" <> pretty a <> pretty "|"
     pretty (TRefined t xp) = 
