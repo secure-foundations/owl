@@ -146,7 +146,8 @@ data Env = Env {
     _smtCache :: IORef (M.Map Int Bool),
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
-    _typeCheckLogDepth :: IORef Int
+    _typeCheckLogDepth :: IORef Int,
+    _curSpan :: Position
 }
 
 
@@ -307,8 +308,11 @@ joinLbl l1 l2 =
 addVars :: [(DataVar, (Ignore String, Ty))] -> Map DataVar (Ignore String, Ty) -> Map DataVar (Ignore String, Ty)
 addVars xs g = g ++ xs 
     
-assert :: Ignore Position -> String -> Bool -> Check ()
-assert pos m b = if b then return () else typeError pos m 
+assert :: String -> Bool -> Check ()
+assert m b = do
+    if b then return () else do
+        pos <- view $ curSpan
+        typeError (ignore pos) m 
 
 laxAssertion :: Check () -> Check ()
 laxAssertion k = do
@@ -322,7 +326,7 @@ withVars :: [(DataVar, (Ignore String, Ty))] -> Check a -> Check a
 withVars assocs k = do
     tyC <- view tyContext
     forM_ assocs $ \(x, _) -> 
-        assert (ignore def) (show $ ErrDuplicateVarName x) $ not $ elem x $ map fst tyC
+        assert (show $ ErrDuplicateVarName x) $ not $ elem x $ map fst tyC
     local (over tyContext $ addVars assocs) k
 
 
@@ -373,23 +377,23 @@ checkIdxSession i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or Session ID") $ it /= IdxPId
-       TcDef _ ->  assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Session ID") $ it == IdxSession
+       TcGhost -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or Session ID") $ it /= IdxPId
+       TcDef _ ->  assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check ()
 checkIdxPId i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
-       TcDef _ -> assert pos (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
+       TcGhost -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
+       TcDef _ -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
 
 openModule :: Ignore Position -> ResolvedPath -> Check ModBody
 openModule pos rp = do
     mb <- go rp
     tc <- view tcScope
     case tc of
-      TcDef _ -> assert pos ("Module must be concrete: " ++ show rp) $ (mb^.isModuleType) == ModConcrete 
+      TcDef _ -> assert ("Module must be concrete: " ++ show rp) $ (mb^.isModuleType) == ModConcrete 
       _ -> return ()
     return mb
     where
@@ -450,7 +454,7 @@ checkCounterIsLocal pos p0@(PRes (PDot p s)) (vs1, vs2) = do
             TcDef l2 -> do
                 l1' <- normLocality pos l'
                 l2' <- normLocality pos l2
-                assert pos ("Wrong locality for counter") $ l1' `aeq` l2'
+                assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError pos $ "Unknown counter: " ++ show p0
 
 getROPreimage :: Ignore Position -> Path -> ([Idx], [Idx]) -> Check [AExpr]
@@ -482,22 +486,22 @@ getNameInfo ne = do
            Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName pth
            Just b_nd -> do
                ((is, ps), nd') <- unbind b_nd
-               assert (ne^.spanOf) ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+               assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
                let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                case nd of
                  AbstractName -> do
-                     assert (ne^.spanOf) ("Cannot use hash select on abstract name") $ oi == Nothing 
+                     assert ("Cannot use hash select on abstract name") $ oi == Nothing 
                      return Nothing
                  BaseDef (nt, lcls) -> do
-                     assert (ne^.spanOf) ("Cannot use hash select on base name") $ oi == Nothing 
+                     assert ("Cannot use hash select on base name") $ oi == Nothing 
                      return $ Just (nt, Just lcls) 
                  RODef (as, nts) -> 
                      case oi of
                        Nothing -> do
-                           assert (ne^.spanOf) ("Missing hash select parameter for RO name") $ length nts == 1
+                           assert ("Missing hash select parameter for RO name") $ length nts == 1
                            return $ Just (nts !! 0, Nothing)
                        Just i -> do
-                           assert (ne^.spanOf) ("Hash select parameter for RO name out of bounds") $ i < length nts
+                           assert ("Hash select parameter for RO name out of bounds") $ i < length nts
                            return $ Just (nts !! i, Nothing)
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
@@ -620,12 +624,12 @@ inferAExpr ae = do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
         (ar, k) <- getFuncInfo (ae^.spanOf) f
-        assert (ae^.spanOf) (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
+        assert (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
         mkSpanned <$> k params (zip args ts)
       (AEString s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
-          assert (ae^.spanOf) ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
@@ -647,7 +651,7 @@ inferAExpr ae = do
                 ot <- case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality (ae^.spanOf) curr_locality
-                        assert (ae^.spanOf) (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
+                        assert (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
@@ -698,7 +702,7 @@ extractEnum :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(Stri
 extractEnum pos ps s b = do
     idxs <- getEnumParams pos ps
     (is, bdy') <- unbind b
-    assert (ignore def) (show $ pretty "Wrong index arity for enum " <> pretty s) $ length idxs == length is  
+    assert (show $ pretty "Wrong index arity for enum " <> pretty s) $ length idxs == length is  
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
@@ -706,7 +710,7 @@ extractStruct :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(St
 extractStruct pos ps s b = do
     idxs <- getStructParams pos ps
     (is, xs') <- unbind b
-    assert (ignore def) (show $ pretty "Wrong index arity for struct " <> pretty s <> pretty ": got " <> pretty idxs <> pretty " expected " <> pretty (length is)) $ length idxs == length is 
+    assert (show $ pretty "Wrong index arity for struct " <> pretty s <> pretty ": got " <> pretty idxs <> pretty " expected " <> pretty (length is)) $ length idxs == length is 
     return $ substs (zip is idxs) xs'
 
 
@@ -915,10 +919,10 @@ normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
       Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
       Just (Right p') -> normLocality pos $ Locality (PRes p') xs
       Just (Left ar) -> do
-              assert pos (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
+              assert (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
-                  assert pos (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
+                  assert (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
               return $ Locality (PRes (PDot p s)) xs 
 normLocality pos loc = typeError pos $ "bad case: " ++ show loc
 

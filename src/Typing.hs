@@ -48,12 +48,13 @@ emptyEnv f = do
     r' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty interpUserFunc r m mempty rs r'
+    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
+        interpUserFunc r m mempty rs r' def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
 assertEmptyParams ps f =
-    assert (ignore def) ("Function " ++ f ++ " does not expect params") $ length ps == 0
+    assert ("Function " ++ f ++ " does not expect params") $ length ps == 0
 
 withNoParams :: String -> ([(AExpr, Ty)] -> Check TyX) -> [FuncParam] -> [(AExpr, Ty)] -> Check TyX
 withNoParams f k ps args = do
@@ -121,7 +122,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "FALSE" 0 $ \args -> do
         return $ TBool zeroLbl,
     ("eq", (2, \ps args -> do 
-        assert (ignore def) ("Bad params") $ length ps == 0
+        assert ("Bad params") $ length ps == 0
         case args of
           [(a1, t1), (a2, t2)] -> do
               l1 <- coveringLabel t1
@@ -145,7 +146,7 @@ initDetFuncs = withNormalizedTys $ [
               return (TOption t)
           _ -> typeError (ignore def) $ show $ ErrBadArgs "None" (map snd args))),
     ("andb", (2, \ps args -> do
-        assert (ignore def) ("Bad params") $ length ps == 0
+        assert ("Bad params") $ length ps == 0
         case args of
           [(x, t1), (y, t2)] -> do
             l1 <- coveringLabel t1
@@ -258,7 +259,7 @@ interpUserFunc pos pth md (StructConstructor tv) = do
           return (ar, \ps xs -> do
               forM_ ps checkParam
               nts <- extractStruct pos ps (show tv) idf 
-              assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              assert (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               if length xs == ar then do
                 b <- foldM (\acc i -> do
                     b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
@@ -273,7 +274,7 @@ interpUserFunc pos pth md (StructProjector tv field) = do
           return (1, \ps args -> do
               forM_ ps checkParam
               nts <- extractStruct pos ps (show tv) idf 
-              assert pos (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              assert (show $ pretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               case lookup field nts of
                 Just t -> do
                   b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PRes $ PDot pth tv) ps)
@@ -291,7 +292,7 @@ interpUserFunc pos pth md (EnumConstructor tv variant) = do
           return (ar, \ps args -> do 
               forM_ ps checkParam
               nts <- extractEnum pos ps (show tv) idf
-              assert pos (show $ pretty "Index arity mismatch on enum constructor") $ length ps == is_ar 
+              assert (show $ pretty "Index arity mismatch on enum constructor") $ length ps == is_ar 
               let ot = fromJust $ lookup variant nts
               case ot of
                 Nothing -> return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) (ps)) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeLenConst "tag"))
@@ -459,7 +460,7 @@ isSubtype' t1 t2 = do
           case (aeq x' y', td) of
             (True, EnumDef _) -> return $ aeq ps1 ps2 
             (True, StructDef _) -> do
-                assert (t1^.spanOf) (show $ pretty "Func param arity mismatch on struct") $ length ps1 == length ps2
+                assert (show $ pretty "Func param arity mismatch on struct") $ length ps1 == length ps2
                 qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
                     case (p1, p2) of
                       (ParamIdx i1, ParamIdx i2) -> return $ mkSpanned $ PEqIdx i1 i2
@@ -532,7 +533,7 @@ assertSubtype t1 t2 = laxAssertion $ do
     tyc <- view tyContext
     debug $ pretty "Asserting subtype " <> pretty t1 <> pretty " <= " <> pretty t2 <> pretty "Under context: " <> prettyTyContext tyc
     b <- isSubtype t1 t2
-    assert (t1^.spanOf) (show $ ErrCannotProveSubtype t1 t2) b
+    assert (show $ ErrCannotProveSubtype t1 t2) b
 
 typeProtectsLabel' :: Label -> Ty -> Check ()
 typeProtectsLabel' l t0 =
@@ -575,7 +576,7 @@ typeProtectsLabel l t = laxAssertion $ do
 
 
 coveringLabel :: Ty -> Check Label
-coveringLabel t = do
+coveringLabel t = local (set tcScope TcGhost) $ do
     t' <- normalizeTy t
     coveringLabel' t'
 
@@ -588,13 +589,13 @@ addDef pos n df cont = do
       (DefHeader _, Just _) -> typeError pos $ "Def already defined: " ++ n
       (Def isdp, Just (DefHeader bl)) -> do
           (is, DefSpec _ l _) <- unbind isdp
-          assert pos ("Locality mismatch for " ++ n) $ (bind is l) `aeq` bl 
+          assert ("Locality mismatch for " ++ n) $ (bind is l) `aeq` bl 
           local (over (curMod . defs) $ insert n df) $ cont
       (Def isdp, Just (Def isdp')) -> do
           (is, DefSpec abs1 l1 ret1) <- unbind isdp
           (_, DefSpec abs2 _ _) <- unbind isdp'
-          assert pos ("Duplicate abstract def: " ++ n) $ not (unignore abs1) 
-          assert pos ("Def already defined: " ++ n) $ unignore abs2
+          assert ("Duplicate abstract def: " ++ n) $ not (unignore abs1) 
+          assert ("Def already defined: " ++ n) $ unignore abs2
           defMatches pos n (Just $ Def isdp) (Def isdp') 
           local (over (curMod . defs) $ insert n df) $ cont
 
@@ -610,7 +611,7 @@ addTyDef s td k = do
             EnumDef bts -> typeError (ignore def) $ show $ pretty "Cannot assign abstract type " <> pretty s <> pretty " to enum def "
             StructDef sd -> do
                 (is, xs') <- unbind sd
-                assert (ignore def) (show $ pretty "Cannot assign abstract type " <> pretty s <> pretty " to indexed struct") $ length is == 0
+                assert (show $ pretty "Cannot assign abstract type " <> pretty s <> pretty " to indexed struct") $ length is == 0
                 ls <- forM xs' $ \(_, t) -> tyLenLbl t
                 return $ foldr joinLbl zeroLbl ls
             TyAbbrev t -> tyLenLbl t
@@ -630,9 +631,9 @@ addNameDef n (is1, is2) (nt, nls) k = do
         ((is1', is2'), nd) <- unbind o
         case nd of
           AbstractName -> do
-              assert (nt^.spanOf) (show $ pretty "Indices on abstract and concrete def of name" <+> pretty n <+> pretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
+              local (set curSpan (unignore $ nt^.spanOf)) $ assert (show $ pretty "Indices on abstract and concrete def of name" <+> pretty n <+> pretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
           _ -> typeError (ignore def) $ "Duplicate name: " ++ n
-    assert (nt^.spanOf) (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
+    local (set curSpan (unignore $ nt^.spanOf)) $ assert (show $ pretty "Duplicate indices in definition: " <> pretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
     local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
         local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
             debug $ pretty "Checking localities of name defs " <> pretty nls <> pretty " for " <> pretty n
@@ -658,7 +659,7 @@ inferModuleExp me =
           p <- curModName
           t1 <- inferModuleExp $ unembed t 
           kind_t1 <- modDefKind t1
-          assert (me^.spanOf) (show $ pretty "Not a module type: " <> pretty (unembed t)) $ kind_t1 == ModType
+          local (set curSpan (unignore $ me^.spanOf)) $ assert (show $ pretty "Not a module type: " <> pretty (unembed t)) $ kind_t1 == ModType
           t1Concrete <- makeModDefConcrete t1
           r <- local (over modContext $ insert x t1Concrete) $ 
                   inferModuleExp k
@@ -670,7 +671,7 @@ inferModuleExp me =
             MFun _ s xd -> do
               argd <- getModDef (me^.spanOf) argp
               kind_argd <- modDefKind argd
-              assert (me^.spanOf) ("Not a module: " ++ show argp) $ kind_argd == ModConcrete
+              local (set curSpan (unignore $ me^.spanOf)) $ assert ("Not a module: " ++ show argp) $ kind_argd == ModConcrete
               moduleMatches (me^.spanOf) argd s 
               (x, d) <- unbind xd
               return $ subst x argp d
@@ -700,7 +701,7 @@ singleLineSpan i =
 
                   
 checkDecl :: Decl -> Check a -> Check a
-checkDecl d cont = 
+checkDecl d cont = local (set curSpan (unignore $ d^.spanOf)) $
     case d^.val of
       (DeclLocality n dcl) -> 
           case dcl of
@@ -736,7 +737,7 @@ checkDecl d cont =
                         AdmitUniqueness -> return ()
                         NoAdmitUniqueness -> checkROUnique (d^.spanOf) aes
                       nds <- view $ curMod . nameDefs
-                      assert (d^.spanOf) (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
+                      assert (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
               local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef (aes, nts)) cont 
       DeclModule n imt me omt -> do
           md <- case me^.val of
@@ -744,14 +745,14 @@ checkDecl d cont =
                   _ -> inferModuleExp me
           kind_md <- modDefKind md
           case imt of
-            ModConcrete -> assert (d^.spanOf) ("Expected module, got module type: " ++ show (pretty me)) $ kind_md == imt
-            ModType -> assert (d^.spanOf) ("Expected module type, got module: " ++ show (pretty me)) $ kind_md == imt
+            ModConcrete -> assert ("Expected module, got module type: " ++ show (pretty me)) $ kind_md == imt
+            ModType -> assert ("Expected module type, got module: " ++ show (pretty me)) $ kind_md == imt
           case omt of
             Nothing -> return ()
             Just mt -> do
               mdt <- inferModuleExp mt
               kind_mdt <- modDefKind mdt
-              assert (d^.spanOf) ("Expected module type: " ++ show (pretty mt)) $ kind_mdt == ModType
+              assert ("Expected module type: " ++ show (pretty mt)) $ kind_mdt == ModType
               moduleMatches (singleLineSpan $ d^.spanOf) md mdt
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
@@ -807,13 +808,13 @@ checkDecl d cont =
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
           tvars <- view $ curMod . tyDefs
-          assert (d^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n tvars
-          assert (d^.spanOf) (show $ pretty n <+> pretty "already defined") $ not $ member n dfs
-          assert (d^.spanOf) (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
+          assert (show $ pretty n <+> pretty "already defined") $ not $ member n tvars
+          assert (show $ pretty n <+> pretty "already defined") $ not $ member n dfs
+          assert (show $ pretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
           local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
               forM_ xs $ \(x, t) -> do
                   checkTy t
-                  assert (d^.spanOf) (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
+                  assert (show $ pretty x <+> pretty "already defined") $ not $ member x dfs
                   llbl <- tyLenLbl t
                   flowCheck (t^.spanOf) llbl advLbl
           let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
@@ -825,7 +826,7 @@ checkDecl d cont =
         (is, bdy) <- unbind b
         local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
             mapM_ checkTy $ catMaybes $ map snd bdy
-        assert (d^.spanOf) (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
+        assert (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
         let constrs = map (\(x, ot) -> (x, EnumConstructor n x)) bdy 
         let tests = map (\(x, ot) -> (x ++ "?", EnumTest n x)) bdy
         local (over (curMod . userFuncs) $ mappend (constrs ++ tests)) $ 
@@ -843,13 +844,13 @@ checkDecl d cont =
       (DeclTable n t loc) -> do
           tbls <- view $ curMod . tableEnv
           locs <- view $ curMod . localities
-          assert (d^.spanOf) (show $ pretty "Duplicate table name: " <> pretty n) (not $ member n tbls)
+          assert (show $ pretty "Duplicate table name: " <> pretty n) (not $ member n tbls)
           normLocality (d^.spanOf) loc
           checkTy t
           local (over (curMod . tableEnv) $ insert n (t, loc)) cont
       (DeclDetFunc f opts ar) -> do
         dfs <- view detFuncs
-        assert (d^.spanOf) (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
+        assert (show $ pretty f <+> pretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
@@ -862,20 +863,20 @@ nameExpIsLocal ne =
       PRFName ne _ -> nameExpIsLocal ne
 
 ensureOnlyLocalNames :: AExpr -> Check ()
-ensureOnlyLocalNames ae = do
+ensureOnlyLocalNames ae = local (set curSpan (unignore $ ae^.spanOf)) $ do
     case ae^.val of
       AEVar _ _ -> return ()
       AEApp _ _ aes -> forM_ aes ensureOnlyLocalNames
       AEString _ -> return ()
       AEGet n -> do
           b <- nameExpIsLocal n
-          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+          assert "Random oracle decl must only involve local names" b
       AEGetEncPK n -> do
           b <- nameExpIsLocal n
-          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+          assert "Random oracle decl must only involve local names" b
       AEGetVK n -> do
           b <- nameExpIsLocal n
-          assert (ae^.spanOf) "Random oracle decl must only involve local names" b
+          assert "Random oracle decl must only involve local names" b
       AEPackIdx _ a -> ensureOnlyLocalNames a
       AELenConst _ -> return ()
       AEInt _ -> return ()
@@ -887,14 +888,14 @@ localROCheck pos aes = laxAssertion $ do
     -- Injectivity check
     ts <- mapM inferAExpr aes
     bs <- forM ts $ \t ->
-        case t^.val of
+        case (stripRefinements t)^.val of
           TName ne -> nameExpIsLocal ne
           TVK ne -> nameExpIsLocal ne
           TDH_PK ne -> nameExpIsLocal ne
           TEnc_PK ne -> nameExpIsLocal ne
           TSS ne ne' -> liftM2 (||) (nameExpIsLocal ne) (nameExpIsLocal ne')
           _ -> return False
-    assert pos ("Random oracle decl must involve a local name") $ or bs
+    assert ("Random oracle decl must involve a local name") $ or bs
     
 
 
@@ -924,22 +925,22 @@ checkROUnique pos es = laxAssertion $ do
     roPres <- collectLocalROPreimages
     logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
     (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique roPres es 
-    assert pos "RO uniqueness check failed" b
+    assert "RO uniqueness check failed" b
     return ()
 
 checkNameType :: NameType -> Check ()
-checkNameType nt =
+checkNameType nt = local (set curSpan (unignore $ nt^.spanOf)) $
     case nt^.val of
       NT_DH -> return ()
       NT_Sig t -> checkTy t
       NT_Nonce -> return ()
       NT_PRF xs -> do
-          assert (nt^.spanOf) ("PRF value labels not unique") $ uniq $ map fst xs
+          assert ("PRF value labels not unique") $ uniq $ map fst xs
           forM_ xs (\(_, (a, t)) -> do
               _ <- inferAExpr a
               checkNameType t)
           (_, b) <- SMT.smtTypingQuery $ SMT.symListUniq (map (fst . snd) xs)
-          assert (nt^.spanOf) "PRF uniqueness check failed" b
+          assert "PRF uniqueness check failed" b
       NT_Enc t -> do
         checkTy t
         debug $ pretty "Checking if type " <> pretty t <> pretty " has public lengths "
@@ -962,7 +963,7 @@ checkNoncePattern NPHere = return ()
 checkCounter :: Ignore Position -> Path -> Check ()
 checkCounter pos p@(PRes (PDot p0 s)) = do
     p' <- curModName
-    assert pos ("Counter must be local: " ++ (show p)) $ p0 `aeq` p'
+    assert ("Counter must be local: " ++ (show p)) $ p0 `aeq` p'
     md <- openModule pos p0
     case lookup s (md^.ctrEnv) of
       Just _ -> return ()
@@ -980,7 +981,7 @@ checkParam (ParamIdx i) = local (set tcScope TcGhost) $ checkIdx i
 checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()
-checkTy t =
+checkTy t = local (set curSpan (unignore $ t^.spanOf)) $
     local (set tcScope $ TcGhost) $
         case t^.val of
           TUnit -> return ()
@@ -1005,9 +1006,9 @@ checkTy t =
               forM_ ps checkParam
               case td of
                 TyAbstract -> do
-                    assert (t^.spanOf) (show $ pretty "Abstract types do not support indices yet") $ length ps == 0
+                    assert (show $ pretty "Abstract types do not support indices yet") $ length ps == 0
                 TyAbbrev t ->
-                    assert (t^.spanOf) (show $ pretty "Params should be empty for abbrev " <> pretty s) $ length ps == 0
+                    assert (show $ pretty "Params should be empty for abbrev " <> pretty s) $ length ps == 0
                 StructDef ib -> do
                     _ <- extractStruct (t^.spanOf) ps (show s) ib
                     return ()
@@ -1138,7 +1139,7 @@ checkLabel l =
 
 checkProp :: Prop -> Check ()
 checkProp p =
-    local (set tcScope $ TcGhost) $
+    local (set tcScope $ TcGhost) $ local (set curSpan (unignore $ p^.spanOf)) $
         case p^.val of
           PTrue -> return ()
           PFalse -> return ()
@@ -1172,7 +1173,7 @@ checkProp p =
           (PRO x y i) -> do
               _ <- inferAExpr x
               _ <- inferAExpr y
-              assert (p^.spanOf) ("weird case for PRO i") $ i >= 0
+              assert ("weird case for PRO i") $ i >= 0
               return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
@@ -1216,7 +1217,7 @@ decideProp p = do
 flowCheck :: Ignore Position -> Label -> Label -> Check ()
 flowCheck sp l1 l2 = laxAssertion $ do
     b <- flowsTo sp l1 l2
-    assert sp (show $ ErrFlowCheck l1 l2) b
+    assert (show $ ErrFlowCheck l1 l2) b
 
 -- Ensure l flows to LAdv
 
@@ -1310,7 +1311,7 @@ stripTy x t =
           t' <- stripTy x t
           return $ mkSpanned $ TOption t'
       TCase p t1 t2 -> do
-          assert (t^.spanOf) (show $ pretty "Error on TCase: free variable " <> pretty (show x) <> pretty " should not appear in " <> pretty p) $ (not $ x `elem` getPropDataVars p)
+          local (set curSpan (unignore $ t^.spanOf)) $ assert (show $ pretty "Error on TCase: free variable " <> pretty (show x) <> pretty " should not appear in " <> pretty p) $ (not $ x `elem` getPropDataVars p)
           t1' <- stripTy x t1
           t2' <- stripTy x t2
           return $ mkSpanned $ TCase p t1' t2'
@@ -1358,7 +1359,7 @@ stripTy x t =
 checkEndpoint :: Ignore Position -> Endpoint -> Check ()
 checkEndpoint pos (Endpoint x) = do
     s <- view $ endpointContext
-    assert pos (show $ pretty "Unknown endpoint: " <> pretty x) $ elem x s
+    assert (show $ pretty "Unknown endpoint: " <> pretty x) $ elem x s
 checkEndpoint pos (EndpointLocality l) = do
     normLocality pos l
     return ()
@@ -1373,7 +1374,7 @@ getOutTy ot t1 =
 
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
-checkExpr ot e = do
+checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
       ECrypt cop aes -> do
@@ -1404,7 +1405,7 @@ checkExpr ot e = do
           (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert p
           g <- view tyContext
           debug $ pretty "Type context for assertion " <> pretty p <> pretty ":" <> (prettyTyContext g)
-          assert (e^.spanOf) (show $ ErrAssertionFailed fn p) b
+          assert (show $ ErrAssertionFailed fn p) b
           getOutTy ot $ tRefined tUnit (bind (s2n ".x") p)
       (EAssume p) -> do
           local (set tcScope $ TcGhost) $ checkProp p
@@ -1520,7 +1521,7 @@ checkExpr ot e = do
                   TcDef curr_loc -> do
                       curr_loc' <- normLocality (e^.spanOf) curr_loc
                       loc' <- normLocality (e^.spanOf) loc
-                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
+                      assert (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError (e^.spanOf) $ "Weird case: should be in a def"
       (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
@@ -1533,7 +1534,7 @@ checkExpr ot e = do
                   TcDef curr_loc -> do
                       curr_loc' <- normLocality (e^.spanOf) curr_loc
                       loc' <- normLocality (e^.spanOf) loc
-                      assert (e^.spanOf) (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
+                      assert (show $ pretty "Wrong locality for table: got" <> pretty curr_loc <+> pretty "but expected" <+> pretty loc) $ curr_loc' `aeq` loc'
                       ta <- inferAExpr a1
                       assertSubtype ta (tData advLbl advLbl)
                       ta2 <- inferAExpr a2
@@ -1544,8 +1545,8 @@ checkExpr ot e = do
           bfdef <- getDefSpec (e^.spanOf) f
           ts <- view tcScope
           ((bi1, bi2), dspec) <- unbind bfdef
-          assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is1 == length bi1
-          assert (e^.spanOf) (show $ pretty "Wrong index arity for " <> pretty f) $ length is2 == length bi2
+          assert (show $ pretty "Wrong index arity for " <> pretty f) $ length is1 == length bi1
+          assert (show $ pretty "Wrong index arity for " <> pretty f) $ length is2 == length bi2
           forM_ is1 checkIdxSession
           forM_ is2 checkIdxPId
           let (DefSpec _ fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) dspec
@@ -1553,14 +1554,14 @@ checkExpr ot e = do
             TcDef curr_locality -> do
                 fl' <- normLocality (e^.spanOf) fl
                 curr_locality' <- normLocality (e^.spanOf) curr_locality
-                assert (e^.spanOf) (show $ pretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
+                assert (show $ pretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
                 (xts, (pr, rt, _)) <- unbind o
-                assert (e^.spanOf) (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
+                assert (show $ pretty "Wrong variable arity for " <> pretty f) $ length args == length xts
                 argTys <- mapM inferAExpr args
                 forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
                 let (prereq, retTy) = substs (zip (map fst xts) args) (pr, rt)
                 (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert prereq
-                assert (e^.spanOf) ("Precondition failed: " ++ show (pretty prereq) ++ show (pretty fn)) b
+                assert ("Precondition failed: " ++ show (pretty prereq) ++ show (pretty fn)) b
                 let happenedProp = pHappened f (is1, is2) args
                 getOutTy ot $ (tRefined retTy (bind (s2n ".res") happenedProp))
             _ -> typeError (ignore def ) $ "Unreachable"
@@ -1627,7 +1628,7 @@ checkExpr ot e = do
                                   EnumDef b -> do
                                       bdy <- extractEnum (t'^.spanOf) ps (show s) b
                                       return (advLbl, Right bdy)
-          assert (e^.spanOf) (show $ pretty "Empty cases on case expression") $ length cases > 0
+          assert (show $ pretty "Empty cases on case expression") $ length cases > 0
           flowCheck (e1^.spanOf) l advLbl
           branch_tys <- 
               case otcases of
@@ -1727,7 +1728,7 @@ checkCryptoOp pos ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
       CCRHLemma x y -> do
-          assert pos ("crh_lemma takes no other arguments") $ length args == 0
+          assert ("crh_lemma takes no other arguments") $ length args == 0
           _ <- local (set tcScope TcGhost) $ inferAExpr x
           _ <- local (set tcScope TcGhost) $ inferAExpr y
           return $ tRefined tUnit $ bind (s2n "._") $
@@ -1740,9 +1741,9 @@ checkCryptoOp pos ot cop args = do
           let aes = map fst args
           bnd <- getRO pos p
           ((ixs, ixps), (aes'_, nts_)) <- unbind bnd
-          assert pos ("RO index out of bounds") $ i < length nts_
-          assert pos ("Wrong index arity for RO") $ length is == length ixs
-          assert pos ("Wrong index arity for RO") $ length ps == length ixps
+          assert ("RO index out of bounds") $ i < length nts_
+          assert ("Wrong index arity for RO") $ length is == length ixs
+          assert ("Wrong index arity for RO") $ length ps == length ixps
           let (aes', nts) = substs (zip ixs is) $ substs (zip ixps ps) (aes'_, nts_)
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
@@ -1757,13 +1758,13 @@ checkCryptoOp pos ot cop args = do
                                         return $ mkSpanned $ TData l l
           getOutTy ot $ tRefined retTy $ bind (s2n ".res") $ mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i
       CConstantLemma x -> do
-          assert pos ("Wrong number of arguments to is_constant_lemma") $ length args == 0
+          assert ("Wrong number of arguments to is_constant_lemma") $ length args == 0
           _ <- local (set tcScope TcGhost) $ inferAExpr x
           b <- isConstant x
-          assert pos ("Argument is not a constant: " ++ show (pretty x)) b
+          assert ("Argument is not a constant: " ++ show (pretty x)) b
           getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
       CPRF s -> do
-          assert pos ("Wrong number of arguments to prf") $ length args == 2
+          assert ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
@@ -1779,16 +1780,16 @@ checkCryptoOp pos ot cop args = do
                             if (not corr) && b then return (mkSpanned $ TName $ prfName k s) else mkSpanned <$> trivialTypeOf [t1, t]
                   _ -> typeError pos $ "Wrong name type for PRF"
       CAEnc -> do
-          assert pos ("Wrong number of arguments to encryption") $ length args == 2
+          assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
           doAEnc pos t1 x t args
       CADec -> do 
-          assert pos ("Wrong number of arguments to decryption") $ length args == 2
+          assert ("Wrong number of arguments to decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
           doADec pos t1 t args
       CEncStAEAD p iargs -> do
           checkCounterIsLocal pos p iargs
-          assert pos ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
+          assert ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
           let [(_, t1), (x, t), (y, t2)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
@@ -1798,14 +1799,14 @@ checkCryptoOp pos ot cop args = do
                   NT_StAEAD tm xaad p' _ -> do
                       pnorm <- normalizePath p
                       pnorm' <- normalizePath p'
-                      assert pos ("Wrong counter for AEAD: expected " ++ show (pretty p') ++ " but got " ++ show (pretty p)) $ pnorm `aeq` pnorm'
+                      assert ("Wrong counter for AEAD: expected " ++ show (pretty p') ++ " but got " ++ show (pretty p)) $ pnorm `aeq` pnorm'
                       b1 <- isSubtype t tm
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) xaad
                       if b1 && b2 then return $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
                                   else mkSpanned <$> trivialTypeOf (map snd args)
                   _ -> typeError (ignore def) $ "Wrong name type for StAEAD key: "
       CDecStAEAD -> do
-          assert pos ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
+          assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
@@ -1825,7 +1826,7 @@ checkCryptoOp pos ot cop args = do
                             return $ tData l_corr l_corr
                   _ -> mkSpanned <$> trivialTypeOf (map snd args)         
       CPKDec -> do 
-          assert pos ("Wrong number of arguments to pk decryption") $ length args == 2
+          assert ("Wrong number of arguments to pk decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
@@ -1843,7 +1844,7 @@ checkCryptoOp pos ot cop args = do
                         let l_corr = joinLbl (nameLbl k) l
                         return $ mkSpanned $ TData l_corr l_corr
       CPKEnc -> do 
-          assert pos ("Wrong number of arguments to pk encryption") $ length args == 2
+          assert ("Wrong number of arguments to pk encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
           case extractEncPKFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
@@ -1858,7 +1859,7 @@ checkCryptoOp pos ot cop args = do
                           mkSpanned <$> trivialTypeOf [t1, t] 
                   _ -> typeError (ignore def) $ show $ ErrWrongNameType k "encryption key" nt
       CMac -> do
-          assert pos ("Wrong number of arguments to mac") $ length args == 2
+          assert ("Wrong number of arguments to mac") $ length args == 2
           let [(_, t1), (_, t)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
@@ -1871,7 +1872,7 @@ checkCryptoOp pos ot cop args = do
                       return $ mkSpanned $ TRefined (tData l advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
                   _ -> mkSpanned <$> trivialTypeOf [t1, t]
       CMacVrfy -> do
-          assert pos ("Wrong number of arguments to mac_vrfy") $ length args == 3
+          assert ("Wrong number of arguments to mac_vrfy") $ length args == 3
           let [(xt1, t1), (m, mt), (xt, t)] = args
           case extractNameFromType t1 of
             Nothing -> do
@@ -1892,7 +1893,7 @@ checkCryptoOp pos ot cop args = do
                         let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
                         return $ mkSpanned $ (TData l_corr l_corr) -- Change here
       CSign -> do
-          assert pos ("Wrong number of arguments to sign") $ length args == 2
+          assert ("Wrong number of arguments to sign") $ length args == 2
           let [(_, t1), (_, t)] = args
           case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
@@ -1905,7 +1906,7 @@ checkCryptoOp pos ot cop args = do
                       return $ mkSpanned $ TRefined (tData l advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
                   _ -> mkSpanned <$> trivialTypeOf [t1, t]
       CSigVrfy -> do
-          assert pos ("Wrong number of arguments to vrfy") $ length args == 3
+          assert ("Wrong number of arguments to vrfy") $ length args == 3
           let [(_, t1), (_, x), (_, t)] = args
           case extractVKFromType t1 of
             Nothing -> do
@@ -1947,31 +1948,31 @@ instance Pretty a => Pretty (Ignore a) where
 defMatches :: Ignore Position -> String -> Maybe Def -> Def -> Check ()
 defMatches pos s d1 d2 = 
     case (d1, d2) of
-      (Just (DefHeader bl), DefHeader bl') -> assert pos ("Def mismatch with headers: " ++ s) $ bl `aeq` bl'
+      (Just (DefHeader bl), DefHeader bl') -> assert ("Def mismatch with headers: " ++ s) $ bl `aeq` bl'
       (Just (DefHeader bl), Def blspec) -> do
           (is, DefSpec _ l _) <- unbind blspec
-          assert pos ("Def mismatch: " ++ s) $ bl `aeq` (bind is l)
+          assert ("Def mismatch: " ++ s) $ bl `aeq` (bind is l)
       (Just (Def blspec), Def blspec') -> do
           (is1, DefSpec ab l1 pty) <- unbind blspec
           (is', DefSpec ab' l1' pty') <- unbind blspec'
-          assert pos ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
+          assert ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
           (args, (pr1, t1, _)) <- unbind pty
           (args', (pr2, t2, _)) <- unbind pty'
-          assert pos ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
-          assert pos ("Def prereq mismatch") $ (bind is1 $ bind args pr1) `aeq` (bind is' $ bind args' pr2)
-          assert pos ("Def return ty mismatch") $ (bind is1 $ bind args t1) `aeq` (bind is' $ bind args' t2)
+          assert ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
+          assert ("Def prereq mismatch") $ (bind is1 $ bind args pr1) `aeq` (bind is' $ bind args' pr2)
+          assert ("Def return ty mismatch") $ (bind is1 $ bind args t1) `aeq` (bind is' $ bind args' t2)
       (Nothing, _) -> typeError pos $ "Missing def: " ++ s
 
 tyDefMatches :: Ignore Position -> String -> TyDef -> TyDef -> Check ()
 tyDefMatches pos s td1 td2 = 
     case (td1, td2) of
-      (EnumDef d1, EnumDef d2) -> assert pos ("Enum mismatch: " ++ s) $ d1 `aeq` d2
-      (StructDef d1, StructDef d2) -> assert pos ("Struct mismatch: " ++ s) $ d1 `aeq` d2
+      (EnumDef d1, EnumDef d2) -> assert ("Enum mismatch: " ++ s) $ d1 `aeq` d2
+      (StructDef d1, StructDef d2) -> assert ("Struct mismatch: " ++ s) $ d1 `aeq` d2
       _ -> typeError pos $ "UNIMP: tyDefMatches"
 
 
 userFuncMatches :: Ignore Position -> String -> UserFunc -> UserFunc -> Check ()
-userFuncMatches pos s f1 f2 = assert pos ("Func mismatch: " ++ s) $ f1 == f2
+userFuncMatches pos s f1 f2 = assert ("Func mismatch: " ++ s) $ f1 == f2
 
 nameDefMatches :: Ignore Position -> String -> 
     Bind ([IdxVar], [IdxVar]) NameDef -> 
@@ -1981,11 +1982,11 @@ nameDefMatches pos s xn1 xn2 = do
     ((is1, is2), on1) <- unbind xn1
     ((is1', is2'), on2) <- unbind xn2
     case (substs (zip is1 (map mkIVar is1')) $ substs (zip is2 (map mkIVar is2')) $ on1, on2) of
-      (_, AbstractName) -> assert pos ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
+      (_, AbstractName) -> assert ("Arity mismatch for " ++ s) $ (length is1 == length is1') && (length is2 == length is2')
       (AbstractName, _) -> typeError pos $ "Name should be concrete: " ++ show s
       (BaseDef (nt1, ls1), BaseDef (nt2, ls2)) -> do
-          assert pos ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
-          assert pos ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
+          assert ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
+          assert ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
       _ -> typeError pos $ "Unhandled name def matches case"
 
 
@@ -2024,14 +2025,14 @@ moduleMatches pos md1 md2 =
                        Nothing -> typeError pos $ "Locality not found for module match: " ++ s
                        Just (Left ar) -> return ar
                        Just (Right p) -> normLocalityPath pos $ PRes p
-              assert pos ("Locality arity mismatch for module match: " ++ s) $ ar1 == ar2
+              assert ("Locality arity mismatch for module match: " ++ s) $ ar1 == ar2
           -- Defs
           forM_ (md2^.defs) $ \(s, df) -> defMatches pos s (lookup s (md1^.defs)) df
           -- TableEnv
           forM_ (md2^.tableEnv) $ \(s, tl) -> 
               case lookup s (md1^.tableEnv) of
                 Nothing -> typeError pos $ "Missing tenv: " ++ s
-                Just tl' -> assert pos ("Table mismatch for " ++ s) $ tl `aeq` tl'
+                Just tl' -> assert ("Table mismatch for " ++ s) $ tl `aeq` tl'
           -- flowAxioms 
           forM_ (md2^.flowAxioms) $ \ax -> 
               case L.find (aeq ax) (md1^.flowAxioms) of 
