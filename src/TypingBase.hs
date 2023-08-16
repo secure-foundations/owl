@@ -47,6 +47,9 @@ insertMany kvs xs = kvs ++ filter (\p -> not (fst p `elem` map fst kvs)) xs
 data TcScope = 
       TcGhost 
       | TcDef Locality
+      deriving (Show, Generic, Typeable)
+
+instance Alpha TcScope
 
 instance Pretty TcScope where
     pretty TcGhost = pretty "ghost"
@@ -485,6 +488,7 @@ getROPreimage pos pth@(PRes (PDot p n)) (is, ps) = do
       Nothing -> typeError pos $ "Unknown name: " ++ n
       Just b_nd -> do
           ((ixs, pxs), nd') <- unbind b_nd
+          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
           let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
           case nd of
             RODef (as, _) -> return as
@@ -656,6 +660,13 @@ inferAExpr ae = do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
+      AEPreimage p ps@(p1, p2) -> do
+          ts <- view tcScope
+          assert (show $ pretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
+          forM_ p1 checkIdxSession
+          forM_ p2 checkIdxPId
+          aes <- getROPreimage (ae^.spanOf) p ps 
+          inferAExpr $ mkConcats aes
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope

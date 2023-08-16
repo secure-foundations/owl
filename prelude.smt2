@@ -62,6 +62,12 @@
     :qid concat_prefix_postfix
 )))
 
+(assert (forall ((x Bits) (y Bits) (z Bits)) (!
+    (= (concat (concat x y) z) (concat x (concat y z)))
+    :pattern ((concat (concat x y) z))
+    :qid concat_assoc
+)))
+
 
 (declare-fun eq (Bits Bits) Bits)
 (declare-fun TRUE () Bits)

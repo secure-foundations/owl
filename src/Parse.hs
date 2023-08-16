@@ -1361,6 +1361,15 @@ parseAExprTerm =
     )
     <|>
     (parseSpanned $ do 
+        reserved "preimage"
+        ps <- parseIdxParams
+        symbol "("
+        p <- parsePath
+        symbol ")"
+        return $ AEPreimage p ps
+        )
+    <|>
+    (parseSpanned $ do 
         reserved "get"
         symbol "("
         ne <- parseNameExp

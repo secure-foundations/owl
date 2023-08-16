@@ -428,6 +428,9 @@ interpretAExp ae =
       AEString s -> return $ SApp [SAtom "S2B", SAtom $ "\"" ++ s ++ "\""]
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
+      AEPreimage p ps -> do
+          aes <- liftCheck $ getROPreimage (ae^.spanOf) p ps
+          interpretAExp $ mkConcats aes
       AEGet ne -> do
           liftCheck $ debug $ pretty "AEGet" <+> pretty ne
           symNameExp ne

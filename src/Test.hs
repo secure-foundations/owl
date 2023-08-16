@@ -42,8 +42,10 @@ doAllTests f = do
     let testDir = "./tests"
     let successDir = testDir </> "success"
     let failureDir = testDir </> "failure"
-    toSucceed <- getFilesRecursive successDir
-    toFail <- getFilesRecursive failureDir
+    toSucceed_ <- getFilesRecursive successDir
+    toFail_ <- getFilesRecursive failureDir
+    let toSucceed = filter (\s -> takeExtension s == ".owl" || takeExtension s == ".owli") toSucceed_
+    let toFail = filter (\s -> takeExtension s == ".owl" || takeExtension s == ".owli") toFail_
     res1 <- forM toSucceed $ \s -> doSingleTest (s) (set fFilePath s f) ExpectSuccess
     res2 <- forM toFail $ \s -> doSingleTest (s) (set fFilePath s f) ExpectFailure
     let totalTests = length $ res1 ++ res2

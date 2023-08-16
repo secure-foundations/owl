@@ -113,6 +113,7 @@ data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
     | AEApp (Path) [FuncParam] [AExpr]
     | AEString String
+    | AEPreimage Path ([Idx], [Idx])
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
@@ -563,6 +564,10 @@ instance Pretty (Name a) where
 instance Pretty Idx where
     pretty (IVar _ s) = pretty s
 
+prettyIdxParams :: ([Idx], [Idx]) -> Doc ann
+prettyIdxParams  ([], []) = mempty
+prettyIdxParams (vs1, vs2) = pretty "<" <> pretty (intercalate "," (map (show . pretty) vs1)) <> pretty "@" <> pretty (intercalate "," (map (show . pretty) vs2)) <> pretty ">"
+
 instance Pretty NameExpX where
     pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
     pretty (NameConst vs n oi) = 
@@ -570,15 +575,7 @@ instance Pretty NameExpX where
                    Nothing -> mempty
                    Just i -> pretty "[" <> pretty i <> pretty "]"
         in
-        let p = case vs of
-              ([], []) -> pretty n
-              (vs1, vs2) -> pretty n <> pretty "<" <> 
-                  pretty (intercalate "," (map (show . pretty) vs1)) <> 
-                  pretty "@" <>
-                  pretty (intercalate "," (map (show . pretty) vs2)) <> 
-                  pretty ">"
-        in
-        p <> pi
+        pretty n <> prettyIdxParams vs <> pi
 
 prettyBind :: (Alpha a, Alpha b, Pretty a, Pretty b) => Bind b a -> (Doc ann, Doc ann)
 prettyBind b = 
@@ -688,6 +685,7 @@ instance Pretty AExprX where
     pretty (AEString s) = pretty "\"" <> pretty s <> pretty "\""
     pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
     pretty (AEInt i) = pretty i
+    pretty (AEPreimage p ps) = pretty "preimage" <> prettyIdxParams ps <> pretty "(" <> pretty p <> pretty ")"
     pretty (AEGet ne) = pretty "get" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"

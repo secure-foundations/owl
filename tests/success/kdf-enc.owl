@@ -64,6 +64,10 @@ name k1 : enckey Name(alice1) @ alice, bob
 name k2 : RO get(k1) -> enckey Name(alice2) 
 name k3 : RO get(k2) -> enckey Name(alice3) 
 
+name t<i> : nonce @ alice
+name k4<i> : RO get(t<i>) || "a" || "b" -> nonce
+    admit_uniqueness
+
 /*
 rec name k<i>
     | 0 => enckey Name(alice<i>)
@@ -77,6 +81,11 @@ def flows()  @ alice : Unit =
     assert (corr(k2) ==> corr(alice2));
     assert (corr(k2) ==> corr(k3));
     assert (corr(k1) ==> (corr(alice1) /\ corr(alice2) /\ corr(alice3)));
+    ()
+
+def tsts<i> () @ alice : Unit = 
+    assert (preimage(k2) == get(k1));
+    assert (preimage<i>(k4) == concat(get(t<i>), concat("a", "b")));
     ()
 
 
