@@ -181,7 +181,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
       
          if is_group_elem(msg1_ephemeral) then begin
 
-             assume (msg1_ephemeral != dhpk(get(E_init)));// in
+             pcase (msg1_ephemeral != dhpk(get(E_init))) in
 
              let C1 = hash<msg1_C1>(C0, msg1_ephemeral) in 
              let H2 = crh(concat(H1, msg1_ephemeral)) in
