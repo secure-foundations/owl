@@ -382,6 +382,16 @@ parsePropTerm =
             return $ PRO a b i
         )
         <|>         
+        (parseSpanned $ do
+            reserved "let"
+            x <- identifier
+            symbol "="
+            a <- parseAExpr
+            reserved "in"
+            p <- parseProp
+            return $ PLetIn a (bind (s2n x) p)
+        )
+        <|>
         (try $ parseSpanned $ do
             t <- parseAExpr
             symbol "=="

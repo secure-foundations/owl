@@ -461,6 +461,9 @@ interpretProp p =
         liftM2 (sImpl) (interpretProp p1) (interpretProp p2)
       (PNot p) ->
         sNot <$> interpretProp p
+      PLetIn a xp -> do
+          (x, p) <- liftCheck $ unbind xp
+          interpretProp $ subst x a p
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2

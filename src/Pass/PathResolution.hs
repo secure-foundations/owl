@@ -621,6 +621,11 @@ resolveProp p =
       PNot p1 -> do
           p1' <- resolveProp p1
           return $ Spanned (p^.spanOf) $ PNot p1'
+      PLetIn a xp -> do
+          a' <- resolveAExpr a
+          (x, p) <- unbind xp
+          p' <- resolveProp p
+          return $ Spanned (p^.spanOf) $ PLetIn a' (bind x p')
       PEq a1 a2 -> do
           a1' <- resolveAExpr a1
           a2' <- resolveAExpr a2

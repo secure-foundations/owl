@@ -173,6 +173,7 @@ data PropX =
     PTrue | PFalse | PAnd Prop Prop | POr Prop Prop
     | PNot Prop 
     | PEq AExpr AExpr 
+    | PLetIn AExpr (Bind DataVar Prop)
     | PEqIdx Idx Idx
     | PImpl Prop Prop
     | PFlow Label Label 
@@ -648,6 +649,9 @@ instance Pretty PropX where
     pretty (PNot p) = pretty "!" <+> pretty p
     pretty (PEq e1 e2) = pretty e1 <+> pretty "=" <+> pretty e2
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
+    pretty (PLetIn a xe2) = 
+        let (x, e2) = prettyBind xe2 in
+        pretty "let" <+> x <+> pretty "=" <+> pretty a <+> pretty "in" <+> e2
     pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
     pretty (PIsConstant a) = pretty "is_constant(" <> pretty a <> pretty ")"

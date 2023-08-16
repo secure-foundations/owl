@@ -1169,6 +1169,9 @@ checkProp p =
               mapM_ checkIdx idxs1
               mapM_ checkIdx idxs2
               return ()
+          PLetIn a xp -> do
+              (x, p) <- unbind xp
+              checkProp $ subst x a p
           (PEq x y) -> do
               _ <- inferAExpr x
               _ <- inferAExpr y
