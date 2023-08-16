@@ -189,15 +189,16 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
              is_constant_lemma<"mac1---">();
              is_constant_lemma<"0000">();
              assume(msg1_ephemeral != dhpk(get(E_init)) ==> (
-                 concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg1_C1)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg1_C2)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg1_C3)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg1_mac1_key)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg2_C4)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg2_C5)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg2_C6)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg2_C7)
-                 /\ concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != preimage(msg2_mac1_key)
+                let x = concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
+                    x != preimage(msg1_C1)
+                 /\ x != preimage(msg1_C2)
+                 /\ x != preimage(msg1_C3)
+                 /\ x != preimage(msg1_mac1_key)
+                 /\ x != preimage(msg2_C4)
+                 /\ x != preimage(msg2_C5)
+                 /\ x != preimage(msg2_C6)
+                 /\ x != preimage(msg2_C7)
+                 /\ x != preimage(msg2_mac1_key)
             ));
              let C2 = hash<msg1_C2;0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
              let k0 = hash<msg1_C2;1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
@@ -210,15 +211,16 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
 
                      let H3 = crh(concat(H2, dhpk_S_init)) in
                      assume(msg1_ephemeral != dhpk(get(E_init)) ==> (
-                            concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg1_C1)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg1_C2)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg1_C3)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg1_mac1_key)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg2_C4)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg2_C5)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg2_C6)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg2_C7)
-                         /\ concat(C2, dh_combine(dhpk_S_init, get(S_resp))) != preimage(msg2_mac1_key)
+                         let x = concat(C2, dh_combine(dhpk_S_init, get(S_resp))) in 
+                            x != preimage(msg1_C1)
+                         /\ x != preimage(msg1_C2)
+                         /\ x != preimage(msg1_C3)
+                         /\ x != preimage(msg1_mac1_key)
+                         /\ x != preimage(msg2_C4)
+                         /\ x != preimage(msg2_C5)
+                         /\ x != preimage(msg2_C6)
+                         /\ x != preimage(msg2_C7)
+                         /\ x != preimage(msg2_mac1_key)
                     ));
 
                      let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
