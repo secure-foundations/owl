@@ -1221,11 +1221,6 @@ flowCheck sp l1 l2 = laxAssertion $ do
 
 -- Ensure l flows to LAdv
 
-stripRefinements :: Ty -> Ty
-stripRefinements t =
-    case t^.val of
-      TRefined t _ -> stripRefinements t
-      _ -> t
 
 
 -- TODO: generalize for RO?

@@ -36,7 +36,7 @@ solvabilityAxioms aes roName = do
     ladv <- symLabel advLbl
     lss <- forM aes $ \ae -> do
         t <- liftCheck $ inferAExpr ae
-        case t^.val of
+        case (stripRefinements t)^.val of
           TName n -> return [nameLbl n]
           TSS n m -> return [nameLbl n, nameLbl m]
           _ -> return []

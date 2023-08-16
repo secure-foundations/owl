@@ -434,6 +434,12 @@ openModule pos rp = do
               Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
               Nothing -> typeError pos $ "Unknown module: " ++ show p0
 
+stripRefinements :: Ty -> Ty
+stripRefinements t =
+    case t^.val of
+      TRefined t _ -> stripRefinements t
+      _ -> t
+
 getModDef :: Ignore Position -> ResolvedPath -> Check ModDef
 getModDef pos rp = do
     go rp
