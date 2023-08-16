@@ -780,19 +780,22 @@ checkDecl d cont = local (set curSpan (unignore $ d^.spanOf)) $
                       case bdy of
                         Nothing -> return $ Nothing
                         Just bdy' -> do
-                          bdy'' <- ANF.anf bdy'
-                          debug $ pretty "Checking def body " <> pretty n
-                          debug $ pretty "Result of anf: "  <> pretty bdy''
-                          logTypecheck $ "Type checking " ++ n
-                          t0 <- liftIO $ getCurrentTime
-                          pushLogTypecheckScope
-                          local (set tcScope $ TcDef l) $
-                              withVars [(s2n x, (ignore x, ignore Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                              t <- checkExpr (Just tyAnn) bdy''
-                              popLogTypecheckScope
-                              t1 <- liftIO $ getCurrentTime
-                              logTypecheck $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
-                              return $ Just bdy'
+                          onlyCheck <- view $ envFlags . fOnlyCheck
+                          let doCheck = (onlyCheck == Nothing) || (onlyCheck == Just n)
+                          when doCheck $ do 
+                              bdy'' <- ANF.anf bdy'
+                              debug $ pretty "Checking def body " <> pretty n
+                              debug $ pretty "Result of anf: "  <> pretty bdy''
+                              logTypecheck $ "Type checking " ++ n
+                              t0 <- liftIO $ getCurrentTime
+                              pushLogTypecheckScope
+                              local (set tcScope $ TcDef l) $
+                                  withVars [(s2n x, (ignore x, ignore Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
+                                  _ <- checkExpr (Just tyAnn) bdy''
+                                  popLogTypecheckScope
+                                  t1 <- liftIO $ getCurrentTime
+                                  logTypecheck $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
+                          return $ Just bdy'
           let is_abs = ignore $ case abs_or_body of
                          Nothing -> True
                          Just _ -> False

@@ -15,6 +15,7 @@ data Flags = Flags {
     _fLax :: Bool,
     _fFilePath :: String, 
     _fLogTypecheck :: Bool,
+    _fOnlyCheck :: Maybe String,
     _fFileContents :: String
                    }
 
@@ -42,6 +43,7 @@ parseArgs =
       <*>
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )
+      <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
       <*> (pure "")
 
 doParseArgs :: IO Flags
