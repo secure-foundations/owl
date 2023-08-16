@@ -134,7 +134,7 @@ instance Subst ResolvedPath ModBody
 data Env = Env { 
     _envFlags :: Flags,
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
-    _tyContext :: Map DataVar (Ignore String, Ty),
+    _tyContext :: Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty),
     _tcScope :: TcScope,
     _endpointContext :: [EndpointVar],
     _inScopeIndices ::  Map IdxVar IdxType,
@@ -260,12 +260,27 @@ instance Fresh Check where
 instance MonadFail Check where
     fail s = error s
 
+removeAnfVars :: Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty) -> Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty)
+removeAnfVars ctxt = L.foldl' g [] ctxt where
+    g acc (v, (s, anf, t)) = case unignore anf of
+        Nothing -> acc ++ [(v, (s, anf, hideAnfVarsInTy ctxt t))]
+        Just _ -> acc
+
+hideAnfVarsInTy :: Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty) -> Ty -> Ty
+hideAnfVarsInTy ctxt t = L.foldl' substAnfVar t ctxt where
+    substAnfVar :: Ty -> (DataVar, (Ignore String, Ignore (Maybe AExpr), Ty)) -> Ty
+    substAnfVar ty (v, (_, anf, _)) = do
+        case unignore anf of
+            Nothing -> ty
+            Just anfOrig -> subst v anfOrig ty
+
+
 typeError :: Ignore Position -> String -> Check a
 typeError pos msg = do
     fn <- takeFileName <$> (view $ envFlags . fFilePath)
     fl <- takeDirectory <$> (view $ envFlags . fFilePath)
     f <- view $ envFlags . fFileContents
-    tyc <- view tyContext
+    tyc <- removeAnfVars <$> view tyContext
     let rep = Err Nothing msg [(unignore pos, This msg)] [Note $ show $ prettyTyContext tyc]
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
@@ -305,7 +320,7 @@ joinLbl l1 l2 =
     mkSpanned $ LJoin l1 l2
 
 
-addVars :: [(DataVar, (Ignore String, Ty))] -> Map DataVar (Ignore String, Ty) -> Map DataVar (Ignore String, Ty)
+addVars :: [(DataVar, (Ignore String, Ignore (Maybe AExpr), Ty))] -> Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty) -> Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty)
 addVars xs g = g ++ xs 
     
 assert :: String -> Bool -> Check ()
@@ -322,7 +337,7 @@ laxAssertion k = do
 -- withVars xs k = add xs to the typing environment, continue as k with extended
 -- envrionment
 
-withVars :: [(DataVar, (Ignore String, Ty))] -> Check a -> Check a
+withVars :: [(DataVar, (Ignore String, Ignore (Maybe AExpr), Ty))] -> Check a -> Check a
 withVars assocs k = do
     tyC <- view tyContext
     forM_ assocs $ \(x, _) -> 
@@ -618,7 +633,7 @@ inferAExpr ae = do
       AEVar _ x -> do 
         tC <- view tyContext
         case lookup x tC of 
-          Just (_, t) -> return t
+          Just (_, _, t) -> return t
           Nothing -> typeError (ae^.spanOf) $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
@@ -762,8 +777,8 @@ coveringLabel' t =
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
 
-prettyTyContext :: Map DataVar (Ignore String, Ty) -> Doc ann
-prettyTyContext e = vsep $ map (\(_, (x, t)) -> pretty (unignore x) <> pretty ":" <+> pretty t) e
+prettyTyContext :: Map DataVar (Ignore String, Ignore (Maybe AExpr), Ty) -> Doc ann
+prettyTyContext e = vsep $ map (\(_, (x, _, t)) -> pretty (unignore x) <> pretty ":" <+> pretty t) e
 
 prettyIndices :: Map IdxVar IdxType -> Doc ann
 prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty ":" <+> pretty it) m

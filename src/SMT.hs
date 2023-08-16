@@ -187,7 +187,7 @@ setupTyEnv = do
     go vE
     where
         go [] = return ()
-        go ((x, (_, t)) : xs) = do
+        go ((x, (_, _, t)) : xs) = do
             v <- mkTy (Just $ show x) t
             varVals %= (M.insert x v)
             go xs

@@ -109,7 +109,7 @@ concretify e =
           c <- concretify e
           return $ CInput $ bind xe c
       EOutput a eo -> return $ COutput a eo
-      ELet e1 _ _ xk -> do
+      ELet e1 _ _ _ xk -> do
           e1' <- concretify e1
           let (x, k) = unsafeUnbind xk
           k' <- concretify k
