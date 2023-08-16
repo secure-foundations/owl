@@ -512,12 +512,12 @@ resolveExpr e =
           a' <- resolveAExpr a
           oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
           return $ Spanned (e^.spanOf) $ EOutput a' oe'
-      ELet e1 ot s xk -> do
+      ELet e1 ot anf s xk -> do
           e1' <- resolveExpr e1
           ot' <- traverse resolveTy ot
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ELet e1' ot' s (bind x k')
+          return $ Spanned (e^.spanOf) $ ELet e1' ot' anf s (bind x k')
       EUnionCase a xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk

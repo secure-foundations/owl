@@ -772,7 +772,7 @@ checkDecl d cont = local (set curSpan (unignore $ d^.spanOf)) $
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality (d^.spanOf) l
                   forM_ xs $ \(x, t) -> checkTy $ unembed t
-                  withVars (map (\(x, t) -> (x, (ignore $ show x, unembed t))) xs) $ do
+                  withVars (map (\(x, t) -> (x, (ignore $ show x, ignore Nothing, unembed t))) xs) $ do
                       checkProp preReq
                       checkTy tyAnn
                       let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
@@ -787,7 +787,7 @@ checkDecl d cont = local (set curSpan (unignore $ d^.spanOf)) $
                           t0 <- liftIO $ getCurrentTime
                           pushLogTypecheckScope
                           local (set tcScope $ TcDef l) $
-                              withVars [(s2n x, (ignore x, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
+                              withVars [(s2n x, (ignore x, ignore Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                               t <- checkExpr (Just tyAnn) bdy''
                               popLogTypecheckScope
                               t1 <- liftIO $ getCurrentTime
@@ -865,7 +865,7 @@ nameExpIsLocal ne =
 ensureOnlyLocalNames :: AExpr -> Check ()
 ensureOnlyLocalNames ae = local (set curSpan (unignore $ ae^.spanOf)) $ do
     case ae^.val of
-      AEVar _ _ -> return ()
+      AEVar _s _ -> return ()
       AEApp _ _ aes -> forM_ aes ensureOnlyLocalNames
       AEString _ -> return ()
       AEGet n -> do
@@ -949,7 +949,7 @@ checkNameType nt = local (set curSpan (unignore $ nt^.spanOf)) $
           checkTy t
           checkTyPubLen t
           (x, aad) <- unbind xaad
-          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ checkProp aad
+          withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ checkProp aad
           checkNoncePattern np
           checkCounter (nt^.spanOf) p
       NT_PKE t -> do
@@ -998,7 +998,7 @@ checkTy t = local (set curSpan (unignore $ t^.spanOf)) $
           (TRefined t xp) -> do
               (x, p) <- unbind xp
               checkTy t
-              withVars [(x, (ignore $ show x, t))] $ checkProp p
+              withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkProp p
           (TOption t) -> do
               checkTy t
           (TConst s ps) -> do
@@ -1385,7 +1385,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
           checkCryptoOp (e^.spanOf) ot cop args
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
-          withVars [(x, (ignore $ show x, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
+          withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
       (EGetCtr p iargs) -> do 
           checkCounterIsLocal (e^.spanOf) p iargs
           getOutTy ot $ tData advLbl advLbl
@@ -1450,27 +1450,27 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                 debug $ pretty "first case for EUnionCase"
                 logTypecheck $ "First case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t1' <- withVars [(x, (ignore $ show x, t1))] $ checkExpr ot e
+                t1' <- withVars [(x, (ignore $ show x, ignore Nothing, t1))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "first case got" <+> pretty t1'
                 debug $ pretty "second case for EUnionCase"
                 logTypecheck $ "Second case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t2' <- withVars [(x, (ignore $ show x, t2))] $ checkExpr ot e
+                t2' <- withVars [(x, (ignore $ show x, ignore Nothing, t2))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "second case got" <+> pretty t2'
                 assertSubtype t1' t2'
                 getOutTy ot =<< stripTy x t2'
             _ -> do  -- Just continue
-                t <- withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
+                t <- withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkExpr ot e
                 getOutTy ot =<< stripTy x t
-      (ELet e tyAnn sx xe') -> do
+      (ELet e tyAnn anf sx xe') -> do
           case tyAnn of
             Just t -> checkTy t
             Nothing -> return ()
           t1 <- checkExpr tyAnn e
           (x, e') <- unbind xe'
-          t2 <- withVars [(x, (ignore sx, t1))] (checkExpr ot e')
+          t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
           stripTy x t2
       (EChooseIdx ip ik) -> do
           (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
@@ -1481,7 +1481,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                 x <- freshVar
                 let tx = tLemma (subst ix (mkIVar i) p) 
                 to <- local (over inScopeIndices $ insert i IdxGhost) $ do
-                    withVars [(s2n x, (ignore x, tx))] $ checkExpr ot k
+                    withVars [(s2n x, (ignore x, ignore Nothing, tx))] $ checkExpr ot k
                 if i `elem` getTyIdxVars to then
                     return (tExistsIdx (bind i to))
                 else return to
@@ -1498,13 +1498,13 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') (bind (s2n ".res") (pEq (aeVar ".res") a) )
                 to <- local (over (inScopeIndices) $ insert i IdxGhost) $ do
-                    withVars [(x, (ignore $ show x, tx))] $ checkExpr ot e
+                    withVars [(x, (ignore $ show x, ignore Nothing, tx))] $ checkExpr ot e
                 to' <- stripTy x to
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, t))] $ checkExpr ot e
+                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkExpr ot e
                 to' <- stripTy x t'
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
@@ -1579,8 +1579,8 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                 return $ subst x a p 
             _ -> return pTrue
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot e1
-          t2 <- withVars [(s2n x, (ignore x, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ checkExpr ot e2
+          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot e1
+          t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ checkExpr ot e2
           case ot of 
             Just t3 -> return t3
             Nothing -> do
@@ -1598,14 +1598,14 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
       (EPCase p e) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, tLemma p))] $ do
+          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma p))] $ do
               logTypecheck $ "Case split: " ++ show (pretty p)
               pushLogTypecheckScope
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
               r <- if b then getOutTy ot tAdmit else checkExpr ot e
               popLogTypecheckScope
               return r
-          t2 <- withVars [(s2n x, (ignore x, tLemma (pNot p)))] $ do
+          t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma (pNot p)))] $ do
               logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
               pushLogTypecheckScope
               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
@@ -1638,7 +1638,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                           Left e -> checkExpr ot e
                           Right (sb, xe) -> do
                               (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, td))] $ checkExpr ot e
+                              t <- withVars [(x, (sb, ignore Nothing, td))] $ checkExpr ot e
                               case ot of
                                  Just _ -> return t
                                  Nothing -> stripTy x t
@@ -1649,7 +1649,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                           (Nothing, Just (Left e)) -> checkExpr ot e
                           (Just tc, Just (Right (sb, xe))) -> do
                               (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, tc))] $ checkExpr ot e
+                              t <- withVars [(x, (sb, ignore Nothing, tc))] $ checkExpr ot e
                               case ot of
                                 Just _ -> return t
                                 Nothing -> stripTy x t

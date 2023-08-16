@@ -870,7 +870,7 @@ parseExpr = buildExpressionParser parseExprTable parseExprTerm
 parseExprTable = 
     [ [ Infix (do
     symbol ";" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing "_" (bind (s2n "_") e2))
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing (ignore Nothing) "_" (bind (s2n "_") e2))
               )
     AssocLeft ] ]
 
@@ -987,7 +987,7 @@ parseExprTerm =
         p' <- getPosition
         e' <- parseExpr
         if length xts /= length es then fail "must have same number of binders and expressions" else
-            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet (head es) tyAnn x $ bind (s2n x) k in
+            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn (ignore Nothing) x $ bind (s2n x) k in
             return $ foldl f e' $ zip xts es
     )
     <|>
