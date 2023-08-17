@@ -1292,6 +1292,11 @@ stripProp x p =
           return $ mkSpanned $ PQuantIdx q (bind i p'')
       PHappened s _ xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PLetIn a yp -> 
+          if x `elem` (getAExprDataVars a) then return pTrue else do
+            (y, p') <- unbind yp
+            p'' <- stripProp x p'
+            return $ mkSpanned $ PLetIn a (bind y p'')
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =
@@ -1451,13 +1456,13 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
                 debug $ pretty "first case for EUnionCase"
                 logTypecheck $ "First case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t1' <- withVars [(x, (ignore $ show x, ignore Nothing, t1))] $ checkExpr ot e
+                t1' <- withVars [(x, (ignore $ show x, ignore Nothing, tRefined t1 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "first case got" <+> pretty t1'
                 debug $ pretty "second case for EUnionCase"
                 logTypecheck $ "Second case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t2' <- withVars [(x, (ignore $ show x, ignore Nothing, t2))] $ checkExpr ot e
+                t2' <- withVars [(x, (ignore $ show x, ignore Nothing, tRefined t2 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "second case got" <+> pretty t2'
                 assertSubtype t1' t2'
