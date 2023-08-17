@@ -1770,6 +1770,7 @@ checkCryptoOp pos ot cop args = do
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           debug $ pretty $ "symCheckEqTopLevel: " ++ show b_eq
+          len <- lenConstOfROName $ mkSpanned $ NameConst (is, ps) p (Just i)
           retTy <- if b_eq then return $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
                            else do
                               noCollision <- SMT.symDecideNotInRO aes
@@ -1778,7 +1779,10 @@ checkCryptoOp pos ot cop args = do
                                      else do
                                         l <- coveringLabelOf $ map snd args
                                         return $ mkSpanned $ TData l l
-          getOutTy ot $ tRefined retTy $ bind (s2n ".res") $ mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i
+          getOutTy ot $ tRefined retTy $ bind (s2n ".res") $ 
+              pAnd
+                (mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i)
+                (pEq (aeLength (aeVar ".res")) len)
       CConstantLemma x -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 0
           _ <- local (set tcScope TcGhost) $ inferAExpr x

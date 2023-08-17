@@ -637,6 +637,20 @@ mkConcats (x:xs) =
     let go x y = aeApp (topLevelPath "concat") [] [x, y] in
     foldl go x xs
 
+-- Find the corresponding len const associated to a name expression's name type
+lenConstOfROName :: NameExp -> Check AExpr 
+lenConstOfROName ne = do
+    ntLclsOpt <- getNameInfo ne
+    case ntLclsOpt of
+      Nothing -> typeError (ne^.spanOf) $ "Name shouldn't be abstract: " ++ show (pretty ne)
+      Just (nt, _) -> 
+          case nt^.val of
+            NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+            NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+            NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+            NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+            _ -> typeError (ne^.spanOf) $ "Name not an RO name: " ++ show (pretty ne)
+
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
     debug $ pretty (unignore $ ae^.spanOf) <> pretty "Inferring AExp" <+> pretty ae
