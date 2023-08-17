@@ -39,7 +39,7 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -720,6 +720,14 @@ checkDecl d cont = local (set curSpan (unignore $ d^.spanOf)) $
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclSMTOption s1 s2 -> do
         local (over z3Options $ M.insert s1 s2) $ cont
+      DeclPredicate s bnd -> do 
+        preds <- view $ curMod . predicates
+        assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
+        ((is, xs), p) <- unbind bnd
+        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do 
+                withVars (map (\x -> (x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))) xs) $
+                    checkProp p
+        local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
         ((is1, is2), ndecl) <- unbind o
         case ndecl of 
@@ -1163,6 +1171,10 @@ checkProp p =
           (PQuantIdx _ ip) -> do
               (i, p) <- unbind ip
               local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
+          PApp s is xs -> do
+              mapM_ checkIdx is
+              _ <- mapM inferAExpr xs
+              return ()
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
               _ <- mapM inferAExpr xs
@@ -1291,6 +1303,13 @@ stripProp x p =
           p'' <- stripProp x p'
           return $ mkSpanned $ PQuantIdx q (bind i p'')
       PHappened s _ xs -> do
+          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PLetIn a yp -> 
+          if x `elem` (getAExprDataVars a) then return pTrue else do
+            (y, p') <- unbind yp
+            p'' <- stripProp x p'
+            return $ mkSpanned $ PLetIn a (bind y p'')
+      PApp a is xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
 
 stripTy :: DataVar -> Ty -> Check Ty

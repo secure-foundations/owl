@@ -42,6 +42,7 @@ data PathType =
       | PTTbl
       | PTMod
       | PTCounter
+      | PTPredicate
       deriving Eq
 
 instance Show PathType where
@@ -53,6 +54,7 @@ instance Show PathType where
     show PTTbl = "table"
     show PTMod = "module"
     show PTCounter = "counter"
+    show PTPredicate = "predicate"
 
 data IsNameRO = IsRO | NotRO
     deriving Eq
@@ -67,6 +69,7 @@ data ResolveEnv = ResolveEnv {
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
+    _predPaths :: T.Map String ResolvedPath,
     _ctrPaths :: T.Map String ResolvedPath,
     _modPaths :: T.Map String (Bool, ResolvedPath), -- Bool is whether the module is bound
     _freshCtr :: IORef Integer
@@ -95,7 +98,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -121,6 +124,13 @@ resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
     case d^.val of
+      DeclPredicate s bp -> do
+          ((ps, xs), p) <- unbind bp
+          p' <- resolveProp p
+          pth <- view curPath
+          ds' <- local (over predPaths $ T.insert s pth) $ resolveDecls ds
+          let d' = Spanned (d^.spanOf) $ DeclPredicate s $ bind (ps, xs) p'
+          return (d' : ds')
       DeclSMTOption s1 s2 -> do
           ds' <-  resolveDecls ds
           return (d : ds')
@@ -401,6 +411,7 @@ resolvePath' pos pt p =
                       PTTy -> view tyPaths
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
+                      PTPredicate -> view predPaths
                       PTDef -> view defPaths
                       PTTbl -> view tablePaths
                       PTCounter -> view ctrPaths
@@ -621,6 +632,10 @@ resolveProp p =
       PNot p1 -> do
           p1' <- resolveProp p1
           return $ Spanned (p^.spanOf) $ PNot p1'
+      PApp s is as -> do 
+          as' <- mapM resolveAExpr as
+          s' <- resolvePath (p^.spanOf) PTPredicate s
+          return $ Spanned (p^.spanOf) $ PApp s' is as'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp

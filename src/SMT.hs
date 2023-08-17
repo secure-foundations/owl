@@ -464,6 +464,9 @@ interpretProp p =
       PLetIn a xp -> do
           (x, p) <- liftCheck $ unbind xp
           interpretProp $ subst x a p
+      PApp s is ps -> do 
+          p <- liftCheck $ extractPredicate s is ps
+          interpretProp p
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2

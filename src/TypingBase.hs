@@ -122,6 +122,7 @@ data ModBody = ModBody {
     _defs :: Map String Def, 
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
+    _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind [IdxVar] (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
@@ -729,6 +730,19 @@ getStructParams pos ps =
         case p of
             ParamIdx i -> return i
             _ -> typeError pos $ "Wrong param on struct: " ++ show p
+
+extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
+extractPredicate pth@(PRes (PDot p s)) is as = do  
+    md <- openModule (ignore def) p
+    case lookup s (md^.predicates) of
+      Nothing -> typeError (ignore def) $ "Unknown predicate: " ++ (show $ pretty pth)
+      Just b -> do
+          ((ixs, xs), p) <- unbind b
+          assert ("Wrong index arity for predicate " ++ show (pretty pth)) $ length ixs == length is
+          assert ("Wrong arity for predicate " ++ show (pretty pth)) $ length xs == length as
+          return $ substs (zip ixs is) $ substs (zip xs as) p
+
+
 
 extractEnum :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum pos ps s b = do

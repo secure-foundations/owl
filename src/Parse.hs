@@ -447,6 +447,15 @@ parsePropTerm =
         )
         <|>
         (parseSpanned $ try $ do
+            p <- parsePath
+            is <- parseIdxParams1
+            symbol "["
+            xs <- (parseAExpr `sepBy` (symbol ","))
+            symbol "]"
+            return $ PApp p is xs
+            )
+        <|>
+        (parseSpanned $ try $ do
             e <- parseAExpr
             return $ PEq e (builtinFunc "TRUE" []) 
         )
@@ -650,6 +659,18 @@ parseDecls =
             symbol "="
             parseTy
         return $ DeclTy n t
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "predicate"
+        n <- identifier
+        ps <- parseIdxParamBinds1
+        symbol "("
+        xs <- identifier `sepBy` (symbol ",")
+        symbol ")"
+        symbol "="
+        p <- parseProp
+        return $ DeclPredicate n (bind (ps, map s2n xs) p)
     )
     <|>
     (parseSpanned $ do
@@ -1245,6 +1266,17 @@ parseIdxParams = do
     return $ case inds of
                Nothing -> ([], [])
                Just (xs, ys) -> (xs, ys)
+
+parseIdxParams1 :: Parser [Idx]
+parseIdxParams1 = do
+    inds <- optionMaybe $ do
+        symbol "<"
+        is <- parseIdx `sepBy` symbol ","
+        symbol ">"
+        return is
+    return $ case inds of
+               Nothing -> []
+               Just xs -> xs
 
 parseIdxParamsNoAngles :: Parser ([Idx], [Idx])
 parseIdxParamsNoAngles = do
