@@ -136,12 +136,13 @@ predicate not_in_ro(x) = (
                  /\ x != preimage(msg2_mac1_key))
 
 predicate valid_responder_msg1_val (s) = 
+    is_group_elem(_responder_msg1_ephemeral(s)) /\ 
     ((_responder_msg1_ephemeral(s) == dhpk(get(E_init))) ==> (
         _responder_msg1_C3(s) == get(msg1_C3[0])
     )) 
     /\ ((_responder_msg1_ephemeral(s) != dhpk(get(E_init))) ==> (
         _responder_msg1_C3(s) != get(msg1_C3[0]) 
-        /\ not_in_ro[concat(_responder_msg1_C3(s), get(E_resp))]))
+        /\ not_in_ro[concat(_responder_msg1_C3(s), dhpk(get(E_resp)))]))
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
 
@@ -209,8 +210,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
              is_constant_lemma<crh("construction")>();
              is_constant_lemma<"mac1---">();
              is_constant_lemma<"0000">();
-             assume(msg1_ephemeral != dhpk(get(E_init)) ==> 
-                    not_in_ro[concat(C1, dh_combine(msg1_ephemeral, get(S_resp)))]);
+             assume(length(C1) == length(get(msg2_C6[0])));
              let C2 = hash<msg1_C2;0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
              let k0 = hash<msg1_C2;1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
 
@@ -221,7 +221,8 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
                  if eq(msg1_static_dec, dhpk_S_init) then begin 
 
                      let H3 = crh(concat(H2, dhpk_S_init)) in
-                     assume(msg1_ephemeral != dhpk(get(E_init)) ==> 
+                     assume(length(C2) == length(C1));
+                     assert(msg1_ephemeral != dhpk(get(E_init)) ==> 
                         not_in_ro[concat(C2, dh_combine(dhpk_S_init, get(S_resp)))]);
 
                      let C3 = hash<msg1_C3;0>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
@@ -233,10 +234,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
                      | Some msg1_timestamp_dec =>
                         let H4 = crh(concat(H3, msg1_timestamp_dec)) in
 
-                        assume( 
-                            (msg1_ephemeral != dhpk(get(E_init))) ==> 
-                            not_in_ro[concat(C3, get(E_resp))]);
-
+                        assume (length(C3) == length(C2));
                         let retval:responder_msg1_val = responder_msg1_val(C3, H4, msg1_ephemeral, msg1_sender) in
                         assume(_responder_msg1_C3(retval) == C3);
                         assume(_responder_msg1_ephemeral(retval) == msg1_ephemeral);
@@ -255,9 +253,13 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let H4 = _responder_msg1_H4(msg1_val) in
     let dhpk_E_init = _responder_msg1_ephemeral(msg1_val) in
     let msg2_receiver = _responder_msg1_sender(msg1_val) in
+    is_constant_lemma<crh("construction")>();
+    is_constant_lemma<"mac1---">();
+    is_constant_lemma<"0000">();
 
+    pcase (dhpk_E_init != dhpk(get(E_init))) in 
     union_case C3 = C3_union in
-    pcase (dhpk_E_init == dhpk(get(E_init))) in
+    false_elim in 
     
     let psk = "0000" in // should be zeros(32)
 
@@ -265,13 +267,11 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let msg2_ephemeral = dhpk(get(E_resp)) in
     let H5 = crh(concat(H4, msg2_ephemeral)) in
     
-    assume (dhpk_E_init != dhpk(get(E_init)) ==> (
-        not_in_ro[concat(C4, dh_combine(dhpk_E_init, get(E_resp)))]));
-
+    assume(length(C4) == |nonce|);
+    let x = concat(C4, dh_combine(dhpk_E_init, get(E_resp))) in
     let C5 = hash<msg2_C5>(C4, dh_combine(dhpk_E_init, get(E_resp))) in
 
-    assume (dhpk_E_init != dhpk(get(E_init)) ==> (
-        not_in_ro[concat(C5, dh_combine(dhpk_S_init, get(E_resp)))]));
+    assume (length(C5) == length(C4));
 
     let C6 = hash<msg2_C6>(C5, dh_combine(dhpk_S_init, get(E_resp))) in
     let C7 = hash<msg2_C7;0>(C6, psk) in

@@ -1331,7 +1331,9 @@ stripTy x t =
           t' <- stripTy x t
           return $ mkSpanned $ TOption t'
       TCase p t1 t2 -> do
-          local (set curSpan (unignore $ t^.spanOf)) $ assert (show $ pretty "Error on TCase: free variable " <> pretty (show x) <> pretty " should not appear in " <> pretty p) $ (not $ x `elem` getPropDataVars p)
+          local (set curSpan (unignore $ t^.spanOf)) $ 
+              assert ("stripTy failed on TCase: free variable " ++ show x ++ " should not appear in proposition of " ++ show (pretty t)) $ 
+                (not $ x `elem` getPropDataVars p)
           t1' <- stripTy x t1
           t2' <- stripTy x t2
           return $ mkSpanned $ TCase p t1' t2'
@@ -1632,7 +1634,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
               r <- if b then getOutTy ot tAdmit else checkExpr ot e
               popLogTypecheckScope
               return r
-          return $ mkSpanned $ TCase p t1 t2
+          getOutTy ot $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1
