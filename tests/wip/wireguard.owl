@@ -232,9 +232,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
                      | Some msg1_timestamp_dec =>
                         let H4 = crh(concat(H3, msg1_timestamp_dec)) in
 
-                        let retval:responder_msg1_val = responder_msg1_val(C3, H4, msg1_ephemeral, msg1_sender) in
-                        assume(_responder_msg1_C3(retval) == C3);
-                        assume(_responder_msg1_ephemeral(retval) == msg1_ephemeral);
+                        let retval = responder_msg1_val(C3, H4, msg1_ephemeral, msg1_sender) in
                         Some(retval)
 
                  end else None<ty:responder_msg1_val_t>()

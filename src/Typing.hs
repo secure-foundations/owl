@@ -251,6 +251,19 @@ initDetFuncs = withNormalizedTys $ [
     ))
     ]
 
+mkStructType :: ResolvedPath -> TyVar -> [FuncParam] -> [AExpr] -> [(String, Ty)] -> Check TyX
+mkStructType pth tv ps xs fields = do
+    etaRules <- forM [0 .. (length fields - 1)] $ \i -> 
+        return $ pEq (xs !! i) $ mkSpanned $ AEApp (PRes $ PDot pth (fst $ fields !! i)) ps [aeVar ".res"]
+    let etaRule = foldr pAnd pTrue etaRules
+    return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) $
+            bind (s2n ".res") $ 
+                pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths xs))
+                     etaRule
+
+
+        
+
 interpUserFunc :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 interpUserFunc pos pth md (StructConstructor tv) = do
     case lookup tv (md^.tyDefs) of
@@ -264,7 +277,7 @@ interpUserFunc pos pth md (StructConstructor tv) = do
                 b <- foldM (\acc i -> do
                     b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
                     return $ acc && b1) True [0..(length xs - 1)]
-                if b then return (TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) (bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst xs)))) else trivialTypeOf (map snd xs)
+                if b then mkStructType pth tv ps (map fst xs) nts else trivialTypeOf (map snd xs)
               else trivialTypeOf (map snd xs))
       _ -> typeError pos $ "Unknown struct: " ++ show tv
 interpUserFunc pos pth md (StructProjector tv field) = do
@@ -327,16 +340,17 @@ normalizeTy t0 = do
     debug $ pretty "normalizeTy: " <> pretty t0
     case t0^.val of
         TUnit -> return tUnit
-        (TCase p t1 t2) -> do
-            ob <- decideProp p
-            t1' <- normalizeTy t1
-            t2' <- normalizeTy t2
-            case ob of
-              Nothing -> do
-                  b1 <- isSubtype t1 t2
-                  b2 <- isSubtype t2 t1
-                  if (b1 && b2) then return t1' else return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
-              Just b -> return $ if b then t1' else t2'
+        (TCase p t1 t2) -> 
+            if t1 `aeq` t2 then normalizeTy t1 else do
+                ob <- decideProp p
+                t1' <- normalizeTy t1
+                t2' <- normalizeTy t2
+                case ob of
+                  Nothing -> do
+                      b1 <- isSubtype t1 t2
+                      b2 <- isSubtype t2 t1
+                      if (b1 && b2) then return t1' else return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
+                  Just b -> return $ if b then t1' else t2'
         (TOption t) -> do
             t' <- normalizeTy t
             return $ Spanned (t0^.spanOf) $ TOption t'
@@ -1634,7 +1648,7 @@ checkExpr ot e = local (set curSpan (unignore $ e ^. spanOf))  $ do
               r <- if b then getOutTy ot tAdmit else checkExpr ot e
               popLogTypecheckScope
               return r
-          getOutTy ot $ mkSpanned $ TCase p t1 t2
+          normalizeTy $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1
@@ -1759,7 +1773,9 @@ checkCryptoOp pos ot cop args = do
                      (aeApp (topLevelPath "crh") [] [y]))
                 (pEq x y)
       CHash p (is, ps) i -> do                            
-          local (set tcScope TcGhost) $ forM_ is checkIdx
+          local (set tcScope TcGhost) $ do
+              forM_ is checkIdx
+              forM_ ps checkIdx
           let aes = map fst args
           bnd <- getRO pos p
           ((ixs, ixps), (aes'_, nts_)) <- unbind bnd
@@ -1770,7 +1786,7 @@ checkCryptoOp pos ot cop args = do
           debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
           (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
           debug $ pretty $ "symCheckEqTopLevel: " ++ show b_eq
-          len <- lenConstOfROName $ mkSpanned $ NameConst (is, ps) p (Just i)
+          len <- local (set tcScope TcGhost) $ lenConstOfROName $ mkSpanned $ NameConst (is, ps) p (Just i)
           retTy <- if b_eq then return $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
                            else do
                               noCollision <- SMT.symDecideNotInRO aes
