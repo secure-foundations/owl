@@ -393,7 +393,7 @@ data ExprX =
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | EPCase Prop Expr
+    | EPCase Prop (Maybe Prop) Expr
     | EFalseElim Expr
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -758,7 +758,7 @@ instance Pretty ExprX where
                       Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
                     ) xs in
         pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (EPCase p e) = 
+    pretty (EPCase p op e) = 
         pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
     pretty (EDebug dc) = pretty "debug" <+> pretty dc
     pretty (ESetOption s1 s2 e) = pretty "set_option" <+> pretty (show s1) <+> pretty "=" <+> pretty (show s2) <+> pretty "in" <+> pretty e                                         

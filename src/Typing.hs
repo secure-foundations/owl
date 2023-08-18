@@ -1631,24 +1631,33 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
-      (EPCase p e) -> do
+      (EPCase p op e) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
-          x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma p))] $ do
-              logTypecheck $ "Case split: " ++ show (pretty p)
-              pushLogTypecheckScope
-              (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              r <- if b then getOutTy ot tAdmit else checkExpr ot e
-              popLogTypecheckScope
-              return r
-          t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma (pNot p)))] $ do
-              logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
-              pushLogTypecheckScope
-              (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-              r <- if b then getOutTy ot tAdmit else checkExpr ot e
-              popLogTypecheckScope
-              return r
-          normalizeTy $ mkSpanned $ TCase p t1 t2
+          doCaseSplit <- case op of
+                           Nothing -> return True
+                           Just pcond -> do 
+                               _ <- local (set tcScope TcGhost) $ checkProp pcond
+                               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert pcond
+                               return b 
+          case doCaseSplit of 
+            False -> checkExpr ot e
+            True -> do 
+              x <- freshVar
+              t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma p))] $ do
+                  logTypecheck $ "Case split: " ++ show (pretty p)
+                  pushLogTypecheckScope
+                  (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
+                  r <- if b then getOutTy ot tAdmit else checkExpr ot e
+                  popLogTypecheckScope
+                  return r
+              t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma (pNot p)))] $ do
+                  logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
+                  pushLogTypecheckScope
+                  (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
+                  r <- if b then getOutTy ot tAdmit else checkExpr ot e
+                  popLogTypecheckScope
+                  return r
+              normalizeTy $ mkSpanned $ TCase p t1 t2
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1

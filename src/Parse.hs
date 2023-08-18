@@ -1090,17 +1090,23 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "corr_case"
         n <- parseNameExp
+        op <- optionMaybe $ do
+            reserved "when"
+            parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase (pFlow (nameLbl n) advLbl) e
+        return $ EPCase (pFlow (nameLbl n) advLbl) op e
         )
     <|>
     (parseSpanned $ do
         reserved "pcase"
         p <- parseProp
+        op <- optionMaybe $ do
+            reserved "when"
+            parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase p e
+        return $ EPCase p op e
         )
     <|>
     (parseSpanned $ do

@@ -136,9 +136,9 @@ anf e =
                     be' <- anfBind be
                     return $ (s, Right (c, be'))
           elet e1' Nothing (ignore Nothing) Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) y) cases'
-      EPCase p k -> do 
+      EPCase p op k -> do 
          k' <- anf k
-         return $ Spanned (e^.spanOf) $ EPCase p k'
+         return $ Spanned (e^.spanOf) $ EPCase p op k'
       ESetOption s1 s2 k -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
