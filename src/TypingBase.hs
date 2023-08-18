@@ -151,6 +151,7 @@ data Env = Env {
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int,
+    _debugLogDepth :: IORef Int,
     _curSpan :: Position
 }
 
@@ -376,10 +377,15 @@ class WithSpan a where
     withSpan :: a -> Check b -> Check b
 
 instance WithSpan Position where
-    withSpan x k = local (set curSpan x) k
+    withSpan x k = do
+        r <- view $ debugLogDepth
+        liftIO $ modifyIORef r (+1)
+        res <- local (set curSpan x) k
+        liftIO $ modifyIORef r (+ (-1))
+        return res
 
 instance WithSpan (Ignore Position) where
-    withSpan x k = local (set curSpan $ unignore x) k
+    withSpan x k = withSpan (unignore x) k
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = withSpan pos $ do
@@ -580,8 +586,11 @@ getNameType ne = do
 
 debug :: Show a => a -> Check ()
 debug d = do
+    r <- view $ debugLogDepth
     b <- view $ envFlags . fDebug
-    when b $ liftIO $ putStrLn $ show d
+    when b $ do
+        n <- liftIO $ readIORef r
+        liftIO $ putStrLn $ replicate (n*2) ' ' ++ show d
 
 pushLogTypecheckScope :: Check ()
 pushLogTypecheckScope = do

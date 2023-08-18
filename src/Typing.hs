@@ -46,10 +46,11 @@ emptyEnv :: Flags -> IO Env
 emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
+    r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
     return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m mempty rs r' def
+        interpUserFunc r m mempty rs r' r'' def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
