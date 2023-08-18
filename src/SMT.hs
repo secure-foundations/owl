@@ -198,7 +198,7 @@ setupUserFunc (s, f) =
     case f of
       StructConstructor tv -> do
         -- Concats
-        td <- liftCheck $ getTyDef (ignore def) (PRes $ PDot s tv)
+        td <- liftCheck $ getTyDef  (PRes $ PDot s tv)
         case td of
           StructDef idf -> do
               let ar = length $ snd $ unsafeUnbind idf
@@ -207,7 +207,7 @@ setupUserFunc (s, f) =
       StructProjector _ proj -> setupFunc (PDot s proj, 1) -- Maybe leave uninterpreted?
       EnumConstructor tv variant ->  do
         -- Concat the pair using EnumTag
-        td <- liftCheck $ getTyDef (ignore def) (PRes $ PDot s tv)
+        td <- liftCheck $ getTyDef (PRes $ PDot s tv)
         case td of
           EnumDef idf -> do
               let enum_map = snd $ unsafeUnbind idf 
@@ -230,7 +230,7 @@ setupUserFunc (s, f) =
               funcInterps %= (M.insert sn (SAtom sn, ar))
           _ -> error "Unknown enum in SMT"
       EnumTest tv variant -> do -- Compare the first eight bits using prefix 
-          td <- liftCheck $ getTyDef (ignore def) (PRes $ PDot s tv)
+          td <- liftCheck $ getTyDef (PRes $ PDot s tv)
           case td of
             EnumDef idf -> do
                 let enum_map = snd $ unsafeUnbind idf 
@@ -373,16 +373,16 @@ smtTy t =
           return $ SApp [SAtom "TCase", vp, vt1, vt2]
       TExistsIdx _ -> return $ SAtom "Data" -- Opaque to SMT
       TConst s@(PRes (PDot pth _)) ps -> do
-          td <- liftCheck $ getTyDef (t^.spanOf) s
+          td <- liftCheck $ getTyDef  s
           case td of
             TyAbstract -> return $ SAtom "Data"
             TyAbbrev t -> smtTy t
             StructDef ixs -> do
-                dts <- liftCheck $ extractStruct (t^.spanOf) ps (show s) ixs
+                dts <- liftCheck $ extractStruct  ps (show s) ixs
                 vts <- forM dts $ \(_, t) -> smtTy t
                 return $ sIterPair vts
             EnumDef ixs -> do
-                dts <- liftCheck $ extractEnum (t^.spanOf) ps (show s) ixs
+                dts <- liftCheck $ extractEnum ps (show s) ixs
                 vts <- forM dts $ \(_, ot) -> 
                     case ot of
                       Just t -> smtTy t
@@ -429,7 +429,7 @@ interpretAExp ae =
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
       AEPreimage p ps -> do
-          aes <- liftCheck $ getROPreimage (ae^.spanOf) p ps
+          aes <- liftCheck $ getROPreimage p ps
           interpretAExp $ mkConcats aes
       AEGet ne -> do
           liftCheck $ debug $ pretty "AEGet" <+> pretty ne

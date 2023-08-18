@@ -265,7 +265,7 @@ fromSMT setup k = do
           resp <- liftIO $ queryZ3 logsmt filepath z3rs z3mp q
           case resp of
             Right (b, fn) -> return (fn, b)
-            Left err -> typeError (ignore def) $ "Z3 error: " ++ err   
+            Left err -> typeError $ "Z3 error: " ++ err   
               
 raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
 raceSMT setup k1 k2 = do
@@ -396,7 +396,7 @@ symIndex idx@(IVar ispan v) = do
       Nothing -> do
           indices <- view $ inScopeIndices
           liftIO $ putStrLn $ "Unknown index: " ++ show v
-          liftCheck $ typeError ispan (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
+          liftCheck $ typeError (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
 
 flattenNameDefs :: Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef) ->
                    Sym (Map (ResolvedPath, Maybe Int) (Bind ([IdxVar], [IdxVar]) NameDef))

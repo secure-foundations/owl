@@ -144,7 +144,7 @@ data Env = Env {
     _inScopeIndices ::  Map IdxVar IdxType,
     _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
     _modContext :: Map (Name ResolvedPath) ModDef,
-    _interpUserFuncs :: Ignore Position -> ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
+    _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
@@ -237,7 +237,7 @@ modDefKind (MBody xd) =
 modDefKind (MFun _ _ xd) = 
     let (_, d) = unsafeUnbind xd in modDefKind d
 modDefKind (MAlias p) = do
-    md <- getModDef (ignore def) p
+    md <- getModDef p
     modDefKind md
 
 
@@ -250,7 +250,7 @@ makeModDefConcrete (MFun s t xk) = do
     k' <- makeModDefConcrete k
     return $ MFun s t $ bind x k'
 makeModDefConcrete (MAlias p) = do
-    md <- getModDef (ignore def) p
+    md <- getModDef p
     makeModDefConcrete md
 
 instance Fresh Check where
@@ -279,13 +279,14 @@ hideAnfVarsInTy ctxt t = L.foldl' substAnfVar t ctxt where
             Just anfOrig -> subst v anfOrig ty
 
 
-typeError :: Ignore Position -> String -> Check a
-typeError pos msg = do
+typeError :: String -> Check a
+typeError msg = do
+    pos <- view curSpan
     fn <- takeFileName <$> (view $ envFlags . fFilePath)
     fl <- takeDirectory <$> (view $ envFlags . fFilePath)
     f <- view $ envFlags . fFileContents
     tyc <- removeAnfVars <$> view tyContext
-    let rep = Err Nothing msg [(unignore pos, This msg)] [Note $ show $ prettyTyContext tyc]
+    let rep = Err Nothing msg [(pos, This msg)] [Note $ show $ prettyTyContext tyc]
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
     printDiagnostic stdout True True 4 defaultStyle diag 
@@ -329,9 +330,7 @@ addVars xs g = g ++ xs
     
 assert :: String -> Bool -> Check ()
 assert m b = do
-    if b then return () else do
-        pos <- view $ curSpan
-        typeError (ignore pos) m 
+    if b then return () else typeError m 
 
 laxAssertion :: Check () -> Check ()
 laxAssertion k = do
@@ -373,17 +372,26 @@ curModName = do
       Nothing -> return PTop
       Just pv -> return $ PPathVar OpenPathVar pv
 
+class WithSpan a where
+    withSpan :: a -> Check b -> Check b
+
+instance WithSpan Position where
+    withSpan x k = local (set curSpan x) k
+
+instance WithSpan (Ignore Position) where
+    withSpan x k = local (set curSpan $ unignore x) k
+
 inferIdx :: Idx -> Check IdxType
-inferIdx (IVar pos i) = do
+inferIdx (IVar pos i) = withSpan pos $ do
     m <- view $ inScopeIndices
     tc <- view tcScope
     case lookup i m of
       Just t -> 
           case (tc, t) of
             (TcDef _, IdxGhost) ->  
-                typeError pos $ "Index should be nonghost: " ++ show (pretty i) 
+                typeError $ "Index should be nonghost: " ++ show (pretty i) 
             _ -> return t
-      Nothing -> typeError pos $ "Unknown index: " ++ show (pretty i)
+      Nothing -> typeError $ "Unknown index: " ++ show (pretty i)
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
@@ -407,8 +415,8 @@ checkIdxPId i@(IVar pos _) = do
        TcGhost -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
        TcDef _ -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
 
-openModule :: Ignore Position -> ResolvedPath -> Check ModBody
-openModule pos rp = do
+openModule :: ResolvedPath -> Check ModBody
+openModule rp = do
     mb <- go rp
     tc <- view tcScope
     case tc of
@@ -426,8 +434,8 @@ openModule pos rp = do
                   (x, mb) <- unbind xmb
                   return $ subst x p0 mb 
               Just (MAlias p) -> go p
-              Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
-              Nothing -> typeError pos $ "Unknown module or functor (functor argument, openModule): " ++ show p0
+              Just (MFun _ _ _) -> typeError $ show p0 ++ " is not a module"
+              Nothing -> typeError $ "Unknown module or functor (functor argument, openModule): " ++ show p0
         go p0@(PDot p' s) = do
             md <- go p'
             case lookup s (md^.modules) of
@@ -435,8 +443,8 @@ openModule pos rp = do
               Just (MBody xmb) -> do
                   (x, mb) <- unbind xmb
                   return $ subst x p0 mb
-              Just (MFun _ _ _) -> typeError pos $ show p0 ++ " is not a module"
-              Nothing -> typeError pos $ "Unknown module: " ++ show p0
+              Just (MFun _ _ _) -> typeError $ show p0 ++ " is not a module"
+              Nothing -> typeError $ "Unknown module: " ++ show p0
 
 stripRefinements :: Ty -> Ty
 stripRefinements t =
@@ -444,56 +452,56 @@ stripRefinements t =
       TRefined t _ -> stripRefinements t
       _ -> t
 
-getModDef :: Ignore Position -> ResolvedPath -> Check ModDef
-getModDef pos rp = do
+getModDef :: ResolvedPath -> Check ModDef
+getModDef rp = do
     go rp
     where
         go :: ResolvedPath -> Check ModDef
-        go PTop = typeError pos $ "Got top for getModDef"
-        go (PPathVar OpenPathVar v) = typeError pos $ "Got opened module var for getModDef"
+        go PTop = typeError $ "Got top for getModDef"
+        go (PPathVar OpenPathVar v) = typeError $ "Got opened module var for getModDef"
         go (PPathVar (ClosedPathVar _) v) = do
             mc <- view modContext
             case lookup v mc of
               Just b -> return b
-              Nothing -> typeError pos $ "Unknown module or functor (functor argument, getModDef): " ++ show rp
+              Nothing -> typeError $ "Unknown module or functor (functor argument, getModDef): " ++ show rp
         go p0@(PDot p' s) = do
-            md <- openModule pos p'
+            md <- openModule p'
             case lookup s (md^.modules) of
               Just b -> return b
-              Nothing -> typeError pos $ "Unknown module or functor: " ++ show rp
+              Nothing -> typeError $ "Unknown module or functor: " ++ show rp
 
-checkCounterIsLocal :: Ignore Position -> Path -> ([Idx], [Idx]) -> Check ()
-checkCounterIsLocal pos p0@(PRes (PDot p s)) (vs1, vs2) = do
-    md <- openModule pos p
+checkCounterIsLocal :: Path -> ([Idx], [Idx]) -> Check ()
+checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
+    md <- openModule p
     case lookup s (md^.ctrEnv) of
       Just r -> do
           forM_ vs1 checkIdxSession
           forM_ vs2 checkIdxPId
           ((is1, is2), l) <- unbind r
           when ((length vs1, length vs2) /= (length is1, length is2)) $ 
-              typeError pos $ "Wrong index arity for counter " ++ show p0
+              typeError $ "Wrong index arity for counter " ++ show p0
           let l' = substs (zip is1 vs1) $ substs (zip is2 vs2) $ l
           tc <- view tcScope
           case tc of
-            TcGhost -> typeError pos $ "Must be in a def for the counter"
+            TcGhost -> typeError $ "Must be in a def for the counter"
             TcDef l2 -> do
-                l1' <- normLocality pos l'
-                l2' <- normLocality pos l2
+                l1' <- normLocality l'
+                l2' <- normLocality l2
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
-      Nothing -> typeError pos $ "Unknown counter: " ++ show p0
+      Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-getROPreimage :: Ignore Position -> Path -> ([Idx], [Idx]) -> Check [AExpr]
-getROPreimage pos pth@(PRes (PDot p n)) (is, ps) = do
-    md <- openModule pos p
+getROPreimage :: Path -> ([Idx], [Idx]) -> Check [AExpr]
+getROPreimage pth@(PRes (PDot p n)) (is, ps) = do
+    md <- openModule p
     case lookup n (md^.nameDefs) of
-      Nothing -> typeError pos $ "Unknown name: " ++ n
+      Nothing -> typeError $ "Unknown name: " ++ n
       Just b_nd -> do
           ((ixs, pxs), nd') <- unbind b_nd
           assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
           let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
           case nd of
             RODef (as, _) -> return as
-            _ -> typeError pos $ "Not an RO name: " ++ n
+            _ -> typeError $ "Not an RO name: " ++ n
 
 
 
@@ -504,12 +512,12 @@ getNameInfo ne = do
     debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
     case ne^.val of 
      NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
-         md <- openModule (ne^.spanOf) p
+         md <- openModule p
          tc <- view tcScope
          forM_ vs1 checkIdxSession
          forM_ vs2 checkIdxPId
          case lookup n (md^.nameDefs)  of
-           Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownName pth
+           Nothing -> typeError $ show $ ErrUnknownName pth
            Just b_nd -> do
                ((is, ps), nd') <- unbind b_nd
                assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
@@ -532,27 +540,27 @@ getNameInfo ne = do
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
          case ntLclsOpt of
-           Nothing -> typeError (ne^.spanOf) $ show $ ErrNameStillAbstract $ show $ pretty n
+           Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty n
            Just (nt, _) -> 
             case nt^.val of
             NT_PRF xs -> 
                 case L.find (\p -> fst p == s) xs of
                     Just (_, (_, nt')) -> return $ Just (nt, Nothing)
-                    Nothing -> typeError (ne^.spanOf) $ show $ ErrUnknownPRF n s
-            _ -> typeError (ne^.spanOf) $ show $ ErrWrongNameType n "prf" nt
+                    Nothing -> typeError $ show $ ErrUnknownPRF n s
+            _ -> typeError $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (pretty ne)
 
-getRO :: Ignore Position -> Path -> Check (Bind ([IdxVar], [IdxVar]) ([AExpr], [NameType]))
-getRO pos p0@(PRes (PDot p s)) = do
-        md <- openModule pos p 
+getRO :: Path -> Check (Bind ([IdxVar], [IdxVar]) ([AExpr], [NameType]))
+getRO p0@(PRes (PDot p s)) = do
+        md <- openModule p 
         case lookup s (md^.nameDefs) of 
           Just ind -> do
               (ps, nd) <- unbind ind
               case nd of
                 RODef res -> return $ bind ps res
-                _ -> typeError pos $ "Not an RO name: " ++ show (pretty p0)
-          Nothing -> typeError pos $ show $ ErrUnknownRO p
-getRO pos pth = typeError pos $ "Unknown path: " ++ show pth
+                _ -> typeError $ "Not an RO name: " ++ show (pretty p0)
+          Nothing -> typeError $ show $ ErrUnknownRO p
+getRO pth = typeError $ "Unknown path: " ++ show pth
 
 
 getNameTypeOpt :: NameExp -> Check (Maybe NameType)
@@ -566,7 +574,7 @@ getNameType :: NameExp -> Check NameType
 getNameType ne = do
     ntOpt <- getNameTypeOpt ne
     case ntOpt of
-        Nothing -> typeError (ne^.spanOf) $ show $ ErrNameStillAbstract $ show $ pretty ne
+        Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
         Just nt -> return nt
 
 
@@ -595,41 +603,41 @@ logTypecheck s = do
         n <- liftIO $ readIORef r
         liftIO $ putStrLn $ replicate (n*2) ' ' ++ s
 
-getTyDef :: Ignore Position -> Path -> Check TyDef
-getTyDef pos (PRes (PDot p s)) = do
-    md <- openModule pos p
+getTyDef :: Path -> Check TyDef
+getTyDef (PRes (PDot p s)) = do
+    md <- openModule p
     case lookup s (md ^. tyDefs) of
       Just td -> return td
-      Nothing -> typeError pos $ "Unknown type variable: " ++ show s 
+      Nothing -> typeError $ "Unknown type variable: " ++ show s 
 
 -- AExpr's have unambiguous types, so can be inferred.
 
-getUserFunc :: Ignore Position -> Path -> Check (Maybe UserFunc)
-getUserFunc pos (PRes (PDot p s)) = do
-    md <- openModule pos p
+getUserFunc :: Path -> Check (Maybe UserFunc)
+getUserFunc (PRes (PDot p s)) = do
+    md <- openModule p
     return $ lookup s (md^.userFuncs)
 
-getDefSpec :: Ignore Position -> Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
-getDefSpec pos (PRes (PDot p s)) = do
-    md <- openModule pos p
+getDefSpec :: Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
+getDefSpec (PRes (PDot p s)) = do
+    md <- openModule p
     case lookup s (md^.defs) of
-      Nothing -> typeError pos $ "Unknown def: " ++ s
-      Just (DefHeader _) -> typeError pos $ "Def is unspecified: " ++ s
+      Nothing -> typeError $ "Unknown def: " ++ s
+      Just (DefHeader _) -> typeError $ "Def is unspecified: " ++ s
       Just (Def r) -> return r
 
 
-getFuncInfo :: Ignore Position -> Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
-getFuncInfo pos f@(PRes (PDot p s)) = do
+getFuncInfo :: Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+getFuncInfo f@(PRes (PDot p s)) = do
     fs <- view detFuncs
     case (p, lookup s fs) of
       (PTop, Just r) -> return r
       (_, Nothing) -> do 
-          md <- openModule pos p
+          md <- openModule p
           case lookup s (md ^. userFuncs) of 
             Just uf -> do 
                 uf_interp <- view interpUserFuncs
-                uf_interp pos p md uf
-            Nothing -> typeError (pos) (show $ ErrUnknownFunc f)
+                uf_interp p md uf
+            Nothing -> typeError  (show $ ErrUnknownFunc f)
 
 mkConcats :: [AExpr] -> AExpr
 mkConcats [] = aeApp (topLevelPath "UNIT") [] []
@@ -642,14 +650,14 @@ lenConstOfROName :: NameExp -> Check AExpr
 lenConstOfROName ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
-      Nothing -> typeError (ne^.spanOf) $ "Name shouldn't be abstract: " ++ show (pretty ne)
+      Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (pretty ne)
       Just (nt, _) -> 
           case nt^.val of
             NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-            _ -> typeError (ne^.spanOf) $ "Name not an RO name: " ++ show (pretty ne)
+            _ -> typeError $ "Name not an RO name: " ++ show (pretty ne)
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
@@ -659,11 +667,11 @@ inferAExpr ae = do
         tC <- view tyContext
         case lookup x tC of 
           Just (_, _, t) -> return t
-          Nothing -> typeError (ae^.spanOf) $ show $ ErrUnknownVar x
+          Nothing -> typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
         debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
-        (ar, k) <- getFuncInfo (ae^.spanOf) f
+        (ar, k) <- getFuncInfo f
         assert (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
         mkSpanned <$> k params (zip args ts)
       (AEString s) -> return $ tData zeroLbl zeroLbl
@@ -680,76 +688,76 @@ inferAExpr ae = do
           assert (show $ pretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
           forM_ p1 checkIdxSession
           forM_ p2 checkIdxPId
-          aes <- getROPreimage (ae^.spanOf) p ps 
+          aes <- getROPreimage p ps 
           inferAExpr $ mkConcats aes
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError (ae^.spanOf) $ show $ ErrNameStillAbstract $ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
-                        Just xs -> mapM (normLocality (ae^.spanOf)) xs
+                        Just xs -> mapM normLocality xs
                         Nothing -> do
                             case ts of
                               TcGhost -> return []
-                              TcDef _ -> typeError (ae^.spanOf) $ show $ pretty "Calling get on name " <> pretty ne <> pretty " in non-ghost context"
+                              TcDef _ -> typeError $ show $ pretty "Calling get on name " <> pretty ne <> pretty " in non-ghost context"
                 ot <- case ts of
                     TcDef curr_locality -> do
-                        curr_locality' <- normLocality (ae^.spanOf) curr_locality
+                        curr_locality' <- normLocality curr_locality
                         assert (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
                 case ne^.val of
                   NameConst ips pth (Just i) -> do
-                      aes <- getROPreimage (ae^.spanOf) pth ips 
+                      aes <- getROPreimage pth ips 
                       return $ tRefined ot $ bind (s2n ".res") $ mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i  
                   _ -> return ot
       (AEGetEncPK ne) -> do
           case ne^.val of
             NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError (ae^.spanOf) $ "Cannot call get_encpk on indexed name"
-            _ -> typeError (ae^.spanOf) $ "Cannot call get_encpk on random oracle or PRF name"
+            NameConst _ _ _ -> typeError $ "Cannot call get_encpk on indexed name"
+            _ -> typeError $ "Cannot call get_encpk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError (ae^.spanOf) $ show $ ErrNameStillAbstract$ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract$ show $ pretty ne
             Just (nt, _) ->           
                 case nt^.val of
                     NT_PKE _ -> return $ mkSpanned $ TEnc_PK ne
-                    _ -> typeError (ae^.spanOf) $ show $ pretty "Expected encryption sk: " <> pretty ne
+                    _ -> typeError $ show $ pretty "Expected encryption sk: " <> pretty ne
       (AEGetVK ne) -> do
           case ne^.val of
             NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError (ae^.spanOf) $ "Cannot call get_vk on indexed name"
-            _ -> typeError (ae^.spanOf) $ "Cannot call get_vk on random oracle or PRF name"
+            NameConst _ _ _ -> typeError $ "Cannot call get_vk on indexed name"
+            _ -> typeError $ "Cannot call get_vk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError (ae^.spanOf) $ show $ ErrNameStillAbstract $ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
             Just (nt, _) ->          
                 case nt^.val of
                     NT_Sig _ -> return $ mkSpanned $ TVK ne
-                    _ -> typeError (ae^.spanOf) $ show $ pretty "Expected signature sk: " <> pretty ne
+                    _ -> typeError $ show $ pretty "Expected signature sk: " <> pretty ne
 
-getEnumParams :: Ignore Position -> [FuncParam] -> Check ([Idx])
-getEnumParams pos ps = forM ps $ \p -> 
+getEnumParams :: [FuncParam] -> Check ([Idx])
+getEnumParams ps = forM ps $ \p -> 
      case p of
        ParamIdx i -> return i
-       _ -> typeError pos $ "Wrong param on enum: " ++ show p
+       _ -> typeError $ "Wrong param on enum: " ++ show p
 
-getStructParams :: Ignore Position -> [FuncParam] -> Check [Idx]
-getStructParams pos ps =
+getStructParams :: [FuncParam] -> Check [Idx]
+getStructParams ps =
     forM ps $ \p -> do
         case p of
             ParamIdx i -> return i
-            _ -> typeError pos $ "Wrong param on struct: " ++ show p
+            _ -> typeError $ "Wrong param on struct: " ++ show p
 
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
 extractPredicate pth@(PRes (PDot p s)) is as = do  
-    md <- openModule (ignore def) p
+    md <- openModule p
     case lookup s (md^.predicates) of
-      Nothing -> typeError (ignore def) $ "Unknown predicate: " ++ (show $ pretty pth)
+      Nothing -> typeError $ "Unknown predicate: " ++ (show $ pretty pth)
       Just b -> do
           ((ixs, xs), p) <- unbind b
           assert ("Wrong index arity for predicate " ++ show (pretty pth)) $ length ixs == length is
@@ -758,17 +766,17 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
 
 
 
-extractEnum :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
-extractEnum pos ps s b = do
-    idxs <- getEnumParams pos ps
+extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
+extractEnum ps s b = do
+    idxs <- getEnumParams ps
     (is, bdy') <- unbind b
     assert (show $ pretty "Wrong index arity for enum " <> pretty s) $ length idxs == length is  
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-extractStruct :: Ignore Position -> [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
-extractStruct pos ps s b = do
-    idxs <- getStructParams pos ps
+extractStruct :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
+extractStruct ps s b = do
+    idxs <- getStructParams ps
     (is, xs') <- unbind b
     assert (show $ pretty "Wrong index arity for struct " <> pretty s <> pretty ": got " <> pretty idxs <> pretty " expected " <> pretty (length is)) $ length idxs == length is 
     return $ substs (zip is idxs) xs'
@@ -797,17 +805,17 @@ coveringLabel' t =
           l2 <- coveringLabel' t2
           return $ joinLbl l1 l2
       (TConst s ps) -> do
-          td <- getTyDef (t^.spanOf) s
+          td <- getTyDef  s
           case td of
             EnumDef b -> do
-                bdy <- extractEnum (t^.spanOf) ps (show s) b
+                bdy <- extractEnum ps (show s) b
                 ls <- mapM coveringLabel' $ catMaybes $ map snd bdy
                 let l2 = foldr joinLbl zeroLbl ls
                 return $ l2
             TyAbstract -> return $ joinLbl (lblConst $ TyLabelVar s) advLbl
             TyAbbrev t -> coveringLabel' t
             StructDef ixs -> do
-                xs <- extractStruct (t^.spanOf) ps (show s) ixs
+                xs <- extractStruct ps (show s) ixs
                 ls <- forM xs $ \(_, t) -> coveringLabel' t
                 return $ foldr joinLbl zeroLbl ls
       TAdmit -> return $ zeroLbl -- mostly a placeholder
@@ -815,7 +823,7 @@ coveringLabel' t =
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
           if (l1 `aeq` l2) then return l1 else 
-              typeError (t^.spanOf) $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
+              typeError $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
           l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
@@ -834,9 +842,9 @@ prettyContext e =
 
 isNameDefRO :: Path -> Check Bool
 isNameDefRO (PRes (PDot p n)) = do 
-    md <- openModule (ignore def) p
+    md <- openModule p
     case lookup n (md^.nameDefs) of
-        Nothing -> typeError (ignore def) $ "SMT error"
+        Nothing -> typeError  $ "SMT error"
         Just b_nd -> do 
             case snd (unsafeUnbind b_nd) of
               RODef _ -> return True
@@ -971,35 +979,35 @@ pathPrefix (PDot p _) = p
 pathPrefix _ = error "pathPrefix error" 
 
 -- Normalize and check locality
-normLocality :: Ignore Position -> Locality -> Check Locality
-normLocality pos loc@(Locality (PRes (PDot p s)) xs) = do
+normLocality :: Locality -> Check Locality
+normLocality loc@(Locality (PRes (PDot p s)) xs) = do
     debug $ pretty "normLocality: " <> (pretty $ show loc)
-    md <- openModule pos p
+    md <- openModule p
     case lookup s (md^.localities) of 
-      Nothing -> typeError pos $ "Unknown locality: " ++ show (pretty  loc)
-      Just (Right p') -> normLocality pos $ Locality (PRes p') xs
+      Nothing -> typeError $ "Unknown locality: " ++ show (pretty  loc)
+      Just (Right p') -> normLocality $ Locality (PRes p') xs
       Just (Left ar) -> do
               assert (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
                   assert (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
               return $ Locality (PRes (PDot p s)) xs 
-normLocality pos loc = typeError pos $ "bad case: " ++ show loc
+normLocality loc = typeError $ "bad case: " ++ show loc
 
 -- Normalize locality path, get arity
-normLocalityPath :: Ignore Position -> Path -> Check Int
-normLocalityPath pos (PRes loc@(PDot p s)) = do
-    md <- openModule pos p
+normLocalityPath :: Path -> Check Int
+normLocalityPath (PRes loc@(PDot p s)) = do
+    md <- openModule p
     case lookup s (md^.localities) of 
-      Nothing -> typeError pos $ "Unknown locality: " ++ show loc
+      Nothing -> typeError $ "Unknown locality: " ++ show loc
       Just (Left ar) -> return ar
-      Just (Right p) -> normLocalityPath pos (PRes p)
+      Just (Right p) -> normLocalityPath (PRes p)
 
 normModulePath :: ResolvedPath -> Check ResolvedPath
 normModulePath PTop = return PTop
 normModulePath p@(PPathVar OpenPathVar _) = return p
 normModulePath p = do
-    md <- getModDef (ignore def) p
+    md <- getModDef  p
     case md of
       MAlias p' -> normModulePath p'
       _ -> return p
