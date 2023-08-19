@@ -186,10 +186,10 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
  def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder 
      : Option (responder_msg1_val_t) 
      =
-     set_option ":rlimit" "2000000" in // TODO
+     set_option ":rlimit" "2000000" in 
      input inp in
      let msg1_reserved = _msg1_reserved(inp) in
-     let msg1_sender = _msg1_sender(inp) in // TODO: Why does this not get a length annotation of 4?
+     let msg1_sender = _msg1_sender(inp) in 
      let msg1_ephemeral = _msg1_ephemeral(inp) in
      let msg1_static = _msg1_static(inp) in
      let msg1_timestamp = _msg1_timestamp(inp) in
@@ -261,7 +261,7 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let msg2_ephemeral = dhpk(get(E_resp)) in
     let H5 = crh(concat(H4, msg2_ephemeral)) in
     
-    let x = concat(C4, dh_combine(dhpk_E_init, get(E_resp))) in
+    // let x = concat(C4, dh_combine(dhpk_E_init, get(E_resp))) in
     let C5 = hash<msg2_C5>(C4, dh_combine(dhpk_E_init, get(E_resp))) in
 
 
@@ -288,3 +288,52 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let msg2_output = msg2(msg2_payload_value) in
     let _ = output msg2_output in
     ()
+
+
+def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ Initiator : Option (Unit) =
+    input inp in
+    let msg2_reserved = _msg2_reserved(inp) in
+    let msg2_sender = _msg2_sender(inp) in 
+    let msg2_receiver = _msg2_receiver(inp) in
+    let msg2_ephemeral = _msg2_ephemeral(inp) in
+    let msg2_empty = _msg2_empty(inp) in
+    let msg2_mac1 = _msg2_mac1(inp) in
+    let C3 = _initiator_msg1_C3(msg1_val) in
+    let H4 = _initiator_msg1_H4(msg1_val) in
+
+    if eq(length(msg2_sender), 4) then begin
+        is_constant_lemma<crh("construction")>();
+        is_constant_lemma<"mac1---">();
+        is_constant_lemma<"0000">();
+
+        let psk = "0000" in // should be zeros(32)
+
+        if is_group_elem(msg2_ephemeral) then begin
+            
+            pcase (msg2_ephemeral == dhpk(get(E_resp))) in
+
+            let C4 = hash<msg2_C4>(C3, msg2_ephemeral) in
+            let H5 = crh(concat(H4, msg2_ephemeral)) in
+            
+            let C5 = hash<msg2_C5>(C4, dh_combine(msg2_ephemeral, get(E_init))) in
+
+            let C6 = hash<msg2_C6>(C5, dh_combine(msg2_ephemeral, get(S_init))) in
+            let C7 = hash<msg2_C7;0>(C6, psk) in
+            let tau = hash<msg2_C7;1>(C6, psk) in
+            let k0 = hash<msg2_C7;2>(C6, psk) in
+            let H6 : Data<adv> = crh(concat(H5, tau)) in
+            let emptystring : Data<adv> |0| = call get_empty_i() in
+            
+            corr_case msg2_C7[2] when (msg2_ephemeral == dhpk(get(E_resp))) in
+            case st_aead_dec(k0, msg2_empty, 0, H6) 
+            | None => None<ty:Unit>()
+            | Some msg2_empty_dec => 
+                if eq(msg2_empty_dec, emptystring) then begin
+
+                    let H7 = crh(concat(H6, msg2_empty)) in
+                    Some(())
+
+                end else None<ty:Unit>()
+        end else None<ty:Unit>()
+    end else None<ty:Unit>()
+
