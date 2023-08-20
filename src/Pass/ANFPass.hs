@@ -109,6 +109,10 @@ anf e =
           e2' <- anf e2
           ea <- anfAExpr a
           elet ea Nothing (ignore $ Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EIf (aevar (a^.spanOf) y) e1' e2'
+      EGuard a e -> do
+          e' <- anf e
+          ea <- anfAExpr a
+          elet ea Nothing (ignore $ Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EGuard (aevar (a^.spanOf) y) e'
       ERet a -> do
           ea <- anfAExpr a
           elet ea Nothing (ignore $ Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ ERet (aevar (a^.spanOf) y) 

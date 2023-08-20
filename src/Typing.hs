@@ -1631,6 +1631,21 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 t1' <- stripTy (s2n x) t1
                 assertSubtype t2 t1'
                 return t1'
+      EGuard a k -> do
+          t <- inferAExpr a
+          b <- tyFlowsTo t advLbl
+          withSpan (a^.spanOf) $ assert ("Guard must be public") b   
+          t' <- normalizeTy t
+          pathRefinement <- case t'^.val of
+                              TRefined _ xp -> do
+                                  (x, p) <- unbind xp
+                                  return $ subst x a p
+                              _ -> return pTrue
+          x <- freshVar
+          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot k
+          case t1^.val of
+            TOption _ -> stripTy (s2n x) t1 
+            _ -> typeError $ "Guard body must return an option: " ++ show (pretty t1)
       (ERet a) -> do
           t <- inferAExpr a
           getOutTy ot $ tRefined t (bind (s2n ".res") $ pEq (aeVar ".res") a)

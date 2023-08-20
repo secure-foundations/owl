@@ -1063,6 +1063,14 @@ parseExprTerm =
         return $ EIf t e1 e2)
     <|>
     (parseSpanned $ do
+        reserved "guard"
+        a <- parseAExpr
+        reserved "in"
+        e <- parseExpr
+        return $ EGuard a e
+    )
+    <|>
+    (parseSpanned $ do
         reserved "case"
         x <- parseExpr
         xs <- many1 $ do

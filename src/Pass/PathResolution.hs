@@ -553,6 +553,10 @@ resolveExpr e =
           e1' <- resolveExpr e1
           e2' <- resolveExpr e2
           return $ Spanned (e^.spanOf) $ EIf a' e1' e2'
+      EGuard a e1 -> do
+          a' <- resolveAExpr a
+          e1' <- resolveExpr e1
+          return $ Spanned (e^.spanOf) $ EGuard a' e1'
       ERet a -> do
           a' <- resolveAExpr a
           return $ Spanned (e^.spanOf) $ ERet a'

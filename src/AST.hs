@@ -383,6 +383,7 @@ data ExprX =
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
+    | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
     | EIncCtr Path ([Idx], [Idx])
@@ -746,6 +747,8 @@ instance Pretty ExprX where
     pretty (EUnpack a k) = pretty "unpack a .... TODO"
     pretty (EIf t e1 e2) = 
         pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
+    pretty (EGuard a e) = 
+        pretty "guard" <+> pretty a <+> pretty "in" <+> pretty e
     pretty (ERet ae) = pretty ae
     pretty (EAdmit) = pretty "admit"
     pretty (ECall f is as) = 
