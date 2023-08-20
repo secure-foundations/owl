@@ -1853,7 +1853,10 @@ checkCryptoOp ot cop args = do
                       pnorm' <- normalizePath p'
                       assert ("Wrong counter for AEAD: expected " ++ show (pretty p') ++ " but got " ++ show (pretty p)) $ pnorm `aeq` pnorm'
                       b1 <- isSubtype t tm
-                      b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) xaad
+                      (xa, aadp) <- unbind xaad
+                      b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ 
+                          pImpl (pNot $ pFlow (nameLbl k) advLbl)
+                                (subst xa (aeVar ".res") aadp)
                       if b1 && b2 then return $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
                                   else mkSpanned <$> trivialTypeOf (map snd args)
                   _ -> typeError $ "Wrong name type for StAEAD key: "
