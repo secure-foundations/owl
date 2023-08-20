@@ -179,6 +179,7 @@ data PropX =
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
     | PQuantIdx Quant  (Bind IdxVar Prop)
+    | PQuantBV Quant  (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
     | PRO AExpr AExpr Int
     | PApp Path [Idx] [AExpr]
@@ -660,6 +661,9 @@ instance Pretty PropX where
     pretty (PQuantIdx q b) = 
         let (x, p) = prettyBind b in
         pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
+    pretty (PQuantBV q b) = 
+        let (x, p) = prettyBind b in
+        pretty q <+> x <+> pretty ": bv" <> pretty "." <+> p
     pretty (PRO a b i) = pretty "ro(" <> pretty a <> pretty "," <+> pretty b <> pretty "," <+> pretty i <> pretty ")"
     pretty (PApp p is xs) = pretty p <> angles (mconcat $ map pretty is) <> list (map pretty xs)
     pretty (PHappened s ixs xs) = 

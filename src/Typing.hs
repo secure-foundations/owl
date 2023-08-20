@@ -1186,6 +1186,9 @@ checkProp p =
           (PQuantIdx _ ip) -> do
               (i, p) <- unbind ip
               local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
+          (PQuantBV _ xp) -> do
+              (x, p) <- unbind xp
+              withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ checkProp p 
           PApp s is xs -> do
               mapM_ checkIdx is
               _ <- mapM inferAExpr xs
@@ -1317,6 +1320,10 @@ stripProp x p =
           (i, p') <- unbind ip
           p'' <- stripProp x p'
           return $ mkSpanned $ PQuantIdx q (bind i p'')
+      PQuantBV q xp -> do
+          (y, p) <- unbind xp               
+          p' <- stripProp x p
+          return $ mkSpanned $ PQuantBV q (bind y p')
       PHappened s _ xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
       PLetIn a yp -> 

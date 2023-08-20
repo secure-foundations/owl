@@ -667,6 +667,10 @@ resolveProp p =
           (i, p') <- unbind ip
           p''  <- resolveProp p'
           return $ Spanned (p^.spanOf) $ PQuantIdx q $ bind i p''
+      PQuantBV q xp -> do
+          (x, p') <- unbind xp
+          p'' <- resolveProp p'
+          return $ Spanned (p^.spanOf) $ PQuantBV q $ bind x p''
 
 
                                             

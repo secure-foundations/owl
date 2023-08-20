@@ -480,6 +480,15 @@ interpretProp p =
       (PIsConstant a) -> do
           v <- interpretAExp a
           return $ SApp [SAtom "IsConstant", v]
+      (PQuantBV q ip) -> do
+          (x, p) <- liftCheck $ unbind ip
+          vVs <- use varVals
+          varVals %= (M.insert x (SAtom $ show x))
+          v <- interpretProp p
+          varVals .= vVs
+          case q of
+            Forall -> return $ sForall [(SAtom $ show x, bitstringSort)] v [] $ "forall_" ++ show x
+            Exists -> return $ sExists [(SAtom $ show x, bitstringSort)] v [] $ "exists_" ++ show x
       (PQuantIdx q ip) -> do
           (i, p') <- liftCheck $ unbind ip
           sIE <- use symIndexEnv

@@ -33,17 +33,39 @@ name E_resp : DH @ Responder
 name S_init : DH @ Initiator
 name S_resp : DH @ Responder
 
+predicate msg1_C2_aad(x) = 
+    (x ==
+     crh(concat(
+             crh(concat(
+                     crh(concat(
+                         crh("construction"),
+                         "identifier"
+                             )),
+                      dhpk(get(S_resp))
+                     )),
+             dhpk(get(E_init))) 
+            ))
+
+predicate msg1_C3_aad(x) = 
+    (exists y : bv. 
+        exists z : bv. 
+            msg1_C2_aad[y] /\
+            x == crh(concat(y, z))
+    )
+    
+    
+
 name msg1_C1 : RO crh("construction") || dhpk(get(E_init)) -> nonce
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
     st_aead dhpk(S_init)
-            aad x. true
+            aad x. msg1_C2_aad[x]
             nonce aead_counter_msg1_C2
             nonce_pattern *
 counter aead_counter_msg1_C3 @ Initiator
 name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
     st_aead (Data<adv> |12|)
-            aad x.true
+            aad x. msg1_C3_aad[x]
             nonce aead_counter_msg1_C3
             nonce_pattern *
 
@@ -54,6 +76,22 @@ name msg2_C4 : RO get(msg1_C3[0]) || dhpk(get(E_resp)) -> nonce
 name msg2_C5 : RO get(msg2_C4[0]) || dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
 name msg2_C6 : RO get(msg2_C5[0]) || dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
 counter aead_counter_msg2_C7 @ Responder
+
+// TODO: doesn't yet work for the protocol
+predicate msg2_C7_aad(x) =  
+    exists msg_timestamp : bv. 
+        exists h : bv.
+            exists tau : bv. 
+            msg1_C3_aad[h] /\
+            x == crh(concat(
+                        crh(concat(
+                            crh(concat(h, msg_timestamp)),
+                            dhpk(get(E_resp))
+                                )),
+                        tau))
+            
+        
+
 name msg2_C7 : RO get(msg2_C6[0]) || "0000" -> nonce || nonce || 
     st_aead (Data<adv> |0|)
             aad x. true

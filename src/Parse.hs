@@ -482,7 +482,9 @@ parseQuantBody q i = do
                 return $ PQuantIdx q $ bind (s2n i) p
             parseBVQuant q i = do
                 reserved "bv"
-                error "Parse error: bv unsupported with forall"
+                symbol "."
+                p <- parseProp
+                return $ PQuantBV q $ bind (s2n i) p
 
 parsePropTable = [ 
     [ Prefix (do
