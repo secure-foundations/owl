@@ -1795,17 +1795,42 @@ prettyMaybe x =
       Nothing -> pretty "Nothing"
       Just x -> pretty "Just" <+> pretty x
 
-isConstant :: AExpr -> Check Bool
+isConstant :: AExpr -> Bool
 isConstant a = 
     case a^.val of
-      AEApp _ _ xs -> do
-          bs <- mapM isConstant xs
-          return $ and bs
-      AEHex _ -> return True
-      AEInt _ -> return True
-      AELenConst _ -> return True
+      AEApp _ _ xs -> and $ map isConstant xs
+      AEHex _ -> True
+      AEInt _ -> True
+      AELenConst _ -> True
       AEPackIdx _ a -> isConstant a
-      _ -> return False
+      _ -> False
+
+proveDisjointContents :: AExpr -> AExpr -> Check ()
+proveDisjointContents x y = do
+    ns1 <- getNameContents x
+    ns2 <- getNameContents y
+    ns1' <- mapM normalizeNameExp ns1
+    ns2' <- mapM normalizeNameExp ns2
+    let b1 = any (\x -> all (\y -> not $ x `aeq` y) ns2') ns1'
+    let b2 = any (\x -> all (\y -> not $ x `aeq` y) ns1') ns2'
+    assert ("Cannot prove disjointness of " ++ show (pretty x) ++ " and " ++ show (pretty y) ++ ": got " ++ show (pretty ns1') ++ " and " ++ show (pretty ns2')) $ b1 || b2
+        where
+            -- Computes the set of names that are contained verbatim in the
+            -- expression
+            getNameContents :: AExpr -> Check [NameExp]
+            getNameContents a = withSpan (a^.spanOf) $
+                case a^.val of
+                  _ | isConstant a -> return []
+                  AEGet ne -> return [ne]
+                  AEApp f _ xs -> do
+                      case f of
+                        _ | f `aeq` topLevelPath "concat" -> do
+                            ns <- mapM getNameContents xs
+                            return $ concat ns
+                        _ | f `aeq` topLevelPath "dhpk" -> return []
+                        _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (pretty f)
+                  _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (pretty a)
+
 
 
 checkCryptoOp :: Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
@@ -1848,10 +1873,16 @@ checkCryptoOp ot cop args = do
               pAnd
                 (mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i)
                 (pEq (aeLength (aeVar ".res")) len)
+      CDisjNotEq x y -> do
+          _ <- local (set tcScope TcGhost) $ inferAExpr x
+          _ <- local (set tcScope TcGhost) $ inferAExpr y
+          assert ("Wrong number of arguments to disjoint_not_eq_lemma") $ length args == 0
+          proveDisjointContents x y
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x y
       CConstantLemma x -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 0
           _ <- local (set tcScope TcGhost) $ inferAExpr x
-          b <- isConstant x
+          let b = isConstant x
           assert ("Argument is not a constant: " ++ show (pretty x)) b
           getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
       CPRF s -> do

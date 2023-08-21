@@ -399,6 +399,7 @@ data CryptOp =
       | CPRF String
       | CCRHLemma AExpr AExpr
       | CConstantLemma AExpr
+      | CDisjNotEq AExpr AExpr
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx])
@@ -700,6 +701,7 @@ instance Pretty CryptOp where
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
     pretty (CConstantLemma a) = pretty "is_constant_lemma<" <> pretty a <> pretty ">()"
+    pretty (CDisjNotEq a1 a2) = pretty "disjoint_not_eq<" <> pretty a1 <> pretty "," <> pretty a2 <> pretty ">()"
     pretty (CAEnc) = pretty "aenc"
     pretty (CADec) = pretty "adec"
     pretty CPKEnc = pretty "pkenc"

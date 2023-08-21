@@ -490,6 +490,10 @@ resolveCryptOp pos cop =
       CConstantLemma x -> do
           x' <- resolveAExpr x
           return $ CConstantLemma x'
+      CDisjNotEq x y -> do
+          x' <- resolveAExpr x
+          y' <- resolveAExpr y
+          return $ CDisjNotEq x' y'
       CCRHLemma x y -> do
           x' <- resolveAExpr x
           y' <- resolveAExpr y

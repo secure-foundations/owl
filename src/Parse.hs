@@ -1203,6 +1203,16 @@ parseCryptOp =
         return $ CConstantLemma x
     )
     <|>
+    (do
+        reserved "disjoint_not_eq_lemma"
+        symbol "<"
+        x <- parseAExpr
+        symbol ","
+        y <- parseAExpr
+        symbol ">"
+        return $ CDisjNotEq x y
+    )
+    <|>
     (reserved "aenc" >> return CAEnc)
     <|>
     (reserved "adec" >> return CADec)
