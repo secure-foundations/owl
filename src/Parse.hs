@@ -1398,24 +1398,33 @@ parseAExprTerm =
     )
     <|>
     (parseSpanned $ do
-        symbol "\""
-        x <- many $ noneOf "\""
-        symbol "\""
-        return $ AEString x
-    )
+        whiteSpace
+        x <- digit
+        case x of 
+          '0' -> do
+              y <- optionMaybe $ try $ digit <|> char 'x'
+              whiteSpace
+              case y of
+                Nothing -> return $ AEInt 0
+                Just 'x' -> do
+                    z <- many hexDigit
+                    whiteSpace
+                    return $ AEHex z
+                Just y' -> do
+                    z <- many1 digit
+                    whiteSpace
+                    return $ AEInt $ read $ x : y' : z
+          _ -> do
+                z <- many digit
+                whiteSpace
+                return $ AEInt $ read $ x : z
+    )             
     <|>
     (parseSpanned $ do
         symbol "|"
         x <- many1 (alphaNum <|> oneOf "_'")
         symbol "|"
         return $ AELenConst x
-    )
-    <|>
-    (parseSpanned $ do
-        whiteSpace
-        i <- many1 digit
-        whiteSpace
-        return $ AEInt (read i)
     )
     <|>
     (parseSpanned $ do 

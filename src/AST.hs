@@ -112,7 +112,7 @@ type EndpointVar = Name Endpoint
 data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
     | AEApp (Path) [FuncParam] [AExpr]
-    | AEString String
+    | AEHex String
     | AEPreimage Path ([Idx], [Idx])
     | AEGet NameExp
     | AEGetEncPK NameExp
@@ -694,7 +694,7 @@ instance Pretty NameTypeX where
 instance Pretty AExprX where
     pretty (AEVar s n) = pretty (unignore s)
     pretty (AEApp f _ as) = pretty f <> tupled (map pretty as)
-    pretty (AEString s) = pretty "\"" <> pretty s <> pretty "\""
+    pretty (AEHex s) = pretty "0x" <> pretty s
     pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
     pretty (AEInt i) = pretty i
     pretty (AEPreimage p ps) = pretty "preimage" <> prettyIdxParams ps <> pretty "(" <> pretty p <> pretty ")"

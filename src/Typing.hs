@@ -893,7 +893,7 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
     case ae^.val of
       AEVar _s _ -> return ()
       AEApp _ _ aes -> forM_ aes ensureOnlyLocalNames
-      AEString _ -> return ()
+      AEHex _ -> return ()
       AEGet n -> do
           b <- nameExpIsLocal n
           assert "Random oracle decl must only involve local names" b
@@ -1784,7 +1784,7 @@ isConstant a =
       AEApp _ _ xs -> do
           bs <- mapM isConstant xs
           return $ and bs
-      AEString _ -> return True
+      AEHex _ -> return True
       AEInt _ -> return True
       AELenConst _ -> return True
       AEPackIdx _ a -> isConstant a

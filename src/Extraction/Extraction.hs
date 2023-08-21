@@ -836,7 +836,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                                                                 pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
                             _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
                     else throwError $ UndefinedSymbol $ show owlFn
-extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
+extractAExpr binds (AEHex s) = error "umimp" -- return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes()")
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of

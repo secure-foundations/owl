@@ -38,7 +38,7 @@ table keys : (exists i. Name(K<@i>)) @ R
 
 def T_main<@i> () @ T<i>
 : Unit =
-    let _ = output "" to endpoint(R) in
+    let _ = output 0 to endpoint(R) in
     input inp in
     if eq(length(inp), |nonce|) then
         let inp':Data<adv> ||nonce|| = inp in

@@ -9,6 +9,11 @@ timestamp (12 bytes)
 mac1 (16 bytes) 
 mac2 (16 bytes)
 
+CONSTANTS:
+construction -> 0x636f6e737472756374696f6e
+identifier -> 0x6964656e746966696572
+mac1--- -> 0x6d6163312d2d2d
+
 */
 
 /*
@@ -38,8 +43,8 @@ predicate msg1_C2_aad(x) =
      crh(concat(
              crh(concat(
                      crh(concat(
-                         crh("construction"),
-                         "identifier"
+                         crh(0x636f6e737472756374696f6e), // construction
+                         0x6964656e746966696572 // identifier
                              )),
                       dhpk(get(S_resp))
                      )),
@@ -55,7 +60,7 @@ predicate msg1_C3_aad(x) =
     
     
 
-name msg1_C1 : RO crh("construction") || dhpk(get(E_init)) -> nonce
+name msg1_C1 : RO crh(0x636f6e737472756374696f6e) || dhpk(get(E_init)) -> nonce
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
     st_aead dhpk(S_init)
@@ -70,7 +75,7 @@ name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) 
             nonce_pattern *
 
 // needs to use the crh hash function, rather than kdf
-name msg1_mac1_key : RO "mac1---" || dhpk(get(S_resp)) -> mackey Data<adv> 
+name msg1_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_resp)) -> mackey Data<adv> 
 
 name msg2_C4 : RO get(msg1_C3[0]) || dhpk(get(E_resp)) -> nonce
 name msg2_C5 : RO get(msg2_C4[0]) || dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
@@ -92,7 +97,7 @@ predicate msg2_C7_aad(x) =
             
         
 
-name msg2_C7 : RO get(msg2_C6[0]) || "0000" -> nonce || nonce || 
+name msg2_C7 : RO get(msg2_C6[0]) || (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
             aad x. true
             nonce aead_counter_msg2_C7
@@ -101,7 +106,7 @@ name msg2_C7 : RO get(msg2_C6[0]) || "0000" -> nonce || nonce ||
 corr adv ==> [msg2_C7[1]]
 
 // needs to use the crh hash function, rather than kdf
-name msg2_mac1_key : RO "mac1---" || dhpk(get(S_init)) -> mackey Data<adv>
+name msg2_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_init)) -> mackey Data<adv>
     admit_uniqueness // TODO
 
 // TODO
@@ -114,7 +119,7 @@ counter N_resp_send @ Responder
 counter N_resp_recv @ Responder
 
 // T_init_send = T_resp_recv || T_resp_send = T_init_recv
-name transp_T : RO get(msg2_C7[0]) || "" -> 
+name transp_T : RO get(msg2_C7[0]) || 0x -> 
     st_aead (Name(plaintext_init))
         aad x. true
         nonce N_init_send
@@ -265,8 +270,8 @@ type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
 // type msg2_val_t = s:msg2_val {valid_msg2_val[s]}
 
 def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val =
-    let C0 = crh("construction") in
-    let H0 = crh(concat(C0, "identifier")) in 
+    let C0 = crh(0x636f6e737472756374696f6e) in
+    let H0 = crh(concat(C0, 0x6964656e746966696572)) in 
     let H1 = crh(concat(H0, dhpk_S_resp)) in
     let C1 = hash<msg1_C1>(C0, dhpk(get(E_init))) in 
     let msg1_ephemeral = dhpk(get(E_init)) in
@@ -286,7 +291,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
     let msg1_sender : Data<adv> |4| = call get_sender_i() in
     let msg1_reserved : Data<adv> |3| = call get_padding_i() in
 
-    let msg1_mac1_k = hash<msg1_mac1_key>("mac1---", dhpk_S_resp) in 
+    let msg1_mac1_k = hash<msg1_mac1_key>(0x6d6163312d2d2d, dhpk_S_resp) in 
     // TODO this needs to incorporate the tag byte 
     let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
         concat(msg1_reserved, concat(msg1_sender, concat(msg1_ephemeral,
@@ -313,25 +318,23 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
      let msg1_mac1 = _msg1_mac1(inp) in
      guard eq(length(msg1_sender), 4) in 
      guard is_group_elem(msg1_ephemeral) in 
-     let C0 = crh("construction") in
-     let H0 = crh(concat(C0, "identifier")) in 
+     let C0 = crh(0x636f6e737472756374696f6e) in
+     let H0 = crh(concat(C0, 0x6964656e746966696572)) in 
      let H1 = crh(concat(H0, dhpk(get(S_resp)))) in
      pcase (msg1_ephemeral != dhpk(get(E_init))) in
      let C1 = hash<msg1_C1>(C0, msg1_ephemeral) in 
      let H2 = crh(concat(H1, msg1_ephemeral)) in
-     is_constant_lemma<crh("construction")>();
-     is_constant_lemma<"mac1---">();
-     is_constant_lemma<"0000">();
-     is_constant_lemma<"">();
 
      // TODO this fails when the transp_T oracle is added?
+     assume(length(dh_combine(msg1_ephemeral, get(S_resp))) != 0);
+     assert(concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != concat(get(msg2_C7[0]), 0x));
      assume(not_in_ro[concat(C1, dh_combine(msg1_ephemeral, get(S_resp)))]);
 
      let C2 = hash<msg1_C2;0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
      let k0 = hash<msg1_C2;1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
 
      corr_case msg1_C2[1] when (msg1_ephemeral == dhpk(get(E_init))) in
-     case st_aead_dec(k0, msg1_static, 0, H2) 
+     case st_aead_dec(k0, msg1_static, 0x, H2) 
          | None => None<ty:responder_msg1_val_t>()
          | Some msg1_static_dec => 
                 guard eq(msg1_static_dec, dhpk_S_init) in 
@@ -343,7 +346,7 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
                 let k1 = hash<msg1_C3;1>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
                 
                 corr_case msg1_C3[1] when (msg1_ephemeral == dhpk(get(E_init))) in
-                case st_aead_dec(k1, msg1_timestamp, 0, H3) 
+                case st_aead_dec(k1, msg1_timestamp, 0x, H3) 
                 | None => None<ty:responder_msg1_val_t>()
                 | Some msg1_timestamp_dec =>
                    let H4 = crh(concat(H3, msg1_timestamp_dec)) in
@@ -357,16 +360,12 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let H4 = _responder_msg1_H4(msg1_val) in
     let dhpk_E_init = _responder_msg1_ephemeral(msg1_val) in
     let msg2_receiver = _responder_msg1_sender(msg1_val) in
-    is_constant_lemma<crh("construction")>();
-    is_constant_lemma<"mac1---">();
-    is_constant_lemma<"0000">();
-    is_constant_lemma<"">();
     
     pcase (dhpk_E_init != dhpk(get(E_init))) in 
     union_case C3 = C3_union in
     false_elim in 
     
-    let psk = "0000" in // should be zeros(32)
+    let psk = 0x00000000 in // should be zeros(32)
 
     let C4 = hash<msg2_C4>(C3, dhpk(get(E_resp))) in
     let msg2_ephemeral = dhpk(get(E_resp)) in
@@ -388,7 +387,7 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let msg2_sender : Data<adv> |4| = call get_sender_r() in
     let msg2_reserved : Data<adv> |3| = call get_padding_r() in
 
-    let msg2_mac1_k = hash<msg2_mac1_key>("mac1---", dhpk_S_init) in
+    let msg2_mac1_k = hash<msg2_mac1_key>(0x6d6163312d2d2d, dhpk_S_init) in
     // // TODO this needs to incorporate the tag byte
     let msg2_mac1 : Data<adv> | |maclen| | = mac(msg2_mac1_k,
         concat(msg2_reserved, concat(msg2_sender, concat(msg2_receiver, concat(msg2_ephemeral, msg2_empty))))
@@ -400,8 +399,8 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let _ = output msg2_output in
     
     // Calculate transport keys
-    let T_resp_recv = hash<transp_T;0>(C7, "") in
-    let T_resp_send = hash<transp_T;1>(C7, "") in
+    let T_resp_recv = hash<transp_T;0>(C7, 0x) in
+    let T_resp_send = hash<transp_T;1>(C7, 0x) in
     let retval = transp_keys(msg2_receiver, msg2_sender, dhpk_E_init, msg2_ephemeral, T_resp_recv, T_resp_send) in
 
     retval
@@ -421,20 +420,25 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
 
     guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
     guard is_group_elem(msg2_ephemeral) in 
-    is_constant_lemma<crh("construction")>();
-    is_constant_lemma<"mac1---">();
-    is_constant_lemma<"0000">();
-    is_constant_lemma<"">();
 
-    let psk = "0000" in // should be zeros(32)
+    let psk = 0x00000000 in // should be zeros(32)
 
     pcase (msg2_ephemeral == dhpk(get(E_resp))) in
 
+    assume (msg2_ephemeral != dhpk(get(E_resp)) ==> 
+        not_in_ro[concat(C3, msg2_ephemeral)]
+        );
     let C4 = hash<msg2_C4>(C3, msg2_ephemeral) in
     let H5 = crh(concat(H4, msg2_ephemeral)) in
     
+    assume (msg2_ephemeral != dhpk(get(E_resp)) ==> 
+        not_in_ro[concat(C4, dh_combine(msg2_ephemeral, get(E_init)))] 
+        );
     let C5 = hash<msg2_C5>(C4, dh_combine(msg2_ephemeral, get(E_init))) in
 
+    assume (msg2_ephemeral != dhpk(get(E_resp)) ==> 
+        not_in_ro[concat(C5, dh_combine(msg2_ephemeral, get(S_init)))] 
+        );
     let C6 = hash<msg2_C6>(C5, dh_combine(msg2_ephemeral, get(S_init))) in
     let C7 = hash<msg2_C7;0>(C6, psk) in
     let tau = hash<msg2_C7;1>(C6, psk) in
@@ -443,15 +447,15 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     let emptystring : Data<adv> |0| = call get_empty_i() in
     
     corr_case msg2_C7[2] when (msg2_ephemeral == dhpk(get(E_resp))) in
-    case st_aead_dec(k0, msg2_empty, 0, H6) 
+    case st_aead_dec(k0, msg2_empty, 0x, H6) 
     | None => None<ty:transp_keys_t>()
     | Some msg2_empty_dec => 
         guard eq(msg2_empty_dec, emptystring) in 
         let H7 = crh(concat(H6, msg2_empty)) in
         
         // Calculate transport keys
-        let T_init_send = hash<transp_T;0>(C7, "") in
-        let T_init_recv = hash<transp_T;1>(C7, "") in
+        let T_init_send = hash<transp_T;0>(C7, 0x) in
+        let T_init_recv = hash<transp_T;1>(C7, 0x) in
         let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init)), msg2_ephemeral, T_init_send, T_init_recv) in
         Some(retval)
 
@@ -468,7 +472,7 @@ def transp_send_init (transp_keys_val : transp_keys_t) @ Initiator
     let transp_counter = get_counter N_init_send in
     assume(length(transp_counter) == 8); // TODO add |counter| length const
 
-    let transp_packet = st_aead_enc<n_init_send>(T_init_send, plaintext, "") in
+    let transp_packet = st_aead_enc<N_init_send>(T_init_send, plaintext, 0x) in
 
     let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in

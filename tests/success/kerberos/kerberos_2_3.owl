@@ -37,7 +37,7 @@ def service_main () @ service
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
-                         let _ = output "" to endpoint(client) in ()
+                         let _ = output 0 to endpoint(client) in ()
                      else ())
 
 // called by the respective client_main() functions for the two versions of kerberos

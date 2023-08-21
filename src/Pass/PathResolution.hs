@@ -465,7 +465,7 @@ resolveAExpr a =
           ps' <- mapM resolveFuncParam ps
           as' <- mapM resolveAExpr as
           return $ Spanned (a^.spanOf) $ AEApp f' ps' as'
-      AEString _ -> return a
+      AEHex _ -> return a
       AEPreimage p ps -> do
           p' <- resolvePath (a^.spanOf) PTName p
           return $ Spanned (a^.spanOf) $ AEPreimage p' ps

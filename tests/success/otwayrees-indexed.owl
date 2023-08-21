@@ -200,9 +200,9 @@ def Bob_main<i> (
 
     begin case encm' 
         | mA2_enc _ =>
-            let _ = output "" to endpoint(AS) in
+            let _ = output 0 to endpoint(AS) in
             input _ in
-            let _ = output "" to endpoint(Alice) in
+            let _ = output 0 to endpoint(Alice) in
             pack<j>(bob_None<idx i, idx j>())
         | mA1_enc v =>
             if eq(length(M'), |nonce|) && eq(length(A'), |nonce|) && eq(length(v), cipherlen((4 * |nonce|) + |tag|)) then
@@ -221,7 +221,7 @@ def Bob_main<i> (
                 // let _ = check_session_identifier(M') in
 
                 begin case adec(kB, x2') 
-                    | None => let _ = output "" to endpoint(Alice) in pack<j>(bob_None<idx i, idx j>())
+                    | None => let _ = output 0 to endpoint(Alice) in pack<j>(bob_None<idx i, idx j>())
                     | Some res =>
                         unpack i', res' = res in
                         unpack j', res'' = res' in
@@ -240,9 +240,9 @@ def Bob_main<i> (
                         end in pack<j'>(o)
                 end
             else
-                let _ = output "" to endpoint(AS) in
+                let _ = output 0 to endpoint(AS) in
                 input _ in
-                let _ = output "" to endpoint(Alice) in
+                let _ = output 0 to endpoint(Alice) in
                 pack<j>(bob_None<idx i, idx j>())
     end
     
@@ -279,10 +279,10 @@ def AS_main<i> () @ AS
                         | mA1 msg1A =>
                             // attempt to decrypt the second message only after the first one decrypts correctly
                             begin case x2
-                                | mB2_enc =>  let _ = output "" to endpoint(Bob) in ()
+                                | mB2_enc =>  let _ = output 0 to endpoint(Bob) in ()
                                 | mB1_enc =>
                                     begin case adec(kB, x2)
-                                        | None =>  let _ = output "" to endpoint(Bob) in ()
+                                        | None =>  let _ = output 0 to endpoint(Bob) in ()
                                         | Some resB =>
                                             unpack j3, resB' = resB in
                                             unpack j4, resB'' = resB' in
@@ -296,12 +296,12 @@ def AS_main<i> () @ AS
                                                     let encmB = aenc(kB, pack<j3>(pack<i>(mB2<idx j3, idx i>(kB_message_2<idx j3, idx i>(_nB1<idx j3>(msg1B), kab))))) in
                                                     let _ = output msg3_StoB(M, encmA, encmB) to endpoint(Bob)
                                                     in ()
-                                                | mB2 _ => let _ = output "" to endpoint(Bob) in ()
+                                                | mB2 _ => let _ = output 0 to endpoint(Bob) in ()
                                             end
                                     end
                             end
-                        | mA2 _ =>  let _ = output "" to endpoint(Bob) in ()
+                        | mA2 _ =>  let _ = output 0 to endpoint(Bob) in ()
                     end
             end
-    else let _ = output "" to endpoint(Bob) in ()
+    else let _ = output 0 to endpoint(Bob) in ()
 // ************************************************************************

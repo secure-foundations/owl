@@ -353,7 +353,7 @@ def service_main () @ service
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
-                         let _ = output "" to endpoint(client) in ()
+                         let _ = output 0 to endpoint(client) in ()
                      else ())
 
 def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC : encpk(seckeyCnew)) @ authserver

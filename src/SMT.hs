@@ -6,6 +6,7 @@ module SMT where
 import AST
 import Data.List
 import Control.Monad
+import Numeric (readHex)
 import Data.Maybe
 import System.Process
 import Control.Lens
@@ -407,6 +408,23 @@ tyConstraints t v = do
     vt <- smtTy t
     return $ SApp [SAtom "HasType", v, vt]
 
+makeHex :: String -> Sym SExp
+makeHex s = do
+    hc <- use hexConstants
+    if M.member s hc then
+        return $ hc M.! s
+    else do
+        let len = case length s of
+                         0 -> 0
+                         _ -> 4 * (length s)
+        let s' = "%hc_" ++ s
+        emit $ SApp [SAtom "declare-const", SAtom s', SAtom "Bits"]
+        emitAssertion $ sEq (sLength (SAtom s')) (SApp [SAtom "I2B", SAtom $ show len])
+        emitAssertion $ SApp [SAtom "IsConstant", SAtom s']
+        hexConstants %= (M.insert s (SAtom s'))
+        return $ SAtom s'
+
+
 interpretAExp :: AExpr -> Sym SExp
 interpretAExp ae = 
     case ae^.val of
@@ -425,7 +443,7 @@ interpretAExp ae =
           _ -> do
               vf <- getFunc =<< (smtName f)
               return $ sApp $ vf : vs
-      AEString s -> return $ SApp [SAtom "S2B", SAtom $ "\"" ++ s ++ "\""]
+      AEHex s -> makeHex s
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
       AEPreimage p ps -> do

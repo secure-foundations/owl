@@ -38,7 +38,7 @@ module Kerberos_Stage23 (P : Params, Stage1 : Kerberos_Stage1(P)) = {
                      | None => ()
                      | Some u =>
                          if eq(u, get(P.uname)) then
-                             let _ = output "" to endpoint(P.client) in ()
+                             let _ = output 0 to endpoint(P.client) in ()
                          else ())
 
     def authserver_main() @ P.authserver : Unit = call Stage1.authserver_main()

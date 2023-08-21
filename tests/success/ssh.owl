@@ -129,7 +129,7 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
             let k      :if sec(b1) /\ sec(c) then Name(l2) else Data<adv> = hash<l2>(ss) in 
             
             // request PFA to sign
-            let request = _req("a") in // TODO: "a" is the hash
+            let request = _req(1) in // TODO: 1 is the hash
             let enc_request = aenc(k11, request) in
             let _ = output enc_request to endpoint(PFA) in
 
@@ -222,7 +222,7 @@ def PDIS_KE () @ PDIS
                     let ss     :if sec(skPFA) then shared_secret(b, a) else Data<adv /\ [b]> = dh_combine(g_pow_a, get(b)) in
                     // ss_swap?
                     let k11    :if sec(a) /\ sec(b) then Name(l1) else Data<adv> = hash<l1>(ss) in
-                    let _ = output "" to endpoint(SDIS) in // TODO: The hash stuff
+                    let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
                     call PDIS_actual(k11)
 
 

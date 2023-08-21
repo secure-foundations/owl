@@ -42,7 +42,7 @@ anfAExpr :: Fresh m => AExpr -> m Expr
 anfAExpr a =
     case a^.val of
       AEVar _ _ -> return $ Spanned (a^.spanOf) $ ERet a
-      AEString _ -> return $ Spanned (a^.spanOf) $ ERet a
+      AEHex _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEGet _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEPreimage _ _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEGetEncPK _ -> return $ Spanned (a^.spanOf) $ ERet a

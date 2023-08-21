@@ -5,7 +5,6 @@
 (set-option :smt.delay_units true)
 
 (declare-sort Bits)
-(declare-fun S2B (String) Bits)
 (declare-fun B2I (Bits) Int)
 (declare-fun I2B (Int) Bits)
 (assert (forall ((x Int)) (!
@@ -29,6 +28,7 @@
     :pattern (length x)
     :qid b2i_length
 )))
+
 
 
 
@@ -195,6 +195,8 @@
 ;; TODO: move this
 (declare-const group_len Bits)
 (declare-const exponent_len Bits)
+(assert (not (= group_len (I2B 0))))
+(assert (not (= exponent_len (I2B 0))))
 (declare-fun dhpk (Bits) Bits)
 (declare-fun IsExponent (Bits) Bool)
 (declare-fun is_group_elem (Bits) Bits)
@@ -270,6 +272,7 @@
 (declare-fun NameKindLength (NameKind) Int)
 (declare-const Enckey NameKind)
 (declare-const Nonce NameKind)
+(assert (>= (NameKindLength Nonce) 256))
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)

@@ -683,7 +683,7 @@ inferAExpr ae = do
         (ar, k) <- getFuncInfo f
         assert (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
         mkSpanned <$> k params (zip args ts)
-      (AEString s) -> return $ tData zeroLbl zeroLbl
+      (AEHex s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag"]

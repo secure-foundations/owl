@@ -107,6 +107,7 @@ instance Subst AExpr CanonAtom
 data SolverEnv = SolverEnv {
     _constants :: M.Map String SExp,
     _lengthConstants :: M.Map String SExp,
+    _hexConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
     _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
@@ -119,7 +120,7 @@ data SolverEnv = SolverEnv {
 
 makeLenses ''SolverEnv
 
-initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
+initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
 
 newtype Sym a = Sym {unSym :: ReaderT Env (StateT SolverEnv (ExceptT String IO)) a }
     deriving (Functor, Applicative, Monad, MonadReader Env, MonadState SolverEnv, MonadIO)

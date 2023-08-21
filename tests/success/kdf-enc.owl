@@ -65,7 +65,7 @@ name k2 : RO get(k1) -> enckey Name(alice2)
 name k3 : RO get(k2) -> enckey Name(alice3) 
 
 name t<i> : nonce @ alice
-name k4<i> : RO get(t<i>) || "a" || "b" -> nonce
+name k4<i> : RO get(t<i>) || 1 || 2 -> nonce
     admit_uniqueness
 
 /*
@@ -85,7 +85,7 @@ def flows()  @ alice : Unit =
 
 def tsts<i> () @ alice : Unit = 
     assert (preimage(k2) == get(k1));
-    assert (preimage<i>(k4) == concat(get(t<i>), concat("a", "b")));
+    assert (preimage<i>(k4) == concat(get(t<i>), concat(1, 2)));
     ()
 
 

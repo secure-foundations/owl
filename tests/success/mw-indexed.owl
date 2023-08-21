@@ -114,4 +114,4 @@ def T_main<i> () @ T
         let x = xor(id_i, m) in
         output m1_t(nT, x) to endpoint(R)
     else
-        output "" to endpoint(R)
+        output 0 to endpoint(R)
