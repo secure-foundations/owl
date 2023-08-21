@@ -105,12 +105,24 @@ name msg2_C7 : RO get(msg2_C6[0]) || (0x00000000) -> nonce || nonce ||
             aad x. true
             nonce aead_counter_msg2_C7
             nonce_pattern *
-    uniqueness_by admit
+    uniqueness_by (
+        let x = concat(get(msg2_C6[0]), 0x00000000) in 
+        assume (x != preimage(msg1_C1));
+        assume (x != preimage(msg1_mac1_key));
+        ()
+        )
+
+    
+
 corr adv ==> [msg2_C7[1]]
 
 // needs to use the crh hash function, rather than kdf
 name msg2_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_init)) -> mackey Data<adv>
-    uniqueness_by admit
+    uniqueness_by (
+        let x = concat(0x6d6163312d2d2d, dhpk(get(S_init))) in 
+        assume (x != preimage(msg2_C7));
+        ()
+        )
 
 // TODO
 name plaintext_init : nonce @ Initiator
@@ -131,7 +143,13 @@ name transp_T : RO get(msg2_C7[0]) || 0x ->
         aad x. true
         nonce N_resp_send
         nonce_pattern *
-    uniqueness_by admit
+    uniqueness_by (
+        let x = concat(get(msg2_C7[0]), 0x) in  
+        assume (x != preimage(msg1_C1));
+        assume (x != preimage(msg1_mac1_key));
+        assume (x != preimage(msg2_mac1_key));
+        ()
+        )
 
 corr [transp_T[0]] ==> [plaintext_init]
 
