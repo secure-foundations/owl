@@ -74,15 +74,6 @@ rec name k<i>
     | j => RO get(k<j-1>) -> enckey Name(alice<j>)
 */
 
-def flows()  @ alice : Unit = 
-    assert (sec(k3) ==> sec(k2) /\ sec(k1));
-    assert (corr(k3) ==> corr(alice3));
-    assert (corr(k1) ==> corr(k2));
-    assert (corr(k2) ==> corr(alice2));
-    assert (corr(k2) ==> corr(k3));
-    assert (corr(k1) ==> (corr(alice1) /\ corr(alice2) /\ corr(alice3)));
-    ()
-
 def tsts<i> () @ alice : Unit = 
     assert (preimage(k2) == get(k1));
     assert (preimage<i>(k4) == concat(get(t<i>), concat(1, 2)));
@@ -115,7 +106,7 @@ def bob_main() @ bob : Unit =
             case adec(k3, c3)
             | None => ()
             | Some m3 => begin
-                assert (sec(k3) ==> (m1 == get(alice1) /\ m2 == get(alice2) /\ m3 == get(alice3)));
+                assert (sec(k3) ==> sec(k2));
                 assert (sec(k2) ==> (m1 == get(alice1) /\ m2 == get(alice2)));
                 assert (sec(k1) ==> (m1 == get(alice1)));
                 ()

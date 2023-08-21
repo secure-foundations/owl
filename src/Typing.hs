@@ -764,11 +764,12 @@ checkDecl d cont = withSpan (d^.spanOf) $
           DeclRO aes nts adm -> do
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
                   local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
-                      _ <- mapM inferAExpr aes
+                      aest <- mapM inferAExpr aes
                       forM_ nts $ \nt -> do
                           checkNameType nt
                           checkROName nt
                       localROCheck aes
+                      validROPreimage $ zip aes aest
                       checkROUnique aes adm
                       nds <- view $ curMod . nameDefs
                       assert (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
@@ -920,6 +921,15 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
       AEPackIdx _ a -> ensureOnlyLocalNames a
       AELenConst _ -> return ()
       AEInt _ -> return ()
+
+validROPreimage :: [(AExpr, Ty)] -> Check ()
+validROPreimage aes = 
+    forM_ aes $ \(a, t) ->
+        if isConstant a then return () else 
+        case (stripRefinements t)^.val of
+          TName _ -> return ()
+          TSS _ _ -> return ()
+          _ -> typeError $ "Unsupported random oracle preimage value: " ++ show (pretty t)
 
 localROCheck :: [AExpr] -> Check ()
 localROCheck aes = laxAssertion $ do
