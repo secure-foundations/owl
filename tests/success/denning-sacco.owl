@@ -37,6 +37,9 @@ struct tickets {
 
 name skS : sigkey signed_by_pkS @ S
 
+name A_username : nonce @ A, B
+name B_username : nonce @ A, B
+
 def S_main () @ S : Unit =
     let sigK = get(skS) in
     input inp in
@@ -56,8 +59,6 @@ enum A_result {
     | A_No
 }
 
-name A_username : nonce @ A, B
-name B_username : nonce @ A, B
 
 def A_main() @ A 
     requires [A_username] /\ [B_username] <= adv

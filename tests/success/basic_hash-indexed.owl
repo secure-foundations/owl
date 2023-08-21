@@ -29,15 +29,16 @@ struct s {
 
 table keys : (exists i. Name(K<@i>)) @ R
 
+enum reader_response {
+    | Ok (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | No
+}
+
 def T_main<@i> () @ T<i>
 : Unit =
     let m = mac(get(K<@i>), get(NT<@i>)) in // include the username here (in mac and PT)
     output s(get(NT<@i>), m) to endpoint(R)
 
-enum reader_response {
-    | Ok (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
-    | No
-}
 
 def R_main () @ R
 : reader_response = 

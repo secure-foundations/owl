@@ -86,6 +86,13 @@ enum alice_result<i, j> {
 
 name Alice_username : nonce @ Alice
 
+enum bob_result<i, j> {
+    | bob_Some Name(KAB<j>)
+    | bob_None
+}
+
+name Bob_username : nonce @ Bob
+
 def Alice_main<i> () @ Alice
     requires ([NA<i>] /\ [Alice_username] <= adv)
 : if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
@@ -122,12 +129,6 @@ def Alice_main<i> () @ Alice
     end
 
 
-enum bob_result<i, j> {
-    | bob_Some Name(KAB<j>)
-    | bob_None
-}
-
-name Bob_username : nonce @ Bob
 
 def Bob_main<i> () @ Bob
     requires ([Bob_username] <= adv)

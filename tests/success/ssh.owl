@@ -1,4 +1,4 @@
-set_option ":rlimit" "65000"
+// set_option ":rlimit" "65000"
 /*
  * Excerpt from Squirrel SSH:
 

@@ -714,11 +714,22 @@ singleLineSpan i =
             go (Position b e i) = Position b (f b) i
             f b = (fst b, 100)
 
+ensureNoConcreteDefs :: Check ()
+ensureNoConcreteDefs = do
+    dfs <- view $ curMod . defs
+    forM_ dfs $ \(_, d) -> do
+        case d of
+          DefHeader _ -> return ()
+          Def ds -> do
+              let (_, d) = unsafeUnbind ds 
+              assert ("Decl cannot appear after concrete def") $ unignore $ _isAbstract d
+
                   
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
     case d^.val of
-      (DeclLocality n dcl) -> 
+      (DeclLocality n dcl) -> do
+          ensureNoConcreteDefs
           case dcl of
             Left i -> local (over (curMod . localities) $ insert n (Left i)) $ cont
             Right (PRes pth@(PDot p s)) -> do
@@ -728,6 +739,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                   Just _ -> local (over (curMod . localities) $ insert n (Right pth)) $ cont
       DeclInclude _ -> error "Include found during type inference"
       DeclCounter n isloc -> do
+          ensureNoConcreteDefs
           ((is1, is2), loc) <- unbind isloc
           local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
@@ -744,6 +756,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
+        ensureNoConcreteDefs
         ((is1, is2), ndecl) <- unbind o
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
@@ -761,6 +774,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                       assert (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
               local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef (aes, nts)) cont 
       DeclModule n imt me omt -> do
+          ensureNoConcreteDefs
           md <- case me^.val of
                   ModuleVar (PRes p) -> return $ MAlias p 
                   _ -> inferModuleExp me
@@ -823,6 +837,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
           let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, abs_or_body))
           addDef n df $ cont
       (DeclCorr ils) -> do
+          ensureNoConcreteDefs
           (is, (l1, l2)) <- unbind ils
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
               checkLabel l1
@@ -866,6 +881,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
             local (over (curMod . tyDefs) $ insert s (TyAbstract)) $
                     cont
       (DeclTable n t loc) -> do
+          ensureNoConcreteDefs
           tbls <- view $ curMod . tableEnv
           locs <- view $ curMod . localities
           assert (show $ pretty "Duplicate table name: " <> pretty n) (not $ member n tbls)

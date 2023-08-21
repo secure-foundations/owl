@@ -68,6 +68,13 @@ enum alice_result {
     | alice_None
 }
 
+// ************************************************************************
+// Bob's result and operation *********************************************
+enum bob_result {
+    | bob_Some Name(KAB)
+    | bob_None
+}
+
 def alice (
     A : Data<static>,
     B : Data<static>
@@ -126,12 +133,6 @@ def server () @ AS
 // ************************************************************************
 
 
-// ************************************************************************
-// Bob's result and operation *********************************************
-enum bob_result {
-    | bob_Some Name(KAB)
-    | bob_None
-}
 
 def bob () @ Bob
 : if sec(KB) then bob_result else Data<adv> =
