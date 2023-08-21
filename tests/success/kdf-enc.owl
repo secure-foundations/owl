@@ -66,7 +66,7 @@ name k3 : RO get(k2) -> enckey Name(alice3)
 
 name t<i> : nonce @ alice
 name k4<i> : RO get(t<i>) || 1 || 2 -> nonce
-    admit_uniqueness
+    uniqueness_by admit
 
 /*
 rec name k<i>

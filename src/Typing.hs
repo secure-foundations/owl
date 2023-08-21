@@ -756,9 +756,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                           checkNameType nt
                           checkROName nt
                       localROCheck aes
-                      case adm of
-                        AdmitUniqueness -> return ()
-                        NoAdmitUniqueness -> checkROUnique aes
+                      checkROUnique aes adm
                       nds <- view $ curMod . nameDefs
                       assert (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
               local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef (aes, nts)) cont 
@@ -945,14 +943,33 @@ checkDeclsWithCont :: [Decl] -> Check a -> Check a
 checkDeclsWithCont [] k = k
 checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
+mkForallIdx :: [IdxVar] -> Prop -> Prop
+mkForallIdx [] p = p
+mkForallIdx (i:is) p = mkSpanned $ PQuantIdx Forall (bind i (mkForallIdx is p))
 
-checkROUnique :: [AExpr] -> Check ()
-checkROUnique es = laxAssertion $ do
+
+mkRODisjointPred :: [AExpr] -> Check Prop
+mkRODisjointPred es = do
+    roPres <- collectLocalROPreimages
+    bs <- forM (zip roPres [0 .. (length roPres - 1)]) $ \(bnd, j) -> do
+        ((is, ps), aes) <- unbind bnd
+        return $ mkForallIdx (is ++ ps) $ pNot $ pEq (mkConcats aes) (mkConcats es)
+    return $ foldr pAnd pTrue bs
+
+
+checkROUnique :: [AExpr] -> Maybe Expr -> Check ()
+checkROUnique es olem = laxAssertion $ do
     roPres <- collectLocalROPreimages
     logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
-    (_, b) <- SMT.smtTypingQuery $ SMT.symROUnique roPres es 
-    assert "RO uniqueness check failed" b
-    return ()
+    disjointPred <- mkRODisjointPred es
+    case olem of
+      Nothing -> do
+          (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ disjointPred
+          assert "RO uniqueness check failed" b
+      Just elem -> do
+          elem' <- ANF.anf elem
+          _ <- checkExpr (Just $ tLemma disjointPred) elem'
+          return ()
 
 checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 

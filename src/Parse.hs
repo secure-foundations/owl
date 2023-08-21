@@ -592,11 +592,10 @@ parseNameDeclBody =
             es <- parseAExpr `sepBy1` (symbol "||")
             symbol "->"
             nts <- parseNameType `sepBy1` (symbol "||")
-            oadm <- optionMaybe $ reserved "admit_uniqueness"
-            let ad = case oadm of
-                       Just _ -> AdmitUniqueness
-                       Nothing -> NoAdmitUniqueness
-            return $ DeclRO es nts ad)
+            olem <- optionMaybe $ do
+                reserved "uniqueness_by"
+                parseExpr
+            return $ DeclRO es nts olem)
          <|>
          (do
              nt <- parseNameType

@@ -410,13 +410,14 @@ tyConstraints t v = do
 
 makeHex :: String -> Sym SExp
 makeHex s = do
+    liftCheck $ assert  "makeHex: string length must be even" (length s `mod` 2 == 0)
     hc <- use hexConstants
     if M.member s hc then
         return $ hc M.! s
     else do
         let len = case length s of
                          0 -> 0
-                         _ -> 4 * (length s)
+                         _ -> (length s) `quot` 2
         let s' = "%hc_" ++ s
         emit $ SApp [SAtom "declare-const", SAtom s', SAtom "Bits"]
         emitAssertion $ sEq (sLength (SAtom s')) (SApp [SAtom "I2B", SAtom $ show len])

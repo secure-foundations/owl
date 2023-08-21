@@ -60,6 +60,7 @@ predicate msg1_C3_aad(x) =
     
     
 
+// TODO: problematic for disjointness
 name msg1_C1 : RO crh(0x636f6e737472756374696f6e) || dhpk(get(E_init)) -> nonce
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) || dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
@@ -75,6 +76,7 @@ name msg1_C3 : RO get(msg1_C2[0]) || dh_combine(dhpk(get(S_resp)), get(S_init)) 
             nonce_pattern *
 
 // needs to use the crh hash function, rather than kdf
+// TODO: problematic for RO disjointness
 name msg1_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_resp)) -> mackey Data<adv> 
 
 name msg2_C4 : RO get(msg1_C3[0]) || dhpk(get(E_resp)) -> nonce
@@ -97,17 +99,18 @@ predicate msg2_C7_aad(x) =
             
         
 
+// TODO: problematic for disjointness
 name msg2_C7 : RO get(msg2_C6[0]) || (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
             aad x. true
             nonce aead_counter_msg2_C7
             nonce_pattern *
-    admit_uniqueness // TODO
+    uniqueness_by admit
 corr adv ==> [msg2_C7[1]]
 
 // needs to use the crh hash function, rather than kdf
 name msg2_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_init)) -> mackey Data<adv>
-    admit_uniqueness // TODO
+    uniqueness_by admit
 
 // TODO
 name plaintext_init : nonce @ Initiator
@@ -128,7 +131,7 @@ name transp_T : RO get(msg2_C7[0]) || 0x ->
         aad x. true
         nonce N_resp_send
         nonce_pattern *
-    admit_uniqueness // TODO
+    uniqueness_by admit
 
 corr [transp_T[0]] ==> [plaintext_init]
 
@@ -268,6 +271,10 @@ type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
 //         /\ not_in_ro[concat(_msg2_val_C7(s), "")]))
 
 // type msg2_val_t = s:msg2_val {valid_msg2_val[s]}
+
+def tst_disjointness() @ Initiator : Unit = 
+    assert (preimage(msg2_C7) != preimage(msg1_C1))
+
 
 def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val =
     let C0 = crh(0x636f6e737472756374696f6e) in

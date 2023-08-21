@@ -152,7 +152,8 @@ resolveDecls (d:ds) =
                       DeclRO aes nts adm -> do
                           aes' <- mapM resolveAExpr aes
                           nts' <- mapM resolveNameType nts
-                          return $ DeclRO aes' nts' adm
+                          adm' <- traverse resolveExpr adm
+                          return $ DeclRO aes' nts' adm' 
           p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
@@ -258,7 +259,6 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
-      _ -> error $ "Unimp: " ++ show d
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
