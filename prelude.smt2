@@ -7,6 +7,13 @@
 (declare-sort Bits)
 (declare-fun B2I (Bits) Int)
 (declare-fun I2B (Int) Bits)
+(declare-fun OkInt (Bits) Bool)
+(assert (forall ((x Int)) (!
+    (OkInt (I2B x))
+    :pattern (I2B x)
+    :qid okint_i2b
+)))
+
 (assert (forall ((x Int)) (!
     (=> (>= x 0)
         (= (B2I (I2B x)) x))
@@ -14,9 +21,10 @@
     :qid i2b_b2i
 )))
 (assert (forall ((x Bits)) (!
-    (and 
-        (= (I2B (B2I x)) x)
-        (>= (B2I x) 0))
+    (=> (OkInt x)
+        (and 
+            (= (I2B (B2I x)) x)
+            (>= (B2I x) 0)))
     :pattern (B2I x)
     :qid b2i_i2b
 )))
@@ -24,13 +32,12 @@
 ;; Built-in functions on bits
 (declare-fun length (Bits) Bits)
 (assert (forall ((x Bits)) (!
-    (>= (B2I (length x)) 0)
+    (and 
+        (>= (B2I (length x)) 0)
+        (OkInt (length x)))
     :pattern (length x)
     :qid b2i_length
 )))
-
-
-
 
 
 (declare-fun concat (Bits Bits) Bits)
@@ -169,23 +176,25 @@
 (declare-fun EnumTag (Int) Bits)
 (assert (forall ((x Int)) (!
     (=> (and (>= x 0) (< x 256))
-        (and (= (B2I (length (EnumTag x))) 8)
+        (and (OkInt (EnumTag x)) 
+             (= (B2I (length (EnumTag x))) 2)
              (= (B2I (EnumTag x)) x)))
     :pattern (EnumTag x)
     :qid enumtag_def
 )))
 
 (define-fun TestEnumTag ((x Int) (y Bits)) Bits
-    (eq (Prefix y 8) (EnumTag x)))
+    (eq (Prefix y 2) (EnumTag x)))
 
 
 (declare-fun Enum ((Seq Type)) Type)
 (assert (forall ((x Bits) (ts (Seq Type))) (!
     (= (HasType x (Enum ts))
        (and
-        (>= (B2I (length x)) 8) ; 8 bits for the tag
-        (< (B2I (Prefix x 8)) (seq.len ts)) ; tag is in range
-        (HasType (Postfix x 8) (seq.nth ts (B2I (Prefix x 8)))) ; payload has correct type
+        (OkInt (Prefix x 2))
+        (>= (B2I (length x)) 2) ; 2 bytes for tag
+        (< (B2I (Prefix x 2)) (seq.len ts)) ; tag is in range
+        (HasType (Postfix x 2) (seq.nth ts (B2I (Prefix x 2)))) ; payload has correct type
        )
     )
     :pattern (HasType x (Enum ts))
@@ -272,7 +281,7 @@
 (declare-fun NameKindLength (NameKind) Int)
 (declare-const Enckey NameKind)
 (declare-const Nonce NameKind)
-(assert (>= (NameKindLength Nonce) 256))
+(assert (>= (NameKindLength Nonce) 32))
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
