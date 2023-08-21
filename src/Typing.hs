@@ -929,6 +929,7 @@ validROPreimage aes =
         case (stripRefinements t)^.val of
           TName _ -> return ()
           TSS _ _ -> return ()
+          TDH_PK _ -> return ()
           _ -> typeError $ "Unsupported random oracle preimage value: " ++ show (pretty t)
 
 localROCheck :: [AExpr] -> Check ()

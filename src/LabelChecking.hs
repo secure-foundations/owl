@@ -38,7 +38,7 @@ solvabilityAxioms aes roName = do
         case (stripRefinements t)^.val of
           TName n -> return [nameLbl n]
           TSS n m -> return [nameLbl n, nameLbl m]
-          _ -> return [] -- ae must be a constant, since valid
+          _ -> return [] -- ae must be a constant or a public value, since valid
     lvs <- mapM symLabel $ concat lss
     return $ sImpl (sAnd $ map (\l -> sFlows l ladv) lvs) (sFlows (SApp [SAtom "LabelOf", roName]) ladv)
 
