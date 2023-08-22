@@ -1834,8 +1834,10 @@ isConstant a =
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
-    ns1 <- getNameContents x
-    ns2 <- getNameContents y
+    x' <- normalizeAExpr x
+    y' <- normalizeAExpr y
+    ns1 <- getNameContents x'
+    ns2 <- getNameContents y'
     ns1' <- mapM normalizeNameExp ns1
     ns2' <- mapM normalizeNameExp ns2
     let b1 = any (\x -> all (\y -> not $ x `aeq` y) ns2') ns1'
@@ -1909,9 +1911,10 @@ checkCryptoOp ot cop args = do
       CConstantLemma x -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 0
           _ <- local (set tcScope TcGhost) $ inferAExpr x
-          let b = isConstant x
+          x' <- normalizeAExpr x
+          let b = isConstant x'
           assert ("Argument is not a constant: " ++ show (pretty x)) b
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x'
       CPRF s -> do
           assert ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args

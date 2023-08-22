@@ -107,10 +107,9 @@ name msg2_C7 : RO get(msg2_C6[0]) || (0x00000000) -> nonce || nonce ||
             nonce_pattern *
     uniqueness_by (
         disjoint_not_eq_lemma<concat(get(msg2_C6[0]), 0x00000000),
-                              concat(crh(0x636f6e737472756374696f6e),
-                                     dhpk(get(E_init)))>();
+                              preimage(msg1_C1)>();
         disjoint_not_eq_lemma<concat(get(msg2_C6[0]), 0x00000000),
-                              concat(0x6d6163312d2d2d, dhpk(get(S_resp)))>();
+                              preimage(msg1_mac1_key)>();
         ()
         )
 
@@ -123,7 +122,7 @@ name msg2_mac1_key : RO 0x6d6163312d2d2d || dhpk(get(S_init)) -> mackey Data<adv
     uniqueness_by (
         let x = concat(0x6d6163312d2d2d, dhpk(get(S_init))) in 
         disjoint_not_eq_lemma<concat(0x6d6163312d2d2d, dhpk(get(S_init))),
-                              concat(get(msg2_C6[0]), 0x00000000)>(); 
+                              preimage(msg2_C7)>();
         ()
         )
 
@@ -149,12 +148,11 @@ name transp_T : RO get(msg2_C7[0]) || 0x ->
     uniqueness_by (
         let x = concat(get(msg2_C7[0]), 0x) in  
         disjoint_not_eq_lemma<concat(get(msg2_C7[0]), 0x),
-                              concat(crh(0x636f6e737472756374696f6e),
-                                     dhpk(get(E_init)))>();
+                              preimage(msg1_C1)>() ;  
         disjoint_not_eq_lemma<concat(get(msg2_C7[0]), 0x),
-                              concat(0x6d6163312d2d2d, dhpk(get(S_resp)))>();
+                              preimage(msg1_mac1_key)>();
         disjoint_not_eq_lemma<concat(get(msg2_C7[0]), 0x),
-                              concat(0x6d6163312d2d2d, dhpk(get(S_init)))>();
+                              preimage(msg2_mac1_key)>();
         ()
         )
 

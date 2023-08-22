@@ -668,6 +668,42 @@ lenConstOfROName ne = do
             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
             _ -> typeError $ "Name not an RO name: " ++ show (pretty ne)
 
+normalizeAExpr :: AExpr -> Check AExpr
+normalizeAExpr ae = 
+    case ae^.val of
+      AEVar _ _ -> return ae
+      AEHex _ -> return ae
+      AEInt _ -> return ae
+      AELenConst _ -> return ae
+      AEPackIdx i a -> do
+          a' <- normalizeAExpr a
+          return $ Spanned (ae^.spanOf) $ AEPackIdx i a'
+      AEGetVK ne -> do
+          ne' <- normalizeNameExp ne
+          return $ Spanned (ae^.spanOf) $ AEGetVK ne'
+      AEGetEncPK ne -> do
+          ne' <- normalizeNameExp ne
+          return $ Spanned (ae^.spanOf) $ AEGetEncPK ne'
+      AEGet ne -> do
+          ne' <- normalizeNameExp ne
+          return $ Spanned (ae^.spanOf) $ AEGet ne'
+      AEPreimage p ps@(p1, p2) -> do  
+          ts <- view tcScope
+          assert (show $ pretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
+          forM_ p1 checkIdxSession
+          forM_ p2 checkIdxPId
+          aes <- getROPreimage p ps 
+          return $ mkConcats aes
+      AEApp p fs aes -> do
+          aes' <- mapM normalizeAExpr aes
+          fs' <- forM fs $ \f ->
+              case f of
+                ParamAExpr a -> ParamAExpr <$> normalizeAExpr a
+                _ -> return f
+          p' <- normalizePath p 
+          return $ Spanned (ae^.spanOf) $ AEApp p' fs' aes'
+
+
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
     debug $ pretty (unignore $ ae^.spanOf) <> pretty "Inferring AExp" <+> pretty ae
@@ -1036,6 +1072,8 @@ getModDefFVs = toListOf fv
 
 getModBodyFVs :: ModBody -> [Name ResolvedPath]
 getModBodyFVs = toListOf fv
+
+-- Unfolds macros
 
 prettyMap :: Pretty a => String -> Map String a -> Doc ann
 prettyMap s m = 
