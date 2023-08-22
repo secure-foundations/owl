@@ -998,12 +998,13 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsSidArgs
-    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)]" <> line <> pretty "fn main()" <+> lbrace <> line <>
+    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)]" <> line <> pretty "fn entrypoint()" <+> lbrace <> line <>
         pretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
         vsep runLocs <> line <>
         config <>
         braces (pretty "println!(\"Incorrect usage\");") <> line <>
-        rbrace
+        rbrace <> line <> line <>
+        pretty "fn main() { entrypoint() }" <> line
     where
         genIdxLocCount (lname, (npids,_,_,_,_)) =
             if npids == 0 then pretty "" else

@@ -33,13 +33,13 @@ pub open spec fn view_option(v: Option<Vec<u8>>) -> Option<Seq<u8>>
 }
 
 // pub closed spec fn cipherlen(l : nat) -> nat {
-//     l + crate::TAG_SIZE as nat
+//     l + crate::TAG_SIZE() as nat
 // }
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
-    recommends k.len() == crate::KEY_SIZE,
-               coins.len() == crate::TAG_SIZE
+    recommends k.len() == crate::KEY_SIZE(),
+               coins.len() == crate::TAG_SIZE()
 {
     todo!()
 }
@@ -48,7 +48,7 @@ pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq
 {
     // match (k, c) {
     //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE && coins.len() == crate::TAG_SIZE) {
+            if (k.len() == crate::KEY_SIZE() && coins.len() == crate::TAG_SIZE()) {
                 evercrypt_spec_of_enc(k, x, coins)
             } else {
                 seq![]
@@ -60,7 +60,7 @@ pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
-    recommends k.len() == crate::KEY_SIZE,
+    recommends k.len() == crate::KEY_SIZE(),
 {
     todo!()
 }
@@ -69,7 +69,7 @@ pub open spec(checked) fn dec(k: Seq<u8>, c: Seq<u8>) -> (x: Option<Seq<u8>>)
 {
     // match (k, c) {
     //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE) {
+            if (k.len() == crate::KEY_SIZE()) {
                 evercrypt_spec_of_dec(k, c)
             } else {
                 None
@@ -108,7 +108,7 @@ pub open spec fn length(x: Seq<u8>) -> nat
 
 pub mod itree {
     use crate::*;
-    use vstd::{modes::*, option::*, prelude::*, seq::*, vec::*, *};
+    use vstd::{modes::*, prelude::*, seq::*, *};
 
     verus! {
     #[is_variant]

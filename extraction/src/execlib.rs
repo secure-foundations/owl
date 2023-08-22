@@ -66,14 +66,14 @@ pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
     //     ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ === speclib::enc(k@, msg@, iv@)),
     //    !((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ === seq![]),
 {
-    todo!()
     // match owl_aead::encrypt_combined(cipher(), k, msg, iv) {
     //     Ok(c) => c,
     //     Err(e) => {
     //         // dbg!(e);
-    //         Vec { vec: vec![] }
+    //         vec![]
     //     }
     // }
+    todo!()
 }
 
 #[verifier(external_body)]

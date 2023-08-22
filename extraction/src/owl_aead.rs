@@ -7,6 +7,7 @@ use vstd::prelude::*;
 verus! {
 
 #[derive(Clone, Copy)]
+#[is_variant]
 pub enum Mode {
     Aes128Gcm,
     Aes256Gcm,
@@ -14,7 +15,7 @@ pub enum Mode {
 }
 
 #[inline]
-pub open spec fn spec_key_size(mode: Mode) -> usize {
+pub open const spec fn spec_key_size(mode: Mode) -> usize {
     match mode {
         Mode::Aes128Gcm => 16,
         Mode::Aes256Gcm => 32,
@@ -43,7 +44,7 @@ pub fn gen_rand_key(mode: Mode) -> Vec<u8> {
 
 /// Get the tag size of the `Mode` in bytes.
 #[inline]
-pub open spec fn spec_tag_size(mode: Mode) -> usize {
+pub open const spec fn spec_tag_size(mode: Mode) -> usize {
     match mode {
         Mode::Aes128Gcm => 16,
         Mode::Aes256Gcm => 16,
@@ -73,7 +74,7 @@ pub fn gen_rand_tag(mode: Mode) -> Vec<u8> {
 
 /// Get the nonce size of the `Mode` in bytes.
 #[inline]
-pub open spec fn spec_nonce_size(mode: Mode) -> usize {
+pub open const spec fn spec_nonce_size(mode: Mode) -> usize {
     match mode {
         Mode::Aes128Gcm => 12,
         Mode::Aes256Gcm => 12,

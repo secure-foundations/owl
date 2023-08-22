@@ -29,26 +29,19 @@ pub use std::time::Duration;
 pub use std::time::Instant;
 
 verus! {
-pub spec const CIPHER: owl_aead::Mode = crate::owl_aead::Mode::Chacha20Poly1305;
-pub const fn cipher() -> (r:owl_aead::Mode) ensures r == CIPHER { crate::owl_aead::Mode::Chacha20Poly1305 }
-pub spec const KEY_SIZE: usize = owl_aead::spec_key_size(CIPHER);
-pub const fn key_size() -> (r:usize) ensures r == KEY_SIZE { owl_aead::key_size(cipher()) }
-pub spec const TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);
-pub const fn tag_size() -> (r:usize) ensures r == TAG_SIZE { owl_aead::tag_size(cipher()) }
-pub spec const NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);
-pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE { owl_aead::nonce_size(cipher()) }
-pub spec const HMAC_MODE: owl_hmac::Mode = crate::owl_hmac::Mode::Sha512;
-pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE { crate::owl_hmac::Mode::Sha512 }
+pub open const spec fn CIPHER() -> owl_aead::Mode { crate::owl_aead::Mode::Chacha20Poly1305 }
+pub const fn cipher() -> (r:owl_aead::Mode) ensures r == CIPHER() { crate::owl_aead::Mode::Chacha20Poly1305 }
+pub open const spec fn KEY_SIZE() -> usize { owl_aead::spec_key_size(CIPHER()) }
+pub const fn key_size() -> (r:usize) ensures r == KEY_SIZE() { owl_aead::key_size(cipher()) }
+pub open const spec fn TAG_SIZE() -> usize { owl_aead::spec_tag_size(CIPHER()) }
+pub const fn tag_size() -> (r:usize) ensures r == TAG_SIZE() { owl_aead::tag_size(cipher()) }
+pub open const spec fn NONCE_SIZE() -> usize { owl_aead::spec_nonce_size(CIPHER()) }
+pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE() { owl_aead::nonce_size(cipher()) }
+pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sha512 }
+pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
 trait OwlOps {
-    // fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str);
     fn owl_enc(&self, key: &[u8]) -> Vec<u8>;
     fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;
-    // fn owl_eq(&self, other: &Self) -> bool
-    // where
-    //     Self: PartialEq,
-    // {
-    //     self == other
-    // }
     fn owl_length(&self) -> usize;
     fn owl_mac(&self, key: &[u8]) -> Vec<u8>;
     fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>>;
@@ -62,11 +55,8 @@ trait OwlOps {
     fn owl_xor(&self, other: &[u8]) -> Vec<u8>;
 }
 impl OwlOps for &[u8] {
-    // fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) {
-    //     output(self, dest_addr, ret_addr);
-    // }
     #[verifier(external_body)] fn owl_enc(&self, key: &[u8]) -> Vec<u8> {
-        match owl_aead::encrypt_combined(CIPHER, &key[..KEY_SIZE], self, &key[KEY_SIZE..], &[]) {
+        match owl_aead::encrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
             Ok(c) => c,
             Err(e) => {
                 // dbg!(e);
@@ -75,7 +65,7 @@ impl OwlOps for &[u8] {
         }
     }
     #[verifier(external_body)] fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> {
-        match owl_aead::decrypt_combined(CIPHER, &key[..KEY_SIZE], self, &key[KEY_SIZE..], &[]) {
+        match owl_aead::decrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
             Ok(p) => Some(p),
             Err(e) => {
                 // dbg!(e);
@@ -92,7 +82,7 @@ impl OwlOps for &[u8] {
     }
     #[verifier(external_body)]
     fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
-        if owl_hmac::verify(HMAC_MODE, key, self, value, None) {
+        if owl_hmac::verify(hmac_mode(), key, self, value, None) {
             Some(self.to_vec())
         } else {
             None
@@ -132,53 +122,6 @@ impl OwlOps for &[u8] {
         }
     }
 }
-// impl OwlOps for Vec<u8> {
-//     fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) {
-//         (&self[..]).owl_output(dest_addr, ret_addr)
-//     }
-//     fn owl_enc(&self, key: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_enc(key)
-//     }
-//     fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> {
-//         (&self[..]).owl_dec(key)
-//     }
-//     fn owl_eq(&self, other: &Self) -> bool {
-//         self == other
-//     }
-//     fn owl_length(&self) -> usize {
-//         self.len()
-//     }
-//     fn owl_mac(&self, key: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_mac(key)
-//     }
-//     fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
-//         (&self[..]).owl_mac_vrfy(key, value)
-//     }
-//     fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_pkenc(pubkey)
-//     }
-//     fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_pkdec(privkey)
-//     }
-//     fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_sign(privkey)
-//     }
-//     fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
-//         (&self[..]).owl_vrfy(pubkey, signature)
-//     }
-//     fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_dh_combine(others_pk)
-//     }
-//     fn owl_dhpk(&self) -> Vec<u8> {
-//         (&self[..]).owl_dhpk()
-//     }
-//     fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> {
-//         (&self[..]).owl_extract_expand_to_len(salt, len)
-//     }
-//     fn owl_xor(&self, other: &[u8]) -> Vec<u8> {
-//         (&self[..]).owl_xor(&other[..])
-//     }
-// }
 
 // #[derive(Serialize, Deserialize, Debug)] // TODO incorporate real parsing/marshaling
 /* pub struct msg {
