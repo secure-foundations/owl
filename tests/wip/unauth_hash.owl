@@ -25,3 +25,19 @@ def bob_main() @ bob
     | Some p =>
         guard (eq(p, 0x00)) in 
         Some(K2)
+
+/* 
+    N' : Data<adv>
+    c : Data<adv>
+    K2 : x:(Data<adv>){ro(concat(get(K), N', 0)) /\ length(x) == |enckey|}
+
+    p : Data<adv>
+    _ : eq(p, 0x00)
+
+    The issue is K2 : Data<adv>. This says that K2 is safe to disclose to the
+    adv, but in this case, we want to maintain its underivability.
+*/
+
+    
+        
+
