@@ -1,0 +1,26 @@
+locality alice
+locality bob
+name K : nonce @ alice, bob
+name N : nonce @ alice
+corr adv ==> [N] // secrecy of N doesn't matter
+
+name roKN : RO get(K) || get(N) -> enckey (x:Data<adv>{x == 0x00})
+
+def alice_main() @ alice : Unit =
+    let K2 = hash<roKN>(get(K), get(N)) in
+    let c = aenc(K2, 0x00) in
+    let _ = output get(N) in
+    output c
+
+def bob_main() @ bob 
+    requires sec(K)
+    : Option(Name(roKN)) =
+    input N' in
+    input c in
+    let K2 = hash<roKN>(get(K), N') in
+    case adec(K2, c)
+    | None => None<ty:Name(roKN)>()
+    | Some p =>
+        if eq(p, 0x00)
+        then Some(K2)
+        else None<ty:Name(roKN)>()
