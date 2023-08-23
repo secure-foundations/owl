@@ -564,7 +564,7 @@ extractExpr loc binds (CInput xsk) = do
     (_, rt', prek, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
     let eWrapped = pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
     let letbinding =
-            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(itree/*, &self.listener */)" <> pretty ";" <> line <>
+            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(itree, &self.listener)" <> pretty ";" <> line <>
             pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [letbinding, prek, kPrettied])
 extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
@@ -931,7 +931,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 [pretty "salt" <> pretty ": Vec<u8>"]
         stateFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
-                pretty "// pub listener: TcpListener" :
+                pretty "pub listener: TcpListener" :
                 map (\(s,_,nsids,npids) -> pretty "pub" <+> pretty (rustifyName s) <>
                         if nsids == 0
                         then pretty ": Rc<Vec<u8>>"
@@ -945,13 +945,13 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
         genInitLoc loc localNames sharedNames pubKeys tbls = do
             localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames
             return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
-                pretty "// let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
+                pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
                 pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
                 pretty "let config:" <+> pretty (locName loc) <> pretty "_config =" <+> pretty "todo!(); // serde_json::from_str(&config_str).expect(\"Can't parse config file\");" <> line <> 
                 pretty "return" <+> pretty (locName loc) <+>
                     braces (hsep . punctuate comma $
-                        -- pretty "/* listener */"  :
+                        pretty "listener"  :
                         map (\(s,_,nsids,_) ->
                                 if nsids == 0
                                 then (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty . rustifyName $ s)
@@ -1028,13 +1028,13 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 
         writeConfig pubKeys (loc, (npids, _, ss, _, _)) =
             let configInits = hsep . punctuate comma $
-                    (map (\(n,_,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".vec.clone()") ss ++
-                     map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".vec.clone()") pubKeys ++
-                     [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".vec.clone()"]) in
+                    (map (\(n,_,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".clone()") ss ++
+                     map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++
+                     [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
             (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
-            pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" <+> pretty "todo!(); //" <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
+            pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" {- <+> pretty "todo!(); //" -} <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
             pretty "let" <+> pretty (locName loc) <> pretty "_config_serialized: std::string::String" <+> pretty "=" <+>
-                    pretty "todo!(); // serde_json::to_string" <> parens (pretty "&" <> pretty (locName loc) <> pretty "_config") <> pretty ".unwrap();" <> line <>
+                    pretty "todo!(); //" <+> pretty "serde_json::to_string" <> parens (pretty "&" <> pretty (locName loc) <> pretty "_config") <> pretty ".unwrap();" <> line <>
             pretty "let mut" <+> pretty (locName loc) <> pretty "_f" <+> pretty "=" <+>
                 pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
                     dquotes (pretty (locName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>

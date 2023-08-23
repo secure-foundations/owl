@@ -54,80 +54,85 @@ trait OwlOps {
     fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8>;
     fn owl_xor(&self, other: &[u8]) -> Vec<u8>;
 }
-impl OwlOps for &[u8] {
-    #[verifier(external_body)] fn owl_enc(&self, key: &[u8]) -> Vec<u8> {
-        match owl_aead::encrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
-            Ok(c) => c,
-            Err(e) => {
-                // dbg!(e);
-                vec![]
-            }
-        }
-    }
-    #[verifier(external_body)] fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> {
-        match owl_aead::decrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                // dbg!(e);
-                None
-            }
-        }
-    }
-    #[verifier(external_body)]
-    fn owl_length(&self) -> usize {
-        self.len()
-    }
-    fn owl_mac(&self, key: &[u8]) -> Vec<u8> {
-        owl_hmac::hmac(hmac_mode(), key, self, None)
-    }
-    #[verifier(external_body)]
-    fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
-        if owl_hmac::verify(hmac_mode(), key, self, value, None) {
-            Some(self.to_vec())
-        } else {
-            None
-        }
-    }
-    fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> {
-        owl_pke::encrypt(&pubkey, self)
-    }
-    fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> {
-        owl_pke::decrypt(&privkey, self)
-    }
-    fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> {
-        owl_pke::sign(&privkey, self)
-    }
-    #[verifier(external_body)]
-    fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
-        if owl_pke::verify(&pubkey, &signature, self) {
-            Some(self.to_vec())
-        } else {
-            None
-        }
-    }
-    fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> {
-        owl_dhke::ecdh_combine(self, &others_pk)
-    }
-    fn owl_dhpk(&self) -> Vec<u8> {
-        owl_dhke::ecdh_dhpk(self)
-    }
-    fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> {
-        owl_hkdf::extract_expand_to_len(self, salt, len)
-    }
-    #[verifier(external_body)]
-    fn owl_xor(&self, other: &[u8]) -> Vec<u8> {
-        {
-            let c: Vec<u8> = self.iter().zip(other).map(|(x, y)| x ^ y).collect();
-            c
-        }
-    }
-}
+// impl OwlOps for &[u8] {
+//     #[verifier(external_body)] fn owl_enc(&self, key: &[u8]) -> Vec<u8> {
+//         match owl_aead::encrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
+//             Ok(c) => c,
+//             Err(e) => {
+//                 // dbg!(e);
+//                 vec![]
+//             }
+//         }
+//     }
+//     #[verifier(external_body)] fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> {
+//         match owl_aead::decrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
+//             Ok(p) => Some(p),
+//             Err(e) => {
+//                 // dbg!(e);
+//                 None
+//             }
+//         }
+//     }
+//     #[verifier(external_body)]
+//     fn owl_length(&self) -> usize {
+//         self.len()
+//     }
+//     fn owl_mac(&self, key: &[u8]) -> Vec<u8> {
+//         owl_hmac::hmac(hmac_mode(), key, self, None)
+//     }
+//     #[verifier(external_body)]
+//     fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
+//         if owl_hmac::verify(hmac_mode(), key, self, value, None) {
+//             Some(self.to_vec())
+//         } else {
+//             None
+//         }
+//     }
+//     fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> {
+//         owl_pke::encrypt(&pubkey, self)
+//     }
+//     fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> {
+//         owl_pke::decrypt(&privkey, self)
+//     }
+//     fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> {
+//         owl_pke::sign(&privkey, self)
+//     }
+//     #[verifier(external_body)]
+//     fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
+//         if owl_pke::verify(&pubkey, &signature, self) {
+//             Some(self.to_vec())
+//         } else {
+//             None
+//         }
+//     }
+//     fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> {
+//         owl_dhke::ecdh_combine(self, &others_pk)
+//     }
+//     fn owl_dhpk(&self) -> Vec<u8> {
+//         owl_dhke::ecdh_dhpk(self)
+//     }
+//     fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> {
+//         owl_hkdf::extract_expand_to_len(self, salt, len)
+//     }
+//     #[verifier(external_body)]
+//     fn owl_xor(&self, other: &[u8]) -> Vec<u8> {
+//         {
+//             let c: Vec<u8> = self.iter().zip(other).map(|(x, y)| x ^ y).collect();
+//             c
+//         }
+//     }
+// }
 
 // #[derive(Serialize, Deserialize, Debug)] // TODO incorporate real parsing/marshaling
-/* pub struct msg {
-ret_addr: std::string::String,
-payload: std::vec::Vec<u8>
-} */
+// pub struct msg {
+//     ret_addr: std::string::String,
+//     payload: std::vec::Vec<u8>
+// }
+
+#[verifier(external_type_specification)]
+#[verifier(external_body)]
+pub struct TcpListenerWrapper ( std::net::TcpListener );
+
 #[verifier(external_body)]
 pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
     requires old(t)@@.is_output(x@, endpoint_of_addr(dest_addr.view()))
@@ -135,24 +140,26 @@ pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_add
 {
     // let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
     // let serialized = serde_json::to_vec(&msg).unwrap();
-    // let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
-    // stream.write_all(&serialized).unwrap();
-    // stream.flush().unwrap();
-    todo!()
+    let serialized = x.to_vec();
+    let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
+    stream.write_all(&serialized).unwrap();
+    stream.flush().unwrap();
+    // todo!()
 }
 
 #[verifier(external_body)]
-pub fn owl_input<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, /*listener: &TcpListener*/) -> (ie:(Vec<u8>, String))
+pub fn owl_input<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
     requires old(t)@@.is_input()
     ensures  t@@ === old(t)@@.take_input(ie.0@, endpoint_of_addr(ie.1.view()))
 {
-    // let (mut stream, _addr) = listener.accept().unwrap();
-    // let mut reader = io::BufReader::new(&mut stream);
-    // let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
-    // reader.consume(received.len());
+    let (mut stream, _addr) = listener.accept().unwrap();
+    let mut reader = io::BufReader::new(&mut stream);
+    let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
+    reader.consume(received.len());
     // let msg : msg = serde_json::from_slice(&received).expect("Couldn't parse input");
     // (Vec { vec: msg.payload }, String::from_rust_string(msg.ret_addr))
-    todo!()
+    // todo!()
+    (received, String::from_str(new_strlit(""))) // TODO proper endpoint variable handling
 }
 
 #[verifier(external_body)]

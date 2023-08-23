@@ -1,7 +1,6 @@
-// use crate::owl_aead;
-use crate::speclib;
+use crate::{owl_aead, speclib, *};
 use std::rc::Rc;
-use vstd::{prelude::*, *};
+// use vstd::{prelude::*, slice::*, *};
 
 verus! {
 
@@ -59,6 +58,8 @@ pub exec fn rc_new(v: Vec<u8>) -> (res: Rc<Vec<u8>>)
     Rc::new(v)
 }
 
+// By convention, we include the nonce at the start of the ciphertext. (TODO check wrt wire formats)
+
 #[verifier(external_body)]
 pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
     ensures
@@ -66,14 +67,17 @@ pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
     //     ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ === speclib::enc(k@, msg@, iv@)),
     //    !((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ === seq![]),
 {
-    // match owl_aead::encrypt_combined(cipher(), k, msg, iv) {
-    //     Ok(c) => c,
-    //     Err(e) => {
-    //         // dbg!(e);
-    //         vec![]
-    //     }
-    // }
-    todo!()
+    match owl_aead::encrypt_combined(cipher(), k, msg, iv, &[]) {
+        Ok(mut c) => {
+            let mut v = iv.to_owned();
+            v.append(&mut c);
+            v
+        },
+        Err(e) => {
+            // dbg!(e);
+            vec![]
+        }
+    }
 }
 
 #[verifier(external_body)]
@@ -85,14 +89,13 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
         // speclib::dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    todo!()
-    // match owl_aead::decrypt_combined(cipher(), slice_subrange(&k, 0, key_size()), self, slice_subrange(&key, key_size(), key.len())) {
-    //     Ok(p) => Some(p),
-    //     Err(e) => {
-    //         // dbg!(e);
-    //         None
-    //     }
-    // }
+    match owl_aead::decrypt_combined(cipher(), &c[..nonce_size()], &c[nonce_size()..], k, &[]) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            // dbg!(e);
+            None
+        }
+    }
 }
 
 } // verus!
