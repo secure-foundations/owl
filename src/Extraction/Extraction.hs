@@ -1050,9 +1050,9 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                      map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++
                      [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
             (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
-            pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" {- <+> pretty "todo!(); //" -} <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
+            pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
             pretty "let" <+> pretty (locName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
-                    pretty "serialize_" <> pretty (locName loc) <> pretty "_config" <> parens (pretty (locName loc) <> pretty "_config") <> pretty ";" <> line <>
+                    pretty "serialize_" <> pretty (locName loc) <> pretty "_config" <> parens (pretty "&" <> pretty (locName loc) <> pretty "_config") <> pretty ";" <> line <>
             pretty "let mut" <+> pretty (locName loc) <> pretty "_f" <+> pretty "=" <+>
                 pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
                     dquotes (pretty (locName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
