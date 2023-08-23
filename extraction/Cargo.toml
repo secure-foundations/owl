@@ -1,14 +1,14 @@
 [package]
-name = "extraction-temp"
+name = "extraction"
 version = "0.1.0"
 edition = "2021"
 
-# [lib]
-# name = "owl_crypto_primitives"
-# path = "src/lib.rs"
+[lib]
+name = "extraction_lib"
+path = "src/lib.rs"
 
 [[bin]]
-name = "extraction-temp"
+name = "extraction"
 path = "src/main.rs"
 
 [dependencies]

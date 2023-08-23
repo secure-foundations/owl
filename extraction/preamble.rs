@@ -16,7 +16,7 @@ pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
 
-pub use serde::{Deserialize, Serialize};
+pub use extraction_lib::*;
 pub use std::collections::HashMap;
 pub use std::env;
 pub use std::fs;
@@ -39,21 +39,21 @@ pub open const spec fn NONCE_SIZE() -> usize { owl_aead::spec_nonce_size(CIPHER(
 pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE() { owl_aead::nonce_size(cipher()) }
 pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sha512 }
 pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
-trait OwlOps {
-    fn owl_enc(&self, key: &[u8]) -> Vec<u8>;
-    fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;
-    fn owl_length(&self) -> usize;
-    fn owl_mac(&self, key: &[u8]) -> Vec<u8>;
-    fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>>;
-    fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8>;
-    fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8>;
-    fn owl_sign(&self, privkey: &[u8]) -> Vec<u8>;
-    fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>>;
-    fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8>;
-    fn owl_dhpk(&self) -> Vec<u8>;
-    fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8>;
-    fn owl_xor(&self, other: &[u8]) -> Vec<u8>;
-}
+// trait OwlOps {
+//     fn owl_enc(&self, key: &[u8]) -> Vec<u8>;
+//     fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>>;
+//     fn owl_length(&self) -> usize;
+//     fn owl_mac(&self, key: &[u8]) -> Vec<u8>;
+//     fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>>;
+//     fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8>;
+//     fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8>;
+//     fn owl_sign(&self, privkey: &[u8]) -> Vec<u8>;
+//     fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>>;
+//     fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8>;
+//     fn owl_dhpk(&self) -> Vec<u8>;
+//     fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8>;
+//     fn owl_xor(&self, other: &[u8]) -> Vec<u8>;
+// }
 // impl OwlOps for &[u8] {
 //     #[verifier(external_body)] fn owl_enc(&self, key: &[u8]) -> Vec<u8> {
 //         match owl_aead::encrypt_combined(cipher(), &key[..key_size()], self, &key[key_size()..], &[]) {
@@ -123,12 +123,6 @@ trait OwlOps {
 //     }
 // }
 
-// #[derive(Serialize, Deserialize, Debug)] // TODO incorporate real parsing/marshaling
-// pub struct msg {
-//     ret_addr: std::string::String,
-//     payload: std::vec::Vec<u8>
-// }
-
 #[verifier(external_type_specification)]
 #[verifier(external_body)]
 pub struct TcpListenerWrapper ( std::net::TcpListener );
@@ -144,7 +138,6 @@ pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_add
     let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
     stream.write_all(&serialized).unwrap();
     stream.flush().unwrap();
-    // todo!()
 }
 
 #[verifier(external_body)]

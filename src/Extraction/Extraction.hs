@@ -887,22 +887,23 @@ preprocessModBody mb = do
             oracles %= M.insert n rtlen
 
 
--- return number of arguments to main and the print of the locality
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann, Doc ann)
+-- return (main func name, number of sessionID args to main, exec code, spec code, unverified lib code)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann, Doc ann, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     let sfs = stateFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
     indexedNameGetters <- mapM genIndexedNameGetter localNames
     let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
+    initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
+    let configDef = configLibCode loc cfs
     case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
         Just (mainName,_,sids,_,_,_) -> do
-            initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
             (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
             return (rustifyName mainName, length sids,
-                pretty "// #[derive(Serialize, Deserialize, Debug)]" <> line <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
                 pretty "impl" <+> pretty (locName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
-                vsep fnspecs)
+                vsep fnspecs,
+                configDef)
         Nothing -> throwError $ LocalityWithNoMain loc
     where
         genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ pretty "" else do
@@ -924,11 +925,24 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 rcClone <> parens (pretty "&self." <> pretty (rustifyName n)) <>
             rbrace
 
+        configLibCode loc cfs =
+            pretty "#[derive(Serialize, Deserialize)]" <> line <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
+            serdeWrappers loc
+
+        serdeWrappers loc =
+            let l = pretty (locName loc) in
+            pretty "pub fn serialize_" <> l <> pretty "_config(l: &" <> l <> pretty "_config) -> String" <> braces (line <>
+                pretty "serde_json::to_string(&l).expect(\"Can't serialize "<> l <> pretty "_config\")" <> line
+            ) <> line <> 
+            pretty "pub fn deserialize_" <> l <> pretty "_config<'a>(s: &'a str) -> " <> l <> pretty "_config" <> braces (line <>
+                pretty "serde_json::from_str(s).expect(\"Can't dserialize "<> l <> pretty "_config\")" <> line
+            )
+
         configFields idxs sharedNames pubKeys =
             vsep . punctuate comma $
-                map (\(s,_,_,npids) -> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Vec<u8>" else pretty ": HashMap<usize, Vec<u8>>")) sharedNames ++
-                map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
-                [pretty "salt" <> pretty ": Vec<u8>"]
+                map (\(s,_,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Vec<u8>" else pretty ": HashMap<usize, Vec<u8>>")) sharedNames ++
+                map (\(s,_,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
+                [pretty "pub" <+> pretty "salt" <> pretty ": Vec<u8>"]
         stateFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
                 pretty "pub listener: TcpListener" :
@@ -948,7 +962,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
                 pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
-                pretty "let config:" <+> pretty (locName loc) <> pretty "_config =" <+> pretty "todo!(); // serde_json::from_str(&config_str).expect(\"Can't parse config file\");" <> line <> 
+                pretty "let config =" <+> pretty "deserialize_" <> pretty (locName loc) <> pretty "_config(&config_str);" <> line <>
                 pretty "return" <+> pretty (locName loc) <+>
                     braces (hsep . punctuate comma $
                         pretty "listener"  :
@@ -964,16 +978,20 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                     ) <>
                 rbrace
 
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann, Doc ann)
+-- returns (index map, executable code, spec code, unverified lib code)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann, Doc ann, Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
-    (sidArgMap, ps, spec_ps) <- foldM (go pubkeys) (M.empty, [], []) $ M.assocs locMap
+    (sidArgMap, ps, spec_ps, ls) <- foldM (go pubkeys) (M.empty, [], [], []) $ M.assocs locMap
     let specEndpoint = Spec.mkSpecEndpoint $ M.keys locMap
-    return (sidArgMap, addrs <> line <> vsep ps, specEndpoint <> line <> Spec.endpointOfAddr <> line <> line <> (vsep . punctuate line $ spec_ps))
+    return (sidArgMap, 
+            addrs <> line <> vsep ps, 
+            specEndpoint <> line <> Spec.endpointOfAddr <> line <> line <> (vsep . punctuate line $ spec_ps),
+            vsep . punctuate line $ ls)
     where
-        go pubKeys (m, ps, ss) (lname, ldata) = do
-            (mainName, nSidArgs, p, s) <- extractLoc pubKeys (lname, ldata)
-            return (M.insert lname (mainName, nSidArgs) m, ps ++ [p], ss ++ [s])
+        go pubKeys (m, ps, ss, ls) (lname, ldata) = do
+            (mainName, nSidArgs, p, s, l) <- extractLoc pubKeys (lname, ldata)
+            return (M.insert lname (mainName, nSidArgs) m, ps ++ [p], ss ++ [s], ls ++ [l])
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
@@ -1033,8 +1051,8 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                      [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
             (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
             pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" {- <+> pretty "todo!(); //" -} <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
-            pretty "let" <+> pretty (locName loc) <> pretty "_config_serialized: std::string::String" <+> pretty "=" <+>
-                    pretty "todo!(); //" <+> pretty "serde_json::to_string" <> parens (pretty "&" <> pretty (locName loc) <> pretty "_config") <> pretty ".unwrap();" <> line <>
+            pretty "let" <+> pretty (locName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
+                    pretty "serialize_" <> pretty (locName loc) <> pretty "_config" <> parens (pretty (locName loc) <> pretty "_config") <> pretty ";" <> line <>
             pretty "let mut" <+> pretty (locName loc) <> pretty "_f" <+> pretty "=" <+>
                 pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
                     dquotes (pretty (locName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
@@ -1093,15 +1111,15 @@ preamble = do
     s <- liftIO $ readFile preambleFn
     return $ pretty s
 
-extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann) 
+extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann, Doc ann) 
 extractModBody mb = do
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
-    (sidArgMap, locsExtracted, locSpecsExtracted) <- extractLocs pubKeys locMap
+    (sidArgMap, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
     p <- preamble
     ep <- entryPoint locMap sharedNames pubKeys sidArgMap
-    return $
+    return (
         p                       <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
         pretty "// ------------------------------------" <> line <>
@@ -1119,6 +1137,9 @@ extractModBody mb = do
         pretty "// ------------------------------------" <> line <> line <>
         ep                      <> line <> line <>
         pretty "} // verus!"    <> line <> line
+      , pretty "pub use serde::{Deserialize, Serialize};" <> line <>
+        libCode
+      )
 
-extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
+extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann))
 extract tcEnv path modbody = runExtractionMonad tcEnv (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody

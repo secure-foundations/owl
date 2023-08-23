@@ -42,15 +42,19 @@ main = do
                           printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
                           if args^.fExtract then do
                               let extfn = "extraction/src/main.rs"
+                              let libfn = "extraction/src/lib.rs"
                               modBody <- doFlattening tcEnv
                               res <- E.extract tcEnv (takeDirectory fn) modBody
                               case res of
                                 Left err -> EB.printErr err
-                                Right rust_code -> do
+                                Right (rust_code, lib_code) -> do
                                   -- putStrLn $ show rust_code
-                                  writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
+                                  writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
                                   callProcess "rustfmt" [extfn]
+                                  writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
+                                  appendFile libfn $ show lib_code
+                                  callProcess "rustfmt" [libfn]
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           else return ()
