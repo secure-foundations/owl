@@ -31,6 +31,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Map.Ordered as OM
 import Control.Lens
 import Prettyprinter
+import Pretty
 import TypingBase
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name
@@ -144,15 +145,21 @@ instance SmtName ResolvedPath where
         return $ go p'
         where
             go :: ResolvedPath -> String
-            go (PDot PTop a) = a 
+            go (PDot PTop a) = cleanSMTIdent a 
             go PTop = "Top"
             go (PPathVar _ x) = show x
-            go (PDot a b) = go a ++ "__" ++ b
+            go (PDot a b) = go a ++ "__" ++ cleanSMTIdent b
 
 instance SmtName Path where
     smtName (PRes p) = smtName p
     smtName r@_ = error $ "smtName of unresolved path: " ++ show r
 
+cleanSMTIdent :: String -> String
+cleanSMTIdent s = map go s
+    where
+        go '\'' = '^' 
+        go c = c
+        
 freshSMTName :: Sym String
 freshSMTName = do
     freshSMTCtr += 1
@@ -241,6 +248,7 @@ queryZ3 logsmt filepath z3results mp q = do
               case pres of
                 Left err -> do
                     putStrLn $ "Z3 parse error on " ++ s
+                    putStrLn q
                     return $ Left $ "Z3 ERROR: " ++ show err
                 Right z3result -> do
                     fn <- case logsmt of
@@ -286,13 +294,17 @@ raceSMT setup k1 k2 = do
               case resp of
                   Right (True, fn) -> putMVar sem $ Just (fn, False)
                   Right (False, _) -> putMVar sem Nothing
-                  Left err -> error $ "Z3 error: " ++ err   
+                  Left err -> do
+                      b <- logSMT filepath q1 
+                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
           p2 <- liftIO $ forkIO $ do 
               resp <- queryZ3 logsmt filepath z3rs z3mp q2
               case resp of
                   Right (True, fn) -> putMVar sem $ Just (fn, True)
                   Right (False, _) -> putMVar sem Nothing 
-                  Left err -> error $ "Z3 error: " ++ err   
+                  Left err -> do
+                      b <- logSMT filepath q2 
+                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
           o1 <- liftIO $ takeMVar sem
           case o1 of
             Just (fn, b) -> do
@@ -355,13 +367,105 @@ sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
-sName :: Bool -> String -> [SExp] -> Maybe Int -> SExp
-sName isRO n ivs oi = 
-    let vn = case oi of
-               Nothing -> if isRO then (SAtom $ "%name_" ++ n ++ "_0") else (SAtom $ "%name_" ++ n)
-               Just i -> SAtom $ "%name_" ++ n ++ "_" ++ (show i)
-    in
-    sApp $ vn : ivs 
+makeHex :: String -> Sym SExp
+makeHex s = do
+    liftCheck $ assert  "makeHex: string length must be even" (length s `mod` 2 == 0)
+    hc <- use hexConstants
+    if M.member s hc then
+        return $ hc M.! s
+    else do
+        let len = case length s of
+                         0 -> 0
+                         _ -> (length s) `quot` 2
+        let s' = "%hc_" ++ s
+        emit $ SApp [SAtom "declare-const", SAtom s', SAtom "Bits"]
+        emitAssertion $ sEq (sLength (SAtom s')) (SApp [SAtom "I2B", SAtom $ show len])
+        emitAssertion $ SApp [SAtom "IsConstant", SAtom s']
+        hexConstants %= (M.insert s (SAtom s'))
+        return $ SAtom s'
+
+getFunc :: String -> Sym SExp
+getFunc s = do
+    fs <- use funcInterps
+    case M.lookup s fs of
+      Just (v, _) -> return v
+      Nothing -> error $ "Function not in SMT: " ++ show s ++ show (M.keys fs)
+
+getTopLevelFunc s = do
+    sn <- smtName $ topLevelPath s
+    getFunc sn
+
+lengthConstant :: String -> Sym SExp
+lengthConstant s = 
+    case s of
+      "nonce" -> return $ SApp [SAtom "NameKindLength", SAtom "Nonce"]    
+      "DH" -> return $ SApp [SAtom "NameKindLength", SAtom "DHkey"]
+      "enckey" -> return $ SApp [SAtom "NameKindLength", SAtom "Enckey"]
+      "pkekey" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
+      "sigkey" -> return $ SApp [SAtom "NameKindLength", SAtom "Sigkey"]
+      "prfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "PRFkey"]
+      "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
+      "signature" -> return $ SAtom "SignatureLen"
+      "vk" -> return $ SAtom "VKLen"
+      "maclen" -> return $ SAtom "MAClen"
+      "tag" -> return $ SAtom "Taglen"
+
+symLenConst :: String -> Sym SExp
+symLenConst s = do
+    v <- lengthConstant s
+    return $ SApp [SAtom "I2B", v]
+
+sLength :: SExp -> SExp
+sLength e = SApp [SAtom "length", e]
+
+bTrue :: SExp
+bTrue = SAtom "TRUE"
+
+bFalse :: SExp
+bFalse = SAtom "FALSE"
+
+unit :: SExp
+unit = SAtom "UNIT"
+
+interpretAExp :: AExpr -> Sym SExp
+interpretAExp ae = 
+    case ae^.val of
+      AEVar _ x -> do
+        env <- use varVals
+        case M.lookup x env of 
+            Just v -> return v
+            Nothing -> error $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (pretty (M.keys env))
+      AEApp f _ xs -> do
+        vs <- mapM interpretAExp xs
+        case f of
+          -- Special cases
+          f | f `aeq` (topLevelPath "UNIT") -> return unit
+          f | f `aeq` (topLevelPath "TRUE") -> return bTrue
+          f | f `aeq` (topLevelPath "FALSE") -> return bFalse
+          _ -> do
+              vf <- getFunc =<< (smtName f)
+              return $ sApp $ vf : vs
+      AEHex s -> makeHex s
+      AELenConst s -> symLenConst s
+      AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
+      AEPreimage p ps as -> do
+          aes <- liftCheck $ getROPreimage p ps as
+          interpretAExp aes
+      AEGet ne -> do
+          liftCheck $ debug $ pretty "AEGet" <+> pretty ne
+          symNameExp ne
+      AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
+      AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
+      AEPackIdx i a -> interpretAExp a
+
+sName :: Bool -> String -> [SExp] -> Maybe ([AExpr], Int) -> Sym SExp
+sName isRO n ivs oi = do
+    (vn, argvs) <- case oi of
+               Nothing -> return $ (if isRO then (SAtom $ "%name_" ++ n ++ "_0") else (SAtom $ "%name_" ++ n), [])
+               Just (as, i) -> do
+                   argvs <- mapM interpretAExp as
+                   return $ (SAtom $ "%name_" ++ n ++ "_" ++ (show i), argvs)
+    return $ sApp $ vn : ivs ++ argvs
 
 withIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
 withIndices xs k = do
@@ -369,6 +473,15 @@ withIndices xs k = do
     symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ show i)) xs) 
     res <- local (over inScopeIndices $ (++) xs) k
     symIndexEnv .= sIE
+    return res
+
+withSMTVars :: [DataVar] -> Sym a -> Sym a
+withSMTVars xs k = do
+    vVs <- use varVals
+    varVals %= (M.union $ M.fromList $ map (\v -> (v, SAtom $ show v)) xs)
+    let tyc = map (\v -> (v, (ignore $ show v, Nothing, tData advLbl advLbl))) xs -- The label on the type here is arbitrary
+    res <- local (over tyContext $ (++) tyc) k
+    varVals .= vVs
     return res
 
 ---- Helpers for logging 
@@ -399,25 +512,27 @@ symIndex idx@(IVar ispan v) = do
           liftIO $ putStrLn $ "Unknown index: " ++ show v
           liftCheck $ typeError (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
 
+data SMTNameDef = 
+    SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))
+      | SMTROName (SExp, ResolvedPath) Int (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
+
 flattenNameDefs :: Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef) ->
-                   Sym (Map (ResolvedPath, Maybe Int) (Bind ([IdxVar], [IdxVar]) NameDef))
+                   Sym [SMTNameDef]
 flattenNameDefs xs = do
     ys <- forM xs $ \(n, b) -> do
         ((is, ps), nd) <- liftCheck $ unbind b
         case nd of
-          BaseDef _ -> return [((n, Nothing), b)]
-          AbstractName -> return [((n, Nothing), b)]
-          RODef (as, nts) ->
-              return $ map (\i -> ((n, Just i), bind (is, ps) $ RODef (as, [nts !! i]))) [0 .. (length nts - 1)]
+          BaseDef (nt, _) -> do
+              sn <- smtName n
+              return [SMTBaseName ((SAtom $ "%name_" ++ sn), n) (bind (is, ps) (Just nt))] 
+          AbstractName -> do
+              sn <- smtName n
+              return [SMTBaseName ((SAtom $ "%name_" ++ sn), n) (bind (is, ps) Nothing)]
+          RODef b  -> do
+              sn <- smtName n
+              (xs, (a, p, nts)) <- liftCheck $ unbind b
+              return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
     return $ concat ys
-
-smtNameOfFlattenedName :: (ResolvedPath, Maybe Int) -> Sym SExp
-smtNameOfFlattenedName (n, oi) = do
-    sn <- smtName n
-    case oi of
-      Nothing -> return $ SAtom $ "%name_" ++ sn
-      Just i -> return $ SAtom $ "%name_" ++ sn ++ "_" ++ (show i)
-
             
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
@@ -429,11 +544,16 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         isRO <- liftCheck $ isNameDefRO s
-        return $ sName isRO sn (vs1 ++ vs2) oi
+        sName isRO sn (vs1 ++ vs2) oi
       PRFName ne1 s -> do
           n <- getSymName ne1
           return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
 
+symNameExp :: NameExp -> Sym SExp
+symNameExp ne = do
+    liftCheck $ debug $ pretty "symNameExp" <+> pretty ne
+    n <- getSymName ne
+    return $ SApp [SAtom "ValueOf", n]
 
 sForall :: [(SExp, SExp)] -> SExp -> [SExp] -> String -> SExp
 sForall vs bdy pats qid = 

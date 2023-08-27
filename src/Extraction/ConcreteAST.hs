@@ -15,6 +15,7 @@ import Data.Maybe
 import Control.Monad
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind

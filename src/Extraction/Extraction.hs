@@ -769,13 +769,13 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
-        (CHash p _ n, [(_,x)]) -> do 
-            roname <- rustifyPath p 
-            orcls <- use oracles
-            case orcls M.!? roname of
-                Nothing -> throwError $ TypeError "unrecognized random oracle"
-                Just outLen -> do
-                    return (VecU8, x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
+        (CHash _ i, [(_,x)]) -> error "unimp" 
+        --    roname <- rustifyPath p 
+        --    orcls <- use oracles
+        --    case orcls M.!? roname of
+        --        Nothing -> throwError $ TypeError "unrecognized random oracle"
+        --        Just outLen -> do
+        --            return (VecU8, x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [(_,k), (_,x)]) -> do return (VecU8, x ++ ".owl_enc(&" ++ k ++ ")")
         (CADec, [(_,k), (_,x)]) -> do return (Option VecU8, x ++ ".owl_dec(&" ++ k ++ ")")
@@ -1205,12 +1205,12 @@ preprocessModBody mb = do
         processOrcls (n, b) = do
             let (_, nd) = unsafeUnbind b
             case nd of
-              TB.RODef (args, rtys) -> do
-                rtlen <- case (map (view val) rtys) of
-                    [NT_Nonce] -> return "NONCE_SIZE"
-                    [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
-                    _ -> throwError $ UnsupportedOracleReturnType n
-                oracles %= M.insert n rtlen
+              TB.RODef _ -> error "unimp" -- do
+                --rtlen <- case (map (view val) rtys) of
+                --    [NT_Nonce] -> return "NONCE_SIZE"
+                --    [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
+                --    _ -> throwError $ UnsupportedOracleReturnType n
+                --oracles %= M.insert n rtlen
               _ -> return ()
 
 

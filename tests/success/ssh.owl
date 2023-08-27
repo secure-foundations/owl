@@ -69,7 +69,13 @@ corr [a] ==> [b]
 corr [b] ==> [a]
 
 name l1 : RO dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
-name l2 : RO dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> // TODO: Enum of sign request and answer
+name l2 : RO dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> 
+    // TODO: Enum of sign request and answer
+name h_corr : RO<x> x
+        -> enckey Data<adv>
+    requires x != dh_combine(dhpk(get(b)), get(a))
+             /\ 
+             x != dh_combine(dhpk(get(b1)), get(c))
 
 struct PFA_msg {
     _pfa1: dhpk(a),
@@ -122,11 +128,13 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
     case vrfy(vkSDIS, _sdis1(inp), _sdis2(inp)) 
         | None => ()
         | Some m =>
-            let g_pow_c:if sec(skSDIS) then dhpk(c) else Data<adv> = m in
-            let ss     :if sec(skSDIS) then shared_secret(b1, c) else Data<adv> = dh_combine(g_pow_c, get(b1)) in
+            let g_pow_c = m in 
+            let ss  = dh_combine(g_pow_c, get(b1)) in
             corr_case b1 in 
             corr_case c in 
-            let k      :if sec(b1) /\ sec(c) then Name(l2) else Data<adv> = hash<l2>(ss) in 
+            assert (sec(b1) /\ sec(c) ==> ss == preimage(l1));
+            assert (ss == preimage(h_corr[ss]));
+            let k = hash<l2, h_corr[ss]>(ss) in 
             
             // request PFA to sign
             let request = _req(1) in // TODO: 1 is the hash

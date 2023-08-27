@@ -149,11 +149,13 @@ resolveDecls (d:ds) =
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
                           return $ DeclBaseName nt' ls'
-                      DeclRO aes nts adm -> do
-                          aes' <- mapM resolveAExpr aes
+                      DeclRO b -> do
+                          (xs, (a, req, nts, lem)) <- unbind b
+                          a' <- resolveAExpr a
+                          req' <- resolveProp req
                           nts' <- mapM resolveNameType nts
-                          adm' <- traverse resolveExpr adm
-                          return $ DeclRO aes' nts' adm' 
+                          lem' <- resolveExpr lem
+                          return $ DeclRO $ bind xs (a', req', nts', lem')
           p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
@@ -466,9 +468,10 @@ resolveAExpr a =
           as' <- mapM resolveAExpr as
           return $ Spanned (a^.spanOf) $ AEApp f' ps' as'
       AEHex _ -> return a
-      AEPreimage p ps -> do
+      AEPreimage p ps as -> do
           p' <- resolvePath (a^.spanOf) PTName p
-          return $ Spanned (a^.spanOf) $ AEPreimage p' ps
+          as' <- mapM resolveAExpr as
+          return $ Spanned (a^.spanOf) $ AEPreimage p' ps as'
       AEGet ne -> do
           ne' <- resolveNameExp ne
           return $ Spanned (a^.spanOf) $ AEGet ne'
@@ -498,9 +501,12 @@ resolveCryptOp pos cop =
           x' <- resolveAExpr x
           y' <- resolveAExpr y
           return $ CCRHLemma x' y'
-      CHash p is i -> do
-          p' <- resolvePath pos PTName p
-          return $ CHash p' is i
+      CHash hints i -> do
+          hints' <- forM hints $ \(p, is, as) -> do
+              p' <- resolvePath pos PTName p
+              as' <- mapM resolveAExpr as
+              return (p', is, as')
+          return $ CHash hints' i
       CAEnc -> return CAEnc
       CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p
@@ -620,6 +626,7 @@ resolveDebugCommand dc =
       DebugPrintProp p -> DebugPrintProp <$> resolveProp p
       DebugPrintExpr e -> DebugPrintExpr <$> resolveExpr e
       DebugPrintLabel l -> DebugPrintLabel <$> resolveLabel l
+      DebugResolveANF a -> DebugResolveANF <$> resolveAExpr a
       DebugPrint _ -> return dc
       DebugPrintTyContext -> return dc
       DebugPrintModules -> return dc

@@ -27,6 +27,7 @@ import qualified PathResolution as PR
 import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
+import Pretty
 import Control.Lens
 import LabelChecking
 import TypingBase
@@ -752,7 +753,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
         ((is, xs), p) <- unbind bnd
         local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))) xs) $
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $
                     checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
@@ -761,19 +762,18 @@ checkDecl d cont = withSpan (d^.spanOf) $
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
           DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
-          DeclRO aes nts adm -> do
+          DeclRO b -> do
+              (xs, (a, p, nts, lem)) <- unbind b
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
-                  local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
-                      aest <- mapM inferAExpr aes
-                      forM_ nts $ \nt -> do
-                          checkNameType nt
-                          checkROName nt
-                      localROCheck aes
-                      validROPreimage $ zip aes aest
-                      checkROUnique aes adm
-                      nds <- view $ curMod . nameDefs
-                      assert (show $ pretty "Duplicate RO name: " <> pretty n) $ not $ member n nds 
-              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef (aes, nts)) cont 
+                local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
+                    withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                        _ <- inferAExpr a
+                        checkProp p
+                        forM_ nts $ \nt -> do
+                            checkNameType nt
+                            checkROName nt
+              checkROUnique (bind ((is1, is2), xs) (a, p, lem))
+              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef $ bind xs (a, p, nts)) cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
           md <- case me^.val of
@@ -808,7 +808,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality l
                   forM_ xs $ \(x, t) -> checkTy $ unembed t
-                  withVars (map (\(x, t) -> (x, (ignore $ show x, ignore Nothing, unembed t))) xs) $ do
+                  withVars (map (\(x, t) -> (x, (ignore $ show x, Nothing, unembed t))) xs) $ do
                       checkProp preReq
                       checkTy tyAnn
                       let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
@@ -821,12 +821,13 @@ checkDecl d cont = withSpan (d^.spanOf) $
                           when doCheck $ do 
                               bdy'' <- ANF.anf bdy'
                               debug $ pretty "Checking def body " <> pretty n
+                              debug $ pretty "Doing ANF on: "   <> pretty bdy'
                               debug $ pretty "Result of anf: "  <> pretty bdy''
                               logTypecheck $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
                               pushLogTypecheckScope
                               local (set tcScope $ TcDef l) $
-                                  withVars [(s2n x, (ignore x, ignore Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
+                                  withVars [(s2n x, (ignore x, Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                                   _ <- checkExpr (Just tyAnn) bdy''
                                   popLogTypecheckScope
                                   t1 <- liftIO $ getCurrentTime
@@ -922,35 +923,6 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
       AELenConst _ -> return ()
       AEInt _ -> return ()
 
-validROPreimage :: [(AExpr, Ty)] -> Check ()
-validROPreimage aes = 
-    forM_ aes $ \(a, t) ->
-        if isConstant a then return () else 
-        case (stripRefinements t)^.val of
-          TName _ -> return ()
-          TSS _ _ -> return ()
-          TDH_PK _ -> return ()
-          _ -> typeError $ "Unsupported random oracle preimage value: " ++ show (pretty t)
-
-localROCheck :: [AExpr] -> Check ()
-localROCheck aes = laxAssertion $ do
-    -- Locality check
-    forM_ aes $ ensureOnlyLocalNames
-    -- Injectivity check
-    ts <- mapM inferAExpr aes
-    bs <- forM ts $ \t ->
-        case (stripRefinements t)^.val of
-          TName ne -> nameExpIsLocal ne
-          TVK ne -> nameExpIsLocal ne
-          TDH_PK ne -> nameExpIsLocal ne
-          TEnc_PK ne -> nameExpIsLocal ne
-          TSS ne ne' -> liftM2 (||) (nameExpIsLocal ne) (nameExpIsLocal ne')
-          _ -> return False
-    assert ("Random oracle decl must involve a local name") $ or bs
-    
-
-
-
 checkROName :: NameType -> Check ()
 checkROName nt =  
     case nt^.val of
@@ -975,28 +947,21 @@ mkForallIdx [] p = p
 mkForallIdx (i:is) p = mkSpanned $ PQuantIdx Forall (bind i (mkForallIdx is p))
 
 
-mkRODisjointPred :: [AExpr] -> Check Prop
-mkRODisjointPred es = do
-    roPres <- collectLocalROPreimages
-    bs <- forM (zip roPres [0 .. (length roPres - 1)]) $ \(bnd, j) -> do
-        ((is, ps), aes) <- unbind bnd
-        return $ mkForallIdx (is ++ ps) $ pNot $ pEq (mkConcats aes) (mkConcats es)
-    return $ foldr pAnd pTrue bs
-
-
-checkROUnique :: [AExpr] -> Maybe Expr -> Check ()
-checkROUnique es olem = laxAssertion $ do
-    roPres <- collectLocalROPreimages
-    logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
-    disjointPred <- mkRODisjointPred es
-    case olem of
-      Nothing -> do
-          (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ disjointPred
-          assert "RO uniqueness check failed" b
-      Just elem -> do
-          elem' <- ANF.anf elem
-          _ <- checkExpr (Just $ tLemma disjointPred) elem'
-          return ()
+checkROUnique :: Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop, Expr) -> Check ()
+checkROUnique b = do
+    pos <- view curSpan
+    warn $ "Random oracle uniqueness check not implemented yet " ++ show (pretty pos)
+    --roPres <- collectLocalROPreimages
+    --logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
+    --disjointPred <- mkRODisjointPred es
+    --case olem of
+    --  Nothing -> do
+    --      (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ disjointPred
+    --      assert "RO uniqueness check failed" b
+    --  Just elem -> do
+    --      elem' <- ANF.anf elem
+    --      _ <- checkExpr (Just $ tLemma disjointPred) elem'
+    --      return ()
 
 checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 
@@ -1019,7 +984,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
           checkTy t
           checkTyPubLen t
           (x, aad) <- unbind xaad
-          withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ checkProp aad
+          withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp aad
           checkNoncePattern np
           checkCounter p
       NT_PKE t -> do
@@ -1068,7 +1033,7 @@ checkTy t = withSpan (t^.spanOf) $
           (TRefined t xp) -> do
               (x, p) <- unbind xp
               checkTy t
-              withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkProp p
+              withVars [(x, (ignore $ show x, Nothing, t))] $ checkProp p
           (TOption t) -> do
               checkTy t
           (TConst s ps) -> do
@@ -1232,7 +1197,7 @@ checkProp p =
               local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
           (PQuantBV _ xp) -> do
               (x, p) <- unbind xp
-              withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ checkProp p 
+              withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp p 
           PApp s is xs -> do
               mapM_ checkIdx is
               _ <- mapM inferAExpr xs
@@ -1473,7 +1438,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
           checkCryptoOp ot cop args
       (EInput xsk) -> do
           ((x, s), k) <- unbind xsk
-          withVars [(x, (ignore $ show x, ignore Nothing, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
+          withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
       (EGetCtr p iargs) -> do 
           checkCounterIsLocal p iargs
           getOutTy ot $ tData advLbl advLbl
@@ -1502,6 +1467,11 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
       (EDebug (DebugPrintModules)) -> do
           ms <- view openModules
           liftIO $ putStrLn $ show ms
+          getOutTy ot $ tUnit
+      (EDebug (DebugResolveANF a)) -> do
+          liftIO $ putStrLn $ "Resolving ANF on " ++ show (pretty a) ++ ":"
+          b <- resolveANF a
+          liftIO $ putStrLn $ "Got " ++ show (pretty b)
           getOutTy ot $ tUnit
       (EDebug (DebugPrint s)) -> do
           liftIO $ putStrLn s
@@ -1538,19 +1508,19 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 debug $ pretty "first case for EUnionCase"
                 logTypecheck $ "First case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t1' <- withVars [(x, (ignore $ show x, ignore Nothing, tRefined t1 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
+                t1' <- withVars [(x, (ignore $ show x, Nothing, tRefined t1 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "first case got" <+> pretty t1'
                 debug $ pretty "second case for EUnionCase"
                 logTypecheck $ "Second case for EUnionCase: " ++ show (pretty a)
                 pushLogTypecheckScope
-                t2' <- withVars [(x, (ignore $ show x, ignore Nothing, tRefined t2 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
+                t2' <- withVars [(x, (ignore $ show x, Nothing, tRefined t2 (bind (s2n ".res") (pEq (aeVar ".res") a))))] $ checkExpr ot e
                 popLogTypecheckScope
                 debug $ pretty "second case got" <+> pretty t2'
                 assertSubtype t1' t2'
                 getOutTy ot =<< stripTy x t2'
             _ -> do  -- Just continue
-                t <- withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkExpr ot e
+                t <- withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
                 getOutTy ot =<< stripTy x t
       (ELet e tyAnn anf sx xe') -> do
           case tyAnn of
@@ -1569,7 +1539,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 x <- freshVar
                 let tx = tLemma (subst ix (mkIVar i) p) 
                 to <- local (over inScopeIndices $ insert i IdxGhost) $ do
-                    withVars [(s2n x, (ignore x, ignore Nothing, tx))] $ checkExpr ot k
+                    withVars [(s2n x, (ignore x, Nothing, tx))] $ checkExpr ot k
                 if i `elem` getTyIdxVars to then
                     return (tExistsIdx (bind i to))
                 else return to
@@ -1586,13 +1556,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') (bind (s2n ".res") (pEq (aeVar ".res") a) )
                 to <- local (over (inScopeIndices) $ insert i IdxGhost) $ do
-                    withVars [(x, (ignore $ show x, ignore Nothing, tx))] $ checkExpr ot e
+                    withVars [(x, (ignore $ show x, Nothing, tx))] $ checkExpr ot e
                 to' <- stripTy x to
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, ignore Nothing, t))] $ checkExpr ot e
+                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
                 to' <- stripTy x t'
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
@@ -1667,8 +1637,8 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 return $ subst x a p 
             _ -> return pTrue
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot e1
-          t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ checkExpr ot e2
+          t1 <- withVars [(s2n x, (ignore x, Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot e1
+          t2 <- withVars [(s2n x, (ignore x, Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pNot $ pEq a aeTrue) pathRefinement)))] $ checkExpr ot e2
           case ot of 
             Just t3 -> return t3
             Nothing -> do
@@ -1686,7 +1656,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                                   return $ subst x a p
                               _ -> return pTrue
           x <- freshVar
-          t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot k
+          t1 <- withVars [(s2n x, (ignore x, Nothing, tRefined tUnit (bind (s2n ".pCond") $ pAnd (pEq a aeTrue) pathRefinement)))] $ checkExpr ot k
           case t1^.val of
             TOption _ -> stripTy (s2n x) t1 
             _ -> typeError $ "Guard body must return an option: " ++ show (pretty t1)
@@ -1710,14 +1680,14 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
             False -> checkExpr ot e
             True -> do 
               x <- freshVar
-              t1 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma p))] $ do
+              t1 <- withVars [(s2n x, (ignore x, Nothing, tLemma p))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
                   r <- if b then getOutTy ot tAdmit else checkExpr ot e
                   popLogTypecheckScope
                   return r
-              t2 <- withVars [(s2n x, (ignore x, ignore Nothing, tLemma (pNot p)))] $ do
+              t2 <- withVars [(s2n x, (ignore x, Nothing, tLemma (pNot p)))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
@@ -1750,7 +1720,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                           Left e -> checkExpr ot e
                           Right (sb, xe) -> do
                               (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, ignore Nothing, td))] $ checkExpr ot e
+                              t <- withVars [(x, (sb, Nothing, td))] $ checkExpr ot e
                               case ot of
                                  Just _ -> return t
                                  Nothing -> stripTy x t
@@ -1761,7 +1731,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                           (Nothing, Just (Left e)) -> checkExpr ot e
                           (Just tc, Just (Right (sb, xe))) -> do
                               (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, ignore Nothing, tc))] $ checkExpr ot e
+                              t <- withVars [(x, (sb, Nothing, tc))] $ checkExpr ot e
                               case ot of
                                 Just _ -> return t
                                 Nothing -> stripTy x t
@@ -1822,15 +1792,6 @@ prettyMaybe x =
       Nothing -> pretty "Nothing"
       Just x -> pretty "Just" <+> pretty x
 
-isConstant :: AExpr -> Bool
-isConstant a = 
-    case a^.val of
-      AEApp _ _ xs -> and $ map isConstant xs
-      AEHex _ -> True
-      AEInt _ -> True
-      AELenConst _ -> True
-      AEPackIdx _ a -> isConstant a
-      _ -> False
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
@@ -1860,6 +1821,23 @@ proveDisjointContents x y = do
                         _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (pretty f)
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (pretty a)
 
+checkROHint :: ROHint -> Check (AExpr, Prop, [NameType])
+checkROHint (p, (is, ps), args) = local (set tcScope TcGhost) $ do
+    b <- getRO p
+    ((ixs, pxs), b') <- unbind b
+    (xs, (pre_, req_, nts_)) <- unbind b'
+    assert ("Wrong index arity to RO " ++ show (pretty p)) $ (length is, length ps) == (length ixs, length pxs)
+    assert ("Wrong var arity to RO " ++ show (pretty p)) $ length args == length xs
+    forM_ is checkIdx
+    forM_ ps checkIdx
+    _ <- forM args inferAExpr
+    return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs args) $ (pre_, req_, nts_) 
+
+findGoodROHint :: AExpr -> Int -> [((AExpr, Prop, [NameType]), ROHint)] -> Check NameExp
+findGoodROHint a _ [] = typeError $ "Cannot prove " ++ show (pretty a) ++ " matches given hints"
+findGoodROHint a i (((a', p', _), (pth, inds, args)) : xs) = do
+    (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ pAnd p' (pEq a a')
+    if b then return (mkSpanned $ NameConst inds pth (Just (args, i))) else findGoodROHint a i xs
 
 
 checkCryptoOp :: Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
@@ -1875,33 +1853,28 @@ checkCryptoOp ot cop args = do
                 (pEq (aeApp (topLevelPath "crh") [] [x])
                      (aeApp (topLevelPath "crh") [] [y]))
                 (pEq x y)
-      CHash p (is, ps) i -> do                            
-          local (set tcScope TcGhost) $ do
-              forM_ is checkIdx
-              forM_ ps checkIdx
-          let aes = map fst args
-          bnd <- getRO p
-          ((ixs, ixps), (aes'_, nts_)) <- unbind bnd
-          assert ("RO index out of bounds") $ i < length nts_
-          assert ("Wrong index arity for RO") $ length is == length ixs
-          assert ("Wrong index arity for RO") $ length ps == length ixps
-          let (aes', nts) = substs (zip ixs is) $ substs (zip ixps ps) (aes'_, nts_)
-          debug $ pretty $ "Trying to prove if " ++ show (pretty aes) ++ " equals " ++ show (pretty aes')
-          (_, b_eq) <- SMT.smtTypingQuery $ SMT.symCheckEqTopLevel aes' aes
-          debug $ pretty $ "symCheckEqTopLevel: " ++ show b_eq
-          len <- local (set tcScope TcGhost) $ lenConstOfROName $ mkSpanned $ NameConst (is, ps) p (Just i)
-          retTy <- if b_eq then return $ mkSpanned $ TName $ mkSpanned $ NameConst (is, ps) p (Just i)
-                           else do
-                              noCollision <- SMT.symDecideNotInRO aes
-                              debug $ pretty $ "symDecideNotInRO: " ++ show noCollision
-                              if noCollision then return $ mkSpanned $ TData advLbl advLbl
-                                     else do
-                                        l <- coveringLabelOf $ map snd args
-                                        return $ mkSpanned $ TData l l
-          getOutTy ot $ tRefined retTy $ bind (s2n ".res") $ 
-              pAnd
-                (mkSpanned $ PRO (mkConcats aes) (aeVar ".res") i)
-                (pEq (aeLength (aeVar ".res")) len)
+      CHash hints i -> do
+          assert ("RO hints must be nonempty") $ length hints > 0
+          hints_data <- forM hints checkROHint
+          let nks = map (map getNameKind) $ map (\(_, _, x)  -> x) hints_data
+          let hints_consistent = all (\x -> x == head nks) nks
+          assert ("RO hints must have consistent name kinds") $ hints_consistent
+          assert ("RO name index out of bounds") $ i < length (head nks)
+          ne <- findGoodROHint (mkConcats $ map fst args) i (zip hints_data hints)
+          lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
+          solvability <- solvabilityAxioms (mkConcats $ map fst args) ne 
+          warn $ "Solvability axioms generated for " ++ show (pretty ne) ++ ": " ++ show (pretty solvability)
+          return $ mkSpanned $ TRefined (tName ne) $ bind (s2n ".res") $ 
+              pAnd (mkSpanned $ PRO (mkConcats $ map fst args) (aeVar ".res") i)
+                (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
+
+      -- 1. Ensure that the hints are nonempty and consistent (name kinds are the same)
+      -- 1.5. Check that i is in bounds
+      -- 2. One by one, try to find a hint that matches the concats of the args 
+      -- 3. If no hint matches, throw an error
+      -- 4. If a hint matches, return the corresponding name type, refined with:
+      --    - RO solvability axioms
+      --    - RO predicate
       CDisjNotEq x y -> do
           _ <- local (set tcScope TcGhost) $ inferAExpr x
           _ <- local (set tcScope TcGhost) $ inferAExpr y

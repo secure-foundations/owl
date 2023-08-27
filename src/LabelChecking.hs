@@ -26,21 +26,6 @@ sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
 
--- If the random oracle preimage is corrupt, then the RO is as well.
--- N.B.: this list does _not_ have to be exhaustive. It is only used to
--- prune impossible paths. We still need to case on the RO label
-solvabilityAxioms :: [AExpr] -> SExp -> Sym SExp
-solvabilityAxioms aes roName = do
-    -- If all labels are corrupt, the RO is corrupt
-    ladv <- symLabel advLbl
-    lss <- forM aes $ \ae -> do
-        t <- liftCheck $ inferAExpr ae
-        case (stripRefinements t)^.val of
-          TName n -> return [nameLbl n]
-          TSS n m -> return [nameLbl n, nameLbl m]
-          _ -> return [] -- ae must be a constant or a public value, since valid
-    lvs <- mapM symLabel $ concat lss
-    return $ sImpl (sAnd $ map (\l -> sFlows l ladv) lvs) (sFlows (SApp [SAtom "LabelOf", roName]) ladv)
 
 nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do

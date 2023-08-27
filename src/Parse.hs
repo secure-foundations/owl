@@ -28,7 +28,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen", "tag", "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -99,9 +99,16 @@ parseNameExp =
         ps <- parseIdxParams 
         oi <- optionMaybe $ do
             symbol "["
+            oas_ <- optionMaybe $ do 
+                as <- parseAExpr `sepBy` (symbol ",")
+                symbol ";"
+                return as
+            let as = case oas_ of
+                        Nothing -> []
+                        Just v -> v
             i <- many1 digit
             symbol "]"
-            return $ read i
+            return $ (as, read i)
         return $ NameConst ps i oi)
 
 parsePath :: Parser Path
@@ -584,18 +591,43 @@ parseNameDecl =
         namedecl_body <- parseNameDeclBody
         return $ DeclName n $ bind inds namedecl_body
 
+parseRequires :: Parser (Maybe Prop)
+parseRequires = do
+    ps <- many $ do
+        reserved "requires"
+        parseProp
+    return $ case ps of
+                [] -> Nothing
+                _ -> Just $ foldl1 pAnd ps
+
 parseNameDeclBody =
     (do
         symbol ":"
         ((do
             reserved "RO"
-            es <- parseAExpr `sepBy1` (symbol "||")
+            xs_ <- optionMaybe $ do
+                symbol "<"
+                xs <- (identifier `sepBy1` (symbol ","))
+                symbol ">"
+                return $ map s2n xs
+            let xs = case xs_ of
+                       Nothing -> []
+                       Just v -> v
+            e <- parseAExpr
             symbol "->"
             nts <- parseNameType `sepBy1` (symbol "||")
+            oreq <- parseRequires
+            let req = case oreq of
+                        Nothing -> pTrue
+                        Just v -> v
             olem <- optionMaybe $ do
                 reserved "uniqueness_by"
                 parseExpr
-            return $ DeclRO es nts olem)
+            let lem = case olem of
+                        Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "UNIT") [] []
+                        Just l -> l
+            return $ DeclRO (bind xs (e, req, nts, lem))
+         )
          <|>
          (do
              nt <- parseNameType
@@ -757,9 +789,7 @@ parseRegularDef n inds = do
     symbol ")"
     symbol "@"
     nl <- parseLocality
-    preReq <- optionMaybe $ do 
-        reserved "requires"
-        parseProp
+    preReq <- parseRequires
     symbol ":"
     tyAnn <- parseTy
     oe <- optionMaybe $ do
@@ -856,6 +886,14 @@ parseDebugCommand =
     )
     <|>
     (try $ do
+        reserved "resolveANF"
+        symbol "("
+        a <- parseAExpr
+        symbol ")"
+        return $ DebugResolveANF a
+    )
+    <|>
+    (try $ do
         reserved "printTy"
         symbol "("
         t <- parseTy
@@ -902,7 +940,7 @@ parseExpr = buildExpressionParser parseExprTable parseExprTerm
 parseExprTable = 
     [ [ Infix (do
     symbol ";" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing (ignore Nothing) "_" (bind (s2n "_") e2))
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing Nothing "_" (bind (s2n "_") e2))
               )
     AssocLeft ] ]
 
@@ -1019,7 +1057,7 @@ parseExprTerm =
         p' <- getPosition
         e' <- parseExpr
         if length xts /= length es then fail "must have same number of binders and expressions" else
-            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn (ignore Nothing) x $ bind (s2n x) k in
+            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
             return $ foldl f e' $ zip xts es
     )
     <|>
@@ -1072,6 +1110,7 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "case"
         x <- parseExpr
+        symbol "{"
         xs <- many1 $ do
           symbol "|"
           c <- identifier
@@ -1081,6 +1120,7 @@ parseExprTerm =
           return (c, case ov of
                        Nothing -> Left e
                        Just x -> Right (ignore x, bind (s2n x) e))
+        symbol "}"
         return $ ECase x xs 
     )
     <|>
@@ -1156,25 +1196,39 @@ parseArgs :: Parser [AExpr]
 parseArgs = 
     parseAExpr `sepBy` (reservedOp ",")
 
+parseROHint :: Parser (Path, ([Idx], [Idx]), [AExpr])
+parseROHint = do
+    p <- parsePath
+    inds <- parseIdxParams
+    xs_ <- optionMaybe $ do
+        symbol "["
+        as <- parseAExpr `sepBy1` (symbol ",")
+        symbol "]"
+        return as
+    let xs = case xs_ of
+               Nothing -> []
+               Just v -> v
+    return (p, inds, xs)
+
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
     (do
         reserved "hash"
-        symbol "<"
-        p <- parsePath
-        oixs <- optionMaybe $ do
-            symbol ","
-            parseIdxParamsNoAngles
-        let idxs = case oixs of
-                    Nothing -> ([], [])
-                    Just v -> v
-        oi <- optionMaybe $ do
-            symbol ";"
-            many1 digit
-        symbol ">"
-        return $ case oi of
-                   Just x -> CHash p idxs (read x)
-                   Nothing -> CHash p idxs 0
+        ohints_idx <- optionMaybe $ do
+            symbol "<"
+            hs <- parseROHint `sepBy1` (symbol ",")
+            idx_ <- optionMaybe $ do
+                symbol ";"
+                many1 digit
+            let idx = case idx_ of
+                        Nothing -> 0
+                        Just v -> read v
+            symbol ">"
+            return (hs, idx)
+        let (hints, idx) = case ohints_idx of
+                             Nothing -> ([], 0)
+                             Just v -> v
+        return $ CHash hints idx
     )
     <|>
     (do
@@ -1383,6 +1437,12 @@ parseAExprTable =
     return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "andb") [] [e1, e2])
               )
     AssocLeft]
+    ,[
+    Infix (do
+    symbol "||" 
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "concat") [] [e1, e2])
+              )
+    AssocLeft]
     ]
 parseAExprTerm =           
     (try $ do
@@ -1438,11 +1498,19 @@ parseAExprTerm =
     <|>
     (parseSpanned $ do 
         reserved "preimage"
-        ps <- parseIdxParams
         symbol "("
         p <- parsePath
+        ps <- parseIdxParams
+        oargs <- optionMaybe $ do
+            symbol "["
+            as <- parseAExpr `sepBy1` (symbol ",")
+            symbol "]"
+            return as
         symbol ")"
-        return $ AEPreimage p ps
+        let args = case oargs of
+                     Nothing -> []
+                     Just as -> as
+        return $ AEPreimage p ps args
         )
     <|>
     (parseSpanned $ do 
