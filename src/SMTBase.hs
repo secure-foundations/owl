@@ -381,6 +381,7 @@ makeHex s = do
         emit $ SApp [SAtom "declare-const", SAtom s', SAtom "Bits"]
         emitAssertion $ sEq (sLength (SAtom s')) (SApp [SAtom "I2B", SAtom $ show len])
         emitAssertion $ SApp [SAtom "IsConstant", SAtom s']
+        emitAssertion $ SApp [SAtom "HasHex", SAtom s', SAtom $ "\"" ++ s ++ "\""]
         hexConstants %= (M.insert s (SAtom s'))
         return $ SAtom s'
 

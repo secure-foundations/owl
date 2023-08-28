@@ -399,9 +399,7 @@ type ROHint = (Path, ([Idx], [Idx]), [AExpr])
 data CryptOp = 
     CHash [ROHint] Int
       | CPRF String
-      | CCRHLemma AExpr AExpr
-      | CConstantLemma AExpr
-      | CDisjNotEq AExpr AExpr
+      | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx])
@@ -412,6 +410,13 @@ data CryptOp =
       | CMacVrfy
       | CSign
       | CSigVrfy
+    deriving (Show, Generic, Typeable)
+
+data BuiltinLemma = 
+      LemmaCRH 
+      | LemmaConstant 
+      | LemmaDisjNotEq 
+      | LemmaCrossDH NameExp NameExp NameExp
     deriving (Show, Generic, Typeable)
 
 
@@ -556,6 +561,11 @@ instance Alpha CryptOp
 instance Subst AExpr CryptOp
 instance Subst Idx CryptOp
 instance Subst ResolvedPath CryptOp
+
+instance Alpha BuiltinLemma
+instance Subst AExpr BuiltinLemma
+instance Subst Idx BuiltinLemma
+instance Subst ResolvedPath BuiltinLemma
 
 
 

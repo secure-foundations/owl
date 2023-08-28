@@ -24,7 +24,7 @@ instance Pretty NameExpX where
     pretty (NameConst vs n oi) = 
         let pi = case oi of
                    Nothing -> mempty
-                   Just i -> pretty "[" <> pretty i <> pretty "]"
+                   Just (xs, i) -> pretty "[" <> hsep (intersperse (pretty ",") (map pretty xs)) <> pretty ";" <+> pretty i <> pretty "]"
         in
         pretty n <> prettyIdxParams vs <> pi
 
@@ -91,19 +91,42 @@ instance Pretty Quant where
     pretty Forall = pretty "forall"
     pretty Exists = pretty "exists"
 
+pIsInfix :: Prop -> Bool
+pIsInfix (Spanned _ (PAnd _ _)) = True
+pIsInfix (Spanned _ (POr _ _)) = True
+pIsInfix (Spanned _ (PImpl _ _)) = True
+pIsInfix _ = False
+
+pIsAnd :: Prop -> Bool
+pIsAnd (Spanned _ (PAnd _ _)) = True
+pIsAnd _ = False
+
+pIsOr :: Prop -> Bool
+pIsOr (Spanned _ (POr _ _)) = True
+pIsOr _ = False
+
 instance Pretty PropX where 
     pretty PTrue = pretty "true"
     pretty PFalse = pretty "false"
-    pretty (PAnd p1 p2) = pretty p1 <+> pretty "&&" <+> pretty p2
-    pretty (POr p1 p2) = pretty p1 <+> pretty "||" <+> pretty p2
+    pretty (PAnd p1 p2) = 
+        let pp1 = if (pIsInfix p1 && (not $ pIsAnd p1)) then parens (pretty p1) else pretty p1 in
+        let pp2 = if (pIsInfix p2 && (not $ pIsAnd p2)) then parens (pretty p2) else pretty p2 in
+        pp1 <+> pretty "/\\" <+> pp2
+    pretty (POr p1 p2) = 
+        let pp1 = if (pIsInfix p1 && (not $ pIsOr p1)) then parens (pretty p1) else pretty p1 in
+        let pp2 = if (pIsInfix p2 && (not $ pIsOr p2)) then parens (pretty p2) else pretty p2 in
+        pp1 <+> pretty "\\/" <+> pp2
     pretty (PNot (Spanned _ (PEq a b))) = pretty a <+> pretty "!=" <+> pretty b
-    pretty (PNot p) = pretty "!" <+> pretty p
     pretty (PEq e1 e2) = pretty e1 <+> pretty "=" <+> pretty e2
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PLetIn a xe2) = 
         let (x, e2) = prettyBind xe2 in
         pretty "let" <+> x <+> pretty "=" <+> pretty a <+> pretty "in" <+> e2
-    pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
+    pretty (PImpl p1 p2) = 
+        let pp1 = if (pIsInfix p1) then parens (pretty p1) else pretty p1 in
+        let pp2 = if (pIsInfix p2) then parens (pretty p2) else pretty p2 in
+        pp1 <+> pretty "==>" <+> pp2
+    pretty (PNot (Spanned _ (PFlow l1 l2))) = pretty l1 <+> pretty "!<=" <+> pretty l2
     pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
     pretty (PIsConstant a) = pretty "is_constant(" <> pretty a <> pretty ")"
     pretty (PQuantIdx q b) = 
@@ -124,6 +147,7 @@ instance Pretty PropX where
                          pretty (intercalate "," (map (show . pretty) v2)) <> 
                          pretty ">" in 
         pretty "happened(" <> pretty s <> pids <> tupled (map pretty xs) <> pretty ")"
+    pretty (PNot p) = pretty "!" <+> pretty p
 
 instance Pretty NameTypeX where
     pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
@@ -144,18 +168,28 @@ instance Pretty AExprX where
     pretty (AEHex s) = pretty "0x" <> pretty s
     pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
     pretty (AEInt i) = pretty i
-    pretty (AEPreimage p ps xs) = pretty "preimage" <> prettyIdxParams ps <> pretty "(" <> pretty p <> pretty ")" <> pretty xs
+    pretty (AEPreimage p ps xs) = 
+        let pxs = case xs of
+                    [] -> mempty
+                    _ -> pretty xs
+        in
+        pretty "preimage" <> prettyIdxParams ps <> pretty "(" <> pretty p <> pretty ")" <> pxs
     pretty (AEGet ne) = pretty "get" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
     pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
 
+instance Pretty BuiltinLemma where
+    pretty (LemmaConstant) = pretty "is_constant_lemma"
+    pretty (LemmaDisjNotEq) = pretty "disjoint_not_eq_lemma" 
+    pretty (LemmaCrossDH n1 n2 n3) = pretty "cross_dh_lemma" <> angles (tupled [pretty n1, pretty n2, pretty n3])
+    pretty (LemmaCRH) = pretty "crh_lemma"
+
 instance Pretty CryptOp where
     pretty (CHash _ _) = pretty "hash"
     pretty (CPRF x) = 
         pretty "PRF" <+> pretty x 
-    pretty (CConstantLemma a) = pretty "is_constant_lemma<" <> pretty a <> pretty ">()"
-    pretty (CDisjNotEq a1 a2) = pretty "disjoint_not_eq<" <> pretty a1 <> pretty "," <> pretty a2 <> pretty ">()"
+    pretty (CLemma l) = pretty l
     pretty (CAEnc) = pretty "aenc"
     pretty (CADec) = pretty "adec"
     pretty CPKEnc = pretty "pkenc"
@@ -164,7 +198,6 @@ instance Pretty CryptOp where
     pretty CMacVrfy = pretty "mac_vrfy"
     pretty CSign = pretty "sign"
     pretty CSigVrfy = pretty "vrfy"
-    pretty (CCRHLemma a1 a2) = pretty "crh_lemma" <> angles (tupled [pretty a1, pretty a2])
     pretty (CEncStAEAD p (idx1, idx2)) = pretty "st_aead_enc" <> angles (pretty p <> angles (tupled (map pretty idx1) <> pretty "@" <> tupled (map pretty idx2)))
     pretty (CDecStAEAD) = pretty "st_aead_dec"
 

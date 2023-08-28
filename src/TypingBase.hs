@@ -23,6 +23,7 @@ import Control.Monad.Cont
 import CmdArgs
 import System.FilePath
 import Prettyprinter
+import Prettyprinter.Render.String
 import Pretty
 import Control.Lens
 import Control.Lens.At
@@ -289,7 +290,8 @@ typeError' removeANF msg = do
     fl <- takeDirectory <$> (view $ envFlags . fFilePath)
     f <- view $ envFlags . fFileContents
     tyc <- if removeANF then removeAnfVars <$> view tyContext else view tyContext
-    let rep = Err Nothing msg [(pos, This msg)] [Note $ show $ prettyTyContext tyc]
+    let tyc_str = renderString $ layoutPretty (LayoutOptions Unbounded) $ prettyTyContext tyc
+    let rep = Err Nothing msg [(pos, This msg)] [Note $ tyc_str]
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
     printDiagnostic stdout True True 4 defaultStyle diag 
@@ -734,6 +736,56 @@ normalizeAExpr ae =
           p' <- normalizePath p 
           return $ Spanned (ae^.spanOf) $ AEApp p' fs' aes'
 
+simplifyProp :: Prop -> Check Prop
+simplifyProp p = do
+    p' <- go p
+    if p `aeq` p' then return p' else simplifyProp p'
+        where 
+            go p = case p^.val of
+                     PTrue -> return p
+                     PFalse -> return p
+                     PAnd (Spanned _ PTrue) p -> simplifyProp p
+                     PAnd p (Spanned _ PTrue) -> simplifyProp p
+                     PAnd (Spanned _ PFalse) p -> return pFalse
+                     PAnd p (Spanned _ PFalse) -> return pFalse
+                     PAnd p1 p2 -> do
+                         p1' <- simplifyProp p1
+                         p2' <- simplifyProp p2
+                         return $ mkSpanned $ PAnd p1' p2'
+                     POr (Spanned _ PTrue) p -> return pTrue
+                     POr p (Spanned _ PTrue) -> return pTrue
+                     POr (Spanned _ PFalse) p -> simplifyProp p
+                     POr p (Spanned _ PFalse) -> simplifyProp p
+                     POr p1 p2 -> do
+                         p1' <- simplifyProp p1
+                         p2' <- simplifyProp p2
+                         return $ mkSpanned $ POr p1' p2'
+                     PImpl (Spanned _ PTrue) p -> simplifyProp p
+                     PImpl _ (Spanned _ PTrue) -> return pTrue  
+                     PImpl (Spanned _ PFalse) p -> return pTrue
+                     PImpl p (Spanned _ PFalse) -> pNot <$> simplifyProp p
+                     PImpl p1 p2 -> do 
+                         p1' <- simplifyProp p1
+                         p2' <- simplifyProp p2
+                         return $ mkSpanned $ PImpl p1' p2'
+                     PEq a1 a2 -> do
+                         a1' <- normalizeAExpr a1
+                         a2' <- normalizeAExpr a2
+                         return $ mkSpanned $ PEq a1' a2'
+                     PLetIn a xp -> do
+                         (x, p) <- unbind xp
+                         simplifyProp $ subst x a p
+                     PNot (Spanned _ PTrue) -> return pFalse
+                     PNot (Spanned _ PFalse) -> return pTrue
+                     PNot p -> do
+                         p' <- simplifyProp p
+                         return $ mkSpanned $ PNot p'
+                     _ -> return p
+
+      
+
+
+
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = do
@@ -879,7 +931,7 @@ derivability args = do
         if isConstant a' then return pTrue else
             case (stripRefinements t)^.val of
               TName n -> return $ pFlow (nameLbl n) advLbl
-              TSS n m -> return $ pAnd (pFlow (nameLbl n) advLbl) (pFlow (nameLbl m) advLbl)
+              TSS n m -> return $ pOr (pFlow (nameLbl n) advLbl) (pFlow (nameLbl m) advLbl)
               _ -> return $ pFalse
     return $ foldr pAnd pTrue ps
 
@@ -986,6 +1038,11 @@ coveringLabel' t =
 
 prettyTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Doc ann
 prettyTyContext e = vsep $ map (\(x, (s, oanf, t)) -> 
+    pretty (unignore s) <> pretty ":" <+> pretty t) e
+
+-- Useful for debugging
+prettyTyContext' :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Doc ann
+prettyTyContext' e = vsep $ map (\(x, (s, oanf, t)) -> 
     pretty (show x) <> tupled [pretty (unignore s), pretty (oanf)] <> pretty ":" <+> pretty t) e
 
 prettyIndices :: Map IdxVar IdxType -> Doc ann

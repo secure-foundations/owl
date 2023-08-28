@@ -14,6 +14,17 @@
     :qid okint_i2b
 )))
 
+; HasHex b s is true when:
+; - s is a valid hex string in ASCII; and
+; - b is the bitvector corresponding to the hex string
+(declare-fun HasHex (Bits String) Bool)
+(assert (forall ((x Bits) (s1 String) (s2 String)) (!
+    (=> (and (HasHex x s1) (HasHex x s2))
+        (= s1 s2))
+    :pattern ((HasHex x s1) (HasHex x s2))
+    :qid hashex_unique
+)))
+
 (assert (forall ((x Int)) (!
     (=> (>= x 0)
         (= (B2I (I2B x)) x))

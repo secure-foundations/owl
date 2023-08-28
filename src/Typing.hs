@@ -1461,6 +1461,12 @@ checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = withSpan (e^.spanOf) $ do 
     debug $ pretty "Inferring expr " <> pretty e
     case e^.val of
+      ECrypt (CLemma lem) aes -> do -- Type check lemma arguments in ghost
+          args <- local (set tcScope TcGhost) $ forM aes $ \a -> do
+              t <- inferAExpr a
+              t' <- normalizeTy t
+              return (a, t')
+          checkCryptoOp ot (CLemma lem) args
       ECrypt cop aes -> do
           args <- forM aes $ \a -> do
               t <- inferAExpr a
@@ -1699,7 +1705,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
-      (EPCase p op e) -> do
+      (EPCase p op k) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
           doCaseSplit <- case op of
                            Nothing -> return True
@@ -1708,21 +1714,22 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                                (_, b) <- SMT.smtTypingQuery $ SMT.symAssert pcond
                                return b 
           case doCaseSplit of 
-            False -> checkExpr ot e
+            False -> checkExpr ot k
             True -> do 
+              let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- freshVar
-              t1 <- withVars [(s2n x, (ignore x, Nothing, tLemma p))] $ do
+              t1 <- withVars [(s2n x, (ignore $ "pcase_true_" ++ show pcase_line, Nothing, tLemma p))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr ot e
+                  r <- if b then getOutTy ot tAdmit else checkExpr ot k
                   popLogTypecheckScope
                   return r
-              t2 <- withVars [(s2n x, (ignore x, Nothing, tLemma (pNot p)))] $ do
+              t2 <- withVars [(s2n x, (ignore $ "pcase_false_" ++ show pcase_line, Nothing, tLemma (pNot p)))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr ot e
+                  r <- if b then getOutTy ot tAdmit else checkExpr ot k
                   popLogTypecheckScope
                   return r
               normalizeTy $ mkSpanned $ TCase p t1 t2
@@ -1823,8 +1830,17 @@ prettyMaybe x =
       Nothing -> pretty "Nothing"
       Just x -> pretty "Just" <+> pretty x
 
+pNameExpEq :: NameExp -> NameExp -> Prop
+pNameExpEq ne1 ne2 = 
+    case (ne1^.val, ne2^.val) of
+      _ | ne1 `aeq` ne2 -> pTrue
+      (NameConst _ p1 _, NameConst _ p2 _) | (not $ p1 `aeq` p2) -> pFalse 
+      (NameConst _ _ _, NameConst _ _ _) -> pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2)
+      (PRFName x s, PRFName x' s') -> pAnd (pNameExpEq x x') (if s == s' then pTrue else pFalse)
+      _ -> pFalse
+
 nameExpNotIn :: NameExp -> [NameExp] -> Prop
-nameExpNotIn ne nes = foldr pOr pFalse $ map (\ne' -> pNot $ pEq (mkSpanned $ AEGet ne) (mkSpanned $ AEGet ne')) nes
+nameExpNotIn ne nes = foldr pAnd pTrue $ map (\ne' -> pNot $ pNameExpEq ne ne') nes 
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
@@ -1879,15 +1895,51 @@ checkCryptoOp :: Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
-      CCRHLemma x y -> do
-          assert ("crh_lemma takes no other arguments") $ length args == 0
-          _ <- local (set tcScope TcGhost) $ inferAExpr x
-          _ <- local (set tcScope TcGhost) $ inferAExpr y
+      CLemma (LemmaCRH) -> do 
+          assert ("crh_lemma takes two arguments") $ length args == 2
+          let [(x, _), (y, _)] = args
+          x' <- resolveANF x
+          y' <- resolveANF y
           return $ tRefined tUnit $ bind (s2n "._") $
               pImpl
                 (pEq (aeApp (topLevelPath "crh") [] [x])
                      (aeApp (topLevelPath "crh") [] [y]))
                 (pEq x y)
+      CLemma (LemmaDisjNotEq) -> do
+          assert ("disjoint_not_eq_lemma takes two arguments") $ length args == 2
+          let [(x, _), (y, _)] = args
+          x' <- resolveANF x
+          y' <- resolveANF y
+          assert ("Wrong number of arguments to disjoint_not_eq_lemma") $ length args == 0
+          proveDisjointContents x' y'
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x y
+      CLemma (LemmaCrossDH n1 n2 n3) -> do
+          assert ("Wrong number of arguments to cross_dh_lemma") $ length args == 1
+          let [(x, t)] = args
+          b <- tyFlowsTo t advLbl
+          assert ("Argument to cross_dh_lemma must flow to adv") b
+          nt1 <- getNameType n1
+          assert ("First argument to cross_dh_lemma must be a DH name") $ (nt1^.val) `aeq` NT_DH
+          nt2 <- getNameType n2
+          assert ("Second argument to cross_dh_lemma must be a DH name") $ (nt2^.val) `aeq` NT_DH
+          nt3 <- getNameType n3
+          assert ("Third argument to cross_dh_lemma must be a DH name") $ (nt3^.val) `aeq` NT_DH
+          let ns_disj = pAnd (pNot $ pNameExpEq n1 n2) $ pAnd (pNot $ pNameExpEq n1 n3) $ pNot $ pNameExpEq n2 n3
+          let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+          let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+          p <- simplifyProp $  pImpl (foldr pAnd pTrue [ns_disj, pNot (pFlow (nameLbl n2) advLbl), pNot (pFlow (nameLbl n3) advLbl)])
+                        (pNot $ pEq (dhCombine x (mkSpanned $ AEGet n1))
+                                    (dhCombine (dhpk (mkSpanned $ AEGet n2)) (mkSpanned $ AEGet n3)))
+   
+          getOutTy ot $ tLemma p
+      CLemma (LemmaConstant)  -> do
+          assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
+          let [(x, _)] = args
+          x' <- resolveANF x
+          x'' <- normalizeAExpr x'
+          let b = isConstant x''
+          assert ("Argument is not a constant: " ++ show (pretty x'')) b
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
       CHash hints i -> do
           assert ("RO hints must be nonempty") $ length hints > 0
           hints_data <- forM hints checkROHint
@@ -1898,10 +1950,10 @@ checkCryptoOp ot cop args = do
           ne <- findGoodROHint (mkConcats $ map fst args) i (zip hints_data hints)
           lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
           solvability <- solvabilityAxioms (mkConcats $ map fst args) ne 
-          warn $ "Solvability axioms generated for " ++ show (pretty ne) ++ ": " ++ show (pretty solvability)
+          solvability' <- simplifyProp solvability
           return $ mkSpanned $ TRefined (tName ne) $ bind (s2n ".res") $ 
               pAnd (mkSpanned $ PRO (mkConcats $ map fst args) (aeVar ".res") i)
-                (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
+                (pAnd solvability' $ pEq (aeLength (aeVar ".res")) lenConst)
 
       -- 1. Ensure that the hints are nonempty and consistent (name kinds are the same)
       -- 1.5. Check that i is in bounds
@@ -1910,19 +1962,6 @@ checkCryptoOp ot cop args = do
       -- 4. If a hint matches, return the corresponding name type, refined with:
       --    - RO solvability axioms
       --    - RO predicate
-      CDisjNotEq x y -> do
-          _ <- local (set tcScope TcGhost) $ inferAExpr x
-          _ <- local (set tcScope TcGhost) $ inferAExpr y
-          assert ("Wrong number of arguments to disjoint_not_eq_lemma") $ length args == 0
-          proveDisjointContents x y
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x y
-      CConstantLemma x -> do
-          assert ("Wrong number of arguments to is_constant_lemma") $ length args == 0
-          _ <- local (set tcScope TcGhost) $ inferAExpr x
-          x' <- normalizeAExpr x
-          let b = isConstant x'
-          assert ("Argument is not a constant: " ++ show (pretty x)) b
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x'
       CPRF s -> do
           assert ("Wrong number of arguments to prf") $ length args == 2
           let [(_, t1), (a, t)] = args

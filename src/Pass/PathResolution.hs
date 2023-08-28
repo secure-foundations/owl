@@ -487,20 +487,25 @@ resolveAExpr a =
       AELenConst _ -> return a
       AEInt _ -> return a
 
+resolveLemma :: Ignore Position -> BuiltinLemma -> Resolve BuiltinLemma
+resolveLemma pos lem =
+    case lem of
+      LemmaCRH -> return lem
+      LemmaConstant -> return lem
+      LemmaDisjNotEq -> return lem
+      LemmaCrossDH n1 n2 n3 -> do
+          n1' <- resolveNameExp n1
+          n2' <- resolveNameExp n2
+          n3' <- resolveNameExp n3
+          return $ LemmaCrossDH n1' n2' n3'
+
+
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
 resolveCryptOp pos cop = 
     case cop of
-      CConstantLemma x -> do
-          x' <- resolveAExpr x
-          return $ CConstantLemma x'
-      CDisjNotEq x y -> do
-          x' <- resolveAExpr x
-          y' <- resolveAExpr y
-          return $ CDisjNotEq x' y'
-      CCRHLemma x y -> do
-          x' <- resolveAExpr x
-          y' <- resolveAExpr y
-          return $ CCRHLemma x' y'
+      CLemma l -> do
+          l' <- resolveLemma pos l
+          return $ CLemma l'
       CHash hints i -> do
           hints' <- forM hints $ \(p, is, as) -> do
               p' <- resolvePath pos PTName p

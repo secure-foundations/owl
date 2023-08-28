@@ -499,7 +499,7 @@ parsePropTable = [
          symbol "/\\"
          return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (PAnd x y)) AssocLeft, 
      Infix (do
-         symbol "||"
+         symbol "\\/"
          return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (POr x y)) AssocLeft], 
      [ 
      Infix (do
@@ -931,12 +931,19 @@ parseDebugCommand =
         return $ DebugPrintLabel l
     )
 
+varNameSuggest :: Expr -> String
+varNameSuggest e = 
+    let line = fst $ begin $ unignore $ e^.spanOf in
+    case e^.val of
+      EAssert _ -> "_assert_" ++ show line
+      EAssume _ -> "_assume_" ++ show line
+      _ -> "_"
 
 parseExpr = buildExpressionParser parseExprTable parseExprTerm
 parseExprTable = 
     [ [ Infix (do
     symbol ";" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing Nothing "_" (bind (s2n "_") e2))
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing Nothing (varNameSuggest e1) (bind (s2n $ varNameSuggest e1) e2))
               )
     AssocLeft ] ]
 
@@ -1237,30 +1244,29 @@ parseCryptOp =
     <|>
     (do
         reserved "crh_lemma"
-        symbol "<"
-        x <- parseAExpr
-        symbol ","
-        y <- parseAExpr
-        symbol ">"
-        return $ CCRHLemma x y
+        return $ CLemma $ LemmaCRH 
     )
     <|>
     (do
         reserved "is_constant_lemma"
-        symbol "<"
-        x <- parseAExpr
-        symbol ">"
-        return $ CConstantLemma x
+        return $ CLemma $ LemmaConstant 
     )
     <|>
     (do
         reserved "disjoint_not_eq_lemma"
+        return $ CLemma $ LemmaDisjNotEq 
+    )
+    <|>
+    (do
+        reserved "cross_dh_lemma"
         symbol "<"
-        x <- parseAExpr
+        x <- parseNameExp
         symbol ","
-        y <- parseAExpr
+        y <- parseNameExp
+        symbol ","
+        z <- parseNameExp
         symbol ">"
-        return $ CDisjNotEq x y
+        return $ CLemma $ LemmaCrossDH x y z
     )
     <|>
     (reserved "aenc" >> return CAEnc)
@@ -1416,12 +1422,20 @@ parseParams = do
 parseAExpr :: Parser AExpr
 parseAExpr = buildExpressionParser parseAExprTable parseAExprTerm
 parseAExprTable = 
-    [ [ 
+    [ 
+    [
+    Infix (do
+    symbol "++" 
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "concat") [] [e1, e2])
+              )
+    AssocLeft]
+    , [ 
     Infix (do
     symbol "+" 
     return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath "plus") [] [e1, e2])
               )
-    AssocLeft], [
+    AssocLeft], 
+    [
     Infix (do
     symbol "*" 
     return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "mult") [] [e1, e2])
@@ -1431,12 +1445,6 @@ parseAExprTable =
     Infix (do
     symbol "&&" 
     return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "andb") [] [e1, e2])
-              )
-    AssocLeft]
-    ,[
-    Infix (do
-    symbol "++" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "concat") [] [e1, e2])
               )
     AssocLeft]
     ]

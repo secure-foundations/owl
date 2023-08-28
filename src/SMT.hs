@@ -80,7 +80,7 @@ setupNameEnvRO = do
     mkSelfDisjointness fdfs
     -- Axioms relevant for each def 
     forM_ fdfs $ \fd -> do
-        withSMTNameDef fd $ \(sn, pth) oi ((is, ps), xs) ont ->  
+        withSMTNameDef fd $ \(sn, pth) oi ((is, ps), xs) ont -> do
             -- Name def flows
             case ont of
               Nothing -> return ()
@@ -111,6 +111,24 @@ setupNameEnvRO = do
                             (sAnd sAxs)
                             [sApp (sn : (map fst ivs) ++ (map fst xvs))]
                             ("nameDefFlows_" ++ show sn)
+            -- Solvability
+            case oi of
+              Nothing -> return () -- Not RO
+              Just i -> do 
+                when (length xs == 0) $ do
+                    withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) (Just ([], i)) 
+                        preimage <- liftCheck $ getROPreimage (PRes pth) (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) []
+                        solvability <- liftCheck $ solvabilityAxioms preimage nameExp
+                        vsolv <- interpretProp solvability
+                        let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
+                        emitAssertion $ sForall ivs vsolv [sApp (sn : map fst ivs)] ("solvability_" ++ show sn)  
+
+
+
+
+
+
 
 mkCrossDisjointness :: [SMTNameDef] -> Sym ()
 mkCrossDisjointness fdfs = do
