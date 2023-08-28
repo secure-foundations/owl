@@ -1823,6 +1823,8 @@ prettyMaybe x =
       Nothing -> pretty "Nothing"
       Just x -> pretty "Just" <+> pretty x
 
+nameExpNotIn :: NameExp -> [NameExp] -> Prop
+nameExpNotIn ne nes = foldr pOr pFalse $ map (\ne' -> pNot $ pEq (mkSpanned $ AEGet ne) (mkSpanned $ AEGet ne')) nes
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
@@ -1832,9 +1834,11 @@ proveDisjointContents x y = do
     ns2 <- getNameContents y'
     ns1' <- mapM normalizeNameExp ns1
     ns2' <- mapM normalizeNameExp ns2
-    let b1 = any (\x -> all (\y -> not $ x `aeq` y) ns2') ns1'
-    let b2 = any (\x -> all (\y -> not $ x `aeq` y) ns1') ns2'
-    assert ("Cannot prove disjointness of " ++ show (pretty x) ++ " and " ++ show (pretty y) ++ ": got " ++ show (pretty ns1') ++ " and " ++ show (pretty ns2')) $ b1 || b2
+    let p1 = foldr pAnd pTrue $ map (\ne -> nameExpNotIn ne ns2') ns1' 
+    let p2 = foldr pAnd pTrue $ map (\ne -> nameExpNotIn ne ns1') ns2' 
+    local (set tcScope TcGhost) $ do
+        (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ pOr p1 p2
+        assert ("Cannot prove disjointness of " ++ show (pretty x) ++ " and " ++ show (pretty y) ++ ": got " ++ show (pretty ns1') ++ " and " ++ show (pretty ns2')) $ b
         where
             -- Computes the set of names that are contained verbatim in the
             -- expression
