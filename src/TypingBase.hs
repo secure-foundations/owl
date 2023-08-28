@@ -125,7 +125,7 @@ data ModBody = ModBody {
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
-    _advCorrConstraints :: [Bind [IdxVar] (Label, Label)],
+    _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -1150,7 +1150,7 @@ collectNameDefs = collectEnvInfo (_nameDefs)
 collectFlowAxioms :: Check ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 
-collectAdvCorrConstraints :: Check ([Bind [IdxVar] (Label, Label)])
+collectAdvCorrConstraints :: Check ([Bind ([IdxVar], [DataVar]) (Label, Label)])
 collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
 
 collectUserFuncs :: Check (Map ResolvedPath UserFunc)

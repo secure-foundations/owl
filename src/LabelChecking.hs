@@ -67,18 +67,16 @@ smtLabelSetup = do
     afcs <- liftCheck $ collectAdvCorrConstraints 
     ladv <- symLabel advLbl
     forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
-        (is, (l1, l2)) <- liftCheck $ unbind ils
-        sIE <- use symIndexEnv
-        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
-        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do 
-            v1 <- symLabel l1
-            v2 <- symLabel l2
-            emitAssertion $ sForall 
-                (map (\i -> (SAtom $ show i, indexSort)) is)
-                (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
-                []
-                ("advConstraint_" ++ show j)
-        symIndexEnv .= sIE
+        ((is, xs), (l1, l2)) <- liftCheck $ unbind ils
+        withIndices (map (\i -> (i, IdxGhost)) is) $ do
+            withSMTVars xs $ do 
+                v1 <- symLabel l1
+                v2 <- symLabel l2
+                emitAssertion $ sForall 
+                    (map (\i -> (SAtom $ show i, indexSort)) is ++ map (\x -> (SAtom $ show x, bitstringSort)) xs)
+                    (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
+                    []
+                    ("advConstraint_" ++ show j)
 
 
 getIdxVars :: Label -> [IdxVar]

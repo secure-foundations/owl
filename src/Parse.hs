@@ -705,10 +705,20 @@ parseDecls =
     (parseSpanned $ do
         reserved "corr"
         pb <- parseIdxParamBinds1
-        l1 <- parseLabel
-        symbol "==>"
-        l2 <- parseLabel
-        return $ DeclCorr $ bind pb (l1, l2)
+        alt
+            (try $ do
+                symbol "["
+                xs <- identifier `sepBy1` (symbol ",")
+                symbol "]"
+                l1 <- parseLabel
+                symbol "==>"
+                l2 <- parseLabel
+                return $ DeclCorr $ bind (pb, map s2n xs) (l1, l2))
+            (do
+                l1 <- parseLabel
+                symbol "==>"
+                l2 <- parseLabel
+                return $ DeclCorr $ bind (pb, []) (l1, l2))
     )
     <|>
     (parseSpanned $ do

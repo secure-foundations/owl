@@ -316,7 +316,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclCorr (Bind [IdxVar] (Label, Label))
+    | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)

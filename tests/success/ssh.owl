@@ -46,6 +46,7 @@ enum signed_by_PFA {
 }
 
 name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
+corr [skPFA] ==> [a]
 // name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
 name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
 corr [skPDIS] ==> [b]
@@ -54,9 +55,14 @@ name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
 corr [skSDIS] ==> [c]
 
 name l1 : RO 0x01 ++ dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
+name l1_corr : RO<x> 0x01 ++ x -> enckey (x:Data<adv>{false})
+    requires (x != dh_combine(dhpk(get(b)), get(a)))
 name l2 : RO 0x02 ++ dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> 
 name l2_corr : RO<x> 0x02 ++ x -> enckey (x:Data<adv>{false})
     requires (x != dh_combine(dhpk(get(b1)), get(c)))
+
+corr [x] (adv) ==> [l2_corr[x;0]]
+corr [x] (adv) ==> [l1_corr[x;0]]
 
 struct PFA_msg {
     _pfa1: dhpk(a),
@@ -151,7 +157,8 @@ def SDIS_actual () @ SDIS
                 | _comm_with_pfa _ => ()
                 | _comm_with_sdis g_pow_b1 =>
                     let ss   = dh_combine(g_pow_b1, get(c)) in
-                    let k    = hash<l2>(ss) in
+                    pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
+                    let k    = hash<l2, l2_corr[ss]>(0x02 ++ ss) in
                     
                     input inp2 in
                     corr_case l2 in
@@ -179,12 +186,12 @@ def PFA_KE () @ PFA
         | Some m =>
             case m {
             | _comm_with_sdis _ => ()
-            | _comm_with_pfa m' =>
-                let g_pow_b:if sec(skPDIS) then dhpk(b) else Data<adv> = m' in
+            | _comm_with_pfa g_pow_b =>
                 corr_case a in 
                 corr_case b in 
-                let ss     :if sec(skPDIS) then shared_secret(b, a) else Data<adv /\ [a]> = dh_combine(g_pow_b, get(a)) in
-                let k11    :if sec(a) /\ sec(b) then Name(l1) else Data<adv> = hash<l1>(ss) in
+                let ss     = dh_combine(g_pow_b, get(a)) in
+                pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                let k11    = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
                 call PFA_FW (k11)
             }
     }
@@ -204,13 +211,12 @@ def PDIS_KE () @ PDIS
         | Some m =>
             case m {
                 | _signed_by_PFA_hash _ => ()
-                | _signed_by_PFA_g_pow_a m' =>
-                    let g_pow_a:if sec(skPFA) then dhpk(a) else Data<adv> = m' in
+                | _signed_by_PFA_g_pow_a g_pow_a =>
                     corr_case a in
                     corr_case b in
-                    let ss     :if sec(skPFA) then shared_secret(b, a) else Data<adv /\ [b]> = dh_combine(g_pow_a, get(b)) in
-                    // ss_swap?
-                    let k11    :if sec(a) /\ sec(b) then Name(l1) else Data<adv> = hash<l1>(ss) in
+                    let ss   = dh_combine(g_pow_a, get(b)) in
+                    pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                    let k11  = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
                     let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
                     call PDIS_actual(k11)
             }

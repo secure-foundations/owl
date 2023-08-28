@@ -842,8 +842,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           addDef n df $ cont
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
-          (is, (l1, l2)) <- unbind ils
+          ((is, xs), (l1, l2)) <- unbind ils
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
               checkLabel l1
               checkLabel l2
           local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
