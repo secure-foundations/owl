@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -51,7 +52,7 @@ emptyEnv f = do
     m <- newIORef $ M.empty
     rs <- newIORef []
     return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m mempty rs r' r'' def
+        interpUserFunc r m mempty rs r' r'' (typeError' True) def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -772,7 +773,8 @@ checkDecl d cont = withSpan (d^.spanOf) $
                         forM_ nts $ \nt -> do
                             checkNameType nt
                             checkROName nt
-              checkROUnique (bind ((is1, is2), xs) (a, p, lem))
+              checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
+              checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
               local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef $ bind xs (a, p, nts)) cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
@@ -946,22 +948,51 @@ mkForallIdx :: [IdxVar] -> Prop -> Prop
 mkForallIdx [] p = p
 mkForallIdx (i:is) p = mkSpanned $ PQuantIdx Forall (bind i (mkForallIdx is p))
 
+openROData :: Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> (AExpr -> Prop -> Check a) -> Check a
+openROData b k = do 
+    (((is1, is2), xs), (a, preq)) <- unbind b
+    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
+        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                k a preq 
 
-checkROUnique :: Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop, Expr) -> Check ()
-checkROUnique b = do
-    pos <- view curSpan
-    warn $ "Random oracle uniqueness check not implemented yet " ++ show (pretty pos)
-    --roPres <- collectLocalROPreimages
-    --logTypecheck $ "Checking RO uniqueness of " ++ show (pretty es)
-    --disjointPred <- mkRODisjointPred es
-    --case olem of
-    --  Nothing -> do
-    --      (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ disjointPred
-    --      assert "RO uniqueness check failed" b
-    --  Just elem -> do
-    --      elem' <- ANF.anf elem
-    --      _ <- checkExpr (Just $ tLemma disjointPred) elem'
-    --      return ()
+withTypeErrorHook :: (forall a. String -> Check a) -> Check b -> Check b
+withTypeErrorHook f k = do
+    local (\e -> e { _typeErrorHook = f }) k 
+
+checkROUnique :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop, Expr) -> Check ()
+checkROUnique roname b = do
+    pres <- collectROPreimages
+    (((is1, is2), xs), (a, preq, elem)) <- unbind b
+    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
+        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                forM_ pres $ \(pth, p) -> 
+                    openROData p $ \a' preq' -> do 
+                        withTypeErrorHook (\x -> typeError' True $ "Cannot prove RO disjointness between " ++ roname ++ " and " ++ show (pretty pth) ++ ": \n             " ++ x) $ do
+                                let pdisj = pImpl (pAnd preq preq') (pNot $ pEq a a')
+                                _ <- checkExpr (Just $ tLemma pdisj) elem
+                                return ()
+
+checkROSelfDisjoint :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> Check ()
+checkROSelfDisjoint roname b = do
+    (((is1, ps1), xs1), (a1, preq1)) <- unbind b
+    (((is2, ps2), xs2), (a2, preq2)) <- unbind b
+    when ((length is1 + length ps1 + length xs1) > 0) $ do
+        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
+            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps1) $ do                
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs1) $ do
+                    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is2) $
+                        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do                
+                            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs2) $ do
+                                let idxs_eq = foldr pAnd pTrue $ zipWith (\i1 i2 -> mkSpanned $ PEqIdx (IVar (ignore def) i1) (IVar (ignore def) i2)) (is1 ++ ps1) (is2 ++ ps2)
+                                let xs_eq = foldr pAnd pTrue $ zipWith (\x y -> pEq (aeVar' x) (aeVar' y)) xs1 xs2
+                                let pdisj = pImpl (pAnd preq1 preq2) $ pImpl (pEq a1 a2) $ (pAnd idxs_eq xs_eq)
+                                (_, b) <- SMT.smtTypingQuery $ SMT.symAssert pdisj
+                                assert ("RO self disjointness check failed: " ++ roname) b
+                                        
+
+
 
 checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 

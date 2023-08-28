@@ -76,49 +76,73 @@ setupNameEnvRO = do
               let iar = length is + length ps
               let var = length xs
               emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort ++ replicate var bitstringSort), nameSort]
+    mkCrossDisjointness fdfs
+    mkSelfDisjointness fdfs
     -- Axioms relevant for each def 
     forM_ fdfs $ \fd -> do
-        bind_nt <- case fd of
-                     SMTROName _ _ v -> return $ Just v
-                     SMTBaseName _ bnt -> do
-                         (is, ont) <- liftCheck $ unbind bnt
-                         case ont of
-                           Nothing -> return Nothing
-                           Just nt -> return $ Just $ bind (is, []) nt
-        let (sn, npth) = case fd of
-                   SMTROName v _ _ -> v
-                   SMTBaseName v _ -> v
-        -- Name def flows
-        case bind_nt of
-          Nothing -> return ()
-          Just b -> do 
-            (((is, ps), xs), nt) <- liftCheck $ unbind b
-            let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
-            let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
-            withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
-                withSMTVars xs $ do 
-                    nk <- nameKindOf nt
-                    emitAssertion $ sForall
-                        (ivs ++ xvs)
-                        (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs) ++ (map fst xvs)), nk])
-                        [sApp (sn : (map fst ivs) ++ (map fst xvs))]
-                        ("nameKind_" ++ show sn)
+        withSMTNameDef fd $ \(sn, pth) oi ((is, ps), xs) ont ->  
+            -- Name def flows
+            case ont of
+              Nothing -> return ()
+              Just nt -> do
+                let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
+                let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
+                withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+                    withSMTVars xs $ do 
+                        nk <- nameKindOf nt
+                        emitAssertion $ sForall
+                            (ivs ++ xvs)
+                            (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs) ++ (map fst xvs)), nk])
+                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            ("nameKind_" ++ show sn)
 
-                    let nameExp = case fd of
-                                    SMTBaseName _ _ -> 
-                                        mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes npth) Nothing
-                                    SMTROName _ i _ -> 
-                                        mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes npth) (Just $ (map aeVar' xs, i))
+                        let roArgs = case oi of
+                                       Nothing -> Nothing
+                                       Just i -> Just $ (map aeVar' xs, i)
 
-                    lAxs <- nameDefFlows nameExp nt
-                    sAxs <- forM lAxs $ \(l1, l2) -> do
-                        vl1 <- symLabel l1
-                        vl2 <- symLabel l2
-                        return $ SApp [SAtom "Flows", vl1, vl2]
-                    emitAssertion $ sForall (ivs ++ xvs)
-                        (sAnd sAxs)
-                        [sApp (sn : (map fst ivs) ++ (map fst xvs))]
-                        ("nameDefFlows_" ++ show sn)
+                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) roArgs
+
+                        lAxs <- nameDefFlows nameExp nt
+                        sAxs <- forM lAxs $ \(l1, l2) -> do
+                            vl1 <- symLabel l1
+                            vl2 <- symLabel l2
+                            return $ SApp [SAtom "Flows", vl1, vl2]
+                        emitAssertion $ sForall (ivs ++ xvs)
+                            (sAnd sAxs)
+                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            ("nameDefFlows_" ++ show sn)
+
+mkCrossDisjointness :: [SMTNameDef] -> Sym ()
+mkCrossDisjointness fdfs = do
+    -- Get all pairs of fdfs
+    let pairs = [(x, y) | (x : ys) <- tails fdfs, y <- ys]
+    forM_ pairs $ \(fd1, fd2) -> 
+        withSMTNameDef fd1 $ \(sn1, pth1) oi1 ((is1, ps1), xs1) _ ->  
+            withSMTNameDef fd2 $ \(sn2, pth2) oi2 ((is2, ps2), xs2) _ ->  do
+                let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
+                let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+                let v1 = sApp (sn1 : (map fst q1))
+                let v2 = sApp (sn2 : (map fst q2))
+                emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2] $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
+
+
+mkSelfDisjointness :: [SMTNameDef] -> Sym ()
+mkSelfDisjointness fdfs = do
+    forM_ fdfs $ \fd -> 
+        withSMTNameDef fd $ \(sn, pth) oi ((is1, ps1), xs1) _ ->  do
+            withSMTNameDef fd $ \_ _ ((is2, ps2), xs2) _ -> do
+                when ((length is1 + length ps1 + length xs1) > 0) $ do
+                    let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
+                    let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+                    let v1 = sApp (sn : (map fst q1))
+                    let v2 = sApp (sn : (map fst q2))
+                    let q1_eq_q2 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q2 !! i)) [0 .. (length q1 - 1)]
+                    let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                                                                             SApp [SAtom "ValueOf", v2]]]
+                    emitAssertion $ sForall (q1 ++ q2)
+                        (v1_eq_v2 `sImpl` q1_eq_q2)
+                        [v1_eq_v2]
+                        ("self_disj_" ++ show (sn))
 
 nameKindOf :: NameType -> Sym SExp
 nameKindOf nt = 

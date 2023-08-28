@@ -156,6 +156,8 @@ parseLabelTerm =
           return $ LRangeIdx $ bind (s2n i) l
           )
 
+alt = (<|>)
+
 parseTy = buildExpressionParser parseTyTable parseTyTerm
 parseTyTable = [ [  ] ]
 parseTyTerm = 
@@ -191,34 +193,28 @@ parseTyTerm =
         reserved "Data"
         symbol "<"
         l <- parseLabel
-        o <-
-            (try $ do
+        alt
+            (do
                 symbol ">"
-                symbol "|"
-                a <- parseAExpr
-                symbol "|"
-                return $ Right a
+                alt
+                    (try $ do
+                        symbol "|"
+                        a <- parseAExpr
+                        symbol "|"
+                        return $ TDataWithLength l a
+                    )
+                    (return $ TData l l)
             )
-            <|>
-            (try $ do
-                symbol ">"
-                return $ Left l
-                )
-            <|>
-            (try $ do
+            (do
                 symbol ","
                 symbol "|"
                 l' <- parseLabel
                 symbol "|"
                 symbol ">"
-                return $ Left l'
+                return $ TData l l'
             ) 
-        case o of
-          Left l' -> return $ TData l l'
-          Right a -> return $ TDataWithLength l a
     )
     <|>
-
     (parseSpanned $ do
         reserved "if"
         p <- parseProp
@@ -620,7 +616,7 @@ parseNameDeclBody =
             let req = case oreq of
                         Nothing -> pTrue
                         Just v -> v
-            olem <- optionMaybe $ do
+            olem <- optionMaybe $ try $ do
                 reserved "uniqueness_by"
                 parseExpr
             let lem = case olem of
@@ -1439,7 +1435,7 @@ parseAExprTable =
     AssocLeft]
     ,[
     Infix (do
-    symbol "||" 
+    symbol "++" 
     return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "concat") [] [e1, e2])
               )
     AssocLeft]

@@ -153,6 +153,7 @@ data Env = Env {
     _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int,
     _debugLogDepth :: IORef Int,
+    _typeErrorHook :: (forall a. String -> Check a),
     _curSpan :: Position
 }
 
@@ -294,7 +295,10 @@ typeError' removeANF msg = do
     printDiagnostic stdout True True 4 defaultStyle diag 
     Check $ lift $ throwError e
 
-typeError = typeError' True
+typeError x = do
+    th <- view typeErrorHook
+    th x
+
 typeErrorANF = typeError' False
 
 warn :: String -> Check ()
@@ -1099,33 +1103,33 @@ collectTyDefs :: Check (Map ResolvedPath TyDef)
 collectTyDefs = collectEnvInfo _tyDefs
 
 
-collectROPreimages :: Check [Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr]
+collectROPreimages :: Check [(ResolvedPath, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
 collectROPreimages = do
     xs <- collectNameDefs
-    ps <- mapM go (map snd xs)
+    ps <- mapM go xs
     return $ concat ps
         where
-            go b = do
+            go (p, b) = do
                 (is, nd) <- unbind b
                 case nd of
                   RODef b -> do
-                      (xs, (a, _, _)) <- unbind b
-                      return [bind (is, xs) a]
+                      (xs, (a, b, _)) <- unbind b
+                      return [(p, bind (is, xs) (a, b))]
                   _ -> return []
 
 
-collectLocalROPreimages :: Check [Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr]
+collectLocalROPreimages :: Check [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
 collectLocalROPreimages =  do
     xs <- view $ curMod . nameDefs
-    ps <- mapM go (map snd xs)
+    ps <- mapM go xs
     return $ concat ps
         where
-            go b = do
+            go (n, b) = do
                 (is, nd) <- unbind b
                 case nd of
                   RODef b -> do
-                      (xs, (a, _, _)) <- unbind b
-                      return [bind (is, xs) a]
+                      (xs, (a, b, _)) <- unbind b
+                      return [(n, bind (is, xs) (a, b))]
                   _ -> return []
 
 

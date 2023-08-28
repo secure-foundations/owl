@@ -516,6 +516,16 @@ data SMTNameDef =
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))
       | SMTROName (SExp, ResolvedPath) Int (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
 
+withSMTNameDef :: SMTNameDef -> ((SExp, ResolvedPath) -> Maybe Int -> (([IdxVar], [IdxVar]), [DataVar]) -> Maybe NameType -> Sym a) -> Sym a                      
+withSMTNameDef df k = do
+    case df of
+      SMTBaseName p b -> do
+          (idxs, ont) <- liftCheck $ unbind b
+          k p Nothing (idxs, []) ont
+      SMTROName p i b -> do
+          (idxs_xs, nt) <- liftCheck $ unbind b
+          k p (Just i) idxs_xs (Just nt)
+
 flattenNameDefs :: Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef) ->
                    Sym [SMTNameDef]
 flattenNameDefs xs = do
