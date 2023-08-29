@@ -117,7 +117,7 @@ instance Pretty PropX where
         let pp2 = if (pIsInfix p2 && (not $ pIsOr p2)) then parens (pretty p2) else pretty p2 in
         pp1 <+> pretty "\\/" <+> pp2
     pretty (PNot (Spanned _ (PEq a b))) = pretty a <+> pretty "!=" <+> pretty b
-    pretty (PEq e1 e2) = pretty e1 <+> pretty "=" <+> pretty e2
+    pretty (PEq e1 e2) = pretty e1 <+> pretty "==" <+> pretty e2
     pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
     pretty (PLetIn a xe2) = 
         let (x, e2) = prettyBind xe2 in

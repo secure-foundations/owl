@@ -970,9 +970,10 @@ checkROUnique roname b = do
             withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
                 forM_ pres $ \(pth, p) -> 
                     openROData p $ \a' preq' -> do 
+                        elem' <- ANF.anf elem
                         withTypeErrorHook (\x -> typeError' True $ "Cannot prove RO disjointness between " ++ roname ++ " and " ++ show (pretty pth) ++ ": \n             " ++ x) $ do
                                 let pdisj = pImpl (pAnd preq preq') (pNot $ pEq a a')
-                                _ <- checkExpr (Just $ tLemma pdisj) elem
+                                _ <- checkExpr (Just $ tLemma pdisj) elem'
                                 return ()
 
 checkROSelfDisjoint :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> Check ()
@@ -1911,7 +1912,6 @@ checkCryptoOp ot cop args = do
           let [(x, _), (y, _)] = args
           x' <- resolveANF x
           y' <- resolveANF y
-          assert ("Wrong number of arguments to disjoint_not_eq_lemma") $ length args == 0
           proveDisjointContents x' y'
           getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x y
       CLemma (LemmaCrossDH n1 n2 n3) -> do

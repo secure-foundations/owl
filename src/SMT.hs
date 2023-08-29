@@ -126,7 +126,9 @@ setupNameEnvRO = do
 
 
 
-
+smtNameDefIsRO :: SMTNameDef -> Bool
+smtNameDefIsRO (SMTBaseName _ _) = False
+smtNameDefIsRO (SMTROName _ _ _) = True
 
 
 
@@ -141,7 +143,21 @@ mkCrossDisjointness fdfs = do
                 let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
                 let v1 = sApp (sn1 : (map fst q1))
                 let v2 = sApp (sn2 : (map fst q2))
-                emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2] $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                                                                             SApp [SAtom "ValueOf", v2]]]
+                emitAssertion $ sForall (q1 ++ q2) (sNot $ v1_eq_v2) [v1, v2] $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                when (oi1 == Just 0 && oi2 == Just 0 && (not $ pth1 `aeq` pth2)) $ do 
+                    vpre1 <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) ps1) $ do
+                        withSMTVars xs1 $ do 
+                            p <- liftCheck $ getROPreimage (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
+                            interpretAExp p
+                    vpre2 <- withIndices (map (\i -> (i, IdxSession)) is2 ++ map (\i -> (i, IdxPId)) ps2) $ do
+                        withSMTVars xs1 $ do 
+                            p <- liftCheck $ getROPreimage (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
+                            interpretAExp p
+                    let vpre1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", vpre1, vpre2]]
+                    emitComment $ "Preimage disjointness for " ++ show sn1 ++ " and " ++ show sn2
+                    emitAssertion $ sForall (q1 ++ q2) (sNot $ vpre1_eq_v2) [vpre1, vpre2] $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
 
 
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()

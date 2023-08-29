@@ -619,7 +619,7 @@ parseNameDeclBody =
             let req = case oreq of
                         Nothing -> pTrue
                         Just v -> v
-            olem <- optionMaybe $ try $ do
+            olem <- optionMaybe $ do
                 reserved "uniqueness_by"
                 parseExpr
             let lem = case olem of
