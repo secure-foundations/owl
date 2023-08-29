@@ -133,10 +133,10 @@ def alice (
 
     input i in
     let st = magic_parse(i) in
-    (case adec(kA, st) 
+    case adec(kA, st) {
         | None => alice_None()
         | Some res =>
-            (case res 
+            case res {
                 | mA1 _ => alice_None()
                 | mA2 msg2 =>
                     let b = checknonce(_nA2(msg2), nA) in
@@ -146,8 +146,8 @@ def alice (
                         alice_Some(kab)
                     else
                         alice_None()
-            )
-    )
+            }
+    }
 // ************************************************************************
 
 
@@ -187,10 +187,10 @@ def bob (
     let x2' = msg3_x2(i) in
 
     let _ = check_session_identifier(M') in
-    (case adec(kB, x2') 
+    case adec(kB, x2') {
         | None => bob_None()
         | Some res =>
-            (case res 
+            case res {
                 | mB1 _ => bob_None()
                 | mB2 msg2 =>
                     let b = checknonce(_nB2(msg2), nB) in
@@ -200,8 +200,8 @@ def bob (
                         bob_Some(kab)
                     else
                         bob_None()
-            )
-    )
+            }
+    }
 // ************************************************************************
 
 // ************************************************************************
@@ -222,16 +222,16 @@ def server (
     let x1 = msg2_x1(i) in
     let x2 = msg2_x2(i) in
 
-    (case adec(kA, x1) 
+    case adec(kA, x1) {
         | None => ()
         | Some resA =>
-            (case resA 
+            case resA {
                 | mA1 msg1A =>
                     // attempt to decrypt the second message only after the first one decrypts correctly
-                    (case adec(kB, x2) 
+                    case adec(kB, x2) {
                         | None => ()
                         | Some resB =>
-                            (case resB 
+                            case resB {
                                 | mB1 msg1B =>
                                     let _ = check_equal(A, _AA(msg1A), _AB(msg1B)) in
                                     let _ = check_equal(B, _BA(msg1A), _BB(msg1B)) in
@@ -245,11 +245,11 @@ def server (
                                     let _ = output msg3_StoB(M, encmA, encmB)
                                     in ()
                                 | mB2 _ => ()
-                            )
-                    )
+                            }
+                    }
                 | mA2 _ => ()
-            )
-    )
+            }
+    }
 
 // ************************************************************************
 

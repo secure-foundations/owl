@@ -31,10 +31,12 @@ module M = {
         s(get(k))
 
     def bar(x : t) @ alice : Unit = 
-        case x 
+        case x {
         | Ok => ()
         | Bad => ()
+        }
 }
+        
 
 module N = M
 
@@ -48,8 +50,9 @@ def alice_main() @ alice : Unit =
     let z : N.s = call N.foo() in 
     let w : N.t = N.Ok() in 
     call N.bar(w);
-    case w
+    case w {
         | Ok => ()
         | Bad => ()
+    }
 
 

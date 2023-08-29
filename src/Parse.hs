@@ -67,12 +67,12 @@ parensPos k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) (v^.val)
 
-beginEndPos :: Parser (Spanned a) -> Parser (Spanned a)
-beginEndPos k = do
+bracesPos :: Parser (Spanned a) -> Parser (Spanned a)
+bracesPos k = do
     p <- getPosition
-    reserved "begin"
+    symbol "{"
     v <- k
-    reserved "end"
+    symbol "}"
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) (v^.val)
 
@@ -125,11 +125,13 @@ parsePath =
         return $ PUnresolvedVar x
     )
 
+infixLabel op f assoc = 
+    Infix (do
+        symbol op
+        return (\x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) $ f x y)) assoc
+
 parseLabel = buildExpressionParser parseLabelTable parseLabelTerm
-parseLabelTable = [ [ Infix (do
-    symbol "/\\" 
-    return (\x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) $ LJoin x y))
-    AssocLeft ] ]
+parseLabelTable = [ [ infixProp "/\\" LJoin AssocLeft ] ] 
 parseLabelTerm = 
         parensPos parseLabel <|> 
       (parseSpanned $ do
@@ -489,24 +491,25 @@ parseQuantBody q i = do
                 p <- parseProp
                 return $ PQuantBV q $ bind (s2n i) p
 
-parsePropTable = [ 
-    [ Prefix (do
+prefixProp op f =
+    Prefix (do
         p <- getPosition
-        reservedOp "!" 
-        return $ \x -> mkSpannedWith (prefixPosition p (unignore $ x^.spanOf)) $ PNot x) ],
-    [ 
-     Infix (do
-         symbol "/\\"
-         return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (PAnd x y)) AssocLeft, 
-     Infix (do
-         symbol "\\/"
-         return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (POr x y)) AssocLeft], 
-     [ 
-     Infix (do
-         p <- getPosition
-         symbol "==>"
-         return $ \x y -> mkSpannedWith  (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (PImpl x y)) AssocLeft 
-     ] ]
+        reservedOp op
+        return $ \x -> mkSpannedWith (prefixPosition p (unignore $ x^.spanOf)) $ f x
+        )
+
+infixProp op f assoc = 
+    Infix (do
+        symbol op
+        return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (f x y)) AssocLeft 
+
+
+parsePropTable = [ 
+    [ prefixProp "!" PNot ], 
+    [ infixProp "/\\" PAnd AssocLeft ],
+    [ infixProp "\\/" POr AssocLeft ],
+    [ infixProp "==>" PImpl AssocLeft ]
+                 ]
 
 parseNoncePattern = 
     (symbol "*" >> return NPHere)
@@ -602,9 +605,9 @@ parseNameDeclBody =
         ((do
             reserved "RO"
             xs_ <- optionMaybe $ do
-                symbol "<"
+                symbol "["
                 xs <- (identifier `sepBy1` (symbol ","))
-                symbol ">"
+                symbol "]"
                 return $ map s2n xs
             let xs = case xs_ of
                        Nothing -> []
@@ -969,7 +972,7 @@ parseExprTerm =
     <|>
     parensPos parseExpr
     <|>
-    beginEndPos parseExpr
+    bracesPos parseExpr
     <|>
     (parseSpanned $ do
         reserved "input"
@@ -1429,35 +1432,23 @@ parseParams = do
     symbol ">"
     return ps
 
+infixAExpr name fname assoc = 
+    Infix (do
+        try $ symbol name
+        return $ \e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath fname) [] [e1, e2]
+          ) assoc
+
+
 parseAExpr :: Parser AExpr
 parseAExpr = buildExpressionParser parseAExprTable parseAExprTerm
 parseAExprTable = 
     [ 
-    [
-    Infix (do
-    symbol "++" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "concat") [] [e1, e2])
-              )
-    AssocLeft]
-    , [ 
-    Infix (do
-    symbol "+" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath "plus") [] [e1, e2])
-              )
-    AssocLeft], 
-    [
-    Infix (do
-    symbol "*" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "mult") [] [e1, e2])
-              )
-    AssocLeft]
-    ,[
-    Infix (do
-    symbol "&&" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath $ "andb") [] [e1, e2])
-              )
-    AssocLeft]
+        [ infixAExpr "*" "mult" AssocLeft ],
+        [ infixAExpr "++" "concat" AssocLeft ],
+        [ infixAExpr "&&" "andb" AssocLeft ],
+        [ infixAExpr "+" "plus" AssocLeft ]
     ]
+
 parseAExprTerm =           
     (try $ do
         p <- getPosition

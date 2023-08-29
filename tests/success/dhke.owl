@@ -8,6 +8,10 @@ name Y : DH @ bob
 name skA : sigkey (dhpk(X)) @ alice
 name skB : sigkey (dhpk(Y)) @ bob
 name l : RO dh_combine(dhpk(get(Y)), get(X)) -> enckey Name(d) 
+name l_corr : RO[x] x -> enckey Name(d)
+    requires x != dh_combine(dhpk(get(Y)), get(X))
+
+corr[x] adv ==> [l_corr[x;0]]
 
 struct alice_msg {
     _a1: dhpk(X),
@@ -42,18 +46,19 @@ def alice_main () @ alice
     let _ = output a to endpoint(bob) in
     input i, _ in 
     corr_case skB in
-    case vrfy(vkB, _b1(i), _b2(i)) 
-     | Some m => 
-       let bobs_pk : if sec(skB) then dhpk(Y) else Data<adv> = m in
+    case vrfy(vkB, _b1(i), _b2(i)) {
+     | Some bobs_pk => 
        corr_case X in
        corr_case Y in
        corr_case d in
-       let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv /\ [X] /\ [Y])> = dh_combine(bobs_pk, get(X)) in
-       let k : if sec(X) /\ sec(Y) then Name(l) else Data<adv> = hash<l>(ss) in
+       let ss = dh_combine(bobs_pk, get(X)) in
+       pcase (ss == dh_combine(dhpk(get(Y)), get(X))) in 
+       let k : if sec(X) /\ sec(Y) then Name(l) else Data<adv> = hash<l, l_corr[ss]>(ss) in
        let c = aenc(k, get(d)) in
        let _ = output c to endpoint(bob) in 
        ()
      | None => ()
+    }
 
 
 def bob_main () @ bob 
@@ -64,25 +69,26 @@ def bob_main () @ bob
     let _ = output b to endpoint(alice) in
     input i, _ in 
     corr_case skA in
-    case vrfy(vkA, _a1(i), _a2(i)) 
-     | Some m => 
+
+    case vrfy(vkA, _a1(i), _a2(i)) {
+     | Some pkX => 
        corr_case X in
        corr_case Y in
        corr_case d in
-       let pkX : if sec(skA) then dhpk(X) else Data<adv> = m in
-       let ss : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = dh_combine(pkX, get(Y)) in
-       let ss_swap : if sec(X) /\ sec(Y) then shared_secret(Y, X) else Data<(adv)> = ss in 
-       let k : if sec(X) /\ sec(Y) then Name(l) else Data<adv> = hash<l> (ss_swap) in
+       let ss = dh_combine(pkX, get(Y)) in
+       pcase (ss == dh_combine(dhpk(get(Y)), get(X))) in 
+       let k = hash<l, l_corr[ss]> (ss) in
        input ii, _ in 
        corr_case l in
-       (case adec(k, ii) 
+       case adec(k, ii) {
        | None => ()
        | Some dd => 
          let ddd : if sec(X) /\ sec(Y) /\ sec(l) then
             Name(d) else Data<adv> = dd in
          ()
-         )
+       }
      | None => ()
+    }
 
 /* The problem that needs to be solved by extra typing is:
     - If pkY is adv controlled,

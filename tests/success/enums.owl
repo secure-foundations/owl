@@ -10,7 +10,7 @@ enum t<i, j> {
 }
 
 def alice<i, j> (x : t<idx i, idx j>) @ alice : Unit = 
-    assert ((A?(x) == true) || (B?(x) == true) || (C?(x) == true));
+    assert ((A?(x) == true) \/ (B?(x) == true) \/ (C?(x) == true));
     assert (! (A?(x) == true /\ B?(x) == true));
     assert (! (B?(x) == true /\ C?(x) == true));
     assert (! (A?(x) == true /\ C?(x) == true));
@@ -21,5 +21,5 @@ def alice<i, j> (x : t<idx i, idx j>) @ alice : Unit =
     ()
 
 def alice2 (x : Bool<adv>) @ alice : Unit = 
-    assert (x == true || x == false);
+    assert (x == true \/ x == false);
     assert (! (x == true /\ x == false))

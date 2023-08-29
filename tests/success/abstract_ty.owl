@@ -7,8 +7,9 @@ name k : enckey t @ alice
 def alice_main() @ alice : Unit = 
  input inp in
  corr_case k in
- case adec(get(k), inp) 
+ case adec(get(k), inp) {
   | None => ()
   | Some j => 
    let r : if sec(k) then t else Data<adv> = j in
    ()
+ }

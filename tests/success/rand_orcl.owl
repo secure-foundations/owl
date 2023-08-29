@@ -2,11 +2,10 @@ locality alice
 name k1 : nonce @ alice
 name k2 : nonce @ alice
 
-name l : RO get(k1) || get(k2) -> nonce || nonce
+name l : RO get(k1) ++ get(k2) -> nonce || nonce
 
 def alice() @ alice : Unit = 
-    let x = hash<l; 0>(get(k1), get(k2)) in
-    debug printTyOf(get(l[0]));
+    let x = hash<l;0>(get(k1), get(k2)) in
     ()
 
 

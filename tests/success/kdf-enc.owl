@@ -65,7 +65,7 @@ name k2 : RO get(k1) -> enckey Name(alice2)
 name k3 : RO get(k2) -> enckey Name(alice3) 
 
 name t<i> : nonce @ alice
-name k4<i> : RO get(t<i>) || 1 || 2 -> nonce
+name k4<i> : RO get(t<i>) ++ 1 ++ 2 -> nonce
     uniqueness_by admit
 
 /*
@@ -76,7 +76,7 @@ rec name k<i>
 
 def tsts<i> () @ alice : Unit = 
     assert (preimage(k2) == get(k1));
-    assert (preimage<i>(k4) == concat(get(t<i>), concat(1, 2)));
+    assert (preimage(k4<i>) == concat(get(t<i>), concat(1, 2)));
     ()
 
 
@@ -91,27 +91,27 @@ def alice_main() @ alice : Unit =
 def bob_main() @ bob : Unit = 
     input c1 in
     corr_case k1 in 
-    case adec(get(k1), c1)
+    case adec(get(k1), c1) {
     | None => ()
-    | Some m1 => begin 
+    | Some m1 =>  
         input c2 in 
         let k2 = hash<k2>(get(k1)) in
         corr_case k2 in
-        case adec(k2, c2)
+        case adec(k2, c2) {
         | None => ()
-        | Some m2 => begin
+        | Some m2 => 
             input c3 in 
             let k3 = hash<k3>(k2) in
             corr_case k3 in
-            case adec(k3, c3)
+            case adec(k3, c3) {
             | None => ()
-            | Some m3 => begin
+            | Some m3 => 
                 assert (sec(k3) ==> sec(k2));
                 assert (sec(k2) ==> (m1 == get(alice1) /\ m2 == get(alice2)));
                 assert (sec(k1) ==> (m1 == get(alice1)));
                 ()
-                end
-            end
-    end
+            }
+        }
+    }
 
         

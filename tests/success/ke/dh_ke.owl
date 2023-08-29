@@ -5,6 +5,11 @@ name C : DH @ Client
 name skS : sigkey (dhpk(S)) @ Server
 name skC : sigkey (dhpk(C)) @ Client
 name l : RO dh_combine(dhpk(get(C)), get(S)) -> enckey Name(k) 
+name l_corr : RO[x] x -> enckey Unit
+    requires x != dh_combine(dhpk(get(C)), get(S))
+
+corr[x] adv ==> [l_corr[x;0]]
+
 
 struct server_msg {
     _s1: dhpk(S),
@@ -34,13 +39,13 @@ def ke_Server () @ Server
     let _ = output a to endpoint(Client) in
     input i, _ in 
     corr_case skC in
-    case vrfy(vkC, _c1(i), _c2(i)) 
-     | Some m => 
-       let client_pk : if sec(skC) then dhpk(C) else Data<adv> = m in
+    case vrfy(vkC, _c1(i), _c2(i)) {
+     | Some client_pk => 
        corr_case S in 
        corr_case C in 
-       let ss : if sec(skC) then shared_secret(C, S) else Data<(adv /\ [S])> = dh_combine(client_pk, get(S)) in
-       let dhk : if sec(C) /\ sec(S) then Name(l) else Data<adv> = hash<l>(ss) in
+       let ss  = dh_combine(client_pk, get(S)) in
+       pcase (ss == dh_combine(dhpk(get(C)), get(S))) in 
+       let dhk = hash<l, l_corr[ss]>(ss) in
        let c =  aenc(dhk, get(k)) in
        corr_case k in
        false_elim in
@@ -48,6 +53,7 @@ def ke_Server () @ Server
        let _ = output c to endpoint(Client) in 
        ()
      | None => ()
+    }
 
 
 def ke_Client () @ Client
@@ -59,21 +65,21 @@ def ke_Client () @ Client
     let _ = output b to endpoint(Server) in
     input i, _ in 
     corr_case skS in
-    case vrfy(vkS, _s1(i), _s2(i)) 
-     | Some m => 
-       let server_pk : if sec(skS) then dhpk(S) else Data<adv> = m in
-       let ss : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = dh_combine(server_pk, get(C)) in
-       let ss_swap : if sec(skS) then shared_secret(C, S) else Data<(adv /\ [C])> = ss in 
-       let dhk : if sec(skS) then Name(l) else Data<adv> = hash<l> (ss_swap) in
+    case vrfy(vkS, _s1(i), _s2(i)) {
+     | Some server_pk => 
+       let ss  = dh_combine(server_pk, get(C)) in
+       pcase (ss == dh_combine(dhpk(get(C)), get(S))) in 
+       let dhk = hash<l, l_corr[ss]> (ss) in
        input ii, _ in 
        corr_case l in
        corr_case k in 
        false_elim in
-       (case adec(dhk, ii) 
+       case adec(dhk, ii) {
        | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
        | Some dd => 
          let ddd : if sec(k) then Name(k) else Data<adv> = dd in
          // Some(ddd)
          None<ty: if sec(k) then Name(k) else Data<adv> >()
-         )
+       }
      | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
+    }

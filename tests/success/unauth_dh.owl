@@ -1,6 +1,7 @@
 locality client : 1
 locality server 
 name X<@i> : DH @ client<i>
+
 name Y : DH @ server
 
 name data<@i> : nonce @ client<i>
@@ -9,41 +10,47 @@ corr<i> [Y] ==> [data<@i>]
 
 name L<@i> : RO dh_combine(dhpk(get(X<@i>)), get(Y)) -> enckey Name(data<@i>)
 
+name L_corr : RO[x] x -> enckey Unit
+    requires forall i:idx. x != dh_combine(dhpk(get(X<@i>)), get(Y))
+
+corr[x] adv ==> [L_corr[x;0]]
+
 def client_main<@i>(pky : dhpk(Y)) @ client<i> : Unit = 
     let h = dhpk(get(X<@i>)) in
     output h;
-    let y = hash<L, @i>(dh_combine(pky, get(X<@i>))) in 
+    let y = hash<L<@i>>(dh_combine(pky, get(X<@i>))) in 
     let c = aenc(y, get(data<@i>)) in 
     output c
 
 def server_getkey() @ server : Option (Union<Data<adv>, (exists j. Name(L<@j>))>) = 
     input h in 
-    if is_group_elem(h) then
-    begin
-        pcase (exists j:idx. h == dhpk(get(X<@j>))) in 
-        choose_idx j | h == dhpk(get(X<@j>)) in
-        let y = hash<L, @j>(dh_combine<name X<@j>, name Y>(h, get(Y))) in 
+    if is_group_elem(h) then {
+        pcase (exists j:idx. dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y))) in 
+        choose_idx j | dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y)) in 
+        let ss = dh_combine(h, get(Y)) in 
+        let y = hash<L<@j>, L_corr[ss]>(ss) in 
         Some(pack<j>(y))
-    end
+    }
     else None<type Union<Data<adv>, (exists j. Name(L<@j>))>>()
 
 def server_main() @ server :
 Unit = 
     let u = call server_getkey() in  
-    case u
+    case u {
     | None => ()
-    | Some u_ => begin
+    | Some u_ => 
         union_case x_ = u_ in 
         unpack j, x = x_ in 
         input c in 
-        (corr_case L<@j> in 
-        case adec(x, c)
+        corr_case L<@j> in 
+        case adec(x, c) {
         | Some m => 
             let c = aenc(x, m) in 
             output c
-        | None => ());
-        ()
-        end
+        | None => ()
+        }
+    }
+        
 
 
 

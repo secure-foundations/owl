@@ -89,7 +89,7 @@ def alice (
   input i in
   corr_case KA in
   corr_case KAB in
-  (case adec(kA, i) 
+  case adec(kA, i) {
     | None => alice_None()
     | Some res =>
         let res' = res in 
@@ -98,7 +98,7 @@ def alice (
         let _ = output m1 in
 
         input i in
-        (case adec(kAB, i) 
+        case adec(kAB, i) {
             | None => alice_None()
             | Some res2 =>
                 // let nB':Name(NB) = some_func(res) in
@@ -106,8 +106,8 @@ def alice (
                 let encm = aenc(kAB, nB') in
                 let _ = output encm in
                 alice_Some(kAB)
-        )
-  )
+        }
+  }
 // ************************************************************************
 
 
@@ -140,7 +140,7 @@ def bob () @ Bob
     corr_case KB in
     corr_case KAB in
     input i in
-    (case adec(kB, i) 
+    case adec(kB, i) {
         | None => bob_None()
         | Some res =>
             let A' = _A(res) in
@@ -150,11 +150,11 @@ def bob () @ Bob
             output encm;
 
             input i2 in
-            (case adec(kAB', i2) 
+            case adec(kAB', i2) {
                 | None => bob_None()
                 | Some res =>
                     let _ = check_nonce(res, nB) in
                     bob_Some(kAB')
-            )
-    )
+            }
+    }
 // ************************************************************************

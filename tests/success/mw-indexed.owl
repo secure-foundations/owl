@@ -66,7 +66,7 @@ def R_main<i>() @ R
     // let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, nT) in
     let x: Option (exists j. pair<idx j>) = lookup(keys, nT) in
 
-    begin case x 
+    case x {
         | None => No()
         | Some p_packed =>
             unpack j, p = p_packed in
@@ -77,7 +77,7 @@ def R_main<i>() @ R
             let mac_to_verify = h1_t<idx j>(zz(), nR, nT) in
 
             let mc'  = xor(id, mc) in
-            begin case mac_vrfy(k, mac_to_verify, mc') 
+            case mac_vrfy(k, mac_to_verify, mc') {
                 | None => No()
                 | Some m =>
                     // let _ = check_equal(mc, xor(id, m)) in
@@ -98,8 +98,8 @@ def R_main<i>() @ R
                     let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((p == get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
                     Ok(res)
                     // Ok(pack<j>(nT'))
-            end
-    end
+            }
+    }
 
 def T_main<i> () @ T
 : Unit =

@@ -559,6 +559,7 @@ getNameInfo ne = do
                            assert ("Missing variable arguments for RO name") $ length xs == 0
                            return $ Just (nts !! 0, Nothing)
                        Just (as, i) -> do
+                           _ <- mapM inferAExpr as
                            assert ("Hash select parameter for RO name out of bounds") $ i < length nts
                            assert ("Variable arguments for RO name incorrect") $ length as == length xs
                            return $ Just (substs (zip xs as) $ nts !! i, Nothing)

@@ -8,18 +8,20 @@ def ticketserver_main () @ ticketserver
     input i in 
     
     corr_case kT in
-    case adec(get(kT), _client_to_ticketserver_msg_1(i)) 
+    case adec(get(kT), _client_to_ticketserver_msg_1(i)) {
          | None => ()
          | Some ak =>
          
              corr_case AK in
-             (case adec(ak, _client_to_ticketserver_msg_2(i)) 
+             case adec(ak, _client_to_ticketserver_msg_2(i)) {
                  | Some ClientRequest =>
                      let st =  aenc(get(kS), get(SK)) in
                      let m =  aenc(ak, TicketResponse(get(SK))) in
                      let p = ticketserver_msg(st, m) in
                      let _ = output p to endpoint(client) in ()
-                 | None => ())
+                 | None => ()
+             }
+    }
 
 
 def service_main () @ service
@@ -29,16 +31,18 @@ def service_main () @ service
     input i in
     
     corr_case kS in
-    case adec(get(kS), _client_to_service_msg_1(i)) 
+    case adec(get(kS), _client_to_service_msg_1(i)) {
          | None => ()
          | Some sk =>
              corr_case SK in
-             (case adec(sk, _client_to_service_msg_2(i)) 
+             case adec(sk, _client_to_service_msg_2(i)) {
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
                          let _ = output 0 to endpoint(client) in ()
-                     else ())
+                     else ()
+             }
+    }
 
 // called by the respective client_main() functions for the two versions of kerberos
 def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
@@ -53,14 +57,16 @@ def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
 
     input i' in 
     let service_ticket = _ticketserver_msg_1(i') in
-    (case adec(ak, _ticketserver_msg_2(i')) 
+    case adec(ak, _ticketserver_msg_2(i')) {
         | None => ()
         | Some res =>
-            (case res 
+            case res {
                 | ClientRequest => () 
                 | TicketResponse sk => 
                 let m' =  aenc(sk, username) in
                 let p' = client_to_service_msg(service_ticket, m') in
                 let _ = output p' to endpoint(service) in 
                 // wait for service's response
-                input _ in () ))
+                input _ in () 
+            }
+    }

@@ -59,23 +59,25 @@ def alice () @ alice
     let _ = output c to endpoint(bob) in 
     input i, _ in 
     corr_case k_data in
-    case adec(get(k_data), i)
+    case adec(get(k_data), i) {
      | Some j => 
        assert(sec(k_data) ==> happened(bob()));
        SomeResult(j)
      | None => NoResult()
+     }
     
 def bob () @ bob
     : x:Bool<adv>{(x /\ sec(shared_key)) ==> happened(alice()) } = 
     input i, _ in 
     // i : Data<adv>
     corr_case shared_key in
-    case adec(get(shared_key), i) 
+    case adec(get(shared_key), i) {
      | Some k => 
         assert (sec(shared_key) ==> happened(alice()));
         let c = aenc(k, get(x)) in
         output c to endpoint(alice);
         true
      | None => false
+     }
         
 

@@ -96,7 +96,7 @@ def Alice_main<i> (
 
     corr_case KA in
     input inp in
-    begin case adec(kA, inp) 
+    case adec(kA, inp) { 
         | None => 
             unpack j, _ = () in // arbitrary j
             pack<j>(alice_None<idx i, idx j>())
@@ -111,15 +111,15 @@ def Alice_main<i> (
 
             input inp2 in
             assert (corr(KA) ==> corr(KAB<j>));
-            begin case adec(kAB', inp2) 
+            case adec(kAB', inp2) {
                 | None => pack<j>(alice_None<idx i, idx j>())
                 | Some res2 =>
                     let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
                     let encm = aenc(kAB', nB') in // some_func(nB')
                     let _ = output encm to endpoint(Bob) in
                     pack<j>(alice_Some<idx i, idx j>(kAB'))
-            end
-    end
+            }
+        }
 // ************************************************************************
 
 
@@ -154,7 +154,7 @@ def Bob_main<i> () @ Bob
     let kB : Name(KB) = get(KB) in
     corr_case KB in
     input inp in 
-    begin case adec(kB, inp) 
+    case adec(kB, inp) {
         | None => 
           unpack j, _ = () in // arbitrary j
           pack<j>(bob_None<idx i, idx j>())
@@ -168,13 +168,13 @@ def Bob_main<i> () @ Bob
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in
-            begin case adec(kAB', inp2) 
+            case adec(kAB', inp2) {
                 | None => pack<j>(bob_None<idx i, idx j>())
                 | Some res2 =>
                     // let _ = check_nonce(res2, nB) in
                     assert (corr(KB) ==> corr(KAB<j>));
                     let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
                     pack<j>(bob_Some<idx i, idx j>(m))
-            end
-    end
+            }
+    }
 // ************************************************************************

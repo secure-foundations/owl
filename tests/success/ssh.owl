@@ -55,10 +55,10 @@ name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
 corr [skSDIS] ==> [c]
 
 name l1 : RO 0x01 ++ dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
-name l1_corr : RO<x> 0x01 ++ x -> enckey (x:Data<adv>{false})
+name l1_corr : RO[x] 0x01 ++ x -> enckey (x:Data<adv>{false})
     requires (x != dh_combine(dhpk(get(b)), get(a)))
 name l2 : RO 0x02 ++ dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> 
-name l2_corr : RO<x> 0x02 ++ x -> enckey (x:Data<adv>{false})
+name l2_corr : RO[x] 0x02 ++ x -> enckey (x:Data<adv>{false})
     requires (x != dh_combine(dhpk(get(b1)), get(c)))
 
 corr [x] (adv) ==> [l2_corr[x;0]]

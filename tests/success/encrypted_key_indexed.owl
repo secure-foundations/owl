@@ -29,17 +29,19 @@ def alice () @ alice
     let _ = output c in 
     input i in 
     corr_case k_data in
-    case adec(get(k_data), i) 
+    case adec(get(k_data), i) {
      | Some j => Ok(j)
      | None => Err()
+    }
     
 def bob<i> () @ bob
     : Unit = 
     input i in 
     corr_case shared_key in
-    case adec(get(shared_key), i) 
+    case adec(get(shared_key), i) {
      | Some k => 
         let msg : x:Name(x<i>){happened(bob<i>())} = get(x<i>) in 
         let c = aenc(k, pack<i>(msg)) in
         output c
      | None => ()
+    }

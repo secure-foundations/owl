@@ -16,17 +16,19 @@ def alice<@j>() @ alice : if sec(msg<@j>) then Result<idx j> else Data<adv> =
   input i in
   corr_case k_data<@j> in
   corr_case msg<@j> in
-  case adec(get(k_data<@j>), i)
+  case adec(get(k_data<@j>), i) {
   | Some o => Ok<idx j>(o)
   | None => Err<idx j>()
+  }
 
 def bob<@j>() @ bob<j> : Unit =
     input i in
     corr_case psk<@j> in
-    case adec(get(psk<@j>), i)
+    case adec(get(psk<@j>), i) {
     | Some k => 
       let c = aenc(k, get(msg<@j>)) in 
       output c
     | None => ()
+    }
 
 

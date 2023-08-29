@@ -270,10 +270,19 @@
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
     (=> (and (IsExponent x) (= TRUE (is_group_elem y)) (= TRUE (is_group_elem z))
              (= TRUE (eq (dh_combine y x) (dh_combine z x))))
-        (= y z))
+        (= TRUE (eq y z)))
     :pattern (eq (dh_combine y x) (dh_combine z x))
     :qid dh_combine_inj_2
 )))
+
+(assert (forall ((x Bits) (y Bits)) (!
+    (=>
+        (and (IsExponent x) (IsExponent y)
+             (= TRUE (eq (dhpk x) (dhpk y))))
+        (= TRUE (eq x y)))
+    :pattern ((eq (dhpk x) (dhpk y)))
+    :qid dhpk_inj
+ )))
 
 
 (declare-sort Name)
@@ -435,15 +444,6 @@
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
     :pattern dh_combine_neq_dhpk
 )))
-
-(assert (forall ((x Name) (y Name)) (!
-    (=>
-        (and (HasNameKind x DHkey) (HasNameKind y DHkey)
-             (= TRUE (eq (dhpk (ValueOf x)) (dhpk (ValueOf y)))))
-        (= x y))
-    :pattern ((eq (dhpk (ValueOf x)) (dhpk (ValueOf y))))
-    :qid dhpk_inj
- )))
 
 ;; RO(a, b, i) means that the _current_ random oracle maps a to b in slot i.
 (declare-fun RO (Bits Bits Int) Bool)
