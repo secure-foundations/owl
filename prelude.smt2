@@ -289,8 +289,8 @@
 (declare-fun ValueOf (Name) Bits)
 (declare-fun TName (Name) Type)
 (assert (forall ((x Bits) (n Name)) (!
-    (=> (HasType x (TName n))
-        (= x (ValueOf n)))
+    (= (HasType x (TName n))
+        (= TRUE (eq x (ValueOf n))))
     :pattern (HasType x (TName n))
     :qid hastype_name
 )))

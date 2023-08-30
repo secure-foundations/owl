@@ -339,7 +339,7 @@ interpUserFunc pth md (UninterpUserFunc f ar) = do
 -- Normalize a type expression. Only nontrivial computations are to normalize a
 -- nested refinement, and to normalize a case whether a name n is honest.
 normalizeTy :: Ty -> Check Ty
-normalizeTy t0 = do
+normalizeTy t0 = local (set tcScope TcGhost) $ do
     debug $ pretty "normalizeTy: " <> pretty t0
     case t0^.val of
         TUnit -> return tUnit
@@ -1501,7 +1501,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
           getOutTy ot tUnit
       (EAssert p) -> do
           local (set tcScope $ TcGhost) $ checkProp p
-          (fn, b) <- SMT.smtTypingQuery $ SMT.symAssert p
+          (fn, b) <- local (set tcScope $ TcGhost) $ SMT.smtTypingQuery $ SMT.symAssert p
           g <- view tyContext
           debug $ pretty "Type context for assertion " <> pretty p <> pretty ":" <> (prettyTyContext g)
           assert (show $ ErrAssertionFailed fn p) b
@@ -2014,7 +2014,7 @@ checkCryptoOp ot cop args = do
                                 (subst xa (aeVar ".res") aadp)
                       if b1 && b2 then return $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
                                   else mkSpanned <$> trivialTypeOf (map snd args)
-                  _ -> typeError $ "Wrong name type for StAEAD key: "
+                  _ -> mkSpanned <$> trivialTypeOf (map snd args)
       CDecStAEAD -> do
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
@@ -2147,7 +2147,11 @@ typeCheckDecls f ds = do
     case r of
       Left () -> return $ Left e
       Right ds' -> do
-          runExceptT $ runReaderT (unCheck $ checkDeclsWithCont ds' $ ask) e
+          runExceptT $ runReaderT (unCheck $ do
+              loadSMTCache
+              checkDeclsWithCont ds' $ do
+                  writeSMTCache
+                  ask) e
 
 
 ---- Module stuff ----

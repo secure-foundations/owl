@@ -5,3 +5,4 @@ hie.yaml
 stack.yaml.lock
 .vscode/
 .owl-log/
+*.smtcache

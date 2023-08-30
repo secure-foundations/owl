@@ -47,6 +47,7 @@ data SExp =
       | SComment String
       | SPat SExp
       | SQid String
+      | SNamed String
       | SOption String String 
 
 instance Show SExp where
@@ -55,6 +56,7 @@ instance Show SExp where
     show (SComment s) = "; " ++ s
     show (SPat e) = " :pattern " ++ show e
     show (SQid s) = " :qid " ++ s
+    show (SNamed s) = " :named " ++ s
     show (SOption x y) = ":" ++ x ++ " " ++ y
 
 bitstringSort :: SExp
@@ -208,7 +210,9 @@ emitComment :: String -> Sym ()
 emitComment s = emit (SComment s)
 
 emitAssertion :: SExp -> Sym ()
-emitAssertion e = emit (SApp [SAtom "assert", e])
+emitAssertion e = do
+    i <- freshSMTName
+    emit (SApp [SAtom "assert", SApp [SAtom "!", e, SNamed i]])
 
 emitToProve :: SExp -> Sym ()
 emitToProve e = do

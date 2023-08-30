@@ -14,9 +14,11 @@ import qualified Data.Set as S
 import Data.Maybe
 import Data.Serialize
 import Data.IORef
+import System.Directory
 import Control.Monad
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
+import qualified Data.ByteString as BS
 import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.Cont
@@ -295,6 +297,7 @@ typeError' removeANF msg = do
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
     printDiagnostic stdout True True 4 defaultStyle diag 
+    writeSMTCache
     Check $ lift $ throwError e
 
 typeError x = do
@@ -302,6 +305,34 @@ typeError x = do
     th x
 
 typeErrorANF = typeError' False
+
+writeSMTCache :: Check ()
+writeSMTCache = do
+    cacheref <- view smtCache
+    cache <- liftIO $ readIORef cacheref
+    filepath <- view $ envFlags . fFilePath
+    let hintsFile = filepath ++ ".smtcache"
+    liftIO $ BS.writeFile hintsFile $ encode cache
+
+loadSMTCache :: Check ()
+loadSMTCache = do
+    filepath <- view $ envFlags . fFilePath
+    let hintsFile = filepath ++ ".smtcache"
+    b <- liftIO $ doesFileExist hintsFile
+    when b $ do
+        clean <- view $ envFlags . fCleanCache
+        if clean then liftIO $ removeFile hintsFile
+        else do
+            cache <- liftIO $ BS.readFile hintsFile
+            cacheref <- view smtCache
+            case decode cache of
+              Left s -> do
+                  TypingBase.warn $ "Could not decode SMT cache: " ++ s ++ ", deleting file"
+                  liftIO $ removeFile hintsFile
+              Right c -> do
+                  liftIO $ putStrLn $ "Found smtcache file"
+                  liftIO $ writeIORef cacheref $ c
+
 
 warn :: String -> Check ()
 warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
@@ -525,6 +556,21 @@ getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
                 return $ substs (zip xs as) a
             _ -> typeError $ "Not an RO name: " ++ n
 
+getROPrereq :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check Prop
+getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
+    md <- openModule p
+    case lookup n (md^.nameDefs) of
+      Nothing -> typeError $ "Unknown name: " ++ n
+      Just b_nd -> do
+          ((ixs, pxs), nd') <- unbind b_nd
+          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
+          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
+          case nd of
+            RODef b -> do
+                (xs, (_, p, _)) <- unbind b
+                assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
+                return $ substs (zip xs as) p
+            _ -> typeError $ "Not an RO name: " ++ n
 
 
     
@@ -725,7 +771,6 @@ normalizeAExpr ae =
           return $ Spanned (ae^.spanOf) $ AEGet ne'
       AEPreimage p ps@(p1, p2) args -> do  
           ts <- view tcScope
-          assert (show $ pretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
           forM_ p1 checkIdxSession
           forM_ p2 checkIdxPId
           getROPreimage p ps args 

@@ -10,6 +10,7 @@ import System.Directory
 data Flags = Flags { 
     _fDebug :: Bool,
     _fLogSMT :: Bool,
+    _fCleanCache :: Bool,
     _fExtract :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
@@ -31,6 +32,9 @@ parseArgs =
           switch
           ( long "log-smt" <> short 'l' <> help "Log SMT queries" )
       <*>
+          switch
+          ( long "clean-smt-cache" <> short 'c' <> help "Clean SMT cache" )
+      <*>
           switch 
           ( long "extract" <> short 'e' <> 
             help "Extract rust code (requires rustfmt to be installed)" )
@@ -51,7 +55,13 @@ parseArgs =
       <*> (pure "")
 
 doParseArgs :: IO Flags
-doParseArgs = execParser $ info (parseArgs <**> helper) (fullDesc <> progDesc "OWL")
+doParseArgs = do 
+    f <- execParser $ info (parseArgs <**> helper) (fullDesc <> progDesc "OWL")
+    return $ postProcessFlags f
+
+postProcessFlags :: Flags -> Flags
+postProcessFlags f = 
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f}
 
 getHelpMessage :: String
 getHelpMessage = 

@@ -515,6 +515,7 @@ parseNoncePattern =
     (symbol "*" >> return NPHere)
 
 parseNameType = 
+    parensPos parseNameType <|>
     (parseSpanned $ do
         reserved "DH"
         return NT_DH)
