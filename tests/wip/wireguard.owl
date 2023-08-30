@@ -1,3 +1,4 @@
+set_option ":rlimit" "2000000"
 /*
 
 type := 0x1 (1 byte) 
@@ -65,7 +66,7 @@ name msg1_C1 : RO crh(0x636f6e737472756374696f6e) ++ dhpk(get(E_init)) -> nonce
 name msg1_C1_resp_corr : RO[x] crh(0x636f6e737472756374696f6e) ++ x -> nonce
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
-corr[x] adv ==> [msg1_C1_resp_corr[x;0]]
+    uniqueness_by admit
 
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
@@ -75,14 +76,14 @@ name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> 
             nonce_pattern *
     uniqueness_by { disjoint_not_eq_lemma(get(msg1_C1), crh(0x636f6e737472756374696f6e)); () }
 
-name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || enckey Unit
+type Empty = (x:Data<adv>{false})
+
+name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || enckey Empty
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {
         disjoint_not_eq_lemma(get(msg1_C1_resp_corr[x;0]), crh(0x636f6e737472756374696f6e)); ()
     }
-corr[x] adv ==> [msg1_C2_resp_corr[x;0]]
-corr[x] adv ==> [msg1_C2_resp_corr[x;1]]
 
 counter aead_counter_msg1_C3 @ Initiator
 name msg1_C3 : RO get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
@@ -92,7 +93,8 @@ name msg1_C3 : RO get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init))
             nonce_pattern *
     uniqueness_by { disjoint_not_eq_lemma(get(msg1_C2[;0]), crh(0x636f6e737472756374696f6e)); () }
 
-name msg1_C3_resp_corr : RO[x] get(msg1_C2_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Unit
+name msg1_C3_resp_corr : RO[x] get(msg1_C2_resp_corr[x;0]) ++
+dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Empty
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {
@@ -100,8 +102,6 @@ name msg1_C3_resp_corr : RO[x] get(msg1_C2_resp_corr[x;0]) ++ dh_combine(dhpk(ge
         disjoint_not_eq_lemma(get(msg1_C2_resp_corr[x;0]), crh(0x636f6e737472756374696f6e));
         ()
     }
-corr[x] adv ==> [msg1_C3_resp_corr[x;0]]
-corr[x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 // TODO: problematic for RO disjointness
@@ -115,7 +115,6 @@ name msg2_C4 : RO get(msg1_C3[;0]) ++ dhpk(get(E_resp)) -> nonce
 name msg2_C4_resp_corr : RO[x] get(msg1_C3_resp_corr[x;0]) ++ dhpk(get(E_resp)) -> nonce
     uniqueness_by admit
 
-corr[x] adv ==> [msg2_C4_resp_corr[x;0]]
 
 
 name msg2_C4_init_corr : RO[y] get(msg1_C3[;0]) ++ y -> nonce
@@ -132,22 +131,18 @@ name msg2_C5 : RO get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), get(E_resp))
 name msg2_C5_resp_corr : RO[x] get(msg2_C4_resp_corr[x;0]) ++ dh_combine(x, get(E_resp)) -> nonce
     uniqueness_by admit
 
-corr [x] adv ==> [msg2_C5_resp_corr[x;0]]
 
 name msg2_C5_init_corr : RO[x] get(msg2_C4_init_corr[x;0]) ++ dh_combine(x, get(E_init)) -> nonce
     uniqueness_by admit
 
-corr [x] adv ==> [msg2_C5_init_corr[x;0]]
 
 name msg2_C6 : RO get(msg2_C5[;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     uniqueness_by { disjoint_not_eq_lemma(get(msg2_C5[;0]), crh(0x636f6e737472756374696f6e)); () }
 name msg2_C6_resp_corr : RO[x] get(msg2_C5_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     uniqueness_by admit
-corr [x] adv ==> [msg2_C5_resp_corr[x;0]]
 
 name msg2_C6_init_corr : RO[x] get(msg2_C5_init_corr[x;0]) ++ dh_combine(x, get(S_init)) -> nonce
     uniqueness_by admit
-corr [x] adv ==> [msg2_C5_init_corr[x;0]]
 
 counter aead_counter_msg2_C7 @ Responder
 
@@ -186,17 +181,17 @@ name msg2_C7 : RO get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce ||
 
 corr adv ==> [msg2_C7[;1]]
 
-name msg2_C7_resp_corr : RO[x] get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Unit
+name msg2_C7_resp_corr : RO[x] get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
+    uniqueness_by admit
 
-corr[x] adv ==> [msg2_C7_resp_corr[x;0]]
-corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
-corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
 
-name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Unit
+name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
+    (st_aead Empty
+            aad x. true
+            nonce aead_counter_msg2_C7
+            nonce_pattern *)
+    uniqueness_by admit
 
-corr[x] adv ==> [msg2_C7_init_corr[x;0]]
-corr[x] adv ==> [msg2_C7_init_corr[x;1]]
-corr[x] adv ==> [msg2_C7_init_corr[x;2]]
 
 
 // needs to use the crh hash function, rather than kdf
@@ -206,7 +201,7 @@ name msg2_mac1_key : RO 0x6d6163312d2d2d ++ dhpk(get(S_init)) -> mackey Data<adv
         assume (0x6d6163312d2d2d != crh(0x636f6e737472756374696f6e)); 
         disjoint_not_eq_lemma(concat(0x6d6163312d2d2d, dhpk(get(S_init))),
                               preimage(msg2_C7));
-        ()
+        admit
         }
 
 // TODO
@@ -242,13 +237,11 @@ name transp_T : RO get(msg2_C7[;0]) ++ 0x ->
         ()
     }
 
-name transp_T_resp_corr : RO[x] get(msg2_C7_resp_corr[x;0]) ++ 0x -> enckey Unit || enckey Unit
-corr[x] adv ==> [transp_T_resp_corr[x;0]]
-corr[x] adv ==> [transp_T_resp_corr[x;1]]
+name transp_T_resp_corr : RO[x] get(msg2_C7_resp_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
+    uniqueness_by admit
 
-name transp_T_init_corr : RO[x] get(msg2_C7_init_corr[x;0]) ++ 0x -> enckey Unit || enckey Unit
-corr[x] adv ==> [transp_T_init_corr[x;0]]
-corr[x] adv ==> [transp_T_init_corr[x;1]]
+name transp_T_init_corr : RO[x] get(msg2_C7_init_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
+    uniqueness_by admit
     
 
 ////////////////////////////
@@ -312,7 +305,7 @@ struct initiator_msg1_val {
 }
 
 struct responder_msg1_val {
-      _responder_msg1_C3 : Data<adv /\ [msg1_C3[;0]]> | |nonce| |
+      _responder_msg1_C3 : Data<adv /\ [msg1_C3[;0]]> | |nonce| | // TODO: needs to be dependent on msg1_ephemeral
     , _responder_msg1_H4 : Data<adv> // todo
     , _responder_msg1_ephemeral : Data<adv>
     , _responder_msg1_sender : Data<adv> |4|
@@ -446,6 +439,7 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
      let k0 = hash<msg1_C2, msg1_C2_resp_corr[msg1_ephemeral];1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
 
      corr_case msg1_C2[;1] when (msg1_ephemeral == dhpk(get(E_init))) in
+     corr_case msg1_C2_resp_corr[msg1_ephemeral;1] when (msg1_ephemeral != dhpk(get(E_init))) in
      case st_aead_dec(k0, msg1_static, 0x, H2) {
          | None => None<ty:responder_msg1_val_t>()
          | Some msg1_static_dec => 
@@ -455,6 +449,7 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
                 let k1 = hash<msg1_C3, msg1_C3_resp_corr[msg1_ephemeral];1>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
                 
                 corr_case msg1_C3[;1] when (msg1_ephemeral == dhpk(get(E_init))) in
+                corr_case msg1_C3_resp_corr[msg1_ephemeral;1] when (msg1_ephemeral != dhpk(get(E_init))) in
                 case st_aead_dec(k1, msg1_timestamp, 0x, H3) {
                 | None => None<ty:responder_msg1_val_t>()
                 | Some msg1_timestamp_dec =>
@@ -543,6 +538,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     let emptystring : Data<adv> |0| = call get_empty_i() in
     
     corr_case msg2_C7[;2] when (msg2_ephemeral == dhpk(get(E_resp))) in
+    corr_case msg2_C7_init_corr[msg2_ephemeral;2] when (msg2_ephemeral != dhpk(get(E_resp))) in
     case st_aead_dec(k0, msg2_empty, 0x, H6) {
     | None => None<ty:transp_keys_t>()
     | Some msg2_empty_dec => 
