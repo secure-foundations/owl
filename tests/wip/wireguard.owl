@@ -554,8 +554,12 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
         // Calculate transport keys
         let T_init_send = hash<transp_T, transp_T_init_corr[msg2_ephemeral];0>(C7, 0x) in
         let T_init_recv = hash<transp_T, transp_T_init_corr[msg2_ephemeral];1>(C7, 0x) in
+        assert ((T_init_send == get(transp_T[;0])) \/ (T_init_send == get(transp_T_init_corr[msg2_ephemeral;0]) 
+                                                       /\
+                                                       [msg2_C7_init_corr[msg2_ephemeral;2]] <= adv));
+
+
         let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init)), msg2_ephemeral, T_init_send, T_init_recv) in
-        //debug printTyContext;
         Some(retval)
     }
 
