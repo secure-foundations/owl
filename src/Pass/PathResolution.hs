@@ -363,7 +363,12 @@ resolveNameExp ne =
     case ne^.val of
         NameConst s p oi -> do
             p' <- resolvePath (ne^.spanOf) PTName p
-            return $ Spanned (ne^.spanOf) $ NameConst s p' oi
+            oi' <- case oi of
+                     Nothing -> return Nothing
+                     Just (as, i) -> do
+                         as' <- mapM resolveAExpr as
+                         return $ Just (as', i)
+            return $ Spanned (ne^.spanOf) $ NameConst s p' oi'
         PRFName ne1 s -> do
             ne1' <- resolveNameExp ne1
             return $ Spanned (ne^.spanOf) $ PRFName ne1' s

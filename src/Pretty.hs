@@ -164,7 +164,13 @@ instance Pretty NameTypeX where
 
 instance Pretty AExprX where
     pretty (AEVar s n) = pretty (unignore s) 
-    pretty (AEApp f _ as) = pretty f <> tupled (map pretty as)
+    pretty (AEApp f _ as) = 
+        case (f, as) of
+          (PRes (PDot PTop "plus"), [x, y]) -> pretty x <+> pretty "+" <+> pretty y
+          (PRes (PDot PTop "concat"), [x, y]) -> pretty x <+> pretty "++" <+> pretty y
+          (PRes (PDot PTop "zero"), []) -> pretty "0"
+          (PRes (PDot PTop s), xs) -> pretty s <> tupled (map pretty xs)
+          _ -> pretty f <> tupled (map pretty as)
     pretty (AEHex s) = pretty "0x" <> pretty s
     pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
     pretty (AEInt i) = pretty i

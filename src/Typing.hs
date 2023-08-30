@@ -361,9 +361,11 @@ normalizeTy t0 = do
             (x, p1) <- unbind xp1
             (y, p2) <- unbind yp2
             normalizeTy $ Spanned (t0^.spanOf) $ TRefined t $ bind (s2n "_x") $ pAnd (subst x (aeVar "_x") p1) (subst y (aeVar "_x") p2)
-        (TRefined t p) -> do
+        (TRefined t xp) -> do
             t' <- normalizeTy t
-            return $ Spanned (t0^.spanOf) $ TRefined t' p
+            (x, p) <- unbind xp
+            p' <- withVars [(x, (ignore $ show x, Nothing, t'))] $ simplifyProp p
+            return $ Spanned (t0^.spanOf) $ TRefined t' $ bind x p'
         (TUnion t1 t2) -> do
             t1' <- normalizeTy t1
             t2' <- normalizeTy t2
@@ -550,7 +552,9 @@ assertSubtype t1 t2 = laxAssertion $ do
     tyc <- view tyContext
     debug $ pretty "Asserting subtype " <> pretty t1 <> pretty " <= " <> pretty t2 <> pretty "Under context: " <> prettyTyContext tyc
     b <- isSubtype t1 t2
-    assert (show $ ErrCannotProveSubtype t1 t2) b
+    t1' <- normalizeTy t1
+    t2' <- normalizeTy t2
+    assert (show $ ErrCannotProveSubtype t1' t2') b
 
 typeProtectsLabel' :: Label -> Ty -> Check ()
 typeProtectsLabel' l t0 =
@@ -773,8 +777,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
                         forM_ nts $ \nt -> do
                             checkNameType nt
                             checkROName nt
-              checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
-              checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
+              skipROUnique <- view $ envFlags . fSkipRODisj
+              when (not skipROUnique) $ do
+                  logTypecheck $ "Checking RO uniqueness of " ++ n
+                  checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
+                  checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
               local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef $ bind xs (a, p, nts)) cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs

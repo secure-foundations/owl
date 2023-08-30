@@ -13,6 +13,7 @@ data Flags = Flags {
     _fExtract :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
+    _fSkipRODisj :: Bool,
     _fFilePath :: String, 
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
@@ -39,6 +40,9 @@ parseArgs =
       <*>
           switch
           ( long "lax" <> help "Lax checking (skip some SMT queries)" )
+      <*>
+          switch
+          ( long "skip-ro-disj" <> help "Skip RO disjointness queries" )
       <*> Options.Applicative.argument (str) (value "" <> metavar "FILE")
       <*>
           switch

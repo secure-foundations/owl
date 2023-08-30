@@ -435,7 +435,7 @@ interpretAExp ae =
         env <- use varVals
         case M.lookup x env of 
             Just v -> return v
-            Nothing -> error $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (pretty (M.keys env))
+            Nothing -> liftCheck $ typeError $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (pretty (M.keys env))
       AEApp f _ xs -> do
         vs <- mapM interpretAExp xs
         case f of

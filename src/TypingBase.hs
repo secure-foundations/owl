@@ -682,6 +682,7 @@ getFuncInfo f@(PRes (PDot p s)) = do
                 uf_interp <- view interpUserFuncs
                 uf_interp p md uf
             Nothing -> typeError  (show $ ErrUnknownFunc f)
+      _ -> typeError $ "Unknown function: " ++ show f
 
 mkConcats :: [AExpr] -> AExpr
 mkConcats [] = aeApp (topLevelPath "UNIT") [] []
