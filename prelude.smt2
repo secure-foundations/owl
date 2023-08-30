@@ -401,6 +401,7 @@
     :pattern ((Flows (Join x y) z))
     :qid flows_join_l
 )))
+
 (declare-const %zeroLbl Label)
 (assert (forall ((x Label)) (! 
     (Flows %zeroLbl x)
@@ -412,6 +413,19 @@
     (=> (Flows x %zeroLbl) (= x %zeroLbl))
     :pattern ((Flows x %zeroLbl))
     :qid flows_zero_r
+)))
+
+(declare-const %top Label)
+(assert (forall ((x Label)) (! 
+    (Flows x %top)
+    :pattern ((Flows x %top))
+    :qid flows_top_l
+)))
+
+(assert (forall ((x Label)) (!
+    (=> (Flows %top x) (= x %top))
+    :pattern ((Flows %top x))
+    :qid flows_top_r
 )))
 
 (declare-fun LabelOf (Name) Label)

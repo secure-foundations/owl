@@ -88,6 +88,7 @@ data CanonAtom =
     CanonLName NameExp
       | CanonZero
       | CanonAdv
+      | CanonTop
       | CanonConst LblConst
     deriving (Show, Generic, Typeable)
 
@@ -620,4 +621,5 @@ instance Pretty CanonLabelBig where
 instance Pretty CanonAtom where
     pretty (CanonLName a) = pretty (nameLbl a)
     pretty (CanonAdv) = pretty advLbl
+    pretty (CanonTop) = pretty topLbl
     pretty (CanonZero) = pretty zeroLbl

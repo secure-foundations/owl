@@ -451,6 +451,7 @@ resolveLabel l =
           return $ Spanned (l^.spanOf) $ LName ne'
       LZero -> return l
       LAdv -> return l
+      LTop -> return l
       LJoin l1 l2 -> do
           l1' <- resolveLabel l1
           l2' <- resolveLabel l2

@@ -85,6 +85,8 @@ name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(
         disjoint_not_eq_lemma(get(msg1_C1_resp_corr[x;0]), crh(0x636f6e737472756374696f6e)); ()
     }
 
+corr[x] adv ==> [msg1_C2_resp_corr[x;1]]
+
 counter aead_counter_msg1_C3 @ Initiator
 name msg1_C3 : RO get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
     st_aead (Data<adv> |12|)
@@ -102,6 +104,8 @@ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Empty
         disjoint_not_eq_lemma(get(msg1_C2_resp_corr[x;0]), crh(0x636f6e737472756374696f6e));
         ()
     }
+
+corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 // TODO: problematic for RO disjointness
@@ -184,6 +188,9 @@ corr adv ==> [msg2_C7[;1]]
 name msg2_C7_resp_corr : RO[x] get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
     uniqueness_by admit
 
+corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
+corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
+
 
 name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
@@ -191,6 +198,8 @@ name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> no
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     uniqueness_by admit
+
+corr[x] adv ==> [msg2_C7_init_corr[x;1]]
 
 
 
@@ -305,7 +314,7 @@ struct initiator_msg1_val {
 }
 
 struct responder_msg1_val {
-      _responder_msg1_C3 : Data<adv /\ [msg1_C3[;0]]> | |nonce| | // TODO: needs to be dependent on msg1_ephemeral
+      _responder_msg1_C3 : Data<top> | |nonce| | 
     , _responder_msg1_H4 : Data<adv> // todo
     , _responder_msg1_ephemeral : Data<adv>
     , _responder_msg1_sender : Data<adv> |4|
@@ -326,8 +335,8 @@ struct transp_keys {
     , _transp_keys_responder : Data<adv> |4|  // value of get_sender_r
     , _transp_keys_msg1_ephemeral : Data<adv> // TODO should be ghost
     , _transp_keys_msg2_ephemeral : Data<adv> // TODO should be ghost
-    , _transp_keys_T_init_send : Data<[transp_T[;0]] /\ adv> | |enckey| |
-    , _transp_keys_T_resp_send : Data<[transp_T[;1]] /\ adv> | |enckey| |
+    , _transp_keys_T_init_send : Data<top> | |enckey| |
+    , _transp_keys_T_resp_send : Data<top> | |enckey| |
 }
 
 predicate valid_transp_keys (s) =
@@ -338,14 +347,11 @@ predicate valid_transp_keys (s) =
         _transp_keys_T_init_send(s) == get(transp_T[;0]) /\
         _transp_keys_T_resp_send(s) == get(transp_T[;1])
     )) /\ 
-    ((_transp_keys_msg1_ephemeral(s) != dhpk(get(E_init))) ==> (
+    ((_transp_keys_msg1_ephemeral(s) != dhpk(get(E_init)) \/
+     _transp_keys_msg2_ephemeral(s) != dhpk(get(E_init))) 
+     ==> 
         _transp_keys_T_init_send(s) != get(transp_T[;0]) /\
-        _transp_keys_T_resp_send(s) != get(transp_T[;1])
-    )) /\ 
-    ((_transp_keys_msg2_ephemeral(s) != dhpk(get(E_resp))) ==> (
-        _transp_keys_T_init_send(s) != get(transp_T[;0]) /\
-        _transp_keys_T_resp_send(s) != get(transp_T[;1])
-    ))
+        _transp_keys_T_resp_send(s) != get(transp_T[;1]))
 
 type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
 
@@ -449,7 +455,6 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
                 let k1 = hash<msg1_C3, msg1_C3_resp_corr[msg1_ephemeral];1>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
                 
                 corr_case msg1_C3[;1] when (msg1_ephemeral == dhpk(get(E_init))) in
-                corr_case msg1_C3_resp_corr[msg1_ephemeral;1] when (msg1_ephemeral != dhpk(get(E_init))) in
                 case st_aead_dec(k1, msg1_timestamp, 0x, H3) {
                 | None => None<ty:responder_msg1_val_t>()
                 | Some msg1_timestamp_dec =>
@@ -542,6 +547,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     case st_aead_dec(k0, msg2_empty, 0x, H6) {
     | None => None<ty:transp_keys_t>()
     | Some msg2_empty_dec => 
+        false_elim in 
         guard eq(msg2_empty_dec, emptystring) in 
         let H7 = crh(concat(H6, msg2_empty)) in
         
@@ -555,12 +561,14 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
 def transp_send_init (transp_keys_val : transp_keys_t) @ Initiator 
     : Option(Unit) = 
     let transp_receiver = _transp_keys_responder(transp_keys_val) in
-    let T_init_send_union = _transp_keys_T_init_send(transp_keys_val) in
+    let T_init_send = _transp_keys_T_init_send(transp_keys_val) in
     let plaintext = get(plaintext_init) in
     let transp_reserved = call get_padding_i() in
 
     guard eq(length(transp_receiver), 4) in 
-    union_case T_init_send = T_init_send_union in
+    pcase (_transp_keys_msg1_ephemeral(transp_keys_val) == dhpk(get(E_init))
+           /\
+           _transp_keys_msg2_ephemeral(transp_keys_val) == dhpk(get(E_resp))) in 
 
     let transp_counter = get_counter N_init_send in
     assume(length(transp_counter) == 8); // TODO add |counter| length const

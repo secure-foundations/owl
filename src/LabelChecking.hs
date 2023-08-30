@@ -89,6 +89,7 @@ simplLabel l =
       LName _ -> return l
       LZero -> return l
       LAdv -> return l
+      LTop -> return l
       LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
       LRangeIdx il -> do
@@ -116,6 +117,7 @@ canonLabel l = do
       LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
       LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
       LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
+      LTop -> return $ CanonAnd [CanonNoBig $ CanonTop]
       LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
@@ -131,6 +133,7 @@ canonRange is l =
           canonRange (i : is) l'
       LZero -> return (is, CanonZero)
       LAdv -> return (is, CanonAdv)
+      LTop -> return (is, CanonTop)
       LConst s -> return (is, CanonConst s)
       LName ne -> return (is, CanonLName ne)
 
@@ -175,6 +178,7 @@ symCanonAtom c =
         return $ SApp [SAtom "LabelOf", n]
       CanonZero -> return $ SAtom "%zeroLbl"
       CanonAdv -> return $ SAtom "%adv"
+      CanonTop -> return $ SAtom "%top"
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
@@ -201,6 +205,7 @@ data SymLbl =
     SName NameExp
       | SConst LblConst
       | SAdv
+      | STop
       | SRange (Bind IdxVar SymLbl)
       deriving (Show, Generic, Typeable)
 
@@ -213,6 +218,7 @@ mkSymLbl l =
       LName n -> return $ S.singleton $ AlphaOrd $ SName n
       LConst s -> return $ S.singleton $ AlphaOrd $ SConst s
       LAdv -> return $ S.singleton $ AlphaOrd SAdv
+      LTop -> return $ S.singleton $ AlphaOrd STop
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeIdx xl -> do
           (xi, l) <- unbind xl
@@ -227,6 +233,7 @@ lblFromSym s =
     case s of
       SName n -> return $ nameLbl n
       SAdv -> return advLbl
+      STop -> return topLbl
       SConst n -> return $ lblConst n
       SRange xl -> do
           (x, l) <- unbind xl

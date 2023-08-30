@@ -1202,6 +1202,7 @@ checkLabel l =
               return ()
           LZero -> return ()
           LAdv -> return ()
+          LTop -> return ()
           (LJoin l1 l2) -> do
               checkLabel l1
               checkLabel l2

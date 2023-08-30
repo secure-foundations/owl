@@ -40,6 +40,7 @@ instance Pretty LabelX where
     pretty (LName n) = pretty "[" <> pretty n <> pretty "]"
     pretty LZero = pretty "static"
     pretty (LAdv) = pretty "adv"
+    pretty (LTop) = pretty "top"
     pretty (LJoin v1 v2) = pretty v1 <+> pretty "/\\" <+> pretty v2
     pretty (LConst s) = pretty s
     pretty (LRangeIdx l) = 

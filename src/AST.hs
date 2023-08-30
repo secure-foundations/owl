@@ -144,6 +144,7 @@ data LabelX =
     LName NameExp 
     | LZero
     | LAdv 
+    | LTop
     | LJoin Label Label 
     | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
@@ -161,6 +162,9 @@ zeroLbl = mkSpanned LZero
 
 advLbl :: Label
 advLbl = mkSpanned LAdv
+
+topLbl :: Label
+topLbl = mkSpanned LTop
 
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)

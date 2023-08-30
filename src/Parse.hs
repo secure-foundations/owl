@@ -141,6 +141,10 @@ parseLabelTerm =
       (parseSpanned $ do
           reserved "adv";
           return LAdv)
+      <|>
+      (parseSpanned $ do
+          reserved "top";
+          return LTop)
       <|> (parseSpanned $ do
           symbol "["
           n <- parseNameExp;
