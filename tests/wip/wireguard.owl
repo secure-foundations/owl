@@ -348,7 +348,7 @@ predicate valid_transp_keys (s) =
         _transp_keys_T_resp_send(s) == get(transp_T[;1])
     )) /\ 
     ((_transp_keys_msg1_ephemeral(s) != dhpk(get(E_init)) \/
-     _transp_keys_msg2_ephemeral(s) != dhpk(get(E_init))) 
+     _transp_keys_msg2_ephemeral(s) != dhpk(get(E_resp))) 
      ==> 
         _transp_keys_T_init_send(s) != get(transp_T[;0]) /\
         _transp_keys_T_resp_send(s) != get(transp_T[;1]))
@@ -555,6 +555,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
         let T_init_send = hash<transp_T, transp_T_init_corr[msg2_ephemeral];0>(C7, 0x) in
         let T_init_recv = hash<transp_T, transp_T_init_corr[msg2_ephemeral];1>(C7, 0x) in
         let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init)), msg2_ephemeral, T_init_send, T_init_recv) in
+        //debug printTyContext;
         Some(retval)
     }
 
