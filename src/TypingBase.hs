@@ -113,11 +113,12 @@ instance Subst ResolvedPath ModDef
 data NameDef = 
     BaseDef (NameType, [Locality])
       | AbstractName
-      | RODef (Bind [DataVar] (AExpr, Prop, [NameType]))
+      | RODef ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType]))
       deriving (Show, Generic, Typeable)
 
 instance Alpha NameDef
 instance Subst ResolvedPath NameDef
+instance Subst Idx ROStrictness
 instance Subst Idx NameDef
 
 data ModBody = ModBody { 
@@ -330,7 +331,7 @@ loadSMTCache = do
                   TypingBase.warn $ "Could not decode SMT cache: " ++ s ++ ", deleting file"
                   liftIO $ removeFile hintsFile
               Right c -> do
-                  liftIO $ putStrLn $ "Found smtcache file"
+                  liftIO $ putStrLn $ "Found smtcache file: " ++ hintsFile
                   liftIO $ writeIORef cacheref $ c
 
 
@@ -540,6 +541,21 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
+getROStrictness :: NameExp -> Check ROStrictness 
+getROStrictness ne = 
+    case ne^.val of
+      NameConst _ pth@(PRes (PDot p n)) _ -> do
+          md <- openModule p
+          case lookup n (md^.nameDefs) of
+            Nothing -> typeError $ "Unknown name: " ++ show (pretty pth)
+            Just b_nd -> do
+                ((is, ps), nd) <- unbind b_nd
+                case nd of
+                  RODef strictness _ -> return strictness
+                  _ -> typeError $ "Not an RO name: " ++ show (pretty ne)
+      _ -> typeError $ "Not an RO name: " ++ show (pretty ne)
+
+
 getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check AExpr
 getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
     md <- openModule p
@@ -550,7 +566,7 @@ getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
           assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
           let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
           case nd of
-            RODef b -> do
+            RODef _ b -> do
                 (xs, (a, _, _)) <- unbind b
                 assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
                 return $ substs (zip xs as) a
@@ -566,7 +582,7 @@ getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
           assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
           let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
           case nd of
-            RODef b -> do
+            RODef _ b -> do
                 (xs, (_, p, _)) <- unbind b
                 assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
                 return $ substs (zip xs as) p
@@ -597,7 +613,7 @@ getNameInfo ne = do
                  BaseDef (nt, lcls) -> do
                      assert ("Cannot use hash select on base name") $ oi `aeq` Nothing 
                      return $ Just (nt, Just lcls) 
-                 RODef b -> do
+                 RODef _ b -> do
                      (xs, (_, _, nts)) <- unbind b
                      case oi of
                        Nothing -> do
@@ -629,7 +645,7 @@ getRO p0@(PRes (PDot p s)) = do
           Just ind -> do
               (ps, nd) <- unbind ind
               case nd of
-                RODef res -> return $ bind ps res
+                RODef _ res -> return $ bind ps res
                 _ -> typeError $ "Not an RO name: " ++ show (pretty p0)
           Nothing -> typeError $ show $ ErrUnknownRO p
 getRO pth = typeError $ "Unknown path: " ++ show pth
@@ -931,11 +947,19 @@ splitConcats a =
 -- prune impossible paths. We still need to case on the RO label
 solvabilityAxioms :: AExpr -> NameExp -> Check Prop
 solvabilityAxioms ae roName = local (set tcScope TcGhost) $ do
-    let args = splitConcats ae
+    ae' <- resolveANF ae
+    let args = splitConcats ae'
     arg_t <- mapM inferAExpr args
     -- If all labels are corrupt, the RO is corrupt
-    p <- derivability (zip args arg_t)
-    return $ pImpl p (pFlow (nameLbl roName) advLbl) 
+    p <- derivabilitySufficient (zip args arg_t)
+    strictness <- getROStrictness roName
+    case strictness of
+      ROUnstrict -> return $ pImpl p (pFlow (nameLbl roName) advLbl) 
+      ROStrict -> do
+          p' <- derivabilityNecessary (zip args arg_t)
+          return $ pAnd
+                    (pImpl p (pFlow (nameLbl roName) advLbl))
+                    (pImpl (pFlow (nameLbl roName) advLbl) p')
 
 resolveANF :: AExpr -> Check AExpr
 resolveANF a = do
@@ -964,22 +988,34 @@ resolveANF a = do
       AELenConst _ -> return a
       AEInt _ -> return a
 
--- Derivability produces an overapproximation of when the arguments can be
--- derived.
--- derivability(get(N) || get(M)) = corr(N) /\ corr(M)
--- derivability(get(N) || get(M) || f()) = corr(N) /\ corr(M)
--- derivability(get(N) || get(M) || f(get(Z))) = corr(N) /\ corr(M) /\ corr(Z)
--- derivability(unknown) = False
--- 
-derivability :: [(AExpr, Ty)] -> Check Prop
-derivability args = do
+-- derivabilitySufficient produces an overapproximation of when the arguments can be
+-- derived, in the sense that derivabilitySufficient ==> arguments must be
+-- derivable.
+-- We currently approximate it since we do not precisely track weak secrecy.
+
+data DerivabilityApproximation = DSufficient | DNecessary
+    deriving Eq
+
+derivabilitySufficient :: [(AExpr, Ty)] -> Check Prop
+derivabilitySufficient args = derivability DSufficient args
+--
+-- derivabilityNecessary produces an overapproximationg of when the arguments can be
+-- derived, in the sense that "arguments are derivable" ==> derivabilitySufficient.
+-- We only use this one for strict RO names, where the name is only corrupt when
+-- the preimage is derivable.
+
+derivabilityNecessary :: [(AExpr, Ty)] -> Check Prop
+derivabilityNecessary args = derivability DNecessary args
+
+derivability :: DerivabilityApproximation -> [(AExpr, Ty)] -> Check Prop
+derivability da args = do
     ps <- forM args $ \(a, t) -> do
         a' <- resolveANF a
         if isConstant a' then return pTrue else
             case (stripRefinements t)^.val of
               TName n -> return $ pFlow (nameLbl n) advLbl
               TSS n m -> return $ pOr (pFlow (nameLbl n) advLbl) (pFlow (nameLbl m) advLbl)
-              _ -> return $ pFalse
+              _ -> return $ if da == DSufficient then pFalse else pTrue
     return $ foldr pAnd pTrue ps
 
 isConstant :: AExpr -> Bool
@@ -1106,7 +1142,7 @@ isNameDefRO (PRes (PDot p n)) = do
         Nothing -> typeError  $ "SMT error"
         Just b_nd -> do 
             case snd (unsafeUnbind b_nd) of
-              RODef _ -> return True
+              RODef _ _ -> return True
               _ -> return False
 
 normalizeNameExp :: NameExp -> Check NameExp
@@ -1216,7 +1252,7 @@ collectROPreimages = do
             go (p, b) = do
                 (is, nd) <- unbind b
                 case nd of
-                  RODef b -> do
+                  RODef _ b -> do
                       (xs, (a, b, _)) <- unbind b
                       return [(p, bind (is, xs) (a, b))]
                   _ -> return []
@@ -1231,7 +1267,7 @@ collectLocalROPreimages =  do
             go (n, b) = do
                 (is, nd) <- unbind b
                 case nd of
-                  RODef b -> do
+                  RODef _ b -> do
                       (xs, (a, b, _)) <- unbind b
                       return [(n, bind (is, xs) (a, b))]
                   _ -> return []

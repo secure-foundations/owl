@@ -149,13 +149,13 @@ resolveDecls (d:ds) =
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
                           return $ DeclBaseName nt' ls'
-                      DeclRO b -> do
+                      DeclRO strictness b -> do
                           (xs, (a, req, nts, lem)) <- unbind b
                           a' <- resolveAExpr a
                           req' <- resolveProp req
                           nts' <- mapM resolveNameType nts
                           lem' <- resolveExpr lem
-                          return $ DeclRO $ bind xs (a', req', nts', lem')
+                          return $ DeclRO strictness $ bind xs (a', req', nts', lem')
           p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds

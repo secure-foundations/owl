@@ -767,7 +767,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
           DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
-          DeclRO b -> do
+          DeclRO strictness b -> do
               (xs, (a, p, nts, lem)) <- unbind b
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
                 local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
@@ -782,7 +782,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                   logTypecheck $ "Checking RO uniqueness of " ++ n
                   checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
                   checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
-              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef $ bind xs (a, p, nts)) cont
+              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef strictness $ bind xs (a, p, nts)) cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
           md <- case me^.val of

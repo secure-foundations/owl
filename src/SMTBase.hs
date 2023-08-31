@@ -329,7 +329,6 @@ raceSMT setup k1 k2 = do
 -- Smart app
 sApp :: [SExp] -> SExp
 sApp [x] = x
-sApp [] = error "Empty sApp"
 sApp xs = SApp xs
 
 sInt :: Int -> SExp
@@ -544,7 +543,7 @@ flattenNameDefs xs = do
           AbstractName -> do
               sn <- smtName n
               return [SMTBaseName ((SAtom $ "%name_" ++ sn), n) (bind (is, ps) Nothing)]
-          RODef b  -> do
+          RODef _ b -> do
               sn <- smtName n
               (xs, (a, p, nts)) <- liftCheck $ unbind b
               return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
@@ -579,7 +578,7 @@ sForall vs bdy pats qid =
         let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
         let bdy' = case pats of
                      [] -> SApp [SAtom "!", bdy, SQid qid] 
-                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats), SQid qid] 
+                     _ -> SApp [SAtom "!", bdy, SPat (sApp pats), SQid qid] 
         in
         SApp [SAtom "forall", v_sorts, bdy']
 
@@ -591,7 +590,7 @@ sExists vs bdy pats qid =
         let v_sorts = SApp $ map (\(x, y) -> SApp [x, y]) vs in 
         let bdy' = case pats of
                      [] -> SApp [SAtom "!", bdy, SQid qid] 
-                     _ -> SApp [SAtom "!", bdy, SPat (SApp pats), SQid qid] 
+                     _ -> SApp [SAtom "!", bdy, SPat (sApp pats), SQid qid] 
         in
         SApp [SAtom "exists", v_sorts, bdy']
 

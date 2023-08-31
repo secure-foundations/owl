@@ -1163,7 +1163,7 @@ preprocessModBody mb = do
             let ((sids, pids), nd) = unsafeUnbind binds
             case nd of
               TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
-              TB.RODef _ -> return (locMap, shared, pubkeys) -- ignore RO defs
+              TB.RODef _ _ -> return (locMap, shared, pubkeys) -- ignore RO defs
               TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize
@@ -1205,7 +1205,7 @@ preprocessModBody mb = do
         processOrcls (n, b) = do
             let (_, nd) = unsafeUnbind b
             case nd of
-              TB.RODef _ -> error "unimp" -- do
+              TB.RODef _ _ -> error "unimp" -- do
                 --rtlen <- case (map (view val) rtys) of
                 --    [NT_Nonce] -> return "NONCE_SIZE"
                 --    [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"

@@ -327,9 +327,12 @@ data DeclX =
 
 type Decl = Spanned DeclX
 
+data ROStrictness = ROStrict | ROUnstrict
+    deriving (Show, Generic, Typeable, Eq)
+
 data NameDecl = 
     DeclBaseName NameType [Locality]
-      | DeclRO (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
+      | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
       | DeclAbstractName
       deriving (Show, Generic, Typeable)
 
@@ -470,6 +473,10 @@ instance Subst ResolvedPath Endpoint
 instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
+
+instance Alpha ROStrictness
+instance Subst AExpr ROStrictness
+instance Subst ResolvedPath ROStrictness
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX

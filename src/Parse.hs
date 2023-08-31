@@ -28,7 +28,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -617,6 +617,10 @@ parseNameDeclBody =
             let xs = case xs_ of
                        Nothing -> []
                        Just v -> v
+            ostrict <- optionMaybe $ reserved "strict"
+            let strictness = case ostrict of
+                               Just _ -> ROStrict
+                               Nothing -> ROUnstrict
             e <- parseAExpr
             symbol "->"
             nts <- parseNameType `sepBy1` (symbol "||")
@@ -630,7 +634,7 @@ parseNameDeclBody =
             let lem = case olem of
                         Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "UNIT") [] []
                         Just l -> l
-            return $ DeclRO (bind xs (e, req, nts, lem))
+            return $ DeclRO strictness (bind xs (e, req, nts, lem))
          )
          <|>
          (do

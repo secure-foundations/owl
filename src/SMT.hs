@@ -164,8 +164,7 @@ mkCrossDisjointness fdfs = do
                             return (vpi, vpr)
                     let vpre1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", vpre1, vpre2]]
                     emitComment $ "Preimage disjointness for " ++ show sn1 ++ " and " ++ show sn2
-                    let patPre = (if length q1 > 0 then [vpre1] else []) ++ (if length q2 > 0 then [vpre2] else [])
-                    emitAssertion $ sForall (q1 ++ q2) (sImpl (sAnd2 vprereq1 vprereq2) $ sNot $ vpre1_eq_v2) patPre $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                    emitAssertion $ sForall (q1 ++ q2) (sImpl (sAnd2 vprereq1 vprereq2) $ sNot $ vpre1_eq_v2) [vpre1_eq_v2] $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
 
 
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()
@@ -491,22 +490,6 @@ sConcats :: [SExp] -> SExp
 sConcats vs = 
     let sConcat a b = SApp [SAtom "concat", a, b] in
     foldl sConcat (head vs) (tail vs) 
-
-
-symROUnique :: [Bind ([IdxVar], [IdxVar]) [AExpr]] -> [AExpr] -> Sym ()
-symROUnique roPres e = do
-    v <- sConcats <$> mapM interpretAExp e
-    bs <- forM (zip roPres [0..(length roPres - 1)]) $ \(bnd, j) -> do
-        ((is, ps), aes) <- liftCheck $ unbind bnd
-        let ivs = map (\i -> SAtom (show i)) $ is ++ ps
-        withIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ do
-            vs <- mapM interpretAExp aes
-            return $ sForall
-                (map (\i -> (i, indexSort)) ivs)
-                (sNot $ sEq (SAtom "TRUE") $ SApp [SAtom "eq", sConcats vs, v])
-                []
-                ("ro_unique_" ++ show j)
-    emitToProve $ sAnd bs
 
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
