@@ -115,7 +115,7 @@
 (assert (= (length UNIT) (I2B 0)))
 
 (assert (forall ((x Bits) (y Bits) (z Bits) (w Bits)) (!
-    (=> (and (or (= (length x) (length z)) (= (length y) (length w)))
+    (=> (and (or (= TRUE (eq (length x) (length z))) (= TRUE (eq (length y) (length w))))
              (= TRUE (eq (concat x y) (concat z w))))
         (and (= TRUE (eq x z)) (= TRUE (eq y w))))
     :pattern ((eq (concat x y) (concat z w)))

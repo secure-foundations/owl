@@ -1125,6 +1125,19 @@ parseExprTerm =
         return $ EIf t e1 e2)
     <|>
     (parseSpanned $ do
+        reserved "forall"
+        x <- identifier
+        oreq <- parseRequires
+        let req = case oreq of
+                    Nothing -> pTrue
+                    Just req -> req
+        symbol "{"
+        k <- parseExpr
+        symbol "}"
+        return $ EForall $ bind (s2n x) (req, k)
+    )
+    <|>
+    (parseSpanned $ do
         reserved "guard"
         a <- parseAExpr
         reserved "in"

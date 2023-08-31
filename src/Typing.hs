@@ -1466,6 +1466,11 @@ getOutTy ot t1 =
           assertSubtype t1 t2
           return t2
 
+ensureNonGhost :: Check ()
+ensureNonGhost = do
+    s <- view tcScope
+    assert "Cannot be in ghost here" $ not $ s `aeq` TcGhost        
+
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = withSpan (e^.spanOf) $ do 
@@ -1484,15 +1489,18 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
               return (a, t')
           checkCryptoOp ot cop args
       (EInput xsk) -> do
+          ensureNonGhost
           ((x, s), k) <- unbind xsk
           withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
       (EGetCtr p iargs) -> do 
           checkCounterIsLocal p iargs
           getOutTy ot $ tData advLbl advLbl
       (EIncCtr p iargs) -> do
+          ensureNonGhost
           checkCounterIsLocal p iargs
           getOutTy ot $ tUnit
       (EOutput a ep) -> do
+          ensureNonGhost
           case ep of
             Nothing -> return ()
             Just ep -> checkEndpoint ep
@@ -1629,6 +1637,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError $ "Weird case: should be in a def"
       (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
+          ensureNonGhost
           md <- openModule p
           case lookup n (md^.tableEnv) of 
             Nothing -> typeError $ show $ pretty "Unknown table: " <> pretty n
@@ -1646,6 +1655,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                       getOutTy ot $ tUnit
 
       (ECall f (is1, is2) args) -> do
+          ensureNonGhost -- TODO: fix for ghost methods
           bfdef <- getDefSpec f
           ts <- view tcScope
           ((bi1, bi2), dspec) <- unbind bfdef
@@ -1692,6 +1702,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                 assertSubtype t2 t1'
                 return t1'
       EGuard a k -> do
+          ensureNonGhost
           t <- inferAExpr a
           b <- tyFlowsTo t advLbl
           withSpan (a^.spanOf) $ assert ("Guard must be public") b   
@@ -1714,6 +1725,17 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
+      (EForall xpk) -> do
+          (x, (p, k)) <- unbind xpk
+          t <- local (set tcScope TcGhost) $ withVars [(x, (ignore $ show x, Nothing, tData topLbl topLbl))] $ do
+              checkProp p
+              checkExpr Nothing k
+          t' <- normalizeTy t
+          case t'^.val of
+            TRefined (Spanned _ TUnit) yp -> do
+                (y, p') <- unbind yp
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall $ bind x $ subst y (aeApp (topLevelPath "UNIT") [] []) p'
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (pretty t')
       (EPCase p op k) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
           doCaseSplit <- case op of
@@ -1853,10 +1875,8 @@ nameExpNotIn ne nes = foldr pAnd pTrue $ map (\ne' -> pNot $ pNameExpEq ne ne') 
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
-    x' <- normalizeAExpr x
-    y' <- normalizeAExpr y
-    ns1 <- getNameContents x'
-    ns2 <- getNameContents y'
+    ns1 <- getNameContents x
+    ns2 <- getNameContents y
     ns1' <- mapM normalizeNameExp ns1
     ns2' <- mapM normalizeNameExp ns2
     let p1 = foldr pAnd pTrue $ map (\ne -> nameExpNotIn ne ns2') ns1' 
@@ -1917,10 +1937,10 @@ checkCryptoOp ot cop args = do
       CLemma (LemmaDisjNotEq) -> do
           assert ("disjoint_not_eq_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
-          x' <- resolveANF x
-          y' <- resolveANF y
+          x' <- normalizeAExpr =<< resolveANF x
+          y' <- normalizeAExpr =<< resolveANF y
           proveDisjointContents x' y'
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x y
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x' y'
       CLemma (LemmaCrossDH n1 n2 n3) -> do
           assert ("Wrong number of arguments to cross_dh_lemma") $ length args == 1
           let [(x, t)] = args
@@ -1947,7 +1967,7 @@ checkCryptoOp ot cop args = do
           x'' <- normalizeAExpr x'
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (pretty x'')) b
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x
+          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x''
       CHash hints i -> do
           assert ("RO hints must be nonempty") $ length hints > 0
           hints_data <- forM hints checkROHint

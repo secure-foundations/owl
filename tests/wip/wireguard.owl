@@ -66,7 +66,7 @@ name msg1_C1 : RO crh(0x636f6e737472756374696f6e) ++ dhpk(get(E_init)) -> nonce
 name msg1_C1_resp_corr : RO[x] crh(0x636f6e737472756374696f6e) ++ x -> nonce
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
-    uniqueness_by admit
+    uniqueness_by ()
 
 counter aead_counter_msg1_C2 @ Initiator
 name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
@@ -74,7 +74,9 @@ name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> 
             aad x. msg1_C2_aad[x]
             nonce aead_counter_msg1_C2
             nonce_pattern *
-    uniqueness_by { disjoint_not_eq_lemma(get(msg1_C1), crh(0x636f6e737472756374696f6e)); () }
+            uniqueness_by {
+                is_constant_lemma(crh(0x636f6e737472756374696f6e))
+            }
 
 type Empty = (x:Data<adv>{false})
 
@@ -82,7 +84,7 @@ name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {
-        disjoint_not_eq_lemma(get(msg1_C1_resp_corr[x;0]), crh(0x636f6e737472756374696f6e)); ()
+                is_constant_lemma(crh(0x636f6e737472756374696f6e))
     }
 
 corr[x] adv ==> [msg1_C2_resp_corr[x;1]]
@@ -93,60 +95,61 @@ name msg1_C3 : RO get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init))
             aad x. msg1_C3_aad[x]
             nonce aead_counter_msg1_C3
             nonce_pattern *
-    uniqueness_by { disjoint_not_eq_lemma(get(msg1_C2[;0]), crh(0x636f6e737472756374696f6e)); () }
+    uniqueness_by {    is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg1_C3_resp_corr : RO[x] get(msg1_C2_resp_corr[x;0]) ++
 dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Empty
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
-    uniqueness_by {
-        disjoint_not_eq_lemma(get(msg1_C2_resp_corr[x;0]), get(msg1_C2[;0]));
-        disjoint_not_eq_lemma(get(msg1_C2_resp_corr[x;0]), crh(0x636f6e737472756374696f6e));
-        ()
-    }
+    uniqueness_by {    is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 // TODO: problematic for RO disjointness
 name msg1_mac1_key : RO 0x6d6163312d2d2d ++ dhpk(get(S_resp)) -> mackey Data<adv> 
-    uniqueness_by { assume (0x6d6163312d2d2d != crh(0x636f6e737472756374696f6e)); () }
+    uniqueness_by { assume (0x6d6163312d2d2d != crh(0x636f6e737472756374696f6e)); 
+                    is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
     
 name msg2_C4 : RO get(msg1_C3[;0]) ++ dhpk(get(E_resp)) -> nonce
-    uniqueness_by { disjoint_not_eq_lemma(get(msg1_C3[;0]), crh(0x636f6e737472756374696f6e)); () }
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C4_resp_corr : RO[x] get(msg1_C3_resp_corr[x;0]) ++ dhpk(get(E_resp)) -> nonce
-    uniqueness_by admit
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
 
 name msg2_C4_init_corr : RO[y] get(msg1_C3[;0]) ++ y -> nonce
     requires is_group_elem(y)
     requires y != dhpk(get(E_resp))
-    uniqueness_by admit
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
     
 corr[y] adv ==> [msg2_C4_init_corr[y;0]]
 
 
 name msg2_C5 : RO get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
-    uniqueness_by { disjoint_not_eq_lemma(get(msg2_C4[;0]), crh(0x636f6e737472756374696f6e)); () }
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C5_resp_corr : RO[x] get(msg2_C4_resp_corr[x;0]) ++ dh_combine(x, get(E_resp)) -> nonce
-    uniqueness_by admit
-
+    requires is_group_elem(x)
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C5_init_corr : RO[x] get(msg2_C4_init_corr[x;0]) ++ dh_combine(x, get(E_init)) -> nonce
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
 name msg2_C6 : RO get(msg2_C5[;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     uniqueness_by { disjoint_not_eq_lemma(get(msg2_C5[;0]), crh(0x636f6e737472756374696f6e)); () }
+
 name msg2_C6_resp_corr : RO[x] get(msg2_C5_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C6_init_corr : RO[x] get(msg2_C5_init_corr[x;0]) ++ dh_combine(x, get(S_init)) -> nonce
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 counter aead_counter_msg2_C7 @ Responder
 
@@ -171,22 +174,22 @@ name msg2_C7 : RO get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce ||
             aad x. true
             nonce aead_counter_msg2_C7
             nonce_pattern *
-    uniqueness_by {
-        assume (forall x : bv. 
-            concat(get(msg2_C6[;0]), 0x00000000) != preimage(msg1_C1_resp_corr[x])
-        );
-        disjoint_not_eq_lemma(get(msg2_C6[;0]), crh(0x636f6e737472756374696f6e));
-        disjoint_not_eq_lemma(concat(get(msg2_C6[;0]), 0x00000000),
-                              preimage(msg1_C1));
-        disjoint_not_eq_lemma(concat(get(msg2_C6[;0]), 0x00000000),
-                              preimage(msg1_mac1_key));
-        ()
+    uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e));
+        disjoint_not_eq_lemma(get(msg2_C6[;0]) ++ (0x00000000), preimage(msg1_mac1_key));
+        assume (forall x:bv. is_group_elem(x) ==> 
+            length (get(msg2_C6[;0]) ++ (0x00000000)) != length(preimage(msg1_C1_resp_corr[x])))
     }
 
 corr adv ==> [msg2_C7[;1]]
 
 name msg2_C7_resp_corr : RO[x] get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { 
+        disjoint_not_eq_lemma(get(msg2_C6_resp_corr[x;0]) ++ (0x00000000), preimage(msg1_mac1_key));
+        assume (forall x:bv. is_group_elem(x) ==> 
+            length (get(msg2_C6_resp_corr[x;0]) ++ (0x00000000)) != length(preimage(msg1_C1_resp_corr[x])))
+    }
+        
 
 corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
 corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
@@ -197,7 +200,12 @@ name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> no
             aad x. true
             nonce aead_counter_msg2_C7
             nonce_pattern *)
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { 
+        disjoint_not_eq_lemma(get(msg2_C6_init_corr[x;0]) ++ (0x00000000), preimage(msg1_mac1_key));
+        assume (forall x:bv. is_group_elem(x) ==> 
+            length (get(msg2_C6_init_corr[x;0]) ++ (0x00000000)) != length(preimage(msg1_C1_resp_corr[x])))
+    }
 
 corr[x] adv ==> [msg2_C7_init_corr[x;1]]
 
@@ -205,13 +213,20 @@ corr[x] adv ==> [msg2_C7_init_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 name msg2_mac1_key : RO 0x6d6163312d2d2d ++ dhpk(get(S_init)) -> mackey Data<adv>
-    uniqueness_by {
-        let x = concat(0x6d6163312d2d2d, dhpk(get(S_init))) in 
-        assume (0x6d6163312d2d2d != crh(0x636f6e737472756374696f6e)); 
-        disjoint_not_eq_lemma(concat(0x6d6163312d2d2d, dhpk(get(S_init))),
-                              preimage(msg2_C7));
-        admit
-        }
+    uniqueness_by { 
+        is_constant_lemma(crh(0x636f6e737472756374696f6e));
+        assume (forall x:bv. is_group_elem(x) ==> 
+         0x6d6163312d2d2d ++ dhpk(get(S_init)) !=
+         preimage(msg2_C7_init_corr[x]));
+        assume (forall x:bv. is_group_elem(x) ==> 
+         0x6d6163312d2d2d ++ dhpk(get(S_init)) !=
+         preimage(msg2_C7_resp_corr[x]));
+        disjoint_not_eq_lemma(0x6d6163312d2d2d ++ dhpk(get(S_init)),
+        preimage(msg2_C7));
+        assume (forall x:bv. is_group_elem(x) ==> 
+         0x6d6163312d2d2d ++ dhpk(get(S_init)) !=
+         preimage(msg1_C1_resp_corr[x]))
+    }
 
 // TODO
 name plaintext_init : nonce @ Initiator
@@ -232,25 +247,34 @@ name transp_T : RO get(msg2_C7[;0]) ++ 0x ->
         aad x. true
         nonce N_resp_send
         nonce_pattern *
-    uniqueness_by {
-        let x = concat(get(msg2_C7[;0]), 0x) in  
-        assume (forall y : bv. 
-            x != preimage(msg1_C1_resp_corr[y])
-        );
-        disjoint_not_eq_lemma(concat(get(msg2_C7[;0]), 0x),
-                              preimage(msg1_C1)) ;  
-        disjoint_not_eq_lemma(concat(get(msg2_C7[;0]), 0x),
-                              preimage(msg1_mac1_key));
-        disjoint_not_eq_lemma(concat(get(msg2_C7[;0]), 0x),
-                              preimage(msg2_mac1_key));
-        ()
-    }
+    uniqueness_by { 
+        is_constant_lemma(crh(0x636f6e737472756374696f6e));
+        disjoint_not_eq_lemma(get(msg2_C7[;0]) ++ 0x, preimage(msg2_mac1_key));
+        disjoint_not_eq_lemma(get(msg2_C7[;0]) ++ 0x, preimage(msg1_mac1_key));
+        assume (forall x:bv.
+            is_group_elem(x) ==> 
+            length(get(msg2_C7[;0]) ++ 0x) != length(preimage(msg1_C1_resp_corr[x])))
+        }
 
 name transp_T_resp_corr : RO[x] get(msg2_C7_resp_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { 
+        assume (length(get(msg2_C7_resp_corr[x;0]) ++ 0x) != length(preimage(msg2_mac1_key)));
+        assume (forall y:bv. 
+            is_group_elem(y) ==>
+                length(get(msg2_C7_resp_corr[x;0]) ++ 0x) !=
+                length(preimage(msg1_C1_resp_corr[y])));
+        is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name transp_T_init_corr : RO[x] get(msg2_C7_init_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
-    uniqueness_by admit
+    requires is_group_elem(x)
+    uniqueness_by { 
+        assume (length(get(msg2_C7_init_corr[x;0]) ++ 0x) != length(preimage(msg2_mac1_key)));
+        assume (forall y:bv. 
+            is_group_elem(y) ==>
+                length(get(msg2_C7_init_corr[x;0]) ++ 0x) !=
+                length(preimage(msg1_C1_resp_corr[y])));
+        is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
     
 
 ////////////////////////////
@@ -377,9 +401,8 @@ type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
 
 // type msg2_val_t = s:msg2_val {valid_msg2_val[s]}
 
-def off_chain_resp(er : Data<top>, dhpk_S_init : dhpk(S_init)) @ Responder : Unit = 
-    assume (is_group_elem(er));
-    assume (er != dhpk(get(E_init)));
+def off_chain_resp(er : 
+    (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_init))}), dhpk_S_init : dhpk(S_init)) @ Responder : Unit = 
     let c1 = hash<msg1_C1_resp_corr[er]>(crh(0x636f6e737472756374696f6e), er) in
     let c2 = hash<msg1_C2_resp_corr[er]>(c1, dh_combine(er, get(S_resp))) in
     let c3 = hash<msg1_C3_resp_corr[er]>(c2, dh_combine(dhpk_S_init, get(S_resp))) in 
@@ -397,9 +420,7 @@ def off_chain_resp(er : Data<top>, dhpk_S_init : dhpk(S_init)) @ Responder : Uni
     debug printTyOf(c7);
     debug printTyOf(tsend)
 
-def off_chain_init(er : Data<top>, dhpk_S_resp : dhpk(S_resp)) @ Initiator : Unit = 
-    assume (is_group_elem(er));
-    assume (er != dhpk(get(E_resp)));
+def off_chain_init(er : (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_resp))}), dhpk_S_resp : dhpk(S_resp)) @ Initiator : Unit = 
     let c1 = hash<msg1_C1>(crh(0x636f6e737472756374696f6e), dhpk(get(E_init))) in
     let c2 = hash<msg1_C2>(c1, dh_combine(dhpk_S_resp, get(E_init))) in
     let c3 = hash<msg1_C3>(c2, dh_combine(dhpk_S_resp, get(S_init))) in 
@@ -475,8 +496,7 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
      let C1 = hash<msg1_C1, msg1_C1_resp_corr[msg1_ephemeral]>(C0, msg1_ephemeral) in 
      let H2 = crh(concat(H1, msg1_ephemeral)) in
 
-     // TODO this fails when the transp_T oracle is added?
-     assume(length(dh_combine(msg1_ephemeral, get(S_resp))) != 0);
+     assert(length(dh_combine(msg1_ephemeral, get(S_resp))) != 0);
      assert(concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != concat(get(msg2_C7[;0]), 0x));
 
      let C2 = hash<msg1_C2, msg1_C2_resp_corr[msg1_ephemeral];0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
