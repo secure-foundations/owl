@@ -1525,10 +1525,9 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTyOf a)) -> do
           t <- local (set tcScope $ TcGhost) $ inferAExpr a
+          a' <- resolveANF a
           t' <- normalizeTy t
-          e <- ask
-          tyc <- view tyContext
-          liftIO $ putStrLn $ show $ pretty "Type for " <> pretty a <> pretty ": " <> pretty t <> line <> pretty "Normalized: " <> pretty t' 
+          liftIO $ putStrLn $ show $ pretty "Type for " <> pretty a <> pretty ": " <> pretty t' 
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t

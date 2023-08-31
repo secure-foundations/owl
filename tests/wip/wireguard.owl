@@ -377,8 +377,46 @@ type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
 
 // type msg2_val_t = s:msg2_val {valid_msg2_val[s]}
 
-def tst_disjointness() @ Initiator : Unit = 
-    assert (preimage(msg2_C7) != preimage(msg1_C1))
+def off_chain_resp(er : Data<top>, dhpk_S_init : dhpk(S_init)) @ Responder : Unit = 
+    assume (is_group_elem(er));
+    assume (er != dhpk(get(E_init)));
+    let c1 = hash<msg1_C1_resp_corr[er]>(crh(0x636f6e737472756374696f6e), er) in
+    let c2 = hash<msg1_C2_resp_corr[er]>(c1, dh_combine(er, get(S_resp))) in
+    let c3 = hash<msg1_C3_resp_corr[er]>(c2, dh_combine(dhpk_S_init, get(S_resp))) in 
+    let c4 = hash<msg2_C4_resp_corr[er]>(c3, dhpk(get(E_resp))) in 
+    let c5 = hash<msg2_C5_resp_corr[er]>(c4, dh_combine(er, get(E_resp))) in
+    let c6 = hash<msg2_C6_resp_corr[er]>(c5, dh_combine(dhpk_S_init, get(E_resp))) in
+    let c7 = hash<msg2_C7_resp_corr[er]>(c6, 0x00000000) in
+    let tsend = hash<transp_T_resp_corr[er]>(c7, 0x) in 
+    debug printTyOf(c1);
+    debug printTyOf(c2);
+    debug printTyOf(c3);
+    debug printTyOf(c4);
+    debug printTyOf(c5);
+    debug printTyOf(c6);
+    debug printTyOf(c7);
+    debug printTyOf(tsend)
+
+def off_chain_init(er : Data<top>, dhpk_S_resp : dhpk(S_resp)) @ Initiator : Unit = 
+    assume (is_group_elem(er));
+    assume (er != dhpk(get(E_resp)));
+    let c1 = hash<msg1_C1>(crh(0x636f6e737472756374696f6e), dhpk(get(E_init))) in
+    let c2 = hash<msg1_C2>(c1, dh_combine(dhpk_S_resp, get(E_init))) in
+    let c3 = hash<msg1_C3>(c2, dh_combine(dhpk_S_resp, get(S_init))) in 
+    let c4 = hash<msg2_C4_init_corr[er]>(c3, er) in 
+    let c5 = hash<msg2_C5_init_corr[er]>(c4, dh_combine(er, get(E_init))) in
+    let c6 = hash<msg2_C6_init_corr[er]>(c5, dh_combine(er, get(S_init))) in
+    let c7 = hash<msg2_C7_init_corr[er]>(c6, 0x00000000) in
+    let tsend = hash<transp_T_init_corr[er]>(c7, 0x) in 
+    debug printTyOf(c1);
+    debug printTyOf(c2);
+    debug printTyOf(c3);
+    debug printTyOf(c4);
+    debug printTyOf(c5);
+    debug printTyOf(c6);
+    debug printTyOf(c7);
+    debug printTyOf(tsend)
+
 
 
 def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val =
