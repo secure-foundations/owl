@@ -41,7 +41,7 @@ import qualified Text.Parsec as P
 import Parse
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -777,6 +777,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
                         forM_ nts $ \nt -> do
                             checkNameType nt
                             checkROName nt
+                        case strictness of
+                          ROStrict (Just is) -> do
+                              forM_ is $ \i -> do
+                                  assert ("Hash index " ++ show i ++ " not in scope") $ i < length nts
+                          _ -> return ()
               skipROUnique <- view $ envFlags . fSkipRODisj
               when (not skipROUnique) $ do
                   logTypecheck $ "Checking RO uniqueness of " ++ n

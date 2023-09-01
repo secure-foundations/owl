@@ -17,16 +17,6 @@ mac1--- -> 0x6d6163312d2d2d
 
 */
 
-/*
-TODOs: 
-- specify authenticated data values for the AEAD names generated from msg1_C2 and msg1_C3 (new primitive for aenc)
-- synchronized enckey_with_nonce counters across multiple localities
-- think about timestamp() --- indexed nonce?
-
-*/
-
-
-
 
 locality Initiator
 locality Responder
@@ -62,14 +52,14 @@ predicate msg1_C3_aad(x) =
     
 
 // TODO: problematic for disjointness
-name msg1_C1 : RO crh(0x636f6e737472756374696f6e) ++ dhpk(get(E_init)) -> nonce
-name msg1_C1_resp_corr : RO[x] crh(0x636f6e737472756374696f6e) ++ x -> nonce
+name msg1_C1 : RO strict crh(0x636f6e737472756374696f6e) ++ dhpk(get(E_init)) -> nonce
+name msg1_C1_resp_corr : RO[x] strict crh(0x636f6e737472756374696f6e) ++ x -> nonce
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by ()
 
 counter aead_counter_msg1_C2 @ Initiator
-name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
+name msg1_C2 : RO strict{0} get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> nonce || 
     st_aead dhpk(S_init)
             aad x. msg1_C2_aad[x]
             nonce aead_counter_msg1_C2
@@ -80,7 +70,7 @@ name msg1_C2 : RO get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_init)) -> 
 
 type Empty = (x:Data<adv>{false})
 
-name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || enckey Empty
+name msg1_C2_resp_corr : RO[x] strict{0} get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || enckey Empty
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {
@@ -90,15 +80,15 @@ name msg1_C2_resp_corr : RO[x] get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(
 corr[x] adv ==> [msg1_C2_resp_corr[x;1]]
 
 counter aead_counter_msg1_C3 @ Initiator
-name msg1_C3 : RO get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
+name msg1_C3 : RO strict{0} get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
     st_aead (Data<adv> |12|)
             aad x. msg1_C3_aad[x]
             nonce aead_counter_msg1_C3
             nonce_pattern *
     uniqueness_by {    is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name msg1_C3_resp_corr : RO[x] get(msg1_C2_resp_corr[x;0]) ++
-dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || enckey Empty
+name msg1_C3_resp_corr : RO[x] strict{0}  get(msg1_C2_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) 
+    -> nonce || enckey Empty
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {    is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
@@ -107,20 +97,20 @@ corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 // TODO: problematic for RO disjointness
-name msg1_mac1_key : RO 0x6d6163312d2d2d ++ dhpk(get(S_resp)) -> mackey Data<adv> 
+name msg1_mac1_key : RO strict{0} 0x6d6163312d2d2d ++ dhpk(get(S_resp)) -> mackey Data<adv> 
     uniqueness_by { assume (0x6d6163312d2d2d != crh(0x636f6e737472756374696f6e)); 
                     is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
     
-name msg2_C4 : RO get(msg1_C3[;0]) ++ dhpk(get(E_resp)) -> nonce
+name msg2_C4 : RO strict{0} get(msg1_C3[;0]) ++ dhpk(get(E_resp)) -> nonce
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name msg2_C4_resp_corr : RO[x] get(msg1_C3_resp_corr[x;0]) ++ dhpk(get(E_resp)) -> nonce
+name msg2_C4_resp_corr : RO[x] strict{0} get(msg1_C3_resp_corr[x;0]) ++ dhpk(get(E_resp)) -> nonce
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
 
-name msg2_C4_init_corr : RO[y] get(msg1_C3[;0]) ++ y -> nonce
+name msg2_C4_init_corr : RO[y] strict{0} get(msg1_C3[;0]) ++ y -> nonce
     requires is_group_elem(y)
     requires y != dhpk(get(E_resp))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
@@ -128,32 +118,33 @@ name msg2_C4_init_corr : RO[y] get(msg1_C3[;0]) ++ y -> nonce
 corr[y] adv ==> [msg2_C4_init_corr[y;0]]
 
 
-name msg2_C5 : RO get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
+name msg2_C5 : RO strict{0} get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name msg2_C5_resp_corr : RO[x] get(msg2_C4_resp_corr[x;0]) ++ dh_combine(x, get(E_resp)) -> nonce
+name msg2_C5_resp_corr : RO[x] strict{0} get(msg2_C4_resp_corr[x;0]) ++ dh_combine(x, get(E_resp)) -> nonce
     requires is_group_elem(x)
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name msg2_C5_init_corr : RO[x] get(msg2_C4_init_corr[x;0]) ++ dh_combine(x, get(E_init)) -> nonce
+name msg2_C5_init_corr : RO[x] strict{0} get(msg2_C4_init_corr[x;0]) ++ dh_combine(x, get(E_init)) -> nonce
     requires is_group_elem(x)
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
-name msg2_C6 : RO get(msg2_C5[;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
+name msg2_C6 : RO strict{0} get(msg2_C5[;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     uniqueness_by { disjoint_not_eq_lemma(get(msg2_C5[;0]), crh(0x636f6e737472756374696f6e)); () }
 
-name msg2_C6_resp_corr : RO[x] get(msg2_C5_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
+name msg2_C6_resp_corr : RO[x] strict{0} get(msg2_C5_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     requires is_group_elem(x)
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name msg2_C6_init_corr : RO[x] get(msg2_C5_init_corr[x;0]) ++ dh_combine(x, get(S_init)) -> nonce
+name msg2_C6_init_corr : RO[x] strict{0} get(msg2_C5_init_corr[x;0]) ++ dh_combine(x, get(S_init)) -> nonce
     requires is_group_elem(x)
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 counter aead_counter_msg2_C7 @ Responder
 
 // TODO: doesn't yet work for the protocol
+/*
 predicate msg2_C7_aad(x) =  
     exists msg_timestamp : bv. 
         exists h : bv.
@@ -165,11 +156,12 @@ predicate msg2_C7_aad(x) =
                             dhpk(get(E_resp))
                                 )),
                         tau))
+*/
             
         
 
 // TODO: problematic for disjointness
-name msg2_C7 : RO get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce || 
+name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
             aad x. true
             nonce aead_counter_msg2_C7
@@ -182,7 +174,7 @@ name msg2_C7 : RO get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce ||
 
 corr adv ==> [msg2_C7[;1]]
 
-name msg2_C7_resp_corr : RO[x] get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
+name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
     requires is_group_elem(x)
     uniqueness_by { 
         disjoint_not_eq_lemma(get(msg2_C6_resp_corr[x;0]) ++ (0x00000000), preimage(msg1_mac1_key));
@@ -195,7 +187,7 @@ corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
 corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
 
 
-name msg2_C7_init_corr : RO[x] get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
+name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
             aad x. true
             nonce aead_counter_msg2_C7
@@ -228,9 +220,11 @@ name msg2_mac1_key : RO 0x6d6163312d2d2d ++ dhpk(get(S_init)) -> mackey Data<adv
          preimage(msg1_C1_resp_corr[x]))
     }
 
-// TODO
-name plaintext_init : nonce @ Initiator
-name plaintext_resp : nonce @ Responder
+locality dummy // TODO just for now
+
+name channel_secret : nonce @ dummy
+corr [S_init] ==> [channel_secret]
+corr [S_resp] ==> [channel_secret]
 
 counter N_init_send @ Initiator
 counter N_init_recv @ Initiator
@@ -239,11 +233,11 @@ counter N_resp_recv @ Responder
 
 // T_init_send = T_resp_recv || T_resp_send = T_init_recv
 name transp_T : RO get(msg2_C7[;0]) ++ 0x -> 
-    st_aead (Name(plaintext_init))
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
         aad x. true
         nonce N_init_send
         nonce_pattern * ||
-    st_aead (Name(plaintext_resp))
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
         aad x. true
         nonce N_resp_send
         nonce_pattern *
@@ -256,7 +250,15 @@ name transp_T : RO get(msg2_C7[;0]) ++ 0x ->
             length(get(msg2_C7[;0]) ++ 0x) != length(preimage(msg1_C1_resp_corr[x])))
         }
 
-name transp_T_resp_corr : RO[x] get(msg2_C7_resp_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
+name transp_T_resp_corr : RO[x] strict get(msg2_C7_resp_corr[x;0]) ++ 0x -> 
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
+        aad x. true
+        nonce N_init_send
+        nonce_pattern * ||
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
+        aad x. true
+        nonce N_resp_send
+        nonce_pattern *
     requires is_group_elem(x)
     uniqueness_by { 
         assume (length(get(msg2_C7_resp_corr[x;0]) ++ 0x) != length(preimage(msg2_mac1_key)));
@@ -266,7 +268,15 @@ name transp_T_resp_corr : RO[x] get(msg2_C7_resp_corr[x;0]) ++ 0x -> enckey Empt
                 length(preimage(msg1_C1_resp_corr[y])));
         is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
-name transp_T_init_corr : RO[x] get(msg2_C7_init_corr[x;0]) ++ 0x -> enckey Empty || enckey Empty
+name transp_T_init_corr : RO[x] strict get(msg2_C7_init_corr[x;0]) ++ 0x -> 
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
+        aad x. true
+        nonce N_init_send
+        nonce_pattern * ||
+    st_aead (Data<adv /\ [channel_secret], |adv|>)
+        aad x. true
+        nonce N_resp_send
+        nonce_pattern *
     requires is_group_elem(x)
     uniqueness_by { 
         assume (length(get(msg2_C7_init_corr[x;0]) ++ 0x) != length(preimage(msg2_mac1_key)));
@@ -345,62 +355,66 @@ struct responder_msg1_val {
 }
 
 predicate valid_responder_msg1_val (s) = 
-    is_group_elem(_responder_msg1_ephemeral(s)) /\ 
-    ((_responder_msg1_ephemeral(s) == dhpk(get(E_init))) ==> (
+    let eph = _responder_msg1_ephemeral(s) in 
+    is_group_elem(eph) /\ 
+    ((eph == dhpk(get(E_init))) ==> (
         _responder_msg1_C3(s) == get(msg1_C3[;0])
     )) 
-    /\ ((_responder_msg1_ephemeral(s) != dhpk(get(E_init))) ==> 
-        _responder_msg1_C3(s) == get(msg1_C3_resp_corr[_responder_msg1_ephemeral(s);0]) )
+    /\ ((eph != dhpk(get(E_init))) ==> 
+        _responder_msg1_C3(s) == get(msg1_C3_resp_corr[eph;0]) /\
+        (corr(msg1_C3_resp_corr[eph;0]) ==> corr(S_init) \/ corr(S_resp)))
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
 
 struct transp_keys {
       _transp_keys_initiator : Data<adv> |4|  // value of get_sender_i
     , _transp_keys_responder : Data<adv> |4|  // value of get_sender_r
-    , _transp_keys_msg1_ephemeral : Data<adv> // TODO should be ghost
-    , _transp_keys_msg2_ephemeral : Data<adv> // TODO should be ghost
+    , _transp_keys_init_ephemeral : Data<adv> // TODO should be ghost
+    , _transp_keys_resp_ephemeral : Data<adv> // TODO should be ghost
     , _transp_keys_T_init_send : Data<top> | |enckey| |
     , _transp_keys_T_resp_send : Data<top> | |enckey| |
 }
 
-predicate valid_transp_keys (s) =
-    is_group_elem(_transp_keys_msg1_ephemeral(s)) /\ 
-    is_group_elem(_transp_keys_msg2_ephemeral(s)) /\ 
-    ((_transp_keys_msg1_ephemeral(s) == dhpk(get(E_init)) 
-      /\ (_transp_keys_msg2_ephemeral(s) == dhpk(get(E_resp)))) ==> (
+predicate valid_transp_keys_init(s) = 
+    let dh_other = _transp_keys_resp_ephemeral(s) in 
+    (_transp_keys_init_ephemeral(s) == dhpk(get(E_init)))
+    /\
+    is_group_elem(dh_other)
+    /\
+    (dh_other == dhpk(get(E_resp)) ==>
         _transp_keys_T_init_send(s) == get(transp_T[;0]) /\
-        _transp_keys_T_resp_send(s) == get(transp_T[;1])
-    )) /\ 
-    ((_transp_keys_msg1_ephemeral(s) != dhpk(get(E_init)) \/
-     _transp_keys_msg2_ephemeral(s) != dhpk(get(E_resp))) 
-     ==> 
-        _transp_keys_T_init_send(s) != get(transp_T[;0]) /\
-        _transp_keys_T_resp_send(s) != get(transp_T[;1]))
+        _transp_keys_T_resp_send(s) == get(transp_T[;1]))
+    /\
+    (dh_other != dhpk(get(E_resp)) ==>
+        _transp_keys_T_init_send(s) == get(transp_T_init_corr[dh_other;0]) /\
+        _transp_keys_T_resp_send(s) == get(transp_T_init_corr[dh_other;1]) /\
+        (corr(transp_T_init_corr[dh_other;0]) ==>
+            (corr(S_init) \/ corr(S_resp)))
+    )
+        
+    
+type transp_keys_init_t = s:transp_keys {valid_transp_keys_init[s]}
 
-type transp_keys_t = s:transp_keys {valid_transp_keys[s]}
-
-// struct msg2_val {
-//       _msg2_val_msg1_ephemeral : Data<adv>
-//     , _msg2_val_msg2_ephemeral : Data<adv>
-//     , _msg2_val_C7 : Union<Name(msg2_C7[0]), Data<adv>>
-//     , _msg2_val_H7 : Data<adv>
-// }
-
-// predicate valid_msg2_val (s) = 
-//     is_group_elem(_msg2_val_msg1_ephemeral(s)) /\ 
-//     is_group_elem(_msg2_val_msg2_ephemeral(s)) /\ 
-//     ((_msg2_val_msg1_ephemeral(s) == dhpk(get(E_init)) /\ (_msg2_val_msg2_ephemeral(s) == dhpk(get(E_resp)))) ==> (
-//         _msg2_val_C7(s) == get(msg2_C7[0])
-//     )) 
-//     /\ ((_msg2_val_msg1_ephemeral(s) != dhpk(get(E_init))) ==> (
-//         _msg2_val_C7(s) != get(msg2_C7[0]) 
-//         /\ not_in_ro[concat(_msg2_val_C7(s), "")]))
-//     /\ ((_msg2_val_msg2_ephemeral(s) != dhpk(get(E_resp))) ==> (
-//         _msg2_val_C7(s) != get(msg2_C7[0]) 
-//         /\ not_in_ro[concat(_msg2_val_C7(s), "")]))
-
-// type msg2_val_t = s:msg2_val {valid_msg2_val[s]}
-
+predicate valid_transp_keys_resp(s) = 
+    let dh_other = _transp_keys_init_ephemeral(s) in 
+    (_transp_keys_resp_ephemeral(s) == dhpk(get(E_resp)))
+    /\
+    is_group_elem(dh_other)
+    /\
+    (dh_other == dhpk(get(E_init)) ==>
+        _transp_keys_T_init_send(s) == get(transp_T[;0]) /\
+        _transp_keys_T_resp_send(s) == get(transp_T[;1]))
+    /\
+    (dh_other != dhpk(get(E_init)) ==>
+        _transp_keys_T_init_send(s) == get(transp_T_resp_corr[dh_other;0]) /\
+        _transp_keys_T_resp_send(s) == get(transp_T_resp_corr[dh_other;1]) /\
+        (corr(transp_T_resp_corr[dh_other;0]) ==>
+            (corr(S_init) \/ corr(S_resp)))
+    ) 
+    
+type transp_keys_resp_t = s:transp_keys {valid_transp_keys_resp[s]}
+        
+        
 def off_chain_resp(er : 
     (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_init))}), dhpk_S_init : dhpk(S_init)) @ Responder : Unit = 
     let c1 = hash<msg1_C1_resp_corr[er]>(crh(0x636f6e737472756374696f6e), er) in
@@ -411,14 +425,11 @@ def off_chain_resp(er :
     let c6 = hash<msg2_C6_resp_corr[er]>(c5, dh_combine(dhpk_S_init, get(E_resp))) in
     let c7 = hash<msg2_C7_resp_corr[er]>(c6, 0x00000000) in
     let tsend = hash<transp_T_resp_corr[er]>(c7, 0x) in 
-    debug printTyOf(c1);
-    debug printTyOf(c2);
-    debug printTyOf(c3);
-    debug printTyOf(c4);
-    debug printTyOf(c5);
-    debug printTyOf(c6);
-    debug printTyOf(c7);
-    debug printTyOf(tsend)
+    assert (corr(msg2_C7_resp_corr[er;0]) ==>
+                (corr(S_init) \/ corr(E_resp))
+                /\
+                (corr(S_init) \/ corr(S_resp))
+    )
 
 def off_chain_init(er : (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_resp))}), dhpk_S_resp : dhpk(S_resp)) @ Initiator : Unit = 
     let c1 = hash<msg1_C1>(crh(0x636f6e737472756374696f6e), dhpk(get(E_init))) in
@@ -429,14 +440,12 @@ def off_chain_init(er : (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_resp))}
     let c6 = hash<msg2_C6_init_corr[er]>(c5, dh_combine(er, get(S_init))) in
     let c7 = hash<msg2_C7_init_corr[er]>(c6, 0x00000000) in
     let tsend = hash<transp_T_init_corr[er]>(c7, 0x) in 
-    debug printTyOf(c1);
-    debug printTyOf(c2);
-    debug printTyOf(c3);
-    debug printTyOf(c4);
-    debug printTyOf(c5);
-    debug printTyOf(c6);
-    debug printTyOf(c7);
-    debug printTyOf(tsend)
+    assert (corr(msg2_C7_init_corr[er;0]) ==>
+              (corr(S_resp) \/ corr(S_init))
+              \/
+              (corr(S_resp) \/ corr(E_init))
+    )
+
 
 
 
@@ -496,9 +505,6 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
      let C1 = hash<msg1_C1, msg1_C1_resp_corr[msg1_ephemeral]>(C0, msg1_ephemeral) in 
      let H2 = crh(concat(H1, msg1_ephemeral)) in
 
-     assert(length(dh_combine(msg1_ephemeral, get(S_resp))) != 0);
-     assert(concat(C1, dh_combine(msg1_ephemeral, get(S_resp))) != concat(get(msg2_C7[;0]), 0x));
-
      let C2 = hash<msg1_C2, msg1_C2_resp_corr[msg1_ephemeral];0>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
      let k0 = hash<msg1_C2, msg1_C2_resp_corr[msg1_ephemeral];1>(C1, dh_combine(msg1_ephemeral, get(S_resp))) in
 
@@ -525,7 +531,7 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
     
 
 def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @ Responder 
-    : transp_keys_t = 
+    : transp_keys_resp_t = 
      set_option ":rlimit" "2000000" in 
     let C3' = _responder_msg1_C3(msg1_val) in     
     let H4 = _responder_msg1_H4(msg1_val) in
@@ -565,11 +571,10 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let T_resp_recv = hash<transp_T, transp_T_resp_corr[ephemeral];0>(C7, 0x) in
     let T_resp_send = hash<transp_T, transp_T_resp_corr[ephemeral];1>(C7, 0x) in
     let retval = transp_keys(msg2_receiver, msg2_sender, ephemeral, msg2_ephemeral, T_resp_recv, T_resp_send) in
-
     retval 
 
 def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ Initiator 
-    : Option (transp_keys_t) =
+    : Option (transp_keys_init_t) =
     set_option ":rlimit" "2000000" in 
     input inp in
     let msg2_reserved = _msg2_reserved(inp) in
@@ -603,7 +608,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     corr_case msg2_C7[;2] when (msg2_ephemeral == dhpk(get(E_resp))) in
     corr_case msg2_C7_init_corr[msg2_ephemeral;2] when (msg2_ephemeral != dhpk(get(E_resp))) in
     case st_aead_dec(k0, msg2_empty, 0x, H6) {
-    | None => None<ty:transp_keys_t>()
+    | None => None<ty:transp_keys_init_t>()
     | Some msg2_empty_dec => 
         false_elim in 
         guard eq(msg2_empty_dec, emptystring) in 
@@ -621,26 +626,54 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
         Some(retval)
     }
 
-def transp_send_init (transp_keys_val : transp_keys_t) @ Initiator 
+def transp_send_init (transp_keys_val : transp_keys_init_t, plaintext : Data<adv /\ [channel_secret], |adv|>) @ Initiator 
     : Option(Unit) = 
-    let transp_receiver = _transp_keys_responder(transp_keys_val) in
-    let T_init_send = _transp_keys_T_init_send(transp_keys_val) in
-    let plaintext = get(plaintext_init) in
-    let transp_reserved = call get_padding_i() in
-
-    guard eq(length(transp_receiver), 4) in 
-    pcase (_transp_keys_msg1_ephemeral(transp_keys_val) == dhpk(get(E_init))
-           /\
-           _transp_keys_msg2_ephemeral(transp_keys_val) == dhpk(get(E_resp))) in 
-
+    let eph_resp = _transp_keys_resp_ephemeral(transp_keys_val) in
+    pcase (eph_resp == dhpk(get(E_resp))) in 
+    let i2r : if eph_resp == dhpk(get(E_resp)) then Name(transp_T[;0]) 
+                                               else Name(transp_T_init_corr[eph_resp;0]) 
+        = _transp_keys_T_init_send(transp_keys_val) in       
+    let r2i : if eph_resp == dhpk(get(E_resp)) then Name(transp_T[;1]) 
+                                               else Name(transp_T_init_corr[eph_resp;1]) 
+        = _transp_keys_T_resp_send(transp_keys_val) in       
     let transp_counter = get_counter N_init_send in
     assume(length(transp_counter) == 8); // TODO add |counter| length const
 
-    let transp_packet = st_aead_enc<N_init_send>(T_init_send, plaintext, 0x) in
+    let transp_receiver = _transp_keys_responder(transp_keys_val) in
+    let transp_reserved = call get_padding_i() in
+    guard eq(length(transp_receiver), 4) in 
+
+    let transp_packet = st_aead_enc<N_init_send>(i2r, plaintext, 0x) in
 
     let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in
+    let _ = output transp_output in
+    Some(())
 
+def transp_send_resp (transp_keys_val : transp_keys_resp_t, plaintext : Data<adv
+/\ [channel_secret], |adv|>) @ Responder 
+    : Option(Unit) = 
+    let eph_init = _transp_keys_init_ephemeral(transp_keys_val) in
+    pcase (eph_init == dhpk(get(E_init))) in 
+    let i2r : if eph_init == dhpk(get(E_init)) then Name(transp_T[;0]) 
+                                               else
+                                                   Name(transp_T_resp_corr[eph_init;0]) 
+        = _transp_keys_T_init_send(transp_keys_val) in       
+    let r2i : if eph_init == dhpk(get(E_init)) then Name(transp_T[;1]) 
+                                               else
+                                                   Name(transp_T_resp_corr[eph_init;1]) 
+        = _transp_keys_T_resp_send(transp_keys_val) in       
+    let transp_counter = get_counter N_resp_send in
+    assume(length(transp_counter) == 8); // TODO add |counter| length const
+
+    let transp_receiver = _transp_keys_initiator(transp_keys_val) in
+    let transp_reserved = call get_padding_r() in
+    guard eq(length(transp_receiver), 4) in 
+
+    let transp_packet = st_aead_enc<N_resp_send>(r2i, plaintext, 0x) in
+
+    let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
+    let transp_output = transp(transp_payload_value) in
     let _ = output transp_output in
     Some(())
 

@@ -327,7 +327,7 @@ data DeclX =
 
 type Decl = Spanned DeclX
 
-data ROStrictness = ROStrict | ROUnstrict
+data ROStrictness = ROStrict (Maybe [Int]) | ROUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
 data NameDecl = 

@@ -617,9 +617,15 @@ parseNameDeclBody =
             let xs = case xs_ of
                        Nothing -> []
                        Just v -> v
-            ostrict <- optionMaybe $ reserved "strict"
+            ostrict <- optionMaybe $ do
+                reserved "strict"
+                optionMaybe $ do
+                    symbol "{"
+                    i <- (many1 digit) `sepBy1` (symbol ",")
+                    symbol "}"
+                    return $ map read i
             let strictness = case ostrict of
-                               Just _ -> ROStrict
+                               Just oi -> ROStrict oi
                                Nothing -> ROUnstrict
             e <- parseAExpr
             symbol "->"

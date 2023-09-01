@@ -952,14 +952,18 @@ solvabilityAxioms ae roName = local (set tcScope TcGhost) $ do
     arg_t <- mapM inferAExpr args
     -- If all labels are corrupt, the RO is corrupt
     p <- derivabilitySufficient (zip args arg_t)
+    let ax1 = pImpl p (pFlow (nameLbl roName) advLbl)
     strictness <- getROStrictness roName
-    case strictness of
-      ROUnstrict -> return $ pImpl p (pFlow (nameLbl roName) advLbl) 
-      ROStrict -> do
-          p' <- derivabilityNecessary (zip args arg_t)
-          return $ pAnd
-                    (pImpl p (pFlow (nameLbl roName) advLbl))
-                    (pImpl (pFlow (nameLbl roName) advLbl) p')
+    let doStrictness = case (strictness, roName^.val) of
+                         (ROStrict (Just is), NameConst _ _ (Just (_, i))) -> i `elem` is
+                         (ROStrict Nothing, _) -> True
+                         _ -> False
+    ax2 <- case doStrictness of
+             True -> do 
+                p' <- derivabilityNecessary (zip args arg_t)
+                return $ pImpl (pFlow (nameLbl roName) advLbl) p'
+             _ -> return $ pTrue
+    return $ pAnd ax1 ax2
 
 resolveANF :: AExpr -> Check AExpr
 resolveANF a = do
@@ -1052,8 +1056,6 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong index arity for predicate " ++ show (pretty pth)) $ length ixs == length is
           assert ("Wrong arity for predicate " ++ show (pretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
-
-
 
 extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum ps s b = do
