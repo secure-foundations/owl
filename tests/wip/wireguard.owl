@@ -106,6 +106,8 @@ name msg2_C4 : RO strict{0} get(msg1_C3[;0]) ++ dhpk(get(E_resp)) -> nonce
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C4_resp_corr : RO[x] strict{0} get(msg1_C3_resp_corr[x;0]) ++ dhpk(get(E_resp)) -> nonce
+    requires is_group_elem(x)
+    requires x != dhpk(get(E_init))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
@@ -123,10 +125,12 @@ name msg2_C5 : RO strict{0} get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), ge
 
 name msg2_C5_resp_corr : RO[x] strict{0} get(msg2_C4_resp_corr[x;0]) ++ dh_combine(x, get(E_resp)) -> nonce
     requires is_group_elem(x)
+    requires x != dhpk(get(E_init))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C5_init_corr : RO[x] strict{0} get(msg2_C4_init_corr[x;0]) ++ dh_combine(x, get(E_init)) -> nonce
     requires is_group_elem(x)
+    requires x != dhpk(get(E_resp))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 
@@ -135,10 +139,12 @@ name msg2_C6 : RO strict{0} get(msg2_C5[;0]) ++ dh_combine(dhpk(get(S_init)), ge
 
 name msg2_C6_resp_corr : RO[x] strict{0} get(msg2_C5_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_init)), get(E_resp)) -> nonce
     requires is_group_elem(x)
+    requires x != dhpk(get(E_init))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 name msg2_C6_init_corr : RO[x] strict{0} get(msg2_C5_init_corr[x;0]) ++ dh_combine(x, get(S_init)) -> nonce
     requires is_group_elem(x)
+    requires x != dhpk(get(E_resp))
     uniqueness_by { is_constant_lemma(crh(0x636f6e737472756374696f6e)) }
 
 counter aead_counter_msg2_C7 @ Responder
@@ -176,6 +182,7 @@ corr adv ==> [msg2_C7[;1]]
 
 name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
     requires is_group_elem(x)
+    requires x != dhpk(get(E_init))
     uniqueness_by { 
         disjoint_not_eq_lemma(get(msg2_C6_resp_corr[x;0]) ++ (0x00000000), preimage(msg1_mac1_key));
         assume (forall x:bv. is_group_elem(x) ==> 
@@ -193,6 +200,7 @@ name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     requires is_group_elem(x)
+    requires x != dhpk(get(E_resp))
     uniqueness_by { 
         disjoint_not_eq_lemma(get(msg2_C6_init_corr[x;0]) ++ (0x00000000), preimage(msg1_mac1_key));
         assume (forall x:bv. is_group_elem(x) ==> 
