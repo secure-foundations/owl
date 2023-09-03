@@ -158,7 +158,7 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
 #[verifier(external_body)]
 pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
     requires old(t)@.is_sample(n)
-    ensures  t@ === old(t)@.get_sample(res@)
+    ensures  t@ == old(t)@.get_sample(res@)
 {
     owl_util::gen_rand_bytes(n)
 }

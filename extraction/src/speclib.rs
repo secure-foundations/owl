@@ -21,7 +21,7 @@ macro_rules! option_and {
 pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
 {
     (v.is_None() && s.is_None()) ||
-    (v.is_Some() && s.is_Some() && v.get_Some_0()@ === s.get_Some_0())
+    (v.is_Some() && s.is_Some() && v.get_Some_0()@ == s.get_Some_0())
 }
 
 pub open spec fn view_option(v: Option<Vec<u8>>) -> Option<Seq<u8>>
@@ -129,7 +129,7 @@ pub mod itree {
             (self.get_Input_0())(i, ev)
         }
         pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
-            self.is_Output() && self.get_Output_0() === o && self.get_Output_1() === ev
+            self.is_Output() && self.get_Output_0() == o && self.get_Output_1() == ev
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o, ev| self.is_output(o, ev))
@@ -137,7 +137,7 @@ pub mod itree {
             *self.get_Output_2()
         }
         pub open spec fn is_sample(&self, n: usize) -> bool {
-            self.is_Sample() && self.get_Sample_0() === n
+            self.is_Sample() && self.get_Sample_0() == n
         }
         pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
@@ -145,7 +145,7 @@ pub mod itree {
             (self.get_Sample_1())(coins)
         }
         pub open spec(checked) fn results_in(&self, a: A) -> bool {
-            self.is_Ret() && self.get_Ret_0() === a
+            self.is_Ret() && self.get_Ret_0() == a
         }
 
         pub open spec fn bind<B>(&self, next: FnSpec(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
@@ -289,7 +289,7 @@ pub mod itree {
 
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
+    // #[verifier(broadcast_forall)]
     pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}

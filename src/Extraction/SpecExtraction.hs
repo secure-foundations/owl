@@ -115,13 +115,13 @@ extractEnum owlName owlCases = do
 --- Code generation
 
 -- Owl builtin functions that must be printed differently in Rust
-specBuiltinFuncs :: M.Map String String
+specBuiltinFuncs :: M.Map String ([Doc ann] -> Doc ann)
 specBuiltinFuncs = M.fromList [
-        ("UNIT", ""),
-        ("TRUE", "true"),
-        ("FALSE", "false"),
-        ("Some", "Option::Some"),
-        ("None", "Option::None")
+        ("UNIT", \_ -> pretty "()"),
+        ("TRUE", \_ -> pretty "true"),
+        ("FALSE", \_ -> pretty "false"),
+        ("Some", \a -> pretty "Option::Some" <> tupled a),
+        ("None", \_ -> pretty "Option::None")
     ]
 
 extractEndpoint :: Endpoint -> ExtractionMonad (Doc ann)
@@ -137,13 +137,14 @@ extractAExpr :: AExpr -> ExtractionMonad (Doc ann)
 extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEVar s n) = return $ extractVar n
     extractAExpr' (AEApp f _ as) = do 
-        f' <- do
-            ftail <- tailPath f
-            case specBuiltinFuncs M.!? ftail of
-                Just f'' -> return f''
-                Nothing  -> flattenPath f
-        as' <- mapM extractAExpr as
-        return $ pretty f' <> tupled as'
+        as' <- mapM extractAExpr as    
+        ftail <- tailPath f
+        case specBuiltinFuncs M.!? ftail of
+            Just f' -> return $ f' as'
+            Nothing  -> do
+                f' <- flattenPath f
+                return $ pretty f' <> tupled as'
+        -- return $ pretty f' <> tupled as'
     extractAExpr' (AEString s) = return $ pretty "\"" <> pretty s <> pretty "\""
     extractAExpr' (AELenConst s) = return $ pretty s <> pretty "_len"
     extractAExpr' (AEInt i) = return $ pretty i

@@ -40,39 +40,39 @@
 locality alice
 locality bob
 
-def bob  @ bob
+def bob_main  @ bob
 
-def alice  @ alice
+def alice_main  @ alice
 
 name x : nonce @ bob
-name k_data : enckey (z:Name(x){happened(bob())}) @ alice
-name shared_key : enckey (z:Name(k_data){happened(alice())}) @ alice, bob
+name k_data : enckey (z:Name(x){happened(bob_main())}) @ alice
+name shared_key : enckey (z:Name(k_data){happened(alice_main())}) @ alice, bob
 
 enum Result {
     | SomeResult Name(x)
     | NoResult
 }
 
-def alice () @ alice
-     : if sec(k_data) then (x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob())}) else Data<adv> = 
+def alice_main () @ alice
+     : if sec(k_data) then (x:Result{(SomeResult?(x) /\ sec(k_data)) ==> happened(bob_main())}) else Data<adv> = 
     let c = aenc(get(shared_key), get(k_data)) in
     let _ = output c to endpoint(bob) in 
     input i, _ in 
     corr_case k_data in
     case adec(get(k_data), i)
      | Some j => 
-       assert(sec(k_data) ==> happened(bob()));
+       assert(sec(k_data) ==> happened(bob_main()));
        SomeResult(j)
      | None => NoResult()
     
-def bob () @ bob
-    : x:Bool<adv>{(x /\ sec(shared_key)) ==> happened(alice()) } = 
+def bob_main () @ bob
+    : x:Bool<adv>{(x /\ sec(shared_key)) ==> happened(alice_main()) } = 
     input i, _ in 
     // i : Data<adv>
     corr_case shared_key in
     case adec(get(shared_key), i) 
      | Some k => 
-        assert (sec(shared_key) ==> happened(alice()));
+        assert (sec(shared_key) ==> happened(alice_main()));
         let c = aenc(k, get(x)) in
         output c to endpoint(alice);
         true
