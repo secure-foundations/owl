@@ -81,7 +81,8 @@ data Env = Env {
     _enums :: M.Map (S.Set String) String,
     _oracles :: M.Map String String, -- how to print the output length
     _includes :: S.Set String, -- files we have included so far
-    _freshCtr :: Integer
+    _freshCtr :: Integer,
+    _curRetTy :: Maybe String -- return type of the def currently being extracted (needed for type annotations)
 }
 
 data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
@@ -360,7 +361,7 @@ initFuncs = M.fromList [
     ]
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -430,3 +431,10 @@ rustifySpecTy ct = do
 
 rcClone :: Doc ann
 rcClone = pretty "rc_clone"
+
+getCurRetTy :: ExtractionMonad String
+getCurRetTy = do
+    t <- use curRetTy
+    case t of      
+        Nothing -> throwError $ ErrSomethingFailed "getCurRetTy of Nothing"
+        Just s -> return s

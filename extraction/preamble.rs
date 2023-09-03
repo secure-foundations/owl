@@ -128,9 +128,9 @@ pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate:
 pub struct TcpListenerWrapper ( std::net::TcpListener );
 
 #[verifier(external_body)]
-pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
-    requires old(t)@@.is_output(x@, endpoint_of_addr(dest_addr.view()))
-    ensures  t@@ === old(t)@@.give_output()
+pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
+    requires old(t)@.is_output(x@, endpoint_of_addr(dest_addr.view()))
+    ensures  t@ == old(t)@.give_output()
 {
     // let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
     // let serialized = serde_json::to_vec(&msg).unwrap();
@@ -141,9 +141,9 @@ pub fn owl_output<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, x: &[u8], dest_add
 }
 
 #[verifier(external_body)]
-pub fn owl_input<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
-    requires old(t)@@.is_input()
-    ensures  t@@ === old(t)@@.take_input(ie.0@, endpoint_of_addr(ie.1.view()))
+pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
+    requires old(t)@.is_input()
+    ensures  t@ == old(t)@.take_input(ie.0@, endpoint_of_addr(ie.1.view()))
 {
     let (mut stream, _addr) = listener.accept().unwrap();
     let mut reader = io::BufReader::new(&mut stream);
@@ -156,9 +156,9 @@ pub fn owl_input<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, listener: &TcpListe
 }
 
 #[verifier(external_body)]
-pub fn owl_sample<A>(t: &mut Tracked<ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
-    requires old(t)@@.is_sample(n)
-    ensures  t@@ === old(t)@@.get_sample(res@)
+pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
+    requires old(t)@.is_sample(n)
+    ensures  t@ === old(t)@.get_sample(res@)
 {
     owl_util::gen_rand_bytes(n)
 }

@@ -130,26 +130,6 @@ layoutEnum name cases = do
 ---------------------------------------------------------------------------------------
 -- ADT extraction
 
-genOwlOpsImpl :: String -> Doc ann
-genOwlOpsImpl name = pretty ""
-    -- "impl OwlOps for" <+> pretty name <+> (braces . vsep $ map pretty [
-    --     "fn owl_output<A: ToSocketAddrs>(&self, dest_addr: &A, ret_addr: &str) { (&self.0.as_slice()).owl_output(dest_addr, ret_addr) }",
-    --     "fn owl_enc(&self, key: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_enc(key) }",
-    --     "fn owl_dec(&self, key: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_dec(key) }",
-    --     "fn owl_eq(&self, other: &Self) -> bool { *self.0 == *other.0 }",
-    --     "fn owl_length(&self) -> usize { self.0.len() }",
-    --     "fn owl_mac(&self, key: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_mac(key) }",
-    --     "fn owl_mac_vrfy(&self, key: &[u8], value: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_mac_vrfy(key, value) }",
-    --     "fn owl_pkenc(&self, pubkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_pkenc(pubkey) }",
-    --     "fn owl_pkdec(&self, privkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_pkdec(privkey) }",
-    --     "fn owl_sign(&self, privkey: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_sign(privkey) }",
-    --     "fn owl_vrfy(&self, pubkey: &[u8], signature: &[u8]) -> Option<Vec<u8>> { (&self.0.as_slice()).owl_vrfy(pubkey, signature) } ",
-    --     "fn owl_dh_combine(&self, others_pk: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_dh_combine(others_pk) }",
-    --     "fn owl_dhpk(&self) -> Vec<u8> { (&self.0.as_slice()).owl_dhpk() }",
-    --     "fn owl_extract_expand_to_len(&self, salt: &[u8], len: usize) -> Vec<u8> { (&self.0.as_slice()).owl_extract_expand_to_len(salt, len) }",
-    --     "fn owl_xor(&self, other: &[u8]) -> Vec<u8> { (&self.0.as_slice()).owl_xor(other) }"
-    -- ])
-
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
@@ -167,11 +147,10 @@ extractStruct owlName owlFields = do
     constructorDef <- genConstructorDef name parsingOutcomeName layout layoutFields
     selectorDefs <- genSelectorDefs name parsingOutcomeName layoutFields
     structFuncs <- mkStructFuncs owlName parsingOutcomeName owlFields
-    let owlOpsImpl = genOwlOpsImpl name
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
     structSpec <- Spec.extractStruct owlName owlFields
-    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs ++ [owlOpsImpl], structSpec)
+    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef, constructorDef] ++ selectorDefs, structSpec)
     where
         mkStructFuncs owlName parsingOutcomeName owlFields = return $
             M.fromList $
@@ -332,13 +311,12 @@ extractEnum owlName owlCases' = do
     lenValidFnDef <- genLenValidFnDef name layoutCases
     parseFnDef <- genParseFnDef name parsingOutcomeName layout
     constructorDefs <- genConstructorDefs name parsingOutcomeName layout layoutCases
-    let owlOpsImpl = genOwlOpsImpl name
     enumFuncs <- mkEnumFuncs owlName owlCases
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) owlName
     enumSpec <- Spec.extractEnum owlName owlCases'
-    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs ++ [owlOpsImpl], enumSpec)
+    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs, enumSpec)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
@@ -453,7 +431,7 @@ extractEnum owlName owlCases' = do
 -------------------------------------------------------------------------------------------
 -- Code generation
 
-extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, Doc ann, Doc an)
+extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, Doc ann, Doc ann)
 extractCryptOp binds op owlArgs = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
@@ -468,7 +446,10 @@ extractCryptOp binds op owlArgs = do
                     return (VecU8, pretty $ x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
-            let genSample = pretty "let coins = owl_sample(itree, nonce_size());"
+            typeAnnot <- do
+                t <- getCurRetTy
+                return $ pretty "::" <> angles (pretty t)
+            let genSample = pretty "let coins = owl_sample" <> typeAnnot <> pretty "(Tracked(&mut itree), nonce_size());"
             let encOp = pretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (VecU8, genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec" [k, x])
@@ -554,20 +535,25 @@ extractAExpr binds (AELenConst s) = do
       Just n -> return (Number, pretty "", pretty n)
 
 
+-- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
+-- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
 
-extractExpr :: Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, Doc ann, Doc ann)
-extractExpr loc binds CSkip = return (binds, Unit, pretty "", pretty "()")
-extractExpr loc binds (CInput xsk) = do
+extractExpr :: Bool -> Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, Doc ann, Doc ann)
+extractExpr inK loc binds CSkip = return (binds, Unit, pretty "", pretty "()")
+extractExpr inK loc binds (CInput xsk) = do
     let ((x, ev), k) = unsafeUnbind xsk
     let rustX = rustifyName . show $ x
     let rustEv = if show ev == "_" then "_" else rustifyName . show $ ev
-    (_, rt', prek, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
+    (_, rt', prek, kPrettied) <- extractExpr inK loc (M.insert rustX RcVecU8 binds) k
     let eWrapped = pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+    typeAnnot <- do
+        t <- getCurRetTy
+        return $ pretty "::" <> angles (pretty t)
     let letbinding =
-            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input(itree, &self.listener)" <> pretty ";" <> line <>
+            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input" <> typeAnnot <> pretty "(Tracked(&mut itree), &self.listener)" <> pretty ";" <> line <>
             pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [letbinding, prek, kPrettied])
-extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
+extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (rty, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     let aePrettied' = pretty $ printOwlArg (rty, show aePrettied)    
     l <- case lopt of
@@ -577,12 +563,18 @@ extractExpr (Locality myLname myLidxs) binds (COutput ae lopt) = do
             return $ pretty "&" <> pretty plname <> pretty "_addr()"
         Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev) <> pretty ".as_str()"
     pmyLname <- flattenPath myLname
-    return $ (binds, Unit, preAe, pretty "owl_output" <> (parens . hsep. punctuate comma $ [pretty "itree", aePrettied', l, pretty "&" <> pretty pmyLname <> pretty "_addr()"]))
-extractExpr loc binds (CLet e xk) = do
+    typeAnnot <- do
+        t <- getCurRetTy
+        return $ pretty "::" <> angles (pretty t)
+    let callOutput = pretty "owl_output" <> typeAnnot <> (parens . hsep. punctuate comma $ [pretty "Tracked(&mut itree)", aePrettied', l, pretty "&" <> pretty pmyLname <> pretty "_addr()"])
+    -- The "end" of the let-binding can be an `output` call as well as a `CRet`, so we need to return the `itree` here too
+    let callOutput' = if inK then tupled [callOutput, pretty "Tracked(itree)"] else callOutput
+    return $ (binds, Unit, preAe, callOutput')
+extractExpr inK loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
-    (_, rt, preE, ePrettied) <- extractExpr loc binds e
-    (_, rt', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
+    (_, rt, preE, ePrettied) <- extractExpr False loc binds e
+    (_, rt', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
     let eWrapped = case rt of
             VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
             RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
@@ -592,15 +584,16 @@ extractExpr loc binds (CLet e xk) = do
             _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
-extractExpr loc binds (CIf ae eT eF) = do
+extractExpr inK loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    (_, rt, preeT, eTPrettied) <- extractExpr loc binds eT
-    (_, rt', preeF, eFPrettied) <- extractExpr loc binds eF
+    (_, rt, preeT, eTPrettied) <- extractExpr inK loc binds eT
+    (_, rt', preeF, eFPrettied) <- extractExpr inK loc binds eF
     return (binds, rt, pretty "", preAe <> line <> pretty "if" <+> aePrettied <+> braces (vsep [preeT, eTPrettied]) <+> pretty "else" <+> braces (vsep [preeF, eFPrettied]))
-extractExpr loc binds (CRet ae) = do
+extractExpr inK loc binds (CRet ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    return (binds, rt, preAe, aePrettied)
-extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
+    let aePrettied' = if inK then tupled [aePrettied, pretty "Tracked(itree)"] else aePrettied
+    return (binds, rt, preAe, aePrettied')
+extractExpr inK loc binds (CCall owlFn (sids, pids) owlArgs) = do
     fs <- use funcs
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
@@ -612,19 +605,19 @@ extractExpr loc binds (CCall owlFn (sids, pids) owlArgs) = do
       Just (rt, f) -> do
         str <- f args
         return (binds, rt, preArgs, pretty str)
-extractExpr loc binds (CCase ae cases) = do
+extractExpr inK loc binds (CCase ae cases) = do
    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
    case rt of
      Option rt' -> do
        casesPrettiedRts <- forM cases $ \(c, o) ->
                case o of
                    Left e -> do
-                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
                        return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
                    Right xk -> do
                        let (x, k) = unsafeUnbind xk
                        let rustX = rustifyName . show $ x
-                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
+                       (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
                        let eWrapped = case rt' of
                                VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
                                RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
@@ -653,13 +646,13 @@ extractExpr loc binds (CCase ae cases) = do
                case o of
                    Left e -> do
                        b <- tagByteOf c
-                       (_, rt'', preE, ePrettied) <- extractExpr loc binds e
+                       (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
                        return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
                    Right xk -> do
                        b <- tagByteOf c
                        let (x, k) = unsafeUnbind xk
                        let rustX = rustifyName . show $ x
-                       (_, rt'', preK, kPrettied) <- extractExpr loc (M.insert rustX RcVecU8 binds) k
+                       (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX RcVecU8 binds) k
                        let eWrapped = pretty "rc_new(caser_tmp.data[1..].to_vec())"
                        return (rt'', pretty b <+> pretty "=>"
                                    <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
@@ -684,7 +677,7 @@ extractExpr loc binds (CCase ae cases) = do
                    pretty "_ =>" <+> defaultCase <> comma
                ))
            )
-extractExpr loc binds (CTLookup tbl ae) = do
+extractExpr inK loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
             RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty ".as_slice()"
@@ -693,10 +686,10 @@ extractExpr loc binds (CTLookup tbl ae) = do
     ptbl <- flattenPath tbl
     let tblName = rustifyName ptbl
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
-extractExpr loc binds (CCrypt cryptOp args) = do
+extractExpr inK loc binds (CCrypt cryptOp args) = do
     (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
     return (binds, rt, pre, opPrettied)
-extractExpr loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
+extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
 funcCallPrinter name rustArgs callArgs = do
@@ -741,28 +734,32 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     anfBody <- concretify =<< ANF.anf owlBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
-    (_, rtb, preBody, body) <- extractExpr loc (M.fromList rustArgs) anfBody
+    rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
+    curRetTy .= (Just . show . pretty . specTyOf) rtb
+    (_, rtb, preBody, body) <- extractExpr True loc (M.fromList rustArgs) anfBody
+    curRetTy .= Nothing
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody rustArgs (specTyOf rtb)
-    return $ (decl <+> lbrace <> line <> preBody <> line <> body <> line <> rbrace, defSpec)
+    return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace, defSpec)
     where
         specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
         genFuncDecl name sidArgs owlArgs rt = do
-            let itree = pretty "itree: &mut Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
+            let itree = pretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
             let argsPrettied = hsep . punctuate comma $ 
                     pretty "&mut self"
-                    : itree
-                    : (map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs) 
-                    ++ (map extractArg owlArgs)
-            let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> pretty rt)
+                    : pretty "Tracked(itree):" <+> itree
+                    : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
+                    ++ map extractArg owlArgs
+            let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> tupled [pretty rt, itree])
             let viewRes = case rt of
                     Unit -> pretty "()"
-                    ADT _ -> pretty "res.data.view()"
-                    _ -> pretty "res.view()"            
+                    ADT _ -> pretty "res.0.data.view()"
+                    _ -> pretty "res.0.view()"            
             let defReqEns =
-                    pretty "requires old(itree)@@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
-                    pretty "ensures  itree@@.results_in" <> parens viewRes <> line 
+                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
+                    pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
+        unwrapItreeArg = pretty "let tracked mut itree = itree;"
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
 nameInit s nt = case nt^.val of
@@ -1021,8 +1018,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
         vsep runLocs <> line <>
         config <>
         braces (pretty "println!(\"Incorrect usage\");") <> line <>
-        rbrace <> line <> line <>
-        pretty "fn main() { entrypoint() }" <> line
+        rbrace <> line <> line 
     where
         genIdxLocCount (lname, (npids,_,_,_,_)) =
             if npids == 0 then pretty "" else
@@ -1074,7 +1070,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "// let res = s." <> pretty mainName <> tupled (pretty "todo!(/* itree token */)" : pretty "todo!(/* cont */)"  : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
+            pretty "let res = s." <> pretty mainName <> tupled (pretty "todo!(/* itree token */)" : {- pretty "todo!(/* cont */)" : -} [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
@@ -1105,10 +1101,9 @@ extractTyDefs ((tv, td):ds) = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
             return $ (pretty "", pretty "")
 
-preamble :: ExtractionMonad (Doc ann)        
-preamble = do
-    let preambleFn = "extraction/preamble.rs"
-    s <- liftIO $ readFile preambleFn
+prettyFile :: String -> ExtractionMonad (Doc ann)        
+prettyFile fn = do
+    s <- liftIO $ readFile fn
     return $ pretty s
 
 extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann, Doc ann) 
@@ -1117,7 +1112,8 @@ extractModBody mb = do
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     (sidArgMap, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
-    p <- preamble
+    p <- prettyFile "extraction/preamble.rs"
+    lp <- prettyFile "extraction/lib_preamble.rs"
     ep <- entryPoint locMap sharedNames pubKeys sidArgMap
     return (
         p                       <> line <> line <> line <> line <> 
@@ -1136,8 +1132,9 @@ extractModBody mb = do
         pretty "// ------------ ENTRY POINT -----------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         ep                      <> line <> line <>
-        pretty "} // verus!"    <> line <> line
-      , pretty "pub use serde::{Deserialize, Serialize};" <> line <>
+        pretty "} // verus!"    <> line <> line <>
+        pretty "fn main() { entrypoint() }" <> line
+      , lp                      <> line <> line <> line <> line <> 
         libCode
       )
 
