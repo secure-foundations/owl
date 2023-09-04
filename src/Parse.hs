@@ -451,8 +451,10 @@ parsePropTerm =
         <|>
         (parseSpanned $ do
             q <- parseQuant
-            i <- identifier
-            parseQuantBody q i
+            bs <- parseQuantBinders
+            symbol "."
+            p <- parseProp
+            return $ (mkQuant q bs p)^.val
         )
         <|>
         (parseSpanned $ try $ do
@@ -480,20 +482,23 @@ parseQuant =
         return $ Exists
     )
 
-parseQuantBody q i = do
-    symbol ":"
-    (parseIdxQuant q i <|> parseBVQuant q i)
-        where
-            parseIdxQuant q i = do
-                reserved "idx"
-                symbol "."
-                p <- parseProp
-                return $ PQuantIdx q $ bind (s2n i) p
-            parseBVQuant q i = do
-                reserved "bv"
-                symbol "."
-                p <- parseProp
-                return $ PQuantBV q $ bind (s2n i) p
+data BinderType = BTIdx | BTBV
+    deriving Eq
+
+parseQuantBinders = 
+    (do
+        i <- identifier
+        symbol ":"
+        bt <- alt
+            (reserved "idx" >> return BTIdx)
+            (reserved "bv" >> return BTBV)
+        return (i, bt)) `sepBy1` (symbol ",")
+
+mkQuant :: Quant -> [(String, BinderType)] -> Prop -> Prop
+mkQuant q [] p = p
+mkQuant q ((i, bt):bs) p = case bt of
+    BTIdx -> mkSpanned $ PQuantIdx q $ bind (s2n i) $ mkQuant q bs p
+    BTBV -> mkSpanned $ PQuantBV q $ bind (s2n i) $ mkQuant q bs p
 
 prefixProp op f =
     Prefix (do
