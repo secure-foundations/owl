@@ -329,6 +329,11 @@ interpUserFunc pth md (EnumTest tv variant) = do
                 _ -> do
                     l <- coveringLabel t
                     return $ TBool l
+interpUserFunc pth md (FunDef b) = do
+    let ar = length $ snd $ fst $ unsafeUnbind b
+    return $ (ar, \ps as -> do
+        t <- inferAExpr =<< extractFunDef b ps (map fst as)
+        return $ t^.val)
 interpUserFunc pth md (UninterpUserFunc f ar) = do
     return $ (ar, withNoParams (show f) $ \args -> do
         l <- coveringLabelOf $ map snd args
@@ -753,6 +758,16 @@ checkDecl d cont = withSpan (d^.spanOf) $
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclSMTOption s1 s2 -> do
         local (over z3Options $ M.insert s1 s2) $ cont
+      DeclFun s bnd -> do
+          ufs <- view $ curMod . userFuncs
+          assert ("Duplicate function: " ++ show s) $ not $ member s ufs
+          (((is, ps), xs), a) <- unbind bnd
+          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
+              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                    _ <- inferAExpr a
+                    return ()
+          local (over (curMod . userFuncs) $ insert s (FunDef bnd)) $ cont
       DeclPredicate s bnd -> do 
         preds <- view $ curMod . predicates
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
@@ -1749,26 +1764,27 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
                                _ <- local (set tcScope TcGhost) $ checkProp pcond
                                (_, b) <- SMT.smtTypingQuery $ SMT.symAssert pcond
                                return b 
+          retT <- case ot of
+                    Just t -> return t
+                    Nothing -> typeError $ "pcase must have expected return type"
           case doCaseSplit of 
             False -> checkExpr ot k
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- freshVar
-              t1 <- withVars [(s2n x, (ignore $ "pcase_true_" ++ show pcase_line, Nothing, tLemma p))] $ do
+              _ <- withVars [(s2n x, (ignore $ "pcase_true_" ++ show pcase_line, Nothing, tLemma p))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr ot k
+                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
                   popLogTypecheckScope
-                  return r
-              t2 <- withVars [(s2n x, (ignore $ "pcase_false_" ++ show pcase_line, Nothing, tLemma (pNot p)))] $ do
+              _ <- withVars [(s2n x, (ignore $ "pcase_false_" ++ show pcase_line, Nothing, tLemma (pNot p)))] $ do
                   logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr ot k
+                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
                   popLogTypecheckScope
-                  return r
-              normalizeTy $ mkSpanned $ TCase p t1 t2
+              normalizeTy retT
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
           t <- checkExpr Nothing e1
@@ -2211,7 +2227,7 @@ tyDefMatches s td1 td2 =
 
 
 userFuncMatches :: String -> UserFunc -> UserFunc -> Check ()
-userFuncMatches s f1 f2 = assert ("Func mismatch: " ++ s) $ f1 == f2
+userFuncMatches s f1 f2 = assert ("Func mismatch: " ++ s) $ f1 `aeq` f2
 
 nameDefMatches :: String -> 
     Bind ([IdxVar], [IdxVar]) NameDef -> 

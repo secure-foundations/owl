@@ -124,6 +124,13 @@ resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
     case d^.val of
+      DeclFun s bp -> do
+          (b, a) <- unbind bp
+          a' <- resolveAExpr a
+          pth <- view curPath
+          ds' <- local (over funcPaths $ T.insert s pth) $ resolveDecls ds
+          let d' = Spanned (d^.spanOf) $ DeclFun s $ bind b a'
+          return (d' : ds')
       DeclPredicate s bp -> do
           ((ps, xs), p) <- unbind bp
           p' <- resolveProp p

@@ -433,7 +433,8 @@ unit :: SExp
 unit = SAtom "UNIT"
 
 interpretAExp :: AExpr -> Sym SExp
-interpretAExp ae = 
+interpretAExp ae' = do
+    ae <- liftCheck $ normalizeAExpr ae'
     case ae^.val of
       AEVar _ x -> do
         env <- use varVals

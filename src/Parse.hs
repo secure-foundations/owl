@@ -721,6 +721,26 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
+        reserved "func"
+        n <- identifier
+        alt
+            (do
+                reserved "arity"
+                whiteSpace
+                i <- many1 digit
+                whiteSpace
+                return $ DeclDetFunc n UninterpFunc (read i))
+            (do
+                ps <- parseIdxParamBinds
+                symbol "("
+                xs <- identifier `sepBy` (symbol ",")
+                symbol ")"
+                symbol "="
+                a <- parseAExpr
+                return $ DeclFun n (bind (ps, map s2n xs) a))
+    )
+    <|>
+    (parseSpanned $ do
         reserved "corr"
         pb <- parseIdxParamBinds1
         alt
@@ -738,15 +758,6 @@ parseDecls =
                 l2 <- parseLabel
                 return $ DeclCorr $ bind (pb, []) (l1, l2))
     )
-    <|>
-    (parseSpanned $ do
-        reserved "func"                  
-        x <- identifier
-        reserved "arity"
-        whiteSpace
-        i <- many1 digit
-        whiteSpace
-        return $ DeclDetFunc x UninterpFunc (read i))
     <|>
     (try $ parseSpanned $ do
         reserved "locality"

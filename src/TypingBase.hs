@@ -96,7 +96,8 @@ data UserFunc =
       | EnumConstructor TyVar String
       | EnumTest TyVar String
       | UninterpUserFunc String Int
-    deriving (Eq, Show, Generic, Typeable)
+      | FunDef (Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr)
+    deriving (Show, Generic, Typeable)
 
 instance Alpha UserFunc
 instance Subst ResolvedPath UserFunc
@@ -718,11 +719,6 @@ getTyDef (PRes (PDot p s)) = do
 
 -- AExpr's have unambiguous types, so can be inferred.
 
-getUserFunc :: Path -> Check (Maybe UserFunc)
-getUserFunc (PRes (PDot p s)) = do
-    md <- openModule p
-    return $ lookup s (md^.userFuncs)
-
 getDefSpec :: Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
 getDefSpec (PRes (PDot p s)) = do
     md <- openModule p
@@ -731,6 +727,14 @@ getDefSpec (PRes (PDot p s)) = do
       Just (DefHeader _) -> typeError $ "Def is unspecified: " ++ s
       Just (Def r) -> return r
 
+getUserFunc :: Path -> Check (Maybe UserFunc)
+getUserFunc f@(PRes (PDot p s)) = do
+    fs <- view detFuncs
+    case (p, lookup s fs) of
+      (PTop, Just _) -> return Nothing
+      (_, Nothing) -> do
+          md <- openModule p
+          return $ lookup s (md ^. userFuncs) 
 
 getFuncInfo :: Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 getFuncInfo f@(PRes (PDot p s)) = do
@@ -790,14 +794,17 @@ normalizeAExpr ae =
           forM_ p1 checkIdxSession
           forM_ p2 checkIdxPId
           getROPreimage p ps args 
-      AEApp p fs aes -> do
+      AEApp f fs aes -> do
           aes' <- mapM normalizeAExpr aes
           fs' <- forM fs $ \f ->
               case f of
                 ParamAExpr a -> ParamAExpr <$> normalizeAExpr a
                 _ -> return f
-          p' <- normalizePath p 
-          return $ Spanned (ae^.spanOf) $ AEApp p' fs' aes'
+          pth <- normalizePath f
+          ouf <- getUserFunc pth
+          case ouf of
+            Just (FunDef b) -> normalizeAExpr =<< extractFunDef b fs' aes'
+            _ -> return $ Spanned (ae^.spanOf) $ AEApp pth fs' aes'
 
 simplifyProp :: Prop -> Check Prop
 simplifyProp p = do
@@ -1045,6 +1052,27 @@ getStructParams ps =
         case p of
             ParamIdx i -> return i
             _ -> typeError $ "Wrong param on struct: " ++ show p
+
+getFunDefParams :: [FuncParam] -> Check ([Idx], [Idx])
+getFunDefParams [] = return ([], [])
+getFunDefParams (p:ps) =
+    case p of
+      ParamIdx i -> do
+          t <- inferIdx i
+          (xs, ys) <- getFunDefParams ps
+          case t of
+            IdxSession -> return (i:xs, ys)
+            IdxPId -> return (xs, i:ys)
+            _ -> typeError $ "Function parameter must be a session or a pid"
+      _ -> typeError $ "Function parameter must be an index"
+
+extractFunDef :: Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr -> [FuncParam] -> [AExpr] -> Check AExpr 
+extractFunDef b ps as = do
+    (is, ps) <- getFunDefParams ps
+    (((ixs, pxs), xs), a) <- unbind b
+    assert ("Wrong index arity for fun def") $ (length ixs, length pxs) == (length is, length ps)
+    assert ("Wrong arity for fun def") $ length xs == length as
+    return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs as) a
 
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
 extractPredicate pth@(PRes (PDot p s)) is as = do  

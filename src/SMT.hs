@@ -225,6 +225,7 @@ setupTyEnv = do
 setupUserFunc :: (ResolvedPath, UserFunc) -> Sym ()
 setupUserFunc (s, f) =
     case f of
+      FunDef _ -> return ()
       StructConstructor tv -> do
         -- Concats
         td <- liftCheck $ getTyDef  (PRes $ PDot s tv)

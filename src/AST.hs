@@ -304,6 +304,7 @@ data DeclX =
       | DeclSMTOption String String   
     | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
     | DeclPredicate String (Bind ([IdxVar], [DataVar]) Prop)
+    | DeclFun       String (Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
                          Bind [(DataVar, Embed Ty)]
