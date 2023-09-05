@@ -145,8 +145,7 @@ counter aead_counter_msg2_C7 @ Responder
 
 name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
-            aad x. true
-            // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+            aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
             nonce_pattern *
     uniqueness_by { is_constant_lemma(crh(construction()));
@@ -173,8 +172,7 @@ corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
 
 name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
-            aad x. true
-            // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+            aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     requires is_group_elem(x)
@@ -351,11 +349,6 @@ predicate valid_responder_msg1_val (s) =
     /\ (eph != dhpk(get(E_init)) ==> 
         _responder_msg1_C3(s) == get(msg1_C3_resp_corr[eph;0]) /\
         (corr(msg1_C3_resp_corr[eph;0]) ==> corr(S_init) \/ corr(S_resp)))
-    // /\ (
-    //     ((eph == dhpk(get(E_init)) /\ sec(msg1_C3[;0]))
-    //     \/ (eph != dhpk(get(E_init)) /\ sec(msg1_C3_resp_corr[eph;0])))
-    //     ==>
-    //     exists c:bv, ts:bv. _responder_msg1_H4(s) == crh(msg1_C3_aad(c) ++ ts))
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
 
@@ -546,6 +539,10 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let k0 = hash<msg2_C7, msg2_C7_resp_corr[ephemeral];2>(C6, psk) in
     let H6 : Data<adv> = crh(H5 ++ tau) in
     let emptystring : Data<adv> |0| = call get_empty_r() in
+    /* assert (k0 == get(msg2_C7[;2]) /\ sec(msg2_C7[;2])
+             ==>
+             (exists c:bv, ts:bv, tau:bv. H6 == crh(honest_H6_pre(c,ts,tau))));
+    */
     let msg2_empty : Data<adv> |cipherlen(0)| = st_aead_enc<aead_counter_msg2_C7>(k0, emptystring, H6) in
     let H7 = crh(H6 ++ msg2_empty) in
     let msg2_sender : Data<adv> |4| = call get_sender_r() in

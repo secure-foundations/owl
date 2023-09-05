@@ -385,7 +385,9 @@ laxAssertion k = do
     b1 <- view $ envFlags . fLax
     onlyCheck <- view $ envFlags . fOnlyCheck
     cd <- view curDef
-    let b2 = cd /= onlyCheck -- Lax if not checking the requested definition
+    let b2 = case onlyCheck of
+               Just s -> (cd /= Just s) -- Only lax if onlyCheck is Just s, and we are not in method s
+               Nothing -> False
     if b1 || b2 then return () else k
 
 -- withVars xs k = add xs to the typing environment, continue as k with extended

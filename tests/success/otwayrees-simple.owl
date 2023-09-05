@@ -158,7 +158,6 @@ def bob (
     // requires ([NB] <= adv) // wrong, but just checking
 : if sec(KB) then bob_result else Data<adv> =
     let kB:Name(KB) = get(KB) in
-    corr_case KB in
 
     input i in 
     let A'    = msg1_A(i) in
@@ -179,6 +178,7 @@ def bob (
     let x2' = msg3_x2(i) in
 
     // let _ = check_session_identifier(M') in
+    corr_case KB in
     case adec(kB, x2') {
         | None => bob_None()
         | Some res =>

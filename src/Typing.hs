@@ -1503,13 +1503,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
               t <- inferAExpr a
               t' <- normalizeTy t
               return (a, t')
-          checkCryptoOp ot (CLemma lem) args
+          getOutTy ot =<< checkCryptoOp (CLemma lem) args
       ECrypt cop aes -> do
           args <- forM aes $ \a -> do
               t <- inferAExpr a
               t' <- normalizeTy t
               return (a, t')
-          checkCryptoOp ot cop args
+          getOutTy ot =<< checkCryptoOp cop args
       (EInput xsk) -> do
           ensureNonGhost
           ((x, s), k) <- unbind xsk
@@ -1609,7 +1609,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
       (EChooseIdx ip ik) -> do
           (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
           (i, k) <- unbind ik
-          case b of
+          getOutTy ot =<< case b of
             Just True -> do
                 (ix, p) <- unbind ip
                 x <- freshVar
@@ -1627,7 +1627,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
       (EUnpack a ixk) -> do
           t <- inferAExpr a
           ((i, x), e) <- unbind ixk
-          case (stripRefinements t)^.val of
+          getOutTy ot =<< case (stripRefinements t)^.val of
             TExistsIdx jt' -> do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') (bind (s2n ".res") (pEq (aeVar ".res") a) )
@@ -1867,19 +1867,21 @@ doADec t1 t args =
       Just k -> do
           debug $ pretty "Trying nontrivial dec"
           nt <-  local (set tcScope TcGhost) $ getNameType k
-          l <- coveringLabel t
           case nt^.val of
             NT_Enc t' -> do
                 b2 <- flowsTo (nameLbl k) advLbl
-                if ((not b2)) then do
+                b <- tyFlowsTo t advLbl -- Public ciphertext
+                if ((not b2) && b) then do
                     -- Honest
                     debug $ pretty "Honest dec"
                     return $ mkSpanned $ TOption t'
+                else if b then do
+                    l_corr <- coveringLabelOf [t1, t]
+                    return $ mkSpanned $ TOption $ tData l_corr l_corr -- Change here
                 else do
                     debug $ pretty "Corrupt dec"
+                    l_corr <- coveringLabelOf [t1, t]
                     -- Corrupt
-                    let l_corr = joinLbl (nameLbl k) l
-                    debug $ pretty "joinLbl succeeded"
                     return $ tData l_corr l_corr -- Change here
             _ -> typeError $ show $  ErrWrongNameType k "encryption key" nt
       _ -> do
@@ -1952,8 +1954,8 @@ findGoodROHint a i (((a', p', _), (pth, inds, args)) : xs) = do
     if b then return (mkSpanned $ NameConst inds pth (Just (args, i))) else findGoodROHint a i xs
 
 
-checkCryptoOp :: Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
-checkCryptoOp ot cop args = do
+checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
+checkCryptoOp cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
       CLemma (LemmaCRH) -> local (set tcScope TcGhost) $ do 
@@ -1972,7 +1974,7 @@ checkCryptoOp ot cop args = do
           x' <- normalizeAExpr =<< resolveANF x
           y' <- normalizeAExpr =<< resolveANF y
           proveDisjointContents x' y'
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x' y'
+          return $ tRefined tUnit $ bind (s2n "._") $ pNot $ pEq x' y'
       CLemma (LemmaCrossDH n1 n2 n3) -> do
           assert ("Wrong number of arguments to cross_dh_lemma") $ length args == 1
           let [(x, t)] = args
@@ -1991,7 +1993,7 @@ checkCryptoOp ot cop args = do
                         (pNot $ pEq (dhCombine x (mkSpanned $ AEGet n1))
                                     (dhCombine (dhpk (mkSpanned $ AEGet n2)) (mkSpanned $ AEGet n3)))
    
-          getOutTy ot $ tLemma p
+          return $ tLemma p
       CLemma (LemmaConstant)  -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
           let [(x, _)] = args
@@ -1999,7 +2001,7 @@ checkCryptoOp ot cop args = do
           x'' <- normalizeAExpr x'
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (pretty x'')) b
-          getOutTy ot $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x''
+          return $ tRefined tUnit $ bind (s2n "._") $ mkSpanned $ PIsConstant x''
       CHash hints i -> do
           assert ("RO hints must be nonempty") $ length hints > 0
           hints_data <- forM hints checkROHint
@@ -2077,10 +2079,15 @@ checkCryptoOp ot cop args = do
                 case nt^.val of
                   NT_StAEAD tm xaad _ _ -> do
                       b1 <- flowsTo (nameLbl k) advLbl
-                      b2 <- isSubtype tnonce $ tData advLbl advLbl 
-                      if (not b1) && b2 then do
+                      b2 <- tyFlowsTo tnonce advLbl
+                      b3 <- tyFlowsTo t advLbl
+                      b4 <- tyFlowsTo t2 advLbl
+                      if (not b1) && b2 && b3 && b4 then do
                             (x, aad) <- unbind xaad
                             return $ mkSpanned $ TOption $ tRefined tm (bind (s2n ".res") $ subst x y aad)
+                      else if (b2 && b3 && b4) then do 
+                          l <- coveringLabelOf [t1, t, t2, tnonce]
+                          return $ mkSpanned $ TOption $ tData l l
                       else do
                             -- Corrupt
                             l <- coveringLabel t
@@ -2100,8 +2107,11 @@ checkCryptoOp ot cop args = do
                     b1 <- flowsTo l advLbl
                     b2 <- flowsTo (nameLbl k) advLbl
                     if b1 && (not b2) then do
-                        -- TODO HIGH PRIORITY: is this complete?
-                        return $ mkSpanned $ TData advLbl advLbl -- TUnion t' (tData advLbl advLbl), 
+                        -- TODO: is this complete?
+                        return $ mkSpanned $ TOption $ mkSpanned $ TData advLbl advLbl -- TUnion t' (tData advLbl advLbl), 
+                    else if b1 then do
+                        let l_corr = joinLbl (nameLbl k) l
+                        return $ mkSpanned $ TOption $ tData l_corr l_corr
                     else do
                         let l_corr = joinLbl (nameLbl k) l
                         return $ mkSpanned $ TData l_corr l_corr
