@@ -1,0 +1,5 @@
+source-repository-package
+  type: git
+  location: https://github.com/solidsnack/wcwidth.git
+
+packages: ./owl.cabal
