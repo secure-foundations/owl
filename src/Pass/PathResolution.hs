@@ -576,11 +576,14 @@ resolveExpr e =
           k' <- resolveExpr k
           p' <- resolveProp p
           return $ Spanned (e^.spanOf) $ EChooseIdx (bind i' p') (bind i k')
-      EForall xpk -> do
-          (x, (p, k)) <- unbind xpk
-          p' <- resolveProp p
+      EForallBV xpk -> do
+          (x, k) <- unbind xpk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EForall (bind x (p', k'))
+          return $ Spanned (e^.spanOf) $ EForallBV (bind x k') 
+      EForallIdx xpk -> do
+          (x, k) <- unbind xpk
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ EForallIdx (bind x k')
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1

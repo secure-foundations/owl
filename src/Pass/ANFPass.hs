@@ -107,10 +107,14 @@ anf e =
           e2' <- anf e2
           ea <- anfAExpr a
           elet ea Nothing ( Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EIf (aevar (a^.spanOf) y) e1' e2'
-      EForall xpk -> do
-          (x, (p, k)) <- unbind xpk
+      EForallBV xpk -> do
+          (x, k) <- unbind xpk
           k' <- anf k
-          return $ Spanned (e^.spanOf) $ EForall $ bind x (p, k')
+          return $ Spanned (e^.spanOf) $ EForallBV $ bind x k'
+      EForallIdx xpk -> do
+          (x, k) <- unbind xpk
+          k' <- anf k
+          return $ Spanned (e^.spanOf) $ EForallIdx $ bind x k'
       EGuard a e -> do
           e' <- anf e
           ea <- anfAExpr a

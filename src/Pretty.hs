@@ -234,7 +234,8 @@ instance Pretty ExprX where
     pretty (EUnpack a k) = pretty "unpack a .... TODO"
     pretty (EIf t e1 e2) = 
         pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (EForall xpk) = pretty "forall_expr"
+    pretty (EForallBV xpk) = pretty "forall_expr.. TODO" 
+    pretty (EForallIdx xpk) = pretty "forall_idx.. TODO"
     pretty (EGuard a e) = 
         pretty "guard" <+> pretty a <+> pretty "in" <+> pretty e
     pretty (ERet ae) = pretty ae

@@ -382,7 +382,8 @@ data ExprX =
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
-    | EForall (Bind DataVar (Prop, Expr))
+    | EForallBV (Bind DataVar Expr)
+    | EForallIdx (Bind IdxVar Expr)
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])

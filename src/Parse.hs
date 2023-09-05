@@ -500,6 +500,13 @@ mkQuant q ((i, bt):bs) p = case bt of
     BTIdx -> mkSpanned $ PQuantIdx q $ bind (s2n i) $ mkQuant q bs p
     BTBV -> mkSpanned $ PQuantBV q $ bind (s2n i) $ mkQuant q bs p
 
+mkEForall :: [(String, BinderType)] -> Expr -> Expr
+mkEForall [] e = e
+mkEForall ((i, bt):bs) k = case bt of
+    BTIdx -> mkSpanned $ EForallIdx $ bind (s2n i) $ mkEForall bs k
+    BTBV -> mkSpanned $ EForallBV $ bind (s2n i) $ mkEForall bs k
+
+
 prefixProp op f =
     Prefix (do
         p <- getPosition
@@ -1148,15 +1155,11 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "forall"
-        x <- identifier
-        oreq <- parseRequires
-        let req = case oreq of
-                    Nothing -> pTrue
-                    Just req -> req
+        bs <- parseQuantBinders
         symbol "{"
         k <- parseExpr
         symbol "}"
-        return $ EForall $ bind (s2n x) (req, k)
+        return $ (mkEForall bs k)^.val
     )
     <|>
     (parseSpanned $ do

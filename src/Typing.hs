@@ -1747,16 +1747,25 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
         if b then getOutTy ot tAdmit else checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
-      (EForall xpk) -> do
-          (x, (p, k)) <- unbind xpk
+      (EForallBV xk) -> do
+          (x, k) <- unbind xk
           t <- local (set tcScope TcGhost) $ withVars [(x, (ignore $ show x, Nothing, tData topLbl topLbl))] $ do
-              checkProp p
               checkExpr Nothing k
           t' <- normalizeTy t
           case t'^.val of
             TRefined (Spanned _ TUnit) yp -> do
                 (y, p') <- unbind yp
                 getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall $ bind x $ subst y (aeApp (topLevelPath "UNIT") [] []) p'
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (pretty t')
+      (EForallIdx ik) -> do
+          (i, k) <- unbind ik
+          t <- local (set tcScope TcGhost) $ local (over inScopeIndices $ mappend [(i, IdxGhost)]) $ do
+              checkExpr Nothing k
+          t' <- normalizeTy t
+          case t'^.val of
+            TRefined (Spanned _ TUnit) yp -> do
+                (y, p') <- unbind yp
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall $ bind i $ subst y (aeApp (topLevelPath "UNIT") [] []) p'
             _ -> typeError $ "Unexpected return type of forall body: " ++ show (pretty t')
       (EPCase p op k) -> do
           _ <- local (set tcScope TcGhost) $ checkProp p
