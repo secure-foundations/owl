@@ -131,7 +131,8 @@ anf e =
       EAssume _ -> return e
       EAdmit -> return e
       ECrypt p as ->
-          anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECrypt p xs 
+          if isGhostOp p then return e
+                         else anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECrypt p xs 
       ECall s is as -> 
           anfAExprList (e^.spanOf) as $ \xs -> Spanned (e^.spanOf) $ ECall s is xs
       ECase e1 cases -> do
@@ -163,3 +164,8 @@ anf e =
          elet ea1 Nothing (Just a1) Nothing $ \x -> 
              elet ea2 Nothing (Just a1) Nothing $ \y -> 
                  return $ Spanned (e^.spanOf) $ ETWrite t (aevar (a1^.spanOf) x) (aevar (a2^.spanOf) y)
+
+isGhostOp :: CryptOp -> Bool
+isGhostOp (CLemma _) = True
+isGhostOp _ = False
+

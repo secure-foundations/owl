@@ -159,6 +159,7 @@ data Env = Env {
     _typeCheckLogDepth :: IORef Int,
     _debugLogDepth :: IORef Int,
     _typeErrorHook :: (forall a. String -> Check a),
+    _curDef :: Maybe String,
     _curSpan :: Position
 }
 
@@ -381,8 +382,11 @@ assert m b = do
 
 laxAssertion :: Check () -> Check ()
 laxAssertion k = do
-    l <- view $ envFlags . fLax
-    if l then return () else k
+    b1 <- view $ envFlags . fLax
+    onlyCheck <- view $ envFlags . fOnlyCheck
+    cd <- view curDef
+    let b2 = cd /= onlyCheck -- Lax if not checking the requested definition
+    if b1 || b2 then return () else k
 
 -- withVars xs k = add xs to the typing environment, continue as k with extended
 -- envrionment

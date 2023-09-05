@@ -40,7 +40,6 @@ func msg1_C3_aad(c) =
     crh(msg1_C2_aad() ++ c)
     
 
-// TODO: problematic for disjointness
 name msg1_C1 : RO strict crh(construction()) ++ dhpk(get(E_init)) -> nonce
 name msg1_C1_resp_corr : RO[x] strict crh(construction()) ++ x -> nonce
     requires is_group_elem(x)
@@ -77,15 +76,18 @@ name msg1_C3 : RO strict{0} get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), ge
     uniqueness_by {    is_constant_lemma(crh(construction())) }
 
 name msg1_C3_resp_corr : RO[x] strict{0}  get(msg1_C2_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) 
-    -> nonce || enckey Empty
+    -> nonce || 
+        st_aead (Data<adv> |12|)
+            aad x. (exists c:bv. x == msg1_C3_aad(c))
+            nonce aead_counter_msg1_C3
+            nonce_pattern *
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {    is_constant_lemma(crh(construction())) }
 
-corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
+// corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
-// TODO: problematic for RO disjointness
 name msg1_mac1_key : RO strict{0} mac1() ++ dhpk(get(S_resp)) -> mackey Data<adv> 
     uniqueness_by { assume (mac1() != crh(construction())); 
                     is_constant_lemma(crh(construction())) }
@@ -146,8 +148,8 @@ func msg2_C7_aad(c, ts, tau) =
 
 name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
-            aad x. true
-            //aad x.  exists c:bv, ts:bv, tau:bv. x == msg2_C7_aad(c, ts, tau)
+            //aad x. true
+            aad x.  exists c:bv, ts:bv, tau:bv. x == msg2_C7_aad(c, ts, tau)
             nonce aead_counter_msg2_C7
             nonce_pattern *
     uniqueness_by { is_constant_lemma(crh(construction()));
@@ -174,8 +176,8 @@ corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
 
 name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
-            aad x. true
-            // aad x.  exists c:bv, ts:bv, tau:bv. x == msg2_C7_aad(c, ts, tau)
+            //aad x. true
+            aad x.  exists c:bv, ts:bv, tau:bv. x == msg2_C7_aad(c, ts, tau)
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     requires is_group_elem(x)
@@ -334,7 +336,7 @@ def get_empty_r   () @ Responder : Data<adv> |0|
 
 struct initiator_msg1_val {
       _initiator_msg1_C3 : Name(msg1_C3[;0])
-    , _initiator_msg1_H4 : Data<adv> // todo
+    , _initiator_msg1_H4 : (x:Data<adv>{exists c:bv, ts:bv. x == crh(msg1_C3_aad(c) ++ ts)}) 
 }
 
 struct responder_msg1_val {
@@ -346,13 +348,17 @@ struct responder_msg1_val {
 
 predicate valid_responder_msg1_val (s) = 
     let eph = _responder_msg1_ephemeral(s) in 
-    is_group_elem(eph) /\ 
-    ((eph == dhpk(get(E_init))) ==> (
-        _responder_msg1_C3(s) == get(msg1_C3[;0])
-    )) 
-    /\ ((eph != dhpk(get(E_init))) ==> 
+    is_group_elem(eph)  
+    /\ (eph == dhpk(get(E_init)) ==> 
+        _responder_msg1_C3(s) == get(msg1_C3[;0]))
+    /\ (eph != dhpk(get(E_init)) ==> 
         _responder_msg1_C3(s) == get(msg1_C3_resp_corr[eph;0]) /\
         (corr(msg1_C3_resp_corr[eph;0]) ==> corr(S_init) \/ corr(S_resp)))
+    // /\ (
+    //     ((eph == dhpk(get(E_init)) /\ sec(msg1_C3[;0]))
+    //     \/ (eph != dhpk(get(E_init)) /\ sec(msg1_C3_resp_corr[eph;0])))
+    //     ==>
+    //     exists c:bv, ts:bv. _responder_msg1_H4(s) == crh(msg1_C3_aad(c) ++ ts))
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
 
@@ -502,16 +508,37 @@ def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder
      case st_aead_dec(k0, msg1_static, 0x, H2) {
          | None => None<ty:responder_msg1_val_t>()
          | Some msg1_static_dec => 
+                assert (k0 == get(msg1_C2[;1]) /\ sec(msg1_C2[;1]) ==> 
+                    H2 == msg1_C2_aad()
+                );
+                assert (k0 == get(msg1_C2_resp_corr[msg1_ephemeral;1])
+                /\ sec(msg1_C2_resp_corr[msg1_ephemeral;1]) ==> 
+                    H2 == msg1_C2_aad()
+                );
+                crh_lemma(
+                    H1 ++ msg1_ephemeral, 
+                    crh(crh(crh(construction()) ++ identifier()) ++
+                    dhpk(get(S_resp))) ++ dhpk(get(E_init)));
+                assert (H2 == msg1_C2_aad() ==> 
+                    msg1_ephemeral == dhpk(get(E_init))
+                );
+                assert (! (k0 == get(msg1_C2_resp_corr[msg1_ephemeral;1]) /\ sec(msg1_C2_resp_corr[msg1_ephemeral;1])));
                 guard eq(msg1_static_dec, dhpk_S_init) in 
                 let H3 = crh(H2 ++ dhpk_S_init) in
                 let C3 = hash<msg1_C3, msg1_C3_resp_corr[msg1_ephemeral];0>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
                 let k1 = hash<msg1_C3, msg1_C3_resp_corr[msg1_ephemeral];1>(C2, dh_combine(dhpk_S_init, get(S_resp))) in
                 
                 corr_case msg1_C3[;1] when (msg1_ephemeral == dhpk(get(E_init))) in
+                corr_case msg1_C3_resp_corr[msg1_ephemeral;1] when (msg1_ephemeral != dhpk(get(E_init))) in
+                let dec_res = st_aead_dec(k1, msg1_timestamp, 0x, H3) in 
                 case st_aead_dec(k1, msg1_timestamp, 0x, H3) {
                 | None => None<ty:responder_msg1_val_t>()
                 | Some msg1_timestamp_dec =>
                    let H4 = crh(H3 ++ msg1_timestamp_dec) in
+                   assert (msg1_ephemeral == dhpk(get(E_init)) /\
+                   sec(msg1_C3[;1]) ==> 
+                   exists c:bv, ts:bv. 
+                    H4 == crh(msg1_C3_aad(c)  ++ ts));
 
                    let retval = responder_msg1_val(C3, H4, msg1_ephemeral, msg1_sender) in
                    Some(retval)

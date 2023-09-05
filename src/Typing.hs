@@ -52,7 +52,7 @@ emptyEnv f = do
     m <- newIORef $ M.empty
     rs <- newIORef []
     return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m mempty rs r' r'' (typeError' True) def
+        interpUserFunc r m mempty rs r' r'' (typeError' True) Nothing def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -787,6 +787,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
                 local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
                     withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                        logTypecheck $ "Checking RO decl: " ++ n
                         _ <- inferAExpr a
                         checkProp p
                         forM_ nts $ \nt -> do
@@ -855,7 +856,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                               logTypecheck $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
                               pushLogTypecheckScope
-                              local (set tcScope $ TcDef l) $
+                              local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $ 
                                   withVars [(s2n x, (ignore x, Nothing, mkSpanned $ TRefined tUnit (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                                   _ <- checkExpr (Just tyAnn) bdy''
                                   popLogTypecheckScope
@@ -876,6 +877,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
               checkLabel l2
           local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
       (DeclStruct n ixs) -> do
+          logTypecheck $ "Checking struct: " ++ n
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
           tvars <- view $ curMod . tyDefs
@@ -1945,7 +1947,7 @@ checkCryptoOp :: Maybe Ty -> CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp ot cop args = do
     debug $ pretty $ "checkCryptoOp:" ++ show (pretty cop) ++ " " ++ show (pretty args)
     case cop of
-      CLemma (LemmaCRH) -> do 
+      CLemma (LemmaCRH) -> local (set tcScope TcGhost) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
           x' <- resolveANF x
