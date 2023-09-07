@@ -725,8 +725,9 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
 
 
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
-extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> ExtractionMonad (Doc ann, Doc ann)
-extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
+-- the last `bool` argument is if this is the main function, in which case we additionally return a wrapper for the entry point
+extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
+extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
     debugPrint $ pretty ""
     -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
@@ -740,7 +741,8 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
     curRetTy .= Nothing
     decl <- genFuncDecl name rustSidArgs rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody rustArgs (specTyOf rtb)
-    return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace, defSpec)
+    let mainWrapper = if isMain then genMainWrapper owlName rtb (specTyOf rtb) else pretty ""
+    return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace <> line <> line <> mainWrapper, defSpec)
     where
         specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
         genFuncDecl name sidArgs owlArgs rt = do
@@ -760,11 +762,19 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody = do
                     pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"
+        genMainWrapper owlName execRetTy specRetTy = 
+            pretty "pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
+            parens (pretty "&mut self") <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
+                pretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::dummy_itree_token();" <> line <>
+                pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy <> pretty ">"] <+> pretty "=" <+>
+                    pretty "owl_call!" <> tupled [pretty "dummy_tok", pretty owlName <> pretty "_spec(self)", pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "/* todo args? */")] <> pretty ";" <> line <>
+                pretty "res" <>
+            line)
 
 nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
 nameInit s nt = case nt^.val of
     NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(cipher());"
-    NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key_iv(cipher());"
+    NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
     NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&HMAC_MODE());"
     NT_PKE _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
@@ -895,7 +905,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
     let configDef = configLibCode loc cfs
     case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
         Just (mainName,_,sids,_,_,_) -> do
-            (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e) defs
+            (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e (n == mainName)) defs
             return (rustifyName mainName, length sids,
                 pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
                 pretty "impl" <+> pretty (locName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
@@ -932,7 +942,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 pretty "serde_json::to_string(&l).expect(\"Can't serialize "<> l <> pretty "_config\")" <> line
             ) <> line <> 
             pretty "pub fn deserialize_" <> l <> pretty "_config<'a>(s: &'a str) -> " <> l <> pretty "_config" <> braces (line <>
-                pretty "serde_json::from_str(s).expect(\"Can't dserialize "<> l <> pretty "_config\")" <> line
+                pretty "serde_json::from_str(s).expect(\"Can't deserialize "<> l <> pretty "_config\")" <> line
             )
 
         configFields idxs sharedNames pubKeys =
@@ -1070,7 +1080,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty mainName <> tupled (pretty "todo!(/* itree token */)" : {- pretty "todo!(/* cont */)" : -} [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
+            pretty "let res = s." <> pretty mainName <> pretty "_wrapper" <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"

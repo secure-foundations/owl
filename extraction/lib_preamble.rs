@@ -25,3 +25,16 @@ pub use serde::{Deserialize, Serialize};
 // pub use hmac;
 // pub use sha1;
 // // pub use sha2;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct msg {
+    pub ret_addr: String,
+    pub payload: Vec<u8>
+}
+
+pub fn serialize_msg(l: &msg) -> Vec<u8> {
+    serde_json::to_vec(&l).expect("Can't serialize msg")
+}
+pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
+    serde_json::from_slice(s).expect("Can't deserialize msg")
+}

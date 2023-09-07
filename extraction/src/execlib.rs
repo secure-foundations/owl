@@ -46,7 +46,7 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
 
 #[verifier(external_body)]
 pub exec fn rc_clone(rc: &Rc<Vec<u8>>) -> (res: Rc<Vec<u8>>)
-    ensures (**rc)@ == (*res)@
+    ensures rc@ == res@
 {
     Rc::clone(&rc)
 }
@@ -89,7 +89,7 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
         // speclib::dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(cipher(), &c[..nonce_size()], &c[nonce_size()..], k, &[]) {
+    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &c[..nonce_size()], &[]) {
         Ok(p) => Some(p),
         Err(e) => {
             // dbg!(e);
@@ -100,7 +100,7 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
 
 pub exec fn blah(rc: Rc<Vec<u8>>) {
     let tmp = (rc_clone(&rc));
-    assert((*rc).view() == (*tmp).view());
+    assert(rc.view() == tmp.view());
 }
 
 } // verus!

@@ -331,11 +331,20 @@ pub mod itree {
     }
 
     #[allow(unused_macros)]
+    #[macro_export]
     macro_rules! owl_call_internal {
         ($itree:ident, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
             ::builtin_macros::verus_exec_expr! {{
                 let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
                 let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
+                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
+                (res, Tracked($itree))
+            }}
+        };
+        ($itree:ident, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
+            ::builtin_macros::verus_exec_expr! {{
+                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+                let (res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
                 let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
                 (res, Tracked($itree))
             }}
@@ -354,6 +363,15 @@ pub mod itree {
 
     impl<T,Endpoint> ITreeToken<T,Endpoint> {
         pub closed spec fn view(self) -> ITree<T,Endpoint>;
+
+        // Token constructor---this is only used to make the executable code typecheck.
+        // Verified code can never call this function (since it requires false), so it
+        // cannot forge tokens.
+        // We only need to return a token of type (), since we will use the subroutine call
+        // machinery to get the itree of the right type.
+        pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
+            requires false
+        { unimplemented!() }
     }
 
 

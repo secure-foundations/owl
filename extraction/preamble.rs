@@ -132,9 +132,8 @@ pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8],
     requires old(t)@.is_output(x@, endpoint_of_addr(dest_addr.view()))
     ensures  t@ == old(t)@.give_output()
 {
-    // let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
-    // let serialized = serde_json::to_vec(&msg).unwrap();
-    let serialized = x.to_vec();
+    let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
+    let serialized = serialize_msg(&msg);
     let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
     stream.write_all(&serialized).unwrap();
     stream.flush().unwrap();
@@ -149,10 +148,8 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
     let mut reader = io::BufReader::new(&mut stream);
     let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
     reader.consume(received.len());
-    // let msg : msg = serde_json::from_slice(&received).expect("Couldn't parse input");
-    // (Vec { vec: msg.payload }, String::from_rust_string(msg.ret_addr))
-    // todo!()
-    (received, String::from_str(new_strlit(""))) // TODO proper endpoint variable handling
+    let msg : msg = deserialize_msg(&received);
+    (msg.payload, String::from_rust_string(msg.ret_addr))
 }
 
 #[verifier(external_body)]

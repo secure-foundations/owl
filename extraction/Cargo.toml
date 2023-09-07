@@ -26,6 +26,6 @@ sha1 = "0.10.5"
 sha2 = "0.10.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-builtin = { path = "/usr0/home/prataps/src/verus/source/builtin" }
-builtin_macros = { path = "/usr0/home/prataps/src/verus/source/builtin_macros" }
-vstd = { path = "/usr0/home/prataps/src/verus/source/pervasive" }
+builtin = { git = "https://github.com/secure-foundations/verus", branch = "main" }
+builtin_macros = { git = "https://github.com/secure-foundations/verus", branch = "main" }
+vstd = { git = "https://github.com/secure-foundations/verus", branch = "main" }
