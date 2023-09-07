@@ -437,6 +437,9 @@ interpretProp p =
       PApp s is ps -> do 
           p <- liftCheck $ extractPredicate s is ps
           interpretProp p
+      PAADOf ne a -> do
+          p <- liftCheck $ extractAAD ne a
+          interpretProp p
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2

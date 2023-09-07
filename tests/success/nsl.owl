@@ -53,8 +53,10 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
         let _ = output c' to endpoint(bob) in
         let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
         res
-    else
+    else {
+        assert ([nA] /\ [nB] <= adv /\ [nA] /\ [nB]);
         NRNone()
+    }
 
 def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) = 
     let pkA = get_encpk(skA) in

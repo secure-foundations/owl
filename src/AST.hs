@@ -187,6 +187,7 @@ data PropX =
     | PIsConstant AExpr -- Internal use
     | PRO AExpr AExpr Int
     | PApp Path [Idx] [AExpr]
+    | PAADOf NameExp AExpr
     deriving (Show, Generic, Typeable)
 
 

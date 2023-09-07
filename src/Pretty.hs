@@ -138,6 +138,7 @@ instance Pretty PropX where
         pretty q <+> x <+> pretty ": bv" <> pretty "." <+> p
     pretty (PRO a b i) = pretty "ro(" <> pretty a <> pretty "," <+> pretty b <> pretty "," <+> pretty i <> pretty ")"
     pretty (PApp p is xs) = pretty p <> angles (mconcat $ map pretty is) <> list (map pretty xs)
+    pretty (PAADOf ne x) = pretty "aad" <> tupled [pretty ne] <> brackets (pretty x)
     pretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of

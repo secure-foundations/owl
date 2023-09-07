@@ -1265,6 +1265,15 @@ checkProp p =
               mapM_ checkIdx is
               _ <- mapM inferAExpr xs
               return ()
+          PAADOf ne x -> do
+              _ <- inferAExpr x
+              ni <- getNameInfo ne
+              case ni of
+                Just (nt, _) -> 
+                    case nt^.val of
+                      NT_StAEAD _ _ _ _ -> return ()
+                      _ -> typeError $ "Wrong name type for " ++ show (pretty ne) ++ ": expected StAEAD" 
+                Nothing -> typeError $ "Name cannot be abstract here: " ++ show (pretty ne)
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
               _ <- mapM inferAExpr xs
@@ -1331,11 +1340,12 @@ flowCheck l1 l2 = laxAssertion $ do
 -- Ensure l flows to LAdv
 
 
-
--- TODO: generalize for RO?
-
 stripNameExp :: DataVar -> NameExp -> Check NameExp
-stripNameExp x e = return e
+stripNameExp x e = 
+    case e^.val of
+      NameConst _ _ (Just (as, _)) ->
+          if x `elem` (concat $ map getAExprDataVars as) then typeError ("stripNameExp: " ++ show (pretty x) ++ " is in " ++ show (pretty as)) else return e
+      _ -> return e
 
 stripLabel :: DataVar -> Label -> Check Label
 stripLabel x l = return l
@@ -1406,6 +1416,9 @@ stripProp x p =
             return $ mkSpanned $ PLetIn a (bind y p'')
       PApp a is xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PAADOf ne y -> do
+          ne' <- stripNameExp x ne
+          if x `elem` getAExprDataVars y then return pTrue else return p
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =

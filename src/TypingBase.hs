@@ -1080,6 +1080,18 @@ extractFunDef b ps as = do
     assert ("Wrong arity for fun def") $ length xs == length as
     return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs as) a
 
+extractAAD :: NameExp -> AExpr -> Check Prop
+extractAAD ne a = do
+    ni <- getNameInfo ne
+    case ni of
+      Nothing -> typeError $ "Unknown name type: " ++ show ne
+      Just (nt, _) -> 
+          case nt^.val of
+            NT_StAEAD _ yp _ _ -> do
+                (y, p) <- unbind yp
+                return $ subst y a p
+            _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
+
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
 extractPredicate pth@(PRes (PDot p s)) is as = do  
     md <- openModule p
