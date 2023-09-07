@@ -158,7 +158,7 @@ name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce |
 corr adv ==> [msg2_C7[;1]]
 
 name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
-    (st_aead Empty
+    (st_aead (Data<adv> |0|)
             aad x. true
             // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
