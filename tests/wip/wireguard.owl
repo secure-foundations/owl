@@ -557,12 +557,9 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     corr_case msg2_C7_resp_corr[ephemeral;0] when (ephemeral != dhpk(get(E_init))) in
     */
     let _ : Unit = {
-        debug printExpr ( 
         assume (sec(msg2_C7[;2]));
         assert (sec(msg2_C6[;0]));
-        let lemblah = assert (sec(msg2_C5[;0]) \/ (sec(S_init) /\ sec(E_resp))) in
-        ());
-
+        assert (sec(msg2_C5[;0]) \/ (sec(S_init) /\ sec(E_resp)));
         assert (sec(msg1_C3[;0]));
         assert (sec(msg1_C3[;1]));
         assert (aad(msg2_C7[;2])[H6])

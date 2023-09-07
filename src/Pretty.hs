@@ -229,7 +229,7 @@ instance Pretty ExprX where
                         Nothing -> pretty "let"
                         Just a -> pretty "anf_let[" <> pretty a <> pretty "]"
         in
-        anfLet <+> x <+> tann <+> pretty "=" <+> pretty e1 <+> pretty "in" <> line <> k
+        anfLet <+> x <+> tann <+> pretty "=" <+> pretty "(" <> pretty e1 <> pretty ")" <+> pretty "in" <> line <> k
     pretty (EUnionCase a xk) = 
         let (x, k) = prettyBind xk in
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k

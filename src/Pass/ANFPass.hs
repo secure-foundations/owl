@@ -17,14 +17,10 @@ import Unbound.Generics.LocallyNameless.Bind
 import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 
-isJust :: Maybe a -> Bool
-isJust (Just _) = True
-isJust Nothing = False
-
 elet :: Fresh m => Expr -> Maybe Ty -> Maybe AExpr -> Maybe String -> (DataVar -> m Expr) -> m Expr
 elet e tyann anf s k =       
     case e^.val of
-      ELet e1 tyann1 anf1 s1 xe1k | isJust anf1 -> do
+      ELet e1 tyann1 anf1 s1 xe1k -> do
           (x, e1k) <- unbind xe1k
           elet e1 tyann1 anf1 (Just s1) $ \y -> 
               let anf' = subst x (mkSpanned $ AEVar (ignore $ show y) y) anf in 
