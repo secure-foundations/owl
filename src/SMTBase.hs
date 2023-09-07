@@ -414,6 +414,7 @@ lengthConstant s =
       "vk" -> return $ SAtom "VKLen"
       "maclen" -> return $ SAtom "MAClen"
       "tag" -> return $ SAtom "Taglen"
+      "counter" -> return $ SAtom "Counterlen"
 
 symLenConst :: String -> Sym SExp
 symLenConst s = do

@@ -1272,6 +1272,7 @@ checkProp p =
               mapM_ checkIdx idxs2
               return ()
           PLetIn a xp -> do
+              _ <- inferAExpr a 
               (x, p) <- unbind xp
               checkProp $ subst x a p
           (PEq x y) -> do
@@ -1516,7 +1517,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
           withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ local (over (endpointContext) (s :)) $ checkExpr ot k
       (EGetCtr p iargs) -> do 
           checkCounterIsLocal p iargs
-          getOutTy ot $ tData advLbl advLbl
+          getOutTy ot $ tRefined (tData advLbl advLbl) $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) $ mkSpanned $ AELenConst "counter"
       (EIncCtr p iargs) -> do
           ensureNonGhost
           checkCounterIsLocal p iargs

@@ -333,6 +333,9 @@
 (declare-const Taglen Int)
 (assert (> Taglen 0))
 
+(declare-const Counterlen Int)
+(assert (> Counterlen 0))
+
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 

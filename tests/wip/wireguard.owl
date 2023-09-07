@@ -145,7 +145,8 @@ counter aead_counter_msg2_C7 @ Responder
 
 name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce || 
     st_aead (Data<adv> |0|)
-            aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+            aad x. true
+            // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
             nonce_pattern *
     uniqueness_by { is_constant_lemma(crh(construction()));
@@ -156,7 +157,12 @@ name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce |
 
 corr adv ==> [msg2_C7[;1]]
 
-name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || enckey Empty
+name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
+    (st_aead Empty
+            aad x. true
+            // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+            nonce aead_counter_msg2_C7
+            nonce_pattern *)
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by { 
@@ -167,12 +173,12 @@ name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000
         
 
 corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
-corr[x] adv ==> [msg2_C7_resp_corr[x;2]]
 
 
 name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
-            aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+            aad x. true
+            // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     requires is_group_elem(x)
@@ -302,7 +308,7 @@ struct msg2_payload {
 struct transp_payload {
       _transp_reserved : Data<adv> |3|
     , _transp_receiver : Data<adv> |4|
-    , _transp_counter  : Data<adv> | 8 | // TODO need Data<adv> | |counter| |
+    , _transp_counter  : Data<adv> | |counter| | 
     , _transp_packet   : Data<adv> 
 }
 
@@ -316,15 +322,13 @@ enum msg {
 ////////////////////////////
 // Primitives
 
-def get_padding_i () @ Initiator : Data<adv> |3| // TODO primitive for zero bytes?
+func padding() = 0x000000
+
 def get_sender_i  () @ Initiator : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_i   () @ Initiator : Data<adv> |12|
-def get_empty_i   () @ Initiator : Data<adv> |0|
 
-def get_padding_r () @ Responder : Data<adv> |3| // TODO primitive for zero bytes?
 def get_sender_r  () @ Responder : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_r   () @ Responder : Data<adv> |12|
-def get_empty_r   () @ Responder : Data<adv> |0|
 
 ////////////////////////////
 // Return data
@@ -343,12 +347,22 @@ struct responder_msg1_val {
 
 predicate valid_responder_msg1_val (s) = 
     let eph = _responder_msg1_ephemeral(s) in 
+    let h4 = _responder_msg1_H4(s) in 
     is_group_elem(eph)  
     /\ (eph == dhpk(get(E_init)) ==> 
         _responder_msg1_C3(s) == get(msg1_C3[;0]))
     /\ (eph != dhpk(get(E_init)) ==> 
         _responder_msg1_C3(s) == get(msg1_C3_resp_corr[eph;0]) /\
         (corr(msg1_C3_resp_corr[eph;0]) ==> corr(S_init) \/ corr(S_resp)))
+    /\ (eph == dhpk(get(E_init)) /\ sec(msg1_C3[;1])
+         ==>
+        exists c:bv, ts:bv. h4 == crh(honest_H4_pre(c, ts)))
+    /\  (eph == dhpk(get(E_init)) /\ sec(msg1_C3_resp_corr[eph;1])
+         ==>
+        exists c:bv, ts:bv. h4 == crh(honest_H4_pre(c, ts)))
+    /\  (eph == dhpk(get(E_init))  /\ sec(msg1_C3[;0])
+          ==>
+          sec(msg1_C3[;1]))
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
 
@@ -455,7 +469,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
     let H4 = crh(H3 ++ timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i() in
-    let msg1_reserved : Data<adv> |3| = call get_padding_i() in
+    let msg1_reserved = padding() in 
 
     let msg1_mac1_k = hash<msg1_mac1_key>(mac1(), dhpk_S_resp) in 
     // TODO this needs to incorporate the tag byte 
@@ -538,15 +552,25 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
     let tau = hash<msg2_C7, msg2_C7_resp_corr[ephemeral];1>(C6, psk) in
     let k0 = hash<msg2_C7, msg2_C7_resp_corr[ephemeral];2>(C6, psk) in
     let H6 : Data<adv> = crh(H5 ++ tau) in
-    let emptystring : Data<adv> |0| = call get_empty_r() in
-    /* assert (k0 == get(msg2_C7[;2]) /\ sec(msg2_C7[;2])
-             ==>
-             (exists c:bv, ts:bv, tau:bv. H6 == crh(honest_H6_pre(c,ts,tau))));
+    let emptystring = 0x in
+    corr_case msg2_C7[;0] when (ephemeral == dhpk(get(E_init))) in 
+    corr_case msg2_C7_resp_corr[ephemeral;0] when (ephemeral != dhpk(get(E_init))) in
+    /*
+    assert (sec(msg2_C7[;0]) /\ ephemeral == dhpk(get(E_init)) ==> sec(msg2_C6[;0]));
+    assert (sec(msg2_C6[;0]) ==> sec(msg2_C5[;0]) \/ (sec(S_init) /\ sec(E_resp)));
+    assert (sec(msg2_C7[;0]) /\ ephemeral == dhpk(get(E_init)) ==> sec(msg1_C3[;1]) \/ corr(S_init) \/ corr(S_resp));
+    assert ((exists c:bv, ts:bv. H4 == crh(honest_H4_pre(c, ts)))
+            /\ sec(msg2_C7[;0])
+            /\ ephemeral == dhpk(get(E_init))
+            /\ sec(S_init)
+            /\ sec(S_resp)
+            ==>
+            exists c:bv, ts:bv, tau:bv. H6 == crh(honest_H6_pre(c, ts, tau)));
     */
-    let msg2_empty : Data<adv> |cipherlen(0)| = st_aead_enc<aead_counter_msg2_C7>(k0, emptystring, H6) in
+    let msg2_empty = st_aead_enc<aead_counter_msg2_C7>(k0, emptystring, H6) in
     let H7 = crh(H6 ++ msg2_empty) in
     let msg2_sender : Data<adv> |4| = call get_sender_r() in
-    let msg2_reserved : Data<adv> |3| = call get_padding_r() in
+    let msg2_reserved = padding() in 
     let msg2_mac1_k = hash<msg2_mac1_key>(mac1(), dhpk_S_init) in
     // // TODO this needs to incorporate the tag byte
     let msg2_mac1 : Data<adv> | |maclen| | = mac(msg2_mac1_k,
@@ -594,7 +618,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     let tau = hash<msg2_C7, msg2_C7_init_corr[msg2_ephemeral];1>(C6, psk) in
     let k0 = hash<msg2_C7, msg2_C7_init_corr[msg2_ephemeral];2>(C6, psk) in
     let H6 : Data<adv> = crh(H5 ++ tau) in
-    let emptystring : Data<adv> |0| = call get_empty_i() in
+    let emptystring = 0x in 
     
     corr_case msg2_C7[;2] when (msg2_ephemeral == dhpk(get(E_resp))) in
     corr_case msg2_C7_init_corr[msg2_ephemeral;2] when (msg2_ephemeral != dhpk(get(E_resp))) in
@@ -625,10 +649,9 @@ def transp_send_init (transp_keys_val : transp_keys_init_t, plaintext : payload_
                                                else Name(transp_T_init_corr[eph_resp;0]) 
         = _transp_keys_T_init_send(transp_keys_val) in       
     let transp_counter = get_counter N_init_send in
-    assume(length(transp_counter) == 8); // TODO add |counter| length const
 
     let transp_receiver = _transp_keys_responder(transp_keys_val) in
-    let transp_reserved = call get_padding_i() in
+    let transp_reserved = padding() in 
     guard eq(length(transp_receiver), 4) in 
 
     let transp_packet = st_aead_enc<N_init_send>(i2r, plaintext, 0x) in
@@ -680,10 +703,9 @@ def transp_send_resp (transp_keys_val : transp_keys_resp_t, plaintext : Data<adv
                                                    Name(transp_T_resp_corr[eph_init;1]) 
         = _transp_keys_T_resp_send(transp_keys_val) in       
     let transp_counter = get_counter N_resp_send in
-    assume(length(transp_counter) == 8); // TODO add |counter| length const
 
     let transp_receiver = _transp_keys_initiator(transp_keys_val) in
-    let transp_reserved = call get_padding_r() in
+    let transp_reserved = padding() in 
     guard eq(length(transp_receiver), 4) in 
 
     let transp_packet = st_aead_enc<N_resp_send>(r2i, plaintext, 0x) in

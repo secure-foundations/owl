@@ -864,7 +864,7 @@ simplifyProp p = do
 
 
 inferAExpr :: AExpr -> Check Ty
-inferAExpr ae = do
+inferAExpr ae = withSpan (ae^.spanOf) $ do
     debug $ pretty (unignore $ ae^.spanOf) <> pretty "Inferring AExp" <+> pretty ae
     case ae^.val of
       AEVar _ x -> do 
@@ -881,7 +881,7 @@ inferAExpr ae = do
       (AEHex s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag", "counter"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
