@@ -16,6 +16,7 @@ name k<@i> : st_aead Name(X<@i>)
 def tst<@i>() @ alice<i> : Unit = 
     inc_counter N<@i>;
     let x = get_counter N<@i> in 
+    assert (aad(k<@i>)[f()]);
     let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), f()) in 
     output c;
     corr_case k<@i> in

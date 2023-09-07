@@ -678,6 +678,10 @@ resolveProp p =
           as' <- mapM resolveAExpr as
           s' <- resolvePath (p^.spanOf) PTPredicate s
           return $ Spanned (p^.spanOf) $ PApp s' is as'
+      PAADOf ne a -> do
+          ne' <- resolveNameExp ne
+          a' <- resolveAExpr a
+          return $ Spanned (p^.spanOf) $ PAADOf ne' a'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp
