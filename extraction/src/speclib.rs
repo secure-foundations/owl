@@ -369,6 +369,7 @@ pub mod itree {
         // cannot forge tokens.
         // We only need to return a token of type (), since we will use the subroutine call
         // machinery to get the itree of the right type.
+        #[verifier(external_body)]
         pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
             requires false
         { unimplemented!() }

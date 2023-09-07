@@ -763,11 +763,13 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"
         genMainWrapper owlName execRetTy specRetTy = 
-            pretty "pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
+            pretty "#[verifier(external_body)] pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
             parens (pretty "&mut self") <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
-                pretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::dummy_itree_token();" <> line <>
+                pretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
+                pretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  pretty owlName <> pretty "_spec(*self)" <> pretty ");" <> line <>
+
                 pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy <> pretty ">"] <+> pretty "=" <+>
-                    pretty "owl_call!" <> tupled [pretty "dummy_tok", pretty owlName <> pretty "_spec(self)", pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "/* todo args? */")] <> pretty ";" <> line <>
+                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), /* todo args? */") <> pretty ";" <> line <>
                 pretty "res" <>
             line)
 
