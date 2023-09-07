@@ -554,6 +554,9 @@ resolveExpr e =
           a' <- resolveAExpr a
           oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
           return $ Spanned (e^.spanOf) $ EOutput a' oe'
+      EBlock k -> do
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ EBlock k'
       ELet e1 ot anf s xk -> do
           e1' <- resolveExpr e1
           ot' <- traverse resolveTy ot

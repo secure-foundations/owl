@@ -90,11 +90,15 @@ anf e =
       EOutput a oe -> do
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
-      ELet e1 tyann _ s xk -> do
+      ELet e1 tyann Nothing s xk -> do
           (x, k) <- unbind xk
           e' <- anf e1
           elet e' tyann (Nothing) (Just s) $ \y -> 
               anf $ subst x (mkSpanned $ AEVar (ignore $ show y) y) k
+      ELet _ _ (Just _) _ _ -> error "Got anfVar in anf routine"
+      EBlock k -> do
+          k' <- anf k
+          return $ Spanned (e^.spanOf) $ EBlock k'
       EUnionCase a xk -> do
           xk' <- anfBind xk
           ea <- anfAExpr a

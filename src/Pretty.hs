@@ -218,6 +218,7 @@ instance Pretty ExprX where
     pretty (EOutput e l) = pretty "output" <+> pretty e <+> (case l of
        Nothing -> pretty ""
        Just s -> pretty "to" <+> pretty s)
+    pretty (EBlock e) = pretty "{" <> pretty e <> pretty "}"
     pretty (ELet e1 tyAnn anf sx xk) = 
         let (x, k) = prettyBind xk in
         let tann = case tyAnn of

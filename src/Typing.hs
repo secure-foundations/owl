@@ -1419,6 +1419,8 @@ stripProp x p =
       PAADOf ne y -> do
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
+      PRO a1 a2 i -> do
+          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =
@@ -1612,6 +1614,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
             _ -> do  -- Just continue
                 t <- withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
                 getOutTy ot =<< stripTy x t
+      (EBlock k) -> checkExpr ot k
       (ELet e tyAnn anf sx xe') -> do
           case tyAnn of
             Just t -> checkTy t
@@ -2026,10 +2029,9 @@ checkCryptoOp cop args = do
           ne <- findGoodROHint (mkConcats $ map fst args) i (zip hints_data hints)
           lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
           solvability <- solvabilityAxioms (mkConcats $ map fst args) ne 
-          solvability' <- simplifyProp solvability
           return $ mkSpanned $ TRefined (tName ne) $ bind (s2n ".res") $ 
               pAnd (mkSpanned $ PRO (mkConcats $ map fst args) (aeVar ".res") i)
-                (pAnd solvability' $ pEq (aeLength (aeVar ".res")) lenConst)
+                (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
 
       -- 1. Ensure that the hints are nonempty and consistent (name kinds are the same)
       -- 1.5. Check that i is in bounds

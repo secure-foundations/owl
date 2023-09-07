@@ -1032,6 +1032,7 @@ derivability da args = do
             case (stripRefinements t)^.val of
               TName n -> return $ pFlow (nameLbl n) advLbl
               TSS n m -> return $ pOr (pFlow (nameLbl n) advLbl) (pFlow (nameLbl m) advLbl)
+              TDH_PK _ -> return $ pTrue -- DH public keys always derivable
               _ -> return $ if da == DSufficient then pFalse else pTrue
     return $ foldr pAnd pTrue ps
 

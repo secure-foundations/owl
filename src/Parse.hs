@@ -67,14 +67,6 @@ parensPos k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) (v^.val)
 
-bracesPos :: Parser (Spanned a) -> Parser (Spanned a)
-bracesPos k = do
-    p <- getPosition
-    symbol "{"
-    v <- k
-    symbol "}"
-    p' <- getPosition
-    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) (v^.val)
 
 
 parseSpanned :: Parser a -> Parser (Spanned a)
@@ -1009,6 +1001,15 @@ parseExprTable =
               )
     AssocLeft ] ]
 
+parseExprBlock :: Parser Expr
+parseExprBlock = do
+    p <- getPosition
+    symbol "{"
+    v <- parseExpr
+    symbol "}"
+    p' <- getPosition
+    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) $ EBlock v
+
 parseExprTerm = 
     (try $ do -- Short circuit for ()
         p <- getPosition
@@ -1021,7 +1022,7 @@ parseExprTerm =
     <|>
     parensPos parseExpr
     <|>
-    bracesPos parseExpr
+    parseExprBlock 
     <|>
     (parseSpanned $ do
         reserved "input"
