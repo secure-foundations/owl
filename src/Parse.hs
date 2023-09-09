@@ -520,14 +520,14 @@ prefixProp op f =
 infixProp op f assoc = 
     Infix (do
         symbol op
-        return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (f x y)) AssocLeft 
+        return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (f x y)) assoc 
 
 
 parsePropTable = [ 
     [ prefixProp "!" PNot ], 
     [ infixProp "/\\" PAnd AssocLeft ],
     [ infixProp "\\/" POr AssocLeft ],
-    [ infixProp "==>" PImpl AssocLeft ]
+    [ infixProp "==>" PImpl AssocRight ]
                  ]
 
 parseNoncePattern = 
