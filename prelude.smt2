@@ -374,6 +374,15 @@
     :qid mult_def
 )))
 
+(declare-fun crh (Bits) Bits)
+(declare-fun CrhLength () Int)
+(assert (> CrhLength 0))
+(assert (forall ((x Bits)) (!
+    (= (length (crh x)) (I2B CrhLength))
+    :pattern (crh x)
+    :qid crh_length
+)))
+
 (declare-sort Label)
 (declare-const %adv Label)
 

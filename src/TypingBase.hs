@@ -881,7 +881,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
       (AEHex s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag", "counter"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag", "counter", "crh"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx

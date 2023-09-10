@@ -28,7 +28,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad"]
+                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -186,6 +186,13 @@ parseTyTerm =
     (parseSpanned $ do
         reserved "Unit"
         return $ TUnit)
+    <|>
+    (parseSpanned $ do
+        reserved "Lemma"
+        symbol "{"
+        p <- parseProp
+        symbol "}"
+        return $ TRefined tUnit $ bind (s2n "._") p)
     <|>
     (parseSpanned $ do
         reserved "Data"
@@ -522,12 +529,15 @@ infixProp op f assoc =
         symbol op
         return $ \x y -> mkSpannedWith (joinPosition (unignore $ x^.spanOf) (unignore $ y^.spanOf)) (f x y)) assoc 
 
+pIff :: Prop -> Prop -> PropX
+pIff p1 p2 = PAnd (mkSpanned $ PImpl p1 p2) (mkSpanned $ PImpl p2 p1)
 
 parsePropTable = [ 
     [ prefixProp "!" PNot ], 
     [ infixProp "/\\" PAnd AssocLeft ],
     [ infixProp "\\/" POr AssocLeft ],
-    [ infixProp "==>" PImpl AssocRight ]
+    [ infixProp "==>" PImpl AssocRight ],
+    [ infixProp "<==>" pIff AssocNone ]
                  ]
 
 parseNoncePattern = 
