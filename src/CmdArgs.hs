@@ -18,7 +18,6 @@ data Flags = Flags {
     _fFilePath :: String, 
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
-    _fNoMultiThread :: Bool,
     _fFileContents :: String
                    }
 
@@ -53,9 +52,6 @@ parseArgs =
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )
       <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
-      <*>
-          switch
-          ( long "no-multi-threading" <> help "Disable multithreading" )
       <*> (pure "")
 
 doParseArgs :: IO Flags
@@ -65,9 +61,7 @@ doParseArgs = do
 
 postProcessFlags :: Flags -> Flags
 postProcessFlags f = 
-    f { _fCleanCache = _fCleanCache f || _fLogSMT f,
-        _fNoMultiThread = _fNoMultiThread f || _fLogTypecheck f
-      }
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f}
 
 getHelpMessage :: String
 getHelpMessage = 

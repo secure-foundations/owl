@@ -8,9 +8,7 @@ import Control.Monad
 import qualified Text.Parsec as P
 import qualified Data.Map.Strict as M
 import Prettyprinter
-import Prettyprinter.Render.Text
 import TypingBase
-import Error.Diagnose
 import System.FilePath
 import CmdArgs
 import System.Directory
@@ -40,10 +38,7 @@ main = do
                 do
                     res <- typeCheckDecls (set fFileContents s args) ast
                     case res of
-                      Left (_, res) -> 
-                          case res of
-                            Nothing -> return ()
-                            Just (SomeDiag p) -> printDiagnostic stdout True True 4 defaultStyle p 
+                      Left _ -> return ()
                       Right tcEnv -> do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)

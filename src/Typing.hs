@@ -1800,19 +1800,18 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- freshVar
-              let k1 = withVars [(s2n x, (ignore $ "pcase_true_" ++ show pcase_line, Nothing, tLemma p))] $ do
-                          logTypecheck $ "Case split: " ++ show (pretty p)
-                          pushLogTypecheckScope
-                          (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                          r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                          popLogTypecheckScope
-              let k2 = withVars [(s2n x, (ignore $ "pcase_false_" ++ show pcase_line, Nothing, tLemma (pNot p)))] $ do
-                          logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
-                          pushLogTypecheckScope
-                          (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-                          r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                          popLogTypecheckScope
-              _ <- forkCheck k1 k2
+              _ <- withVars [(s2n x, (ignore $ "pcase_true_" ++ show pcase_line, Nothing, tLemma p))] $ do
+                  logTypecheck $ "Case split: " ++ show (pretty p)
+                  pushLogTypecheckScope
+                  (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
+                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
+                  popLogTypecheckScope
+              _ <- withVars [(s2n x, (ignore $ "pcase_false_" ++ show pcase_line, Nothing, tLemma (pNot p)))] $ do
+                  logTypecheck $ "Case split: " ++ show (pretty $ pNot p)
+                  pushLogTypecheckScope
+                  (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
+                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
+                  popLogTypecheckScope
               normalizeTy retT
       (ECase e1 cases) -> do
           debug $ pretty "Typing checking case: " <> pretty (unignore $ e^.spanOf)
@@ -2219,12 +2218,12 @@ checkCryptoOp cop args = do
 
 ---- Entry point ----
 
-typeCheckDecls :: Flags -> [Decl] -> IO (Either (Env, Maybe SomeDiag) Env)
+typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
 typeCheckDecls f ds = do
     e <- emptyEnv f
     r <- PR.runResolve f $ PR.resolveDecls ds
     case r of
-      Left () -> return $ Left (e, Nothing)
+      Left () -> return $ Left e
       Right ds' -> do
           runExceptT $ runReaderT (unCheck $ do
               loadSMTCache

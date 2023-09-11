@@ -38,6 +38,5 @@ executable owl
                        hashable,
                        cereal,
                        bytestring,
-                       async,
                        time
 
