@@ -19,8 +19,7 @@ import Data.Default (Default, def)
 import System.Directory
 import System.FilePath
 import Control.Lens
-import Control.Concurrent
-import Control.Concurrent.MVar
+import Control.Concurrent.Async
 import qualified Data.List as L
 import Control.Monad.Except
 import Control.Monad.Trans
@@ -225,7 +224,7 @@ getSMTQuery setup k = do
     env <- ask
     res <- liftIO $ runExceptT $ runStateT (runReaderT (unSym go) env) initSolverEnv
     case res of
-      Left _ -> Check $ lift $ throwError env
+      Left _ -> Check $ lift $ throwError (env, Nothing)
       Right (_, e) -> do
           if e^.trivialVC then return Nothing else do
                 prelude <- liftIO $ readFile "prelude.smt2"
@@ -289,41 +288,38 @@ raceSMT setup k1 k2 = do
       (Nothing, _) -> return (Nothing, Just False)
       (_, Nothing) -> return (Nothing, Just True)
       (Just q1, Just q2) -> do 
-          sem <- liftIO $ newEmptyMVar 
           z3mp <- view smtCache
           logsmt <- view $ envFlags . fLogSMT
           filepath <- view $ envFlags . fFilePath
           z3rs <- view z3Results
-          p1 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3rs z3mp q1 
-              case resp of
-                  Right (True, fn) -> putMVar sem $ Just (fn, False)
-                  Right (False, _) -> putMVar sem Nothing
-                  Left err -> do
-                      b <- logSMT filepath q1 
-                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
-          p2 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3rs z3mp q2
-              case resp of
-                  Right (True, fn) -> putMVar sem $ Just (fn, True)
-                  Right (False, _) -> putMVar sem Nothing 
-                  Left err -> do
-                      b <- logSMT filepath q2 
-                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
-          o1 <- liftIO $ takeMVar sem
-          case o1 of
-            Just (fn, b) -> do
-                liftIO $ killThread p1
-                liftIO $ killThread p2
-                return (fn, Just b)                        
-            Nothing -> do 
-                o2 <- liftIO $ takeMVar sem
-                liftIO $ killThread p1
-                liftIO $ killThread p2
-                case o2 of
-                  Nothing -> return (Nothing, Nothing)
-                  Just (fn, b) -> return (fn, Just b)
-
+          let k b = do
+                      resp <- queryZ3 logsmt filepath z3rs z3mp (if b then q2 else q1)
+                      case resp of
+                          Right (True, fn) -> return $ Just fn
+                          Right (False, _) -> return Nothing
+                          Left err -> do
+                              b <- logSMT filepath q1 
+                              error $ "Z3 error: " ++ err ++ " logged to " ++ b
+          liftIO $ withAsync (k False) $ \r1 ->
+              withAsync (k True) $ \r2 -> do
+                  o <- waitEither r1 r2
+                  case o of
+                    Left (Just fn) -> do
+                        cancel r2
+                        return (fn, Just False)
+                    Left Nothing -> do
+                        o <- wait r2
+                        case o of
+                          Nothing -> return (Nothing, Nothing)
+                          Just fn -> return (fn, Just True)
+                    Right (Just fn) -> do
+                        cancel r1
+                        return (fn, Just True)
+                    Right Nothing -> do
+                        o <- wait r1
+                        case o of
+                          Nothing -> return (Nothing, Nothing)
+                          Just fn -> return (fn, Just False)
 
 
 -- Smart app

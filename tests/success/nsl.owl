@@ -41,7 +41,7 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
     corr_case skA in
     corr_case nA in
     corr_case nB in
-    let c : if sec(skA) then Union<nsl_bob_message, Data<adv> > else Data<adv> = pkdec(get(skA), i) in 
+    let c = pkdec(get(skA), i) in 
     union_case x = c in         
     union_case nA' = _nbA(x) in 
     let nB' = _nbB(x) in 

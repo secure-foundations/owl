@@ -59,7 +59,11 @@ name msg1_C2 : RO strict{0} get(msg1_C1) ++ dh_combine(dhpk(get(S_resp)), get(E_
 
 type Empty = (x:Data<adv>{false})
 
-name msg1_C2_resp_corr : RO[x] strict{0} get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || enckey Empty
+name msg1_C2_resp_corr : RO[x] strict{0} get(msg1_C1_resp_corr[x;0]) ++ dh_combine(x, get(S_resp)) -> nonce || 
+    st_aead Empty
+            aad x. false
+            nonce aead_counter_msg1_C2
+            nonce_pattern *
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {
@@ -78,8 +82,8 @@ name msg1_C3 : RO strict get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S
 
 name msg1_C3_resp_corr : RO[x] strict  get(msg1_C2_resp_corr[x;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) 
     -> nonce || 
-        st_aead (Data<adv> |12|)
-            aad x. (exists c:bv. x == crh(honest_H3_pre(c)))
+        st_aead Empty
+            aad x. false
             nonce aead_counter_msg1_C3
             nonce_pattern *
     requires is_group_elem(x)
@@ -158,9 +162,8 @@ name msg2_C7 : RO strict{0} get(msg2_C6[;0]) ++ (0x00000000) -> nonce || nonce |
 corr adv ==> [msg2_C7[;1]]
 
 name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
-    (st_aead (Data<adv> |0|)
-            // aad x. true
-            aad x. sec(S_init) /\ sec(S_resp) ==> exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
+    (st_aead Empty
+             aad x. false
             nonce aead_counter_msg2_C7
             nonce_pattern *)
     requires is_group_elem(x)
@@ -177,7 +180,7 @@ corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
 
 name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
-            aad x. true
+            aad x. false
             // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
             nonce aead_counter_msg2_C7
             nonce_pattern *)

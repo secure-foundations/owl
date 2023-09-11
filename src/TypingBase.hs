@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-} 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-} 
 {-# LANGUAGE FlexibleInstances #-} 
+{-# LANGUAGE GADTs #-} 
 {-# LANGUAGE MultiParamTypeClasses #-} 
 {-# LANGUAGE UndecidableInstances #-} 
 {-# LANGUAGE FlexibleContexts #-} 
@@ -20,6 +21,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString as BS
 import Control.Monad.Reader
+import Control.Concurrent.Async
 import Control.Monad.Except
 import Control.Monad.Cont
 import CmdArgs
@@ -230,15 +232,41 @@ instance Pretty (TypeError) where
 instance Show TypeError where
     show = show . pretty
 
-newtype Check a = Check { unCheck :: ReaderT Env (ExceptT Env IO) a }
-    deriving (Functor, Applicative, Monad, MonadReader Env, MonadIO)
+data SomeDiag where
+    SomeDiag :: forall a. Pretty a => Diagnostic a -> SomeDiag
 
+newtype Check a = Check { unCheck :: ReaderT Env (ExceptT (Env, Maybe SomeDiag) IO) a }
+    deriving (Functor, Applicative, Monad, MonadReader Env, MonadIO)
 
 makeLenses ''DefSpec
 
 makeLenses ''Env
 
 makeLenses ''ModBody
+
+forkCheck :: Check a -> Check b -> Check (a, b)
+forkCheck k1 k2 = do
+    fnomult <- view $ envFlags . fNoMultiThread
+    case fnomult of
+      True -> do
+           x <- k1
+           y <- k2
+           return (x, y)
+      False -> do
+            e <- ask
+            res <- liftIO $ withAsync (runExceptT $ runReaderT (unCheck k1) e) $ \r1 -> 
+                withAsync (runExceptT $ runReaderT (unCheck k2) e) $ \r2 -> do
+                    o1 <- wait r1
+                    o2 <- wait r2
+                    case (o1, o2) of
+                      (Left e, _) -> return $ Left e
+                      (_, Left e) -> return $ Left e 
+                      (Right r1, Right r2) -> return $ Right (r1, r2)
+            case res of
+              Left e -> Check $ lift $ throwError e
+              Right v -> return v
+
+     
 
 modDefKind :: ModDef -> Check IsModuleType
 modDefKind (MBody xd) =
@@ -299,9 +327,8 @@ typeError' removeANF msg = do
     let rep = Err Nothing msg [(pos, This msg)] [Note $ tyc_str]
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
-    printDiagnostic stdout True True 4 defaultStyle diag 
     writeSMTCache
-    Check $ lift $ throwError e
+    Check $ lift $ throwError (e, Just $ SomeDiag diag)
 
 typeError x = do
     th <- view typeErrorHook
