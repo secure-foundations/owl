@@ -1,0 +1,21 @@
+locality alice
+
+name d : nonce @ alice
+name k : enckey Name(d) @ alice 
+name blah : nonce @ alice
+
+def alice1 (b: Name(blah)) @ alice : Name(d)
+    = get(d)
+
+def alice2 @ alice
+
+def alice2 () @ alice : Unit
+    = 
+    assert (happened(alice2()));
+    let x = call alice1(get(blah)) in 
+    assert (happened(alice1(get(blah))));
+    let c = aenc(get(k), x) in
+    output c to endpoint(alice)
+
+def alice_main () @ alice : Unit =
+    call alice2()

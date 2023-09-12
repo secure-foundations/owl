@@ -4,6 +4,13 @@ use std::rc::Rc;
 
 verus! {
 
+#[verifier(external_body)]
+#[verifier(broadcast_forall)]
+pub proof fn axiom_Rc_view<A>(rc: Rc<A>) 
+    where A: View
+    ensures (rc@ == (*rc)@)
+{}
+
 /// Clones a Vec<u8> (because currently Verus doesn't support this natively)
 #[verifier(external_body)]
 pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)

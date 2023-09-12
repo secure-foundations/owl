@@ -725,7 +725,7 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
 
 
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
--- the last `bool` argument is if this is the main function, in which case we additionally return a wrapper for the entry point
+-- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
 extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
 extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
     debugPrint $ pretty ""

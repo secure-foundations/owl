@@ -289,7 +289,7 @@ pub mod itree {
 
 
     #[verifier(external_body)]
-    // #[verifier(broadcast_forall)]
+    #[verifier(broadcast_forall)]
     pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}
@@ -404,6 +404,9 @@ pub mod itree {
         (sample($n:expr, $f:ident($($arg:expr),*))) => {
             (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!((ret($f($($arg),*, coins))))})))
         };
+        (call ($($e:tt)*)) => {
+            ($($e)*)
+        };
         (ret ($($e:tt)*)) => {
             ITree::Ret($($e)*)
         };
@@ -428,55 +431,6 @@ pub mod itree {
             owl_spec!( $($e)* )
                 .bind( closure_to_fn_spec(|$var| owl_spec!($($next)*) ))
         };
-        // (($($e:tt)*) in $($next:tt)*) => {
-        //     // owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
-        //     owl_spec!( $($e)* )
-        //         .bind( closure_to_fn_spec(|_var| owl_spec!($($next)*) ))
-        // };
-        // (let $var:ident = { ($($e:tt)*) in $($next:tt)* }) => {
-        //     // Re-merge the trailing tt* into a single tt
-        //     // Duplicated to descend under { } added by previous rules
-        //     owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)* })
-        // };
-        // (@@internal merged_let $var:ident = (ret $($e:tt)*) in $next:tt) => {
-        //     { let $var = $($e)*; owl_spec!($next) }
-        // };
-        // (@@internal pushed_let $var:ident = (ret ($e:expr)) in $next:tt) => {
-        //     { let $var = $e; owl_spec!($next) }
-        // };
-        // (@@internal merged_let $var:ident = (input ($($e:tt)*)) in $next:tt) => {
-        //     owl_spec!((input ($($e)*)) in let $var = $next)
-        // };
-        // (@@internal merged_let $var:ident = (output ($($e:tt)*) to ($($endpoint:tt)*)) in $next:tt) => {
-        //     owl_spec!((output ($($e)*) to ($($endpoint)*)) in let $var = $next)
-        // };
-        // (@@internal merged_let $var:ident = (sample($n:expr, $f:ident($($arg:expr),*), $cvar:ident)) in $next:tt) => {
-        //     owl_spec!((sample($n, $f($($arg),*), $cvar)) in let $var = $next)
-        // };
-        // (@@internal merged_let $var:ident = (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) in $next:tt) => {
-        //     match $e {
-        //         $($pattern => {
-        //             owl_spec!(@@internal pushed_let $var = ($($branch)*) in $next)
-        //         })*
-        //     }
-        // };
-        // (@@internal merged_let $var:ident = (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) in $next:tt) => {
-        //     if $e {
-        //         owl_spec!(@@internal pushed_let $var = ($($e1)*) in $next)
-        //     } else {
-        //         owl_spec!(@@internal pushed_let $var = ($($e2)*) in $next)
-        //     }
-        // };
-        // // (@@internal pushed_let $var:ident = ($e:expr) in $($next:tt)+) => {
-        // //     {
-        // //         owl_spec!(let $var = $($e)*); owl_spec!($($next)+)
-        // //     }
-        // // };
-        // (@@internal pushed_let $var:ident = ($($e:tt)*) in $($next:tt)+) => {
-        //     {
-        //         owl_spec!(let $var = $($e)* in $($next)+)
-        //     }
-        // };
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }

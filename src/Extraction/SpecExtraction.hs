@@ -229,10 +229,11 @@ extractExpr (CRet a) = do
     return $ parens $ pretty "ret" <+> parens a'
 extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
+    ftail <- tailPath f
     let inds = case is of
                 ([], []) -> mempty
                 (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
-    return $ parens (pretty "call" <> parens (pretty f <> pretty "_spec" <> inds <> tupled (pretty "loc" : as')))
+    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> inds <> tupled (pretty "loc" : as'))
 extractExpr (CCase a xs) = do
     a' <- extractAExpr a
     pcases <-
