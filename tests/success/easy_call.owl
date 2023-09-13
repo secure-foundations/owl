@@ -1,6 +1,7 @@
 locality alice
 
 name d : nonce @ alice
+corr adv ==> [d]
 name k : enckey Name(d) @ alice 
 name blah : nonce @ alice
 
@@ -9,13 +10,13 @@ def alice1 (b: Name(blah)) @ alice : Name(d)
 
 def alice2 @ alice
 
-def alice2 () @ alice : Unit
+def alice2 () @ alice : Name(d)
     = 
     assert (happened(alice2()));
     let x = call alice1(get(blah)) in 
     assert (happened(alice1(get(blah))));
-    let c = aenc(get(k), x) in
-    output c to endpoint(alice)
+    let _ = output x to endpoint(alice) in
+    x
 
-def alice_main () @ alice : Unit =
+def alice_main () @ alice : Name(d) =
     call alice2()

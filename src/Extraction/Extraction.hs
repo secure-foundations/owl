@@ -573,6 +573,9 @@ extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
 extractExpr inK loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
+    let tempBindingLHS = case e of 
+            CCall {} -> tupled [pretty "temp_" <> pretty rustX, pretty "Tracked(itree)"] 
+            _ -> pretty "temp_" <> pretty rustX 
     (_, rt, preE, ePrettied) <- extractExpr False loc binds e
     (_, rt', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
     let eWrapped = case rt of
@@ -581,7 +584,7 @@ extractExpr inK loc binds (CLet e xk) = do
             _ -> pretty "temp_" <> pretty rustX
     let letbinding = case e of
             CSkip -> pretty ""
-            _ -> pretty "let" <+> pretty "temp_" <> pretty rustX <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
+            _ -> pretty "let" <+> tempBindingLHS <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
                  pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
     return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
 extractExpr inK loc binds (CIf ae eT eF) = do
@@ -692,14 +695,18 @@ extractExpr inK loc binds (CCrypt cryptOp args) = do
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
-funcCallPrinter name rustArgs callArgs = do
+funcCallPrinter owlName rustArgs callArgs = do
     if length rustArgs == length callArgs then
-        return $ show $ pretty "self." <> pretty name <> 
-        (parens . hsep . punctuate comma $ 
-            pretty "itree"
-            : (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "&") <+> pretty arg) $ callArgs)
-        )
-    else throwError $ TypeError $ "got wrong args for call to " ++ name
+        return $ show $ pretty "owl_call!" <> tupled [
+              pretty "itree"
+            , pretty owlName <> pretty "_spec" <>
+                tupled (pretty "*self" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
+            , pretty "self." <> pretty (rustifyName owlName) <>
+                tupled (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "&") <> pretty arg) $ callArgs)
+        ]
+    else throwError $ TypeError $ "got wrong args for call to " ++ owlName
+    where
+        unclone str = fromMaybe str (stripPrefix "rc_clone" str)
 
 extractArg :: (String, RustTy) -> Doc ann
 extractArg (s, rt) =
@@ -719,8 +726,8 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     let name = rustifyName owlName
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
-    rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
-    funcs %= M.insert owlName (rtb, funcCallPrinter name (rustSidArgs ++ rustArgs))
+    rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
+    funcs %= M.insert owlName (rtb, funcCallPrinter owlName (rustSidArgs ++ rustArgs))
     return ()
 
 
@@ -758,7 +765,7 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
                     ADT _ -> pretty "res.0.data.view()"
                     _ -> pretty "res.0.view()"            
             let defReqEns =
-                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> parens (pretty "*old(self)") <> line <>
+                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*old(self)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
                     pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"

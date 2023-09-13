@@ -413,6 +413,20 @@ rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
 rustifyArgTy _ = return VecU8
 
+rustifyRetTy :: CTy -> ExtractionMonad RustTy
+rustifyRetTy (CTOption ct) = do
+    rt <- rustifyArgTy ct
+    return $ Option rt
+rustifyRetTy (CTConst (PUnresolvedVar n)) = do
+    l <- lookupTyLayout . rustifyName $ show n
+    return $ case l of
+        LBytes _ -> RcVecU8
+        LStruct s _ -> ADT s
+        LEnum s _ -> ADT s
+rustifyRetTy CTBool = return Bool
+rustifyRetTy CTUnit = return Unit
+rustifyRetTy _ = return RcVecU8
+
 specTyOf :: RustTy -> SpecTy
 specTyOf VecU8 = SpecSeqU8
 specTyOf RcVecU8 = SpecSeqU8
@@ -438,3 +452,13 @@ getCurRetTy = do
     case t of      
         Nothing -> throwError $ ErrSomethingFailed "getCurRetTy of Nothing"
         Just s -> return s
+
+viewVar :: RustTy -> String -> String
+viewVar VecU8 s = s ++ ".view()"
+viewVar RcVecU8 s = s ++ ".view()"
+viewVar Bool s = s
+viewVar Number s = s
+viewVar String s = s
+viewVar Unit s = s
+viewVar (ADT _) s = s ++ "data.view()" -- TODO nesting?
+viewVar (Option rt) s = s ++ ".view()"
