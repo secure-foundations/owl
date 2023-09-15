@@ -333,7 +333,7 @@ smtTy t =
           v <- interpretAExp a
           return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v
       TBool _ -> return $ SAtom "TBool"  
-      TRefined t xp -> do
+      TRefined t s xp -> do
           vt <- smtTy t
           (x, p) <- liftCheck $ unbind xp
           vE <- use varVals

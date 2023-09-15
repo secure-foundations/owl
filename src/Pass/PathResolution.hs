@@ -335,11 +335,11 @@ resolveTy e = do
                       l' <- resolveLabel l
                       a' <- resolveAExpr a
                       return $ TDataWithLength l' a'
-                  TRefined t xp -> do
+                  TRefined t s xp -> do
                       t' <- resolveTy t
                       (x, p) <- unbind xp
                       p' <- resolveProp p
-                      return $ TRefined t' $ bind x p'
+                      return $ TRefined t' s $ bind x p'
                   TOption t -> TOption <$> resolveTy t
                   TConst p fs -> do
                       fs' <- mapM resolveFuncParam fs
@@ -546,10 +546,10 @@ resolveExpr e =
           cop' <- resolveCryptOp (e^.spanOf) cop
           xs' <- mapM resolveAExpr xs
           return $ Spanned (e^.spanOf) $ ECrypt cop' xs'
-      EInput xk -> do
+      EInput s xk -> do
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EInput $ bind x k'
+          return $ Spanned (e^.spanOf) $ EInput s $ bind x k'
       EOutput a oe -> do
           a' <- resolveAExpr a
           oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
@@ -657,7 +657,7 @@ resolveDebugCommand dc =
       DebugPrintLabel l -> DebugPrintLabel <$> resolveLabel l
       DebugResolveANF a -> DebugResolveANF <$> resolveAExpr a
       DebugPrint _ -> return dc
-      DebugPrintTyContext -> return dc
+      DebugPrintTyContext _ -> return dc
       DebugPrintModules -> return dc
 
 

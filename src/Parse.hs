@@ -192,7 +192,7 @@ parseTyTerm =
         symbol "{"
         p <- parseProp
         symbol "}"
-        return $ TRefined tUnit $ bind (s2n "._") p)
+        return $ TRefined tUnit "._" $ bind (s2n "._") p)
     <|>
     (parseSpanned $ do
         reserved "Data"
@@ -294,7 +294,7 @@ parseTyTerm =
         symbol "{"
         p <- parseProp
         symbol "}"
-        return $ TRefined t $ bind (s2n x) p 
+        return $ TRefined t x $ bind (s2n x) p 
     )
     <|>
     (parseSpanned $ do
@@ -971,7 +971,11 @@ parseDebugCommand =
     <|>
     (try $ do
         reserved "printTyContext"
-        return $ DebugPrintTyContext
+        o <- optionMaybe $ symbol "noanf"
+        let b = case o of
+                  Nothing -> True
+                  Just _ -> False
+        return $ DebugPrintTyContext b
     )
     <|>
     (try $ do
@@ -1046,7 +1050,7 @@ parseExprTerm =
                   Just y -> y
         reserved "in"
         e <- parseExpr
-        return $ EInput $ bind (s2n x, s2n y) e
+        return $ EInput x $ bind (s2n x, s2n y) e
     )
     <|>
     (parseSpanned $ do

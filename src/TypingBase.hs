@@ -507,7 +507,7 @@ openModule rp = do
 stripRefinements :: Ty -> Ty
 stripRefinements t =
     case t^.val of
-      TRefined t _ -> stripRefinements t
+      TRefined t _ _ -> stripRefinements t
       _ -> t
 
 getModDef :: ResolvedPath -> Check ModDef
@@ -827,7 +827,8 @@ simplifyProp p = do
                      PAnd p1 p2 -> do
                          p1' <- simplifyProp p1
                          p2' <- simplifyProp p2
-                         return $ mkSpanned $ PAnd p1' p2'
+                         if p1' `aeq` p2' then return p1' else
+                             return $ mkSpanned $ PAnd p1' p2'
                      POr (Spanned _ PTrue) p -> return pTrue
                      POr p (Spanned _ PTrue) -> return pTrue
                      POr (Spanned _ PFalse) p -> simplifyProp p
@@ -835,7 +836,8 @@ simplifyProp p = do
                      POr p1 p2 -> do
                          p1' <- simplifyProp p1
                          p2' <- simplifyProp p2
-                         return $ mkSpanned $ POr p1' p2'
+                         if p1' `aeq` p2' then return p1' else
+                             return $ mkSpanned $ POr p1' p2'
                      PImpl (Spanned _ PTrue) p -> simplifyProp p
                      PImpl _ (Spanned _ PTrue) -> return pTrue  
                      PImpl (Spanned _ PFalse) p -> return pTrue
@@ -920,7 +922,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
                       aes <- getROPreimage pth ips args
                       lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
                       solvability <- solvabilityAxioms aes ne 
-                      return $ mkSpanned $ TRefined (tName ne) $ bind (s2n ".res") $ 
+                      return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                           pAnd (mkSpanned $ PRO aes (aeVar ".res") i)
                             (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
                   _ -> return ot
@@ -1131,7 +1133,7 @@ coveringLabel' t =
           return $ joinLbl l l'
       TBool l -> return l
       TUnit -> return $ zeroLbl
-      (TRefined t1 _) -> coveringLabel' t1
+      (TRefined t1 _ _) -> coveringLabel' t1
       (TOption t) -> coveringLabel' t  
       (TName n) -> return $ nameLbl n
       (TVK n) -> return $ zeroLbl

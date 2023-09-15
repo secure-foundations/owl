@@ -62,9 +62,9 @@ instance Pretty TyX where
                 pretty "Data <" <> pretty l1 <> pretty ", |" <> pretty l2 <> pretty "|>"
     pretty (TDataWithLength l1 a) = 
             pretty "Data <" <> pretty l1 <> pretty ">" <+> pretty "|" <> pretty a <> pretty "|"
-    pretty (TRefined t xp) = 
+    pretty (TRefined t s xp) = 
         let (x, p) = prettyBind xp in
-        x <> pretty ":" <> parens (pretty t) <> braces p
+        pretty s <> pretty ":" <> parens (pretty t) <> braces (align p)
     pretty (TOption t) = 
             pretty "Option" <+> pretty t
     pretty (TCase p t1 t2) = 
@@ -165,7 +165,7 @@ instance Pretty NameTypeX where
 
 
 instance Pretty AExprX where
-    pretty (AEVar s n) = pretty (unignore s) 
+    pretty (AEVar s n) = pretty (unignore s)
     pretty (AEApp f _ as) = 
         case (f, as) of
           (PRes (PDot PTop "plus"), [x, y]) -> pretty x <+> pretty "+" <+> pretty y
@@ -212,7 +212,7 @@ instance Pretty CryptOp where
 instance Pretty ExprX where 
     pretty (ECrypt cop as) = 
         pretty cop <> (tupled (map pretty as))
-    pretty (EInput k) = 
+    pretty (EInput _ k) = 
         let ((x, i), e) = unsafeUnbind k in
         pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e
     pretty (EOutput e l) = pretty "output" <+> pretty e <+> (case l of
@@ -229,7 +229,7 @@ instance Pretty ExprX where
                         Nothing -> pretty "let"
                         Just a -> pretty "anf_let[" <> pretty a <> pretty "]"
         in
-        anfLet <+> x <+> tann <+> pretty "=" <+> pretty "(" <> pretty e1 <> pretty ")" <+> pretty "in" <> line <> k
+        anfLet <+> pretty sx <+> tann <+> pretty "=" <+> pretty "(" <> pretty e1 <> pretty ")" <+> pretty "in" <> line <> k
     pretty (EUnionCase a xk) = 
         let (x, k) = prettyBind xk in
         pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
@@ -272,7 +272,7 @@ instance Pretty DebugCommand where
     pretty (DebugPrint s) = pretty "debugPrint(" <> pretty s <> pretty ")"
     pretty (DebugPrintTy t) = pretty "debugPrintTy(" <> pretty t <> pretty ")"
     pretty (DebugPrintProp t) = pretty "debugPrintProp(" <> pretty t <> pretty ")"
-    pretty (DebugPrintTyContext) = pretty "debugPrintTyContext"
+    pretty (DebugPrintTyContext anf) = pretty "debugPrintTyContext" <+> (if anf then pretty "anf" else mempty)
     pretty (DebugPrintExpr e) = pretty "debugPrintExpr(" <> pretty e <> pretty ")"
     pretty (DebugPrintLabel l) = pretty "debugPrintLabel(" <> pretty l <> pretty ")"
     pretty (DebugResolveANF a) = pretty "resolveANF" <> parens (pretty a)

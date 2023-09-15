@@ -23,8 +23,8 @@ elet e tyann anf s k =
       ELet e1 tyann1 anf1 s1 xe1k -> do
           (x, e1k) <- unbind xe1k
           elet e1 tyann1 anf1 (Just s1) $ \y -> 
-              let anf' = subst x (mkSpanned $ AEVar (ignore $ show y) y) anf in 
-              elet (subst x (mkSpanned $ AEVar (ignore $ show y) y) e1k) tyann anf' s k
+              let anf' = subst x (mkSpanned $ AEVar (ignore s1) y) anf in 
+              elet (subst x (mkSpanned $ AEVar (ignore s1) y) e1k) tyann anf' s k
       _ -> do
           x <- fresh $ s2n ".x"
           k' <- k x
@@ -80,9 +80,9 @@ anf e =
     case e^.val of 
       EGetCtr _ _ -> return e
       EIncCtr _ _ -> return e
-      EInput xek -> do
+      EInput s xek -> do
           xek' <- anfBind xek
-          return $ Spanned (e^.spanOf) $ EInput xek'
+          return $ Spanned (e^.spanOf) $ EInput s xek'
       EOutput a oe -> do
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
@@ -90,7 +90,7 @@ anf e =
           (x, k) <- unbind xk
           e' <- anf e1
           elet e' tyann (Nothing) (Just s) $ \y -> 
-              anf $ subst x (mkSpanned $ AEVar (ignore $ show y) y) k
+              anf $ subst x (mkSpanned $ AEVar (ignore s) y) k
       ELet _ _ (Just _) _ _ -> error "Got anfVar in anf routine"
       EBlock k -> do
           k' <- anf k
