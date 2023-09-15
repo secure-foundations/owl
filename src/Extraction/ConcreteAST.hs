@@ -15,6 +15,7 @@ import Data.Maybe
 import Control.Monad
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
@@ -49,7 +50,7 @@ concretifyTy t =
   case t^.val of
     TData _ _ -> return CTData
     TDataWithLength _ l -> return $ CTDataWithLength l
-    TRefined t _ -> concretifyTy t
+    TRefined t _ _ -> concretifyTy t
     TOption t -> do
       ct <- concretifyTy t
       return $ CTOption ct
@@ -104,7 +105,7 @@ instance Subst AExpr CExpr
 concretify :: Fresh m => Expr -> m CExpr
 concretify e =
     case e^.val of
-      EInput xse -> do
+      EInput _ xse -> do
           let (xe, e) = unsafeUnbind xse
           c <- concretify e
           return $ CInput $ bind xe c

@@ -53,8 +53,6 @@ setupIndexEnv = do
         return (i, x)
     symIndexEnv .= M.fromList assocs
 
-sLength :: SExp -> SExp
-sLength e = SApp [SAtom "length", e]
 
 sPlus :: SExp -> SExp -> SExp
 sPlus e1 e2 = SApp [SAtom "plus", e1, e2]
@@ -67,86 +65,125 @@ setupNameEnvRO :: Sym ()
 setupNameEnvRO = do
     dfs <- liftCheck $ collectNameDefs
     fdfs <- flattenNameDefs dfs
-    -- First, declare all names
-    forM_ fdfs $ \((n, oi), b) -> do
-        ((is, ps), nd) <- liftCheck $ unbind b
-        sn <- smtNameOfFlattenedName (n, oi)
-        let ar = length is + length ps
-        emit $ SApp [SAtom "declare-fun", sn, SApp (replicate ar indexSort), nameSort]
-    -- Now, declare them all disjoint
-    emitComment $ "Disjointness across names"
-    let different_pairs = [(x, y) | (x : ys) <- tails fdfs, y <- ys]
-    forM_ different_pairs $ \((noi1, b1), (noi2, b2)) -> do
-        ((is1, ps1), _) <- liftCheck $ unbind b1
-        sname1 <- smtNameOfFlattenedName noi1
-        let ar1 = length is1 + length ps1
-        let q1 = map (\i -> (SAtom $ show i, indexSort)) $ is1 ++ ps1
-        let v1 = sApp $ sname1 : (map fst q1)
-        ((is2, ps2), _) <- liftCheck $ unbind b2
-        sname2 <- smtNameOfFlattenedName noi2
-        let ar2 = length is2 + length ps2
-        let q2 = map (\i -> (SAtom $ show i, indexSort)) $ is2 ++ ps2
-        let v2 = sApp $ sname2 : (map fst q2)
-        emitAssertion $ sForall (q1 ++ q2) (sNot $ sEq v1 v2) [v1, v2] $ "disj_" ++ show (sname1) ++ "_" ++ show (sname2) 
-
-        when (ar1 > 0) $ do
-            q12 <- forM q1 $ \_ -> do
-                x <- freshSMTIndexName
-                return (SAtom x, indexSort)
-            let v12 = sApp $ sname1 : (map fst q12)
-            let q1_eq_q12 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q12 !! i)) [0 .. (length q1 - 1)]
-            let v1_eq_v12 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
-                                                                             SApp [SAtom "ValueOf", v12]]]
-            emitAssertion $ sForall (q1 ++ q12)
-                (v1_eq_v12 `sImpl` q1_eq_q12)
-                [v1_eq_v12]
-                ("self_disj_" ++ show (sname1))
+    forM_ fdfs $ \fd -> do
+        case fd of
+          SMTBaseName (sn, _) bnd -> do
+              let ((is, ps), _) = unsafeUnbind bnd
+              let iar = length is + length ps
+              emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort), nameSort]
+          SMTROName (sn, _) _ bnd -> do
+              let (((is, ps), xs), _) = unsafeUnbind bnd
+              let iar = length is + length ps
+              let var = length xs
+              emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort ++ replicate var bitstringSort), nameSort]
+    mkCrossDisjointness fdfs
+    mkSelfDisjointness fdfs
     -- Axioms relevant for each def 
-    forM_ fdfs $ \(noi, b) -> do 
-        ((is, ps), nd) <- liftCheck $ unbind b
-        let ar = length is + length ps
-        sname <- smtNameOfFlattenedName noi
-        let ntOpt = case nd of
-                      BaseDef (nt, _) -> Just nt
-                      AbstractName -> Nothing
-                      RODef (_, [nt]) -> Just nt
-        let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
-        withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
-            case ntOpt of 
+    forM_ fdfs $ \fd -> do
+        withSMTNameDef fd $ \(sn, pth) oi ((is, ps), xs) ont -> do
+            -- Name def flows
+            case ont of
               Nothing -> return ()
               Just nt -> do
-                nk <- nameKindOf nt
-                emitAssertion $ sForall
-                    ivs
-                    (SApp [SAtom "HasNameKind", sApp (sname : (map fst ivs)), nk])
-                    [sApp (sname : (map fst ivs))]
-                    ("nameKind_" ++ show (sname))
+                let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
+                let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
+                withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+                    withSMTVars xs $ do 
+                        nk <- nameKindOf nt
+                        emitAssertion $ sForall
+                            (ivs ++ xvs)
+                            (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs) ++ (map fst xvs)), nk])
+                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            ("nameKind_" ++ show sn)
 
-                let nexp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes (fst noi)) (snd noi)
-                emitComment $ "nameDefFlows for" ++ show (pretty nexp)                                
-                lAxs <- nameDefFlows nexp nt
-                sAxs <- forM lAxs $ \(l1, l2) -> do
-                    vl1 <- symLabel l1
-                    vl2 <- symLabel l2
-                    return $ SApp [SAtom "Flows", vl1, vl2]
-                emitAssertion $ sForall
-                    ivs
-                    (sAnd sAxs)
-                    [sApp (sname : (map fst ivs))]
-                    ("nameDefFlows_" ++ show (sname))
+                        let roArgs = case oi of
+                                       Nothing -> Nothing
+                                       Just i -> Just $ (map aeVar' xs, i)
 
-            case nd of
-              RODef (as, _) -> do
-                  emitComment $ "RO solvability for " ++ show (sApp $ sname : map fst ivs)
-                  ax <- solvabilityAxioms as (sApp $ sname : (map fst ivs))
-                  emitAssertion $ sForall ivs ax [sApp $ sname : (map fst ivs)] $ "RO_solvability_" ++ show (sname)
+                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) roArgs
 
-                  emitComment $ "RO mapsto axiom"
-                  asv <- mapM interpretAExp as
-                  let (Just i) = snd noi
-                  let roAx = SApp [SAtom "RO", sConcats asv, SApp [SAtom "ValueOf", sApp $ sname : (map fst ivs)], SAtom $ show i]
-                  emitAssertion $ sForall ivs roAx [] $ "RO_mapsto_" ++ show (sname)
-              _ -> return ()
+                        lAxs <- nameDefFlows nameExp nt
+                        sAxs <- forM lAxs $ \(l1, l2) -> do
+                            vl1 <- symLabel l1
+                            vl2 <- symLabel l2
+                            return $ SApp [SAtom "Flows", vl1, vl2]
+                        emitAssertion $ sForall (ivs ++ xvs)
+                            (sAnd sAxs)
+                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            ("nameDefFlows_" ++ show sn)
+            -- Solvability
+            case oi of
+              Nothing -> return () -- Not RO
+              Just i -> do 
+                when (length xs == 0) $ do
+                    withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) (Just ([], i)) 
+                        preimage <- liftCheck $ getROPreimage (PRes pth) (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) []
+                        solvability <- liftCheck $ solvabilityAxioms preimage nameExp
+                        vsolv <- interpretProp solvability
+                        let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
+                        emitAssertion $ sForall ivs vsolv [sApp (sn : map fst ivs)] ("solvability_" ++ show sn)  
+
+
+
+smtNameDefIsRO :: SMTNameDef -> Bool
+smtNameDefIsRO (SMTBaseName _ _) = False
+smtNameDefIsRO (SMTROName _ _ _) = True
+
+
+
+mkCrossDisjointness :: [SMTNameDef] -> Sym ()
+mkCrossDisjointness fdfs = do
+    -- Get all pairs of fdfs
+    let pairs = [(x, y) | (x : ys) <- tails fdfs, y <- ys]
+    forM_ pairs $ \(fd1, fd2) -> 
+        withSMTNameDef fd1 $ \(sn1, pth1) oi1 ((is1, ps1), xs1) _ ->  
+            withSMTNameDef fd2 $ \(sn2, pth2) oi2 ((is2, ps2), xs2) _ ->  do
+                let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
+                let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+                let v1 = sApp (sn1 : (map fst q1))
+                let v2 = sApp (sn2 : (map fst q2))
+                let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                                                                             SApp [SAtom "ValueOf", v2]]]
+                let pat = (if length q1 > 0 then [v1] else []) ++ (if length q2 > 0 then [v2] else [])
+                emitAssertion $ sForall (q1 ++ q2) (sNot $ v1_eq_v2) pat $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                when (oi1 == Just 0 && oi2 == Just 0 && (not $ pth1 `aeq` pth2)) $ do 
+                    (vpre1, vprereq1) <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) ps1) $ do
+                        withSMTVars xs1 $ do 
+                            pi <- liftCheck $ getROPreimage (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
+                            vpi <- interpretAExp pi
+                            pr <- liftCheck $ getROPrereq (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
+                            vpr <- interpretProp pr
+                            return (vpi, vpr)
+                    (vpre2, vprereq2) <- withIndices (map (\i -> (i, IdxSession)) is2 ++ map (\i -> (i, IdxPId)) ps2) $ do
+                        withSMTVars xs2 $ do 
+                            pi <- liftCheck $ getROPreimage (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
+                            vpi <- interpretAExp pi
+                            pr <- liftCheck $ getROPrereq (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
+                            vpr <- interpretProp pr
+                            return (vpi, vpr)
+                    let vpre1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", vpre1, vpre2]]
+                    emitComment $ "Preimage disjointness for " ++ show sn1 ++ " and " ++ show sn2
+                    emitAssertion $ sForall (q1 ++ q2) (sImpl (sAnd2 vprereq1 vprereq2) $ sNot $ vpre1_eq_v2) [vpre1_eq_v2] $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
+
+
+mkSelfDisjointness :: [SMTNameDef] -> Sym ()
+mkSelfDisjointness fdfs = do
+    forM_ fdfs $ \fd -> 
+        withSMTNameDef fd $ \(sn, pth) oi ((is1, ps1), xs1) _ ->  do
+            withSMTNameDef fd $ \_ _ ((is2, ps2), xs2) _ -> do
+                when ((length is1 + length ps1 + length xs1) > 0) $ do
+                    let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
+                    let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+                    let v1 = sApp (sn : (map fst q1))
+                    let v2 = sApp (sn : (map fst q2))
+                    let q1_eq_q2 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q2 !! i)) [0 .. (length q1 - 1)]
+                    let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                                                                             SApp [SAtom "ValueOf", v2]]]
+                    emitAssertion $ sForall (q1 ++ q2)
+                        (v1_eq_v2 `sImpl` q1_eq_q2)
+                        [v1_eq_v2]
+                        ("self_disj_" ++ show (sn))
 
 nameKindOf :: NameType -> Sym SExp
 nameKindOf nt = 
@@ -160,16 +197,7 @@ nameKindOf nt =
       NT_MAC _ -> SAtom "MACkey"
       NT_Nonce -> SAtom "Nonce"
 
-symLenConst :: String -> Sym SExp
-symLenConst s = do
-    v <- lengthConstant s
-    return $ SApp [SAtom "I2B", v]
 
-symNameExp :: NameExp -> Sym SExp
-symNameExp ne = do
-    liftCheck $ debug $ pretty "symNameExp" <+> pretty ne
-    n <- getSymName ne
-    return $ SApp [SAtom "ValueOf", n]
 
 mkTy :: Maybe String -> Ty -> Sym SExp
 mkTy s t = do
@@ -197,6 +225,7 @@ setupTyEnv = do
 setupUserFunc :: (ResolvedPath, UserFunc) -> Sym ()
 setupUserFunc (s, f) =
     case f of
+      FunDef _ -> return ()
       StructConstructor tv -> do
         -- Concats
         td <- liftCheck $ getTyDef  (PRes $ PDot s tv)
@@ -252,7 +281,7 @@ lookupIndex x xs = go 0 xs
                            | otherwise = go (i + 1) ys
 
 builtInSMTFuncs :: [String]
-builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "TRUE", "FALSE", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem"]
+builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "TRUE", "FALSE", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh"]
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()
 setupFunc (s, ar) = do
@@ -267,16 +296,6 @@ setupFunc (s, ar) = do
                   emitAssertion $ SApp [SAtom "IsConstant", SAtom sn]
           funcInterps %= (M.insert sn (SAtom sn, ar))
 
-getFunc :: String -> Sym SExp
-getFunc s = do
-    fs <- use funcInterps
-    case M.lookup s fs of
-      Just (v, _) -> return v
-      Nothing -> error $ "Function not in SMT: " ++ show s ++ show (M.keys fs)
-
-getTopLevelFunc s = do
-    sn <- smtName $ topLevelPath s
-    getFunc sn
 
 constant :: String -> Sym SExp
 constant s = do
@@ -288,20 +307,6 @@ constant s = do
           constants %= (M.insert s x)
           return x
 
-lengthConstant :: String -> Sym SExp
-lengthConstant s = 
-    case s of
-      "nonce" -> return $ SApp [SAtom "NameKindLength", SAtom "Nonce"]    
-      "DH" -> return $ SApp [SAtom "NameKindLength", SAtom "DHkey"]
-      "enckey" -> return $ SApp [SAtom "NameKindLength", SAtom "Enckey"]
-      "pkekey" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
-      "sigkey" -> return $ SApp [SAtom "NameKindLength", SAtom "Sigkey"]
-      "prfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "PRFkey"]
-      "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
-      "signature" -> return $ SAtom "SignatureLen"
-      "vk" -> return $ SAtom "VKLen"
-      "maclen" -> return $ SAtom "MAClen"
-      "tag" -> return $ SAtom "Taglen"
 
 
 setupAllFuncs :: Sym ()
@@ -328,7 +333,7 @@ smtTy t =
           v <- interpretAExp a
           return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v
       TBool _ -> return $ SAtom "TBool"  
-      TRefined t xp -> do
+      TRefined t s xp -> do
           vt <- smtTy t
           (x, p) <- liftCheck $ unbind xp
           vE <- use varVals
@@ -408,64 +413,10 @@ tyConstraints t v = do
     vt <- smtTy t
     return $ SApp [SAtom "HasType", v, vt]
 
-makeHex :: String -> Sym SExp
-makeHex s = do
-    liftCheck $ assert  "makeHex: string length must be even" (length s `mod` 2 == 0)
-    hc <- use hexConstants
-    if M.member s hc then
-        return $ hc M.! s
-    else do
-        let len = case length s of
-                         0 -> 0
-                         _ -> (length s) `quot` 2
-        let s' = "%hc_" ++ s
-        emit $ SApp [SAtom "declare-const", SAtom s', SAtom "Bits"]
-        emitAssertion $ sEq (sLength (SAtom s')) (SApp [SAtom "I2B", SAtom $ show len])
-        emitAssertion $ SApp [SAtom "IsConstant", SAtom s']
-        hexConstants %= (M.insert s (SAtom s'))
-        return $ SAtom s'
 
 
-interpretAExp :: AExpr -> Sym SExp
-interpretAExp ae = 
-    case ae^.val of
-      AEVar _ x -> do
-        env <- use varVals
-        case M.lookup x env of 
-            Just v -> return v
-            Nothing -> error $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (pretty (M.keys env))
-      AEApp f _ xs -> do
-        vs <- mapM interpretAExp xs
-        case f of
-          -- Special cases
-          f | f `aeq` (topLevelPath "UNIT") -> return unit
-          f | f `aeq` (topLevelPath "TRUE") -> return bTrue
-          f | f `aeq` (topLevelPath "FALSE") -> return bFalse
-          _ -> do
-              vf <- getFunc =<< (smtName f)
-              return $ sApp $ vf : vs
-      AEHex s -> makeHex s
-      AELenConst s -> symLenConst s
-      AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
-      AEPreimage p ps -> do
-          aes <- liftCheck $ getROPreimage p ps
-          interpretAExp $ mkConcats aes
-      AEGet ne -> do
-          liftCheck $ debug $ pretty "AEGet" <+> pretty ne
-          symNameExp ne
-      AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
-      AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
-      AEPackIdx i a -> interpretAExp a
 
 
-bTrue :: SExp
-bTrue = SAtom "TRUE"
-
-bFalse :: SExp
-bFalse = SAtom "FALSE"
-
-unit :: SExp
-unit = SAtom "UNIT"
 
 interpretProp :: Prop -> Sym SExp
 interpretProp p = 
@@ -486,6 +437,9 @@ interpretProp p =
       PApp s is ps -> do 
           p <- liftCheck $ extractPredicate s is ps
           interpretProp p
+      PAADOf ne a -> do
+          p <- liftCheck $ extractAAD ne a
+          interpretProp p
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
@@ -501,10 +455,7 @@ interpretProp p =
           return $ SApp [SAtom "IsConstant", v]
       (PQuantBV q ip) -> do
           (x, p) <- liftCheck $ unbind ip
-          vVs <- use varVals
-          varVals %= (M.insert x (SAtom $ show x))
-          v <- interpretProp p
-          varVals .= vVs
+          v <- withSMTVars [x] $ interpretProp p 
           case q of
             Forall -> return $ sForall [(SAtom $ show x, bitstringSort)] v [] $ "forall_" ++ show x
             Exists -> return $ sExists [(SAtom $ show x, bitstringSort)] v [] $ "exists_" ++ show x
@@ -544,22 +495,6 @@ sConcats vs =
     let sConcat a b = SApp [SAtom "concat", a, b] in
     foldl sConcat (head vs) (tail vs) 
 
-
-symROUnique :: [Bind ([IdxVar], [IdxVar]) [AExpr]] -> [AExpr] -> Sym ()
-symROUnique roPres e = do
-    v <- sConcats <$> mapM interpretAExp e
-    bs <- forM (zip roPres [0..(length roPres - 1)]) $ \(bnd, j) -> do
-        ((is, ps), aes) <- liftCheck $ unbind bnd
-        let ivs = map (\i -> SAtom (show i)) $ is ++ ps
-        withIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ do
-            vs <- mapM interpretAExp aes
-            return $ sForall
-                (map (\i -> (i, indexSort)) ivs)
-                (sNot $ sEq (SAtom "TRUE") $ SApp [SAtom "eq", sConcats vs, v])
-                []
-                ("ro_unique_" ++ show j)
-    emitToProve $ sAnd bs
-
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
     vs <- mapM interpretAExp es
@@ -588,27 +523,6 @@ symAssert p = do
     b <- interpretProp p
     emitComment $ "Proving prop " ++ show (pretty p)
     emitToProve b
-
-symDecideNotInRO :: [AExpr] -> Check Bool
-symDecideNotInRO aes = do
-    debug $ pretty "symDecideNotInRO" <+> pretty aes
-    if length aes == 0 then return True else do
-        res <- fromSMT smtSetup $ do
-            vs <- mapM interpretAExp aes
-            roPres <- liftCheck $ collectROPreimages
-            bs <- forM (zip roPres [0 .. (length roPres - 1)]) $ \(b, j) -> do 
-                ((is, ps), aes') <- liftCheck $ unbind b
-                let ivs = map (\i -> SAtom (show i)) $ is ++ ps
-                withIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ do
-                    vs' <- mapM interpretAExp aes'
-                    return $ sForall
-                        (map (\i -> (i, indexSort)) ivs)
-                        (sNot $ sEq (sConcats vs) (sConcats vs'))
-                        []
-                        ("not_in_ro_" ++ show j)
-            emitToProve $ sAnd bs
-        if snd res then return True else return False
-
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do

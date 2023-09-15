@@ -26,21 +26,6 @@ sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
 
--- If the random oracle preimage is corrupt, then the RO is as well.
--- N.B.: this list does _not_ have to be exhaustive. It is only used to
--- prune impossible paths. We still need to case on the RO label
-solvabilityAxioms :: [AExpr] -> SExp -> Sym SExp
-solvabilityAxioms aes roName = do
-    -- If all labels are corrupt, the RO is corrupt
-    ladv <- symLabel advLbl
-    lss <- forM aes $ \ae -> do
-        t <- liftCheck $ inferAExpr ae
-        case (stripRefinements t)^.val of
-          TName n -> return [nameLbl n]
-          TSS n m -> return [nameLbl n, nameLbl m]
-          _ -> return [] -- ae must be a constant, since valid
-    lvs <- mapM symLabel $ concat lss
-    return $ sImpl (sAnd $ map (\l -> sFlows l ladv) lvs) (sFlows (SApp [SAtom "LabelOf", roName]) ladv)
 
 nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do
@@ -82,18 +67,16 @@ smtLabelSetup = do
     afcs <- liftCheck $ collectAdvCorrConstraints 
     ladv <- symLabel advLbl
     forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
-        (is, (l1, l2)) <- liftCheck $ unbind ils
-        sIE <- use symIndexEnv
-        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
-        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do 
-            v1 <- symLabel l1
-            v2 <- symLabel l2
-            emitAssertion $ sForall 
-                (map (\i -> (SAtom $ show i, indexSort)) is)
-                (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
-                []
-                ("advConstraint_" ++ show j)
-        symIndexEnv .= sIE
+        ((is, xs), (l1, l2)) <- liftCheck $ unbind ils
+        withIndices (map (\i -> (i, IdxGhost)) is) $ do
+            withSMTVars xs $ do 
+                v1 <- symLabel l1
+                v2 <- symLabel l2
+                emitAssertion $ sForall 
+                    (map (\i -> (SAtom $ show i, indexSort)) is ++ map (\x -> (SAtom $ show x, bitstringSort)) xs)
+                    (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
+                    []
+                    ("advConstraint_" ++ show j)
 
 
 getIdxVars :: Label -> [IdxVar]
@@ -106,6 +89,7 @@ simplLabel l =
       LName _ -> return l
       LZero -> return l
       LAdv -> return l
+      LTop -> return l
       LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
       LRangeIdx il -> do
@@ -133,6 +117,7 @@ canonLabel l = do
       LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
       LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
       LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
+      LTop -> return $ CanonAnd [CanonNoBig $ CanonTop]
       LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
@@ -148,6 +133,7 @@ canonRange is l =
           canonRange (i : is) l'
       LZero -> return (is, CanonZero)
       LAdv -> return (is, CanonAdv)
+      LTop -> return (is, CanonTop)
       LConst s -> return (is, CanonConst s)
       LName ne -> return (is, CanonLName ne)
 
@@ -192,6 +178,7 @@ symCanonAtom c =
         return $ SApp [SAtom "LabelOf", n]
       CanonZero -> return $ SAtom "%zeroLbl"
       CanonAdv -> return $ SAtom "%adv"
+      CanonTop -> return $ SAtom "%top"
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
@@ -218,6 +205,7 @@ data SymLbl =
     SName NameExp
       | SConst LblConst
       | SAdv
+      | STop
       | SRange (Bind IdxVar SymLbl)
       deriving (Show, Generic, Typeable)
 
@@ -230,6 +218,7 @@ mkSymLbl l =
       LName n -> return $ S.singleton $ AlphaOrd $ SName n
       LConst s -> return $ S.singleton $ AlphaOrd $ SConst s
       LAdv -> return $ S.singleton $ AlphaOrd SAdv
+      LTop -> return $ S.singleton $ AlphaOrd STop
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeIdx xl -> do
           (xi, l) <- unbind xl
@@ -244,6 +233,7 @@ lblFromSym s =
     case s of
       SName n -> return $ nameLbl n
       SAdv -> return advLbl
+      STop -> return topLbl
       SConst n -> return $ lblConst n
       SRange xl -> do
           (x, l) <- unbind xl
