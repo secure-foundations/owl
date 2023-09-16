@@ -89,18 +89,18 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
         let certA = _AuthCert(p) in 
         // certA = signature of verkeyA signed by sigkeyCA
         corr_case sigkeyCA in
-        begin case vrfy(vkCA, certA, _vkA(p)) // get verkeyA = vk(sigkeyA)
+        case vrfy(vkCA, certA, _vkA(p)) { // get verkeyA = vk(sigkeyA)
             | Some res =>
-                begin case res 
+                case res {
                 | ClientCert _ => None<ty:client_stage1_t>()
                 | AuthCert vkA => 
                     // now use verkeyA to verify signed_k
                     corr_case sigkeyA in
-                    begin case vrfy(vkA, _k(p), _sigofK(p)) // get K, sign(sigkeyA, k)
+                    case vrfy(vkA, _k(p), _sigofK(p)) {// get K, sign(sigkeyA, k)
                         | Some k =>
                             // finally, decrypt AK using k
                             corr_case K in
-                            begin case adec(k, enc_ak) 
+                            case adec(k, enc_ak) {
                                 | Some ak =>
                                     if eq(length(tgt), cipherlen(|enckey|)) then 
                                         let tgt' : Data<adv> |cipherlen(|enckey|)| = tgt in
@@ -109,12 +109,12 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                                         else None<ty:client_stage1_t>()
                                     else  None<ty:client_stage1_t>()
                                 | None => None<ty:client_stage1_t>()
-                            end
+                            }
                         | None => None<ty:client_stage1_t>()
-                    end
-                end
+                    }
+                }
             | None => None<ty:client_stage1_t>()
-        end
+        }
 
 
     def client_stage1 () @ P.client 
@@ -142,16 +142,16 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
         corr_case K in 
 
         // check that we got a good certificate
-        case _pkinit_client_to_authserver_msg_1(i) // get client vertificate
+        case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
                 | ClientCert certC =>
                 
                     // check that certC is valid for vkC
-                    begin case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) 
+                    case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) {
                         | None => ()
                         | Some vkC =>
                         
                             // use verkeyC to verify the username
-                            begin case vrfy(vkC, signed_un, un) 
+                            case vrfy(vkC, signed_un, un) {
                                 | None => ()
                                 | Some username =>
                                 
@@ -181,9 +181,10 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                                             output msg to endpoint(P.client); ()
                                         else ()
                                     else ()
-                            end
-                    end
+                            }
+                    }
                 | AuthCert x => ()
+        }
 
 
     def authserver_main () @ P.authserver

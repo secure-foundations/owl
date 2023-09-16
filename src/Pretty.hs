@@ -86,7 +86,12 @@ instance  OwlPretty LabelX where
         owlpretty "/\\_" <> b <+> owlpretty "(" <> l' <> owlpretty ")"
 
 instance  OwlPretty (Path) where
-    owlpretty x = owlpretty $ show x
+    owlpretty (PRes p) = owlpretty p
+    owlpretty p = owlpretty $ show p
+
+instance OwlPretty ResolvedPath where
+    owlpretty (PDot PTop x) = owlpretty x
+    owlpretty p = owlpretty $ show p
 
 instance  OwlPretty TyX where
     owlpretty TUnit =

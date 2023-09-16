@@ -1554,11 +1554,11 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
           debug $ owlpretty "Type context for assertion " <> owlpretty p <> owlpretty ":" <> (owlprettyTyContext g)
           assert (show $ ErrAssertionFailed fn p) b
           let lineno =  fst $ begin $ unignore $ e^.spanOf
-          getOutTy ot $ tRefined tUnit ("assertion (line " ++ show lineno ++ ")") p 
+          getOutTy ot $ tRefined tUnit ("assertion_line_" ++ show lineno) p 
       (EAssume p) -> do
           local (set tcScope $ TcGhost) $ checkProp p
           let lineno =  fst $ begin $ unignore $ e^.spanOf
-          getOutTy ot $ tRefined tUnit ("assumption (line " ++ show lineno ++ ")") p
+          getOutTy ot $ tRefined tUnit ("assumption_line_" ++ show lineno) p
       (EAdmit) -> getOutTy ot $ tAdmit
       (EDebug (DebugPrintModules)) -> do
           ms <- view openModules

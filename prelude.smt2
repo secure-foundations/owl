@@ -14,6 +14,17 @@
     :qid okint_i2b
 )))
 
+; HasHex b s is true when:
+; - s is a valid hex string in ASCII; and
+; - b is the bitvector corresponding to the hex string
+(declare-fun HasHex (Bits String) Bool)
+(assert (forall ((x Bits) (s1 String) (s2 String)) (!
+    (=> (and (HasHex x s1) (HasHex x s2))
+        (= s1 s2))
+    :pattern ((HasHex x s1) (HasHex x s2))
+    :qid hashex_unique
+)))
+
 (assert (forall ((x Int)) (!
     (=> (>= x 0)
         (= (B2I (I2B x)) x))
@@ -104,7 +115,7 @@
 (assert (= (length UNIT) (I2B 0)))
 
 (assert (forall ((x Bits) (y Bits) (z Bits) (w Bits)) (!
-    (=> (and (or (= (length x) (length z)) (= (length y) (length w)))
+    (=> (and (or (= TRUE (eq (length x) (length z))) (= TRUE (eq (length y) (length w))))
              (= TRUE (eq (concat x y) (concat z w))))
         (and (= TRUE (eq x z)) (= TRUE (eq y w))))
     :pattern ((eq (concat x y) (concat z w)))
@@ -259,18 +270,27 @@
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
     (=> (and (IsExponent x) (= TRUE (is_group_elem y)) (= TRUE (is_group_elem z))
              (= TRUE (eq (dh_combine y x) (dh_combine z x))))
-        (= y z))
+        (= TRUE (eq y z)))
     :pattern (eq (dh_combine y x) (dh_combine z x))
     :qid dh_combine_inj_2
 )))
+
+(assert (forall ((x Bits) (y Bits)) (!
+    (=>
+        (and (IsExponent x) (IsExponent y)
+             (= TRUE (eq (dhpk x) (dhpk y))))
+        (= TRUE (eq x y)))
+    :pattern ((eq (dhpk x) (dhpk y)))
+    :qid dhpk_inj
+ )))
 
 
 (declare-sort Name)
 (declare-fun ValueOf (Name) Bits)
 (declare-fun TName (Name) Type)
 (assert (forall ((x Bits) (n Name)) (!
-    (=> (HasType x (TName n))
-        (= x (ValueOf n)))
+    (= (HasType x (TName n))
+        (= TRUE (eq x (ValueOf n))))
     :pattern (HasType x (TName n))
     :qid hastype_name
 )))
@@ -313,6 +333,9 @@
 (declare-const Taglen Int)
 (assert (> Taglen 0))
 
+(declare-const Counterlen Int)
+(assert (> Counterlen 0))
+
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
@@ -351,6 +374,15 @@
     :qid mult_def
 )))
 
+(declare-fun crh (Bits) Bits)
+(declare-fun CrhLength () Int)
+(assert (> CrhLength 0))
+(assert (forall ((x Bits)) (!
+    (= (length (crh x)) (I2B CrhLength))
+    :pattern (crh x)
+    :qid crh_length
+)))
+
 (declare-sort Label)
 (declare-const %adv Label)
 
@@ -381,6 +413,7 @@
     :pattern ((Flows (Join x y) z))
     :qid flows_join_l
 )))
+
 (declare-const %zeroLbl Label)
 (assert (forall ((x Label)) (! 
     (Flows %zeroLbl x)
@@ -392,6 +425,19 @@
     (=> (Flows x %zeroLbl) (= x %zeroLbl))
     :pattern ((Flows x %zeroLbl))
     :qid flows_zero_r
+)))
+
+(declare-const %top Label)
+(assert (forall ((x Label)) (! 
+    (Flows x %top)
+    :pattern ((Flows x %top))
+    :qid flows_top_l
+)))
+
+(assert (forall ((x Label)) (!
+    (=> (Flows %top x) (= x %top))
+    :pattern ((Flows %top x))
+    :qid flows_top_r
 )))
 
 (declare-fun LabelOf (Name) Label)
@@ -424,15 +470,6 @@
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
     :pattern dh_combine_neq_dhpk
 )))
-
-(assert (forall ((x Name) (y Name)) (!
-    (=>
-        (and (HasNameKind x DHkey) (HasNameKind y DHkey)
-             (= TRUE (eq (dhpk (ValueOf x)) (dhpk (ValueOf y)))))
-        (= x y))
-    :pattern ((eq (dhpk (ValueOf x)) (dhpk (ValueOf y))))
-    :qid dhpk_inj
- )))
 
 ;; RO(a, b, i) means that the _current_ random oracle maps a to b in slot i.
 (declare-fun RO (Bits Bits Int) Bool)

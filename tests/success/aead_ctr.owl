@@ -16,15 +16,17 @@ name k<@i> : st_aead Name(X<@i>)
 def tst<@i>() @ alice<i> : Unit = 
     inc_counter N<@i>;
     let x = get_counter N<@i> in 
+    assert (aad(k<@i>)[f()]);
     let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), f()) in 
     output c;
     corr_case k<@i> in
     input h in 
-    case st_aead_dec(get(k<@i>), c, h, x)
+    case st_aead_dec(get(k<@i>), c, h, x) {
      | None => ()
      | Some _y => 
         let y : if sec(k<@i>) then (_:Name(X<@i>){h == f()}) else Data<adv> = _y in
         ()
+    }
 
     
 

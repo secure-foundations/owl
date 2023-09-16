@@ -106,7 +106,7 @@ def Alice_main<i> () @ Alice
     input inp1 in
     let tkt1, tkt2 = msg3_tkt1(inp1), msg3_tkt2(inp1) in   
 
-    begin case adec(kA, tkt1) 
+    case adec(kA, tkt1)  {
         | None => 
             unpack j, _ = () in
             pack<j>(alice_None<idx i, idx j>())
@@ -126,7 +126,7 @@ def Alice_main<i> () @ Alice
             // | e2 tkt2 =>
             let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
             pack<j>(alice_Some<idx i, idx j>(kAB'))
-    end
+    }
 
 
 
@@ -155,15 +155,15 @@ def Bob_main<i> () @ Bob
         input inp2 in
         let tkt', x = msg4_tkt(inp2), msg4_x(inp2) in
 
-        case tkt' 
+        case tkt'  {
         | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
         | e2 tkt =>
-            begin case adec(kB, tkt) 
+             case adec(kB, tkt) {
                 | None => pack<j_>(bob_None<idx i, idx j_>())
                 | Some res =>
                     unpack i', res' = res in
                     unpack j', res'' = res' in
-                    begin case res'' 
+                    case res'' {
                         | mB1 _ => pack<j'>(bob_None<idx i, idx j'>())
                         | mB2 msg2 =>
                             let A''  = _A_kB2<idx i', idx j'>(msg2) in
@@ -174,7 +174,7 @@ def Bob_main<i> () @ Bob
                             if checknonce(nB', nB) then 
                                 assert(sec(KB) ==> (i =idx i'));
                                 corr_case KAB<j'> in
-                                (case adec(kAB', x) 
+                                case adec(kAB', x) {
                                     | None => pack<j'>(bob_None<idx i, idx j'>())
                                     | Some res2 =>
                                         // unpack j'', nB' = res2 in
@@ -182,11 +182,13 @@ def Bob_main<i> () @ Bob
                                         if checknonce(nB', nB) then 
                                             pack<j'>(bob_Some<idx i, idx j'>(kAB'))
                                         else
-                                            pack<j'>(bob_None<idx i, idx j'>()))
+                                            pack<j'>(bob_None<idx i, idx j'>())
+                                  }
                             else
                                 pack<j'>(bob_None<idx i, idx j'>())
-                    end
-            end
+                    }
+                }
+        }
     else
         pack<j_>(bob_None<idx i, idx j_>())
 
@@ -202,16 +204,16 @@ def AS_main<i> () @ AS
     let B' = msg2_B(inp) in
     if eq(length(B'), |nonce|)  then
         let x' = msg2_x(inp) in
-        case x' 
+        case x' {
             | e2 _ => ()
             | e1 x'' => 
-                begin case adec(kB, x'') 
+                case adec(kB, x'') {
                     | None => ()
                     | Some res =>
                         unpack i1, res' = res in
                         unpack j1, res'' = res' in
 
-                        begin case res'' 
+                        case res'' {
                             | mB1 msg1 =>
                                 let A'  = _A_kB1<idx i1>(msg1) in
                                 let nA' = _nA_kB1<idx i1>(msg1) in
@@ -226,8 +228,9 @@ def AS_main<i> () @ AS
                                         ()
                                 else ()
                             | mB2 _ => ()
-                        end
-                end
+                        }
+                }
+        }
     else ()
 
 // TODO: Strengthen spec for all servers also? if sec(KA, KB) then valid key output    

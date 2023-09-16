@@ -49,19 +49,19 @@ def R_main () @ R
 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
-    (case x 
+    case x {
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
 
             corr_case K<@j> in
 
-            (case mac_vrfy(k, nT, mc) 
+            case mac_vrfy(k, nT, mc) {
                 | None => No()
                 | Some m =>
                     // Checking if m is of type Name(NT<j>) as expected
                     //   and if m == x - these two lines can be removed
-                    if eq(length(m), |nonce|) then 
+                    if eq(length(m), |nonce|) then {
                         let mm : if sec(K<@j>) then Name(NT<@j>) else Data<adv> | |nonce| | = m in 
                         let mmm: if sec(K<@j>) 
                                  then x:Name(NT<@j>){happened(T_main<@j>())}
@@ -73,9 +73,10 @@ def R_main () @ R
                         |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                           = pack<j>(mmm) in 
                         Ok(res)
+                    }
                     else
                         No()
-            )
-        )
+            }
+        }
 
 

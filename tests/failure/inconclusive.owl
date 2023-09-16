@@ -5,6 +5,7 @@ name k : enckey Name(n) @ alice
 
 def alice_main () @ alice : Unit = 
     input i in 
-    case adec(get(k), i)
+    case adec(get(k), i) {
         | Some m => ()
         | None => ()
+    }

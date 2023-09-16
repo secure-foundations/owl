@@ -66,14 +66,14 @@ def R_main () @ R
 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
-    begin case x 
+    case x {
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
 
             corr_case K<@j> in
             let msg_to_verify = nonces<idx j>(nR, nT) in
-            begin case mac_vrfy(k, msg_to_verify, mc) 
+            case mac_vrfy(k, msg_to_verify, mc) {
                 | None => No()
                 | Some m =>
                     // len(m) == plus(..)
@@ -97,6 +97,7 @@ def R_main () @ R
                         Ok(res)
                     else
                         No()
-            end
-    end
+            }
+    }
+
 

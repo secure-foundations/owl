@@ -6,12 +6,12 @@ name y : nonce @ alice
 name z<i> : nonce @ alice
 
 def tst() @ alice : Unit = 
-    crh_lemma<get(x), get(y)>();
+    crh_lemma(get(x), get(y)); 
     assert (crh(get(x)) != crh(get(y)));
     ()
 
 def tst2<i,j>() @ alice : Unit = 
-    crh_lemma<get(z<i>), get(z<j>)>();
+    crh_lemma(get(z<i>), get(z<j>)); 
     assert (
         (crh(get(z<i>)) == crh(get(z<j>)))
         ==>

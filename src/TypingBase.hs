@@ -1215,9 +1215,6 @@ normalizeNameExp ne =
 
 -- Traversing modules to collect global info
 
-instance OwlPretty ResolvedPath where
-    owlpretty a = owlpretty $ show a
-
 collectEnvInfo :: (ModBody -> Map String a) -> Check (Map ResolvedPath a)
 collectEnvInfo f = do
     cms <- view openModules

@@ -22,10 +22,11 @@ def B_main () @ B : Unit =
     input i in 
     input j in 
     corr_case k in 
-    case mac_vrfy(get(k), i, j) 
+    case mac_vrfy(get(k), i, j) {
     | None => ()
     | Some m => 
         let mm : if sec(k) then Name(d) else Data<adv> = m in
         ()
+    }
 
 

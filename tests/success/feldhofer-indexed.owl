@@ -52,14 +52,14 @@ def R_main<j>() @ R
     input inp in
 
     let x : Option (exists i. Name(K<i>)) = lookup(keys, nR) in
-    begin case x 
+    case x {
         | None =>
             unpack i, _ = () in
             pack<i>(No<idx i>())
         | Some k_packed =>
             unpack i, k = k_packed in
             corr_case K<i> in
-            begin case adec(k, inp) 
+            case adec(k, inp) {
                 | None => pack<i>(No<idx i>())
                 | Some nR' => 
                     // let b = eq(length(inp), cipherlen(|nonce|)) in
@@ -67,8 +67,8 @@ def R_main<j>() @ R
                     pack<i>(Ok<idx i>(inp))
                     // else 
                     //     No<idx i>()
-            end
-    end
+            }
+    }
 
 // The below is another version without tables
 // Reader runs in some session i and wants to auth tag j

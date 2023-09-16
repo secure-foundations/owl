@@ -155,21 +155,22 @@ def Alice_main<i> (
 
     // let _ = check_session_identifier(M') in
 
-    begin case adec(kA, x1') 
+    case adec(kA, x1') {
         | None => pack<j>(alice_None<idx i, idx j>())
         | Some res =>
             unpack i', res' = res in
             unpack j', res'' = res' in
 
             let o : if sec(KA) then alice_result<idx i, idx j'> else Data<adv> =
-            begin case res'' 
+            case res'' {
                 | mA1 _ => alice_None<idx i, idx j'>()
                 | mA2 msg2 =>
                     if checknonce(_nA2<idx i', idx j'>(msg2), nA) then
                         alice_Some<idx i, idx j'>(_kABA<idx i, idx j'>(msg2))
                     else alice_None<idx i, idx j'>()
-            end in pack<j'>(o)
-    end
+            } 
+            in pack<j'>(o)
+    }
 // ************************************************************************
 
 // ************************************************************************
@@ -198,7 +199,7 @@ def Bob_main<i> (
 
     unpack j, _ = () in
 
-    begin case encm' 
+    case encm' {
         | mA2_enc _ =>
             let _ = output 0 to endpoint(AS) in
             input _ in
@@ -220,14 +221,14 @@ def Bob_main<i> (
 
                 // let _ = check_session_identifier(M') in
 
-                begin case adec(kB, x2') 
+                case adec(kB, x2') {
                     | None => let _ = output 0 to endpoint(Alice) in pack<j>(bob_None<idx i, idx j>())
                     | Some res =>
                         unpack i', res' = res in
                         unpack j', res'' = res' in
 
                         let o : if sec(KB) then bob_result<idx i, idx j'> else Data<adv> =
-                        begin case res'' 
+                        case res'' {
                             | mB1 _ => bob_None<idx i, idx j'>()
                             | mB2 msg2 =>
                                 if checknonce(_nB2<idx i', idx j'>(msg2), nB)
@@ -237,14 +238,14 @@ def Bob_main<i> (
                                     bob_Some<idx i, idx j'>(_kABB<idx i, idx j'>(msg2))
                                 else
                                     bob_None<idx i, idx j'>()
-                        end in pack<j'>(o)
-                end
+                        } in pack<j'>(o)
+                }
             else
                 let _ = output 0 to endpoint(AS) in
                 input _ in
                 let _ = output 0 to endpoint(Alice) in
                 pack<j>(bob_None<idx i, idx j>())
-    end
+    }
     
 // ************************************************************************
 
@@ -267,26 +268,26 @@ def AS_main<i> () @ AS
     // let _ = check_valid_username(B) in
 
     if eq(length(M), |nonce|) && eq(length(A), |nonce|) && eq(length(B), |nonce|) then
-        case x1 
+        case x1 {
         | mA2_enc _ => ()
         | mA1_enc x1' => 
-            begin case adec(kA, x1')
+            case adec(kA, x1') {
                 | None => ()
                 | Some resA =>
                     unpack j1, resA' = resA in
                     unpack j2, resA'' = resA' in
-                    begin case resA''
+                    case resA'' {
                         | mA1 msg1A =>
                             // attempt to decrypt the second message only after the first one decrypts correctly
-                            begin case x2
+                            case x2 {
                                 | mB2_enc =>  let _ = output 0 to endpoint(Bob) in ()
                                 | mB1_enc =>
-                                    begin case adec(kB, x2)
+                                     case adec(kB, x2) {
                                         | None =>  let _ = output 0 to endpoint(Bob) in ()
                                         | Some resB =>
                                             unpack j3, resB' = resB in
                                             unpack j4, resB'' = resB' in
-                                            begin case resB''
+                                            case resB'' {
                                                 | mB1 msg1B =>
                                                     // let _ = check_equal(A, _AA<idx j1>(msg1A), _AB<idx j3>(msg1B)) in
                                                     // let _ = check_equal(B, _BA<idx j1>(msg1A), _BB<idx j3>(msg1B)) in
@@ -297,11 +298,12 @@ def AS_main<i> () @ AS
                                                     let _ = output msg3_StoB(M, encmA, encmB) to endpoint(Bob)
                                                     in ()
                                                 | mB2 _ => let _ = output 0 to endpoint(Bob) in ()
-                                            end
-                                    end
-                            end
+                                            }
+                                    }
+                            }
                         | mA2 _ =>  let _ = output 0 to endpoint(Bob) in ()
-                    end
-            end
+                    }
+            }
+        }
     else let _ = output 0 to endpoint(Bob) in ()
 // ************************************************************************
