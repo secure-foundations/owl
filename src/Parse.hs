@@ -208,7 +208,7 @@ parseTyTerm =
                         symbol "|"
                         return $ TDataWithLength l a
                     )
-                    (return $ TData l l)
+                    (return $ TData l l (ignore Nothing))
             )
             (do
                 symbol ","
@@ -216,7 +216,7 @@ parseTyTerm =
                 l' <- parseLabel
                 symbol "|"
                 symbol ">"
-                return $ TData l l'
+                return $ TData l l' (ignore Nothing)
             ) 
     )
     <|>
@@ -241,7 +241,7 @@ parseTyTerm =
         p' <- getPosition
         return $ TCase (mkSpanned $ PNot $ Spanned (ignore $ mkPos p p') $ PFlow (Spanned (_spanOf ne) $ LName ne) advLbl)
                        t
-                       (mkSpanned $ TData advLbl advLbl)
+                       (mkSpanned $ TData advLbl advLbl (ignore Nothing))
     )
     <|>
     (parseSpanned $ do

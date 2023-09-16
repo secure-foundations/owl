@@ -1,96 +1,134 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Pretty where
 import AST
 import Prettyprinter
+import Error.Diagnose
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name
 import Unbound.Generics.LocallyNameless.Unsafe
+import Prettyprinter.Render.Terminal
 import Data.List
 
-instance Pretty a => Pretty (Spanned a) where
-    pretty (Spanned _ v) = pretty v
+type OwlDoc = Doc AnsiStyle
 
-instance Pretty (Name a) where
-    pretty v = pretty $ show v
+class OwlPretty a where
+    owlpretty :: a -> Doc AnsiStyle
 
-instance Pretty Idx where
-    pretty (IVar _ s) = pretty s
+instance OwlPretty Char where
+    owlpretty = pretty
 
-prettyIdxParams :: ([Idx], [Idx]) -> Doc ann
-prettyIdxParams  ([], []) = mempty
-prettyIdxParams (vs1, vs2) = pretty "<" <> pretty (intercalate "," (map (show . pretty) vs1)) <> pretty "@" <> pretty (intercalate "," (map (show . pretty) vs2)) <> pretty ">"
+instance OwlPretty a => OwlPretty (Ignore a) where
+    owlpretty x = owlpretty (unignore x)
 
-instance Pretty NameExpX where
-    pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
-    pretty (NameConst vs n oi) = 
+instance OwlPretty Bool where
+    owlpretty = pretty
+
+instance OwlPretty Int where
+    owlpretty = pretty
+
+instance OwlPretty a => OwlPretty [a] where
+    owlpretty = mconcat . map owlpretty
+
+instance OwlPretty a => OwlPretty (Maybe a) where
+    owlpretty Nothing = mempty
+    owlpretty (Just x) = owlpretty x
+
+instance OwlPretty a => OwlPretty (Spanned a) where
+    owlpretty (Spanned _ v) = owlpretty v
+
+instance OwlPretty Position where
+    owlpretty = pretty
+
+instance OwlPretty (Name a) where
+    owlpretty v = pretty $ show v
+
+instance (OwlPretty a, OwlPretty b) => OwlPretty (a, b) where
+    owlpretty (x, y) = parens $ owlpretty x <> pretty "," <+> owlpretty y
+
+instance OwlPretty Idx where
+    owlpretty (IVar _ s) = pretty $ show s
+
+owlprettyIdxParams :: ([Idx], [Idx]) -> Doc AnsiStyle
+owlprettyIdxParams  ([], []) = mempty
+owlprettyIdxParams (vs1, vs2) = pretty "<" <> pretty (intercalate "," (map (show . owlpretty) vs1)) <> pretty "@" <> pretty (intercalate "," (map (show . owlpretty) vs2)) <> pretty ">"
+
+flowColor = Cyan
+corrColor = Red
+
+instance  OwlPretty NameExpX where
+    owlpretty (PRFName n e) = owlpretty "PRF<" <> owlpretty n <> owlpretty ", " <> owlpretty e <> owlpretty ">"
+    owlpretty (NameConst vs n oi) = 
         let pi = case oi of
                    Nothing -> mempty
-                   Just (xs, i) -> pretty "[" <> hsep (intersperse (pretty ",") (map pretty xs)) <> pretty ";" <+> pretty i <> pretty "]"
+                   Just (xs, i) -> owlpretty "[" <> hsep (intersperse (pretty ",") (map owlpretty xs)) <> owlpretty ";" <+> owlpretty i <> owlpretty "]"
         in
-        pretty n <> prettyIdxParams vs <> pi
+        owlpretty n <> owlprettyIdxParams vs <> pi
 
-prettyBind :: (Alpha a, Alpha b, Pretty a, Pretty b) => Bind b a -> (Doc ann, Doc ann)
-prettyBind b = 
+owlprettyBind :: (Alpha a, Alpha b, OwlPretty a, OwlPretty b) => Bind b a -> (OwlDoc, OwlDoc)
+owlprettyBind b = 
     let (x, y) = unsafeUnbind b in
-    (pretty x, pretty y)
+    (owlpretty x, owlpretty y)
 
-instance Pretty LblConst where
-    pretty (TyLabelVar s) = pretty s
+instance  OwlPretty LblConst where
+    owlpretty (TyLabelVar s) = owlpretty s
 
-instance Pretty LabelX where
-    pretty (LName n) = pretty "[" <> pretty n <> pretty "]"
-    pretty LZero = pretty "static"
-    pretty (LAdv) = pretty "adv"
-    pretty (LTop) = pretty "top"
-    pretty (LJoin v1 v2) = pretty v1 <+> pretty "/\\" <+> pretty v2
-    pretty (LConst s) = pretty s
-    pretty (LRangeIdx l) = 
-        let (b, l') = prettyBind l in
-        pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
+instance  OwlPretty LabelX where
+    owlpretty (LName n) = owlpretty "[" <> owlpretty n <> owlpretty "]"
+    owlpretty LZero = owlpretty "static"
+    owlpretty (LAdv) = owlpretty "adv"
+    owlpretty (LTop) = owlpretty "top"
+    owlpretty (LJoin v1 v2) = owlpretty v1 <+> owlpretty "/\\" <+> owlpretty v2
+    owlpretty (LConst s) = owlpretty s
+    owlpretty (LRangeIdx l) = 
+        let (b, l') = owlprettyBind l in
+        owlpretty "/\\_" <> b <+> owlpretty "(" <> l' <> owlpretty ")"
 
-instance Pretty (Path) where
-    pretty x = pretty $ show x
+instance  OwlPretty (Path) where
+    owlpretty x = owlpretty $ show x
 
-instance Pretty TyX where
-    pretty TUnit =
-        pretty "unit"
-    pretty (TBool l) = 
-            pretty "Bool<" <+> pretty l <> pretty ">"
-    pretty (TData l1 l2) = 
+instance  OwlPretty TyX where
+    owlpretty TUnit =
+        owlpretty "unit"
+    owlpretty (TBool l) = 
+            owlpretty "Bool<" <> owlpretty l <> owlpretty ">"
+    owlpretty (TData l1 l2 _) = 
             if l1 `aeq` l2 then
-                pretty "Data" <+> angles (pretty l1)
+                owlpretty "Data" <> angles (owlpretty l1)
             else
-                pretty "Data <" <> pretty l1 <> pretty ", |" <> pretty l2 <> pretty "|>"
-    pretty (TDataWithLength l1 a) = 
-            pretty "Data <" <> pretty l1 <> pretty ">" <+> pretty "|" <> pretty a <> pretty "|"
-    pretty (TRefined t s xp) = 
-        let (x, p) = prettyBind xp in
-        pretty s <> pretty ":" <> parens (pretty t) <> braces (align p)
-    pretty (TOption t) = 
-            pretty "Option" <+> pretty t
-    pretty (TCase p t1 t2) = 
-            pretty "if" <+> pretty p <+> pretty "then" <+> pretty t1 <> pretty " else " <> pretty t2 
-    pretty (TConst n ps) =
-            pretty n <> pretty "<" <> pretty (intercalate "," (map (show . pretty) ps)) <> pretty ">"
-    pretty (TName n) =
-            pretty "Name(" <> pretty n <> pretty ")"
-    pretty (TVK n) =
-            pretty "vk(" <> pretty n <> pretty ")"
-    pretty (TDH_PK n) =
-            pretty "dhpk(" <> pretty n <> pretty ")"
-    pretty (TEnc_PK n) =
-            pretty "encpk(" <> pretty n <> pretty ")"
-    pretty (TSS n m) =
-            pretty "shared_secret(" <> pretty n <> pretty ", " <> pretty m <> pretty ")"
-    pretty TAdmit = pretty "admit"
-    pretty (TExistsIdx it) = 
-        let (i, t) = prettyBind it in
-        pretty "exists" <+> i <> pretty "." <+> t
-    pretty (TUnion t1 t2) =
-        pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
+                owlpretty "Data<" <> owlpretty l1 <> owlpretty ", |" <> owlpretty l2 <> owlpretty "|>"
+    owlpretty (TDataWithLength l1 a) = 
+            owlpretty "Data <" <> owlpretty l1 <> owlpretty ">" <+> owlpretty "|" <> owlpretty a <> owlpretty "|"
+    owlpretty (TRefined t s xp) = 
+        let (x, p) = owlprettyBind xp in
+        owlpretty s <> owlpretty ":" <> parens (owlpretty t) <> braces (align p)
+    owlpretty (TOption t) = 
+            owlpretty "Option" <+> owlpretty t
+    owlpretty (TCase p t1 t2) = 
+            owlpretty "if" <+> owlpretty p <+> owlpretty "then" <+> owlpretty t1 <> owlpretty " else " <> owlpretty t2 
+    owlpretty (TConst n ps) =
+            owlpretty n <> owlpretty "<" <> hsep (intersperse (pretty ",") (map owlpretty ps))  <> owlpretty ">"
+    owlpretty (TName n) =
+            owlpretty "Name(" <> owlpretty n <> owlpretty ")"
+    owlpretty (TVK n) =
+            owlpretty "vk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (TDH_PK n) =
+            owlpretty "dhpk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (TEnc_PK n) =
+            owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (TSS n m) =
+            owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
+    owlpretty TAdmit = owlpretty "admit"
+    owlpretty (TExistsIdx it) = 
+        let (i, t) = owlprettyBind it in
+        owlpretty "exists" <+> i <> owlpretty "." <+> t
+    owlpretty (TUnion t1 t2) =
+        owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 
-instance Pretty Quant where
-    pretty Forall = pretty "forall"
-    pretty Exists = pretty "exists"
+instance  OwlPretty Quant where
+    owlpretty Forall = owlpretty "forall"
+    owlpretty Exists = owlpretty "exists"
 
 pIsInfix :: Prop -> Bool
 pIsInfix (Spanned _ (PAnd _ _)) = True
@@ -106,199 +144,199 @@ pIsOr :: Prop -> Bool
 pIsOr (Spanned _ (POr _ _)) = True
 pIsOr _ = False
 
-instance Pretty PropX where 
-    pretty PTrue = pretty "true"
-    pretty PFalse = pretty "false"
-    pretty (PAnd p1 p2) = 
-        let pp1 = if (pIsInfix p1 && (not $ pIsAnd p1)) then parens (pretty p1) else pretty p1 in
-        let pp2 = if (pIsInfix p2 && (not $ pIsAnd p2)) then parens (pretty p2) else pretty p2 in
-        pp1 <+> pretty "/\\" <+> pp2
-    pretty (POr p1 p2) = 
-        let pp1 = if (pIsInfix p1 && (not $ pIsOr p1)) then parens (pretty p1) else pretty p1 in
-        let pp2 = if (pIsInfix p2 && (not $ pIsOr p2)) then parens (pretty p2) else pretty p2 in
-        pp1 <+> pretty "\\/" <+> pp2
-    pretty (PNot (Spanned _ (PEq a b))) = pretty a <+> pretty "!=" <+> pretty b
-    pretty (PEq e1 e2) = pretty e1 <+> pretty "==" <+> pretty e2
-    pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
-    pretty (PLetIn a xe2) = 
-        let (x, e2) = prettyBind xe2 in
-        pretty "let" <+> x <+> pretty "=" <+> pretty a <+> pretty "in" <+> e2
-    pretty (PImpl p1 p2) = 
-        let pp1 = if (pIsInfix p1) then parens (pretty p1) else pretty p1 in
-        let pp2 = if (pIsInfix p2) then parens (pretty p2) else pretty p2 in
-        pp1 <+> pretty "==>" <+> pp2
-    pretty (PNot (Spanned _ (PFlow l1 l2))) = pretty l1 <+> pretty "!<=" <+> pretty l2
-    pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
-    pretty (PIsConstant a) = pretty "is_constant(" <> pretty a <> pretty ")"
-    pretty (PQuantIdx q b) = 
-        let (x, p) = prettyBind b in
-        pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
-    pretty (PQuantBV q b) = 
-        let (x, p) = prettyBind b in
-        pretty q <+> x <+> pretty ": bv" <> pretty "." <+> p
-    pretty (PRO a b i) = pretty "ro(" <> pretty a <> pretty "," <+> pretty b <> pretty "," <+> pretty i <> pretty ")"
-    pretty (PApp p is xs) = pretty p <> angles (mconcat $ map pretty is) <> list (map pretty xs)
-    pretty (PAADOf ne x) = pretty "aad" <> tupled [pretty ne] <> brackets (pretty x)
-    pretty (PHappened s ixs xs) = 
+instance  OwlPretty PropX where 
+    owlpretty PTrue = owlpretty "true"
+    owlpretty PFalse = owlpretty "false"
+    owlpretty (PAnd p1 p2) = 
+        let pp1 = if (pIsInfix p1 && (not $ pIsAnd p1)) then parens (owlpretty p1) else owlpretty p1 in
+        let pp2 = if (pIsInfix p2 && (not $ pIsAnd p2)) then parens (owlpretty p2) else owlpretty p2 in
+        pp1 <+> owlpretty "/\\" <+> pp2
+    owlpretty (POr p1 p2) = 
+        let pp1 = if (pIsInfix p1 && (not $ pIsOr p1)) then parens (owlpretty p1) else owlpretty p1 in
+        let pp2 = if (pIsInfix p2 && (not $ pIsOr p2)) then parens (owlpretty p2) else owlpretty p2 in
+        pp1 <+> owlpretty "\\/" <+> pp2
+    owlpretty (PNot (Spanned _ (PEq a b))) = owlpretty a <+> owlpretty "!=" <+> owlpretty b
+    owlpretty (PEq e1 e2) = owlpretty e1 <+> owlpretty "==" <+> owlpretty e2
+    owlpretty (PEqIdx e1 e2) = owlpretty e1 <+> owlpretty "=idx" <+> owlpretty e2
+    owlpretty (PLetIn a xe2) = 
+        let (x, e2) = owlprettyBind xe2 in
+        owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty a <+> owlpretty "in" <+> e2
+    owlpretty (PImpl p1 p2) = 
+        let pp1 = if (pIsInfix p1) then parens (owlpretty p1) else owlpretty p1 in
+        let pp2 = if (pIsInfix p2) then parens (owlpretty p2) else owlpretty p2 in
+        pp1 <+> owlpretty "==>" <+> pp2
+    owlpretty (PNot (Spanned _ (PFlow l1 l2))) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "!<=" <+> owlpretty l2
+    owlpretty (PFlow l1 l2) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2
+    owlpretty (PIsConstant a) = owlpretty "is_constant(" <> owlpretty a <> owlpretty ")"
+    owlpretty (PQuantIdx q b) = 
+        let (x, p) = owlprettyBind b in
+        owlpretty q <+> x <+> owlpretty ": idx" <> owlpretty "." <+> p
+    owlpretty (PQuantBV q b) = 
+        let (x, p) = owlprettyBind b in
+        owlpretty q <+> x <+> owlpretty ": bv" <> owlpretty "." <+> p
+    owlpretty (PRO a b i) = owlpretty "ro(" <> owlpretty a <> owlpretty "," <+> owlpretty b <> owlpretty "," <+> owlpretty i <> owlpretty ")"
+    owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
+    owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
+    owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
                   ([], []) -> mempty
-                  (v1, v2) -> pretty "<" <> 
-                         pretty (intercalate "," (map (show . pretty) v1)) <> 
-                         pretty "@" <>
-                         pretty (intercalate "," (map (show . pretty) v2)) <> 
-                         pretty ">" in 
-        pretty "happened(" <> pretty s <> pids <> tupled (map pretty xs) <> pretty ")"
-    pretty (PNot p) = pretty "!" <+> pretty p
+                  (v1, v2) -> owlpretty "<" <> 
+                         owlpretty (intercalate "," (map (show . owlpretty) v1)) <> 
+                         owlpretty "@" <>
+                         owlpretty (intercalate "," (map (show . owlpretty) v2)) <> 
+                         owlpretty ">" in 
+        owlpretty "happened(" <> owlpretty s <> pids <> tupled (map owlpretty xs) <> owlpretty ")"
+    owlpretty (PNot p) = owlpretty "!" <+> owlpretty p
 
-instance Pretty NameTypeX where
-    pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
-    pretty (NT_StAEAD ty xaad p pat) = 
-        let (x, aad) = prettyBind xaad in
-        pretty "StAEAD" <+> pretty ty <+> pretty "(" <> x <> pretty "." <> aad <> pretty ")" <+> pretty p
-    pretty (NT_Enc ty) = pretty "enc" <+> pretty ty
-    pretty (NT_PKE ty) = pretty "pke" <+> pretty ty
-    pretty (NT_MAC ty) = pretty "mac" <+> pretty ty
-    pretty (NT_PRF xs) = pretty "prf" <+> pretty "[" <> mconcat (map (\(ae, nt) -> pretty ae <+> pretty "->" <+> pretty nt) xs) <> pretty "]"
-    pretty NT_DH = pretty "DH"
-    pretty NT_Nonce = pretty "nonce"
+instance  OwlPretty NameTypeX where
+    owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
+    owlpretty (NT_StAEAD ty xaad p pat) = 
+        let (x, aad) = owlprettyBind xaad in
+        owlpretty "StAEAD" <+> owlpretty ty <+> owlpretty "(" <> x <> owlpretty "." <> aad <> owlpretty ")" <+> owlpretty p
+    owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
+    owlpretty (NT_PKE ty) = owlpretty "pke" <+> owlpretty ty
+    owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
+    owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"
+    owlpretty NT_DH = owlpretty "DH"
+    owlpretty NT_Nonce = owlpretty "nonce"
 
 
-instance Pretty AExprX where
-    pretty (AEVar s n) = pretty (unignore s)
-    pretty (AEApp f _ as) = 
+instance  OwlPretty AExprX where
+    owlpretty (AEVar s n) = owlpretty (unignore s)
+    owlpretty (AEApp f _ as) = 
         case (f, as) of
-          (PRes (PDot PTop "plus"), [x, y]) -> pretty x <+> pretty "+" <+> pretty y
-          (PRes (PDot PTop "concat"), [x, y]) -> pretty x <+> pretty "++" <+> pretty y
-          (PRes (PDot PTop "zero"), []) -> pretty "0"
-          (PRes (PDot PTop s), xs) -> pretty s <> tupled (map pretty xs)
-          _ -> pretty f <> tupled (map pretty as)
-    pretty (AEHex s) = pretty "0x" <> pretty s
-    pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
-    pretty (AEInt i) = pretty i
-    pretty (AEPreimage p ps xs) = 
+          (PRes (PDot PTop "plus"), [x, y]) -> owlpretty x <+> owlpretty "+" <+> owlpretty y
+          (PRes (PDot PTop "concat"), [x, y]) -> owlpretty x <+> owlpretty "++" <+> owlpretty y
+          (PRes (PDot PTop "zero"), []) -> owlpretty "0"
+          (PRes (PDot PTop s), xs) -> owlpretty s <> tupled (map owlpretty xs)
+          _ -> owlpretty f <> tupled (map owlpretty as)
+    owlpretty (AEHex s) = owlpretty "0x" <> owlpretty s
+    owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
+    owlpretty (AEInt i) = owlpretty i
+    owlpretty (AEPreimage p ps xs) = 
         let pxs = case xs of
                     [] -> mempty
-                    _ -> pretty xs
+                    _ -> owlpretty xs
         in
-        pretty "preimage" <> prettyIdxParams ps <> pretty "(" <> pretty p <> pretty ")" <> pxs
-    pretty (AEGet ne) = pretty "get" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
+        owlpretty "preimage" <> owlprettyIdxParams ps <> owlpretty "(" <> owlpretty p <> owlpretty ")" <> pxs
+    owlpretty (AEGet ne) = owlpretty "get" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
+    owlpretty (AEGetEncPK ne) = owlpretty "get_encpk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
+    owlpretty (AEGetVK ne) = owlpretty "get_vk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
+    owlpretty (AEPackIdx s a) = owlpretty "pack" <> owlpretty "<" <> owlpretty s <> owlpretty ">(" <> owlpretty a <> owlpretty ")"
 
-instance Pretty BuiltinLemma where
-    pretty (LemmaConstant) = pretty "is_constant_lemma"
-    pretty (LemmaDisjNotEq) = pretty "disjoint_not_eq_lemma" 
-    pretty (LemmaCrossDH n1 n2 n3) = pretty "cross_dh_lemma" <> angles (tupled [pretty n1, pretty n2, pretty n3])
-    pretty (LemmaCRH) = pretty "crh_lemma"
+instance  OwlPretty BuiltinLemma where
+    owlpretty (LemmaConstant) = owlpretty "is_constant_lemma"
+    owlpretty (LemmaDisjNotEq) = owlpretty "disjoint_not_eq_lemma" 
+    owlpretty (LemmaCrossDH n1 n2 n3) = owlpretty "cross_dh_lemma" <> angles (tupled [owlpretty n1, owlpretty n2, owlpretty n3])
+    owlpretty (LemmaCRH) = owlpretty "crh_lemma"
 
-instance Pretty CryptOp where
-    pretty (CHash _ _) = pretty "hash"
-    pretty (CPRF x) = 
-        pretty "PRF" <+> pretty x 
-    pretty (CLemma l) = pretty l
-    pretty (CAEnc) = pretty "aenc"
-    pretty (CADec) = pretty "adec"
-    pretty CPKEnc = pretty "pkenc"
-    pretty CPKDec = pretty "pkdec"
-    pretty CMac = pretty "mac"
-    pretty CMacVrfy = pretty "mac_vrfy"
-    pretty CSign = pretty "sign"
-    pretty CSigVrfy = pretty "vrfy"
-    pretty (CEncStAEAD p (idx1, idx2)) = pretty "st_aead_enc" <> angles (pretty p <> angles (tupled (map pretty idx1) <> pretty "@" <> tupled (map pretty idx2)))
-    pretty (CDecStAEAD) = pretty "st_aead_dec"
+instance  OwlPretty CryptOp where
+    owlpretty (CHash _ _) = owlpretty "hash"
+    owlpretty (CPRF x) = 
+        owlpretty "PRF" <+> owlpretty x 
+    owlpretty (CLemma l) = owlpretty l
+    owlpretty (CAEnc) = owlpretty "aenc"
+    owlpretty (CADec) = owlpretty "adec"
+    owlpretty CPKEnc = owlpretty "pkenc"
+    owlpretty CPKDec = owlpretty "pkdec"
+    owlpretty CMac = owlpretty "mac"
+    owlpretty CMacVrfy = owlpretty "mac_vrfy"
+    owlpretty CSign = owlpretty "sign"
+    owlpretty CSigVrfy = owlpretty "vrfy"
+    owlpretty (CEncStAEAD p (idx1, idx2)) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
+    owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
 
-instance Pretty ExprX where 
-    pretty (ECrypt cop as) = 
-        pretty cop <> (tupled (map pretty as))
-    pretty (EInput _ k) = 
+instance  OwlPretty ExprX where 
+    owlpretty (ECrypt cop as) = 
+        owlpretty cop <> (tupled (map owlpretty as))
+    owlpretty (EInput _ k) = 
         let ((x, i), e) = unsafeUnbind k in
-        pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e
-    pretty (EOutput e l) = pretty "output" <+> pretty e <+> (case l of
-       Nothing -> pretty ""
-       Just s -> pretty "to" <+> pretty s)
-    pretty (EBlock e) = pretty "{" <> pretty e <> pretty "}"
-    pretty (ELet e1 tyAnn anf sx xk) = 
-        let (x, k) = prettyBind xk in
+        owlpretty "input" <+> owlpretty x <> owlpretty ", " <> owlpretty i <> owlpretty " in " <> owlpretty e
+    owlpretty (EOutput e l) = owlpretty "output" <+> owlpretty e <+> (case l of
+       Nothing -> owlpretty ""
+       Just s -> owlpretty "to" <+> owlpretty s)
+    owlpretty (EBlock e) = owlpretty "{" <> owlpretty e <> owlpretty "}"
+    owlpretty (ELet e1 tyAnn anf sx xk) = 
+        let (x, k) = owlprettyBind xk in
         let tann = case tyAnn of
                      Nothing -> mempty
-                     Just t -> pretty ":" <+> pretty t
+                     Just t -> owlpretty ":" <+> owlpretty t
         in
         let anfLet = case anf of
-                        Nothing -> pretty "let"
-                        Just a -> pretty "anf_let[" <> pretty a <> pretty "]"
+                        Nothing -> owlpretty "let"
+                        Just a -> owlpretty "anf_let[" <> owlpretty a <> owlpretty "]"
         in
-        anfLet <+> pretty sx <+> tann <+> pretty "=" <+> pretty "(" <> pretty e1 <> pretty ")" <+> pretty "in" <> line <> k
-    pretty (EUnionCase a xk) = 
-        let (x, k) = prettyBind xk in
-        pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
-    pretty (EUnpack a k) = pretty "unpack a .... TODO"
-    pretty (EIf t e1 e2) = 
-        pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (EForallBV xpk) = pretty "forall_expr.. TODO" 
-    pretty (EForallIdx xpk) = pretty "forall_idx.. TODO"
-    pretty (EGuard a e) = 
-        pretty "guard" <+> pretty a <+> pretty "in" <+> pretty e
-    pretty (ERet ae) = pretty ae
-    pretty (EAdmit) = pretty "admit"
-    pretty (ECall f is as) = 
+        anfLet <+> owlpretty sx <+> tann <+> owlpretty "=" <+> owlpretty "(" <> owlpretty e1 <> owlpretty ")" <+> owlpretty "in" <> line <> k
+    owlpretty (EUnionCase a xk) = 
+        let (x, k) = owlprettyBind xk in
+        owlpretty "union_case" <+> x <+> owlpretty "=" <> owlpretty a <+>  owlpretty "in" <+> k
+    owlpretty (EUnpack a k) = owlpretty "unpack a .... TODO"
+    owlpretty (EIf t e1 e2) = 
+        owlpretty "if" <+> owlpretty t <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
+    owlpretty (EForallBV xpk) = owlpretty "forall_expr.. TODO" 
+    owlpretty (EForallIdx xpk) = owlpretty "forall_idx.. TODO"
+    owlpretty (EGuard a e) = 
+        owlpretty "guard" <+> owlpretty a <+> owlpretty "in" <+> owlpretty e
+    owlpretty (ERet ae) = owlpretty ae
+    owlpretty (EAdmit) = owlpretty "admit"
+    owlpretty (ECall f is as) = 
         let inds = case is of
                      ([], []) -> mempty
-                     (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
+                     (v1, v2) -> owlpretty "<" <> mconcat (map owlpretty v1) <> owlpretty "@" <> mconcat (map owlpretty v2) <> owlpretty ">"
         in
-        pretty "call" <> inds <+> pretty f <> tupled (map pretty as)
-    pretty (ECase t xs) = 
+        owlpretty "call" <> inds <+> owlpretty f <> tupled (map owlpretty as)
+    owlpretty (ECase t xs) = 
         let pcases = 
                 map (\(c, o) -> 
                     case o of
-                      Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
-                      Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
+                      Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
+                      Right (_, xe) -> let (x, e) = owlprettyBind xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
-        pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (EPCase p op e) = 
-        pretty "pcase" <+> parens (pretty p) <+> pretty "in" <+> pretty e
-    pretty (EDebug dc) = pretty "debug" <+> pretty dc
-    pretty (ESetOption s1 s2 e) = pretty "set_option" <+> pretty (show s1) <+> pretty "=" <+> pretty (show s2) <+> pretty "in" <+> pretty e                                         
-    pretty (EAssert p) = pretty "assert" <+> pretty p
-    pretty (EAssume p) = pretty "assume" <+> pretty p
-    pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k
-    pretty (ETLookup n a) = pretty "lookup" <> tupled [pretty a]
-    pretty (ETWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
-    pretty _ = pretty "unimp"
+        owlpretty "case" <+> owlpretty t <> line <> vsep pcases
+    owlpretty (EPCase p op e) = 
+        owlpretty "pcase" <+> parens (owlpretty p) <+> owlpretty "in" <+> owlpretty e
+    owlpretty (EDebug dc) = owlpretty "debug" <+> owlpretty dc
+    owlpretty (ESetOption s1 s2 e) = owlpretty "set_option" <+> owlpretty (show s1) <+> owlpretty "=" <+> owlpretty (show s2) <+> owlpretty "in" <+> owlpretty e                                         
+    owlpretty (EAssert p) = owlpretty "assert" <+> owlpretty p
+    owlpretty (EAssume p) = owlpretty "assume" <+> owlpretty p
+    owlpretty (EFalseElim k) = owlpretty "false_elim in" <+> owlpretty k
+    owlpretty (ETLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
+    owlpretty (ETWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
+    owlpretty _ = owlpretty "unimp"
 
-instance Pretty DebugCommand where
-    pretty (DebugPrintTyOf ae) = pretty "debugPrintTyOf(" <> pretty ae <> pretty ")"
-    pretty (DebugPrint s) = pretty "debugPrint(" <> pretty s <> pretty ")"
-    pretty (DebugPrintTy t) = pretty "debugPrintTy(" <> pretty t <> pretty ")"
-    pretty (DebugPrintProp t) = pretty "debugPrintProp(" <> pretty t <> pretty ")"
-    pretty (DebugPrintTyContext anf) = pretty "debugPrintTyContext" <+> (if anf then pretty "anf" else mempty)
-    pretty (DebugPrintExpr e) = pretty "debugPrintExpr(" <> pretty e <> pretty ")"
-    pretty (DebugPrintLabel l) = pretty "debugPrintLabel(" <> pretty l <> pretty ")"
-    pretty (DebugResolveANF a) = pretty "resolveANF" <> parens (pretty a)
+instance  OwlPretty DebugCommand where
+    owlpretty (DebugPrintTyOf ae) = owlpretty "debugPrintTyOf(" <> owlpretty ae <> owlpretty ")"
+    owlpretty (DebugPrint s) = owlpretty "debugPrint(" <> owlpretty s <> owlpretty ")"
+    owlpretty (DebugPrintTy t) = owlpretty "debugPrintTy(" <> owlpretty t <> owlpretty ")"
+    owlpretty (DebugPrintProp t) = owlpretty "debugPrintProp(" <> owlpretty t <> owlpretty ")"
+    owlpretty (DebugPrintTyContext anf) = owlpretty "debugPrintTyContext" <+> (if anf then owlpretty "anf" else mempty)
+    owlpretty (DebugPrintExpr e) = owlpretty "debugPrintExpr(" <> owlpretty e <> owlpretty ")"
+    owlpretty (DebugPrintLabel l) = owlpretty "debugPrintLabel(" <> owlpretty l <> owlpretty ")"
+    owlpretty (DebugResolveANF a) = owlpretty "resolveANF" <> parens (owlpretty a)
 
-instance Pretty FuncParam where
-    pretty (ParamStr s) = pretty s
-    pretty (ParamAExpr a) = pretty a
-    pretty (ParamLbl l) = pretty l
-    pretty (ParamTy t) = pretty t
-    pretty (ParamIdx i) = pretty i
-    pretty (ParamName ne) = pretty ne
+instance  OwlPretty FuncParam where
+    owlpretty (ParamStr s) = owlpretty s
+    owlpretty (ParamAExpr a) = owlpretty a
+    owlpretty (ParamLbl l) = owlpretty l
+    owlpretty (ParamTy t) = owlpretty t
+    owlpretty (ParamIdx i) = owlpretty i
+    owlpretty (ParamName ne) = owlpretty ne
 
-instance Pretty Endpoint where
-    pretty (Endpoint  x) = pretty x
-    pretty (EndpointLocality l) = pretty "endpoint(" <> pretty l <> pretty ")"
+instance  OwlPretty Endpoint where
+    owlpretty (Endpoint  x) = owlpretty x
+    owlpretty (EndpointLocality l) = owlpretty "endpoint(" <> owlpretty l <> owlpretty ")"
 
-instance Pretty Locality where
-    pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
+instance  OwlPretty Locality where
+    owlpretty (Locality s xs) = owlpretty s <> angles (mconcat $ map owlpretty xs)
 
-instance Pretty DeclX where
-    pretty d = pretty (show d)
+instance  OwlPretty DeclX where
+    owlpretty d = owlpretty (show d)
 
-instance Pretty ModuleExpX where
-    pretty (ModuleBody _ nk) = 
-        let (n, k) = prettyBind nk in
-        angles (n <> pretty "." <> k)
-    pretty (ModuleVar p) = pretty p
-    pretty x = pretty $ show x
+instance  OwlPretty ModuleExpX where
+    owlpretty (ModuleBody _ nk) = 
+        let (n, k) = owlprettyBind nk in
+        angles (n <> owlpretty "." <> k)
+    owlpretty (ModuleVar p) = owlpretty p
+    owlpretty x = owlpretty $ show x
 
