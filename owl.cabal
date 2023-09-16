@@ -23,6 +23,7 @@ executable owl
                        parsec,
                        containers,
                        prettyprinter,
+                       prettyprinter-ansi-terminal,
                        lens,
                        mtl,
                        optparse-applicative,

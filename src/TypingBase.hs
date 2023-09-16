@@ -25,7 +25,7 @@ import Control.Monad.Cont
 import CmdArgs
 import System.FilePath
 import Prettyprinter
-import Prettyprinter.Render.String
+import Prettyprinter.Render.Terminal
 import Pretty
 import Control.Lens
 import Control.Lens.At
@@ -55,17 +55,17 @@ data TcScope =
 
 instance Alpha TcScope
 
-instance Pretty TcScope where
-    pretty TcGhost = pretty "ghost"
-    pretty (TcDef l) = pretty "def" <> tupled [pretty l]
+instance OwlPretty TcScope where
+    owlpretty TcGhost = owlpretty "ghost"
+    owlpretty (TcDef l) = owlpretty "def" <> tupled [owlpretty l]
 
 data IdxType = IdxSession | IdxPId | IdxGhost
     deriving Eq
 
-instance Pretty IdxType where
-    pretty IdxSession = pretty "IdxSession"
-    pretty IdxPId = pretty "IdxPId"
-    pretty IdxGhost = pretty "IdxGhost"
+instance OwlPretty IdxType where
+    owlpretty IdxSession = owlpretty "IdxSession"
+    owlpretty IdxPId = owlpretty "IdxPId"
+    owlpretty IdxGhost = owlpretty "IdxGhost"
 
 data Def = 
     DefHeader (Bind ([IdxVar], [IdxVar]) Locality)-- All we we know is the arity
@@ -193,42 +193,42 @@ data TypeError =
       | ErrCannotProveSubtype Ty Ty
       | ErrNameStillAbstract String
 
-instance Pretty (TypeError) where
-    pretty (ErrWrongNameType n s nt) = 
-        pretty "Wrong name type for " <> pretty n <> pretty ": expected " <> pretty s <> pretty ", got " <> pretty nt
-    pretty (ErrBadArgs s ts) = 
-        pretty "Bad argument types for " <> pretty s <> pretty ": got " <> pretty ts
-    pretty (ErrUnknownRO s) = 
-        pretty "Unknown random oracle value: " <> pretty (show s)
-    pretty (ErrUnknownPRF n s) = 
-        pretty "Unknown prf value for " <> pretty n <> pretty ": " <> pretty s
-    pretty (ErrDuplicateVarName s) = 
-        pretty "Duplicate variable name: " <> pretty s
-    pretty (ErrWrongCases s a expected actual) = 
-        pretty "Wrong cases for " <> pretty s <> pretty " with "  <> pretty a  <> pretty " expected " <> pretty (map fst expected) <> pretty " but got " <> pretty (map fst actual)
-    pretty (ErrAssertionFailed fn p) =
-        pretty "Assertion failed: " <> pretty p <> pretty " from " <> pretty fn
-    pretty (ErrUnknownName s) =  
-        pretty "Unknown name: " <> pretty s
-    pretty (ErrUnknownFunc s) =  
-        pretty "Unknown func: " <> pretty s
-    pretty (ErrUnknownVar s) =  
-        pretty "Unknown variable: " <> pretty s
-    pretty (ErrUnknownType s) =  
-        pretty "Unknown type name: " <> pretty s
-    pretty (ErrFlowCheck l1 l2) =  
-        pretty "Label " <> pretty l1 <> pretty " does not flow to " <> pretty l2
-    pretty (ErrLenAmbiguous t) = 
-        pretty "Type " <> pretty t <> pretty " has an ambiguous length"
-    pretty (ErrCannotProveSubtype t1 t2) = 
-        pretty "Cannot prove type " <> pretty t1 <> pretty " is a subtype of " <> pretty t2
-    pretty (ErrWrongLocality n l ls) = 
-        pretty "Locality of name " <> pretty n <> pretty " is not available to locality " <> pretty l
-    pretty (ErrNameStillAbstract n) =
-        pretty "Name" <+> pretty n <+> pretty "is abstract but needs to be concrete here"
+instance OwlPretty (TypeError) where
+    owlpretty (ErrWrongNameType n s nt) = 
+        owlpretty "Wrong name type for " <> owlpretty n <> owlpretty ": expected " <> owlpretty s <> owlpretty ", got " <> owlpretty nt
+    owlpretty (ErrBadArgs s ts) = 
+        owlpretty "Bad argument types for " <> owlpretty s <> owlpretty ": got " <> owlpretty ts
+    owlpretty (ErrUnknownRO s) = 
+        owlpretty "Unknown random oracle value: " <> owlpretty (show s)
+    owlpretty (ErrUnknownPRF n s) = 
+        owlpretty "Unknown prf value for " <> owlpretty n <> owlpretty ": " <> owlpretty s
+    owlpretty (ErrDuplicateVarName s) = 
+        owlpretty "Duplicate variable name: " <> owlpretty s
+    owlpretty (ErrWrongCases s a expected actual) = 
+        owlpretty "Wrong cases for " <> owlpretty s <> owlpretty " with "  <> owlpretty a  <> owlpretty " expected " <> owlpretty (map fst expected) <> owlpretty " but got " <> owlpretty (map fst actual)
+    owlpretty (ErrAssertionFailed fn p) =
+        owlpretty "Assertion failed: " <> owlpretty p <> owlpretty " from " <> owlpretty fn
+    owlpretty (ErrUnknownName s) =  
+        owlpretty "Unknown name: " <> owlpretty s
+    owlpretty (ErrUnknownFunc s) =  
+        owlpretty "Unknown func: " <> owlpretty s
+    owlpretty (ErrUnknownVar s) =  
+        owlpretty "Unknown variable: " <> owlpretty s
+    owlpretty (ErrUnknownType s) =  
+        owlpretty "Unknown type name: " <> owlpretty s
+    owlpretty (ErrFlowCheck l1 l2) =  
+        owlpretty "Label " <> owlpretty l1 <> owlpretty " does not flow to " <> owlpretty l2
+    owlpretty (ErrLenAmbiguous t) = 
+        owlpretty "Type " <> owlpretty t <> owlpretty " has an ambiguous length"
+    owlpretty (ErrCannotProveSubtype t1 t2) = 
+        owlpretty "Cannot prove type " <> owlpretty t1 <> owlpretty " is a subtype of " <> owlpretty t2
+    owlpretty (ErrWrongLocality n l ls) = 
+        owlpretty "Locality of name " <> owlpretty n <> owlpretty " is not available to locality " <> owlpretty l
+    owlpretty (ErrNameStillAbstract n) =
+        owlpretty "Name" <+> owlpretty n <+> owlpretty "is abstract but needs to be concrete here"
 
 instance Show TypeError where
-    show = show . pretty
+    show = show . owlpretty
 
 newtype Check a = Check { unCheck :: ReaderT Env (ExceptT Env IO) a }
     deriving (Functor, Applicative, Monad, MonadReader Env, MonadIO)
@@ -295,11 +295,11 @@ typeError' removeANF msg = do
     fl <- takeDirectory <$> (view $ envFlags . fFilePath)
     f <- view $ envFlags . fFileContents
     tyc <- if removeANF then removeAnfVars <$> view tyContext else view tyContext
-    let tyc_str = renderString $ layoutPretty (LayoutOptions Unbounded) $ prettyTyContext tyc
-    let rep = Err Nothing msg [(pos, This msg)] [Note $ tyc_str]
+    let rep = Err Nothing msg [(pos, This msg)] []
     let diag = addFile (addReport def rep) (fn) f  
     e <- ask
     printDiagnostic stdout True True 4 defaultStyle diag 
+    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line
     writeSMTCache
     Check $ lift $ throwError e
 
@@ -447,13 +447,13 @@ inferIdx (IVar pos i) = withSpan pos $ do
       Just t -> 
           case (tc, t) of
             (TcDef _, IdxGhost) ->  
-                typeError $ "Index should be nonghost: " ++ show (pretty i) 
+                typeError $ "Index should be nonghost: " ++ show (owlpretty i) 
             _ -> return t
-      Nothing -> typeError $ "Unknown index: " ++ show (pretty i)
+      Nothing -> typeError $ "Unknown index: " ++ show (owlpretty i)
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
-    debug $ pretty "Checking index " <> pretty i
+    debug $ owlpretty "Checking index " <> owlpretty i
     _ <- inferIdx i
     return ()
 
@@ -462,16 +462,16 @@ checkIdxSession i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or Session ID") $ it /= IdxPId
-       TcDef _ ->  assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Session ID") $ it == IdxSession
+       TcGhost -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or Session ID") $ it /= IdxPId
+       TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check ()
 checkIdxPId i@(IVar pos _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty " expected Ghost or PId") $ it /= IdxSession
-       TcDef _ -> assert (show $ pretty "Wrong index type: " <> pretty i <> pretty ", got " <> pretty it <+> pretty "expected PId") $ it == IdxPId
+       TcGhost -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or PId") $ it /= IdxSession
+       TcDef _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty "expected PId") $ it == IdxPId
 
 openModule :: ResolvedPath -> Check ModBody
 openModule rp = do
@@ -554,13 +554,13 @@ getROStrictness ne =
       NameConst _ pth@(PRes (PDot p n)) _ -> do
           md <- openModule p
           case lookup n (md^.nameDefs) of
-            Nothing -> typeError $ "Unknown name: " ++ show (pretty pth)
+            Nothing -> typeError $ "Unknown name: " ++ show (owlpretty pth)
             Just b_nd -> do
                 ((is, ps), nd) <- unbind b_nd
                 case nd of
                   RODef strictness _ -> return strictness
-                  _ -> typeError $ "Not an RO name: " ++ show (pretty ne)
-      _ -> typeError $ "Not an RO name: " ++ show (pretty ne)
+                  _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
+      _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
 
 
 getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check AExpr
@@ -600,7 +600,7 @@ getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
-    debug $ pretty (unignore $ ne^.spanOf) <> pretty "Inferring name expression" <+> pretty ne 
+    debug $ owlpretty (unignore $ ne^.spanOf) <> owlpretty "Inferring name expression" <+> owlpretty ne 
     case ne^.val of 
      NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
          md <- openModule p
@@ -635,7 +635,7 @@ getNameInfo ne = do
      PRFName n s -> do
          ntLclsOpt <- getNameInfo n
          case ntLclsOpt of
-           Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty n
+           Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty n
            Just (nt, _) -> 
             case nt^.val of
             NT_PRF xs -> 
@@ -643,7 +643,7 @@ getNameInfo ne = do
                     Just (_, (_, nt')) -> return $ Just (nt, Nothing)
                     Nothing -> typeError $ show $ ErrUnknownPRF n s
             _ -> typeError $ show $ ErrWrongNameType n "prf" nt
-     _ -> error $ "Unknown: " ++ show (pretty ne)
+     _ -> error $ "Unknown: " ++ show (owlpretty ne)
 
 getRO :: Path -> Check (Bind ([IdxVar], [IdxVar]) (Bind [DataVar] (AExpr, Prop, [NameType])))
 getRO p0@(PRes (PDot p s)) = do
@@ -653,7 +653,7 @@ getRO p0@(PRes (PDot p s)) = do
               (ps, nd) <- unbind ind
               case nd of
                 RODef _ res -> return $ bind ps res
-                _ -> typeError $ "Not an RO name: " ++ show (pretty p0)
+                _ -> typeError $ "Not an RO name: " ++ show (owlpretty p0)
           Nothing -> typeError $ show $ ErrUnknownRO p
 getRO pth = typeError $ "Unknown path: " ++ show pth
 
@@ -684,7 +684,7 @@ getNameType :: NameExp -> Check NameType
 getNameType ne = do
     ntOpt <- getNameTypeOpt ne
     case ntOpt of
-        Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
+        Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
 
 
@@ -767,14 +767,14 @@ lenConstOfROName :: NameExp -> Check AExpr
 lenConstOfROName ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
-      Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (pretty ne)
+      Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
       Just (nt, _) -> 
           case nt^.val of
             NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-            _ -> typeError $ "Name not an RO name: " ++ show (pretty ne)
+            _ -> typeError $ "Name not an RO name: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check AExpr
 normalizeAExpr ae = 
@@ -867,7 +867,7 @@ simplifyProp p = do
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = withSpan (ae^.spanOf) $ do
-    debug $ pretty (unignore $ ae^.spanOf) <> pretty "Inferring AExp" <+> pretty ae
+    debug $ owlpretty (unignore $ ae^.spanOf) <> owlpretty "Inferring AExp" <+> owlpretty ae
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
@@ -875,10 +875,10 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
           Just (_, _, t) -> return t
           Nothing -> typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
-        debug $ pretty "Inferring application: " <> pretty (unignore $ ae^.spanOf)
+        debug $ owlpretty "Inferring application: " <> owlpretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
         (ar, k) <- getFuncInfo f
-        assert (show $ pretty "Wrong arity for " <> pretty f) $ length ts == ar
+        assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
         mkSpanned <$> k params (zip args ts)
       (AEHex s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
@@ -891,7 +891,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
             return $ mkSpanned $ TExistsIdx $ bind i t 
       AEPreimage p ps@(p1, p2) args -> do
           ts <- view tcScope
-          assert (show $ pretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
+          assert (show $ owlpretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
           forM_ p1 checkIdxSession
           forM_ p2 checkIdxPId
           _ <- mapM inferAExpr args
@@ -902,18 +902,18 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
           ts <- view tcScope
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
                         Just xs -> mapM normLocality xs
                         Nothing -> do
                             case ts of
                               TcGhost -> return []
-                              TcDef _ -> typeError $ show $ pretty "Calling get on name " <> pretty ne <> pretty " in non-ghost context"
+                              TcDef _ -> typeError $ show $ owlpretty "Calling get on name " <> owlpretty ne <> owlpretty " in non-ghost context"
                 ot <- case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality curr_locality
-                        assert (show $ pretty "Wrong locality for " <> pretty ne <> pretty ": Got " <> pretty curr_locality' <> pretty " but expected any of " <> pretty ls') $
+                        assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
@@ -933,11 +933,11 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
             _ -> typeError $ "Cannot call get_encpk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError $ show $ ErrNameStillAbstract$ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract$ show $ owlpretty ne
             Just (nt, _) ->           
                 case nt^.val of
                     NT_PKE _ -> return $ mkSpanned $ TEnc_PK ne
-                    _ -> typeError $ show $ pretty "Expected encryption sk: " <> pretty ne
+                    _ -> typeError $ show $ owlpretty "Expected encryption sk: " <> owlpretty ne
       (AEGetVK ne) -> do
           case ne^.val of
             NameConst ([], []) _ _ -> return ()
@@ -945,11 +945,11 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
             _ -> typeError $ "Cannot call get_vk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
-            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ pretty ne
+            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
             Just (nt, _) ->          
                 case nt^.val of
                     NT_Sig _ -> return $ mkSpanned $ TVK ne
-                    _ -> typeError $ show $ pretty "Expected signature sk: " <> pretty ne
+                    _ -> typeError $ show $ owlpretty "Expected signature sk: " <> owlpretty ne
 
 splitConcats :: AExpr -> [AExpr]
 splitConcats a = 
@@ -1099,18 +1099,18 @@ extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
 extractPredicate pth@(PRes (PDot p s)) is as = do  
     md <- openModule p
     case lookup s (md^.predicates) of
-      Nothing -> typeError $ "Unknown predicate: " ++ (show $ pretty pth)
+      Nothing -> typeError $ "Unknown predicate: " ++ (show $ owlpretty pth)
       Just b -> do
           ((ixs, xs), p) <- unbind b
-          assert ("Wrong index arity for predicate " ++ show (pretty pth)) $ length ixs == length is
-          assert ("Wrong arity for predicate " ++ show (pretty pth)) $ length xs == length as
+          assert ("Wrong index arity for predicate " ++ show (owlpretty pth)) $ length ixs == length is
+          assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
 extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum ps s b = do
     idxs <- getEnumParams ps
     (is, bdy') <- unbind b
-    assert (show $ pretty "Wrong index arity for enum " <> pretty s) $ length idxs == length is  
+    assert (show $ owlpretty "Wrong index arity for enum " <> owlpretty s) $ length idxs == length is  
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
@@ -1118,7 +1118,7 @@ extractStruct :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Chec
 extractStruct ps s b = do
     idxs <- getStructParams ps
     (is, xs') <- unbind b
-    assert (show $ pretty "Wrong index arity for struct " <> pretty s <> pretty ": got " <> pretty idxs <> pretty " expected " <> pretty (length is)) $ length idxs == length is 
+    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty s <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
     return $ substs (zip is idxs) xs'
 
 
@@ -1126,7 +1126,7 @@ extractStruct ps s b = do
 coveringLabel' :: Ty -> Check Label
 coveringLabel' t = 
     case t^.val of
-      (TData l _) -> return l
+      (TData l _ _) -> return l
       (TDataWithLength l a) -> do
           t <- inferAExpr a
           l' <- coveringLabel' t
@@ -1163,28 +1163,31 @@ coveringLabel' t =
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
           if (l1 `aeq` l2) then return l1 else 
-              typeError $ show $ pretty "Difficult case for coveringLabel': TCase" <+> pretty l1 <+> pretty l2
+              typeError $ show $ owlpretty "Difficult case for coveringLabel': TCase" <+> owlpretty l1 <+> owlpretty l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
           l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
 
-prettyTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Doc ann
-prettyTyContext e = vsep $ map (\(x, (s, oanf, t)) -> 
-    pretty (unignore s) <> pretty ":" <+> pretty t) e
+tyInfo :: Ty -> OwlDoc
+tyInfo t = 
+    case (stripRefinements t)^.val of
+      TData _ _ os -> case unignore os of
+                        Just s -> annotate (color corrColor) $ (pretty " ") <> (parens $ owlpretty s)
+                        _ -> mempty
+      _ -> mempty
 
--- Useful for debugging
-prettyTyContext' :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Doc ann
-prettyTyContext' e = vsep $ map (\(x, (s, oanf, t)) -> 
-    pretty (show x) <> tupled [pretty (unignore s), pretty (oanf)] <> pretty ":" <+> pretty t) e
+owlprettyTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> OwlDoc
+owlprettyTyContext e = vsep $ map (\(x, (s, oanf, t)) -> 
+    owlpretty (unignore s) <> tyInfo t <> owlpretty ":" <+> owlpretty t) e
 
-prettyIndices :: Map IdxVar IdxType -> Doc ann
-prettyIndices m = vsep $ map (\(i, it) -> pretty "index" <+> pretty i <> pretty ":" <+> pretty it) m
+owlprettyIndices :: Map IdxVar IdxType -> OwlDoc
+owlprettyIndices m = vsep $ map (\(i, it) -> owlpretty "index" <+> owlpretty i <> owlpretty ":" <+> owlpretty it) m
 
-prettyContext :: Env -> Doc ann
-prettyContext e =
-    vsep [prettyIndices (e^.inScopeIndices), prettyTyContext (e^.tyContext)]
+owlprettyContext :: Env -> OwlDoc
+owlprettyContext e =
+    vsep [owlprettyIndices (e^.inScopeIndices), owlprettyTyContext (e^.tyContext)]
 
 isNameDefRO :: Path -> Check Bool
 isNameDefRO (PRes (PDot p n)) = do 
@@ -1211,9 +1214,6 @@ normalizeNameExp ne =
           return $ Spanned (ne^.spanOf) $ PRFName ne' s
 
 -- Traversing modules to collect global info
-
-instance Pretty ResolvedPath where
-    pretty a = pretty $ show a
 
 collectEnvInfo :: (ModBody -> Map String a) -> Check (Map ResolvedPath a)
 collectEnvInfo f = do
@@ -1331,16 +1331,16 @@ pathPrefix _ = error "pathPrefix error"
 -- Normalize and check locality
 normLocality :: Locality -> Check Locality
 normLocality loc@(Locality (PRes (PDot p s)) xs) = do
-    debug $ pretty "normLocality: " <> (pretty $ show loc)
+    debug $ owlpretty "normLocality: " <> (owlpretty $ show loc)
     md <- openModule p
     case lookup s (md^.localities) of 
-      Nothing -> typeError $ "Unknown locality: " ++ show (pretty  loc)
+      Nothing -> typeError $ "Unknown locality: " ++ show (owlpretty  loc)
       Just (Right p') -> normLocality $ Locality (PRes p') xs
       Just (Left ar) -> do
-              assert (show $ pretty "Wrong arity for locality " <> pretty loc) $ ar == length xs
+              assert (show $ owlpretty "Wrong arity for locality " <> owlpretty loc) $ ar == length xs
               forM_ xs $ \i -> do
                   it <- inferIdx i
-                  assert (show $ pretty "Index should be ghost or party ID: " <> pretty i) $ (it == IdxGhost) || (it == IdxPId)
+                  assert (show $ owlpretty "Index should be ghost or party ID: " <> owlpretty i) $ (it == IdxGhost) || (it == IdxPId)
               return $ Locality (PRes (PDot p s)) xs 
 normLocality loc = typeError $ "bad case: " ++ show loc
 
@@ -1380,50 +1380,50 @@ getModBodyFVs = toListOf fv
 
 -- Unfolds macros
 
-prettyMap :: Pretty a => String -> Map String a -> Doc ann
-prettyMap s m = 
-    pretty s <> pretty ":::" <+> lbracket <> line <>
+owlprettyMap :: OwlPretty a => String -> Map String a -> OwlDoc
+owlprettyMap s m = 
+    owlpretty s <> owlpretty ":::" <+> lbracket <> line <>
     foldr (\(k, a) acc -> 
         acc <> 
-        pretty k <> pretty "::" <> line <> 
-        pretty "   " <> pretty a <+> comma <> line) (pretty "") m
+        owlpretty k <> owlpretty "::" <> line <> 
+        owlpretty "   " <> owlpretty a <+> comma <> line) (owlpretty "") m
     <> line <> rbracket <> line
 
 
-instance Pretty Def where
-    pretty (DefHeader x) = 
-        let (ivars, loc) = prettyBind x in
-        pretty "DefHeader:" <+> angles ivars <> pretty "@" <> loc
-    pretty (Def x) =
-        let (ivars, defspec) = prettyBind x in
-        pretty "Def:" <+> angles ivars <> defspec
+instance OwlPretty Def where
+    owlpretty (DefHeader x) = 
+        let (ivars, loc) = owlprettyBind x in
+        owlpretty "DefHeader:" <+> angles ivars <> owlpretty "@" <> loc
+    owlpretty (Def x) =
+        let (ivars, defspec) = owlprettyBind x in
+        owlpretty "Def:" <+> angles ivars <> defspec
 
-instance Pretty UserFunc where
-    pretty u = pretty $ show u
+instance OwlPretty UserFunc where
+    owlpretty u = owlpretty $ show u
 
 -- debug hack
-instance Pretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
-    pretty b =
-        let (ivars, opt) = prettyBind b in
-        angles ivars <> pretty ":" <> opt
+instance OwlPretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
+    owlpretty b =
+        let (ivars, opt) = owlprettyBind b in
+        angles ivars <> owlpretty ":" <> opt
 
-instance Pretty (Either Int ResolvedPath) where
-    pretty (Left i) = pretty "Left" <+> pretty i
-    pretty (Right rp) = pretty "Right" <+> pretty rp
+instance OwlPretty (Either Int ResolvedPath) where
+    owlpretty (Left i) = owlpretty "Left" <+> owlpretty i
+    owlpretty (Right rp) = owlpretty "Right" <+> owlpretty rp
 
-instance Pretty (Embed Ty) where
-    pretty t = pretty (unembed t)
+instance OwlPretty (Embed Ty) where
+    owlpretty t = owlpretty (unembed t)
 
-instance Pretty DefSpec where
-    pretty ds = 
-        let abs = if unignore $ ds ^. isAbstract then pretty "abstract" else pretty "" in
-        let loc = pretty (ds ^. defLocality) in
+instance OwlPretty DefSpec where
+    owlpretty ds = 
+        let abs = if unignore $ ds ^. isAbstract then owlpretty "abstract" else owlpretty "" in
+        let loc = owlpretty (ds ^. defLocality) in
         let (args, (req, retTy, body)) = unsafeUnbind (ds ^. preReq_retTy_body) in
         let body' = case body of
-                Nothing -> pretty ""
-                Just e  -> pretty e
+                Nothing -> owlpretty ""
+                Just e  -> owlpretty e
         in
-        abs <> pretty "@" <> loc <> pretty ":" <+> pretty args <> pretty "->" <> pretty retTy <+> pretty "=" <> line <> body'
+        abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
 
 
 

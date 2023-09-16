@@ -442,7 +442,7 @@ interpretAExp ae' = do
         env <- use varVals
         case M.lookup x env of 
             Just v -> return v
-            Nothing -> liftCheck $ typeError $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (pretty (M.keys env))
+            Nothing -> liftCheck $ typeError $ "SMT ERROR : Cannot find " ++ show x ++ " with varVals " ++ show (owlpretty (M.keys env))
       AEApp f _ xs -> do
         vs <- mapM interpretAExp xs
         case f of
@@ -460,7 +460,7 @@ interpretAExp ae' = do
           aes <- liftCheck $ getROPreimage p ps as
           interpretAExp aes
       AEGet ne -> do
-          liftCheck $ debug $ pretty "AEGet" <+> pretty ne
+          liftCheck $ debug $ owlpretty "AEGet" <+> owlpretty ne
           symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
@@ -518,7 +518,7 @@ symIndex idx@(IVar ispan v) = do
       Nothing -> do
           indices <- view $ inScopeIndices
           liftIO $ putStrLn $ "Unknown index: " ++ show v
-          liftCheck $ typeError (show $ pretty "SMT ERROR: unknown index " <> pretty v <> pretty " under inScopeIndices " <> pretty (map fst indices))
+          liftCheck $ typeError (show $ owlpretty "SMT ERROR: unknown index " <> owlpretty v <> owlpretty " under inScopeIndices " <> owlpretty (map fst indices))
 
 data SMTNameDef = 
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))
@@ -554,7 +554,7 @@ flattenNameDefs xs = do
             
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
-    liftCheck $ debug $ pretty "getSymName" <+> pretty ne
+    liftCheck $ debug $ owlpretty "getSymName" <+> owlpretty ne
     ne' <- liftCheck $ normalizeNameExp ne
     case ne'^.val of
       NameConst (is1, is2) s oi -> do
@@ -569,7 +569,7 @@ getSymName ne = do
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
-    liftCheck $ debug $ pretty "symNameExp" <+> pretty ne
+    liftCheck $ debug $ owlpretty "symNameExp" <+> owlpretty ne
     n <- getSymName ne
     return $ SApp [SAtom "ValueOf", n]
 
@@ -610,18 +610,18 @@ sROName n is i =
       [] -> SApp $ [n, i]
       _ -> SApp $ n : (is ++ [i])
 
-instance Pretty CanonLabel where
-    pretty (CanonAnd cs) = 
-        mconcat $ intersperse (pretty " /\\ ") (map pretty cs) 
+instance OwlPretty CanonLabel where
+    owlpretty (CanonAnd cs) = 
+        mconcat $ intersperse (owlpretty " /\\ ") (map owlpretty cs) 
 
-instance Pretty CanonLabelBig where        
-    pretty (CanonNoBig ca) = pretty ca
-    pretty (CanonBig ia) = 
-        let (is, a) = prettyBind ia in 
-        pretty "/\\_" <> is <> pretty "(" <> a <> pretty ")"
+instance OwlPretty CanonLabelBig where        
+    owlpretty (CanonNoBig ca) = owlpretty ca
+    owlpretty (CanonBig ia) = 
+        let (is, a) = owlprettyBind ia in 
+        owlpretty "/\\_" <> is <> owlpretty "(" <> a <> owlpretty ")"
 
-instance Pretty CanonAtom where
-    pretty (CanonLName a) = pretty (nameLbl a)
-    pretty (CanonAdv) = pretty advLbl
-    pretty (CanonTop) = pretty topLbl
-    pretty (CanonZero) = pretty zeroLbl
+instance OwlPretty CanonAtom where
+    owlpretty (CanonLName a) = owlpretty (nameLbl a)
+    owlpretty (CanonAdv) = owlpretty advLbl
+    owlpretty (CanonTop) = owlpretty topLbl
+    owlpretty (CanonZero) = owlpretty zeroLbl

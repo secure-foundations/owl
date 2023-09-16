@@ -61,7 +61,7 @@ doParseArgs = do
 
 postProcessFlags :: Flags -> Flags
 postProcessFlags f = 
-    f { _fCleanCache = _fCleanCache f || _fLogSMT f}
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f }
 
 getHelpMessage :: String
 getHelpMessage = 

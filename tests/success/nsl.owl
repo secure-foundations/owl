@@ -54,6 +54,7 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
         let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
         res
     else {
+        false_elim in 
         assert ([nA] /\ [nB] <= adv /\ [nA] /\ [nB]);
         NRNone()
     }

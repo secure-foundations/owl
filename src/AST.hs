@@ -244,7 +244,7 @@ data NoncePattern = NPHere
     deriving (Show, Generic, Typeable)
 
 data TyX = 
-    TData Label Label
+    TData Label Label (Ignore (Maybe String))
     | TDataWithLength Label AExpr
     | TRefined Ty String (Bind DataVar Prop)
     | TOption Ty
@@ -266,7 +266,11 @@ data TyX =
 type Ty = Spanned TyX
 
 tData :: Label -> Label -> Ty
-tData l1 l2 = mkSpanned $ TData l1 l2
+tData l1 l2 = mkSpanned $ TData l1 l2 (ignore Nothing)
+
+tDataAnn :: Label -> Label -> String -> Ty
+tDataAnn l1 l2 s = mkSpanned $ TData l1 l2 (ignore $ Just s)
+
 
 tDataWithLength :: Label -> AExpr -> Ty
 tDataWithLength l a = mkSpanned $ TDataWithLength l a

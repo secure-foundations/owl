@@ -23,6 +23,7 @@ import Control.Lens
 import Prettyprinter
 import LabelChecking
 import TypingBase
+import Pretty
 import SMTBase
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
@@ -203,10 +204,10 @@ mkTy :: Maybe String -> Ty -> Sym SExp
 mkTy s t = do
     x <- freshSMTVal (case s of
                      Nothing -> Nothing
-                     Just x -> Just $ x ++ " : " ++ show (pretty t)
+                     Just x -> Just $ x ++ " : " ++ show (owlpretty t)
                   )
     c <- tyConstraints t x
-    emitComment $ "ty constraint for " ++ show x ++ ": " ++ show (pretty t)
+    emitComment $ "ty constraint for " ++ show x ++ ": " ++ show (owlpretty t)
     emitAssertion c
     return x
 
@@ -328,7 +329,7 @@ sRefined v k =
 smtTy :: Ty -> Sym SExp
 smtTy t = 
     case t^.val of
-      TData _ _ -> return $ SAtom "Data"
+      TData _ _ _ -> return $ SAtom "Data"
       TDataWithLength _ a -> do
           v <- interpretAExp a
           return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v
@@ -345,7 +346,7 @@ smtTy t =
           vt <- smtTy t
           return $ sEnumType [SAtom "Unit", vt]
       TName n -> do
-          liftCheck $ debug $ pretty "TName" <+> pretty n
+          liftCheck $ debug $ owlpretty "TName" <+> owlpretty n
           vn <- getSymName n
           return $ SApp [SAtom "TName", vn]
       TVK n -> do
@@ -487,7 +488,7 @@ subTypeCheck :: Ty -> Ty -> Sym ()
 subTypeCheck t1 t2 = do
     v <- mkTy Nothing t1
     c <- tyConstraints t2 v
-    emitComment $ "Checking subtype " ++ show (pretty t1) ++ " <= " ++ show (pretty t2)
+    emitComment $ "Checking subtype " ++ show (owlpretty t1) ++ " <= " ++ show (owlpretty t2)
     emitToProve c
 
 sConcats :: [SExp] -> SExp
@@ -498,7 +499,7 @@ sConcats vs =
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
     vs <- mapM interpretAExp es
-    emitComment $ "Proving symListUniq with es = " ++ show (pretty es)
+    emitComment $ "Proving symListUniq with es = " ++ show (owlpretty es)
     emitToProve $ sDistinct vs
     return ()
 
@@ -515,24 +516,24 @@ symCheckEqTopLevel eghosts es = do
         varVals .= M.empty
         v_eghosts <- mapM interpretAExp eghosts
         varVals .= vE
-        emitComment $ "Checking if " ++ show (pretty es) ++ " equals ghost val " ++ show (pretty eghosts) 
+        emitComment $ "Checking if " ++ show (owlpretty es) ++ " equals ghost val " ++ show (owlpretty eghosts) 
         emitToProve $ sAnd $ map (\(x, y) -> sEq x y) $ zip v_es v_eghosts 
 
 symAssert :: Prop -> Sym ()
 symAssert p = do
     b <- interpretProp p
-    emitComment $ "Proving prop " ++ show (pretty p)
+    emitComment $ "Proving prop " ++ show (owlpretty p)
     emitToProve b
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do
     let k1 = do {
-        emitComment $ "Trying to prove prop " ++ show (pretty p);
+        emitComment $ "Trying to prove prop " ++ show (owlpretty p);
         b <- interpretProp p;
         emitToProve b 
                 }
     let k2 = do {
-        emitComment $ "Trying to prove prop " ++ show (pretty $ pNot p);
+        emitComment $ "Trying to prove prop " ++ show (owlpretty $ pNot p);
         b <- interpretProp $ pNot p;
         emitToProve b 
                 }
@@ -541,13 +542,13 @@ symDecideProp p = do
 checkFlows :: Label -> Label -> Check (Maybe String, Maybe Bool)
 checkFlows l1 l2 = do
     let k1 = do {
-        emitComment $ "Trying to prove " ++ show (pretty l1) ++ " <= " ++ show (pretty l2);
+        emitComment $ "Trying to prove " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2);
         x <- symLabel l1;
         y <- symLabel l2;
         emitToProve $ SApp [SAtom "Flows", x, y]
                 }
     let k2 = do {
-        emitComment $ "Trying to prove " ++ show (pretty l1) ++ " !<= " ++ show (pretty l2);
+        emitComment $ "Trying to prove " ++ show (owlpretty l1) ++ " !<= " ++ show (owlpretty l2);
         x <- symLabel l1;
         y <- symLabel l2;
         emitToProve $ sNot $ SApp [SAtom "Flows", x, y]

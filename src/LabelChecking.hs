@@ -7,6 +7,7 @@ import Prettyprinter
 import AST 
 import Control.Lens
 import SMTBase
+import Pretty
 import TypingBase
 import Control.Monad
 import Control.Monad.Reader
@@ -60,7 +61,7 @@ smtLabelSetup = do
     forM_ fas $ \(l1, l2) -> do
         v1 <- symLabel l1
         v2 <- symLabel l2
-        emitComment $ "Flow decl: " ++ show (pretty l1) ++ " <= " ++ show (pretty l2)
+        emitComment $ "Flow decl: " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2)
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv
@@ -154,7 +155,7 @@ symCanonBig c = do
               CanonBig il -> do
                   (is, l) <- liftCheck $ unbind il -- All the i's must be relevant here
                   x <- freshSMTName
-                  emitComment $ "label for " ++ show (pretty c)
+                  emitComment $ "label for " ++ show (owlpretty c)
                   emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
                   ivs <- mapM (\_ -> freshSMTIndexName) is
                   iEnv <- use symIndexEnv

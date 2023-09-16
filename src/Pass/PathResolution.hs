@@ -27,6 +27,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import System.FilePath ((</>), takeFileName)
 import System.IO
+import Pretty
 import Prettyprinter
 import Data.IORef
 
@@ -327,10 +328,10 @@ resolveTy e = do
         where
             go t = 
                 case t of
-                  TData l1 l2 -> do
+                  TData l1 l2 s -> do
                       l1' <- resolveLabel l1
                       l2' <- resolveLabel l2
-                      return $ TData l1' l2'
+                      return $ TData l1' l2' s
                   TDataWithLength l a -> do
                       l' <- resolveLabel l
                       a' <- resolveAExpr a
@@ -393,7 +394,7 @@ resolveFuncParam f =
 
 resolvePath pos pt p = do
     p' <- resolvePath' pos pt p
-    debug $ pretty "Resolved " <> pretty p <> pretty " to " <> pretty p'
+    debug $ owlpretty "Resolved " <> owlpretty p <> owlpretty " to " <> owlpretty p'
     return p'
 
 resolvePath' :: Ignore Position -> PathType -> Path -> Resolve Path
@@ -401,7 +402,7 @@ resolvePath' pos pt p =
     case p of
       PRes _ -> return p
       PUnresolvedPath x xs -> do
-          debug $ pretty "Resolving " <> pretty p
+          debug $ owlpretty "Resolving " <> owlpretty p
           mp <- view modPaths
           res <- case lookup x mp of
                   Just (b, p) -> do
