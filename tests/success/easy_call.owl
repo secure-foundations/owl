@@ -10,13 +10,12 @@ def alice1 (b: Name(blah)) @ alice : Name(d)
 
 def alice2 @ alice
 
-def alice2 () @ alice : Name(d)
+def alice2 () @ alice : Unit
     = 
     assert (happened(alice2()));
     let x = call alice1(get(blah)) in 
     assert (happened(alice1(get(blah))));
-    let _ = output x to endpoint(alice) in
-    x
+    output x to endpoint(alice)
 
-def alice_main () @ alice : Name(d) =
+def alice_main () @ alice : Unit =
     call alice2()

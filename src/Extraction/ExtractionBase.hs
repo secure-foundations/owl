@@ -311,11 +311,11 @@ initFuncs = M.fromList [
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
         ("dhpk", (VecU8, \args -> case args of
-                [(_,x)] -> return $ x ++ ".owl_dhpk()"
+                [x] -> do return $ printOwlOp "owl_dhpk" [x] -- return $ x ++ ".owl_dhpk()"
                 _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
         )),
         ("dh_combine", (VecU8, \args -> case args of
-                [(_,pk), (_,sk)] -> return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
+                [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
         )),
         ("UNIT", (Unit, \_ -> return "()")),

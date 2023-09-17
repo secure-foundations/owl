@@ -4,12 +4,12 @@ use std::rc::Rc;
 
 verus! {
 
-#[verifier(external_body)]
-#[verifier(broadcast_forall)]
-pub proof fn axiom_Rc_view<A>(rc: Rc<A>) 
-    where A: View
-    ensures (rc@ == (*rc)@)
-{}
+// #[verifier(external_body)]
+// #[verifier(broadcast_forall)]
+// pub proof fn axiom_Rc_view<A>(rc: Rc<A>) 
+//     where A: View
+//     ensures (rc@ == (*rc)@)
+// {}
 
 /// Clones a Vec<u8> (because currently Verus doesn't support this natively)
 #[verifier(external_body)]
@@ -105,9 +105,46 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
     }
 }
 
-pub exec fn blah(rc: Rc<Vec<u8>>) {
-    let tmp = (rc_clone(&rc));
-    assert(rc.view() == tmp.view());
+#[verifier(external_body)]
+pub exec fn owl_sign(privkey: &[u8], msg: &[u8]) -> (signature: Vec<u8>)
+    ensures signature@ == speclib::sign(privkey@, msg@)
+{
+    owl_pke::sign(privkey, msg)
 }
+
+#[verifier(external_body)]
+pub exec fn owl_vrfy(pubkey: &[u8], msg: &[u8], signature: &[u8]) -> (x: Option<Vec<u8>>)
+    ensures speclib::view_option(x) == speclib::vrfy(pubkey@, msg@, signature@)
+{
+    if owl_pke::verify(pubkey, signature, msg) {
+        Some(msg.to_vec())
+    } else {
+        None
+    }
+}
+
+#[verifier(external_body)]
+pub exec fn owl_dhpk(privkey: &[u8]) -> (pubkey: Vec<u8>)
+    ensures pubkey@ == speclib::dhpk(privkey@)
+{
+    owl_dhke::ecdh_dhpk(privkey)
+}
+
+
+#[verifier(external_body)]
+pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Vec<u8>)
+    ensures
+        ss@ == speclib::dh_combine(pubkey@, privkey@)
+{
+    owl_dhke::ecdh_combine(privkey, pubkey)
+}
+
+#[verifier(external_body)]
+pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h: Vec<u8>) 
+    ensures h@ == kdf(ikm@)
+{
+    owl_hkdf::extract_expand_to_len(ikm, salt, len)
+}
+
 
 } // verus!

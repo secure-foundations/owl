@@ -11,6 +11,7 @@ import CmdArgs
 import System.Directory
 import System.Process
 import System.CPUTime
+import System.Exit
 import Text.Printf
 import ModuleFlattening
 import Test
@@ -46,7 +47,7 @@ main = do
                               modBody <- doFlattening tcEnv
                               res <- E.extract tcEnv (takeDirectory fn) modBody
                               case res of
-                                Left err -> EB.printErr err
+                                Left err -> EB.printErr err >> exitFailure
                                 Right (rust_code, lib_code) -> do
                                   -- putStrLn $ show rust_code
                                   writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"

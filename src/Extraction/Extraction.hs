@@ -437,13 +437,13 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
-        (CHash p _ n, [(_,x)]) -> do 
+        (CHash p _ n, [x]) -> do 
             roname <- flattenPath p 
             orcls <- use oracles
             case orcls M.!? roname of
                 Nothing -> throwError $ TypeError "unrecognized random oracle"
                 Just outLen -> do
-                    return (VecU8, pretty $ x ++ ".owl_extract_expand_to_len(&self.salt, " ++ outLen ++ ")")
+                    return (VecU8, pretty $ printOwlOp "owl_extract_expand_to_len" [(RcVecU8, "self.salt"), (Number, outLen), x])
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
             typeAnnot <- do
@@ -459,8 +459,8 @@ extractCryptOp binds op owlArgs = do
         (CPKDec, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_pkdec(&" ++ k ++ ")")
         (CMac, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_mac(&" ++ k ++ ")")
         (CMacVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, pretty $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
-        (CSign, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_sign(&" ++ k ++ ")")
-        (CSigVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, pretty $ x ++ ".owl_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (CSign, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_sign" [k, x])
+        (CSigVrfy, [k, x, v]) -> do return (Option VecU8, pretty $ printOwlOp "owl_vrfy" [k, x, v])
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     return (rt, preArgs, str)
 
@@ -897,8 +897,8 @@ preprocessModBody mb = do
         sortOrcl (n, b) = do
             let (_, (args, rtys)) = unsafeUnbind b
             rtlen <- case (map (view val) rtys) of
-                [NT_Nonce] -> return "NONCE_SIZE"
-                [NT_Enc _] -> return "KEY_SIZE + NONCE_SIZE"
+                [NT_Nonce] -> return "nonce_size()"
+                [NT_Enc _] -> return "key_size()"
                 _ -> throwError $ UnsupportedOracleReturnType n
             oracles %= M.insert n rtlen
 

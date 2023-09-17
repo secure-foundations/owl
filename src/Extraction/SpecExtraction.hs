@@ -153,23 +153,19 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
         return $ parens (pretty "*loc." <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEGetEncPK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*loc.pk" <> pretty ne') <> pretty ".view()"
+        return $ parens (pretty "*loc.pk_" <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*loc.pk" <> pretty ne') <> pretty ".view()"
+        return $ parens (pretty "*loc.pk_" <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
 
 extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad (Doc ann)
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        -- (CHash p _ n, [x]) -> do 
-        --     roname <- flattenPath p 
-        --     orcls <- use oracles
-        --     case orcls M.!? roname of
-        --         Nothing -> throwError $ TypeError "unrecognized random oracle"
-        --         Just outLen -> do
-        --             return $ x <> pretty ".owl_extract_expand_to_len(&self.salt, " <> pretty outLen <> pretty ")"
+        (CHash p _ n, [x]) -> do 
+            debugPrint "TODO CHash args"
+            return $ noSamp "kdf" [x]
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ pretty "sample" <> tupled [pretty "NONCE_SIZE()", pretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -179,8 +175,8 @@ extractCryptOp op owlArgs = do
         -- (CPKDec, [k, x]) -> do return $ x <> pretty ".owl_pkdec(&" <> k <> pretty ")"
         -- (CMac, [k, x]) -> do return $ x <> pretty ".owl_mac(&" <> k <> pretty ")"
         -- (CMacVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_mac_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
-        -- (CSign, [k, x]) -> do return $ x <> pretty ".owl_sign(&" <> k <> pretty ")"
-        -- (CSigVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
+        (CSign, [k, x]) -> do return $ noSamp "sign" [k, x]
+        (CSigVrfy, [k, x, v]) -> do return $ noSamp "vrfy" [k, x, v]
         (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     where
         noSamp name args = pretty "ret" <> parens (pretty name <> tupled args)
