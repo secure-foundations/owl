@@ -1,7 +1,7 @@
 # Intro to Owl
 
 Owl is a new language for _security by typing_ for cryptographic
-communication protocols (e.g., Kerberos, WireGuard, TLS, and other protocols). 
+communication protocols (e.g., Kerberos, WireGuard, and TLS).
 
 ### Example: Encrypted Key
 
@@ -72,9 +72,10 @@ So, let's begin the protocol with the code for Alice:
     4:    input i in // i : Data<adv> 
     5:    corr_case k_data in
     6:    let res = dec(get(k_data), i) in 
-    7:    case res
-    8:    | Some j => SomeResult(j)
-    9:    | None => NoResult()
+    7:    case res {
+    8:        | Some j => SomeResult(j)
+    9:        | None => NoResult()
+    10:   }
 
 Line 1 defines `alice_main`, the main procedure for Alice. Other than the name, we know it's Alice's procedure since it's annotated with the locality `alice`. We'll get back to the type annotation for `alice_main` in a little bit.
 
