@@ -27,17 +27,19 @@ def alice () @ alice
     input i in 
     corr_case k_data in
     let res = adec(get(k_data), i) in 
-    case res
+    case res {
      | Some j => SomeResult(j)
      | None => NoResult()
+    }
     
 def bob () @ bob : Unit =
     input i in // i : Data<adv>
     corr_case psk in
-    case adec(get(psk), i) 
+    case adec(get(psk), i)  {
      | Some k => 
         let c = aenc(k, get(x)) in
         output c
      | None => ()
+    }
         
 
