@@ -9,7 +9,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module TypingBase where
 import AST
-import Error.Diagnose
 import qualified Data.Set as S
 import Data.Maybe
 import Data.Serialize
@@ -29,6 +28,7 @@ import Prettyprinter.Render.Terminal
 import Pretty
 import Control.Lens
 import Control.Lens.At
+import Error.Diagnose
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import Unbound.Generics.LocallyNameless
@@ -287,27 +287,9 @@ hideAnfVarsInTy ctxt t = L.foldl' substAnfVar t ctxt where
             Nothing -> ty
             Just anfOrig -> subst v anfOrig ty
 
-
-typeError' :: Bool -> String -> Check a
-typeError' removeANF msg = do
-    pos <- view curSpan
-    fn <- takeFileName <$> (view $ envFlags . fFilePath)
-    fl <- takeDirectory <$> (view $ envFlags . fFilePath)
-    f <- view $ envFlags . fFileContents
-    tyc <- if removeANF then removeAnfVars <$> view tyContext else view tyContext
-    let rep = Err Nothing msg [(pos, This msg)] []
-    let diag = addFile (addReport def rep) (fn) f  
-    e <- ask
-    printDiagnostic stdout True True 4 defaultStyle diag 
-    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line
-    writeSMTCache
-    Check $ lift $ throwError e
-
 typeError x = do
     th <- view typeErrorHook
     th x
-
-typeErrorANF = typeError' False
 
 writeSMTCache :: Check ()
 writeSMTCache = do
@@ -757,7 +739,7 @@ getFuncInfo f@(PRes (PDot p s)) = do
       _ -> typeError $ "Unknown function: " ++ show f
 
 mkConcats :: [AExpr] -> AExpr
-mkConcats [] = aeApp (topLevelPath "UNIT") [] []
+mkConcats [] = aeApp (topLevelPath "unit") [] []
 mkConcats (x:xs) = 
     let go x y = aeApp (topLevelPath "concat") [] [x, y] in
     foldl go x xs
@@ -986,7 +968,7 @@ resolveANF a = do
       AEVar s x -> do 
           tC <- view tyContext 
           case lookup x tC of
-            Nothing -> typeErrorANF $ "Unknown var during ANF: " ++ show x ++ ", " ++ show s 
+            Nothing -> error $ "Unknown var during ANF: " ++ show x ++ ", " ++ show s 
             Just (_, ianf, _) -> 
                 case ianf of 
                   Nothing -> return a
@@ -1136,9 +1118,9 @@ coveringLabel' t =
       (TRefined t1 _ _) -> coveringLabel' t1
       (TOption t) -> coveringLabel' t  
       (TName n) -> return $ nameLbl n
-      (TVK n) -> return $ zeroLbl
-      (TDH_PK n) -> return $ zeroLbl
-      (TEnc_PK n) -> return $ zeroLbl
+      (TVK n) -> return $ advLbl
+      (TDH_PK n) -> return $ advLbl
+      (TEnc_PK n) -> return $ advLbl
       (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m) -- TODO: is this right? Definitely sound
       (TUnion t1 t2) -> do
           l1 <- coveringLabel' t1

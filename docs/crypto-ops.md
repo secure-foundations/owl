@@ -49,13 +49,48 @@ Let `n` be a name with type `enckey t`. There are two operations for `n`:
 - Decryption `adec(x, y):` If `x : Name(n)`, `y : Data<adv>`, and `sec(x)`, then `adec(x, y) : Option t`.
 Decryption returns an option type, as decryption will fail if the tag fails to verify.
 
-## Signatures, MACs
+## Signatures
 
+Name type: `sigkey t`. 
+If `n : sigkey t` is a `sigkey` name, we also have the singleton type `vk(n)` for 
+the corresponding public verification key. 
+Below, let `L = |t|` be the _covering label_ for `t`: this is the label of all
+secrets in `t`.
+
+- Public keys: if `x : Name(n)` then `vk(x) : vk(n)`. You can also call
+    `get_vk(n)` to obtain the verification key.
+- Signing: If `x : Name(n)` and `y : t`, then `sign(x, y) : Data<L>`.
+    This models that signatures leak
+    the plaintext data.
+- Verification: if `x : vk(n)`, `m : Data<L>`, `t : Data<L>`, and `sec(n)`,
+then `vrfy(x, m, t) : Option t`.
+
+## MACs
+ 
 TODO
 
 ## PKE
 
-TODO
+Name type: `pkekey t`.
+If `n : pkekey t` is a PKE name, we also have the singleton type `encpk(n)` for 
+the corresponding public encryption key. 
+
+
+Suppose `n : pkekey t`.
+- Public key operation: `enc_pk(x)`. If `x : Name(n)`, then `enc_pk(x) : encpk(n)`. 
+One can also call `get_encpk(n)` to obtain the public key. 
+
+- Encryption: `pkenc(x, y)`. If `x : encpk(n)` and `y : t`, returns `Data<adv>`. 
+- Decryption: `pkdec(x, y)`. If `x : Name(n)` and `y : Data<adv>`, and `sec(n)`,
+    then we return `Option (Union<t, Data<adv> >)`. Once you case on the option,
+    you then need to perform a `union_case` to analyze both cases:
+
+    case pkdec(get(n), i) { 
+        | None => ()
+        | Some m' => 
+            union_case m = m' in 
+            ...
+    }
 
 ## Nonces
 

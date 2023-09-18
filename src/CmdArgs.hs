@@ -68,3 +68,4 @@ getHelpMessage =
     case execParserPure defaultPrefs (info (parseArgs <**> helper) (fullDesc <> progDesc "OWL")) ["--help"] of
       Failure e -> fst (renderFailure e "")
       _ -> error "bad"
+

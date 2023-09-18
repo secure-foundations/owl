@@ -478,7 +478,7 @@ parsePropTerm =
         <|>
         (parseSpanned $ try $ do
             e <- parseAExpr
-            return $ PEq e (builtinFunc "TRUE" []) 
+            return $ PEq e (builtinFunc "true" []) 
         )
 
 parseQuant = 
@@ -663,7 +663,7 @@ parseNameDeclBody =
                 reserved "uniqueness_by"
                 parseExpr
             let lem = case olem of
-                        Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "UNIT") [] []
+                        Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "unit") [] []
                         Just l -> l
             return $ DeclRO strictness (bind xs (e, req, nts, lem))
          )
@@ -1031,7 +1031,7 @@ parseExprTerm =
         char ')'
         p' <- getPosition
         whiteSpace
-        return $ Spanned (ignore $ mkPos p p') $ ERet $ Spanned (ignore $ mkPos p p') (AEApp (topLevelPath "UNIT") [] [])
+        return $ Spanned (ignore $ mkPos p p') $ ERet $ Spanned (ignore $ mkPos p p') (AEApp (topLevelPath "unit") [] [])
         )
     <|>
     parensPos parseExpr
@@ -1118,7 +1118,7 @@ parseExprTerm =
         a <- parseAExpr
         reserved "in"
         e <- parseExpr
-        return $ EUnionCase a $ bind (s2n x) e
+        return $ EUnionCase a x $ bind (s2n x) e
     )
     <|>
     (do
@@ -1529,19 +1529,19 @@ parseAExprTerm =
         char ')'
         p' <- getPosition
         whiteSpace
-        return $ Spanned (ignore $ mkPos p p') $ AEApp (topLevelPath $ "UNIT") [] []
+        return $ Spanned (ignore $ mkPos p p') $ AEApp (topLevelPath $ "unit") [] []
     )
     <|>
     parensPos parseAExpr
     <|>
     (parseSpanned $ do
         reserved "true"
-        return $ AEApp (topLevelPath $ "TRUE") [] []
+        return $ AEApp (topLevelPath $ "true") [] []
     )
     <|>
     (parseSpanned $ do
         reserved "false"
-        return $ AEApp (topLevelPath $ "FALSE") [] []
+        return $ AEApp (topLevelPath $ "false") [] []
     )
     <|>
     (parseSpanned $ do
