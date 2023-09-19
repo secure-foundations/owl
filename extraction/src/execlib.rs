@@ -146,5 +146,39 @@ pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h
     owl_hkdf::extract_expand_to_len(ikm, salt, len)
 }
 
+#[verifier(external_body)]
+pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac: Vec<u8>)
+    ensures mac@ == speclib::mac(mackey@, msg@)
+{
+    owl_hmac::hmac(hmac_mode(), mackey, msg, None)
+}
+
+#[verifier(external_body)]
+pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Vec<u8>>)
+    ensures speclib::view_option(x) == speclib::mac_vrfy(mackey@, msg@, mac@)
+{
+    if owl_hmac::verify(hmac_mode(), mackey, msg, mac, None) {
+        Some(msg.to_vec())
+    } else {
+        None
+    }
+}
+
+#[verifier(external_body)]
+pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)
+    ensures ctxt@ == speclib::pkenc(pubkey@, msg@)
+{
+    owl_pke::encrypt(pubkey, msg)
+}
+
+#[verifier(external_body)]
+pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
+    ensures msg@ == speclib::sign(privkey@, ctxt@)
+{
+    owl_pke::decrypt(privkey, ctxt)
+}
+
+
+
 
 } // verus!

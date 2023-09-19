@@ -171,10 +171,10 @@ extractCryptOp op owlArgs = do
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
         -- (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         -- (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        -- (CPKEnc, [k, x]) -> do return $ x <> pretty ".owl_pkenc(&" <> k <> pretty ")"
-        -- (CPKDec, [k, x]) -> do return $ x <> pretty ".owl_pkdec(&" <> k <> pretty ")"
-        -- (CMac, [k, x]) -> do return $ x <> pretty ".owl_mac(&" <> k <> pretty ")"
-        -- (CMacVrfy, [k, x, v]) -> do return $ x <> pretty ".owl_mac_vrfy(&" <> k <> pretty ", &" <> v <> pretty ")"
+        (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
+        (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
+        (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]
+        (CMacVrfy, [k, x, v]) -> do return $ noSamp "mac_vrfy" [k, x, v]
         (CSign, [k, x]) -> do return $ noSamp "sign" [k, x]
         (CSigVrfy, [k, x, v]) -> do return $ noSamp "vrfy" [k, x, v]
         (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
@@ -196,11 +196,6 @@ extractExpr (COutput a l) = do
         s' <- extractEndpoint s
         return $ pretty "to" <+> parens s'
     return $ parens $ pretty "output " <> parens a' <+> l'
--- -- Special case for `let _ = samp _ in ...` which is special-cased in the ITree syntax
--- extractExpr (CLet (CSamp d xs) xk) =
---     let (x, k) = prettyBind xk in
---     parens (pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map extractAExpr xs) <> comma <+> replacePrimes' x)) <+>
---     pretty "in" <> line <> k
 extractExpr (CLet (COutput a l) xk) = do
     let (_, k) = unsafeUnbind xk 
     o <- extractExpr (COutput a l)
@@ -213,7 +208,6 @@ extractExpr (CLet e xk) = do
     e' <- extractExpr e
     k' <- extractExpr k
     return $ pretty "let" <+> extractVar x <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
--- extractExpr (CSamp d xs) = pretty "sample" <> parens (coinsSize d <> comma <+> pretty d <> tupled (map extractAExpr xs))
 extractExpr (CIf a e1 e2) = do
     a' <- extractAExpr a
     e1' <- extractExpr e1

@@ -94,6 +94,22 @@ pub closed spec(checked) fn dh_combine(pubkey: Seq<u8>, privkey: Seq<u8>) -> (ss
 pub closed spec(checked) fn kdf(x: Seq<u8>) -> (h: Seq<u8>)
 { unimplemented!() }
 
+#[verifier(external_body)]
+pub closed spec(checked) fn pkenc(pubkey: Seq<u8>, msg: Seq<u8>) -> (ctxt: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn mac(mackey: Seq<u8>, msg: Seq<u8>) -> (mac: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn mac_vrfy(mackey: Seq<u8>, msg: Seq<u8>, mac: Seq<u8>) -> (x: Option<Seq<u8>>)
+{ unimplemented!() }
+
 pub open spec fn eq(a: Seq<u8>, b: Seq<u8>) -> bool
 {
     a == b

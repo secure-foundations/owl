@@ -455,10 +455,10 @@ extractCryptOp binds op owlArgs = do
         (CADec, [k, x]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec" [k, x])
         (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CPKEnc, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_pkenc(&" ++ k ++ ")")
-        (CPKDec, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_pkdec(&" ++ k ++ ")")
-        (CMac, [(_,k), (_,x)]) -> do return (VecU8, pretty $ x ++ ".owl_mac(&" ++ k ++ ")")
-        (CMacVrfy, [(_,k), (_,x), (_,v)]) -> do return (Option VecU8, pretty $ x ++ ".owl_mac_vrfy(&" ++ k ++ ", &" ++ v ++ ")")
+        (CPKEnc, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkenc" [k, x])
+        (CPKDec, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkdec" [k, x])
+        (CMac, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_mac" [k, x])
+        (CMacVrfy, [k, x, v]) -> do return (Option VecU8, pretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
         (CSign, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_sign" [k, x])
         (CSigVrfy, [k, x, v]) -> do return (Option VecU8, pretty $ printOwlOp "owl_vrfy" [k, x, v])
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
@@ -784,7 +784,7 @@ nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
 nameInit s nt = case nt^.val of
     NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(cipher());"
     NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
-    NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&HMAC_MODE());"
+    NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&hmac_mode());"
     NT_PKE _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
     NT_DH -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_dhke::gen_ecdh_key_pair();"
