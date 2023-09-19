@@ -150,13 +150,13 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEInt i) = return $ pretty i
     extractAExpr' (AEGet ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*loc." <> pretty ne') <> pretty ".view()"
+        return $ parens (pretty "*cfg." <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEGetEncPK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*loc.pk_" <> pretty ne') <> pretty ".view()"
+        return $ parens (pretty "*cfg.pk_" <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*loc.pk_" <> pretty ne') <> pretty ".view()"
+        return $ parens (pretty "*cfg.pk_" <> pretty ne') <> pretty ".view()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
 
 extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad (Doc ann)
@@ -223,7 +223,7 @@ extractExpr (CCall f is as) = do
     let inds = case is of
                 ([], []) -> mempty
                 (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
-    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> inds <> tupled (pretty "loc" : as'))
+    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> inds <> tupled (pretty "cfg" : as'))
 extractExpr (CCase a xs) = do
     a' <- extractAExpr a
     pcases <-
@@ -240,7 +240,13 @@ extractExpr (CCase a xs) = do
     return $ parens $ pretty "case" <+> parens a' <> line <> braces (vsep pcases)
 extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
-extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented case for extractExpr:" <+> pretty c
+extractExpr (CIncCtr p ([], [])) = do
+    p' <- flattenPath p
+    return $ parens $ pretty "ret" <> parens (pretty "inc_counter" <> tupled [pretty "cfg." <> pretty (rustifyName p')])
+extractExpr (CGetCtr p ([], [])) = do 
+    p' <- flattenPath p
+    return $ parens $ pretty "ret" <> parens (pretty "cfg." <> pretty (rustifyName p'))
+extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented case for Spec.extractExpr:" <+> pretty c
 -- extractExpr (CTLookup n a) = return $ pretty "lookup" <> tupled [pretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ pretty "write" <> tupled [pretty n, extractAExpr a, extractAExpr a']
 
@@ -253,7 +259,7 @@ extractDef :: String -> Locality -> CExpr -> [(String, RustTy)] -> SpecTy -> Ext
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
     let argsPrettied = hsep . punctuate comma $ 
-            pretty "loc:" <+> pretty (locName lname) 
+            pretty "cfg:" <+> pretty (cfgName lname) 
             : map specExtractArg owlArgs
     let rtPrettied = pretty "-> ITree<" <> pretty specRt <> pretty ", Endpoint>"
     body <- extractExpr concreteBody
@@ -271,4 +277,4 @@ mkSpecEndpoint lnames =
     <> line)
 
 endpointOfAddr :: Doc ann
-endpointOfAddr = pretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { todo!() }"
+endpointOfAddr = pretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { unimplemented!() /* axiomatized */ }"

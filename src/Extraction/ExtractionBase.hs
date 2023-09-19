@@ -189,6 +189,12 @@ flattenPath p = error $ "bad path: " ++ show p
 locName :: String -> String
 locName x = "loc_" ++ replacePrimes x
 
+cfgName :: String -> String
+cfgName x = "cfg_" ++ replacePrimes x
+
+stateName :: String -> String
+stateName x = "state_" ++ replacePrimes x
+
 sidName :: String -> String
 sidName x = "sid_" ++ replacePrimes x
 

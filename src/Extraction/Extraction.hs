@@ -692,6 +692,14 @@ extractExpr inK loc binds (CTLookup tbl ae) = do
 extractExpr inK loc binds (CCrypt cryptOp args) = do
     (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
     return (binds, rt, pre, opPrettied)
+extractExpr inK loc binds (CIncCtr ctr idxs) = do
+    pctr <- flattenPath ctr
+    let ctrName = pretty "self." <> pretty (rustifyName pctr)
+    return (binds, Unit, pretty "", ctrName <+> pretty "+= 1;")
+extractExpr inK loc binds (CGetCtr ctr idxs) = do
+    pctr <- flattenPath ctr
+    let ctrName = pretty "self." <> pretty (rustifyName pctr)
+    return (binds, Unit, pretty "", ctrName)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
@@ -784,10 +792,12 @@ nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
 nameInit s nt = case nt^.val of
     NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(cipher());"
     NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
+    NT_EncWithNonce {} -> 
+                return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
     NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&hmac_mode());"
     NT_PKE _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
-    NT_DH -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_dhke::gen_ecdh_key_pair();"
+    NT_DH ->    return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_dhke::gen_ecdh_key_pair();"
     _ -> throwError $ ErrSomethingFailed "unimplemented name initializer"
 
 
@@ -797,7 +807,7 @@ nameInit s nt = case nt^.val of
 type LocalityName = String
 type NameData = (String, NameType, Int, Int) -- name, type, number of sessionID indices, number of processID indices
 type DefData = (String, Locality, [IdxVar], [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, sessionID arguments, arguments, return type, body
-type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)]) -- number of locality indices, local state, shared state, defs, table names and codomains
+type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [String]) -- number of locality indices, local state, shared state, defs, table names and codomains, names of counters
 
 
 -- returns (locality stuff, shared names, public keys)
@@ -805,12 +815,13 @@ preprocessModBody :: TB.ModBody -> ExtractionMonad (M.Map LocalityName LocalityD
 preprocessModBody mb = do
     let (locs, locAliases) = sortLocs $ mb ^. TB.localities
     let lookupLoc = lookupLoc' locs locAliases
-    let locMap = M.map (\npids -> (npids, [],[],[],[])) locs
+    let locMap = M.map (\npids -> (npids, [],[],[],[], [])) locs
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
+    locMap <- foldM (sortCtr lookupLoc) locMap (mb ^. TB.ctrEnv)
     (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
     mapM_ sortOrcl $ (mb ^. TB.randomOracle)
-    -- TODO random oracles, counters
+    -- TODO counters
     return (locMap, shared, pubkeys)
     where
         sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
@@ -838,15 +849,25 @@ preprocessModBody mb = do
                 case body of
                     Nothing -> return m
                     Just e  -> do
-                        let f (i, l, s, d, t) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t)
+                        let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t, c)
                         makeFunc owlName loc sids args retTy
                         return $ M.adjust f locName m
         
         sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
         sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
             locName <- lookupLoc =<< flattenPath locP
-            let f (i, l, s, d, t) = (i, l, s, d, t ++ [(name, ty)])
+            let f (i, l, s, d, t, c) = (i, l, s, d, t ++ [(name, ty)], c)
             return $ M.adjust f locName locMap
+
+        sortCtr :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, Bind ([IdxVar], [IdxVar]) Locality) -> ExtractionMonad (M.Map LocalityName LocalityData)
+        sortCtr lookupLoc locMap (name, b) = do
+            let ((sids, pids), Locality locP _) = unsafeUnbind b
+            case (sids, pids) of
+                ([], []) -> do
+                    locName <- lookupLoc =<< flattenPath locP
+                    let f (i, l, s, d, t, c) = (i, l, s, d, t, c ++ [name])
+                    return $ M.adjust f locName locMap
+                _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
 
         sortName :: (LocalityName -> ExtractionMonad LocalityName) 
                     -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
@@ -859,10 +880,8 @@ preprocessModBody mb = do
               Just (nt, loc) -> do
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize
-                    NT_Enc _ -> do
-                        keySize <- useAeadKeySize
-                        ivSize <- useAeadNonceSize
-                        return $ keySize + ivSize
+                    NT_Enc _ -> do useAeadKeySize
+                    NT_EncWithNonce {} -> do useAeadKeySize
                     NT_MAC _ -> do useHmacKeySize
                     NT_PKE _ -> do return pkeKeySize
                     NT_Sig _ -> do return sigKeySize
@@ -872,8 +891,8 @@ preprocessModBody mb = do
                 let nsids = length sids
                 let npids = length pids
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
-                let gPub m lo = M.adjust (\(i,l,s,d,t) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t)) lo m
-                let gPriv m lo = M.adjust (\(i,l,s,d,t) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t)) lo m
+                let gPub m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t, c)) lo m
+                let gPriv m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t, c)) lo m
                 locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
                 locNameCounts <- mapM (\(Locality lname lidxs) -> do
                     plname <- flattenPath lname
@@ -905,12 +924,12 @@ preprocessModBody mb = do
 
 -- return (main func name, number of sessionID args to main, exec code, spec code, unverified lib code)
 extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann, Doc ann, Doc ann)
-extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
-    let sfs = stateFields idxs localNames sharedNames pubKeys tbls
+extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
+    let sfs = stateFields idxs localNames sharedNames pubKeys tbls ctrs 
     let cfs = configFields idxs sharedNames pubKeys
     indexedNameGetters <- mapM genIndexedNameGetter localNames
     let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
-    initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
+    initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls ctrs
     let configDef = configLibCode loc cfs
     case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
         Just (mainName,_,sids,_,_,_) -> do
@@ -959,7 +978,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 map (\(s,_,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Vec<u8>" else pretty ": HashMap<usize, Vec<u8>>")) sharedNames ++
                 map (\(s,_,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Vec<u8>"]
-        stateFields idxs localNames sharedNames pubKeys tbls =
+        stateFields idxs localNames sharedNames pubKeys tbls ctrs =
             vsep . punctuate comma $
                 pretty "pub listener: TcpListener" :
                 map (\(s,_,nsids,npids) -> pretty "pub" <+> pretty (rustifyName s) <>
@@ -971,9 +990,13 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                 map (\(s,_,_,_) -> pretty "pub" <+> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") pubKeys ++
                 -- Tables are always treated as local:
                 map (\(n,t) -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
+                map (\n -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": usize") ctrs ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
-        genInitLoc loc localNames sharedNames pubKeys tbls = do
-            localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames
+        genInitLoc loc localNames sharedNames pubKeys tbls ctrs = do
+            localInits <- do
+                localNameInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames 
+                let ctrInits = map (\n -> pretty "let" <+> pretty (rustifyName n) <+> pretty "= 0;") ctrs
+                return $ localNameInits ++ ctrInits
             return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
                 pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
@@ -990,6 +1013,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls)) = do
                         map (\(s,_,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
                         map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
                         map (\(n,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty "HashMap::new()") tbls ++
+                        map (pretty . rustifyName) ctrs ++
                         [pretty "salt : rc_new(config.salt)"]
                     ) <>
                 rbrace
@@ -1039,7 +1063,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
         braces (pretty "println!(\"Incorrect usage\");") <> line <>
         rbrace <> line <> line 
     where
-        genIdxLocCount (lname, (npids,_,_,_,_)) =
+        genIdxLocCount (lname, (npids,_,_,_,_,_)) =
             if npids == 0 then pretty "" else
                 pretty "let n_" <> pretty (locName lname) <+> pretty "= get_num_from_cmdline" <> (parens . dquotes $ pretty lname) <> pretty ";"
 
@@ -1059,7 +1083,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 
         genSalt = pretty "let" <+> pretty "salt" <+> pretty "=" <+> pretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt
 
-        writeConfig pubKeys (loc, (npids, _, ss, _, _)) =
+        writeConfig pubKeys (loc, (npids, _, ss, _, _, _)) =
             let configInits = hsep . punctuate comma $
                     (map (\(n,_,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".clone()") ss ++
                      map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++

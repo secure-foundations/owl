@@ -7,17 +7,18 @@ name k : enckey_with_nonce Name(x)
     nonce_pattern *
     @ alice
 
-def tst() @ alice : Unit = 
+def alice_main () @ alice : Bool<static> = 
     inc_counter N;
     let x = get_counter N in 
-    let c = aenc_with_nonce<N>(get(k), get(x)) in 
-    output c;
-    corr_case k in
-    case adec_with_nonce(get(k), x, c)
-     | None => ()
-     | Some _y => 
-        let y : if sec(k) then Name(x) else Data<adv> = _y in
-        ()
+    false
+    // let c = aenc_with_nonce<N>(get(k), get(x)) in 
+    // output c;
+    // corr_case k in
+    // case adec_with_nonce(get(k), x, c)
+    //  | None => false
+    //  | Some _y => 
+    //     let y : if sec(k) then Name(x) else Data<adv> = _y in
+    //     true
 
 
 

@@ -125,6 +125,10 @@ pub open spec fn length(x: Seq<u8>) -> nat
     x.len()
 }
 
+pub open spec fn inc_counter(mut ctr: usize)
+{
+    ctr += 1usize;
+}
 
 }
 

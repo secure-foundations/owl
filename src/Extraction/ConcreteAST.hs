@@ -96,6 +96,8 @@ data CExpr =
     | CTLookup Path AExpr
     | CTWrite Path AExpr AExpr
     | CCrypt CryptOp [AExpr]
+    | CGetCtr Path ([Idx], [Idx])
+    | CIncCtr Path ([Idx], [Idx])
     deriving (Show, Generic, Typeable)
 
 instance Alpha CExpr
@@ -154,7 +156,8 @@ concretify e =
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
       ECrypt op args -> return $ CCrypt op args
-      e -> error $ "TODO: unimplemented case for concretify: " ++ show e
+      EIncCtr p idxs -> return $ CIncCtr p idxs
+      EGetCtr p idxs -> return $ CGetCtr p idxs
 
 doConcretify :: Expr -> CExpr
 doConcretify = runFreshM . concretify
@@ -215,4 +218,6 @@ instance Pretty CExpr where
     pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
     pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
     pretty (CCrypt cop as) = pretty cop <> tupled (map pretty as)
+    pretty (CIncCtr p idxs) = pretty "inc_counter" <> angles (pretty idxs) <> parens (pretty p)
+    pretty (CGetCtr p idxs) = pretty "get_counter" <> angles (pretty idxs) <> parens (pretty p)
 
