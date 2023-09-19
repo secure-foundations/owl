@@ -116,7 +116,7 @@ concretify e =
           let (x, k) = unsafeUnbind xk
           k' <- concretify k
           return $ CLet e1' (bind x k')
-      EUnionCase a xk -> do
+      EUnionCase a s xk -> do
           (x, k) <- unbind xk
           k' <- concretify k
           return $ subst x a k'

@@ -91,7 +91,9 @@ instance  OwlPretty (Path) where
 
 instance OwlPretty ResolvedPath where
     owlpretty (PDot PTop x) = owlpretty x
-    owlpretty p = owlpretty $ show p
+    owlpretty (PDot (PPathVar OpenPathVar _) s) = owlpretty s
+    owlpretty (PDot (PPathVar (ClosedPathVar s) _) x) = owlpretty (unignore s) <> pretty "." <> owlpretty x
+    owlpretty (PDot x y) = owlpretty x <> pretty "." <> owlpretty y
 
 instance  OwlPretty TyX where
     owlpretty TUnit =
@@ -215,7 +217,7 @@ instance  OwlPretty AExprX where
           (PRes (PDot PTop "concat"), [x, y]) -> owlpretty x <+> owlpretty "++" <+> owlpretty y
           (PRes (PDot PTop "zero"), []) -> owlpretty "0"
           (PRes (PDot PTop s), xs) -> owlpretty s <> tupled (map owlpretty xs)
-          _ -> owlpretty f <> tupled (map owlpretty as)
+          _ -> owlpretty f <> pretty "(" <> mconcat (map owlpretty as) <> pretty ")"
     owlpretty (AEHex s) = owlpretty "0x" <> owlpretty s
     owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
     owlpretty (AEInt i) = owlpretty i
@@ -273,7 +275,7 @@ instance  OwlPretty ExprX where
                         Just a -> owlpretty "anf_let[" <> owlpretty a <> owlpretty "]"
         in
         anfLet <+> owlpretty sx <+> tann <+> owlpretty "=" <+> owlpretty "(" <> owlpretty e1 <> owlpretty ")" <+> owlpretty "in" <> line <> k
-    owlpretty (EUnionCase a xk) = 
+    owlpretty (EUnionCase a _ xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "union_case" <+> x <+> owlpretty "=" <> owlpretty a <+>  owlpretty "in" <+> k
     owlpretty (EUnpack a k) = owlpretty "unpack a .... TODO"
