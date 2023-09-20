@@ -352,6 +352,7 @@ predicate valid_responder_msg1_val (s) =
     /\ (eph != dhpk(get(E_init)) ==> 
         _responder_msg1_C3(s) == get(msg1_C3_resp_corr[eph;0]) 
         /\ corr(msg1_C3_resp_corr[eph;0])
+        /\ (corr(S_init) \/ corr(S_resp))
         )
 
 type responder_msg1_val_t = s:responder_msg1_val {valid_responder_msg1_val[s]}
@@ -397,9 +398,10 @@ predicate valid_transp_keys_resp(s) =
     (dh_other != dhpk(get(E_init)) ==>
         _transp_keys_T_init_send(s) == get(transp_T_resp_corr[dh_other;0]) /\
         _transp_keys_T_resp_send(s) == get(transp_T_resp_corr[dh_other;1]) /\
-        (corr(transp_T_resp_corr[dh_other;0]) ==>
-            (corr(S_init) \/ corr(S_resp)))
-    ) 
+        (corr(S_init) \/ corr(S_resp))
+    )
+        
+    
     
 type transp_keys_resp_t = s:transp_keys {valid_transp_keys_resp[s]}
 
@@ -442,7 +444,7 @@ def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val 
 def receive_msg1 (dhpk_S_init : dhpk(S_init)) @ Responder 
      : Option (responder_msg1_val_t) 
      =
-     set_option ":rlimit" "2000000" in 
+     // set_option ":rlimit" "2000000" in 
      input inp in
      let msg1_reserved = _msg1_reserved(inp) in
      let msg1_sender = _msg1_sender(inp) in 
@@ -545,8 +547,7 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
 
     let psk = 0x00000000 in // should be zeros(32)
 
-    // pcase (msg2_ephemeral == dhpk(get(E_resp))) in
-    assume (msg2_ephemeral != dhpk(get(E_resp))); 
+    pcase (msg2_ephemeral == dhpk(get(E_resp))) in
 
     let C4 = hash<msg2_C4, msg2_C4_init_corr[msg2_ephemeral]>(C3, msg2_ephemeral) in
     let H5 = crh(H4 ++ msg2_ephemeral) in
@@ -650,10 +651,6 @@ predicate resp_recv_secure(k) =
     (_transp_keys_T_init_send(k) == get(transp_T[;0])
      /\
      sec(transp_T[;0]))
-    \/
-    (_transp_keys_T_init_send(k) == get(transp_T_resp_corr[eph_init;0])
-     /\
-     sec(transp_T_resp_corr[eph_init;0]))
     
 
 def transp_recv_resp (transp_keys_val : transp_keys_resp_t, c : Data<adv>) @ Responder :   
