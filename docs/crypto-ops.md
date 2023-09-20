@@ -49,6 +49,51 @@ Let `n` be a name with type `enckey t`. There are two operations for `n`:
 - Decryption `adec(x, y):` If `x : Name(n)`, `y : Data<adv>`, and `sec(x)`, then `adec(x, y) : Option t`.
 Decryption returns an option type, as decryption will fail if the tag fails to verify.
 
+## Stateful AEAD
+
+Stateful AEAD is a refinement of authenticated encryption that uses an explicit
+_counter_ rather than needing to sample a random IV. Additionally, it 
+supports Additional Authenticated Data (AAD), which can be used to, on the side,
+authenticate a piece of data against the key.
+
+Counters are declared as follows:
+
+    locality L
+    ...
+    counter N @ L
+
+Since counters model a limited form of mutable state, only one locality is
+supported here.  
+
+The name type for stateful AEAD is as follows:
+
+    st_aead t
+            aad x. P
+            nonce N
+            nonce_pattern pat
+
+Here, `t` is the type to be encrypted (same as `enckey`), 
+while `P` is the AAD proposition, which may make use of `x`, the input to the
+AAD. The nonce `N` must be a previously declared counter, while the
+`nonce_pattern` `pat` specifies how the counter's current value is embedded into 
+the AEAD. Currently, the only supported pattern is `*`, meaning that the counter
+is embedded verbatim (without any padding).
+
+Similar to ordinary authenticated encryption, we have two operations.
+Suppose `n` is a name with the above name type. 
+- Encryption: if:
+    - `k : Name(n)`;
+    - `x : t`; 
+    - `aad : Data<adv>`, where `P[aad]` holds;
+    - and `N` is the counter declared for the name type, then:
+    - `st_aead_enc<N>(k, x, aad) : Data<adv>`.
+- Decryption: if:
+    -  `k : Name(n)` with `sec(n)`;
+    - `c : Data<adv>`;
+    - `aad : Data<adv>`;
+    - `ctr : Data<adv>`; then:
+    - `st_aead_dec(k, c, aad, ctr) : Option (x:t{P[aad]})`.
+
 ## Signatures
 
 Name type: `sigkey t`. 
