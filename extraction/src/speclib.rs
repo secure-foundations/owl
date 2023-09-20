@@ -125,11 +125,6 @@ pub open spec fn length(x: Seq<u8>) -> nat
     x.len()
 }
 
-pub open spec fn inc_counter(mut ctr: usize)
-{
-    ctr += 1usize;
-}
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -413,53 +408,55 @@ pub mod itree {
 
     #[macro_export]
     macro_rules! owl_spec {
-        (($($tt:tt)*)) => { owl_spec!($($tt)*) };
-        ({$($tt:tt)*}) => { owl_spec!($($tt)*) }; // NB: this one has curly braces {}, above has parens (), don't delete!
-        ((input ($var:ident, $evar:ident)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, $evar| {owl_spec!($($next)*)})))
+        ($mut_state:ident, $mut_type:ident, ($($tt:tt)*)) => { owl_spec!($mut_state, $mut_type, $($tt)*) };
+        ($mut_state:ident, $mut_type:ident, {$($tt:tt)*}) => { owl_spec!($mut_state, $mut_type, $($tt)*) }; // NB: this one has curly braces {}, above has parens (), don't delete!
+        ($mut_state:ident, $mut_type:ident, (input ($var:ident, $evar:ident)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|$var, $evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
         };
-        ((input ($var:ident, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, _evar| {owl_spec!($($next)*)})))
+        ($mut_state:ident, $mut_type:ident, (input ($var:ident, _)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|$var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
         };
-        ((input (_, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|_var, _evar| {owl_spec!($($next)*)})))
+        ($mut_state:ident, $mut_type:ident, (input (_, _)) in $($next:tt)*) => {
+            (ITree::Input(closure_to_fn_spec(|_var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
         };
-        ((output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => {
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($($next)*))))
+        ($mut_state:ident, $mut_type:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => {
+            (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($mut_state, $mut_type, $($next)*))))
         };
         // vvv check this
-        (output ($($e:tt)*) to ($($endpoint:tt)*)) => {
+        ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => {
             (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(()))))
         };
-        (sample($n:expr, $f:ident($($arg:expr),*))) => {
-            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!((ret($f($($arg),*, coins))))})))
+        ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => {
+            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))})))
         };
-        (call ($($e:tt)*)) => {
+        ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => {
+            ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1, .. $mut_state}))
+        };
+        ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => {
             ($($e)*)
         };
-        (ret ($($e:tt)*)) => {
-            ITree::Ret($($e)*)
+        ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => {
+            ITree::Ret(($($e)*, $mut_state))
         };
-        (case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => {
+        ($mut_state:ident, $mut_type:ident, case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => {
             match $e {
-                $($pattern => { owl_spec!($($branch)*) })*
+                $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
             }
         };
-        (if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => {
+        ($mut_state:ident, $mut_type:ident, if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => {
             if $e {
-                owl_spec!($($e1)*)
+                owl_spec!($mut_state, $mut_type, $($e1)*)
             } else {
-                owl_spec!($($e2)*)
+                owl_spec!($mut_state, $mut_type, $($e2)*)
             }
         };
-        (let _ = ($($e:tt)*) in $($next:tt)*) => {
-            owl_spec!( $($e)* )
-                .bind( closure_to_fn_spec(|_var| owl_spec!($($next)*) ))
+        ($mut_state:ident, $mut_type:ident, let _ = ($($e:tt)*) in $($next:tt)*) => {
+            owl_spec!($mut_state, $mut_type, $($e)* )
+                .bind( closure_to_fn_spec(|tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
         };
-        (let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
-            // owl_spec!(@@internal merged_let $var = ($($e)*) in { $($next)+ })
-            owl_spec!( $($e)* )
-                .bind( closure_to_fn_spec(|$var| owl_spec!($($next)*) ))
+        ($mut_state:ident, $mut_type:ident, let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
+            owl_spec!($mut_state, $mut_type, $($e)* )
+                .bind( closure_to_fn_spec(|tmp| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
         };
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))

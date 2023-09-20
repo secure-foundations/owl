@@ -4,10 +4,8 @@
 
 pub use vstd::{modes::*, prelude::*, seq::*, slice::*, string::*, *};
 pub mod speclib;
-#[macro_use]
 pub use crate::speclib::{*, itree::*};
 pub mod execlib;
-#[macro_use]
 pub use crate::execlib::{*};
 pub mod owl_aead;
 pub mod owl_dhke;

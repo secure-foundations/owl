@@ -1,23 +1,7 @@
-use crate::{owl_aead, speclib, *};
+use crate::{owl_aead, *};
 use std::rc::Rc;
-// use vstd::{prelude::*, seq::*, slice::*, view::*, *};
 
 verus! {
-
-// #[verifier(external_body)]
-// #[verifier(broadcast_forall)]
-// pub proof fn axiom_Rc_view<A>(rc: Rc<A>) 
-//     where A: View
-//     ensures (rc@ == (*rc)@)
-// {}
-
-/// Clones a Vec<u8> (because currently Verus doesn't support this natively)
-#[verifier(external_body)]
-pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
-    ensures v@ == res@
-{
-    todo!() // Vec { vec: v.vec.clone() }
-}
 
 #[verifier(external_body)]
 pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
@@ -43,13 +27,6 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     }
     v
 }
-
-// #[verifier(external_body)]
-// pub exec fn slice_len<T>(slice: &[T]) -> (res: usize)
-//     ensures slice@.len() == res
-// {
-//     slice.len()
-// }
 
 #[verifier(external_body)]
 pub exec fn rc_clone(rc: &Rc<Vec<u8>>) -> (res: Rc<Vec<u8>>)

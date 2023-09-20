@@ -242,10 +242,10 @@ extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
 extractExpr (CIncCtr p ([], [])) = do
     p' <- flattenPath p
-    return $ parens $ pretty "ret" <> parens (pretty "inc_counter" <> tupled [pretty "cfg." <> pretty (rustifyName p')])
+    return $ parens $ parens (pretty "inc_counter" <> tupled [pretty (rustifyName p')])
 extractExpr (CGetCtr p ([], [])) = do 
     p' <- flattenPath p
-    return $ parens $ pretty "ret" <> parens (pretty "cfg." <> pretty (rustifyName p'))
+    return $ parens $ pretty "ret" <> parens (pretty "mut_state." <> pretty (rustifyName p'))
 extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented case for Spec.extractExpr:" <+> pretty c
 -- extractExpr (CTLookup n a) = return $ pretty "lookup" <> tupled [pretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ pretty "write" <> tupled [pretty n, extractAExpr a, extractAExpr a']
@@ -260,11 +260,12 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
     let argsPrettied = hsep . punctuate comma $ 
             pretty "cfg:" <+> pretty (cfgName lname) 
+            : pretty "mut_state:" <+> pretty (stateName lname)
             : map specExtractArg owlArgs
-    let rtPrettied = pretty "-> ITree<" <> pretty specRt <> pretty ", Endpoint>"
+    let rtPrettied = pretty "-> (res: ITree<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>" <> pretty ")"
     body <- extractExpr concreteBody
     return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-        pretty "owl_spec!" <> parens (line <>
+        pretty "owl_spec!" <> parens (pretty "mut_state," <> pretty (stateName lname) <> comma <> line <>
             body
         <> line) <> line <>
         rbrace

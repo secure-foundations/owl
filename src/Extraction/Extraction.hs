@@ -694,11 +694,14 @@ extractExpr inK loc binds (CCrypt cryptOp args) = do
     return (binds, rt, pre, opPrettied)
 extractExpr inK loc binds (CIncCtr ctr idxs) = do
     pctr <- flattenPath ctr
-    let ctrName = pretty "self." <> pretty (rustifyName pctr)
-    return (binds, Unit, pretty "", ctrName <+> pretty "+= 1;")
+    let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
+    let incr = 
+            pretty "/* TODO better handling of overflow reasoning */ assume" <> parens (ctrName <> pretty "+ 1 <= usize::MAX") <> pretty ";" <> line <> 
+            ctrName <+> pretty "=" <+> ctrName <+> pretty "+ 1;"
+    return (binds, Unit, pretty "", incr)
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
-    let ctrName = pretty "self." <> pretty (rustifyName pctr)
+    let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
     return (binds, Unit, pretty "", ctrName)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
@@ -710,7 +713,7 @@ funcCallPrinter owlName rustArgs callArgs = do
             , pretty owlName <> pretty "_spec" <>
                 tupled (pretty "*self" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
             , pretty "self." <> pretty (rustifyName owlName) <>
-                tupled (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "&") <> pretty arg) $ callArgs)
+                tupled (pretty "mut_state" : (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "&") <> pretty arg) $ callArgs))
         ]
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
@@ -746,45 +749,50 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
     debugPrint $ pretty ""
     -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
+    let (Locality lpath _) = loc
+    lname <- flattenPath lpath
     concreteBody <- concretify owlBody
     anfBody <- concretify =<< ANF.anf owlBody
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
-    curRetTy .= (Just . show . pretty . specTyOf) rtb
+    curRetTy .= (Just . show $ parens (pretty (specTyOf rtb) <> comma <+> pretty (stateName lname)))
     (_, rtb, preBody, body) <- extractExpr True loc (M.fromList rustArgs) anfBody
     curRetTy .= Nothing
-    decl <- genFuncDecl name rustSidArgs rustArgs rtb
+    decl <- genFuncDecl name lname rustSidArgs rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody rustArgs (specTyOf rtb)
-    let mainWrapper = if isMain then genMainWrapper owlName rtb (specTyOf rtb) else pretty ""
+    let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else pretty ""
     return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace <> line <> line <> mainWrapper, defSpec)
     where
-        specRtPrettied specRt = pretty "<" <> pretty specRt <> pretty ", Endpoint>"
-        genFuncDecl name sidArgs owlArgs rt = do
-            let itree = pretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) <> pretty ">"
+        specRtPrettied specRt lname = pretty "<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>"
+        genFuncDecl name lname sidArgs owlArgs rt = do
+            let itree = pretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) lname <> pretty ">"
             let argsPrettied = hsep . punctuate comma $ 
-                    pretty "&mut self"
+                    pretty "&self"
                     : pretty "Tracked(itree):" <+> itree
+                    : pretty "mut_state: &mut" <+> pretty (stateName lname)
                     : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
                     ++ map extractArg owlArgs
             let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> tupled [pretty rt, itree])
-            let viewRes = case rt of
-                    Unit -> pretty "()"
-                    ADT _ -> pretty "res.0.data.view()"
-                    _ -> pretty "res.0.view()"            
+            let viewRes = parens $ 
+                    (case rt of
+                        Unit -> pretty "()"
+                        ADT _ -> pretty "res.0.data.view()"
+                        _ -> pretty "res.0.view()")
+                    <> pretty ", *mut_state"
             let defReqEns =
-                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*old(self)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
+                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*self" : pretty "*old(mut_state)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
                     pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"
-        genMainWrapper owlName execRetTy specRetTy = 
+        genMainWrapper owlName lname execRetTy specRetTy = 
             pretty "#[verifier(external_body)] pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
-            parens (pretty "&mut self") <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
+            parens (pretty "&self, s: &mut" <+> pretty (stateName lname)) <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
                 pretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
-                pretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  pretty owlName <> pretty "_spec(*self)" <> pretty ");" <> line <>
+                pretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  pretty owlName <> pretty "_spec(*self, *s)" <> pretty ");" <> line <>
 
-                pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy <> pretty ">"] <+> pretty "=" <+>
-                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), /* todo args? */") <> pretty ";" <> line <>
+                pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy lname <> pretty ">"] <+> pretty "=" <+>
+                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), s, /* todo args? */") <> pretty ";" <> line <>
                 pretty "res" <>
             line)
 
@@ -925,18 +933,22 @@ preprocessModBody mb = do
 -- return (main func name, number of sessionID args to main, exec code, spec code, unverified lib code)
 extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann, Doc ann, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
-    let sfs = stateFields idxs localNames sharedNames pubKeys tbls ctrs 
+    let sfs = cfgFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
+    let mfs = mutFields ctrs
     indexedNameGetters <- mapM genIndexedNameGetter localNames
     let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
-    initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls ctrs
+    initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
+    let initMutState = genInitMutState loc ctrs
     let configDef = configLibCode loc cfs
     case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
         Just (mainName,_,sids,_,_,_) -> do
             (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e (n == mainName)) defs
             return (rustifyName mainName, length sids,
-                pretty "pub struct" <+> pretty (locName loc) <+> braces sfs <> line <>
-                pretty "impl" <+> pretty (locName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
+                pretty "pub struct" <+> pretty (stateName loc) <+> braces mfs <> line <>
+                pretty "impl" <+> pretty (stateName loc) <+> braces (line <> initMutState) <>
+                pretty "pub struct" <+> pretty (cfgName loc) <+> braces sfs <> line <>
+                pretty "impl" <+> pretty (cfgName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
                 vsep fnspecs,
                 configDef)
         Nothing -> throwError $ LocalityWithNoMain loc
@@ -961,11 +973,11 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
             rbrace
 
         configLibCode loc cfs =
-            pretty "#[derive(Serialize, Deserialize)]" <> line <> pretty "pub struct" <+> pretty (locName loc) <> pretty "_config" <+> braces cfs <> line <>
+            pretty "#[derive(Serialize, Deserialize)]" <> line <> pretty "pub struct" <+> pretty (cfgName loc) <> pretty "_config" <+> braces cfs <> line <>
             serdeWrappers loc
 
         serdeWrappers loc =
-            let l = pretty (locName loc) in
+            let l = pretty (cfgName loc) in
             pretty "pub fn serialize_" <> l <> pretty "_config(l: &" <> l <> pretty "_config) -> String" <> braces (line <>
                 pretty "serde_json::to_string(&l).expect(\"Can't serialize "<> l <> pretty "_config\")" <> line
             ) <> line <> 
@@ -978,7 +990,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
                 map (\(s,_,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Vec<u8>" else pretty ": HashMap<usize, Vec<u8>>")) sharedNames ++
                 map (\(s,_,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Vec<u8>"]
-        stateFields idxs localNames sharedNames pubKeys tbls ctrs =
+        cfgFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
                 pretty "pub listener: TcpListener" :
                 map (\(s,_,nsids,npids) -> pretty "pub" <+> pretty (rustifyName s) <>
@@ -990,19 +1002,18 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
                 map (\(s,_,_,_) -> pretty "pub" <+> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") pubKeys ++
                 -- Tables are always treated as local:
                 map (\(n,t) -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
-                map (\n -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": usize") ctrs ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
-        genInitLoc loc localNames sharedNames pubKeys tbls ctrs = do
-            localInits <- do
-                localNameInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames 
-                let ctrInits = map (\n -> pretty "let" <+> pretty (rustifyName n) <+> pretty "= 0;") ctrs
-                return $ localNameInits ++ ctrInits
-            return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] pub fn init_" <> pretty (locName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
+        mutFields ctrs = 
+            vsep . punctuate comma $ 
+                map (\n -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": usize") ctrs
+        genInitLoc loc localNames sharedNames pubKeys tbls = do
+            localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames 
+            return $ pretty "#[verifier(external_body)] pub fn init_" <> pretty (cfgName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
                 pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
                 pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
-                pretty "let config =" <+> pretty "deserialize_" <> pretty (locName loc) <> pretty "_config(&config_str);" <> line <>
-                pretty "return" <+> pretty (locName loc) <+>
+                pretty "let config =" <+> pretty "deserialize_" <> pretty (cfgName loc) <> pretty "_config(&config_str);" <> line <>
+                pretty "return" <+> pretty (cfgName loc) <+>
                     braces (hsep . punctuate comma $
                         pretty "listener"  :
                         map (\(s,_,nsids,_) ->
@@ -1013,10 +1024,15 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
                         map (\(s,_,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
                         map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
                         map (\(n,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty "HashMap::new()") tbls ++
-                        map (pretty . rustifyName) ctrs ++
                         [pretty "salt : rc_new(config.salt)"]
                     ) <>
                 rbrace
+        genInitMutState loc ctrs = 
+            let ctrInits = map (\n -> pretty (rustifyName n) <+> pretty ": 0,") ctrs in
+            pretty "#[verifier(external_body)] pub fn init_" <> pretty (stateName loc) <+> parens (pretty "") <+> pretty "-> Self" <+> lbrace <> line <> 
+                pretty (stateName loc) <+> braces (vsep ctrInits)
+            <> rbrace
+
 
 -- returns (index map, executable code, spec code, unverified lib code)
 extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann, Doc ann, Doc ann)
@@ -1089,13 +1105,13 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                      map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++
                      [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
             (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
-            pretty "let" <+> pretty (locName loc) <> pretty "_config:" <+> pretty (locName loc) <> pretty "_config" <+> pretty "=" <+> pretty (locName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
-            pretty "let" <+> pretty (locName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
-                    pretty "serialize_" <> pretty (locName loc) <> pretty "_config" <> parens (pretty "&" <> pretty (locName loc) <> pretty "_config") <> pretty ";" <> line <>
-            pretty "let mut" <+> pretty (locName loc) <> pretty "_f" <+> pretty "=" <+>
+            pretty "let" <+> pretty (cfgName loc) <> pretty "_config:" <+> pretty (cfgName loc) <> pretty "_config" <+> pretty "=" <+> pretty (cfgName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
+            pretty "let" <+> pretty (cfgName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
+                    pretty "serialize_" <> pretty (cfgName loc) <> pretty "_config" <> parens (pretty "&" <> pretty (cfgName loc) <> pretty "_config") <> pretty ";" <> line <>
+            pretty "let mut" <+> pretty (cfgName loc) <> pretty "_f" <+> pretty "=" <+>
                 pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
-                    dquotes (pretty (locName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
-            pretty (locName loc) <> pretty "_f" <> pretty ".write_all" <> parens (pretty (locName loc) <> pretty "_config_serialized.as_bytes()")
+                    dquotes (pretty (cfgName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
+            pretty (cfgName loc) <> pretty "_f" <> pretty ".write_all" <> parens (pretty (cfgName loc) <> pretty "_config_serialized.as_bytes()")
                                 <> pretty ".expect(\"Can't write config file\");" <>
             (if npids == 0 then pretty "" else rbrace)
 
@@ -1106,14 +1122,15 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
                 braces body <> pretty "else"
         genRunLocBody loc mainName nSidArgs =
-            pretty "let mut s =" <+> pretty (locName loc) <> pretty "::init_" <> pretty (locName loc) <>
+            pretty "let mut loc =" <+> pretty (cfgName loc) <> pretty "::init_" <> pretty (cfgName loc) <>
                 -- parens (pretty "&args.index(3)") <> pretty ";" <> line <>
                 parens (pretty "&String::from_rust_string(args[3].clone()).as_str()") <> pretty ";" <> line <>
+            pretty "let mut mut_state =" <+> pretty (stateName loc) <> pretty "::init_" <> pretty (stateName loc) <> pretty "();" <> line <>
             pretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = s." <> pretty mainName <> pretty "_wrapper" <> tupled [pretty i | i <- [1..nSidArgs]] <> pretty ";" <> line <>
+            pretty "let _res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled (pretty "&mut mut_state" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
