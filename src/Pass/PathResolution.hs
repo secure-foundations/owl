@@ -635,9 +635,10 @@ resolveExpr e =
       ESetOption s1 s2 k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
-      EFalseElim k -> do
+      EFalseElim k op -> do
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EFalseElim k'
+          op' <- traverse resolveProp op
+          return $ Spanned (e^.spanOf) $ EFalseElim k' op'
       ETLookup p a -> do
           p' <- resolvePath (e^.spanOf) PTTbl p
           a' <- resolveAExpr a

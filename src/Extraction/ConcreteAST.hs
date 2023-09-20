@@ -152,7 +152,7 @@ concretify e =
           avar <- fresh $ s2n "caseval"
           return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
       EPCase _ _ k -> concretify k
-      EFalseElim e -> concretify e
+      EFalseElim e _ -> concretify e
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
       ECrypt op args -> return $ CCrypt op args

@@ -1766,9 +1766,18 @@ checkExpr ot e = withSpan (e^.spanOf) $ do
       (ERet a) -> do
           t <- inferAExpr a
           getOutTy ot $ tRefined t ".res" (pEq (aeVar ".res") a)
-      (EFalseElim e) -> do
-        (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
-        if b then getOutTy ot tAdmit else checkExpr ot e
+      EFalseElim e op -> do
+          doFalseElim <- case op of
+                           Nothing -> return True
+                           Just pcond -> do
+                             _ <- local (set tcScope TcGhost) $ checkProp pcond
+                             (_, b) <- SMT.smtTypingQuery $ SMT.symAssert pcond
+                             return b 
+          case doFalseElim of
+            True -> do
+               (_, b) <- SMT.smtTypingQuery $ SMT.symAssert $ mkSpanned PFalse
+               if b then getOutTy ot tAdmit else checkExpr ot e
+            False -> checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
       (EForallBV xk) -> do

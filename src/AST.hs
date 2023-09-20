@@ -399,7 +399,7 @@ data ExprX =
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | EPCase Prop (Maybe Prop) Expr
-    | EFalseElim Expr
+    | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)

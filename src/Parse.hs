@@ -1249,9 +1249,12 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "false_elim"
+        op <- optionMaybe $ do
+            reserved "when"
+            parseProp
         reserved "in"
         e <- parseExpr
-        return $ EFalseElim e
+        return $ EFalseElim e op
         )
     <|>
     (parseSpanned $ do

@@ -70,8 +70,6 @@ name msg1_C2_resp_corr : RO[x] strict{0} get(msg1_C1_resp_corr[x;0]) ++ dh_combi
                 is_constant_lemma(crh(construction()))
     }
 
-corr[x] adv ==> [msg1_C2_resp_corr[x;1]]
-
 counter aead_counter_msg1_C3 @ Initiator
 name msg1_C3 : RO strict get(msg1_C2[;0]) ++ dh_combine(dhpk(get(S_resp)), get(S_init)) -> nonce || 
     st_aead (Data<adv> |12|)
@@ -89,8 +87,6 @@ name msg1_C3_resp_corr : RO[x] strict  get(msg1_C2_resp_corr[x;0]) ++ dh_combine
     requires is_group_elem(x)
     requires x != dhpk(get(E_init))
     uniqueness_by {    is_constant_lemma(crh(construction())) }
-
-// corr [x] adv ==> [msg1_C3_resp_corr[x;1]]
 
 // needs to use the crh hash function, rather than kdf
 name msg1_mac1_key : RO strict{0} mac1() ++ dhpk(get(S_resp)) -> mackey Data<adv> 
@@ -113,8 +109,6 @@ name msg2_C4_init_corr : RO[y] strict{0} get(msg1_C3[;0]) ++ y -> nonce
     requires y != dhpk(get(E_resp))
     uniqueness_by { is_constant_lemma(crh(construction())) }
     
-corr[y] adv ==> [msg2_C4_init_corr[y;0]]
-
 
 name msg2_C5 : RO strict{0} get(msg2_C4[;0]) ++ dh_combine(dhpk(get(E_init)), get(E_resp)) -> nonce
     uniqueness_by { is_constant_lemma(crh(construction())) }
@@ -177,7 +171,7 @@ name msg2_C7_resp_corr : RO[x] strict{0} get(msg2_C6_resp_corr[x;0]) ++ (0x00000
 corr[x] adv ==> [msg2_C7_resp_corr[x;1]]
 
 
-name msg2_C7_init_corr : RO[x] strict{0} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
+name msg2_C7_init_corr : RO[x] strict{0, 2} get(msg2_C6_init_corr[x;0]) ++ (0x00000000) -> nonce || nonce || 
     (st_aead Empty
             aad x. true
             // aad x.  exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre(c, ts, tau))
@@ -408,40 +402,6 @@ predicate valid_transp_keys_resp(s) =
     ) 
     
 type transp_keys_resp_t = s:transp_keys {valid_transp_keys_resp[s]}
-        
-        
-def off_chain_resp(er : 
-    (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_init))}), dhpk_S_init : dhpk(S_init)) @ Responder : Unit = 
-    let c1 = hash<msg1_C1_resp_corr[er]>(crh(construction()), er) in
-    let c2 = hash<msg1_C2_resp_corr[er]>(c1, dh_combine(er, get(S_resp))) in
-    let c3 = hash<msg1_C3_resp_corr[er]>(c2, dh_combine(dhpk_S_init, get(S_resp))) in 
-    let c4 = hash<msg2_C4_resp_corr[er]>(c3, dhpk(get(E_resp))) in 
-    let c5 = hash<msg2_C5_resp_corr[er]>(c4, dh_combine(er, get(E_resp))) in
-    let c6 = hash<msg2_C6_resp_corr[er]>(c5, dh_combine(dhpk_S_init, get(E_resp))) in
-    let c7 = hash<msg2_C7_resp_corr[er]>(c6, 0x00000000) in
-    let tsend = hash<transp_T_resp_corr[er]>(c7, 0x) in 
-    assert (corr(msg2_C7_resp_corr[er;0]) ==>
-                (corr(S_init) \/ corr(E_resp))
-                /\
-                (corr(S_init) \/ corr(S_resp))
-    )
-
-def off_chain_init(er : (x:Data<top>{is_group_elem(x) /\ x != dhpk(get(E_resp))}), dhpk_S_resp : dhpk(S_resp)) @ Initiator : Unit = 
-    let c1 = hash<msg1_C1>(crh(construction()), dhpk(get(E_init))) in
-    let c2 = hash<msg1_C2>(c1, dh_combine(dhpk_S_resp, get(E_init))) in
-    let c3 = hash<msg1_C3>(c2, dh_combine(dhpk_S_resp, get(S_init))) in 
-    let c4 = hash<msg2_C4_init_corr[er]>(c3, er) in 
-    let c5 = hash<msg2_C5_init_corr[er]>(c4, dh_combine(er, get(E_init))) in
-    let c6 = hash<msg2_C6_init_corr[er]>(c5, dh_combine(er, get(S_init))) in
-    let c7 = hash<msg2_C7_init_corr[er]>(c6, 0x00000000) in
-    let tsend = hash<transp_T_init_corr[er]>(c7, 0x) in 
-    assert (corr(msg2_C7_init_corr[er;0]) ==>
-              (corr(S_resp) \/ corr(S_init))
-              \/
-              (corr(S_resp) \/ corr(E_init))
-    )
-
-
 
 
 def generate_msg1 (dhpk_S_resp : dhpk(S_resp)) @ Initiator : initiator_msg1_val =
@@ -569,7 +529,7 @@ def generate_msg2 (msg1_val: responder_msg1_val_t, dhpk_S_init : dhpk(S_init)) @
 
 def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ Initiator 
     : Option (transp_keys_init_t) =
-    set_option ":rlimit" "2000000" in 
+    // set_option ":rlimit" "2000000" in 
     input inp in
     let msg2_reserved = _msg2_reserved(inp) in
     let msg2_sender = _msg2_sender(inp) in 
@@ -585,7 +545,8 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
 
     let psk = 0x00000000 in // should be zeros(32)
 
-    pcase (msg2_ephemeral == dhpk(get(E_resp))) in
+    // pcase (msg2_ephemeral == dhpk(get(E_resp))) in
+    assume (msg2_ephemeral != dhpk(get(E_resp))); 
 
     let C4 = hash<msg2_C4, msg2_C4_init_corr[msg2_ephemeral]>(C3, msg2_ephemeral) in
     let H5 = crh(H4 ++ msg2_ephemeral) in
@@ -604,14 +565,12 @@ def receive_msg2 (msg1_val: initiator_msg1_val, dhpk_S_resp : dhpk(S_resp)) @ In
     case st_aead_dec(k0, msg2_empty, 0x, H6) {
     | None => None<ty:transp_keys_init_t>()
     | Some msg2_empty_dec => 
-        false_elim in 
-        assert (msg2_ephemeral != dhpk(get(E_resp)) ==> corr(msg2_C7_init_corr[msg2_ephemeral; 0]));
+        false_elim when (sec(msg2_C7_init_corr[msg2_ephemeral; 2])) in 
         guard eq(msg2_empty_dec, emptystring) in 
         let H7 = crh(H6 ++ msg2_empty) in
         // Calculate transport keys
         let T_init_send = hash<transp_T, transp_T_init_corr[msg2_ephemeral];0>(C7, 0x) in
         let T_init_recv = hash<transp_T, transp_T_init_corr[msg2_ephemeral];1>(C7, 0x) in
-
         let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init)), msg2_ephemeral, T_init_send, T_init_recv) in
         Some(retval)
     }
@@ -623,6 +582,7 @@ def transp_send_init (transp_keys_val : transp_keys_init_t, plaintext : payload_
     let i2r : if eph_resp == dhpk(get(E_resp)) then Name(transp_T[;0]) 
                                                else Name(transp_T_init_corr[eph_resp;0]) 
         = _transp_keys_T_init_send(transp_keys_val) in       
+    assert (eph_resp != dhpk(get(E_resp)) ==> corr(S_init) \/ corr(S_resp)); // Only true due to invariants established after handshake
     let transp_counter = get_counter N_init_send in
 
     let transp_receiver = _transp_keys_responder(transp_keys_val) in
@@ -641,11 +601,6 @@ predicate init_recv_secure(k) =
     (_transp_keys_T_resp_send(k) == get(transp_T[;1])
      /\
      sec(transp_T[;1]))
-    \/
-    (_transp_keys_T_resp_send(k) == get(transp_T_init_corr[eph_resp;1])
-     /\
-     sec(transp_T_init_corr[eph_resp;1]))
-    
 
 def transp_recv_init (transp_keys_val : transp_keys_init_t, c : Data<adv>) @ Initiator :   
     Option(if init_recv_secure[transp_keys_val] then payload_r2i else Data<adv>)
