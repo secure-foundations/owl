@@ -110,6 +110,16 @@ pub closed spec(checked) fn mac(mackey: Seq<u8>, msg: Seq<u8>) -> (mac: Seq<u8>)
 pub closed spec(checked) fn mac_vrfy(mackey: Seq<u8>, msg: Seq<u8>, mac: Seq<u8>) -> (x: Option<Seq<u8>>)
 { unimplemented!() }
 
+#[verifier(external_body)]
+pub open spec(checked) fn enc_with_nonce(k: Seq<u8>, x: Seq<u8>, nonce: usize) -> (c: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub open spec(checked) fn dec_with_nonce(k: Seq<u8>, nonce: usize, c: Seq<u8>) -> (x: Option<Seq<u8>>)
+{ unimplemented!() }
+
+
+
 pub open spec fn eq(a: Seq<u8>, b: Seq<u8>) -> bool
 {
     a == b

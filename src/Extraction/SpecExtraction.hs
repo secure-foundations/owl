@@ -169,8 +169,10 @@ extractCryptOp op owlArgs = do
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ pretty "sample" <> tupled [pretty "NONCE_SIZE()", pretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        -- (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        -- (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CAEncWithNonce np _, [k, x]) -> do 
+            n <- flattenPath np
+            return $ noSamp "enc_with_nonce" [k, x, pretty "*mut_state." <> pretty n]
+        (CADecWithNonce, [k, n, c]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
         (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]

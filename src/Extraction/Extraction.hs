@@ -453,8 +453,10 @@ extractCryptOp binds op owlArgs = do
             let encOp = pretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (VecU8, genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec" [k, x])
-        (CAEncWithNonce p (sids, pids), _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CADecWithNonce, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        (CAEncWithNonce np _, [k, x]) -> do 
+            n <- flattenPath np
+            return (VecU8, pretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
+        (CADecWithNonce, [k, n, c]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
         (CPKEnc, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkenc" [k, x])
         (CPKDec, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkdec" [k, x])
         (CMac, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_mac" [k, x])
