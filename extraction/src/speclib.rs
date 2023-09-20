@@ -434,7 +434,7 @@ pub mod itree {
         };
         // vvv check this
         ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => {
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(()))))
+            (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(((), $mut_state)))))
         };
         ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => {
             (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))})))
@@ -466,7 +466,7 @@ pub mod itree {
         };
         ($mut_state:ident, $mut_type:ident, let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
             owl_spec!($mut_state, $mut_type, $($e)* )
-                .bind( closure_to_fn_spec(|tmp| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
+                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
         };
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))

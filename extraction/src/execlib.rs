@@ -161,7 +161,8 @@ pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Vec
     ensures
         ctxt@ == speclib::enc_with_nonce(k@, msg@, nonce)
 {
-    let iv = nonce.to_le_bytes().to_vec();
+    let mut iv = nonce.to_le_bytes().to_vec();
+    iv.resize(nonce_size(), 0u8);
     match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], &[]) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
@@ -184,8 +185,9 @@ pub exec fn owl_dec_with_nonce(k: &[u8], nonce: usize, c: &[u8]) -> (x: Option<V
         // speclib::dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    let iv = nonce.to_le_bytes();
-    match owl_aead::decrypt_combined(cipher(), k, c, &iv, &[]) {
+    let mut iv = nonce.to_le_bytes().to_vec();
+    iv.resize(nonce_size(), 0u8);
+    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &iv, &[]) {
         Ok(p) => Some(p),
         Err(e) => {
             // dbg!(e);

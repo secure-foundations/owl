@@ -171,7 +171,7 @@ extractCryptOp op owlArgs = do
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
         (CAEncWithNonce np _, [k, x]) -> do 
             n <- flattenPath np
-            return $ noSamp "enc_with_nonce" [k, x, pretty "*mut_state." <> pretty n]
+            return $ noSamp "enc_with_nonce" [k, x, pretty "mut_state." <> pretty (rustifyName n)]
         (CADecWithNonce, [k, n, c]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
