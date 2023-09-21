@@ -332,7 +332,7 @@ instance  OwlPretty FuncParam where
     owlpretty (ParamAExpr a) = owlpretty a
     owlpretty (ParamLbl l) = owlpretty l
     owlpretty (ParamTy t) = owlpretty t
-    owlpretty (ParamIdx i) = owlpretty i
+    owlpretty (ParamIdx i _) = owlpretty i
     owlpretty (ParamName ne) = owlpretty ne
 
 instance  OwlPretty Endpoint where

@@ -491,7 +491,7 @@ isSubtype' t1 t2 = do
                 assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
                 qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
                     case (p1, p2) of
-                      (ParamIdx i1, ParamIdx i2) -> return $ mkSpanned $ PEqIdx i1 i2
+                      (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
                       _ -> typeError $ "Bad param to struct: didn't get index"
                 let p = foldr pAnd pTrue qs
                 (_, b) <- SMT.smtTypingQuery $ SMT.symAssert p
@@ -1078,7 +1078,12 @@ checkParam (ParamAExpr a) = do
 checkParam (ParamStr s) = return ()
 checkParam (ParamLbl l) =  checkLabel l
 checkParam (ParamTy t) =  checkTy t
-checkParam (ParamIdx i) = local (set tcScope TcGhost) $ checkIdx i
+checkParam (ParamIdx i oann) = 
+    case oann of
+      Nothing -> local (set tcScope TcGhost) $ checkIdx i
+      Just IdxSession -> local (set tcScope TcGhost) $ checkIdxSession i
+      Just IdxPId -> local (set tcScope TcGhost) $ checkIdxPId i
+      Just IdxGhost -> typeError $ "Ghost annotation not supported yet"
 checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()

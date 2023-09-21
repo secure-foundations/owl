@@ -1404,8 +1404,12 @@ parseParam =
     <|>
     (try $ do
         reserved "idx"
+        ot <- try $ optionMaybe $ do
+            alt 
+                (symbol "session" >> return IdxSession)
+                (symbol "pid" >> return IdxPId)
         i <- parseIdx
-        return $ ParamIdx i)
+        return $ ParamIdx i ot)
     <|>
     (try $ do
         reserved "name"

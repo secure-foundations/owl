@@ -59,8 +59,6 @@ instance OwlPretty TcScope where
     owlpretty TcGhost = owlpretty "ghost"
     owlpretty (TcDef l) = owlpretty "def" <> tupled [owlpretty l]
 
-data IdxType = IdxSession | IdxPId | IdxGhost
-    deriving Eq
 
 instance OwlPretty IdxType where
     owlpretty IdxSession = owlpretty "IdxSession"
@@ -1034,27 +1032,36 @@ isConstant a =
 getEnumParams :: [FuncParam] -> Check ([Idx])
 getEnumParams ps = forM ps $ \p -> 
      case p of
-       ParamIdx i -> return i
+       ParamIdx i _ -> return i
        _ -> typeError $ "Wrong param on enum: " ++ show p
 
 getStructParams :: [FuncParam] -> Check [Idx]
 getStructParams ps =
     forM ps $ \p -> do
         case p of
-            ParamIdx i -> return i
+            ParamIdx i _ -> return i
             _ -> typeError $ "Wrong param on struct: " ++ show p
 
 getFunDefParams :: [FuncParam] -> Check ([Idx], [Idx])
 getFunDefParams [] = return ([], [])
 getFunDefParams (p:ps) =
     case p of
-      ParamIdx i -> do
+      ParamIdx i oann -> do
           t <- inferIdx i
           (xs, ys) <- getFunDefParams ps
-          case t of
-            IdxSession -> return (i:xs, ys)
-            IdxPId -> return (xs, i:ys)
-            _ -> typeError $ "Function parameter must be a session or a pid"
+          case oann of
+            Nothing -> 
+              case t of
+                IdxSession -> return (i:xs, ys)
+                IdxPId -> return (xs, i:ys)
+                _ -> typeError $ "Unknown index type for function param"
+            Just IdxSession -> do
+                checkIdxSession i
+                return (i:xs, ys)
+            Just IdxPId -> do
+                checkIdxPId i
+                return (xs, i:ys)
+            Just IdxGhost -> typeError $ "Index should be annotated with session or pid here"
       _ -> typeError $ "Function parameter must be an index"
 
 extractFunDef :: Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr -> [FuncParam] -> [AExpr] -> Check AExpr 
