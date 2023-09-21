@@ -783,7 +783,7 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
                         _ -> pretty "res.0.view()")
                     <> pretty ", *mut_state"
             let defReqEns =
-                    pretty "requires itree@ ===" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*self" : pretty "*old(mut_state)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
+                    pretty "requires itree@ ==" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*self" : pretty "*old(mut_state)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
                     pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"
