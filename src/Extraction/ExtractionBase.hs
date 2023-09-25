@@ -76,6 +76,7 @@ data Env = Env {
     _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String), -- return type, how to print
     _adtFuncs :: M.Map String (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)),
+    _specAdtFuncs :: S.Set String,
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
     _enums :: M.Map (S.Set String) String,
@@ -327,11 +328,11 @@ initFuncs = M.fromList [
         ("UNIT", (Unit, \_ -> return "()")),
         ("TRUE", (Bool, \_ -> return "true")),
         ("FALSE", (Bool, \_ -> return "false")),
-        ("Some", (Option VecU8, \args -> case args of
+        ("Some", (Option RcVecU8, \args -> case args of
                 [(_,x)] -> return $ "Some(" ++ x ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for Some"
         )),
-        ("None", (Option VecU8, \_ -> return "Option::<Vec<u8>>::None")),
+        ("None", (Option RcVecU8, \_ -> return "Option::<Rc<Vec<u8>>>::None")),
         ("length", (Number, \args -> case args of
                 [(_,x)] -> return $ x ++ ".owl_length()"
                 _ -> throwError $ TypeError $ "got wrong number of args for length"
@@ -367,7 +368,7 @@ initFuncs = M.fromList [
     ]
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode (userFuncs) initFuncs M.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do

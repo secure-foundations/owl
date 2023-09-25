@@ -342,7 +342,7 @@ pub mod itree {
 
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
+    // #[verifier(broadcast_forall)]
     pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}
@@ -488,6 +488,7 @@ pub mod itree {
         };
         ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => {
             ($($e)*)
+                //.bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let (res, $mut_state) = tmp; ITree::Ret((res, $mut_state)) }))
         };
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => {
             ITree::Ret(($($e)*, $mut_state))
