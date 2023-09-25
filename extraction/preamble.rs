@@ -75,13 +75,4 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
     owl_util::gen_rand_bytes(n)
 }
 
-// pub fn get_num_from_cmdline(loc_prompt: &str) -> usize {
-//     let mut input_text = std::string::String::new();
-//     println!("Enter number of {loc_prompt} to generate: ");
-//     io::stdin()
-//     .read_line(&mut input_text)
-//     .expect("failed to read from stdin");
-//     let n = input_text.trim().parse::<usize>().expect("not an int");
-//     n
-// }
 } // verus!

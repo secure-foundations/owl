@@ -316,11 +316,11 @@ initFuncs = M.fromList [
                 [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
-        ("dhpk", (VecU8, \args -> case args of
+        ("dhpk", (RcVecU8, \args -> case args of
                 [x] -> do return $ printOwlOp "owl_dhpk" [x] -- return $ x ++ ".owl_dhpk()"
                 _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
         )),
-        ("dh_combine", (VecU8, \args -> case args of
+        ("dh_combine", (RcVecU8, \args -> case args of
                 [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
         )),
@@ -412,12 +412,12 @@ rustifyArgTy (CTOption ct) = do
 rustifyArgTy (CTConst (PUnresolvedVar n)) = do
     l <- lookupTyLayout . rustifyName $ show n
     return $ case l of
-        LBytes _ -> VecU8
+        LBytes _ -> RcVecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
-rustifyArgTy _ = return VecU8
+rustifyArgTy _ = return RcVecU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
 rustifyRetTy (CTOption ct) = do

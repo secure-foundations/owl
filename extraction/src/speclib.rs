@@ -7,16 +7,6 @@ pub use vstd::{modes::*, prelude::*, seq::*, *};
 ////////////////////////////////////////////////////////////////////////////////
 verus! {
 
-// Macro version of the stdlib's Option::and
-#[macro_export]
-macro_rules! option_and {
-    ($id:ident, $($tt:tt)*) => {
-        match $id {
-            Some($id) => { $($tt)* },
-            None => None
-        }
-    }
-}
 
 pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
 {
@@ -24,13 +14,41 @@ pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
     (v.is_Some() && s.is_Some() && v.get_Some_0()@ == s.get_Some_0())
 }
 
-pub open spec fn view_option(v: Option<Vec<u8>>) -> Option<Seq<u8>>
+pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
 {
     match v {
-        Option::Some(x) => Option::Some(x@),
+        Option::Some(x) => Option::Some(x.view()),
         Option::None    => Option::None
     }
 }
+
+// pub trait ViewOption {
+//     type V;
+//     spec fn view_option(&self) -> Self::V;
+// }
+
+// impl<T:View> ViewOption for Option<T>
+// {
+//     type V = Option<T::V>;
+
+//     #[verifier::inline]
+//     open spec fn view_option(&self) -> Option<T::V> {
+//         match self {
+//             Option::Some(x) => Option::Some(x.view()),
+//             Option::None    => Option::None
+//         }    
+//     }
+// }
+
+// impl<T,S> ViewOption for T where T: View<V = S> {
+//     type V = S;
+
+//     #[verifier::inline]
+//     open spec fn view_option(&self) -> V {
+//         self.view()
+//     }
+// }
+
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
@@ -368,19 +386,45 @@ pub mod itree {
     #[allow(unused_macros)]
     #[macro_export]
     macro_rules! owl_call_internal {
-        ($itree:ident, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
-            ::builtin_macros::verus_exec_expr! {{
-                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
-                let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
-                (res, Tracked($itree))
-            }}
-        };
-        ($itree:ident, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
+        // ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
+        //     ::builtin_macros::verus_exec_expr! {{
+        //         let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+        //         let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
+        //         let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (res@, $mut_state));
+        //         (res, Tracked($itree))
+        //     }}
+        // };
+        ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
             ::builtin_macros::verus_exec_expr! {{
                 let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
                 let (res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, res@);
+                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (res.view(), $mut_state));
+                (res, Tracked($itree))
+            }}
+        };
+        ($($tt:tt)*) => {
+            compile_error!(concat!($("`", stringify!($tt), "`, "),*))
+        }
+    }
+
+    #[allow(unused_macros)]
+    #[macro_export]
+    macro_rules! owl_call_ret_option {
+        [$($tail:tt)*] => {
+            ::builtin_macros::verus_exec_macro_exprs!{
+                owl_call_ret_option_internal!($($tail)*)
+            }
+        };
+    }
+
+    #[allow(unused_macros)]
+    #[macro_export]
+    macro_rules! owl_call_ret_option_internal {
+        ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
+            ::builtin_macros::verus_exec_expr! {{
+                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
+                let (res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
+                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (view_option(res), $mut_state));
                 (res, Tracked($itree))
             }}
         };

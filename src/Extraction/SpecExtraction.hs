@@ -221,11 +221,11 @@ extractExpr (CRet a) = do
     return $ parens $ pretty "ret" <+> parens a'
 extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
-    ftail <- tailPath f
+    ftail <- flattenPath f
     let inds = case is of
                 ([], []) -> mempty
                 (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
-    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> inds <> tupled (pretty "cfg" : as'))
+    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> inds <> tupled (pretty "cfg" : pretty "mut_state" : as'))
 extractExpr (CCase a xs) = do
     a' <- extractAExpr a
     pcases <-
@@ -252,18 +252,20 @@ extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented c
 -- extractExpr (CTLookup n a) = return $ pretty "lookup" <> tupled [pretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ pretty "write" <> tupled [pretty n, extractAExpr a, extractAExpr a']
 
-specExtractArg :: (String, RustTy) -> Doc ann
-specExtractArg (s, rt) =
-    pretty s <> pretty ":" <+> pretty (specTyOf rt)
+specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad (Doc ann)
+specExtractArg (v, t) = do
+    st <- rustifyArgTy . doConcretifyTy . unembed $ t
+    return $ extractVar v <> pretty ":" <+> (pretty . specTyOf $ st)
 
 
-extractDef :: String -> Locality -> CExpr -> [(String, RustTy)] -> SpecTy -> ExtractionMonad (Doc ann)
+extractDef :: String -> Locality -> CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad (Doc ann)
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
+    specArgs <- mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $ 
             pretty "cfg:" <+> pretty (cfgName lname) 
             : pretty "mut_state:" <+> pretty (stateName lname)
-            : map specExtractArg owlArgs
+            : specArgs
     let rtPrettied = pretty "-> (res: ITree<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>" <> pretty ")"
     body <- extractExpr concreteBody
     return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>

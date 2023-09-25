@@ -1,4 +1,4 @@
-use crate::{owl_aead, *};
+use crate::{owl_aead, speclib, *};
 use std::rc::Rc;
 
 verus! {
@@ -45,37 +45,37 @@ pub exec fn rc_new(v: Vec<u8>) -> (res: Rc<Vec<u8>>)
 // By convention, we include the nonce at the start of the ciphertext. (TODO check wrt wire formats)
 
 #[verifier(external_body)]
-pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
+pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Rc<Vec<u8>>)
     ensures
-        ctxt@ == speclib::enc(k@, msg@, iv@)
-    //     ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ == speclib::enc(k@, msg@, iv@)),
+        ctxt@ == enc(k@, msg@, iv@)
+    //     ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ == enc(k@, msg@, iv@)),
     //    !((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ == seq![]),
 {
     match owl_aead::encrypt_combined(cipher(), k, msg, iv, &[]) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
-            v
+            rc_new(v)
         },
-        Err(e) => {
+        Err(_e) => {
             // dbg!(e);
-            vec![]
+            rc_new(vec![])
         }
     }
 }
 
 #[verifier(external_body)]
-pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
+pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        speclib::view_option(x) == speclib::dec(k@, c@)
-        // (k@.len() == crate::KEY_SIZE && speclib::dec(k@, c@).is_Some()) ==>
-        //     x.is_Some() && x.get_Some_0()@ == speclib::dec(k@, c@).get_Some_0(),
-        // speclib::dec(k@, c@).is_None() ==> x.is_None(),
+        view_option(x) == dec(k@, c@)
+        // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
+        //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
+        // dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
     match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &c[..nonce_size()], &[]) {
-        Ok(p) => Some(p),
-        Err(e) => {
+        Ok(p) => Some(rc_new(p)),
+        Err(_e) => {
             // dbg!(e);
             None
         }
@@ -83,83 +83,83 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_sign(privkey: &[u8], msg: &[u8]) -> (signature: Vec<u8>)
-    ensures signature@ == speclib::sign(privkey@, msg@)
+pub exec fn owl_sign(privkey: &[u8], msg: &[u8]) -> (signature: Rc<Vec<u8>>)
+    ensures signature@ == sign(privkey@, msg@)
 {
-    owl_pke::sign(privkey, msg)
+    rc_new(owl_pke::sign(privkey, msg))
 }
 
 #[verifier(external_body)]
-pub exec fn owl_vrfy(pubkey: &[u8], msg: &[u8], signature: &[u8]) -> (x: Option<Vec<u8>>)
-    ensures speclib::view_option(x) == speclib::vrfy(pubkey@, msg@, signature@)
+pub exec fn owl_vrfy(pubkey: &[u8], msg: &[u8], signature: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
+    ensures view_option(x) == vrfy(pubkey@, msg@, signature@)
 {
     if owl_pke::verify(pubkey, signature, msg) {
-        Some(msg.to_vec())
+        Some(rc_new(msg.to_vec()))
     } else {
         None
     }
 }
 
 #[verifier(external_body)]
-pub exec fn owl_dhpk(privkey: &[u8]) -> (pubkey: Vec<u8>)
-    ensures pubkey@ == speclib::dhpk(privkey@)
+pub exec fn owl_dhpk(privkey: &[u8]) -> (pubkey: Rc<Vec<u8>>)
+    ensures pubkey@ == dhpk(privkey@)
 {
-    owl_dhke::ecdh_dhpk(privkey)
+    rc_new(owl_dhke::ecdh_dhpk(privkey))
 }
 
 
 #[verifier(external_body)]
-pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Vec<u8>)
+pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Rc<Vec<u8>>)
     ensures
-        ss@ == speclib::dh_combine(pubkey@, privkey@)
+        ss@ == dh_combine(pubkey@, privkey@)
 {
-    owl_dhke::ecdh_combine(privkey, pubkey)
+    rc_new(owl_dhke::ecdh_combine(privkey, pubkey))
 }
 
 #[verifier(external_body)]
-pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h: Vec<u8>) 
+pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h: Rc<Vec<u8>>) 
     ensures h@ == kdf(ikm@)
 {
-    owl_hkdf::extract_expand_to_len(ikm, salt, len)
+    rc_new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
 }
 
 #[verifier(external_body)]
-pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac: Vec<u8>)
-    ensures mac@ == speclib::mac(mackey@, msg@)
+pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Rc<Vec<u8>>)
+    ensures mac_val@ == mac(mackey@, msg@)
 {
-    owl_hmac::hmac(hmac_mode(), mackey, msg, None)
+    rc_new(owl_hmac::hmac(hmac_mode(), mackey, msg, None))
 }
 
 #[verifier(external_body)]
-pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Vec<u8>>)
-    ensures speclib::view_option(x) == speclib::mac_vrfy(mackey@, msg@, mac@)
+pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
+    ensures view_option(x) == mac_vrfy(mackey@, msg@, mac@)
 {
     if owl_hmac::verify(hmac_mode(), mackey, msg, mac, None) {
-        Some(msg.to_vec())
+        Some(rc_new(msg.to_vec()))
     } else {
         None
     }
 }
 
 #[verifier(external_body)]
-pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)
-    ensures ctxt@ == speclib::pkenc(pubkey@, msg@)
+pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Rc<Vec<u8>>)
+    ensures ctxt@ == pkenc(pubkey@, msg@)
 {
-    owl_pke::encrypt(pubkey, msg)
+    rc_new(owl_pke::encrypt(pubkey, msg))
 }
 
 #[verifier(external_body)]
-pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
-    ensures msg@ == speclib::sign(privkey@, ctxt@)
+pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Rc<Vec<u8>>)
+    ensures msg@ == sign(privkey@, ctxt@)
 {
-    owl_pke::decrypt(privkey, ctxt)
+    rc_new(owl_pke::decrypt(privkey, ctxt))
 }
 
 
 #[verifier(external_body)]
-pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Vec<u8>)
+pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Rc<Vec<u8>>)
     ensures
-        ctxt@ == speclib::enc_with_nonce(k@, msg@, nonce)
+        ctxt@ == enc_with_nonce(k@, msg@, nonce)
 {
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(nonce_size(), 0u8);
@@ -167,29 +167,29 @@ pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Vec
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
-            v
+            rc_new(v)
         },
-        Err(e) => {
+        Err(_e) => {
             // dbg!(e);
-            vec![]
+            rc_new(vec![])
         }
     }
 }
 
 #[verifier(external_body)]
-pub exec fn owl_dec_with_nonce(k: &[u8], nonce: usize, c: &[u8]) -> (x: Option<Vec<u8>>)
+pub exec fn owl_dec_with_nonce(k: &[u8], nonce: usize, c: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        speclib::view_option(x) == speclib::dec_with_nonce(k@, nonce, c@)
-        // (k@.len() == crate::KEY_SIZE && speclib::dec(k@, c@).is_Some()) ==>
-        //     x.is_Some() && x.get_Some_0()@ == speclib::dec(k@, c@).get_Some_0(),
-        // speclib::dec(k@, c@).is_None() ==> x.is_None(),
+        view_option(x) == dec_with_nonce(k@, nonce, c@)
+        // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
+        //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
+        // dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(nonce_size(), 0u8);
     match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &iv, &[]) {
-        Ok(p) => Some(p),
-        Err(e) => {
+        Ok(p) => Some(rc_new(p)),
+        Err(_e) => {
             // dbg!(e);
             None
         }

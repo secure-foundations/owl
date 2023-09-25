@@ -443,7 +443,7 @@ extractCryptOp binds op owlArgs = do
             case orcls M.!? roname of
                 Nothing -> throwError $ TypeError "unrecognized random oracle"
                 Just outLen -> do
-                    return (VecU8, pretty $ printOwlOp "owl_extract_expand_to_len" [(RcVecU8, "self.salt"), (Number, outLen), x])
+                    return (RcVecU8, pretty $ printOwlOp "owl_extract_expand_to_len" [(RcVecU8, "self.salt"), (Number, outLen), x])
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
             typeAnnot <- do
@@ -451,18 +451,18 @@ extractCryptOp binds op owlArgs = do
                 return $ pretty "::" <> angles (pretty t)
             let genSample = pretty "let coins = owl_sample" <> typeAnnot <> pretty "(Tracked(&mut itree), nonce_size());"
             let encOp = pretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
-            return (VecU8, genSample <+> encOp)
-        (CADec, [k, x]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec" [k, x])
+            return (RcVecU8, genSample <+> encOp)
+        (CADec, [k, x]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_dec" [k, x])
         (CAEncWithNonce np _, [k, x]) -> do 
             n <- flattenPath np
-            return (VecU8, pretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
-        (CADecWithNonce, [k, n, c]) -> do return (Option VecU8, pretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
-        (CPKEnc, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkenc" [k, x])
-        (CPKDec, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_pkdec" [k, x])
-        (CMac, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_mac" [k, x])
-        (CMacVrfy, [k, x, v]) -> do return (Option VecU8, pretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
-        (CSign, [k, x]) -> do return (VecU8, pretty $ printOwlOp "owl_sign" [k, x])
-        (CSigVrfy, [k, x, v]) -> do return (Option VecU8, pretty $ printOwlOp "owl_vrfy" [k, x, v])
+            return (RcVecU8, pretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
+        (CADecWithNonce, [k, n, c]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
+        (CPKEnc, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_pkenc" [k, x])
+        (CPKDec, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_pkdec" [k, x])
+        (CMac, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_mac" [k, x])
+        (CMacVrfy, [k, x, v]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
+        (CSign, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_sign" [k, x])
+        (CSigVrfy, [k, x, v]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_vrfy" [k, x, v])
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     return (rt, preArgs, str)
 
@@ -575,9 +575,13 @@ extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
 extractExpr inK loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
-    let tempBindingLHS = case e of 
-            CCall {} -> tupled [pretty "temp_" <> pretty rustX, pretty "Tracked(itree)"] 
-            _ -> pretty "temp_" <> pretty rustX 
+    tempBindingLHS <- case e of 
+            CCall {} -> do 
+                t <- getCurRetTy
+                return $ tupled [pretty "temp_" <> pretty rustX, pretty "Tracked(itree)"] <> 
+                         pretty ":" <+>
+                         tupled [pretty "_", pretty "Tracked<ITreeToken<" <> pretty t <> pretty ", Endpoint>>"]
+            _ -> return $ pretty "temp_" <> pretty rustX 
     (_, rt, preE, ePrettied) <- extractExpr False loc binds e
     (_, rt', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
     let eWrapped = case rt of
@@ -693,7 +697,8 @@ extractExpr inK loc binds (CTLookup tbl ae) = do
     return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
 extractExpr inK loc binds (CCrypt cryptOp args) = do
     (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
-    return (binds, rt, pre, opPrettied)
+    let opPrettied' = if inK then tupled [opPrettied, pretty "Tracked(itree)"] else opPrettied
+    return (binds, rt, pre, opPrettied')
 extractExpr inK loc binds (CIncCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
@@ -707,15 +712,19 @@ extractExpr inK loc binds (CGetCtr ctr idxs) = do
     return (binds, Unit, pretty "", ctrName)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
 
-funcCallPrinter :: String -> [(String, RustTy)] -> [(RustTy, String)] -> ExtractionMonad String
-funcCallPrinter owlName rustArgs callArgs = do
+funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad String
+funcCallPrinter owlName rustArgs retTy callArgs = do
+    let callMacro = case retTy of
+            Option _ -> "owl_call_ret_option!"
+            _ -> "owl_call!"
     if length rustArgs == length callArgs then
-        return $ show $ pretty "owl_call!" <> tupled [
+        return $ show $ pretty callMacro <> tupled [
               pretty "itree"
+            , pretty "*mut_state"
             , pretty owlName <> pretty "_spec" <>
-                tupled (pretty "*self" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
+                tupled (pretty "*self" : pretty "*mut_state" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
             , pretty "self." <> pretty (rustifyName owlName) <>
-                tupled (pretty "mut_state" : (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "&") <> pretty arg) $ callArgs))
+                tupled (pretty "mut_state" : (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "") <> pretty arg) $ callArgs))
         ]
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
@@ -723,7 +732,7 @@ funcCallPrinter owlName rustArgs callArgs = do
 
 extractArg :: (String, RustTy) -> Doc ann
 extractArg (s, rt) =
-    pretty s <> pretty ": &" <+> pretty rt
+    pretty s <> pretty ":" <+> pretty rt
 
 rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (String, RustTy)
 rustifyArg (v, t) = do
@@ -740,7 +749,7 @@ makeFunc owlName _ sidArgs owlArgs owlRetTy = do
     rustArgs <- mapM rustifyArg owlArgs
     let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
-    funcs %= M.insert owlName (rtb, funcCallPrinter owlName (rustSidArgs ++ rustArgs))
+    funcs %= M.insert owlName (rtb, funcCallPrinter owlName (rustSidArgs ++ rustArgs) rtb)
     return ()
 
 
@@ -762,7 +771,7 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
     (_, rtb, preBody, body) <- extractExpr True loc (M.fromList rustArgs) anfBody
     curRetTy .= Nothing
     decl <- genFuncDecl name lname rustSidArgs rustArgs rtb
-    defSpec <- Spec.extractDef owlName loc concreteBody rustArgs (specTyOf rtb)
+    defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
     let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else pretty ""
     return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace <> line <> line <> mainWrapper, defSpec)
     where
@@ -780,6 +789,8 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
                     (case rt of
                         Unit -> pretty "()"
                         ADT _ -> pretty "res.0.data.view()"
+                        Option (ADT _) -> pretty "view_option(res.0).data"
+                        Option _ -> pretty "view_option(res.0)"
                         _ -> pretty "res.0.view()")
                     <> pretty ", *mut_state"
             let defReqEns =
@@ -1074,7 +1085,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsSidArgs
-    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)]" <> line <> pretty "fn entrypoint()" <+> lbrace <> line <>
+    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] #[allow(unused_variables)]" <> line <> pretty "fn entrypoint()" <+> lbrace <> line <>
         pretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
         vsep runLocs <> line <>
         config <>
@@ -1124,7 +1135,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
                 braces body <> pretty "else"
         genRunLocBody loc mainName nSidArgs =
-            pretty "let mut loc =" <+> pretty (cfgName loc) <> pretty "::init_" <> pretty (cfgName loc) <>
+            pretty "let loc =" <+> pretty (cfgName loc) <> pretty "::init_" <> pretty (cfgName loc) <>
                 -- parens (pretty "&args.index(3)") <> pretty ";" <> line <>
                 parens (pretty "&String::from_rust_string(args[3].clone()).as_str()") <> pretty ";" <> line <>
             pretty "let mut mut_state =" <+> pretty (stateName loc) <> pretty "::init_" <> pretty (stateName loc) <> pretty "();" <> line <>
@@ -1132,7 +1143,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let _res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled (pretty "&mut mut_state" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
+            pretty "let res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled (pretty "&mut mut_state" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"

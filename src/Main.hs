@@ -18,6 +18,7 @@ import Test
 import qualified Extraction as E
 import qualified ExtractionBase as EB
 import Control.Lens
+import Control.Monad ( when ) 
 
 main :: IO ()
 main = do
@@ -41,7 +42,7 @@ main = do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)
                           printf "Typechecking success!\n" -- Time to typecheck: %0.5f seconds\n" (diff :: Double)
-                          if args^.fExtract then do
+                          when (args^.fExtract) $ do
                               let extfn = "extraction/src/main.rs"
                               let libfn = "extraction/src/lib.rs"
                               modBody <- doFlattening tcEnv
@@ -54,10 +55,9 @@ main = do
                                   appendFile extfn $ show rust_code
                                   -- Temporarily use a different formatter since rustfmt 
                                   -- doesn't look inside of the verus! macro
-                                  callProcess "genemichaels" [extfn]
+                                  -- callProcess "genemichaels" [extfn]
                                   writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
                                   appendFile libfn $ show lib_code
-                                  callProcess "genemichaels" [libfn]
+                                  -- callProcess "genemichaels" [libfn]
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
-                          else return ()

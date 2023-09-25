@@ -32,10 +32,10 @@ module FullPSK = PSKFunctor(tstParams)
 */
 
 
-module FullDH = {
-    module Inner_KE = DH_KE(tstParams)
-    module P = Full(tstParams, Inner_KE)
-}
+// module FullDH = {
+//     module Inner_KE = DH_KE(tstParams)
+//     module P = Full(tstParams, Inner_KE)
+// }
 
 module FullPSK = {
     module Inner_KE = PSK_KE(tstParams)
