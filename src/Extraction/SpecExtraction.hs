@@ -91,7 +91,7 @@ extractEnum owlName owlCases = do
                         return (n, t')) owlCases
     let enumDef = pretty "#[is_variant]" <> line <> pretty "pub enum" <+> pretty name <> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> pretty (specName n) <> parens (pretty t)) $ cases
-                    ) <> line)
+                    ) <> line) <> line <> pretty "use crate::" <> pretty name <> pretty "::*;" <> line
     parseSerializeDefs <- genParserSerializer name
     caseConstructors <- mapM (genCaseConstructor name) cases
     return $ vsep $ [enumDef, parseSerializeDefs] ++ caseConstructors
@@ -192,6 +192,12 @@ extractCryptOp op owlArgs = do
     where
         noSamp name args = pretty "ret" <> parens (pretty name <> tupled args)
 
+-- the Bool arg is whether the case has arguments
+specCaseName :: Bool -> String -> String
+specCaseName _ "Some" = "Some"
+specCaseName _ "None" = "None"
+specCaseName True c = specName c
+specCaseName False c = specName c ++ "()"
 
 extractExpr :: CExpr -> ExtractionMonad (Doc ann)
 extractExpr CSkip = return $ pretty "skip"
@@ -224,7 +230,7 @@ extractExpr (CIf a e1 e2) = do
     e1' <- extractExpr e1
     e2' <- extractExpr e2
     return $ parens $
-        pretty "if" <+> parens a' <+> pretty "then" <+> parens (pretty e1) <+> pretty "else" <+> parens (pretty e2)
+        pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
 extractExpr (CRet a) = do
     a' <- extractAExpr a
     return $ parens $ pretty "ret" <+> parens a'
@@ -242,11 +248,11 @@ extractExpr (CCase a xs) = do
                 case o of
                 Left e -> do
                     e' <- extractExpr e
-                    return $ pretty c <+> pretty "=>" <+> braces e' <> comma
+                    return $ pretty (specCaseName False c) <+> pretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
                     e' <- extractExpr e
-                    return $ pretty c <+> parens (extractVar x) <+> pretty "=>" <+> braces e' <> comma
+                    return $ pretty (specCaseName True c) <+> parens (extractVar x) <+> pretty "=>" <+> braces e' <> comma
                 ) xs
     return $ parens $ pretty "case" <+> parens a' <> line <> braces (vsep pcases)
 extractExpr (CCrypt cop args) = do

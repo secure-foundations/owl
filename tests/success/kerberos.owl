@@ -396,9 +396,9 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
                                 
                                 // bundle msg and encrypt with pubkeyC
                                 let sA = get(sigkeyA) in
-                                let k''= get(K) in
+                                let kk = get(K) in
                                 // let signed_k : Data<adv> ||signature||= sign(sA, k'') in
-                                let signed_k = sign(sA, k'') in
+                                let signed_k = sign(sA, kk) in
                                 let b = eq(length(signed_k), |signature|) in
                                 if b then
                                     let field1 : Data<adv>||signature|| = certA in 

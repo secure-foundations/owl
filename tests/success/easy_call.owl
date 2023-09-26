@@ -5,15 +5,17 @@ corr adv ==> [d]
 name k : enckey Name(d) @ alice 
 name blah : nonce @ alice
 
-def alice1 (b: Name(blah)) @ alice : Name(d)
-    = get(d)
+def alice1 (b: Name(blah)) @ alice : Option(Name(d))
+    = Some(get(d))
 
 def alice2 @ alice
 
 def alice2 () @ alice : Unit
     = 
     let x = call alice1(get(blah)) in 
-    output x to endpoint(alice)
+    case x
+    | Some y => output y to endpoint(alice)
+    | None => ()
 
 def alice_main () @ alice : Unit =
     call alice2()

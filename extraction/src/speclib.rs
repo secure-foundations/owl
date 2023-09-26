@@ -378,7 +378,17 @@ pub mod itree {
     macro_rules! owl_call {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!($($tail)*)
+                owl_call_internal!(res, res.view(), $($tail)*)
+            }
+        };
+    }
+
+    #[allow(unused_macros)]
+    #[macro_export]
+    macro_rules! owl_call_ret_option {
+        [$($tail:tt)*] => {
+            ::builtin_macros::verus_exec_macro_exprs!{
+                owl_call_internal!(res, view_option(res), $($tail)*)
             }
         };
     }
@@ -394,38 +404,12 @@ pub mod itree {
         //         (res, Tracked($itree))
         //     }}
         // };
-        ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
+        ($res: ident, $view_res:expr, $itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
             ::builtin_macros::verus_exec_expr! {{
                 let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
-                let (res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (res.view(), $mut_state));
-                (res, Tracked($itree))
-            }}
-        };
-        ($($tt:tt)*) => {
-            compile_error!(concat!($("`", stringify!($tt), "`, "),*))
-        }
-    }
-
-    #[allow(unused_macros)]
-    #[macro_export]
-    macro_rules! owl_call_ret_option {
-        [$($tail:tt)*] => {
-            ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_ret_option_internal!($($tail)*)
-            }
-        };
-    }
-
-    #[allow(unused_macros)]
-    #[macro_export]
-    macro_rules! owl_call_ret_option_internal {
-        ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
-            ::builtin_macros::verus_exec_expr! {{
-                let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
-                let (res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (view_option(res), $mut_state));
-                (res, Tracked($itree))
+                let ($res, Tracked(call_token)) = $self.$exec(Tracked(call_token), $($execarg),*);
+                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, ($view_res, $mut_state));
+                ($res, Tracked($itree))
             }}
         };
         ($($tt:tt)*) => {
@@ -488,7 +472,7 @@ pub mod itree {
         };
         ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => {
             ($($e)*)
-                //.bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let (res, $mut_state) = tmp; ITree::Ret((res, $mut_state)) }))
+                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| ITree::Ret(tmp) ))
         };
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => {
             ITree::Ret(($($e)*, $mut_state))

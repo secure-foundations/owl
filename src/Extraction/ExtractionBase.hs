@@ -314,7 +314,8 @@ initFuncs = M.fromList [
                 [(Number, x), (Number, y)] -> return $ x ++ " == " ++ y
                 [(String, x), (String, y)] -> return $ x ++ " == " ++ y
                 [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
-                [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
+                [(ADT _,x), (ADT _,y)] -> return $ x ++ ".data == " ++ y ++ ".data"
+                [(_,x), (_,y)] -> return $ x ++ " == " ++ y
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
         ("dhpk", (RcVecU8, \args -> case args of
@@ -334,7 +335,7 @@ initFuncs = M.fromList [
         )),
         ("None", (Option RcVecU8, \_ -> return "Option::<Rc<Vec<u8>>>::None")),
         ("length", (Number, \args -> case args of
-                [(_,x)] -> return $ x ++ ".owl_length()"
+                [(_,x)] -> return $ x ++ ".len()"
                 _ -> throwError $ TypeError $ "got wrong number of args for length"
         )),
         ("zero", (Number, \_ -> return "0")),
