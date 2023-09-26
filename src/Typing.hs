@@ -1596,11 +1596,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
           stripTy x t2
       (EChooseIdx ip ik) -> do
+          (ix, p) <- unbind ip
+          local (over inScopeIndices $ insert ix IdxGhost) $ do
+              checkProp p
           (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
           (i, k) <- unbind ik
           getOutTy ot =<< case b of
             Just True -> do
-                (ix, p) <- unbind ip
                 x <- freshVar
                 let tx = tLemma (subst ix (mkIVar i) p) 
                 to <- local (over inScopeIndices $ insert i IdxGhost) $ do
