@@ -158,6 +158,7 @@ data Env = Env {
     _debugLogDepth :: IORef Int,
     _typeErrorHook :: (forall a. String -> Check a),
     _curDef :: Maybe String,
+    _inTypeError :: Bool,
     _curSpan :: Position
 }
 
@@ -405,19 +406,25 @@ curModName = do
       Nothing -> return PTop
       Just pv -> return $ PPathVar OpenPathVar pv
 
-class WithSpan a where
-    withSpan :: a -> Check b -> Check b
-
-instance WithSpan Position where
-    withSpan x k = do
-        r <- view $ debugLogDepth
-        liftIO $ modifyIORef r (+1)
-        res <- local (set curSpan x) k
-        liftIO $ modifyIORef r (+ (-1))
+withSpan :: (Ignore Position) -> Check a -> Check a
+withSpan x k = do
+        res <- local (set curSpan (unignore x)) k
         return res
 
-instance WithSpan (Ignore Position) where
-    withSpan x k = withSpan (unignore x) k
+traceFn :: (MonadIO m, MonadReader Env m) => String -> m a -> m a
+traceFn ann k = do
+    r <- view $ debugLogDepth
+    b <- view $ envFlags . fDebug
+    case b of
+      Just fname -> do
+          n <- liftIO $ readIORef r
+          -- liftIO $ appendFile fname $ replicate (n) ' ' ++ ann ++ "\n"
+          liftIO $ appendFile fname $ ann ++ "\n"
+          liftIO $ modifyIORef r (+1)
+          res <- k 
+          liftIO $ modifyIORef r (\x -> x - 1)
+          return res
+      Nothing -> k
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos i) = withSpan pos $ do
@@ -433,7 +440,6 @@ inferIdx (IVar pos i) = withSpan pos $ do
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
-    debug $ owlpretty "Checking index " <> owlpretty i
     _ <- inferIdx i
     return ()
 
@@ -580,7 +586,6 @@ getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = do
-    debug $ owlpretty (unignore $ ne^.spanOf) <> owlpretty "Inferring name expression" <+> owlpretty ne 
     case ne^.val of 
      NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
          md <- openModule p
@@ -668,13 +673,7 @@ getNameType ne = do
         Just nt -> return nt
 
 
-debug :: Show a => a -> Check ()
-debug d = do
-    r <- view $ debugLogDepth
-    b <- view $ envFlags . fDebug
-    when b $ do
-        n <- liftIO $ readIORef r
-        liftIO $ putStrLn $ replicate (n*2) ' ' ++ show d
+
 
 pushLogTypecheckScope :: Check ()
 pushLogTypecheckScope = do
@@ -695,6 +694,13 @@ logTypecheck s = do
         r <- view $ typeCheckLogDepth
         n <- liftIO $ readIORef r
         liftIO $ putStrLn $ replicate (n*2) ' ' ++ s
+    bd <- view $ envFlags . fDebug
+    case bd of
+      Just fname -> do 
+          r <- view $ debugLogDepth
+          n <- liftIO $ readIORef r
+          liftIO $ appendFile fname $ replicate (n) ' ' ++ s ++ "\n"
+      Nothing -> return ()
 
 getTyDef :: Path -> Check TyDef
 getTyDef (PRes (PDot p s)) = do
@@ -757,7 +763,7 @@ lenConstOfROName ne = do
             _ -> typeError $ "Name not an RO name: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check AExpr
-normalizeAExpr ae = 
+normalizeAExpr ae = withSpan (ae^.spanOf) $ 
     case ae^.val of
       AEVar _ _ -> return ae
       AEHex _ -> return ae
@@ -847,7 +853,6 @@ simplifyProp p = do
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr ae = withSpan (ae^.spanOf) $ do
-    debug $ owlpretty (unignore $ ae^.spanOf) <> owlpretty "Inferring AExp" <+> owlpretty ae
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
@@ -855,7 +860,6 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
           Just (_, _, t) -> return t
           Nothing -> typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
-        debug $ owlpretty "Inferring application: " <> owlpretty (unignore $ ae^.spanOf)
         ts <- mapM inferAExpr args
         (ar, k) <- getFuncInfo f
         assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
@@ -863,7 +867,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
       (AEHex s) -> return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag", "counter", "crh"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pkekey", "sigkey", "prfkey", "mackey", "signature", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
@@ -1320,7 +1324,6 @@ pathPrefix _ = error "pathPrefix error"
 -- Normalize and check locality
 normLocality :: Locality -> Check Locality
 normLocality loc@(Locality (PRes (PDot p s)) xs) = do
-    debug $ owlpretty "normLocality: " <> (owlpretty $ show loc)
     md <- openModule p
     case lookup s (md^.localities) of 
       Nothing -> typeError $ "Unknown locality: " ++ show (owlpretty  loc)
@@ -1377,7 +1380,6 @@ owlprettyMap s m =
         owlpretty k <> owlpretty "::" <> line <> 
         owlpretty "   " <> owlpretty a <+> comma <> line) (owlpretty "") m
     <> line <> rbracket <> line
-
 
 instance OwlPretty Def where
     owlpretty (DefHeader x) = 

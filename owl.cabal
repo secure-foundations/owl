@@ -15,7 +15,8 @@ extra-source-files:  README.md
 
 executable owl
   hs-source-dirs:      src, src/Extraction, src/Pass
-  ghc-options:         -Wunused-top-binds
+  ghc-options:         
+    -Wunused-top-binds
   main-is:             Main.hs
   default-language:    Haskell2010
   other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass, PathResolution, ModuleFlattening, Pretty

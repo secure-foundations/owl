@@ -20,6 +20,7 @@ import Test
 import qualified Extraction as E
 import Control.Lens
 
+
 main :: IO ()
 main = do
   args <- doParseArgs
