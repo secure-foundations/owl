@@ -470,6 +470,8 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => {
             ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1, .. $mut_state}))
         };
+        // Special case handling of tail calls, which need an explicit `bind` to the identity function
+        // in order to work with the spec of `split_bind`
         ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => {
             ($($e)*)
                 .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| ITree::Ret(tmp) ))
@@ -489,9 +491,18 @@ pub mod itree {
                 owl_spec!($mut_state, $mut_type, $($e2)*)
             }
         };
+        // Special-case handling of `let _ = ...` pattern for RHS returning ()
+        ($mut_state:ident, $mut_type:ident, let _ = (call($($e:tt)*)) in $($next:tt)*) => {
+            ($($e)*)
+                .bind( closure_to_fn_spec(|tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
+        };
         ($mut_state:ident, $mut_type:ident, let _ = ($($e:tt)*) in $($next:tt)*) => {
             owl_spec!($mut_state, $mut_type, $($e)* )
                 .bind( closure_to_fn_spec(|tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
+        };
+        ($mut_state:ident, $mut_type:ident, let $var:ident = (call($($e:tt)*)) in $($next:tt)*) => {
+            ($($e)*)
+                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
         };
         ($mut_state:ident, $mut_type:ident, let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
             owl_spec!($mut_state, $mut_type, $($e)* )

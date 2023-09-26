@@ -394,7 +394,7 @@ extractEnum owlName owlCases' = do
             -- TODO improve
             pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> pretty "()" <> line <>
             lbrace <> line <>
-                pretty "let mut v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
+                pretty "let v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
                 pretty "let res =" <+> pretty name <+> pretty "{ data: rc_new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>                pretty "res" <> line <>
             rbrace
 

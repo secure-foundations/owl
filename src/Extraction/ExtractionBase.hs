@@ -314,8 +314,9 @@ initFuncs = M.fromList [
                 [(Number, x), (Number, y)] -> return $ x ++ " == " ++ y
                 [(String, x), (String, y)] -> return $ x ++ " == " ++ y
                 [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
-                [(ADT _,x), (ADT _,y)] -> return $ x ++ ".data == " ++ y ++ ".data"
-                [(_,x), (_,y)] -> return $ x ++ " == " ++ y
+                [(ADT _,x), (ADT _,y)] -> return $ "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
+                [(RcVecU8, x), (RcVecU8, y)] -> return $ "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")"
+                [(VecU8, x), (VecU8, y)] -> return $ "vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
                 _ -> throwError $ TypeError $ "got wrong args for eq"
         )),
         ("dhpk", (RcVecU8, \args -> case args of

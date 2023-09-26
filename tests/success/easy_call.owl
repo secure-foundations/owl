@@ -1,21 +1,27 @@
 locality alice
 
 name d : nonce @ alice
-corr adv ==> [d]
 name k : enckey Name(d) @ alice 
 name blah : nonce @ alice
+corr adv ==> [blah]
 
-def alice1 (b: Name(blah)) @ alice : Option(Name(d))
-    = Some(get(d))
+def alice1 (b: Name(blah)) @ alice : Option(Data<adv>) =
+    let k = get(k) in
+    let d = get(d) in
+    let c = aenc(k, d) in
+    Some(c)
 
 def alice2 @ alice
 
 def alice2 () @ alice : Unit
     = 
-    let x = call alice1(get(blah)) in 
-    case x
-    | Some y => output y to endpoint(alice)
-    | None => ()
+    input i in
+    if eq(i, get(blah)) then
+        let x = call alice1(i) in 
+        case x
+        | Some y => output y to endpoint(alice)
+        | None => ()
+    else ()
 
 def alice_main () @ alice : Unit =
     call alice2()
