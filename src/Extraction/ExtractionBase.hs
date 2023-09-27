@@ -116,6 +116,8 @@ data ExtractionError =
     | UnsupportedNameExp NameExp
     | UnsupportedNameType NameType
     | UnsupportedDecl String
+    | DefWithTooManySids String
+    | NameWithTooManySids String
     | UnsupportedSharedIndices String
     | CouldntParseInclude String
     | ErrSomethingFailed String
@@ -139,6 +141,10 @@ instance Pretty ExtractionError where
         pretty "Name type" <+> pretty nt <+> pretty "is unsupported for extraction."
     pretty (UnsupportedDecl s) =
         pretty "Unsupported decl type for extraction:" <+> pretty s
+    pretty (DefWithTooManySids s) =
+        pretty "Owl procedure" <+> pretty s <+> pretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
+    pretty (NameWithTooManySids s) =
+        pretty "Owl name" <+> pretty s <+> pretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
     pretty (UnsupportedSharedIndices s) =
         pretty "Unsupported sharing of indexed name:" <+> pretty s
     pretty (CouldntParseInclude s) =
@@ -282,7 +288,7 @@ hmacLen = 64
 initLenConsts :: M.Map String Int
 initLenConsts = M.fromList [
         ("owl_signature", 256),
-        ("owl_enckey", aeadKeySize defaultCipher + aeadNonceSize defaultCipher),
+        ("owl_enckey", aeadKeySize defaultCipher),
         ("owl_nonce", aeadNonceSize defaultCipher),
         ("owl_mackey", hmacKeySize),
         ("owl_maclen", hmacLen),
@@ -308,66 +314,66 @@ printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map pri
 
 -- NB: Owl puts the key first in enc and dec, Rust puts the plaintext/ciphertext first
 initFuncs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String)
-initFuncs = M.fromList [
-        ("eq", (Bool, \args -> case args of
-                [(Bool, x), (Bool, y)] -> return $ x ++ " == " ++ y
-                [(Number, x), (Number, y)] -> return $ x ++ " == " ++ y
-                [(String, x), (String, y)] -> return $ x ++ " == " ++ y
-                [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
-                [(ADT _,x), (ADT _,y)] -> return $ "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
-                [(RcVecU8, x), (RcVecU8, y)] -> return $ "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")"
-                [(VecU8, x), (VecU8, y)] -> return $ "vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
-                _ -> throwError $ TypeError $ "got wrong args for eq"
-        )),
-        ("dhpk", (RcVecU8, \args -> case args of
-                [x] -> do return $ printOwlOp "owl_dhpk" [x] -- return $ x ++ ".owl_dhpk()"
-                _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
-        )),
-        ("dh_combine", (RcVecU8, \args -> case args of
-                [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
-        )),
-        ("UNIT", (Unit, \_ -> return "()")),
-        ("TRUE", (Bool, \_ -> return "true")),
-        ("FALSE", (Bool, \_ -> return "false")),
-        ("Some", (Option RcVecU8, \args -> case args of
-                [(_,x)] -> return $ "Some(" ++ x ++ ")"
-                _ -> throwError $ TypeError $ "got wrong number of args for Some"
-        )),
-        ("None", (Option RcVecU8, \_ -> return "Option::<Rc<Vec<u8>>>::None")),
-        ("length", (Number, \args -> case args of
-                [(_,x)] -> return $ x ++ ".len()"
-                _ -> throwError $ TypeError $ "got wrong number of args for length"
-        )),
-        ("zero", (Number, \_ -> return "0")),
-        ("plus", (Number, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ " + " ++ y
-                _ -> throwError $ TypeError $ "got wrong number of args for plus"
-        )),
-        ("mult", (Number, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ " * " ++ y
-                _ -> throwError $ TypeError $ "got wrong number of args for mult"
-        )),
-        ("cipherlen", (Number, \args -> case args of
-                [(_,x)] -> do
-                    tsz <- useAeadTagSize
-                    return $ x ++ " + " ++ show tsz
-                _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
-        )),
-        ("checknonce", (Bool, \args -> case args of
-                [(_,x), (_,y)] -> return $ x ++ ".owl_eq(&" ++ y ++ ")"
-                _ -> throwError $ TypeError $ "got wrong args for eq"
-        )),
-        ("xor", (VecU8, \args -> case args of
-            [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
-            [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
-            _ -> throwError $ TypeError $ "got wrong args for xor"
-        )),
-        ("andb", (Bool, \args -> case args of
-            [(_,x), (_,y)] -> return $ x ++ " && " ++ y
-            _ -> throwError $ TypeError $ "got wrong args for andb"
-        ))
-    ]
+initFuncs = 
+    let eqChecker = (Bool, \args -> case args of
+                                [(Bool, x), (Bool, y)] -> return $ x ++ " == " ++ y
+                                [(Number, x), (Number, y)] -> return $ x ++ " == " ++ y
+                                [(String, x), (String, y)] -> return $ x ++ " == " ++ y
+                                [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
+                                [(ADT _,x), (ADT _,y)] -> return $ "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
+                                [(RcVecU8, x), (RcVecU8, y)] -> return $ "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")"
+                                [(VecU8, x), (VecU8, y)] -> return $ "vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
+                                _ -> throwError $ TypeError $ "got wrong args for eq"
+                        ) 
+    in M.fromList [
+            ("eq", eqChecker),
+            ("checknonce", eqChecker),
+            ("dhpk", (RcVecU8, \args -> case args of
+                    [x] -> do return $ printOwlOp "owl_dhpk" [x] -- return $ x ++ ".owl_dhpk()"
+                    _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
+            )),
+            ("dh_combine", (RcVecU8, \args -> case args of
+                    [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
+                    _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
+            )),
+            ("UNIT", (Unit, \_ -> return "()")),
+            ("TRUE", (Bool, \_ -> return "true")),
+            ("FALSE", (Bool, \_ -> return "false")),
+            ("Some", (Option RcVecU8, \args -> case args of
+                    [(_,x)] -> return $ "Some(" ++ x ++ ")"
+                    _ -> throwError $ TypeError $ "got wrong number of args for Some"
+            )),
+            ("None", (Option RcVecU8, \_ -> return "Option::<Rc<Vec<u8>>>::None")),
+            ("length", (Number, \args -> case args of
+                    [(RcVecU8,x)] -> return $ "(*" ++ x ++ ").len()"
+                    [(_,x)] -> return $ x ++ ".len()"
+                    _ -> throwError $ TypeError $ "got wrong number of args for length"
+            )),
+            ("zero", (Number, \_ -> return "0")),
+            ("plus", (Number, \args -> case args of
+                    [(_,x), (_,y)] -> return $ x ++ " + " ++ y
+                    _ -> throwError $ TypeError $ "got wrong number of args for plus"
+            )),
+            ("mult", (Number, \args -> case args of
+                    [(_,x), (_,y)] -> return $ x ++ " * " ++ y
+                    _ -> throwError $ TypeError $ "got wrong number of args for mult"
+            )),
+            ("cipherlen", (Number, \args -> case args of
+                    [(_,x)] -> do
+                        tsz <- useAeadTagSize
+                        return $ x ++ " + " ++ show tsz
+                    _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
+            )),
+            ("xor", (VecU8, \args -> case args of
+                [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
+                [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
+                _ -> throwError $ TypeError $ "got wrong args for xor"
+            )),
+            ("andb", (Bool, \args -> case args of
+                [(_,x), (_,y)] -> return $ x ++ " && " ++ y
+                _ -> throwError $ TypeError $ "got wrong args for andb"
+            ))
+        ] 
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
 initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing

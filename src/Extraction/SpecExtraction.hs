@@ -125,7 +125,24 @@ specBuiltinFuncs = M.fromList [
         ("TRUE", \_ -> pretty "true"),
         ("FALSE", \_ -> pretty "false"),
         ("Some", \a -> pretty "Option::Some" <> tupled a),
-        ("None", \_ -> pretty "Option::None")
+        ("None", \_ -> pretty "Option::None"),
+        ("eq", \[a1, a2] -> a1 <+> pretty "==" <+> a2),
+        ("checknonce", \[a1, a2] -> a1 <+> pretty "==" <+> parens a2)
+    ]
+
+-- How to print len consts in spec land
+specLenConsts :: M.Map String String
+specLenConsts = M.fromList [
+        -- ("signature", "256"),
+        ("enckey", "KEY_SIZE()"),
+        ("nonce", "NONCE_SIZE()"),
+        -- ("mackey", hmacKeySize),
+        -- ("maclen", hmacLen),
+        -- ("pkekey", pkeKeySize),
+        -- ("sigkey", sigKeySize),
+        -- ("vk", vkSize),
+        -- ("DH", dhSize),
+        ("tag", "1")
     ]
 
 extractEndpoint :: Endpoint -> ExtractionMonad (Doc ann)
@@ -154,8 +171,11 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
                     f' <- flattenPath f
                     return $ pretty f' <> tupled as'
         -- return $ pretty f' <> tupled as'
-    extractAExpr' (AEString s) = return $ pretty "\"" <> pretty s <> pretty "\""
-    extractAExpr' (AELenConst s) = return $ pretty s <> pretty "_len"
+    extractAExpr' (AEString s) = return $ pretty "\"" <> pretty s <> pretty "\".as_bytes().to_vec().view()"
+    extractAExpr' (AELenConst s) = do
+        case specLenConsts M.!? s of
+            Nothing -> throwError $ ErrSomethingFailed $ "TODO add spec len const " ++ s
+            Just s' -> return $ pretty s'
     extractAExpr' (AEInt i) = return $ pretty i
     extractAExpr' (AEGet ne) = do
         ne' <- flattenNameExp ne

@@ -136,11 +136,23 @@ pub open spec(checked) fn enc_with_nonce(k: Seq<u8>, x: Seq<u8>, nonce: usize) -
 pub open spec(checked) fn dec_with_nonce(k: Seq<u8>, nonce: usize, c: Seq<u8>) -> (x: Option<Seq<u8>>)
 { unimplemented!() }
 
+// equality checking
+pub trait OwlSpecEq where Self:Sized {
+    spec fn owlSpec_eq(self, other: Self) -> bool;
+}
 
+impl OwlSpecEq for usize {
+    #[verifier::inline]
+    open spec fn owlSpec_eq(self, other: Self) -> bool {
+        self == other
+    }
+}
 
-pub open spec fn eq(a: Seq<u8>, b: Seq<u8>) -> bool
-{
-    a == b
+impl OwlSpecEq for Seq<u8> {
+    #[verifier::inline]
+    open spec fn owlSpec_eq(self, other: Self) -> bool {
+        self == other
+    }
 }
 
 pub open spec fn andb(x: bool, y: bool) -> bool
@@ -148,9 +160,10 @@ pub open spec fn andb(x: bool, y: bool) -> bool
     x && y
 }
 
-pub open spec fn length(x: Seq<u8>) -> nat
+pub open spec fn length(x: Seq<u8>) -> usize
+    recommends x.len() < usize::MAX
 {
-    x.len()
+    x.len() as usize
 }
 
 }

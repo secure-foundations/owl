@@ -417,7 +417,7 @@ extractEnum owlName owlCases' = do
                         pretty "None => " <> braces failureReturn <> line <>
                         rbrace
                     Nothing ->
-                        pretty "extend_vec_u8(&mut v, &arg.as_slice());"
+                        pretty "extend_vec_u8(&mut v, arg);"
                 in
             pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> parens (pretty "arg: &[u8]") <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
             pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> parens (pretty "arg@") <> line <>
@@ -516,12 +516,12 @@ extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <
 extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
 extractAExpr binds (AEGet nameExp) =
     case nameExp ^. val of
-        BaseName ([], _) s -> do
+        BaseName (_, _) s -> do
             fnameExp <- flattenNameExp nameExp
             return (RcVecU8, pretty "", rcClone <> parens (pretty "&self." <> pretty (fnameExp)))
-        BaseName (sidxs, _) s -> do
-            ps <- flattenPath s
-            return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
+        -- BaseName (sidxs, _) s -> do
+        --     ps <- flattenPath s
+        --     return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
         _ -> throwError $ UnsupportedNameExp nameExp
 extractAExpr binds (AEGetEncPK nameExp) = do
     fnameExp <- flattenNameExp nameExp
@@ -726,7 +726,7 @@ funcCallPrinter owlName rustArgs retTy callArgs = do
             , pretty owlName <> pretty "_spec" <>
                 tupled (pretty "*self" : pretty "*mut_state" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
             , pretty "self." <> pretty (rustifyName owlName) <>
-                tupled (pretty "mut_state" : (map (\(rty, arg) -> (if rty == Number then pretty "" else pretty "") <> pretty arg) $ callArgs))
+                tupled (pretty "mut_state" : (map (\(rty, arg) -> pretty arg) $ callArgs))
         ]
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
@@ -741,24 +741,23 @@ rustifyArg (v, t) = do
     rt <- rustifyArgTy . doConcretifyTy . unembed $ t
     return (rustifyName $ show v, rt)
 
-rustifySidArg :: IdxVar -> (String, RustTy)
-rustifySidArg v =
-    (sidName . show $ v, Number)
+-- rustifySidArg :: IdxVar -> (String, RustTy)
+-- rustifySidArg v =
+--     (sidName . show $ v, Number)
 
-makeFunc :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty  -> ExtractionMonad ()
-makeFunc owlName _ sidArgs owlArgs owlRetTy = do
+makeFunc :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty  -> ExtractionMonad ()
+makeFunc owlName _ owlArgs owlRetTy = do
     let name = rustifyName owlName
     rustArgs <- mapM rustifyArg owlArgs
-    let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
-    funcs %= M.insert owlName (rtb, funcCallPrinter owlName (rustSidArgs ++ rustArgs) rtb)
+    funcs %= M.insert owlName (rtb, funcCallPrinter owlName rustArgs rtb)
     return ()
 
 
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
-extractDef :: String -> Locality -> [IdxVar] -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
-extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
+extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
+extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     debugPrint $ pretty ""
     -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
@@ -767,25 +766,25 @@ extractDef owlName loc sidArgs owlArgs owlRetTy owlBody isMain = do
     concreteBody <- concretify owlBody
     anfBody <- concretify =<< ANF.anf owlBody
     rustArgs <- mapM rustifyArg owlArgs
-    let rustSidArgs = map rustifySidArg sidArgs
+    -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (pretty (specTyOf rtb) <> comma <+> pretty (stateName lname)))
     (_, rtb, preBody, body) <- extractExpr True loc (M.fromList rustArgs) anfBody
     curRetTy .= Nothing
-    decl <- genFuncDecl name lname rustSidArgs rustArgs rtb
+    decl <- genFuncDecl name lname rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
     let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else pretty ""
     return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace <> line <> line <> mainWrapper, defSpec)
     where
         specRtPrettied specRt lname = pretty "<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>"
-        genFuncDecl name lname sidArgs owlArgs rt = do
+        genFuncDecl name lname owlArgs rt = do
             let itree = pretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) lname <> pretty ">"
             let argsPrettied = hsep . punctuate comma $ 
                     pretty "&self"
                     : pretty "Tracked(itree):" <+> itree
                     : pretty "mut_state: &mut" <+> pretty (stateName lname)
-                    : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
-                    ++ map extractArg owlArgs
+                    -- : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
+                    : map extractArg owlArgs
             let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> tupled [pretty rt, itree])
             let viewRes = parens $ 
                     (case rt of
@@ -828,8 +827,8 @@ nameInit s nt = case nt^.val of
 -- Handling localities
 
 type LocalityName = String
-type NameData = (String, NameType, Int, Int) -- name, type, number of sessionID indices, number of processID indices
-type DefData = (String, Locality, [IdxVar], [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, sessionID arguments, arguments, return type, body
+type NameData = (String, NameType, Int) -- name, type, number of processID indices
+type DefData = (String, Locality, [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, arguments, return type, body
 type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [String]) -- number of locality indices, local state, shared state, defs, table names and codomains, names of counters
 
 
@@ -866,14 +865,15 @@ preprocessModBody mb = do
         sortDef _ m (_, TB.DefHeader _) = return m
         sortDef lookupLoc m (owlName, TB.Def idxs_defSpec) = do
                 let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
+                when (length sids > 1) $ throwError $ DefWithTooManySids owlName
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc =<< flattenPath locP
                 let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
                 case body of
                     Nothing -> return m
                     Just e  -> do
-                        let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, sids, args, retTy, e)], t, c)
-                        makeFunc owlName loc sids args retTy
+                        let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, args, retTy, e)], t, c)
+                        makeFunc owlName loc args retTy
                         return $ M.adjust f locName m
         
         sortTable :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, (Ty, Locality)) -> ExtractionMonad (M.Map LocalityName LocalityData)
@@ -913,9 +913,10 @@ preprocessModBody mb = do
                         throwError $ UnsupportedNameType nt
                 let nsids = length sids
                 let npids = length pids
+                when (nsids > 1) $ throwError $ DefWithTooManySids name
                 typeLayouts %= M.insert (rustifyName name) (LBytes nameLen)
-                let gPub m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l, s ++ [(name, nt, nsids, npids)], d, t, c)) lo m
-                let gPriv m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l ++ [(name, nt, nsids, npids)], s, d, t, c)) lo m
+                let gPub m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l, s ++ [(name, nt, npids)], d, t, c)) lo m
+                let gPriv m lo = M.adjust (\(i,l,s,d,t,c) -> (i, l ++ [(name, nt, npids)], s, d, t, c)) lo m
                 locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
                 locNameCounts <- mapM (\(Locality lname lidxs) -> do
                     plname <- flattenPath lname
@@ -923,14 +924,14 @@ preprocessModBody mb = do
                 case nt ^.val of
                     -- public keys must be shared, so pub/priv key pairs are generated by the initializer
                     NT_PKE _ ->
-                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, npids), locNameCounts)], pubkeys ++ [(name, nt, npids)])
                     NT_Sig _ ->
-                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, npids), locNameCounts)], pubkeys ++ [(name, nt, npids)])
                     NT_DH ->
-                        return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys ++ [(name, nt, nsids, npids)])
+                        return (foldl gPub locMap locNames, shared ++ [((name, nt, npids), locNameCounts)], pubkeys ++ [(name, nt, npids)])
                     _ -> if length loc /= 1 then
                             -- name is shared among multiple localities
-                            return (foldl gPub locMap locNames, shared ++ [((name, nt, nsids, npids), locNameCounts)], pubkeys)
+                            return (foldl gPub locMap locNames, shared ++ [((name, nt, npids), locNameCounts)], pubkeys)
                         else
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
@@ -945,47 +946,49 @@ preprocessModBody mb = do
             oracles %= M.insert n rtlen
 
 
--- return (main func name, number of sessionID args to main, exec code, spec code, unverified lib code)
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Int, Doc ann, Doc ann, Doc ann)
+-- return (main func name, exec code, spec code, unverified lib code)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Doc ann, Doc ann, Doc ann)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
+    -- check name sharing is ok
+    mapM_ (\(n,_,npids) -> unless (npids == 0 || (idxs == 1 && npids == 1)) $ throwError $ UnsupportedSharedIndices n) sharedNames
     let sfs = cfgFields idxs localNames sharedNames pubKeys tbls
     let cfs = configFields idxs sharedNames pubKeys
     let mfs = mutFields ctrs
-    indexedNameGetters <- mapM genIndexedNameGetter localNames
-    let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
+    -- indexedNameGetters <- mapM genIndexedNameGetter localNames
+    -- let sharedIndexedNameGetters = map genSharedIndexedNameGetter sharedNames
     initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
     let initMutState = genInitMutState loc ctrs
     let configDef = configLibCode loc cfs
-    case find (\(n,_,sids,as,_,_) -> isSuffixOf "_main" n && null as) defs of
-        Just (mainName,_,sids,_,_,_) -> do
-            (fns, fnspecs) <- unzip <$> mapM (\(n, l, sids, as, t, e) -> extractDef n l sids as t e (n == mainName)) defs
-            return (rustifyName mainName, length sids,
+    case find (\(n,_,as,_,_) -> isSuffixOf "_main" n && null as) defs of
+        Just (mainName,_,_,_,_) -> do
+            (fns, fnspecs) <- unzip <$> mapM (\(n, l, as, t, e) -> extractDef n l as t e (n == mainName)) defs
+            return (rustifyName mainName,
                 pretty "pub struct" <+> pretty (stateName loc) <+> braces mfs <> line <>
                 pretty "impl" <+> pretty (stateName loc) <+> braces (line <> initMutState) <>
                 pretty "pub struct" <+> pretty (cfgName loc) <+> braces sfs <> line <>
-                pretty "impl" <+> pretty (cfgName loc) <+> braces (line <> initLoc <+> vsep (indexedNameGetters ++ sharedIndexedNameGetters ++ fns)),
+                pretty "impl" <+> pretty (cfgName loc) <+> braces (line <> initLoc <+> vsep ({- indexedNameGetters ++ sharedIndexedNameGetters ++ -} fns)),
                 vsep fnspecs,
                 configDef)
         Nothing -> throwError $ LocalityWithNoMain loc
     where
-        genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ pretty "" else do
-            ni <- nameInit n nt
-            return $
-                pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&mut self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
-                    pretty "match self." <> pretty (rustifyName n) <> pretty ".get" <> parens (tupled ([pretty "&sid" <> pretty n | n <- [0..(nsids-1)]])) <> lbrace <> line <>
-                        pretty "Some(v) =>" <+> rcClone <> pretty "(v)," <> line <>
-                        pretty "None =>" <+> lbrace <> line <>
-                            ni <> line <>
-                            pretty "let v = rc_new" <> parens (pretty (rustifyName n)) <> pretty ";" <> line <>
-                            pretty "self." <> pretty (rustifyName n) <> pretty ".insert" <> parens (tupled ([pretty "sid" <> pretty n | n <- [0..(nsids-1)]]) <> comma <+> rcClone <> pretty "(&v)") <> pretty ";" <> line <>
-                            rcClone <> pretty "(&v)" <> line <>
-                        rbrace <>
-                    rbrace <>
-                rbrace
-        genSharedIndexedNameGetter (n, _, nsids, _) = if nsids == 0 then pretty "" else
-            pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
-                rcClone <> parens (pretty "&self." <> pretty (rustifyName n)) <>
-            rbrace
+        -- genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ pretty "" else do
+        --     ni <- nameInit n nt
+        --     return $
+        --         pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&mut self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --             pretty "match self." <> pretty (rustifyName n) <> pretty ".get" <> parens (tupled ([pretty "&sid" <> pretty n | n <- [0..(nsids-1)]])) <> lbrace <> line <>
+        --                 pretty "Some(v) =>" <+> rcClone <> pretty "(v)," <> line <>
+        --                 pretty "None =>" <+> lbrace <> line <>
+        --                     ni <> line <>
+        --                     pretty "let v = rc_new" <> parens (pretty (rustifyName n)) <> pretty ";" <> line <>
+        --                     pretty "self." <> pretty (rustifyName n) <> pretty ".insert" <> parens (tupled ([pretty "sid" <> pretty n | n <- [0..(nsids-1)]]) <> comma <+> rcClone <> pretty "(&v)") <> pretty ";" <> line <>
+        --                     rcClone <> pretty "(&v)" <> line <>
+        --                 rbrace <>
+        --             rbrace <>
+        --         rbrace
+        -- genSharedIndexedNameGetter (n, _, nsids, _) = if nsids == 0 then pretty "" else
+        --     pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --         rcClone <> parens (pretty "&self." <> pretty (rustifyName n)) <>
+        --     rbrace
 
         configLibCode loc cfs =
             pretty "#[derive(Serialize, Deserialize)]" <> line <> pretty "pub struct" <+> pretty (cfgName loc) <> pretty "_config" <+> braces cfs <> line <>
@@ -1002,19 +1005,15 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
 
         configFields idxs sharedNames pubKeys =
             vsep . punctuate comma $
-                map (\(s,_,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Vec<u8>" else pretty ": HashMap<usize, Vec<u8>>")) sharedNames ++
-                map (\(s,_,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
+                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> pretty ": Vec<u8>") sharedNames ++
+                map (\(s,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Vec<u8>"]
         cfgFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
                 pretty "pub listener: TcpListener" :
-                map (\(s,_,nsids,npids) -> pretty "pub" <+> pretty (rustifyName s) <>
-                        if nsids == 0
-                        then pretty ": Rc<Vec<u8>>"
-                        else pretty ": HashMap" <> angles ((tupled [pretty "usize" | _ <- [0..(nsids - 1)]]) <> comma <+> pretty "Rc<Vec<u8>>")
-                    ) localNames ++
-                map (\(s,_,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Rc<Vec<u8>>" else pretty ": Rc<HashMap<usize, Vec<u8>>>")) sharedNames ++
-                map (\(s,_,_,_) -> pretty "pub" <+> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") pubKeys ++
+                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") localNames ++
+                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Rc<Vec<u8>>" else pretty ": Rc<HashMap<usize, Vec<u8>>>")) sharedNames ++
+                map (\(s,_,_) -> pretty "pub" <+> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") pubKeys ++
                 -- Tables are always treated as local:
                 map (\(n,t) -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
                 [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
@@ -1022,7 +1021,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
             vsep . punctuate comma $ 
                 map (\n -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": usize") ctrs
         genInitLoc loc localNames sharedNames pubKeys tbls = do
-            localInits <- mapM (\(s,n,i,_) -> if i == 0 then nameInit s n else return $ pretty "") localNames 
+            localInits <- mapM (\(s,n,_) -> nameInit s n) localNames 
             return $ pretty "#[verifier(external_body)] pub fn init_" <> pretty (cfgName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
                 pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
@@ -1031,13 +1030,11 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
                 pretty "return" <+> pretty (cfgName loc) <+>
                     braces (hsep . punctuate comma $
                         pretty "listener"  :
-                        map (\(s,_,nsids,_) ->
-                                if nsids == 0
-                                then (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty . rustifyName $ s)
-                                else (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "HashMap::new()"
+                        map (\(s,_,_) ->
+                                (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty . rustifyName $ s)
                             ) localNames ++
-                        map (\(s,_,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
-                        map (\(s,_,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
+                        map (\(s,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
+                        map (\(s,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
                         map (\(n,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty "HashMap::new()") tbls ++
                         [pretty "salt : rc_new(config.salt)"]
                     ) <>
@@ -1050,7 +1047,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
 
 
 -- returns (index map, executable code, spec code, unverified lib code)
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (String, Int), Doc ann, Doc ann, Doc ann)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName String, Doc ann, Doc ann, Doc ann)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     (sidArgMap, ps, spec_ps, ls) <- foldM (go pubkeys) (M.empty, [], [], []) $ M.assocs locMap
@@ -1061,8 +1058,8 @@ extractLocs pubkeys locMap = do
             vsep . punctuate line $ ls)
     where
         go pubKeys (m, ps, ss, ls) (lname, ldata) = do
-            (mainName, nSidArgs, p, s, l) <- extractLoc pubKeys (lname, ldata)
-            return (M.insert lname (mainName, nSidArgs) m, ps ++ [p], ss ++ [s], ls ++ [l])
+            (mainName, p, s, l) <- extractLoc pubKeys (lname, ldata)
+            return (M.insert lname mainName m, ps ++ [p], ss ++ [s], ls ++ [l])
         mkAddrs :: Int -> [LocalityName] -> Doc ann
         mkAddrs n [] = pretty ""
         mkAddrs n (l:locs) =
@@ -1071,22 +1068,22 @@ extractLocs pubkeys locMap = do
             braces (line <> pretty "new_strlit" <> parens (dquotes (pretty "127.0.0.1:" <> pretty (9001 + n))) <> line) <> line <>
             mkAddrs (n+1) locs
 
-entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName (String, Int) -> ExtractionMonad (Doc ann)
-entryPoint locMap sharedNames pubKeys sidArgMap = do
+entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName String -> ExtractionMonad (Doc ann)
+entryPoint locMap sharedNames pubKeys mainNames = do
     let allLocs = M.keys locMap
     sharedNameInits <- mapM genSharedNameInit sharedNames
     let salt = genSalt
-    let writeConfigs = map (writeConfig (map (\(p,_,_,_) -> p) pubKeys)) $ M.assocs locMap
+    let writeConfigs = map (writeConfig (map (\(p,_,_) -> p) pubKeys)) $ M.assocs locMap
     let idxLocCounts = map genIdxLocCount $ M.assocs locMap
     let config = pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 3", "args[1] == \"config\""]) <>
             (braces . vsep $ [vsep idxLocCounts, vsep sharedNameInits, salt, vsep writeConfigs]) <> pretty "else"
-    allLocsSidArgs <- mapM (\l -> do
-                                    let nSidArgs = sidArgMap M.!? l
+    allLocsMainNames <- mapM (\l -> do
+                                    let nSidArgs = mainNames M.!? l
                                     case nSidArgs of
-                                        Just (m, n) -> return (l, m, n)
-                                        Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up number of sessionID args for " ++ l ++ ", bug in extraction"
+                                        Just m -> return (l, m)
+                                        Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up main function name for " ++ l ++ ", bug in extraction"
                             ) allLocs
-    let runLocs = map genRunLoc allLocsSidArgs
+    let runLocs = map genRunLoc allLocsMainNames
     return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] #[allow(unused_variables)]" <> line <> pretty "fn entrypoint()" <+> lbrace <> line <>
         pretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
         vsep runLocs <> line <>
@@ -1098,7 +1095,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             if npids == 0 then pretty "" else
                 pretty "let n_" <> pretty (locName lname) <+> pretty "= get_num_from_cmdline" <> (parens . dquotes $ pretty lname) <> pretty ";"
 
-        genSharedNameInit ((name, nt, nsids, _), locs) = do
+        genSharedNameInit ((name, nt, _), locs) = do
             let rName = rustifyName name
             let nTotalPids = sum . map snd $ locs
             if nTotalPids == 0 then
@@ -1116,10 +1113,10 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
 
         writeConfig pubKeys (loc, (npids, _, ss, _, _, _)) =
             let configInits = hsep . punctuate comma $
-                    (map (\(n,_,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".clone()") ss ++
+                    (map (\(n,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".clone()") ss ++
                      map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++
                      [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
-            (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
+            -- (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
             pretty "let" <+> pretty (cfgName loc) <> pretty "_config:" <+> pretty (cfgName loc) <> pretty "_config" <+> pretty "=" <+> pretty (cfgName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
             pretty "let" <+> pretty (cfgName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
                     pretty "serialize_" <> pretty (cfgName loc) <> pretty "_config" <> parens (pretty "&" <> pretty (cfgName loc) <> pretty "_config") <> pretty ";" <> line <>
@@ -1127,16 +1124,16 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
                 pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
                     dquotes (pretty (cfgName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
             pretty (cfgName loc) <> pretty "_f" <> pretty ".write_all" <> parens (pretty (cfgName loc) <> pretty "_config_serialized.as_bytes()")
-                                <> pretty ".expect(\"Can't write config file\");" <>
-            (if npids == 0 then pretty "" else rbrace)
+                                <> pretty ".expect(\"Can't write config file\");"
+            -- (if npids == 0 then pretty "" else rbrace)
 
-        genRunLoc (loc, mainName, nSidArgs) =
-            let body = genRunLocBody loc mainName nSidArgs in
+        genRunLoc (loc, mainName) =
+            let body = genRunLocBody loc mainName in
             -- pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ 
             --         ["args.len() >= 4", "args.index(1).as_str().into_rust_str() == \"run\"", "args.index(2).as_str().into_rust_str() == \"" ++ loc ++ "\""]) <>                
             pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
                 braces body <> pretty "else"
-        genRunLocBody loc mainName nSidArgs =
+        genRunLocBody loc mainName =
             pretty "let loc =" <+> pretty (cfgName loc) <> pretty "::init_" <> pretty (cfgName loc) <>
                 -- parens (pretty "&args.index(3)") <> pretty ";" <> line <>
                 parens (pretty "&String::from_rust_string(args[3].clone()).as_str()") <> pretty ";" <> line <>
@@ -1145,7 +1142,7 @@ entryPoint locMap sharedNames pubKeys sidArgMap = do
             pretty "thread::sleep(Duration::new(5, 0));" <> line <>
             pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
             pretty "let now = Instant::now();" <> line <>
-            pretty "let res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled (pretty "&mut mut_state" : [pretty i | i <- [1..nSidArgs]]) <> pretty ";" <> line <>
+            pretty "let res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled ([pretty "&mut mut_state"] {- : [pretty i | i <- [1..nSidArgs]] -}) <> pretty ";" <> line <>
             pretty "let elapsed = now.elapsed();" <> line <>
             pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
             pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
@@ -1186,10 +1183,10 @@ extractModBody mb = do
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
-    (sidArgMap, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
+    (mainNames, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
     p <- prettyFile "extraction/preamble.rs"
     lp <- prettyFile "extraction/lib_preamble.rs"
-    ep <- entryPoint locMap sharedNames pubKeys sidArgMap
+    ep <- entryPoint locMap sharedNames pubKeys mainNames
     return (
         p                       <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
