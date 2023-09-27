@@ -585,7 +585,7 @@ getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
     
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
-getNameInfo ne = do
+getNameInfo ne = withSpan (ne^.spanOf) $ do
     case ne^.val of 
      NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
          md <- openModule p
