@@ -210,7 +210,8 @@ pub mod itree {
         {
             (self.get_Sample_1())(coins)
         }
-        pub open spec(checked) fn results_in(&self, a: A) -> bool {
+        pub open spec(checked) fn results_in(&self, a: A) -> bool 
+        {
             self.is_Ret() && self.get_Ret_0() == a
         }
 
@@ -366,6 +367,7 @@ pub mod itree {
     //////////////////////////////////////////////////////
 
     // Hack because I seem to be unable to return `FnSpec`s
+    #[allow(dead_code)]
     type FnSpecAlias<A,B> = FnSpec(A) -> B;
 
 
@@ -432,6 +434,7 @@ pub mod itree {
 
     struct UnforgeableAux;
 
+    #[allow(dead_code)]
     pub struct ITreeToken<T,Endpoint> {
         token: UnforgeableAux,
         inner: (T, Endpoint)
