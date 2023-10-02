@@ -758,7 +758,7 @@ makeFunc owlName _ owlArgs owlRetTy = do
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
 extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
 extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
-    debugPrint $ pretty ""
+    -- debugPrint $ pretty ""
     -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     let (Locality lpath _) = loc
