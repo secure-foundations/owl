@@ -16,3 +16,8 @@ pub fn serialize_msg(l: &msg) -> Vec<u8> {
 pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
     serde_json::from_slice(s).expect("Can't deserialize msg")
 }
+
+#[derive(Debug)]
+pub enum OwlError {
+    IntegerOverflow,
+}

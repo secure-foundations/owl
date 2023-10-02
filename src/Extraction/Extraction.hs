@@ -705,9 +705,9 @@ extractExpr inK loc binds (CIncCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
     let incr = 
-            pretty "/* TODO better handling of overflow reasoning */ assume" <> parens (ctrName <> pretty "+ 1 <= usize::MAX") <> pretty ";" <> line <> 
+            pretty "if" <+> ctrName <> pretty "> usize::MAX - 1 { return Err(OwlError::IntegerOverflow); }" <> pretty ";" <> line <> 
             ctrName <+> pretty "=" <+> ctrName <+> pretty "+ 1;"
-    return (binds, Unit, pretty "", incr)
+    return (binds, Unit, pretty "", line <> incr)
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
@@ -774,7 +774,12 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     decl <- genFuncDecl name lname rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
     let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else pretty ""
-    return $ (decl <+> lbrace <> line <> unwrapItreeArg <> preBody <> line <> body <> line <> rbrace <> line <> line <> mainWrapper, defSpec)
+    return $ (
+        decl <+> lbrace <> line <> 
+            unwrapItreeArg <> intoOk (preBody <> line <> body <> line) <>
+        rbrace <> line <> line <> 
+        mainWrapper
+        , defSpec)
     where
         specRtPrettied specRt lname = pretty "<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>"
         genFuncDecl name lname owlArgs rt = do
@@ -785,20 +790,21 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                     : pretty "mut_state: &mut" <+> pretty (stateName lname)
                     -- : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
                     : map extractArg owlArgs
-            let rtPrettied = pretty "->" <+> parens (pretty "res:" <+> tupled [pretty rt, itree])
+            let rtPrettied = pretty "->" <+> parens (pretty "res: Result<" <> tupled [pretty rt, itree] <> pretty ", OwlError>")
             let viewRes = parens $ 
                     (case rt of
                         Unit -> pretty "()"
-                        ADT _ -> pretty "res.0.data.view()"
-                        Option (ADT _) -> pretty "view_option(res.0).data"
-                        Option _ -> pretty "view_option(res.0)"
-                        _ -> pretty "res.0.view()")
+                        ADT _ -> pretty "res.get_Ok_0().0.data.view()"
+                        Option (ADT _) -> pretty "view_option(res.get_Ok_0().0).data"
+                        Option _ -> pretty "view_option(res.get_Ok_0().0)"
+                        _ -> pretty "res.get_Ok_0().0.view()")
                     <> pretty ", *mut_state"
             let defReqEns =
                     pretty "requires itree@ ==" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*self" : pretty "*old(mut_state)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
-                    pretty "ensures  (res.1)@@.results_in" <> parens viewRes <> line 
+                    pretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1)@@.results_in" <> parens viewRes <> line 
             return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = pretty "let tracked mut itree = itree;"
+        intoOk rustExpr = pretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> pretty "};" <> line <> pretty "Ok(res_inner)"
         genMainWrapper owlName lname execRetTy specRetTy = 
             pretty "#[verifier(external_body)] pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
             parens (pretty "&self, s: &mut" <+> pretty (stateName lname)) <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
@@ -806,7 +812,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                 pretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  pretty owlName <> pretty "_spec(*self, *s)" <> pretty ");" <> line <>
 
                 pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy lname <> pretty ">"] <+> pretty "=" <+>
-                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), s, /* todo args? */") <> pretty ";" <> line <>
+                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), s, /* todo args? */") <> pretty ".unwrap();" <> line <>
                 pretty "res" <>
             line)
 

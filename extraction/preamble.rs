@@ -44,6 +44,10 @@ pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate:
 #[verifier(external_body)]
 pub struct TcpListenerWrapper ( std::net::TcpListener );
 
+#[verifier(external_type_specification)]
+pub struct OwlErrorWrapper ( OwlError );
+
+
 #[verifier(external_body)]
 pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
     requires old(t)@.is_output(x@, endpoint_of_addr(dest_addr.view()))
