@@ -1,0 +1,117 @@
+locality alice
+locality bob
+
+/* New RO rules:
+
+    
+    If you hash the right thing, you get the RO name out:
+
+    
+    (L : b -> nt) \in RO
+    |= a = b
+    ---------------
+    RO |- hash<L>(a) : Name(RO<L>)
+
+    If you hash something else, you get adv data:
+
+    forall (L : b -> nt) \in RO.
+        |= a != b
+    ---------------
+    RO |- hash<L>(a) : Data<adv>
+
+
+    RO can be overapproximated by IFC:
+
+    a : Data<l, l>
+    --------------
+    RO |- hash<L>(a) : Data<l>
+
+
+    
+    If RO<L> is secret, then something in the preimage is not corrupt:
+
+
+    (L : b -> nt) \in RO
+    ---------------
+    RO |- sec(RO<L>) ==> (\/_(n \in derivability(b)) sec([n]))
+
+
+    derivability(g^(get(x) * get(y))) = {x, y}
+    derivability(get(n)) = {n}
+    derivability(a || b) = derivability(a) \cup derivability(b)
+    derivability(_) = {}
+    
+
+    This last rule is subtle, and requires that, for all names n, either
+        - n is a strong secret, OR
+        - n is completely known to the attacker.
+
+    This disjunction is guaranteed by the type system.
+*/
+
+
+
+/*
+name alice<i> : nonce @ alice
+*/
+
+name alice1 : nonce @ alice
+name alice2 : nonce @ alice
+name alice3 : nonce @ alice
+
+
+name k1 : enckey Name(alice1) @ alice, bob         
+name k2 : RO get(k1) -> enckey Name(alice2) 
+name k3 : RO get(k2) -> enckey Name(alice3) 
+
+name t<i> : nonce @ alice
+name k4<i> : RO get(t<i>) ++ 1 ++ 2 -> nonce
+    uniqueness_by admit
+
+/*
+rec name k<i>
+    | 0 => enckey Name(alice<i>)
+    | j => RO get(k<j-1>) -> enckey Name(alice<j>)
+*/
+
+def tsts<i> () @ alice : Unit = 
+    assert (preimage(k2) == get(k1));
+    assert (preimage(k4<i>) == concat(get(t<i>), concat(1, 2)));
+    ()
+
+
+def alice_main() @ alice : Unit = 
+    let c = aenc(get(k1), get(alice1)) in 
+    output c;
+    let k2 = hash<k2>(get(k1)) in
+    let c2 = aenc(k2, get(alice2)) in 
+    output c2;
+    ()
+
+def bob_main() @ bob : Unit = 
+    input c1 in
+    corr_case k1 in 
+    case adec(get(k1), c1) {
+    | None => ()
+    | Some m1 =>  
+        input c2 in 
+        let k2 = hash<k2>(get(k1)) in
+        corr_case k2 in
+        case adec(k2, c2) {
+        | None => ()
+        | Some m2 => 
+            input c3 in 
+            let k3 = hash<k3>(k2) in
+            corr_case k3 in
+            case adec(k3, c3) {
+            | None => ()
+            | Some m3 => 
+                assert (sec(k3) ==> sec(k2));
+                assert (sec(k2) ==> (m1 == get(alice1) /\ m2 == get(alice2)));
+                assert (sec(k1) ==> (m1 == get(alice1)));
+                ()
+            }
+        }
+    }
+
+        

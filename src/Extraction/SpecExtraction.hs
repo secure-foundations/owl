@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
@@ -37,25 +38,25 @@ import ExtractionBase
 ----------------------------------------------------------------------------------
 --- Datatype extraction
 
-genParserSerializer :: String -> ExtractionMonad (Doc ann)
+genParserSerializer :: String -> ExtractionMonad OwlDoc
 genParserSerializer name = do
     -- TODO nesting design---Seq or ADT args---depends on parsing lib
-    let parser = pretty "#[verifier(external_body)]" <+> pretty "pub closed spec fn parse_" <> pretty name <> parens (pretty "x: Seq<u8>") <+>
-                    pretty "->" <+> pretty "Option" <> angles (pretty name) <+> braces (line <>
-                    (pretty "todo!()") <> line
+    let parser = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
+                    owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
+                    owlpretty "todo!()" <> line
                 )
-    let serializer = pretty "#[verifier(external_body)]" <+> pretty "pub closed spec fn serialize_" <> pretty name <> parens (pretty "x:" <+> pretty name) <+>
-                    pretty "->" <+> pretty "Seq<u8>" <+> braces (line <>
-                    (pretty "todo!()") <> line
+    let serializer = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                    owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
+                    owlpretty "todo!()" <> line
                 )
     return $ vsep [parser, serializer]
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann)
+extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
 extractStruct owlName owlFields = do
     let name = specName owlName
     fields <- mapM (\(n, t) -> (rustifySpecTy . doConcretifyTy) t >>= \t' -> return (n, t')) owlFields
-    let structDef = pretty "pub struct" <+> pretty name <> braces (line <> (
-                        vsep . punctuate comma . map (\(n, t) -> pretty "pub" <+> pretty (specName n) <+> pretty ":" <+> pretty t) $ fields
+    let structDef = owlpretty "pub struct" <+> owlpretty name <> braces (line <> (
+                        vsep . punctuate comma . map (\(n, t) -> owlpretty "pub" <+> owlpretty (specName n) <+> owlpretty ":" <+> owlpretty t) $ fields
                     ) <> line)
     parseSerializeDefs <- genParserSerializer name
     constructor <- genConstructor owlName fields
@@ -64,24 +65,24 @@ extractStruct owlName owlFields = do
     where
         genConstructor owlName fields = do
             specAdtFuncs %= S.insert owlName
-            let args = parens . hsep . punctuate comma . map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": Seq<u8>") $ fields
-            let body = pretty "serialize_" <> pretty (specName owlName) <>
-                    parens (pretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> pretty (specName n) <> pretty ": arg_" <> pretty n) $ fields))
+            let args = parens . hsep . punctuate comma . map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty ": Seq<u8>") $ fields
+            let body = owlpretty "serialize_" <> owlpretty (specName owlName) <>
+                    parens (owlpretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> owlpretty (specName n) <> owlpretty ": arg_" <> owlpretty n) $ fields))
             return $
-                pretty "pub open spec fn" <+> pretty owlName <> args <+> pretty "-> Seq<u8>" <+> braces (line <>
+                owlpretty "pub open spec fn" <+> owlpretty owlName <> args <+> owlpretty "-> Seq<u8>" <+> braces (line <>
                     body
                 <> line)
         genFieldSelector owlName (fieldName, fieldTy) = do
             specAdtFuncs %= S.insert fieldName
             return $
-                pretty "pub open spec fn" <+> pretty fieldName <> parens (pretty "arg: Seq<u8>") <+> pretty "-> Seq<u8>" <+> braces (line <>
-                    pretty "match" <+> pretty "parse_" <> pretty (specName owlName) <> parens (pretty "arg") <+> braces (line <>
-                        pretty "Some(parsed) => parsed." <> pretty (specName fieldName) <> comma <> line <>
-                        pretty "None => seq![] // TODO"
+                owlpretty "pub open spec fn" <+> owlpretty fieldName <> parens (owlpretty "arg: Seq<u8>") <+> owlpretty "-> Seq<u8>" <+> braces (line <>
+                    owlpretty "match" <+> owlpretty "parse_" <> owlpretty (specName owlName) <> parens (owlpretty "arg") <+> braces (line <>
+                        owlpretty "Some(parsed) => parsed." <> owlpretty (specName fieldName) <> comma <> line <>
+                        owlpretty "None => seq![] // TODO"
                     <> line)
                 <> line)
 
-extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann)
+extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad OwlDoc
 extractEnum owlName owlCases = do
     let name = specName owlName
     cases <- mapM (\(n, topt) -> do
@@ -89,9 +90,9 @@ extractEnum owlName owlCases = do
                             Just t -> Just <$> (rustifySpecTy . doConcretifyTy) t
                             Nothing -> return Nothing
                         return (n, t')) owlCases
-    let enumDef = pretty "#[is_variant]" <> line <> pretty "pub enum" <+> pretty name <> braces (line <> (
-                        vsep . punctuate comma . map (\(n, t) -> pretty (specName n) <> parens (pretty t)) $ cases
-                    ) <> line) <> line <> pretty "use crate::" <> pretty name <> pretty "::*;" <> line
+    let enumDef = owlpretty "#[is_variant]" <> line <> owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
+                        vsep . punctuate comma . map (\(n, t) -> owlpretty (specName n) <> parens (owlpretty t)) $ cases
+                    ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
     parseSerializeDefs <- genParserSerializer name
     caseConstructors <- mapM (genCaseConstructor name) cases
     return $ vsep $ [enumDef, parseSerializeDefs] ++ caseConstructors
@@ -99,18 +100,18 @@ extractEnum owlName owlCases = do
         genCaseConstructor name (caseName, Just caseTy) = do
             specAdtFuncs %= S.insert caseName
             return $
-                pretty "pub open spec fn" <+> pretty caseName <> parens (pretty "x: Seq<u8>") <+> pretty "-> Seq<u8>" <+> braces (line <>
-                    pretty "serialize_" <> pretty name <> parens (
-                        pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> parens (pretty "x")
+                owlpretty "pub open spec fn" <+> owlpretty caseName <> parens (owlpretty "x: Seq<u8>") <+> owlpretty "-> Seq<u8>" <+> braces (line <>
+                    owlpretty "serialize_" <> owlpretty name <> parens (
+                        owlpretty "crate::" <> owlpretty name <> owlpretty "::" <> owlpretty (specName caseName) <> parens (owlpretty "x")
                     )
                 <> line)
 
         genCaseConstructor name (caseName, Nothing) = do
             specAdtFuncs %= S.insert caseName
             return $
-                pretty "pub open spec fn" <+> pretty caseName <> pretty "()" <+> pretty "-> Seq<u8>" <+> braces (line <>
-                    pretty "serialize_" <> pretty name <> parens (
-                        pretty "crate::" <> pretty name <> pretty "::" <> pretty (specName caseName) <> pretty "()"
+                owlpretty "pub open spec fn" <+> owlpretty caseName <> owlpretty "()" <+> owlpretty "-> Seq<u8>" <+> braces (line <>
+                    owlpretty "serialize_" <> owlpretty name <> parens (
+                        owlpretty "crate::" <> owlpretty name <> owlpretty "::" <> owlpretty (specName caseName) <> owlpretty "()"
                     )
                 <> line)
 
@@ -119,15 +120,15 @@ extractEnum owlName owlCases = do
 --- Code generation
 
 -- Owl builtin functions that must be printed differently in Rust
-specBuiltinFuncs :: M.Map String ([Doc ann] -> Doc ann)
+specBuiltinFuncs :: M.Map String ([OwlDoc] -> OwlDoc)
 specBuiltinFuncs = M.fromList [
-        ("UNIT", \_ -> pretty "()"),
-        ("TRUE", \_ -> pretty "true"),
-        ("FALSE", \_ -> pretty "false"),
-        ("Some", \a -> pretty "Option::Some" <> tupled a),
-        ("None", \_ -> pretty "Option::None"),
-        ("eq", \[a1, a2] -> a1 <+> pretty "==" <+> a2),
-        ("checknonce", \[a1, a2] -> a1 <+> pretty "==" <+> parens a2)
+        ("unit", \_ -> owlpretty "()"),
+        ("true", \_ -> owlpretty "true"),
+        ("false", \_ -> owlpretty "false"),
+        ("Some", \a -> owlpretty "Option::Some" <> tupled a),
+        ("None", \_ -> owlpretty "Option::None"),
+        ("eq", \[a1, a2] -> a1 <+> owlpretty "==" <+> a2),
+        ("checknonce", \[a1, a2] -> a1 <+> owlpretty "==" <+> parens a2)
     ]
 
 -- How to print len consts in spec land
@@ -145,16 +146,16 @@ specLenConsts = M.fromList [
         ("tag", "1")
     ]
 
-extractEndpoint :: Endpoint -> ExtractionMonad (Doc ann)
+extractEndpoint :: Endpoint -> ExtractionMonad OwlDoc
 extractEndpoint (Endpoint evar) = return $ extractVar evar
 extractEndpoint (EndpointLocality (Locality s _)) = do
     l <- flattenPath s
-    return $ pretty "Endpoint::Loc_" <> pretty l
+    return $ owlpretty "Endpoint::Loc_" <> owlpretty l
 
-extractVar :: Name a -> Doc ann
-extractVar = pretty . replacePrimes . name2String
+extractVar :: Name a -> OwlDoc
+extractVar = owlpretty . replacePrimes . name2String
 
-extractAExpr :: AExpr -> ExtractionMonad (Doc ann)
+extractAExpr :: AExpr -> ExtractionMonad OwlDoc
 extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEVar s n) = return $ extractVar n
     extractAExpr' (AEApp f _ as) = do
@@ -166,42 +167,47 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
                 -- Check if the func is a spec ADT func
                 specAdtFs <- use specAdtFuncs
                 if S.member ftail specAdtFs then do
-                    return $ pretty ftail <> tupled as'
+                    return $ owlpretty ftail <> tupled as'
                 else do
                     f' <- flattenPath f
-                    return $ pretty f' <> tupled as'
-        -- return $ pretty f' <> tupled as'
-    extractAExpr' (AEString s) = return $ pretty "\"" <> pretty s <> pretty "\".as_bytes().to_vec().view()"
+                    return $ owlpretty f' <> tupled as'
+        -- return $ owlpretty f' <> tupled as'
+    extractAExpr' (AEHex s) = do
+        bytelist <- hexStringToByteList s
+        return $ owlpretty "seq![" <> bytelist <> owlpretty "]"
     extractAExpr' (AELenConst s) = do
         case specLenConsts M.!? s of
             Nothing -> throwError $ ErrSomethingFailed $ "TODO add spec len const " ++ s
-            Just s' -> return $ pretty s'
-    extractAExpr' (AEInt i) = return $ pretty i
+            Just s' -> return $ owlpretty s'
+    extractAExpr' (AEInt i) = return $ owlpretty i
     extractAExpr' (AEGet ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*cfg." <> pretty ne') <> pretty ".view()"
+        return $ parens (owlpretty "*cfg." <> owlpretty ne') <> owlpretty ".view()"
     extractAExpr' (AEGetEncPK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*cfg.pk_" <> pretty ne') <> pretty ".view()"
+        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".view()"
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (pretty "*cfg.pk_" <> pretty ne') <> pretty ".view()"
+        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".view()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
+    extractAExpr' (AEPreimage p _ _) = do
+        p' <- flattenPath p
+        throwError $ PreimageInExec p'
 
-extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad (Doc ann)
+extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad OwlDoc
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        (CHash p _ n, [x]) -> do
+        (CHash _ _, [x]) -> do
             debugPrint "TODO CHash args"
             return $ noSamp "kdf" [x]
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CAEnc, [k, x]) -> do return $ pretty "sample" <> tupled [pretty "NONCE_SIZE()", pretty "enc" <> tupled [k, x]]
+        (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        (CAEncWithNonce np _, [k, x]) -> do
+        (CEncStAEAD np _, [k, x]) -> do
             n <- flattenPath np
-            return $ noSamp "enc_with_nonce" [k, x, pretty "mut_state." <> pretty (rustifyName n)]
-        (CADecWithNonce, [k, n, c]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
+            return $ noSamp "enc_with_nonce" [k, x, owlpretty "mut_state." <> owlpretty (rustifyName n)]
+        (CDecStAEAD, [k, n, c]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
         (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]
@@ -210,7 +216,7 @@ extractCryptOp op owlArgs = do
         (CSigVrfy, [k, x, v]) -> do return $ noSamp "vrfy" [k, x, v]
         (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     where
-        noSamp name args = pretty "ret" <> parens (pretty name <> tupled args)
+        noSamp name args = owlpretty "ret" <> parens (owlpretty name <> tupled args)
 
 -- the Bool arg is whether the case has arguments
 specCaseName :: Bool -> String -> String
@@ -219,45 +225,45 @@ specCaseName _ "None" = "None"
 specCaseName True c = specName c
 specCaseName False c = specName c ++ "()"
 
-extractExpr :: CExpr -> ExtractionMonad (Doc ann)
-extractExpr CSkip = return $ pretty "skip"
+extractExpr :: CExpr -> ExtractionMonad OwlDoc
+extractExpr CSkip = return $ owlpretty "skip"
 extractExpr (CInput xsk) = do
     let ((x, ev), sk) = unsafeUnbind xsk
     sk' <- extractExpr sk
-    return $ parens (pretty "input" <+> tupled [extractVar x, extractVar ev]) <+> pretty "in" <> line <> sk'
+    return $ parens (owlpretty "input" <+> tupled [extractVar x, extractVar ev]) <+> owlpretty "in" <> line <> sk'
 extractExpr (COutput a l) = do
     a' <- extractAExpr a
     l' <- case l of
       Nothing -> throwError OutputWithUnknownDestination
       Just s  -> do
         s' <- extractEndpoint s
-        return $ pretty "to" <+> parens s'
-    return $ parens $ pretty "output " <> parens a' <+> l'
+        return $ owlpretty "to" <+> parens s'
+    return $ parens $ owlpretty "output " <> parens a' <+> l'
 extractExpr (CLet (COutput a l) xk) = do
     let (_, k) = unsafeUnbind xk
     o <- extractExpr (COutput a l)
     k' <- extractExpr k
-    return $ o <+> pretty "in" <> line <> k'
+    return $ o <+> owlpretty "in" <> line <> k'
 extractExpr (CLet CSkip xk) =
     let (_, k) = unsafeUnbind xk in extractExpr k
 extractExpr (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
     e' <- extractExpr e
     k' <- extractExpr k
-    return $ pretty "let" <+> extractVar x <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
+    return $ owlpretty "let" <+> extractVar x <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
 extractExpr (CIf a e1 e2) = do
     a' <- extractAExpr a
     e1' <- extractExpr e1
     e2' <- extractExpr e2
     return $ parens $
-        pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
+        owlpretty "if" <+> parens a' <+> owlpretty "then" <+> parens e1' <+> owlpretty "else" <+> parens e2'
 extractExpr (CRet a) = do
     a' <- extractAExpr a
-    return $ parens $ pretty "ret" <+> parens a'
+    return $ parens $ owlpretty "ret" <+> parens a'
 extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
     ftail <- flattenPath f
-    return $ pretty "call" <> parens (pretty ftail <> pretty "_spec" <> tupled (pretty "cfg" : pretty "mut_state" : as'))
+    return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
 extractExpr (CCase a xs) = do
     a' <- extractAExpr a
     pcases <-
@@ -265,53 +271,53 @@ extractExpr (CCase a xs) = do
                 case o of
                 Left e -> do
                     e' <- extractExpr e
-                    return $ pretty (specCaseName False c) <+> pretty "=>" <+> braces e' <> comma
+                    return $ owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
                     e' <- extractExpr e
-                    return $ pretty (specCaseName True c) <+> parens (extractVar x) <+> pretty "=>" <+> braces e' <> comma
+                    return $ owlpretty (specCaseName True c) <+> parens (extractVar x) <+> owlpretty "=>" <+> braces e' <> comma
                 ) xs
-    return $ parens $ pretty "case" <+> parens a' <> line <> braces (vsep pcases)
+    return $ parens $ owlpretty "case" <+> parens a' <> line <> braces (vsep pcases)
 extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
 extractExpr (CIncCtr p ([], [])) = do
     p' <- flattenPath p
-    return $ parens $ parens (pretty "inc_counter" <> tupled [pretty (rustifyName p')])
+    return $ parens $ parens (owlpretty "inc_counter" <> tupled [owlpretty (rustifyName p')])
 extractExpr (CGetCtr p ([], [])) = do
     p' <- flattenPath p
-    return $ parens $ pretty "ret" <> parens (pretty "mut_state." <> pretty (rustifyName p'))
-extractExpr c = throwError . ErrSomethingFailed . show $ pretty "unimplemented case for Spec.extractExpr:" <+> pretty c
--- extractExpr (CTLookup n a) = return $ pretty "lookup" <> tupled [pretty n, extractAExpr a]
--- extractExpr (CTWrite n a a') = return $ pretty "write" <> tupled [pretty n, extractAExpr a, extractAExpr a']
+    return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
+extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
+-- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
+-- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
 
-specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad (Doc ann)
+specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
 specExtractArg (v, t) = do
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
-    return $ extractVar v <> pretty ":" <+> (pretty . specTyOf $ st)
+    return $ extractVar v <> owlpretty ":" <+> (owlpretty . specTyOf $ st)
 
 
-extractDef :: String -> Locality -> CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad (Doc ann)
+extractDef :: String -> Locality -> CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
     specArgs <- mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $
-            pretty "cfg:" <+> pretty (cfgName lname)
-            : pretty "mut_state:" <+> pretty (stateName lname)
+            owlpretty "cfg:" <+> owlpretty (cfgName lname)
+            : owlpretty "mut_state:" <+> owlpretty (stateName lname)
             : specArgs
-    let rtPrettied = pretty "-> (res: ITree<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>" <> pretty ")"
+    let rtPrettied = owlpretty "-> (res: ITree<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>" <> owlpretty ")"
     body <- extractExpr concreteBody
-    return $ pretty "pub open spec fn" <+> pretty owlName <> pretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-        pretty "owl_spec!" <> parens (pretty "mut_state," <> pretty (stateName lname) <> comma <> line <>
+    return $ owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+        owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
             body
         <> line) <> line <>
         rbrace
 
-mkSpecEndpoint :: [String] -> Doc ann
+mkSpecEndpoint :: [String] -> OwlDoc
 mkSpecEndpoint lnames =
-    pretty "#[is_variant]" <> line <> pretty "#[derive(Copy, Clone)]" <> line <>
-    pretty "pub enum Endpoint" <+> braces (line <>
-        (vsep . punctuate comma . map (\s -> pretty "Loc_" <> pretty s) $ lnames)
+    owlpretty "#[is_variant]" <> line <> owlpretty "#[derive(Copy, Clone)]" <> line <>
+    owlpretty "pub enum Endpoint" <+> braces (line <>
+        (vsep . punctuate comma . map (\s -> owlpretty "Loc_" <> owlpretty s) $ lnames)
     <> line)
 
-endpointOfAddr :: Doc ann
-endpointOfAddr = pretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { unimplemented!() /* axiomatized */ }"
+endpointOfAddr :: OwlDoc
+endpointOfAddr = owlpretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { unimplemented!() /* axiomatized */ }"

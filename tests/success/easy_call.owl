@@ -18,9 +18,10 @@ def alice2 () @ alice : Unit
     input i in
     if eq(i, get(blah)) then
         let x = call alice1(i) in 
-        case x
+        case x {
         | Some y => output y to endpoint(alice)
         | None => ()
+        }
     else ()
 
 def alice_main () @ alice : Unit =

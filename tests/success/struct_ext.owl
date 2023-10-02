@@ -12,7 +12,7 @@ struct t {
 }
 
 def tst_ex (x : t) @ alice : Unit = 
-    assert (length(x) =  (2 * |vk|) + |nonce|);
+    assert (length(x) ==  (2 * |vk|) + |nonce|);
     ()
 
 def alice_main () @ alice : Unit = ()

@@ -51,7 +51,7 @@ struct pair<i> {
 table keys : (exists i. pair<idx i>) @ R
 
 enum reader_response {
-    | Ok (exists i. (x:Data<adv>{sec(K<i>) ==> ((x = get(NT<i>)) /\ happened(T_main<i>()))}))
+    | Ok (exists i. (x:Data<adv>{sec(K<i>) ==> ((x == get(NT<i>)) /\ happened(T_main<i>()))}))
     | No
 }
 
@@ -66,7 +66,7 @@ def R_main<i>() @ R
     // let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, nT) in
     let x: Option (exists j. pair<idx j>) = lookup(keys, nT) in
 
-    begin case x 
+    case x {
         | None => No()
         | Some p_packed =>
             unpack j, p = p_packed in
@@ -77,27 +77,29 @@ def R_main<i>() @ R
             let mac_to_verify = h1_t<idx j>(zz(), nR, nT) in
 
             let mc'  = xor(id, mc) in
-            begin case mac_vrfy(k, mac_to_verify, mc') 
+            case mac_vrfy(k, mac_to_verify, mc') {
                 | None => No()
                 | Some m =>
                     // let _ = check_equal(mc, xor(id, m)) in
                     assert(sec(K<j>) ==> happened(T_main<j>()));
                     let nT' = h1_nt<idx j>(m) in
                     let nT':if sec(K<j>) then (x:Name(NT<j>){happened(T_main<j>())}) else Data<adv> = nT' in
-                    let nT'':if sec(K<j>) then (x:Name(NT<j>){happened(T_main<j>())}) else (p:(Data<adv>){sec(K<j>) ==> ((p = get(NT<j>)) /\ happened(T_main<j>()))}) = nT' in
+                    let nT'':if sec(K<j>) then
+                    (x:Name(NT<j>){happened(T_main<j>())}) else
+                    (p:(Data<adv>){sec(K<j>) ==> ((p == get(NT<j>)) /\ happened(T_main<j>()))}) = nT' in
                     // let nT'':if sec(K<j>) then Name(NT<j>) else Data<adv> = h1_nt<idx j>(m) in
 
                     let msg_to_mac = h1_t<idx j>(oo(), nR, nT') in
                     let _ = output xor(id, msg_to_mac) to endpoint(T) in
 
-                    let _ = assert(sec(K<j>) ==> (nT'' = get(NT<j>))) in
+                    let _ = assert(sec(K<j>) ==> (nT'' == get(NT<j>))) in
                     //  let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((x = get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
 
-                    let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((p = get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
+                    let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((p == get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
                     Ok(res)
                     // Ok(pack<j>(nT'))
-            end
-    end
+            }
+    }
 
 def T_main<i> () @ T
 : Unit =
@@ -112,4 +114,4 @@ def T_main<i> () @ T
         let x = xor(id_i, m) in
         output m1_t(nT, x) to endpoint(R)
     else
-        output "" to endpoint(R)
+        output 0 to endpoint(R)

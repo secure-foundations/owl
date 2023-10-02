@@ -1,5 +1,9 @@
 # Owl
 
+## Relevant branches
+
+The `main` branch tracks recent developments, so the Owl syntax and language features are subject to change. Our release [here](https://github.com/secure-foundations/owl/releases/tag/ieee-sp-2023) corresponds to our [S&P publication](https://www.computer.org/csdl/proceedings-article/sp/2023/933600b130/1NrbYvgcB4Q).
+
 ## Setup
 
 To build and run Owl, you need `cabal` and `ghc` in your `PATH`. You can use [ghcup](https://www.haskell.org/ghcup/) to install them. 

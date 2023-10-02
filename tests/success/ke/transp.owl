@@ -12,8 +12,9 @@ def server() @ Server :
 def client(x : Name(data)) @ Client: Unit = 
     corr_case k in
     let o = call ke_Client() in
-    case o 
+    case o {
      | None => ()
      | Some k => 
         let c =  aenc(k, x) in 
         output c to endpoint(Server)
+    }

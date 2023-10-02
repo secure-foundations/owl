@@ -13,9 +13,12 @@ module Transp (P : Params, K : KE(P)) : TRANSP(P) = {
             def client(x : Name(P.data)) @ P.Client: Unit = 
                     corr_case K.k in
                     let o = call K.ke_Client() in
-                    case o 
+                    case o {
                      | None => ()
                      | Some k => 
                         let c =  aenc(k, x) in 
                         output c to endpoint(P.Server)
+                    }
+
 }
+                        

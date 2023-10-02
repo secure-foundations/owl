@@ -6,7 +6,7 @@ name k : enckey Name(n) @ alice
 // Both subtype to unit
 def main(b : Bool<adv>)@alice : Unit = 
     if b then 
-        assert(b = true)
+        assert(b == true)
     else
         ()
 

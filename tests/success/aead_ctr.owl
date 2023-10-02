@@ -1,23 +1,34 @@
-locality alice
+locality alice : 1
+locality bob : 1
 
-name x : nonce @ alice
-counter N @ alice
-name k : enckey_with_nonce Name(x)
+func f 
+    arity 0
+
+name X<@i> : nonce @ alice<i>
+counter N<@i> @ alice<i>
+counter M<@i> @ bob<i>
+name k<@i> : st_aead Name(X<@i>)
+    aad x. (x == f())
     nonce N
     nonce_pattern *
-    @ alice
+    @ alice<i>
 
-def alice_main () @ alice : Bool<static> = 
-    inc_counter N;
-    let x = get_counter N in 
-    let c = aenc_with_nonce<N>(get(k), get(x)) in 
-    // output c;
-    corr_case k in
-    case adec_with_nonce(get(k), x, c)
-     | None => false
+def tst<@i>() @ alice<i> : Unit = 
+    inc_counter N<@i>;
+    let x = get_counter N<@i> in 
+    assert (aad(k<@i>)[f()]);
+    let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), f()) in 
+    output c;
+    corr_case k<@i> in
+    input h in 
+    case st_aead_dec(get(k<@i>), c, h, x) {
+     | None => ()
      | Some _y => 
-        let y : if sec(k) then Name(x) else Data<adv> = _y in
-        true
+        let y : if sec(k<@i>) then (_:Name(X<@i>){h == f()}) else Data<adv> = _y in
+        ()
+    }
+
+    
 
 
 

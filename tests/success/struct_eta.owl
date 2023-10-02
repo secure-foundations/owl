@@ -1,11 +1,36 @@
 locality alice
 
 struct t { 
-    x : Data<adv> | |nonce| |,
-    y : Data<adv> | |nonce| |,
-    z : Data<adv> | |nonce| |
+    _x : Data<adv> | |nonce| |,
+    _y : Data<adv> | |nonce| |,
+    _z : Data<adv> | |nonce| |
+}
+
+name n<i> : nonce @ alice
+struct t2<i> {
+    _a : Name(n<i>),
+    _b : Data<adv>
 }
 
 def amain (a : t) @ alice : Unit = 
-    assert (length(a) = 3 * |nonce|);
+    assert (length(a) == 3 * |nonce|);
     ()
+
+def tst2(x : Data<adv> | |nonce| |, 
+         y : Data<adv> | |nonce| |, 
+         z : Data<adv> | |nonce| |
+) @ alice : Unit = 
+    let s = t(x, y, z) in 
+    assert (x == _x(s));
+    assert (y == _y(s));
+    assert (z == _z(s));
+    ()
+
+def tst3<i>() @ alice :Unit = 
+    input inp in 
+    let x = get(n<i>) in 
+    let s = t2<idx i>(x, inp) in 
+    assert (_a<idx i>(s) == x);
+    assert (_b<idx i>(s) == inp);
+    ()
+

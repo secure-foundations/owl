@@ -71,39 +71,40 @@ def client_pkinit (certC : Data<adv> ||signature||) @ client
 
     // use pke key seckeyC to decrypt msg
     corr_case seckeyCnew in
-    let p' = pkdec(get(seckeyCnew), msg) in
-    corr_case K in
-    let p = p' in 
-    // union_case p = p' in
-    // p = {certA, verkeyA, [k]_sigkeyA, k}
-
-    let certA = _AuthCert(p) in 
-    // certA = signature of verkeyA signed by sigkeyCA
-    corr_case sigkeyCA in
-    begin case vrfy(vkCA, certA, _vkA(p)) // get verkeyA = vk(sigkeyA)
-        | Some res =>
-            begin case res 
-            | ClientCert _ => ()
-            | AuthCert vkA => 
-                // now use verkeyA to verify signed_k
-                corr_case sigkeyA in
-                begin case vrfy(vkA, _k(p), _sigofK(p)) // get K, sign(sigkeyA, k)
-                    | Some k =>
-                        // finally, decrypt AK using k
-                        corr_case K in
-                        begin case adec(k, enc_ak) 
-                            | Some ak =>
-                                if eq(length(tgt), cipherlen(|enckey|)) then 
-                                    let tgt' : Data<adv> |cipherlen(|enckey|)| = tgt in
-                                    call client_kerberos(ak, tgt', username)
-                                else ()
-                            | None => ()
-                        end
-                    | None => ()
-                end
-            end
+    case pkdec(get(seckeyCnew), msg) { 
         | None => ()
-    end
+        | Some p' => 
+            union_case p = p' in 
+            // p = {certA, verkeyA, [k]_sigkeyA, k}
+
+            let certA = _AuthCert(p) in 
+            // certA = signature of verkeyA signed by sigkeyCA
+            corr_case sigkeyCA in
+            case vrfy(vkCA, certA, _vkA(p)) {// get verkeyA = vk(sigkeyA)
+                | Some res =>
+                    case res {
+                    | ClientCert _ => ()
+                    | AuthCert vkA => 
+                        // now use verkeyA to verify signed_k
+                        corr_case sigkeyA in
+                        case vrfy(vkA, _k(p), _sigofK(p)) { // get K, sign(sigkeyA, k)
+                            | Some k =>
+                                // finally, decrypt AK using k
+                                corr_case K in
+                                case adec(k, enc_ak) {
+                                    | Some ak =>
+                                        if eq(length(tgt), cipherlen(|enckey|)) then 
+                                            let tgt' : Data<adv> |cipherlen(|enckey|)| = tgt in
+                                            call client_kerberos(ak, tgt', username)
+                                        else ()
+                                    | None => ()
+                                }
+                            | None => ()
+                        }
+                    }
+                | None => ()
+            }
+        }
 
 def client_main () @ client 
     requires ([sigkeyA] <= [sigkeyCA]) /\ ([K] <= [sigkeyCA]) /\ ([K] <= [sigkeyA]) /\ (! ([sigkeyA] <= [K]))
@@ -132,16 +133,16 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
     corr_case K in 
 
     // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) // get client vertificate
+    case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
             | ClientCert certC =>
             
                 // check that certC is valid for vkC
-                begin case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) 
+                case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) {
                     | None => ()
                     | Some vkC =>
                     
                         // use verkeyC to verify the username
-                        begin case vrfy(vkC, signed_un, un) 
+                        case vrfy(vkC, signed_un, un) {
                             | None => ()
                             | Some username =>
                             
@@ -171,9 +172,10 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
                                         output msg to endpoint(client); ()
                                     else ()
                                 else ()
-                        end
-                end
+                        }
+                }
             | AuthCert x => ()
+    }
 
 
 def authserver_main () @ authserver

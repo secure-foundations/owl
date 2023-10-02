@@ -1,6 +1,0 @@
-locality alice
-random_oracle l : () -> nonce
-corr adv ==> [RO<l>]
-
-def alice () @ alice : Unit = 
-    assert (corr(RO<l>))

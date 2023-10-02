@@ -29,15 +29,16 @@ struct s {
 
 table keys : (exists i. Name(K<@i>)) @ R
 
+enum reader_response {
+    | Ok (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | No
+}
+
 def T_main<@i> () @ T<i>
 : Unit =
     let m = mac(get(K<@i>), get(NT<@i>)) in // include the username here (in mac and PT)
     output s(get(NT<@i>), m) to endpoint(R)
 
-enum reader_response {
-    | Ok (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
-    | No
-}
 
 def R_main () @ R
 : reader_response = 
@@ -48,31 +49,34 @@ def R_main () @ R
 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
-    (case x 
+    case x {
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
 
             corr_case K<@j> in
 
-            (case mac_vrfy(k, nT, mc) 
+            case mac_vrfy(k, nT, mc) {
                 | None => No()
                 | Some m =>
                     // Checking if m is of type Name(NT<j>) as expected
                     //   and if m == x - these two lines can be removed
-                    if eq(length(m), |nonce|) then 
+                    if eq(length(m), |nonce|) then {
                         let mm : if sec(K<@j>) then Name(NT<@j>) else Data<adv> | |nonce| | = m in 
                         let mmm: if sec(K<@j>) 
                                  then x:Name(NT<@j>){happened(T_main<@j>())}
-                                 else (x:(Data<adv> | |nonce| |){sec(K<@j>) ==> ((x = get(NT<@j>)) /\ happened(T_main<@j>()))}) 
+                                 else (x:(Data<adv> | |nonce| |){sec(K<@j>) ==>
+                                     ((x == get(NT<@j>)) /\ happened(T_main<@j>()))}) 
                                = mm in
-                        assert(sec(K<@j>) ==> m = nT);  
-                        let res : (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
+                        assert(sec(K<@j>) ==> m == nT);  
+                        let res : (exists i. (x:(Data<adv> | |nonce|
+                        |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                           = pack<j>(mmm) in 
                         Ok(res)
+                    }
                     else
                         No()
-            )
-        )
+            }
+        }
 
 

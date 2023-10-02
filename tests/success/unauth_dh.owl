@@ -1,48 +1,56 @@
 locality client : 1
 locality server 
 name X<@i> : DH @ client<i>
+
 name Y : DH @ server
 
 name data<@i> : nonce @ client<i>
 corr<i> [X<@i>] ==> [data<@i>]
 corr<i> [Y] ==> [data<@i>]
 
-random_oracle L<i> : dh_combine(dhpk(get(X<@i>)), get(Y)) -> enckey Name(data<@i>)
+name L<@i> : RO dh_combine(dhpk(get(X<@i>)), get(Y)) -> enckey Name(data<@i>)
+
+name L_corr : RO[x] x -> enckey Unit
+    requires forall i:idx. x != dh_combine(dhpk(get(X<@i>)), get(Y))
+
+corr[x] adv ==> [L_corr[x;0]]
 
 def client_main<@i>(pky : dhpk(Y)) @ client<i> : Unit = 
     let h = dhpk(get(X<@i>)) in
     output h;
-    corr_case Y in 
-    corr_case X<@i> in 
-    let y = hash<L, i>(dh_combine(pky, get(X<@i>))) in 
-    corr_case data<@i> in
+    let y = hash<L<@i>>(dh_combine(pky, get(X<@i>))) in 
     let c = aenc(y, get(data<@i>)) in 
     output c
-    
 
-def server_getkey() @ server : Union<Data<adv>, (exists j. Name(RO<L, j>))> = 
+def server_getkey() @ server : Option (Union<Data<adv>, (exists j. Name(L<@j>))>) = 
     input h in 
-    pcase (exists j:idx. h = dhpk(get(X<@j>))) in 
-    choose_idx j | h = dhpk(get(X<@j>)) in
-    corr_case Y in 
-    corr_case X<@j> in 
-    let y = hash<L, j>(dh_combine<name X<@j>, name Y>(h, get(Y))) in 
-    pcase (adv /\ (/\_i [RO<L, i>]) <= adv) in
-    pack<j>(y)
+    if is_group_elem(h) then {
+        pcase (exists j:idx. dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y))) in 
+        choose_idx j | dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y)) in 
+        let ss = dh_combine(h, get(Y)) in 
+        let y = hash<L<@j>, L_corr[ss]>(ss) in 
+        Some(pack<j>(y))
+    }
+    else None<type Union<Data<adv>, (exists j. Name(L<@j>))>>()
 
 def server_main() @ server :
 Unit = 
     let u = call server_getkey() in  
-    union_case x_ = u in 
-    unpack j, x = x_ in 
-    input c in 
-    (corr_case RO<L, j> in 
-    case adec(x, c)
-    | Some m => 
-        let c = aenc(x, m) in 
-        output c
-    | None => ());
-    ()
+    case u {
+    | None => ()
+    | Some u_ => 
+        union_case x_ = u_ in 
+        unpack j, x = x_ in 
+        input c in 
+        corr_case L<@j> in 
+        case adec(x, c) {
+        | Some m => 
+            let c = aenc(x, m) in 
+            output c
+        | None => ()
+        }
+    }
+        
 
 
 

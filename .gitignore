@@ -6,3 +6,5 @@ stack.yaml.lock
 .vscode/
 main
 *.owl_config
+.owl-log/
+*.smtcache

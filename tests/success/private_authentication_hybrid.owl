@@ -45,10 +45,16 @@ def A_main<i> () @ A
     input enc_hybridKB in
     input inp in
     corr_case pkA in
-    let hybridKB = pkdec(get(pkA), enc_hybridKB) in
-    case adec(hybridKB, inp)
-    | None => ()
-    | Some _ => ()
+    case pkdec(get(pkA), enc_hybridKB) {
+        | None => ()
+        | Some hybridKB' =>
+            union_case hybridKB = hybridKB' in
+            corr_case hybrid_skB in 
+            case adec(hybridKB, inp) {
+                | None => ()   
+                | Some _ => ()
+            }
+    }
 
 
 def B_main<j> () @ B
@@ -58,23 +64,29 @@ def B_main<j> () @ B
 
     input enc_hybridKA in
     input inp in
-    let hybridKA = pkdec(privKey, enc_hybridKA) in
-    // union_case hybridKA = hybridKA' in
-    case adec(hybridKA, inp)
-    | None => ()
-    | Some m => 
-        unpack i, m' = m in
-        let n0' = m1_n0<idx i>(m') in
-        let m1_pkA_e = m1_pkA<idx i>(m') in
-        case m1_pkA_e
-        | m1_pkA_tag m1_pkA =>
-            if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
-                let hybridKB          = get(hybrid_skB) in
-                let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in
-                let _ = output enc_hybridKB to endpoint(A) in
-                let pubKeyA = get_encpk(pkA) in
-                let encm =  aenc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
-                let _ = output encm to endpoint(A) in
-                ()
-            else ()
+    case pkdec(privKey, enc_hybridKA) {
+        | None => ()
+        | Some hybridKA' => 
+            union_case hybridKA = hybridKA' in
+            corr_case hybrid_skA in 
+            case adec(hybridKA, inp) {
+            | None => ()
+            | Some m => 
+                unpack i, m' = m in
+                let n0' = m1_n0<idx i>(m') in
+                let m1_pkA_e = m1_pkA<idx i>(m') in
+                case m1_pkA_e {
+                | m1_pkA_tag m1_pkA =>
+                    if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
+                        let hybridKB          = get(hybrid_skB) in
+                        let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in
+                        let _ = output enc_hybridKB to endpoint(A) in
+                        let pubKeyA = get_encpk(pkA) in
+                        let encm =  aenc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
+                        let _ = output encm to endpoint(A) in
+                        ()
+                    else ()
+                }
+            }
+    }
 

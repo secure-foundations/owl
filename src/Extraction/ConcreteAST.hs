@@ -15,6 +15,7 @@ import Data.Maybe
 import Control.Monad
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
@@ -47,9 +48,9 @@ instance Subst AExpr CTy
 concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
   case t^.val of
-    TData _ _ -> return CTData
+    TData _ _ _ -> return CTData
     TDataWithLength _ l -> return $ CTDataWithLength l
-    TRefined t _ -> concretifyTy t
+    TRefined t _ _ -> concretifyTy t
     TOption t -> do
       ct <- concretifyTy t
       return $ CTOption ct
@@ -106,17 +107,17 @@ instance Subst AExpr CExpr
 concretify :: Fresh m => Expr -> m CExpr
 concretify e =
     case e^.val of
-      EInput xse -> do
+      EInput _ xse -> do
           let (xe, e) = unsafeUnbind xse
           c <- concretify e
           return $ CInput $ bind xe c
       EOutput a eo -> return $ COutput a eo
-      ELet e1 _ _ xk -> do
+      ELet e1 _ _ _ xk -> do
           e1' <- concretify e1
           let (x, k) = unsafeUnbind xk
           k' <- concretify k
           return $ CLet e1' (bind x k')
-      EUnionCase a xk -> do
+      EUnionCase a s xk -> do
           (x, k) <- unbind xk
           k' <- concretify k
           return $ subst x a k'
@@ -151,7 +152,7 @@ concretify e =
                     return (c, Right $ bind x k')
           avar <- fresh $ s2n "caseval"
           return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
-      EPCase _ k -> concretify k
+      EPCase _ _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
       ETWrite n a a2 -> return $ CTWrite n a a2
@@ -162,62 +163,61 @@ concretify e =
 doConcretify :: Expr -> CExpr
 doConcretify = runFreshM . concretify
 
-instance Pretty CTy where
-    pretty CTData = pretty "Data"
-    pretty CTUnit =
-        pretty "unit"
-    pretty CTBool =
-            pretty "Bool"
-    pretty (CTDataWithLength a) =
-            pretty "Data " <+> pretty "|" <> pretty a <> pretty "|"
-    pretty (CTOption t) =
-            pretty "Option" <> pretty t
-    pretty (CTConst n) =
-            pretty n
-    pretty (CTName n) =
-            pretty "Name(" <> pretty n <> pretty ")"
-    pretty (CTVK n) =
-            pretty "vk(" <> pretty n <> pretty ")"
-    pretty (CTDH_PK n) =
-            pretty "dhpk(" <> pretty n <> pretty ")"
-    pretty (CTEnc_PK n) =
-            pretty "encpk(" <> pretty n <> pretty ")"
-    pretty (CTSS n m) =
-            pretty "shared_secret(" <> pretty n <> pretty ", " <> pretty m <> pretty ")"
-    -- pretty (CTUnion t1 t2) =
-    --     pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
+instance OwlPretty CTy where
+    owlpretty CTData = owlpretty "Data"
+    owlpretty CTUnit =
+        owlpretty "unit"
+    owlpretty CTBool =
+            owlpretty "Bool"
+    owlpretty (CTDataWithLength a) =
+            owlpretty "Data " <+> owlpretty "|" <> owlpretty a <> owlpretty "|"
+    owlpretty (CTOption t) =
+            owlpretty "Option" <> owlpretty t
+    owlpretty (CTConst n) =
+            owlpretty n
+    owlpretty (CTName n) =
+            owlpretty "Name(" <> owlpretty n <> owlpretty ")"
+    owlpretty (CTVK n) =
+            owlpretty "vk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (CTDH_PK n) =
+            owlpretty "dhpk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (CTEnc_PK n) =
+            owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
+    owlpretty (CTSS n m) =
+            owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
+    -- owlpretty (CTUnion t1 t2) =
+    --     owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 
-instance Pretty CExpr where
-    pretty CSkip = pretty "skip"
-    pretty (CInput xsk) = 
-        let (x, sk) = prettyBind xsk in
-        pretty "input" <+> x <> comma <+> sk
-    pretty (COutput a l) = pretty "output " <> pretty a <+> (case l of
-       Nothing -> pretty ""
-       Just s -> pretty "to" <+> pretty s)
-    pretty (CLet e xk) =
-        let (x, k) = prettyBind xk in
-        pretty "let" <+> x <+> pretty "=" <+> pretty e <+> pretty "in" <> line <> k
-    pretty (CIf a e1 e2) =
-        pretty "if" <+> pretty a <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (CRet a) = pretty "ret " <> pretty a
-    pretty (CCall f is as) = 
+instance OwlPretty CExpr where
+    owlpretty CSkip = owlpretty "skip"
+    owlpretty (CInput xsk) = 
+        let (x, sk) = owlprettyBind xsk in
+        owlpretty "input" <+> x <> comma <+> sk
+    owlpretty (COutput a l) = owlpretty "output " <> owlpretty a <+> (case l of
+       Nothing -> owlpretty ""
+       Just s -> owlpretty "to" <+> owlpretty s)
+    owlpretty (CLet e xk) =
+        let (x, k) = owlprettyBind xk in
+        owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
+    owlpretty (CIf a e1 e2) =
+        owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
+    owlpretty (CRet a) = owlpretty "ret " <> owlpretty a
+    owlpretty (CCall f is as) = 
         let inds = case is of
                      ([], []) -> mempty
-                     (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
+                     (v1, v2) -> owlpretty "<" <> mconcat (map owlpretty v1) <> owlpretty "@" <> mconcat (map owlpretty v2) <> owlpretty ">"
         in
-        pretty f <> inds <> tupled (map pretty as)
-    pretty (CCase a xs) =
+        owlpretty f <> inds <> tupled (map owlpretty as)
+    owlpretty (CCase a xs) =
         let pcases =
                 map (\(c, o) ->
                     case o of
-                      Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
-                      Right xe -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
+                      Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
+                      Right xe -> let (x, e) = owlprettyBind xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
-        pretty "case" <+> pretty a <> line <> vsep pcases
-    pretty (CTLookup n a) = pretty "lookup" <> tupled [pretty a]
-    pretty (CTWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
-    pretty (CCrypt cop as) = pretty cop <> tupled (map pretty as)
-    pretty (CIncCtr p idxs) = pretty "inc_counter" <> angles (pretty idxs) <> parens (pretty p)
-    pretty (CGetCtr p idxs) = pretty "get_counter" <> angles (pretty idxs) <> parens (pretty p)
-
+        owlpretty "case" <+> owlpretty a <> line <> vsep pcases
+    owlpretty (CTLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
+    owlpretty (CTWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
+    owlpretty (CCrypt cop as) = owlpretty cop <> tupled (map owlpretty as)
+    owlpretty (CIncCtr p idxs) = owlpretty "inc_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
+    owlpretty (CGetCtr p idxs) = owlpretty "get_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)

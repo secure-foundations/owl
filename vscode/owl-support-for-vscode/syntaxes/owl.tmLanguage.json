@@ -34,7 +34,7 @@
 			},
 			{
 				"name": "keyword.control.owl",
-				"match": "\\b(case|if|then|else|pack|unpack)\\b"
+				"match": "\\b(case|if|guard|then|else|pack|unpack)\\b"
 			},
 			{
 				"name": "keyword.other.owl",

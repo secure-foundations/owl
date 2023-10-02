@@ -21,7 +21,7 @@ def bob() @ A
     input inp in
     let k = get(K) in
     corr_case K in
-    (case adec(k, inp)
+    case adec(k, inp) {
         | None => ()
         | Some r =>
             unpack j1, r' = r in
@@ -29,4 +29,4 @@ def bob() @ A
             unpack j2, r'' = r' in
             let x3: if sec(K) then Name(N<j1, j2>) else Data<adv> = r'' in
             ()
-    )
+    }

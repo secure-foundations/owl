@@ -31,9 +31,10 @@ def alice_main () @ alice
     let _ = output c to endpoint(bob) in 
     input i in 
     corr_case k_data in 
-    let result = case adec(get(k_data), i) 
+    let result = case adec(get(k_data), i) {
      | Some j => SomeResult(_y(j))
      | None => NoResult()
+    }
     in
     result
     
@@ -42,11 +43,12 @@ def bob_main () @ bob
     input i, ev in 
     // i : Data<adv>
     corr_case shared_key in
-    case adec(get(shared_key), i) 
+    case adec(get(shared_key), i) {
      | Some k => 
         let foo = t(get(x), get(y)) in
         let c = aenc(k, foo) in
         output c to ev
      | None => ()
+    }
         
 

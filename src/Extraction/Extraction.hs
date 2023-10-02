@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
@@ -130,12 +131,12 @@ layoutEnum name cases = do
 ---------------------------------------------------------------------------------------
 -- ADT extraction
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (Doc ann, Doc ann)
+extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
     -- liftIO $ print name
     let parsingOutcomeName = name ++ "_ParsingOutcome"
-    let typeDef = pretty "pub struct" <+> pretty name <+> pretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"
+    let typeDef = owlpretty "pub struct" <+> owlpretty name <+> owlpretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "}"
     let fields = map (\(s,t) -> (rustifyName s, doConcretifyTy t)) owlFields
     layout <- layoutStruct name fields
     layoutFields <- case layout of
@@ -156,147 +157,147 @@ extractStruct owlName owlFields = do
             M.fromList $
                 -- don't need to check arity
                 (owlName, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
-                        pretty "construct_" <> (pretty . rustifyName) owlName <>
-                            (parens . hsep . punctuate comma . map (\(t,a) -> pretty "&" <> (case t of
-                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty ".as_slice()"
-                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty ".as_slice()"
-                                VecU8 -> pretty a <> pretty ".as_slice()"
-                                _ -> pretty a))
+                        owlpretty "construct_" <> (owlpretty . rustifyName) owlName <>
+                            (parens . hsep . punctuate comma . map (\(t,a) -> owlpretty "&" <> (case t of
+                                ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
+                                RcVecU8 -> parens (owlpretty "*" <> owlpretty a) <> owlpretty ".as_slice()"
+                                VecU8 -> owlpretty a <> owlpretty ".as_slice()"
+                                _ -> owlpretty a))
                             $ args)
                         ))) :
                 map (\(owlField, _) -> (owlField, (rustifyName owlName, RcVecU8, \args -> do
                     case args of
                       (ADT _, arg) : _ -> do
                         return $ (Nothing, show $
-                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <> 
-                                parens (pretty "&mut" <+> pretty arg) <> pretty "))")
+                            owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <> 
+                                parens (owlpretty "&mut" <+> owlpretty arg) <> owlpretty "))")
                       (VecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&mut" <+> pretty owlName) <> pretty "))")
+                            owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <>
+                                parens (owlpretty "&mut" <+> owlpretty owlName) <> owlpretty "))")
                       (RcVecU8, arg) : _ -> do
                         return $ (Just (arg, owlName), show $
-                            pretty "rc_new(slice_to_vec(get_" <> (pretty . rustifyName) owlField <> pretty "_" <> (pretty . rustifyName) owlName <>
-                                parens (pretty "&mut" <+> pretty owlName) <> pretty "))")
+                            owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <>
+                                parens (owlpretty "&mut" <+> owlpretty owlName) <> owlpretty "))")
                       _ -> throwError $ TypeError $ "attempt to get from " ++ owlName ++ " with bad args"
                 ))) owlFields
 
         genStructParsingOutcomeDef parsingOutcomeName layoutFields = return $
-            pretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
-            -- pretty "#[is_variant] #[derive(Clone)]" <> line <>
-            pretty "pub enum" <+> pretty parsingOutcomeName <+>
+            owlpretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
+            -- owlpretty "#[is_variant] #[derive(Clone)]" <> line <>
+            owlpretty "pub enum" <+> owlpretty parsingOutcomeName <+>
             vsep [  lbrace,
-                    pretty "Success" <> parens (hsep $ punctuate comma $ replicate (length layoutFields + 1) $ pretty "usize") <> comma,
-                    pretty "Failure" <> comma,
+                    owlpretty "Success" <> parens (hsep $ punctuate comma $ replicate (length layoutFields + 1) $ owlpretty "usize") <> comma,
+                    owlpretty "Failure" <> comma,
                     rbrace]
 
         genLenValidFnDef name layoutFields =
             let fieldCheckers = map fieldChecker layoutFields in
-            let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> pretty "start_" <> pretty n) layoutFields ++ [pretty "i"]) in
-            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
-                pretty " -> Option" <> (angles . parens . hsep . punctuate comma $ [pretty "usize" | _ <- [0..(length layoutFields)]]) <+> lbrace <> line <>
-            pretty "let mut i = 0;" <> line <>
+            let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> owlpretty "start_" <> owlpretty n) layoutFields ++ [owlpretty "i"]) in
+            return $ owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "len_valid_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+>
+                owlpretty " -> Option" <> (angles . parens . hsep . punctuate comma $ [owlpretty "usize" | _ <- [0..(length layoutFields)]]) <+> lbrace <> line <>
+            owlpretty "let mut i = 0;" <> line <>
             vsep fieldCheckers <> line <>
-            pretty "Some" <> (parens . parens $ startsPrettied) <> line <>
+            owlpretty "Some" <> (parens . parens $ startsPrettied) <> line <>
             rbrace
         fieldChecker (n, l) = case l of
             LBytes nb    ->
-                pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
-                pretty "if" <+> pretty "arg.len() - i" <+> pretty "<" <+> pretty nb <+> lbrace <> line <>
-                pretty "return None;" <> line <>
+                owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
+                owlpretty "if" <+> owlpretty "arg.len() - i" <+> owlpretty "<" <+> owlpretty nb <+> lbrace <> line <>
+                owlpretty "return None;" <> line <>
                 rbrace <> line <>
-                pretty "i = i + " <+> pretty nb <> pretty ";"
+                owlpretty "i = i + " <+> owlpretty nb <> owlpretty ";"
             LStruct sn sfs ->
-                pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
-                pretty "match" <+> pretty "len_valid_" <> pretty sn <> parens (pretty "&arg[i..]") <+> lbrace <> line <>
-                pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "_" | _ <- [0..(length sfs - 1)]] ++ [pretty "l"]) <+> pretty "=>" <+> braces (pretty "i = i + l;") <> line <>
-                pretty "None => " <> braces (pretty "return None;") <> line <>
+                owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
+                owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty sn <> parens (owlpretty "&arg[i..]") <+> lbrace <> line <>
+                owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "_" | _ <- [0..(length sfs - 1)]] ++ [owlpretty "l"]) <+> owlpretty "=>" <+> braces (owlpretty "i = i + l;") <> line <>
+                owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
                 rbrace
             LEnum en _   ->
-                pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
-                pretty "match" <+> pretty "len_valid_" <> pretty en <> parens (pretty "&arg[i..]") <+> lbrace <> line <>
-                pretty "Some(l) => " <> braces (pretty "i = i + l;") <> line <>
-                pretty "None => " <> braces (pretty "return None;") <> line <>
+                owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
+                owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty en <> parens (owlpretty "&arg[i..]") <+> lbrace <> line <>
+                owlpretty "Some(l) => " <> braces (owlpretty "i = i + l;") <> line <>
+                owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
                 rbrace
 
         genParseFnDef name parsingOutcomeName layout layoutFields = return $
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> line <> 
-            pretty "ensures" <+>
+            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "parse_into_" <> owlpretty name <> parens (owlpretty "arg: &mut" <+> owlpretty name) <+> line <> 
+            owlpretty "ensures" <+>
                 -- TODO improve
-                pretty "parse_" <> pretty (specName . unrustifyName $ name) <> pretty "(arg.data@).is_Some() ==> arg.data@ === old(arg).data@" <> comma <> line <>
-                pretty "parse_" <> pretty (specName . unrustifyName $ name) <> pretty "(arg.data@).is_None() ==> arg.data@ === seq![] // TODO" <> comma <> line <>
+                owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_Some() ==> arg.data@ === old(arg).data@" <> comma <> line <>
+                owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_None() ==> arg.data@ === seq![] // TODO" <> comma <> line <>
             lbrace <> line <>
-                pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
-                    pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
-                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
-                        pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <+>
-                            pretty "=>" <+> braces (
-                                pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success" <>
-                                    (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..(length layoutFields)]]) <>
-                                pretty ";"
+                owlpretty "match arg.parsing_outcome" <+> lbrace <> line <> 
+                    owlpretty parsingOutcomeName <> owlpretty "::Failure =>" <+> lbrace <> line <>
+                        owlpretty "match len_valid_" <> owlpretty name <> parens (owlpretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
+                        owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "idx_" <> owlpretty j | j <- [0..(length layoutFields)]]) <+>
+                            owlpretty "=>" <+> braces (
+                                owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <>
+                                    (parens . hsep . punctuate comma $ [owlpretty "idx_" <> owlpretty j | j <- [0..(length layoutFields)]]) <>
+                                owlpretty ";"
                             ) <> line <>
-                        pretty "None => " <> braces (
-                                pretty "arg.data =" <+> pretty "rc_new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
-                                pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
+                        owlpretty "None => " <> braces (
+                                owlpretty "arg.data =" <+> owlpretty "rc_new(vec_u8_from_elem(0," <+> owlpretty (lenLayoutFailure layout) <> owlpretty "));" <> line <>
+                                owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Failure;"
                             ) <> line <>
                         rbrace <> line <>
                     rbrace <> comma <> line <>
-                    pretty "_ => {}" <>
+                    owlpretty "_ => {}" <>
                 rbrace <> line <>
             rbrace
 
 
         genConstructorDef name parsingOutcomeName layout layoutFields = do
-            let argsPrettied = hsep $ punctuate comma $ map (\(n,_) -> pretty "arg_" <> pretty n <> pretty ": &[u8]") layoutFields
-            let viewArgsPrettied = hsep $ punctuate comma $ map (\(n,_) -> pretty "arg_" <> pretty n <> pretty "@") layoutFields
-            let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> pretty "start_" <> pretty n) layoutFields ++ [pretty "i"])
+            let argsPrettied = hsep $ punctuate comma $ map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty ": &[u8]") layoutFields
+            let viewArgsPrettied = hsep $ punctuate comma $ map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty "@") layoutFields
+            let startsPrettied = hsep $ punctuate comma (map (\(n,_) -> owlpretty "start_" <> owlpretty n) layoutFields ++ [owlpretty "i"])
             let checkAndExtenders = map (\(n,l) -> checkAndExtender name (lenLayoutFailure layout) parsingOutcomeName n l) layoutFields
             return $ 
-                pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> parens argsPrettied <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
-                pretty "ensures res.data@ ===" <+> pretty owlName <> parens viewArgsPrettied <> line <>
+                owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "construct_" <> owlpretty name <> parens argsPrettied <+> owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty name) <+> line <>
+                owlpretty "ensures res.data@ ===" <+> owlpretty owlName <> parens viewArgsPrettied <> line <>
                 lbrace <> line <>
-                    pretty "let mut v = vec_u8_from_elem(0,0);" <> line <>
-                    pretty "let mut i = 0;" <> line <>
+                    owlpretty "let mut v = vec_u8_from_elem(0,0);" <> line <>
+                    owlpretty "let mut i = 0;" <> line <>
                     vsep checkAndExtenders <> line <>
-                    pretty "let res =" <+> pretty name <+> pretty "{ data: rc_new(v), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Success" <> parens startsPrettied <> pretty "};" <> line <>
-                    pretty "res" <> line <>
+                    owlpretty "let res =" <+> owlpretty name <+> owlpretty "{ data: rc_new(v), parsing_outcome:" <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <> parens startsPrettied <> owlpretty "};" <> line <>
+                    owlpretty "res" <> line <>
                 rbrace
         checkAndExtender name lenFailure parsingOutcomeName n l =
-            let structEnumChecker dn = pretty "len_valid_" <> pretty dn <> parens (pretty "arg_" <> pretty n) <+> pretty " == None" in
+            let structEnumChecker dn = owlpretty "len_valid_" <> owlpretty dn <> parens (owlpretty "arg_" <> owlpretty n) <+> owlpretty " == None" in
             let checker = case l of
-                    LBytes i     -> pretty "arg_" <> pretty n <> pretty ".len()" <+> pretty "!=" <+> pretty i
+                    LBytes i     -> owlpretty "arg_" <> owlpretty n <> owlpretty ".len()" <+> owlpretty "!=" <+> owlpretty i
                     LStruct sn _ -> structEnumChecker sn
                     LEnum en _   -> structEnumChecker en in
-            pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
-            pretty "if" <+> checker <+> lbrace <> line <>
-            pretty "return" <+> pretty name <+> braces (pretty "data: rc_new(vec_u8_from_elem(0," <+> pretty lenFailure <> pretty ")), parsing_outcome:" <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" <> line <>
+            owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
+            owlpretty "if" <+> checker <+> lbrace <> line <>
+            owlpretty "return" <+> owlpretty name <+> braces (owlpretty "data: rc_new(vec_u8_from_elem(0," <+> owlpretty lenFailure <> owlpretty ")), parsing_outcome:" <+> owlpretty parsingOutcomeName <> owlpretty "::Failure") <> owlpretty ";" <> line <>
             rbrace <> line <>
-            pretty "v.extend" <> parens (pretty "arg_" <> pretty n) <> pretty ";" <> line <>
-            pretty "i = i + " <> pretty "arg_" <> pretty n <> pretty ".len();"
+            owlpretty "v.extend" <> parens (owlpretty "arg_" <> owlpretty n) <> owlpretty ";" <> line <>
+            owlpretty "i = i + " <> owlpretty "arg_" <> owlpretty n <> owlpretty ".len();"
 
         genSelectorDefs name parsingOutcomeName layoutFields = do
             let (_, layoutOffsets) = mapAccumL (\(o,i) (n,l) -> let nextO = o + lenLayoutFailure l in ((nextO, i + 1), (n,l,o,nextO,i))) (0,0) layoutFields
             return $ map (genSelectorDef name parsingOutcomeName (length layoutFields)) layoutOffsets
 
-        genSelectorDef :: String -> String -> Int -> (String, Layout, Int, Int, Int) -> Doc ann
+        genSelectorDef :: String -> String -> Int -> (String, Layout, Int, Int, Int) -> OwlDoc
         genSelectorDef name parsingOutcomeName numFields (fieldName, fieldLayout, failOffset, failNextOffset, structIdx) =
-            let success_pattern = pretty parsingOutcomeName <> pretty "::Success" <> (parens . hsep . punctuate comma $ [pretty "idx_" <> pretty j | j <- [0..numFields]]) in
+            let success_pattern = owlpretty parsingOutcomeName <> owlpretty "::Success" <> (parens . hsep . punctuate comma $ [owlpretty "idx_" <> owlpretty j | j <- [0..numFields]]) in
             -- return $
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "get_" <> pretty fieldName <> pretty "_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> pretty "->" <+> pretty "(res: &[u8])" <+> line <>
+            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "get_" <> owlpretty fieldName <> owlpretty "_" <> owlpretty name <> parens (owlpretty "arg: &mut" <+> owlpretty name) <+> owlpretty "->" <+> owlpretty "(res: &[u8])" <+> line <>
             -- TODO make this better
-            pretty "ensures res@ ===" <+> pretty (unrustifyName fieldName) <> parens (pretty "old(arg).data@") <> line <>
+            owlpretty "ensures res@ ===" <+> owlpretty (unrustifyName fieldName) <> parens (owlpretty "old(arg).data@") <> line <>
             lbrace <> line <>
-            pretty "parse_into_" <> pretty name <> parens (pretty "arg") <> pretty ";" <> line <>
-            pretty "match arg.parsing_outcome {" <> line <>
-            success_pattern <+> pretty "=>" <+>
-                pretty "slice_subrange(&(*arg.data).as_slice(), idx_" <> pretty structIdx <> pretty ", idx_" <> pretty (structIdx + 1) <> pretty ")," <> line <>
-            pretty parsingOutcomeName <> pretty "::Failure => slice_subrange(&(*arg.data).as_slice()," <+> pretty failOffset <> pretty "," <+> pretty failNextOffset <> pretty ")" <> line <>
-            pretty "}" <> line <>
-            pretty "}"
+            owlpretty "parse_into_" <> owlpretty name <> parens (owlpretty "arg") <> owlpretty ";" <> line <>
+            owlpretty "match arg.parsing_outcome {" <> line <>
+            success_pattern <+> owlpretty "=>" <+>
+                owlpretty "slice_subrange(&(*arg.data).as_slice(), idx_" <> owlpretty structIdx <> owlpretty ", idx_" <> owlpretty (structIdx + 1) <> owlpretty ")," <> line <>
+            owlpretty parsingOutcomeName <> owlpretty "::Failure => slice_subrange(&(*arg.data).as_slice()," <+> owlpretty failOffset <> owlpretty "," <+> owlpretty failNextOffset <> owlpretty ")" <> line <>
+            owlpretty "}" <> line <>
+            owlpretty "}"
 
 
 
-extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (Doc ann, Doc ann)
+extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
 extractEnum owlName owlCases' = do
     let owlCases = M.fromList owlCases'
     let name = rustifyName owlName
@@ -306,8 +307,8 @@ extractEnum owlName owlCases' = do
     layoutCases <- case layout of
       LEnum _ cs -> return cs
       _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
-    let tagsComment = pretty "//" <+> pretty (M.foldlWithKey (\s name (tag,_) -> s ++ name ++ " -> " ++ show tag ++ ", ") "" layoutCases)
-    let typeDef = tagsComment <> line <> pretty "pub struct" <+> pretty name <+> pretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "}"    
+    let tagsComment = owlpretty "//" <+> owlpretty (M.foldlWithKey (\s name (tag,_) -> s ++ name ++ " -> " ++ show tag ++ ", ") "" layoutCases)
+    let typeDef = tagsComment <> line <> owlpretty "pub struct" <+> owlpretty name <+> owlpretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "}"    
     parsingOutcomeDef <- genEnumParsingOutcomeDef parsingOutcomeName
     lenValidFnDef <- genLenValidFnDef name layoutCases
     parseFnDef <- genParseFnDef name parsingOutcomeName layout
@@ -322,173 +323,175 @@ extractEnum owlName owlCases' = do
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
-                    pretty "construct_" <> (pretty . rustifyName) owlName <> pretty "_" <> (pretty . rustifyName) owlCase <>
-                        (parens . hsep . punctuate comma . map (\(t,a) -> pretty "&" <> (case t of
-                                ADT _ -> parens (pretty "*" <> pretty a <> pretty ".data") <> pretty ".as_slice()"
-                                RcVecU8 -> parens (pretty "*" <> pretty a) <> pretty ".as_slice()"
-                                VecU8 -> pretty a <> pretty ".as_slice()"
-                                _ -> pretty a)) $ args)
+                    owlpretty "construct_" <> (owlpretty . rustifyName) owlName <> owlpretty "_" <> (owlpretty . rustifyName) owlCase <>
+                        (parens . hsep . punctuate comma . map (\(t,a) -> owlpretty "&" <> (case t of
+                                ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
+                                RcVecU8 -> parens (owlpretty "*" <> owlpretty a) <> owlpretty ".as_slice()"
+                                VecU8 -> owlpretty a <> owlpretty ".as_slice()"
+                                _ -> owlpretty a)) $ args)
                 )))) $ M.assocs owlCases
 
         genEnumParsingOutcomeDef parsingOutcomeName = return $
-            pretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
-            -- pretty "#[is_variant] #[derive(Clone)]" <> line <>
-            pretty "pub enum" <+> pretty parsingOutcomeName <+>
+            owlpretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
+            -- owlpretty "#[is_variant] #[derive(Clone)]" <> line <>
+            owlpretty "pub enum" <+> owlpretty parsingOutcomeName <+>
             vsep [  lbrace,
-                    pretty "Success" <> comma,
-                    pretty "Failure" <> comma,
+                    owlpretty "Success" <> comma,
+                    owlpretty "Failure" <> comma,
                     rbrace]
 
         genLenValidFnDef name layoutCases =
             let caseCheckers = map caseChecker $ M.assocs layoutCases in
-            return $ pretty "#[verifier(external_body)] pub fn" <+> pretty "len_valid_" <> pretty name <> parens (pretty "arg: &[u8]") <+>
-                pretty " -> Option<usize>" <+> lbrace <> line <>
-            pretty "if arg.len() < 1 { return None; } else " <> line <>
-            vsep (punctuate (pretty " else ") caseCheckers) <> line <>
-            pretty "else { return None; }" <> line <>
+            return $ owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "len_valid_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+>
+                owlpretty " -> Option<usize>" <+> lbrace <> line <>
+            owlpretty "if arg.len() < 1 { return None; } else " <> line <>
+            vsep (punctuate (owlpretty " else ") caseCheckers) <> line <>
+            owlpretty "else { return None; }" <> line <>
             rbrace
         caseChecker (t, (n, l)) = case l of
             Just (LBytes nb)      ->
-                pretty "if *slice_index_get(arg, 0) ==" <+> pretty n <> pretty "u8" <+> pretty "&&" <+> pretty "arg.len() >=" <+> pretty (1 + nb) <+>
-                braces (pretty " return Some(" <+> pretty (1 + nb) <> pretty "); ")
+                owlpretty "if *slice_index_get(arg, 0) ==" <+> owlpretty n <> owlpretty "u8" <+> owlpretty "&&" <+> owlpretty "arg.len() >=" <+> owlpretty (1 + nb) <+>
+                braces (owlpretty " return Some(" <+> owlpretty (1 + nb) <> owlpretty "); ")
             Just (LStruct sn sfs) ->
-                pretty "if *slice_index_get(arg, 0) ==" <+> pretty n <> pretty "u8" <+> braces (
-                    pretty "match" <+> pretty "len_valid_" <> pretty sn <> parens (pretty "&arg[1..]") <+> lbrace <> line <>
-                    pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "_" | _ <- [0..(length sfs - 1)]] ++ [pretty "l"]) <+>
-                        pretty "=>" <+> braces (pretty "return Some(1 + l);") <> line <>
-                    pretty "None => " <> braces (pretty "return None;") <> line <>
+                owlpretty "if *slice_index_get(arg, 0) ==" <+> owlpretty n <> owlpretty "u8" <+> braces (
+                    owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty sn <> parens (owlpretty "&arg[1..]") <+> lbrace <> line <>
+                    owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "_" | _ <- [0..(length sfs - 1)]] ++ [owlpretty "l"]) <+>
+                        owlpretty "=>" <+> braces (owlpretty "return Some(1 + l);") <> line <>
+                    owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
                     rbrace
                 )
             Just (LEnum en _)     ->
-                pretty "if arg[0] ==" <+> pretty n <+> braces (
-                    pretty "let start_" <> pretty n <+> pretty "= i;" <> line <>
-                    pretty "match" <+> pretty "len_valid_" <> pretty en <> parens (pretty "&arg[1..]") <+> lbrace <> line <>
-                    pretty "Some(l) => " <> braces (pretty "return Some(1 + l);") <> line <>
-                    pretty "None => " <> braces (pretty "return None;") <> line <>
+                owlpretty "if arg[0] ==" <+> owlpretty n <+> braces (
+                    owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
+                    owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty en <> parens (owlpretty "&arg[1..]") <+> lbrace <> line <>
+                    owlpretty "Some(l) => " <> braces (owlpretty "return Some(1 + l);") <> line <>
+                    owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
                     rbrace
                 )
             Nothing ->
-                pretty "if arg[0] ==" <+> pretty n <+> braces ( pretty "return Some(arg.len());" )
+                owlpretty "if arg[0] ==" <+> owlpretty n <+> braces ( owlpretty "return Some(arg.len());" )
 
         genParseFnDef name parsingOutcomeName layout = return $
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "parse_into_" <> pretty name <> parens (pretty "arg: &mut" <+> pretty name) <+> lbrace <> line <>
-                pretty "match arg.parsing_outcome" <+> lbrace <> line <> 
-                    pretty parsingOutcomeName <> pretty "::Failure =>" <+> lbrace <> line <>
-                        pretty "match len_valid_" <> pretty name <> parens (pretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
-                            pretty "Some(l)" <+>
-                                pretty "=>" <+> braces (pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Success;") <> line <>
-                            pretty "None => " <> braces (
-                                    pretty "arg.data =" <+> pretty "rc_new(vec_u8_from_elem(0," <+> pretty (lenLayoutFailure layout) <> pretty "));" <> line <>
-                                    pretty "arg.parsing_outcome =" <+> pretty parsingOutcomeName <> pretty "::Failure;"
+            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "parse_into_" <> owlpretty name <> parens (owlpretty "arg: &mut" <+> owlpretty name) <+> lbrace <> line <>
+                owlpretty "match arg.parsing_outcome" <+> lbrace <> line <> 
+                    owlpretty parsingOutcomeName <> owlpretty "::Failure =>" <+> lbrace <> line <>
+                        owlpretty "match len_valid_" <> owlpretty name <> parens (owlpretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
+                            owlpretty "Some(l)" <+>
+                                owlpretty "=>" <+> braces (owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Success;") <> line <>
+                            owlpretty "None => " <> braces (
+                                    owlpretty "arg.data =" <+> owlpretty "rc_new(vec_u8_from_elem(0," <+> owlpretty (lenLayoutFailure layout) <> owlpretty "));" <> line <>
+                                    owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Failure;"
                                 ) <> line <>
                         rbrace <> line <>
                     rbrace <> comma <> line <>
-                    pretty "_ => {}" <>
+                    owlpretty "_ => {}" <>
                 rbrace <> line <>
             rbrace
 
         genConstructorDefs name parsingOutcomeName layout layoutCases =
             return $ map (genConstructorDef name parsingOutcomeName) $ M.assocs layoutCases
 
-        genConstructorDef :: String -> String -> (String, (Int, Maybe Layout)) -> Doc ann
+        genConstructorDef :: String -> String -> (String, (Int, Maybe Layout)) -> OwlDoc
         genConstructorDef name parsingOutcomeName (tagName, (tag, Just (LBytes 0))) = -- special case for a case with no payload, where the constructor takes no arg
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> pretty "()" <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <> 
+            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "construct_" <> owlpretty name <> owlpretty "_" <> owlpretty tagName <> owlpretty "()" <+> owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty name) <+> line <> 
             -- TODO improve
-            pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> pretty "()" <> line <>
+            owlpretty "ensures" <+> owlpretty "res.data.view() ===" <+> owlpretty (unrustifyName tagName) <> owlpretty "()" <> line <>
             lbrace <> line <>
-                pretty "let v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
-                pretty "let res =" <+> pretty name <+> pretty "{ data: rc_new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>                pretty "res" <> line <>
+                owlpretty "let v = vec_u8_from_elem(" <> owlpretty tag <> owlpretty "u8, 1);" <> line <>
+                owlpretty "let res =" <+> owlpretty name <+> owlpretty "{ data: rc_new(v), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <> owlpretty "};" <> line <>                owlpretty "res" <> line <>
             rbrace
 
         genConstructorDef name parsingOutcomeName (tagName, (tag, tagLayout)) =
             -- Failure case for struct is always a zero tag with no payload
-            let failureReturn = pretty "return" <+> pretty name <+> braces (pretty "data: rc_new(vec_u8_from_elem(0, 1)), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Failure") <> pretty ";" in
+            let failureReturn = owlpretty "return" <+> owlpretty name <+> braces (owlpretty "data: rc_new(vec_u8_from_elem(0, 1)), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Failure") <> owlpretty ";" in
             let checkAndExtender = case tagLayout of
                     Just (LBytes nb)    ->
-                        pretty "if" <+> pretty "arg.len()" <+> pretty "<" <+> pretty nb <+> braces failureReturn <> line <>
-                        pretty "extend_vec_u8" <> parens (pretty "&mut v," <+> pretty "slice_subrange(arg, 0, " <> pretty nb <> pretty ")") <> pretty ";" <> line
+                        owlpretty "if" <+> owlpretty "arg.len()" <+> owlpretty "<" <+> owlpretty nb <+> braces failureReturn <> line <>
+                        owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, " <> owlpretty nb <> owlpretty ")") <> owlpretty ";" <> line
                     Just (LStruct sn sfs) ->
-                        pretty "match" <+> pretty "len_valid_" <> pretty sn <> parens (pretty "arg") <+> lbrace <> line <>
-                        pretty "Some" <> (parens . parens . hsep . punctuate comma $ [pretty "_" | _ <- [0..(length sfs - 1)]] ++ [pretty "l"]) <+>
-                            pretty "=>" <+> braces (pretty "extend_vec_u8" <> parens (pretty "&mut v," <+> pretty "slice_subrange(arg, 0, l)") <> pretty ";") <> line <>
-                        pretty "None => " <> braces failureReturn <> line <>
+                        owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty sn <> parens (owlpretty "arg") <+> lbrace <> line <>
+                        owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "_" | _ <- [0..(length sfs - 1)]] ++ [owlpretty "l"]) <+>
+                            owlpretty "=>" <+> braces (owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, l)") <> owlpretty ";") <> line <>
+                        owlpretty "None => " <> braces failureReturn <> line <>
                         rbrace
                     Just (LEnum en _)   ->
-                        pretty "match" <+> pretty "len_valid_" <> pretty en <> parens (pretty "arg") <+> lbrace <> line <>
-                        pretty "Some(l) => " <> braces (pretty "extend_vec_u8" <> parens (pretty "&mut v," <+> pretty "slice_subrange(arg, 0, l)") <> pretty ";") <> line <>
-                        pretty "None => " <> braces failureReturn <> line <>
+                        owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty en <> parens (owlpretty "arg") <+> lbrace <> line <>
+                        owlpretty "Some(l) => " <> braces (owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, l)") <> owlpretty ";") <> line <>
+                        owlpretty "None => " <> braces failureReturn <> line <>
                         rbrace
                     Nothing ->
-                        pretty "extend_vec_u8(&mut v, arg);"
+                        owlpretty "extend_vec_u8(&mut v, arg);"
                 in
-            pretty "#[verifier(external_body)] pub fn" <+> pretty "construct_" <> pretty name <> pretty "_" <> pretty tagName <> parens (pretty "arg: &[u8]") <+> pretty "->" <+> parens (pretty "res:" <+> pretty name) <+> line <>
-            pretty "ensures" <+> pretty "res.data.view() ===" <+> pretty (unrustifyName tagName) <> parens (pretty "arg@") <> line <>
+            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "construct_" <> owlpretty name <> owlpretty "_" <> owlpretty tagName <> parens (owlpretty "arg: &[u8]") <+> owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty name) <+> line <>
+            owlpretty "ensures" <+> owlpretty "res.data.view() ===" <+> owlpretty (unrustifyName tagName) <> parens (owlpretty "arg@") <> line <>
             lbrace <> line <>
-                pretty "let mut v = vec_u8_from_elem(" <> pretty tag <> pretty "u8, 1);" <> line <>
+                owlpretty "let mut v = vec_u8_from_elem(" <> owlpretty tag <> owlpretty "u8, 1);" <> line <>
                 checkAndExtender <> line <>
-                pretty "let res =" <+> pretty name <+> pretty "{data: rc_new(v), parsing_outcome: " <+> pretty parsingOutcomeName <> pretty "::Success" <> pretty "};" <> line <>
-                pretty "res" <> line <>
+                owlpretty "let res =" <+> owlpretty name <+> owlpretty "{data: rc_new(v), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <> owlpretty "};" <> line <>
+                owlpretty "res" <> line <>
             rbrace
 
 -------------------------------------------------------------------------------------------
 -- Code generation
 
-extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, Doc ann, Doc ann)
+extractCryptOp :: M.Map String RustTy -> CryptOp -> [AExpr] -> ExtractionMonad (RustTy, OwlDoc, OwlDoc)
 extractCryptOp binds op owlArgs = do
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
-    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
+    let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, str) <- case (op, args) of
-        (CHash p _ n, [x]) -> do 
-            roname <- flattenPath p 
+        (CHash hints i, [x]) -> do 
+            -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
+            -- so we can just use the first one to calculate the length to extract to
+            roname <- flattenPath (let (p,_,_) = head hints in p) 
             orcls <- use oracles
-            case orcls M.!? roname of
+            case orcls M.!? (roname, i) of
                 Nothing -> throwError $ TypeError "unrecognized random oracle"
                 Just outLen -> do
-                    return (RcVecU8, pretty $ printOwlOp "owl_extract_expand_to_len" [(RcVecU8, "self.salt"), (Number, outLen), x])
+                    return (RcVecU8, owlpretty $ printOwlOp "owl_extract_expand_to_len" [(RcVecU8, "self.salt"), (Number, outLen), x])
         (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
             typeAnnot <- do
                 t <- getCurRetTy
-                return $ pretty "::" <> angles (pretty t)
-            let genSample = pretty "let coins = owl_sample" <> typeAnnot <> pretty "(Tracked(&mut itree), nonce_size());"
-            let encOp = pretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
+                return $ owlpretty "::" <> angles (owlpretty t)
+            let genSample = owlpretty "let coins = owl_sample" <> typeAnnot <> owlpretty "(Tracked(&mut itree), nonce_size());"
+            let encOp = owlpretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (RcVecU8, genSample <+> encOp)
-        (CADec, [k, x]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_dec" [k, x])
-        (CAEncWithNonce np _, [k, x]) -> do 
+        (CADec, [k, x]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec" [k, x])
+        (CEncStAEAD np _, [k, x]) -> do 
             n <- flattenPath np
-            return (RcVecU8, pretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
-        (CADecWithNonce, [k, n, c]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
-        (CPKEnc, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_pkenc" [k, x])
-        (CPKDec, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_pkdec" [k, x])
-        (CMac, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_mac" [k, x])
-        (CMacVrfy, [k, x, v]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
-        (CSign, [k, x]) -> do return (RcVecU8, pretty $ printOwlOp "owl_sign" [k, x])
-        (CSigVrfy, [k, x, v]) -> do return (Option RcVecU8, pretty $ printOwlOp "owl_vrfy" [k, x, v])
+            return (RcVecU8, owlpretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
+        (CDecStAEAD, [k, n, c]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
+        (CPKEnc, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkenc" [k, x])
+        (CPKDec, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkdec" [k, x])
+        (CMac, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_mac" [k, x])
+        (CMacVrfy, [k, x, v]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
+        (CSign, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_sign" [k, x])
+        (CSigVrfy, [k, x, v]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_vrfy" [k, x, v])
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     return (rt, preArgs, str)
 
 
-extractAExpr :: M.Map String RustTy -> AExprX -> ExtractionMonad (RustTy, Doc ann, Doc ann)
+extractAExpr :: M.Map String RustTy -> AExprX -> ExtractionMonad (RustTy, OwlDoc, OwlDoc)
 extractAExpr binds (AEVar _ owlV) = do
     let v = rustifyName . show $ owlV
     case binds M.!? v of
       Nothing -> do
         debugPrint $ "failed to find " ++ show v ++ " in binds: " ++ show binds
-        return (VecU8, pretty "", pretty v)
-      Just RcVecU8 -> return (RcVecU8, pretty "", rcClone <> parens (pretty "&" <> pretty v))
+        return (VecU8, owlpretty "", owlpretty v)
+      Just RcVecU8 -> return (RcVecU8, owlpretty "", rcClone <> parens (owlpretty "&" <> owlpretty v))
       -- Just (ADT t) -> 
-      Just rt -> return (rt, pretty "", pretty v)
+      Just rt -> return (rt, owlpretty "", owlpretty v)
 extractAExpr binds (AEApp owlFn fparams owlArgs) = do
     fs <- use funcs
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
-    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
+    let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     fdef <- lookupFunc owlFn
     case fdef of
         Just (rt, f) -> do
             str <- f args
-            return (rt, preArgs, pretty str)
+            return (rt, preArgs, owlpretty str)
         Nothing -> do
             -- adtfs <- use adtFuncs
             adtf <- lookupAdtFunc =<< flattenPath owlFn
@@ -496,84 +499,84 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                 Just (adt, rt, f) -> do
                     (argvaropt, str) <- f args
                     let s = case argvaropt of
-                            Nothing -> pretty ""
+                            Nothing -> owlpretty ""
                             Just (arg,var) ->
-                                pretty "let mut" <+> pretty var <+> pretty "=" <+> pretty adt <+> braces (pretty "data:" <+> pretty arg <> comma <+> pretty "parsing_outcome:" <+> pretty adt <> pretty "_ParsingOutcome::Failure") <> pretty ";" <> line <>
-                                pretty "// parse_into_" <> pretty adt <> parens (pretty "&mut" <+> pretty var) <> pretty ";"
-                    return (rt, preArgs <> s, pretty str)
+                                owlpretty "let mut" <+> owlpretty var <+> owlpretty "=" <+> owlpretty adt <+> braces (owlpretty "data:" <+> owlpretty arg <> comma <+> owlpretty "parsing_outcome:" <+> owlpretty adt <> owlpretty "_ParsingOutcome::Failure") <> owlpretty ";" <> line <>
+                                owlpretty "// parse_into_" <> owlpretty adt <> parens (owlpretty "&mut" <+> owlpretty var) <> owlpretty ";"
+                    return (rt, preArgs <> s, owlpretty str)
                 Nothing ->
-                    if owlFn `aeq` (PUnresolvedVar $ "H") then
-                        -- special case for the random oracle function
-                        let unspanned = map (view val) owlArgs in
-                        case (fparams, unspanned) of
-                            ([ParamStr roname], [AEVar owlV _]) -> do
-                                orcls <- use oracles
-                                case orcls M.!? roname of
-                                    Nothing -> throwError $ TypeError "unrecognized random oracle"
-                                    Just outLen -> do
-                                        return (VecU8, pretty "", (pretty . rustifyName . unignore $ owlV) <>
-                                                                pretty ".owl_extract_expand_to_len(&self.salt," <+> pretty outLen <> pretty ")")
-                            _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
-                    else throwError $ UndefinedSymbol $ show owlFn
-extractAExpr binds (AEString s) = return (VecU8, pretty "", dquotes (pretty s) <> pretty ".as_bytes().to_vec()")
-extractAExpr binds (AEInt n) = return (Number, pretty "", pretty n)
-extractAExpr binds (AEGet nameExp) =
-    case nameExp ^. val of
-        BaseName (_, _) s -> do
-            fnameExp <- flattenNameExp nameExp
-            return (RcVecU8, pretty "", rcClone <> parens (pretty "&self." <> pretty (fnameExp)))
-        -- BaseName (sidxs, _) s -> do
-        --     ps <- flattenPath s
-        --     return (RcVecU8, pretty "", pretty "self.get_" <> pretty (rustifyName ps) <> tupled (map (pretty . sidName . show . pretty) sidxs))
-        _ -> throwError $ UnsupportedNameExp nameExp
+                    -- if owlFn `aeq` (PUnresolvedVar $ "H") then
+                    --     -- special case for the random oracle function
+                    --     let unspanned = map (view val) owlArgs in
+                    --     case (fparams, unspanned) of
+                    --         ([ParamStr roname], [AEVar owlV _]) -> do
+                    --             orcls <- use oracles
+                    --             case orcls M.!? roname of
+                    --                 Nothing -> throwError $ TypeError "unrecognized random oracle"
+                    --                 Just outLen -> do
+                    --                     return (VecU8, owlpretty "", (owlpretty . rustifyName . unignore $ owlV) <>
+                    --                                             owlpretty ".owl_extract_expand_to_len(&self.salt," <+> owlpretty outLen <> owlpretty ")")
+                    --         _ -> throwError $ TypeError $ "incorrect args/params to random oracle function"
+                    -- else 
+                    throwError $ UndefinedSymbol $ show owlFn
+extractAExpr binds (AEHex s) = do
+    bytelist <- hexStringToByteList s
+    return (VecU8, owlpretty "", owlpretty "vec![" <> bytelist <> owlpretty "]")
+extractAExpr binds (AEInt n) = return (Number, owlpretty "", owlpretty n)
+extractAExpr binds (AEGet nameExp) = do
+    fnameExp <- flattenNameExp nameExp
+    return (RcVecU8, owlpretty "", rcClone <> parens (owlpretty "&self." <> owlpretty (fnameExp)))
 extractAExpr binds (AEGetEncPK nameExp) = do
     fnameExp <- flattenNameExp nameExp
-    return (RcVecU8, pretty "", rcClone <> parens (pretty "&self.pk_" <> pretty fnameExp))
+    return (RcVecU8, owlpretty "", rcClone <> parens (owlpretty "&self.pk_" <> owlpretty fnameExp))
 extractAExpr binds (AEGetVK nameExp) = do
     fnameExp <- flattenNameExp nameExp
-    return (RcVecU8, pretty "", rcClone <> parens (pretty "&self.pk_" <> pretty fnameExp))
+    return (RcVecU8, owlpretty "", rcClone <> parens (owlpretty "&self.pk_" <> owlpretty fnameExp))
 extractAExpr binds (AEPackIdx idx ae) = extractAExpr binds (ae^.val)
 extractAExpr binds (AELenConst s) = do
     lcs <- use lenConsts
     case lcs M.!? (rustifyName s) of
-      Nothing -> throwError $ UndefinedSymbol s
-      Just n -> return (Number, pretty "", pretty n)
-
+      Nothing -> do
+        throwError $ UndefinedSymbol s
+      Just n -> return (Number, owlpretty "", owlpretty n)
+extractAExpr binds (AEPreimage p _ _) = do
+        p' <- flattenPath p
+        throwError $ PreimageInExec p'
 
 -- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
 -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
 
-extractExpr :: Bool -> Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, Doc ann, Doc ann)
-extractExpr inK loc binds CSkip = return (binds, Unit, pretty "", pretty "()")
+extractExpr :: Bool -> Locality -> M.Map String RustTy -> CExpr -> ExtractionMonad (M.Map String RustTy, RustTy, OwlDoc, OwlDoc)
+extractExpr inK loc binds CSkip = return (binds, Unit, owlpretty "", owlpretty "()")
 extractExpr inK loc binds (CInput xsk) = do
     let ((x, ev), k) = unsafeUnbind xsk
     let rustX = rustifyName . show $ x
     let rustEv = if show ev == "_" then "_" else rustifyName . show $ ev
     (_, rt', prek, kPrettied) <- extractExpr inK loc (M.insert rustX RcVecU8 binds) k
-    let eWrapped = pretty "Rc::new" <> parens (pretty "temp_" <> pretty rustX)
+    let eWrapped = owlpretty "Rc::new" <> parens (owlpretty "temp_" <> owlpretty rustX)
     typeAnnot <- do
         t <- getCurRetTy
-        return $ pretty "::" <> angles (pretty t)
+        return $ owlpretty "::" <> angles (owlpretty t)
     let letbinding =
-            pretty "let" <+> parens (pretty "temp_" <> pretty rustX <> comma <+> pretty rustEv) <+> pretty "=" <+> pretty "owl_input" <> typeAnnot <> pretty "(Tracked(&mut itree), &self.listener)" <> pretty ";" <> line <>
-            pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
-    return (binds, rt', pretty "", vsep [letbinding, prek, kPrettied])
+            owlpretty "let" <+> parens (owlpretty "temp_" <> owlpretty rustX <> comma <+> owlpretty rustEv) <+> owlpretty "=" <+> owlpretty "owl_input" <> typeAnnot <> owlpretty "(Tracked(&mut itree), &self.listener)" <> owlpretty ";" <> line <>
+            owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";"
+    return (binds, rt', owlpretty "", vsep [letbinding, prek, kPrettied])
 extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
     (rty, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    let aePrettied' = pretty $ printOwlArg (rty, show aePrettied)    
+    let aePrettied' = owlpretty $ printOwlArg (rty, show aePrettied)    
     l <- case lopt of
         Nothing -> throwError OutputWithUnknownDestination
         Just (EndpointLocality (Locality lname _)) -> do
             plname <- flattenPath lname
-            return $ pretty "&" <> pretty plname <> pretty "_addr()"
-        Just (Endpoint ev) -> return $ pretty "&" <> (pretty . rustifyName . show $ ev) <> pretty ".as_str()"
+            return $ owlpretty "&" <> owlpretty plname <> owlpretty "_addr()"
+        Just (Endpoint ev) -> return $ owlpretty "&" <> (owlpretty . rustifyName . show $ ev) <> owlpretty ".as_str()"
     pmyLname <- flattenPath myLname
     typeAnnot <- do
         t <- getCurRetTy
-        return $ pretty "::" <> angles (pretty t)
-    let callOutput = pretty "owl_output" <> typeAnnot <> (parens . hsep. punctuate comma $ [pretty "Tracked(&mut itree)", aePrettied', l, pretty "&" <> pretty pmyLname <> pretty "_addr()"])
+        return $ owlpretty "::" <> angles (owlpretty t)
+    let callOutput = owlpretty "owl_output" <> typeAnnot <> (parens . hsep. punctuate comma $ [owlpretty "Tracked(&mut itree)", aePrettied', l, owlpretty "&" <> owlpretty pmyLname <> owlpretty "_addr()"])
     -- The "end" of the let-binding can be an `output` call as well as a `CRet`, so we need to return the `itree` here too
-    let callOutput' = if inK then tupled [callOutput, pretty "Tracked(itree)"] else callOutput
+    let callOutput' = if inK then tupled [callOutput, owlpretty "Tracked(itree)"] else callOutput
     return $ (binds, Unit, preAe, callOutput')
 extractExpr inK loc binds (CLet e xk) = do
     let (x, k) = unsafeUnbind xk
@@ -581,42 +584,42 @@ extractExpr inK loc binds (CLet e xk) = do
     tempBindingLHS <- case e of 
             CCall {} -> do 
                 t <- getCurRetTy
-                return $ tupled [pretty "temp_" <> pretty rustX, pretty "Tracked(itree)"] <> 
-                         pretty ":" <+>
-                         tupled [pretty "_", pretty "Tracked<ITreeToken<" <> pretty t <> pretty ", Endpoint>>"]
-            _ -> return $ pretty "temp_" <> pretty rustX 
+                return $ tupled [owlpretty "temp_" <> owlpretty rustX, owlpretty "Tracked(itree)"] <> 
+                         owlpretty ":" <+>
+                         tupled [owlpretty "_", owlpretty "Tracked<ITreeToken<" <> owlpretty t <> owlpretty ", Endpoint>>"]
+            _ -> return $ owlpretty "temp_" <> owlpretty rustX 
     (_, rt, preE, ePrettied) <- extractExpr False loc binds e
     (_, rt', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt == VecU8 then RcVecU8 else rt) binds) k
     let eWrapped = case rt of
-            VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
-            RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
-            _ -> pretty "temp_" <> pretty rustX
+            VecU8 -> owlpretty "rc_new" <> parens (owlpretty "temp_" <> owlpretty rustX)
+            RcVecU8 -> rcClone <> parens (owlpretty "&temp_" <> owlpretty rustX)
+            _ -> owlpretty "temp_" <> owlpretty rustX
     let letbinding = case e of
-            CSkip -> pretty ""
-            _ -> pretty "let" <+> tempBindingLHS <+> pretty "=" <+> lbrace <+> ePrettied <+> rbrace <> pretty ";" <> line <>
-                 pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";"
-    return (binds, rt', pretty "", vsep [preE, letbinding, preK, kPrettied])
+            CSkip -> owlpretty ""
+            _ -> owlpretty "let" <+> tempBindingLHS <+> owlpretty "=" <+> lbrace <+> ePrettied <+> rbrace <> owlpretty ";" <> line <>
+                 owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";"
+    return (binds, rt', owlpretty "", vsep [preE, letbinding, preK, kPrettied])
 extractExpr inK loc binds (CIf ae eT eF) = do
     (_, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preeT, eTPrettied) <- extractExpr inK loc binds eT
     (_, rt', preeF, eFPrettied) <- extractExpr inK loc binds eF
-    return (binds, rt, pretty "", preAe <> line <> pretty "if" <+> aePrettied <+> braces (vsep [preeT, eTPrettied]) <+> pretty "else" <+> braces (vsep [preeF, eFPrettied]))
+    return (binds, rt, owlpretty "", preAe <> line <> owlpretty "if" <+> aePrettied <+> braces (vsep [preeT, eTPrettied]) <+> owlpretty "else" <+> braces (vsep [preeF, eFPrettied]))
 extractExpr inK loc binds (CRet ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    let aePrettied' = if inK then tupled [aePrettied, pretty "Tracked(itree)"] else aePrettied
+    let aePrettied' = if inK then tupled [aePrettied, owlpretty "Tracked(itree)"] else aePrettied
     return (binds, rt, preAe, aePrettied')
 extractExpr inK loc binds (CCall owlFn (sids, pids) owlArgs) = do
     fs <- use funcs
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
-    let preArgs = foldl (\p (_,s,_) -> p <> s) (pretty "") argsPretties
-    let args = map (\sid -> (Number, sidName . show . pretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
+    let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
+    let args = map (\sid -> (Number, sidName . show . owlpretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
     powlFn <- flattenPath owlFn
     case fs M.!? powlFn of
       Nothing -> do
         throwError $ UndefinedSymbol powlFn
       Just (rt, f) -> do
         str <- f args
-        return (binds, rt, preArgs, pretty str)
+        return (binds, rt, preArgs, owlpretty str)
 extractExpr inK loc binds (CCase ae cases) = do
    (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
    case rt of
@@ -625,27 +628,27 @@ extractExpr inK loc binds (CCase ae cases) = do
                case o of
                    Left e -> do
                        (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
-                       return (rt'', pretty c <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                       return (rt'', owlpretty c <+> owlpretty "=>" <+> braces (vsep [preE, ePrettied]))
                    Right xk -> do
                        let (x, k) = unsafeUnbind xk
                        let rustX = rustifyName . show $ x
                        (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (if rt' == VecU8 then RcVecU8 else rt') binds) k
                        let eWrapped = case rt' of
-                               VecU8 -> pretty "rc_new" <> parens (pretty "temp_" <> pretty rustX)
-                               RcVecU8 -> rcClone <> parens (pretty "&temp_" <> pretty rustX)
-                               _ -> pretty "temp_" <> pretty rustX
-                       return (rt'', pretty c <> parens (pretty "temp_" <> pretty rustX) <+> pretty "=>"
-                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+                               VecU8 -> owlpretty "rc_new" <> parens (owlpretty "temp_" <> owlpretty rustX)
+                               RcVecU8 -> rcClone <> parens (owlpretty "&temp_" <> owlpretty rustX)
+                               _ -> owlpretty "temp_" <> owlpretty rustX
+                       return (rt'', owlpretty c <> parens (owlpretty "temp_" <> owlpretty rustX) <+> owlpretty "=>"
+                                   <+> braces (owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";" <> line <> preK <> line <> kPrettied))
        branchRt <- case casesPrettiedRts of
          [] -> throwError $ TypeError "case on Option type with no cases"
          (b, _) : _ -> return b
        let casesPrettied = map snd casesPrettiedRts
-       return (binds, branchRt, pretty "", preAe <> line <> pretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
+       return (binds, branchRt, owlpretty "", preAe <> line <> owlpretty "match " <+> aePrettied <+> (braces . vsep $ casesPrettied))
      _ -> do -- We are casing on an Owl ADT
        es <- use enums
        enumOwlName <- case es M.!? (S.fromList (map fst cases)) of
          Nothing -> throwError $ UndefinedSymbol $ "can't find an enum whose cases are " ++ (show . map fst $ cases)
-         Just s -> do return s -- debugPrint $ pretty "enum casing on" <+> pretty s; return s
+         Just s -> do return s -- debugPrint $ owlpretty "enum casing on" <+> owlpretty s; return s
        ts <- use typeLayouts
        enumLayout <- case ts M.!? rustifyName enumOwlName of
          Just (LEnum n c) -> return c
@@ -659,63 +662,63 @@ extractExpr inK loc binds (CCase ae cases) = do
                    Left e -> do
                        b <- tagByteOf c
                        (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
-                       return (rt'', pretty b <+> pretty "=>" <+> braces (vsep [preE, ePrettied]))
+                       return (rt'', owlpretty b <+> owlpretty "=>" <+> braces (vsep [preE, ePrettied]))
                    Right xk -> do
                        b <- tagByteOf c
                        let (x, k) = unsafeUnbind xk
                        let rustX = rustifyName . show $ x
                        (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX RcVecU8 binds) k
-                       let eWrapped = pretty "rc_new(caser_tmp.data[1..].to_vec())"
-                       return (rt'', pretty b <+> pretty "=>"
-                                   <+> braces (pretty "let" <+> pretty rustX <+> pretty "=" <+> eWrapped <> pretty ";" <> line <> preK <> line <> kPrettied))
+                       let eWrapped = owlpretty "rc_new(caser_tmp.data[1..].to_vec())"
+                       return (rt'', owlpretty b <+> owlpretty "=>"
+                                   <+> braces (owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";" <> line <> preK <> line <> kPrettied))
        branchRt <- case casesPrettiedRts of
          [] -> throwError $ TypeError "case on enum with no cases"
          (b, _) : _ -> return b
        let defaultCase' = case branchRt of
-             VecU8 -> pretty "vec_u8_from_elem(0,1)"
-             RcVecU8 -> pretty "rc_new(vec_u8_from_elem(0,1))"
-             Bool -> pretty "/* arbitrarily autogenerated */ false"
-             Number -> pretty "/* arbitrarily autogenerated */ 0"
-             String -> pretty "/* arbitrarily autogenerated */ \"\""
-             Unit -> pretty "()"
-             ADT s -> pretty "{ let mut tmp =" <+> pretty s <+> pretty "{data: rc_new(vec_u8_from_elem(0,0)), parsing_outcome:" <+> pretty s <> pretty "_ParsingOutcome::Failure}; parse_into_" <> pretty s <> pretty "(&mut tmp); tmp }"
-             Option _ -> pretty "/* arbitrarily autogenerated */ None"
-       let defaultCase = if inK then parens (defaultCase' <> pretty ", Tracked(itree)") else defaultCase'
+             VecU8 -> owlpretty "vec_u8_from_elem(0,1)"
+             RcVecU8 -> owlpretty "rc_new(vec_u8_from_elem(0,1))"
+             Bool -> owlpretty "/* arbitrarily autogenerated */ false"
+             Number -> owlpretty "/* arbitrarily autogenerated */ 0"
+             String -> owlpretty "/* arbitrarily autogenerated */ \"\""
+             Unit -> owlpretty "()"
+             ADT s -> owlpretty "{ let mut tmp =" <+> owlpretty s <+> owlpretty "{data: rc_new(vec_u8_from_elem(0,0)), parsing_outcome:" <+> owlpretty s <> owlpretty "_ParsingOutcome::Failure}; parse_into_" <> owlpretty s <> owlpretty "(&mut tmp); tmp }"
+             Option _ -> owlpretty "/* arbitrarily autogenerated */ None"
+       let defaultCase = if inK then parens (defaultCase' <> owlpretty ", Tracked(itree)") else defaultCase'
        let casesPrettied = map snd casesPrettiedRts
-       return (binds, branchRt, pretty "", preAe <> braces (
-               pretty "let mut caser_tmp" <+> pretty "=" <+> 
-               pretty (rustifyName enumOwlName) <+> lbrace <+> pretty "data:" <+> aePrettied <> comma <+> pretty "parsing_outcome:" <+> pretty (rustifyName enumOwlName) <> pretty "_ParsingOutcome::Failure" <+> rbrace <> pretty ";" <> line <>
-               pretty "parse_into_" <> pretty (rustifyName enumOwlName)  <> parens (pretty "&mut caser_tmp") <> pretty ";" <> line <>
-               pretty "match caser_tmp.data[0]" <+> braces (
+       return (binds, branchRt, owlpretty "", preAe <> braces (
+               owlpretty "let mut caser_tmp" <+> owlpretty "=" <+> 
+               owlpretty (rustifyName enumOwlName) <+> lbrace <+> owlpretty "data:" <+> aePrettied <> comma <+> owlpretty "parsing_outcome:" <+> owlpretty (rustifyName enumOwlName) <> owlpretty "_ParsingOutcome::Failure" <+> rbrace <> owlpretty ";" <> line <>
+               owlpretty "parse_into_" <> owlpretty (rustifyName enumOwlName)  <> parens (owlpretty "&mut caser_tmp") <> owlpretty ";" <> line <>
+               owlpretty "match caser_tmp.data[0]" <+> braces (
                    vsep casesPrettied <> line <>
-                   pretty "_ =>" <+> defaultCase <> comma
+                   owlpretty "_ =>" <+> defaultCase <> comma
                ))
            )
 extractExpr inK loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
-            RcVecU8 -> return $ pretty "&" <> aePrettied <> pretty ".as_slice()"
-            VecU8 -> return $ pretty "&" <> aePrettied
+            RcVecU8 -> return $ owlpretty "&" <> aePrettied <> owlpretty ".as_slice()"
+            VecU8 -> return $ owlpretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
     ptbl <- flattenPath tbl
     let tblName = rustifyName ptbl
-    return (binds, Option VecU8, preAe, pretty "self." <> pretty tblName <> pretty ".get" <> parens aeWrapped <> pretty ".cloned()")
+    return (binds, Option VecU8, preAe, owlpretty "self." <> owlpretty tblName <> owlpretty ".get" <> parens aeWrapped <> owlpretty ".cloned()")
 extractExpr inK loc binds (CCrypt cryptOp args) = do
     (rt, pre, opPrettied) <- extractCryptOp binds cryptOp args
-    let opPrettied' = if inK then tupled [opPrettied, pretty "Tracked(itree)"] else opPrettied
+    let opPrettied' = if inK then tupled [opPrettied, owlpretty "Tracked(itree)"] else opPrettied
     return (binds, rt, pre, opPrettied')
 extractExpr inK loc binds (CIncCtr ctr idxs) = do
     pctr <- flattenPath ctr
-    let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
+    let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
     let incr = 
-            pretty "if" <+> ctrName <> pretty "> usize::MAX - 1 { return Err(OwlError::IntegerOverflow); }" <> pretty ";" <> line <> 
-            ctrName <+> pretty "=" <+> ctrName <+> pretty "+ 1;"
-    return (binds, Unit, pretty "", line <> incr)
+            owlpretty "if" <+> ctrName <> owlpretty "> usize::MAX - 1 { return Err(OwlError::IntegerOverflow); }" <> owlpretty ";" <> line <> 
+            ctrName <+> owlpretty "=" <+> ctrName <+> owlpretty "+ 1;"
+    return (binds, Unit, owlpretty "", line <> incr)
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
-    let ctrName = pretty "mut_state." <> pretty (rustifyName pctr)
-    return (binds, Unit, pretty "", ctrName)
-extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . pretty $ c)
+    let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
+    return (binds, Unit, owlpretty "", ctrName)
+extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad String
 funcCallPrinter owlName rustArgs retTy callArgs = do
@@ -723,21 +726,21 @@ funcCallPrinter owlName rustArgs retTy callArgs = do
             Option _ -> "owl_call_ret_option!"
             _ -> "owl_call!"
     if length rustArgs == length callArgs then
-        return $ show $ pretty callMacro <> tupled [
-              pretty "itree"
-            , pretty "*mut_state"
-            , pretty owlName <> pretty "_spec" <>
-                tupled (pretty "*self" : pretty "*mut_state" : (map (\(rty, arg) -> pretty (viewVar rty (unclone arg))) $ callArgs))
-            , pretty "self." <> pretty (rustifyName owlName) <>
-                tupled (pretty "mut_state" : (map (\(rty, arg) -> pretty arg) $ callArgs))
+        return $ show $ owlpretty callMacro <> tupled [
+              owlpretty "itree"
+            , owlpretty "*mut_state"
+            , owlpretty owlName <> owlpretty "_spec" <>
+                tupled (owlpretty "*self" : owlpretty "*mut_state" : (map (\(rty, arg) -> owlpretty (viewVar rty (unclone arg))) $ callArgs))
+            , owlpretty "self." <> owlpretty (rustifyName owlName) <>
+                tupled (owlpretty "mut_state" : (map (\(rty, arg) -> owlpretty arg) $ callArgs))
         ]
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
         unclone str = fromMaybe str (stripPrefix "rc_clone" str)
 
-extractArg :: (String, RustTy) -> Doc ann
+extractArg :: (String, RustTy) -> OwlDoc
 extractArg (s, rt) =
-    pretty s <> pretty ":" <+> pretty rt
+    owlpretty s <> owlpretty ":" <+> owlpretty rt
 
 rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (String, RustTy)
 rustifyArg (v, t) = do
@@ -759,9 +762,9 @@ makeFunc owlName _ owlArgs owlRetTy = do
 
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
-extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (Doc ann, Doc ann)
+extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
 extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
-    -- debugPrint $ pretty ""
+    -- debugPrint $ owlpretty ""
     -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     let (Locality lpath _) = loc
@@ -771,12 +774,12 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     rustArgs <- mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
-    curRetTy .= (Just . show $ parens (pretty (specTyOf rtb) <> comma <+> pretty (stateName lname)))
+    curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
     (_, rtb, preBody, body) <- extractExpr True loc (M.fromList rustArgs) anfBody
     curRetTy .= Nothing
     decl <- genFuncDecl name lname rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
-    let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else pretty ""
+    let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else owlpretty ""
     return $ (
         decl <+> lbrace <> line <> 
             unwrapItreeArg <> intoOk (preBody <> line <> body <> line) <>
@@ -784,51 +787,51 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
         mainWrapper
         , defSpec)
     where
-        specRtPrettied specRt lname = pretty "<(" <> pretty specRt <> comma <+> pretty (stateName lname) <> pretty "), Endpoint>"
+        specRtPrettied specRt lname = owlpretty "<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>"
         genFuncDecl name lname owlArgs rt = do
-            let itree = pretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) lname <> pretty ">"
+            let itree = owlpretty "Tracked<ITreeToken" <> specRtPrettied (specTyOf rt) lname <> owlpretty ">"
             let argsPrettied = hsep . punctuate comma $ 
-                    pretty "&self"
-                    : pretty "Tracked(itree):" <+> itree
-                    : pretty "mut_state: &mut" <+> pretty (stateName lname)
-                    -- : map (\(a,_) -> pretty a <+> pretty ": usize") sidArgs
+                    owlpretty "&self"
+                    : owlpretty "Tracked(itree):" <+> itree
+                    : owlpretty "mut_state: &mut" <+> owlpretty (stateName lname)
+                    -- : map (\(a,_) -> owlpretty a <+> owlpretty ": usize") sidArgs
                     : map extractArg owlArgs
-            let rtPrettied = pretty "->" <+> parens (pretty "res: Result<" <> tupled [pretty rt, itree] <> pretty ", OwlError>")
+            let rtPrettied = owlpretty "->" <+> parens (owlpretty "res: Result<" <> tupled [owlpretty rt, itree] <> owlpretty ", OwlError>")
             let viewRes = parens $ 
                     (case rt of
-                        Unit -> pretty "()"
-                        ADT _ -> pretty "res.get_Ok_0().0.data.view()"
-                        Option (ADT _) -> pretty "view_option(res.get_Ok_0().0).data"
-                        Option _ -> pretty "view_option(res.get_Ok_0().0)"
-                        _ -> pretty "res.get_Ok_0().0.view()")
-                    <> pretty ", *mut_state"
+                        Unit -> owlpretty "()"
+                        ADT _ -> owlpretty "res.get_Ok_0().0.data.view()"
+                        Option (ADT _) -> owlpretty "view_option(res.get_Ok_0().0).data"
+                        Option _ -> owlpretty "view_option(res.get_Ok_0().0)"
+                        _ -> owlpretty "res.get_Ok_0().0.view()")
+                    <> owlpretty ", *mut_state"
             let defReqEns =
-                    pretty "requires itree@ ==" <+> pretty owlName <> pretty "_spec" <> tupled (pretty "*self" : pretty "*old(mut_state)" : map (\(s,t) -> pretty $ viewVar t s) owlArgs) <> line <>
-                    pretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1)@@.results_in" <> parens viewRes <> line 
-            return $ pretty "pub fn" <+> pretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
-        unwrapItreeArg = pretty "let tracked mut itree = itree;"
-        intoOk rustExpr = pretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> pretty "};" <> line <> pretty "Ok(res_inner)"
+                    owlpretty "requires itree@ ==" <+> owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs) <> line <>
+                    owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1)@@.results_in" <> parens viewRes <> line 
+            return $ owlpretty "pub fn" <+> owlpretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
+        unwrapItreeArg = owlpretty "let tracked mut itree = itree;"
+        intoOk rustExpr = owlpretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> owlpretty "};" <> line <> owlpretty "Ok(res_inner)"
         genMainWrapper owlName lname execRetTy specRetTy = 
-            pretty "#[verifier(external_body)] pub exec fn" <+> pretty (rustifyName owlName) <> pretty "_wrapper" <> 
-            parens (pretty "&self, s: &mut" <+> pretty (stateName lname)) <> pretty "->" <> parens (pretty "_:" <+> pretty execRetTy) <> braces (line <>
-                pretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
-                pretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  pretty owlName <> pretty "_spec(*self, *s)" <> pretty ");" <> line <>
+            owlpretty "#[verifier(external_body)] pub exec fn" <+> owlpretty (rustifyName owlName) <> owlpretty "_wrapper" <> 
+            parens (owlpretty "&self, s: &mut" <+> owlpretty (stateName lname)) <> owlpretty "->" <> parens (owlpretty "_:" <+> owlpretty execRetTy) <> braces (line <>
+                owlpretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
+                owlpretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  owlpretty owlName <> owlpretty "_spec(*self, *s)" <> owlpretty ");" <> line <>
 
-                pretty "let (res,_):" <+> tupled [pretty execRetTy, pretty "Tracked<ITreeToken" <> specRtPrettied specRetTy lname <> pretty ">"] <+> pretty "=" <+>
-                    pretty "self." <> pretty (rustifyName owlName) <> parens (pretty "Tracked(call_token), s, /* todo args? */") <> pretty ".unwrap();" <> line <>
-                pretty "res" <>
+                owlpretty "let (res,_):" <+> tupled [owlpretty execRetTy, owlpretty "Tracked<ITreeToken" <> specRtPrettied specRetTy lname <> owlpretty ">"] <+> owlpretty "=" <+>
+                    owlpretty "self." <> owlpretty (rustifyName owlName) <> parens (owlpretty "Tracked(call_token), s, /* todo args? */") <> owlpretty ".unwrap();" <> line <>
+                owlpretty "res" <>
             line)
 
-nameInit :: String -> NameType -> ExtractionMonad (Doc ann)
+nameInit :: String -> NameType -> ExtractionMonad (OwlDoc)
 nameInit s nt = case nt^.val of
-    NT_Nonce -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_nonce(cipher());"
-    NT_Enc _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
-    NT_EncWithNonce {} -> 
-                return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_aead::gen_rand_key(cipher());"
-    NT_MAC _ -> return $ pretty "let" <+> pretty (rustifyName s) <+> pretty "=" <+> pretty "owl_hmac::gen_rand_key(&hmac_mode());"
-    NT_PKE _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
-    NT_Sig _ -> return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_pke::gen_rand_keys();"
-    NT_DH ->    return $ pretty "let" <+> (parens . hsep . punctuate comma . map pretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> pretty "=" <+> pretty "owl_dhke::gen_ecdh_key_pair();"
+    NT_Nonce -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
+    NT_Enc _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
+    NT_StAEAD {} -> 
+                return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
+    NT_MAC _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_hmac::gen_rand_key(&hmac_mode());"
+    NT_PKE _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
+    NT_Sig _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
+    NT_DH ->    return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_dhke::gen_ecdh_key_pair();"
     _ -> throwError $ ErrSomethingFailed "unimplemented name initializer"
 
 
@@ -850,8 +853,8 @@ preprocessModBody mb = do
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
     locMap <- foldM (sortCtr lookupLoc) locMap (mb ^. TB.ctrEnv)
-    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameEnv)
-    mapM_ sortOrcl $ (mb ^. TB.randomOracle)
+    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameDefs)
+    -- mapM_ sortOrcl $ (mb ^. TB.randomOracle)
     -- TODO counters
     return (locMap, shared, pubkeys)
     where
@@ -903,17 +906,27 @@ preprocessModBody mb = do
 
         sortName :: (LocalityName -> ExtractionMonad LocalityName) 
                     -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
-                    -> (String, (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))))
+                    -> (String, (Bind ([IdxVar], [IdxVar]) TB.NameDef))
                     -> ExtractionMonad (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
         sortName lookupLoc (locMap, shared, pubkeys) (name, binds) = do
-            let ((sids, pids), ntnlOpt) = unsafeUnbind binds
-            case ntnlOpt of
-              Nothing -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
-              Just (nt, loc) -> do
+            let ((sids, pids), nd) = unsafeUnbind binds
+            case nd of
+              TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
+              TB.RODef _ b -> do
+                let (_, (arg, _, rtys)) = unsafeUnbind b
+                forM_ (zip [0..] rtys) $ \(i, rty) -> do
+                        rtlen <- case rty ^. val of
+                            NT_Nonce -> return "nonce_size()"
+                            NT_Enc _ -> return "key_size()"
+                            NT_StAEAD {} -> return "key_size()"
+                            _ -> throwError $ UnsupportedOracleReturnType name
+                        oracles %= M.insert (name, i) rtlen
+                return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
+              TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize
                     NT_Enc _ -> do useAeadKeySize
-                    NT_EncWithNonce {} -> do useAeadKeySize
+                    NT_StAEAD {} -> do useAeadKeySize
                     NT_MAC _ -> do useHmacKeySize
                     NT_PKE _ -> do return pkeKeySize
                     NT_Sig _ -> do return sigKeySize
@@ -945,18 +958,18 @@ preprocessModBody mb = do
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
 
-        sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
-        sortOrcl (n, b) = do
-            let (_, (args, rtys)) = unsafeUnbind b
-            rtlen <- case (map (view val) rtys) of
-                [NT_Nonce] -> return "nonce_size()"
-                [NT_Enc _] -> return "key_size()"
-                _ -> throwError $ UnsupportedOracleReturnType n
-            oracles %= M.insert n rtlen
+        -- sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
+        -- sortOrcl (n, b) = do
+        --     let (_, (args, rtys)) = unsafeUnbind b
+        --     rtlen <- case (map (view val) rtys) of
+        --         [NT_Nonce] -> return "nonce_size()"
+        --         [NT_Enc _] -> return "key_size()"
+        --         _ -> throwError $ UnsupportedOracleReturnType n
+        --     oracles %= M.insert n rtlen
 
 
 -- return (main func name, exec code, spec code, unverified lib code)
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, Doc ann, Doc ann, Doc ann)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, OwlDoc, OwlDoc, OwlDoc)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
     -- check name sharing is ok
     mapM_ (\(n,_,npids) -> unless (npids == 0 || (idxs == 1 && npids == 1)) $ throwError $ UnsupportedSharedIndices n) sharedNames
@@ -972,91 +985,91 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
         Just (mainName,_,_,_,_) -> do
             (fns, fnspecs) <- unzip <$> mapM (\(n, l, as, t, e) -> extractDef n l as t e (n == mainName)) defs
             return (rustifyName mainName,
-                pretty "pub struct" <+> pretty (stateName loc) <+> braces mfs <> line <>
-                pretty "impl" <+> pretty (stateName loc) <+> braces (line <> initMutState) <>
-                pretty "pub struct" <+> pretty (cfgName loc) <+> braces sfs <> line <>
-                pretty "impl" <+> pretty (cfgName loc) <+> braces (line <> initLoc <+> vsep ({- indexedNameGetters ++ sharedIndexedNameGetters ++ -} fns)),
+                owlpretty "pub struct" <+> owlpretty (stateName loc) <+> braces mfs <> line <>
+                owlpretty "impl" <+> owlpretty (stateName loc) <+> braces (line <> initMutState) <>
+                owlpretty "pub struct" <+> owlpretty (cfgName loc) <+> braces sfs <> line <>
+                owlpretty "impl" <+> owlpretty (cfgName loc) <+> braces (line <> initLoc <+> vsep ({- indexedNameGetters ++ sharedIndexedNameGetters ++ -} fns)),
                 vsep fnspecs,
                 configDef)
         Nothing -> throwError $ LocalityWithNoMain loc
     where
-        -- genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ pretty "" else do
+        -- genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ owlpretty "" else do
         --     ni <- nameInit n nt
         --     return $
-        --         pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&mut self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
-        --             pretty "match self." <> pretty (rustifyName n) <> pretty ".get" <> parens (tupled ([pretty "&sid" <> pretty n | n <- [0..(nsids-1)]])) <> lbrace <> line <>
-        --                 pretty "Some(v) =>" <+> rcClone <> pretty "(v)," <> line <>
-        --                 pretty "None =>" <+> lbrace <> line <>
+        --         owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&mut self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --             owlpretty "match self." <> owlpretty (rustifyName n) <> owlpretty ".get" <> parens (tupled ([owlpretty "&sid" <> owlpretty n | n <- [0..(nsids-1)]])) <> lbrace <> line <>
+        --                 owlpretty "Some(v) =>" <+> rcClone <> owlpretty "(v)," <> line <>
+        --                 owlpretty "None =>" <+> lbrace <> line <>
         --                     ni <> line <>
-        --                     pretty "let v = rc_new" <> parens (pretty (rustifyName n)) <> pretty ";" <> line <>
-        --                     pretty "self." <> pretty (rustifyName n) <> pretty ".insert" <> parens (tupled ([pretty "sid" <> pretty n | n <- [0..(nsids-1)]]) <> comma <+> rcClone <> pretty "(&v)") <> pretty ";" <> line <>
-        --                     rcClone <> pretty "(&v)" <> line <>
+        --                     owlpretty "let v = rc_new" <> parens (owlpretty (rustifyName n)) <> owlpretty ";" <> line <>
+        --                     owlpretty "self." <> owlpretty (rustifyName n) <> owlpretty ".insert" <> parens (tupled ([owlpretty "sid" <> owlpretty n | n <- [0..(nsids-1)]]) <> comma <+> rcClone <> owlpretty "(&v)") <> owlpretty ";" <> line <>
+        --                     rcClone <> owlpretty "(&v)" <> line <>
         --                 rbrace <>
         --             rbrace <>
         --         rbrace
-        -- genSharedIndexedNameGetter (n, _, nsids, _) = if nsids == 0 then pretty "" else
-        --     pretty "pub fn get_" <> pretty (rustifyName n) <> tupled (pretty "&self" : [pretty "sid" <> pretty n <> pretty ": usize" | n <- [0..(nsids-1)]]) <+> pretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
-        --         rcClone <> parens (pretty "&self." <> pretty (rustifyName n)) <>
+        -- genSharedIndexedNameGetter (n, _, nsids, _) = if nsids == 0 then owlpretty "" else
+        --     owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --         rcClone <> parens (owlpretty "&self." <> owlpretty (rustifyName n)) <>
         --     rbrace
 
         configLibCode loc cfs =
-            pretty "#[derive(Serialize, Deserialize)]" <> line <> pretty "pub struct" <+> pretty (cfgName loc) <> pretty "_config" <+> braces cfs <> line <>
+            owlpretty "#[derive(Serialize, Deserialize)]" <> line <> owlpretty "pub struct" <+> owlpretty (cfgName loc) <> owlpretty "_config" <+> braces cfs <> line <>
             serdeWrappers loc
 
         serdeWrappers loc =
-            let l = pretty (cfgName loc) in
-            pretty "pub fn serialize_" <> l <> pretty "_config(l: &" <> l <> pretty "_config) -> String" <> braces (line <>
-                pretty "serde_json::to_string(&l).expect(\"Can't serialize "<> l <> pretty "_config\")" <> line
+            let l = owlpretty (cfgName loc) in
+            owlpretty "pub fn serialize_" <> l <> owlpretty "_config(l: &" <> l <> owlpretty "_config) -> String" <> braces (line <>
+                owlpretty "serde_json::to_string(&l).expect(\"Can't serialize "<> l <> owlpretty "_config\")" <> line
             ) <> line <> 
-            pretty "pub fn deserialize_" <> l <> pretty "_config<'a>(s: &'a str) -> " <> l <> pretty "_config" <> braces (line <>
-                pretty "serde_json::from_str(s).expect(\"Can't deserialize "<> l <> pretty "_config\")" <> line
+            owlpretty "pub fn deserialize_" <> l <> owlpretty "_config<'a>(s: &'a str) -> " <> l <> owlpretty "_config" <> braces (line <>
+                owlpretty "serde_json::from_str(s).expect(\"Can't deserialize "<> l <> owlpretty "_config\")" <> line
             )
 
         configFields idxs sharedNames pubKeys =
             vsep . punctuate comma $
-                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> pretty ": Vec<u8>") sharedNames ++
-                map (\(s,_,_) -> pretty "pub" <+>  pretty "pk_" <> pretty (rustifyName s) <> pretty ": Vec<u8>") pubKeys ++
-                [pretty "pub" <+> pretty "salt" <> pretty ": Vec<u8>"]
+                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> owlpretty ": Vec<u8>") sharedNames ++
+                map (\(s,_,_) -> owlpretty "pub" <+>  owlpretty "pk_" <> owlpretty (rustifyName s) <> owlpretty ": Vec<u8>") pubKeys ++
+                [owlpretty "pub" <+> owlpretty "salt" <> owlpretty ": Vec<u8>"]
         cfgFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
-                pretty "pub listener: TcpListener" :
-                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") localNames ++
-                map (\(s,_,npids) -> pretty "pub" <+> pretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then pretty ": Rc<Vec<u8>>" else pretty ": Rc<HashMap<usize, Vec<u8>>>")) sharedNames ++
-                map (\(s,_,_) -> pretty "pub" <+> pretty "pk_" <> pretty (rustifyName s) <> pretty ": Rc<Vec<u8>>") pubKeys ++
+                owlpretty "pub listener: TcpListener" :
+                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> owlpretty ": Rc<Vec<u8>>") localNames ++
+                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then owlpretty ": Rc<Vec<u8>>" else owlpretty ": Rc<HashMap<usize, Vec<u8>>>")) sharedNames ++
+                map (\(s,_,_) -> owlpretty "pub" <+> owlpretty "pk_" <> owlpretty (rustifyName s) <> owlpretty ": Rc<Vec<u8>>") pubKeys ++
                 -- Tables are always treated as local:
-                map (\(n,t) -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
-                [pretty "pub" <+> pretty "salt" <> pretty ": Rc<Vec<u8>>"]
+                map (\(n,t) -> owlpretty "pub" <+> owlpretty (rustifyName n) <> owlpretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
+                [owlpretty "pub" <+> owlpretty "salt" <> owlpretty ": Rc<Vec<u8>>"]
         mutFields ctrs = 
             vsep . punctuate comma $ 
-                map (\n -> pretty "pub" <+> pretty (rustifyName n) <> pretty ": usize") ctrs
+                map (\n -> owlpretty "pub" <+> owlpretty (rustifyName n) <> owlpretty ": usize") ctrs
         genInitLoc loc localNames sharedNames pubKeys tbls = do
             localInits <- mapM (\(s,n,_) -> nameInit s n) localNames 
-            return $ pretty "#[verifier(external_body)] pub fn init_" <> pretty (cfgName loc) <+> parens (pretty "config_path : &StrSlice") <+> pretty "-> Self" <+> lbrace <> line <>
-                pretty "let listener = TcpListener::bind" <> parens (pretty loc <> pretty "_addr().into_rust_str()") <> pretty ".unwrap();" <> line <>
+            return $ owlpretty "#[verifier(external_body)] pub fn init_" <> owlpretty (cfgName loc) <+> parens (owlpretty "config_path : &StrSlice") <+> owlpretty "-> Self" <+> lbrace <> line <>
+                owlpretty "let listener = TcpListener::bind" <> parens (owlpretty loc <> owlpretty "_addr().into_rust_str()") <> owlpretty ".unwrap();" <> line <>
                 vsep localInits <> line <>
-                pretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
-                pretty "let config =" <+> pretty "deserialize_" <> pretty (cfgName loc) <> pretty "_config(&config_str);" <> line <>
-                pretty "return" <+> pretty (cfgName loc) <+>
+                owlpretty "let config_str = fs::read_to_string(config_path.into_rust_str()).expect(\"Config file not found\");" <> line <>
+                owlpretty "let config =" <+> owlpretty "deserialize_" <> owlpretty (cfgName loc) <> owlpretty "_config(&config_str);" <> line <>
+                owlpretty "return" <+> owlpretty (cfgName loc) <+>
                     braces (hsep . punctuate comma $
-                        pretty "listener"  :
+                        owlpretty "listener"  :
                         map (\(s,_,_) ->
-                                (pretty . rustifyName $ s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty . rustifyName $ s)
+                                (owlpretty . rustifyName $ s) <+> owlpretty ":" <+> owlpretty "rc_new" <> parens (owlpretty . rustifyName $ s)
                             ) localNames ++
-                        map (\(s,_,_) -> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty (rustifyName s))) sharedNames ++
-                        map (\(s,_,_) -> pretty "pk_" <> pretty (rustifyName s) <+> pretty ":" <+> pretty "rc_new" <> parens (pretty "config." <> pretty "pk_" <> pretty (rustifyName s))) pubKeys ++
-                        map (\(n,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty "HashMap::new()") tbls ++
-                        [pretty "salt : rc_new(config.salt)"]
+                        map (\(s,_,_) -> owlpretty (rustifyName s) <+> owlpretty ":" <+> owlpretty "rc_new" <> parens (owlpretty "config." <> owlpretty (rustifyName s))) sharedNames ++
+                        map (\(s,_,_) -> owlpretty "pk_" <> owlpretty (rustifyName s) <+> owlpretty ":" <+> owlpretty "rc_new" <> parens (owlpretty "config." <> owlpretty "pk_" <> owlpretty (rustifyName s))) pubKeys ++
+                        map (\(n,_) -> owlpretty (rustifyName n) <+> owlpretty ":" <+> owlpretty "HashMap::new()") tbls ++
+                        [owlpretty "salt : rc_new(config.salt)"]
                     ) <>
                 rbrace
         genInitMutState loc ctrs = 
-            let ctrInits = map (\n -> pretty (rustifyName n) <+> pretty ": 0,") ctrs in
-            pretty "#[verifier(external_body)] pub fn init_" <> pretty (stateName loc) <+> parens (pretty "") <+> pretty "-> Self" <+> lbrace <> line <> 
-                pretty (stateName loc) <+> braces (vsep ctrInits)
+            let ctrInits = map (\n -> owlpretty (rustifyName n) <+> owlpretty ": 0,") ctrs in
+            owlpretty "#[verifier(external_body)] pub fn init_" <> owlpretty (stateName loc) <+> parens (owlpretty "") <+> owlpretty "-> Self" <+> lbrace <> line <> 
+                owlpretty (stateName loc) <+> braces (vsep ctrInits)
             <> rbrace
 
 
 -- returns (index map, executable code, spec code, unverified lib code)
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName String, Doc ann, Doc ann, Doc ann)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName String, OwlDoc, OwlDoc, OwlDoc)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     (sidArgMap, ps, spec_ps, ls) <- foldM (go pubkeys) (M.empty, [], [], []) $ M.assocs locMap
@@ -1069,23 +1082,23 @@ extractLocs pubkeys locMap = do
         go pubKeys (m, ps, ss, ls) (lname, ldata) = do
             (mainName, p, s, l) <- extractLoc pubKeys (lname, ldata)
             return (M.insert lname mainName m, ps ++ [p], ss ++ [s], ls ++ [l])
-        mkAddrs :: Int -> [LocalityName] -> Doc ann
-        mkAddrs n [] = pretty ""
+        mkAddrs :: Int -> [LocalityName] -> OwlDoc
+        mkAddrs n [] = owlpretty ""
         mkAddrs n (l:locs) =
-            pretty "#[verifier(external_body)] pub const fn" <+> pretty l <> pretty "_addr() -> (a:StrSlice<'static>)" <> line <>
-                pretty "ensures endpoint_of_addr(a.view()) ==" <+> pretty "Endpoint::Loc_" <> pretty l <> line <> 
-            braces (line <> pretty "new_strlit" <> parens (dquotes (pretty "127.0.0.1:" <> pretty (9001 + n))) <> line) <> line <>
+            owlpretty "#[verifier(external_body)] pub const fn" <+> owlpretty l <> owlpretty "_addr() -> (a:StrSlice<'static>)" <> line <>
+                owlpretty "ensures endpoint_of_addr(a.view()) ==" <+> owlpretty "Endpoint::Loc_" <> owlpretty l <> line <> 
+            braces (line <> owlpretty "new_strlit" <> parens (dquotes (owlpretty "127.0.0.1:" <> owlpretty (9001 + n))) <> line) <> line <>
             mkAddrs (n+1) locs
 
-entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName String -> ExtractionMonad (Doc ann)
+entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName String -> ExtractionMonad (OwlDoc)
 entryPoint locMap sharedNames pubKeys mainNames = do
     let allLocs = M.keys locMap
     sharedNameInits <- mapM genSharedNameInit sharedNames
     let salt = genSalt
     let writeConfigs = map (writeConfig (map (\(p,_,_) -> p) pubKeys)) $ M.assocs locMap
     let idxLocCounts = map genIdxLocCount $ M.assocs locMap
-    let config = pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 3", "args[1] == \"config\""]) <>
-            (braces . vsep $ [vsep idxLocCounts, vsep sharedNameInits, salt, vsep writeConfigs]) <> pretty "else"
+    let config = owlpretty "if" <+> (hsep . punctuate (owlpretty " && ") . map owlpretty $ ["args.len() >= 3", "args[1] == \"config\""]) <>
+            (braces . vsep $ [vsep idxLocCounts, vsep sharedNameInits, salt, vsep writeConfigs]) <> owlpretty "else"
     allLocsMainNames <- mapM (\l -> do
                                     let nSidArgs = mainNames M.!? l
                                     case nSidArgs of
@@ -1093,16 +1106,16 @@ entryPoint locMap sharedNames pubKeys mainNames = do
                                         Nothing -> throwError $ ErrSomethingFailed $ "couldn't look up main function name for " ++ l ++ ", bug in extraction"
                             ) allLocs
     let runLocs = map genRunLoc allLocsMainNames
-    return $ pretty "#[verifier(external_body)] #[allow(unreachable_code)] #[allow(unused_variables)]" <> line <> pretty "fn entrypoint()" <+> lbrace <> line <>
-        pretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
+    return $ owlpretty "#[verifier(external_body)] #[allow(unreachable_code)] #[allow(unused_variables)]" <> line <> owlpretty "fn entrypoint()" <+> lbrace <> line <>
+        owlpretty "let args: std::vec::Vec<std::string::String> = env::args().collect();" <> line <>
         vsep runLocs <> line <>
         config <>
-        braces (pretty "println!(\"Incorrect usage\");") <> line <>
+        braces (owlpretty "println!(\"Incorrect usage\");") <> line <>
         rbrace <> line <> line 
     where
         genIdxLocCount (lname, (npids,_,_,_,_,_)) =
-            if npids == 0 then pretty "" else
-                pretty "let n_" <> pretty (locName lname) <+> pretty "= get_num_from_cmdline" <> (parens . dquotes $ pretty lname) <> pretty ";"
+            if npids == 0 then owlpretty "" else
+                owlpretty "let n_" <> owlpretty (locName lname) <+> owlpretty "= get_num_from_cmdline" <> (parens . dquotes $ owlpretty lname) <> owlpretty ";"
 
         genSharedNameInit ((name, nt, _), locs) = do
             let rName = rustifyName name
@@ -1114,55 +1127,55 @@ entryPoint locMap sharedNames pubKeys mainNames = do
                                 Just (l,_) -> return l
                                 Nothing -> throwError $ ErrSomethingFailed "should be unreachable"
                 ni <- nameInit "tmp" nt
-                return $ pretty "let mut" <+> pretty (rustifyName name) <+> pretty "= HashMap::new();" <> line <>
-                    pretty "for i in 0..n_" <> pretty (locName idxLocName) <> braces (ni <+> pretty (rustifyName name) <> pretty ".insert(i, owl_tmp);")
+                return $ owlpretty "let mut" <+> owlpretty (rustifyName name) <+> owlpretty "= HashMap::new();" <> line <>
+                    owlpretty "for i in 0..n_" <> owlpretty (locName idxLocName) <> braces (ni <+> owlpretty (rustifyName name) <> owlpretty ".insert(i, owl_tmp);")
             else throwError $ UnsupportedSharedIndices "can't have a name shared by multiple PID-parameterized localities"
 
-        genSalt = pretty "let" <+> pretty "salt" <+> pretty "=" <+> pretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt
+        genSalt = owlpretty "let" <+> owlpretty "salt" <+> owlpretty "=" <+> owlpretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt
 
         writeConfig pubKeys (loc, (npids, _, ss, _, _, _)) =
             let configInits = hsep . punctuate comma $
-                    (map (\(n,_,_) -> pretty (rustifyName n) <+> pretty ":" <+> pretty (rustifyName n) <> (if npids == 0 then pretty "" else pretty ".get(&i).unwrap()") <> pretty ".clone()") ss ++
-                     map (\n -> pretty "pk_" <> pretty (rustifyName n) <+> pretty ":" <+> pretty "pk_" <> pretty (rustifyName n) <> pretty ".clone()") pubKeys ++
-                     [pretty "salt" <+> pretty ":" <+> pretty "salt" <> pretty ".clone()"]) in
-            -- (if npids == 0 then pretty "" else pretty "for i in 0..n_" <> pretty (locName loc) <+> lbrace) <>
-            pretty "let" <+> pretty (cfgName loc) <> pretty "_config:" <+> pretty (cfgName loc) <> pretty "_config" <+> pretty "=" <+> pretty (cfgName loc) <> pretty "_config" <+> braces configInits <> pretty ";" <> line <>
-            pretty "let" <+> pretty (cfgName loc) <> pretty "_config_serialized" <+> pretty "=" <+>
-                    pretty "serialize_" <> pretty (cfgName loc) <> pretty "_config" <> parens (pretty "&" <> pretty (cfgName loc) <> pretty "_config") <> pretty ";" <> line <>
-            pretty "let mut" <+> pretty (cfgName loc) <> pretty "_f" <+> pretty "=" <+>
-                pretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then pretty "" else pretty "_{}") <> pretty ".owl_config\", &args[2]," <+>
-                    dquotes (pretty (cfgName loc)) <> (if npids == 0 then pretty "" else pretty ",i") <> pretty ")).expect(\"Can't create config file\");" <> line <>
-            pretty (cfgName loc) <> pretty "_f" <> pretty ".write_all" <> parens (pretty (cfgName loc) <> pretty "_config_serialized.as_bytes()")
-                                <> pretty ".expect(\"Can't write config file\");"
-            -- (if npids == 0 then pretty "" else rbrace)
+                    (map (\(n,_,_) -> owlpretty (rustifyName n) <+> owlpretty ":" <+> owlpretty (rustifyName n) <> (if npids == 0 then owlpretty "" else owlpretty ".get(&i).unwrap()") <> owlpretty ".clone()") ss ++
+                     map (\n -> owlpretty "pk_" <> owlpretty (rustifyName n) <+> owlpretty ":" <+> owlpretty "pk_" <> owlpretty (rustifyName n) <> owlpretty ".clone()") pubKeys ++
+                     [owlpretty "salt" <+> owlpretty ":" <+> owlpretty "salt" <> owlpretty ".clone()"]) in
+            -- (if npids == 0 then owlpretty "" else owlpretty "for i in 0..n_" <> owlpretty (locName loc) <+> lbrace) <>
+            owlpretty "let" <+> owlpretty (cfgName loc) <> owlpretty "_config:" <+> owlpretty (cfgName loc) <> owlpretty "_config" <+> owlpretty "=" <+> owlpretty (cfgName loc) <> owlpretty "_config" <+> braces configInits <> owlpretty ";" <> line <>
+            owlpretty "let" <+> owlpretty (cfgName loc) <> owlpretty "_config_serialized" <+> owlpretty "=" <+>
+                    owlpretty "serialize_" <> owlpretty (cfgName loc) <> owlpretty "_config" <> parens (owlpretty "&" <> owlpretty (cfgName loc) <> owlpretty "_config") <> owlpretty ";" <> line <>
+            owlpretty "let mut" <+> owlpretty (cfgName loc) <> owlpretty "_f" <+> owlpretty "=" <+>
+                owlpretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then owlpretty "" else owlpretty "_{}") <> owlpretty ".owl_config\", &args[2]," <+>
+                    dquotes (owlpretty (cfgName loc)) <> (if npids == 0 then owlpretty "" else owlpretty ",i") <> owlpretty ")).expect(\"Can't create config file\");" <> line <>
+            owlpretty (cfgName loc) <> owlpretty "_f" <> owlpretty ".write_all" <> parens (owlpretty (cfgName loc) <> owlpretty "_config_serialized.as_bytes()")
+                                <> owlpretty ".expect(\"Can't write config file\");"
+            -- (if npids == 0 then owlpretty "" else rbrace)
 
         genRunLoc (loc, mainName) =
             let body = genRunLocBody loc mainName in
-            -- pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ 
+            -- owlpretty "if" <+> (hsep . punctuate (owlpretty " && ") . map owlpretty $ 
             --         ["args.len() >= 4", "args.index(1).as_str().into_rust_str() == \"run\"", "args.index(2).as_str().into_rust_str() == \"" ++ loc ++ "\""]) <>                
-            pretty "if" <+> (hsep . punctuate (pretty " && ") . map pretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
-                braces body <> pretty "else"
+            owlpretty "if" <+> (hsep . punctuate (owlpretty " && ") . map owlpretty $ ["args.len() >= 4", "args[1] == \"run\"", "args[2] == \"" ++ loc ++ "\""]) <>
+                braces body <> owlpretty "else"
         genRunLocBody loc mainName =
-            pretty "let loc =" <+> pretty (cfgName loc) <> pretty "::init_" <> pretty (cfgName loc) <>
-                -- parens (pretty "&args.index(3)") <> pretty ";" <> line <>
-                parens (pretty "&String::from_rust_string(args[3].clone()).as_str()") <> pretty ";" <> line <>
-            pretty "let mut mut_state =" <+> pretty (stateName loc) <> pretty "::init_" <> pretty (stateName loc) <> pretty "();" <> line <>
-            pretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
-            pretty "thread::sleep(Duration::new(5, 0));" <> line <>
-            pretty "println!(\"Running" <+> pretty mainName <+> pretty "...\");" <> line <>
-            pretty "let now = Instant::now();" <> line <>
-            pretty "let res = loc." <> pretty mainName <> pretty "_wrapper" <> tupled ([pretty "&mut mut_state"] {- : [pretty i | i <- [1..nSidArgs]] -}) <> pretty ";" <> line <>
-            pretty "let elapsed = now.elapsed();" <> line <>
-            pretty "println!" <> parens (dquotes (pretty loc <+> pretty "returned ") <> pretty "/*" <> pretty "," <+> pretty "res" <> pretty "*/") <> pretty ";" <> line <>
-            pretty "println!" <> parens (dquotes (pretty "Elapsed: {:?}") <> pretty "," <+> pretty "elapsed") <> pretty ";"
+            owlpretty "let loc =" <+> owlpretty (cfgName loc) <> owlpretty "::init_" <> owlpretty (cfgName loc) <>
+                -- parens (owlpretty "&args.index(3)") <> owlpretty ";" <> line <>
+                parens (owlpretty "&String::from_rust_string(args[3].clone()).as_str()") <> owlpretty ";" <> line <>
+            owlpretty "let mut mut_state =" <+> owlpretty (stateName loc) <> owlpretty "::init_" <> owlpretty (stateName loc) <> owlpretty "();" <> line <>
+            owlpretty "println!(\"Waiting for 5 seconds to let other parties start...\");" <> line <>
+            owlpretty "thread::sleep(Duration::new(5, 0));" <> line <>
+            owlpretty "println!(\"Running" <+> owlpretty mainName <+> owlpretty "...\");" <> line <>
+            owlpretty "let now = Instant::now();" <> line <>
+            owlpretty "let res = loc." <> owlpretty mainName <> owlpretty "_wrapper" <> tupled ([owlpretty "&mut mut_state"] {- : [owlpretty i | i <- [1..nSidArgs]] -}) <> owlpretty ";" <> line <>
+            owlpretty "let elapsed = now.elapsed();" <> line <>
+            owlpretty "println!" <> parens (dquotes (owlpretty loc <+> owlpretty "returned ") <> owlpretty "/*" <> owlpretty "," <+> owlpretty "res" <> owlpretty "*/") <> owlpretty ";" <> line <>
+            owlpretty "println!" <> parens (dquotes (owlpretty "Elapsed: {:?}") <> owlpretty "," <+> owlpretty "elapsed") <> owlpretty ";"
 
 
 -------------------------------------------------------------------------------------------
 --- Entry point of extraction
 
 
-extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (Doc ann, Doc ann)
-extractTyDefs [] = return $ (pretty "", pretty "")
+extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (OwlDoc, OwlDoc)
+extractTyDefs [] = return $ (owlpretty "", owlpretty "")
 extractTyDefs ((tv, td):ds) = do
     (dExtracted, sExtracted) <- extractTyDef tv td
     (dsExtracted, ssExtracted) <- extractTyDefs ds
@@ -1177,47 +1190,47 @@ extractTyDefs ((tv, td):ds) = do
         extractTyDef name (TB.TyAbbrev t) = do
             lct <- layoutCTy . doConcretifyTy $ t
             typeLayouts %= M.insert (rustifyName name) lct
-            return $ (pretty "", pretty "")
+            return $ (owlpretty "", owlpretty "")
         extractTyDef name TB.TyAbstract = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
-            return $ (pretty "", pretty "")
+            return $ (owlpretty "", owlpretty "")
 
-prettyFile :: String -> ExtractionMonad (Doc ann)        
-prettyFile fn = do
+owlprettyFile :: String -> ExtractionMonad (OwlDoc)        
+owlprettyFile fn = do
     s <- liftIO $ readFile fn
-    return $ pretty s
+    return $ owlpretty s
 
-extractModBody :: TB.ModBody -> ExtractionMonad (Doc ann, Doc ann) 
+extractModBody :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc) 
 extractModBody mb = do
     (locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
     (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     (mainNames, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
-    p <- prettyFile "extraction/preamble.rs"
-    lp <- prettyFile "extraction/lib_preamble.rs"
+    p <- owlprettyFile "extraction/preamble.rs"
+    lp <- owlprettyFile "extraction/lib_preamble.rs"
     ep <- entryPoint locMap sharedNames pubKeys mainNames
     return (
         p                       <> line <> line <> line <> line <> 
-        pretty "verus! {"       <> line <> line <> 
-        pretty "// ------------------------------------" <> line <>
-        pretty "// ---------- SPECIFICATIONS ----------" <> line <>
-        pretty "// ------------------------------------" <> line <> line <>
+        owlpretty "verus! {"       <> line <> line <> 
+        owlpretty "// ------------------------------------" <> line <>
+        owlpretty "// ---------- SPECIFICATIONS ----------" <> line <>
+        owlpretty "// ------------------------------------" <> line <> line <>
         specTyDefsExtracted     <> line <> line <>
         locSpecsExtracted       <> line <> line <> line <> line <>
-        pretty "// ------------------------------------" <> line <>
-        pretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
-        pretty "// ------------------------------------" <> line <> line <>
+        owlpretty "// ------------------------------------" <> line <>
+        owlpretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
+        owlpretty "// ------------------------------------" <> line <> line <>
         tyDefsExtracted         <> line <> line <>
         locsExtracted           <> line <> line <>
-        pretty "// ------------------------------------" <> line <>
-        pretty "// ------------ ENTRY POINT -----------" <> line <>
-        pretty "// ------------------------------------" <> line <> line <>
+        owlpretty "// ------------------------------------" <> line <>
+        owlpretty "// ------------ ENTRY POINT -----------" <> line <>
+        owlpretty "// ------------------------------------" <> line <> line <>
         ep                      <> line <> line <>
-        pretty "} // verus!"    <> line <> line <>
-        pretty "fn main() { entrypoint() }" <> line
+        owlpretty "} // verus!"    <> line <> line <>
+        owlpretty "fn main() { entrypoint() }" <> line
       , lp                      <> line <> line <> line <> line <> 
         libCode
       )
 
-extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann))
+extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc))
 extract tcEnv path modbody = runExtractionMonad tcEnv (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody

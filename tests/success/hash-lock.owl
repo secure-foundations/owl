@@ -38,7 +38,7 @@ table keys : (exists i. Name(K<@i>)) @ R
 
 def T_main<@i> () @ T<i>
 : Unit =
-    let _ = output "" to endpoint(R) in
+    let _ = output 0 to endpoint(R) in
     input inp in
     if eq(length(inp), |nonce|) then
         let inp':Data<adv> ||nonce|| = inp in
@@ -49,8 +49,8 @@ def T_main<@i> () @ T<i>
     else ()
 
 enum reader_response {
-    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
-    // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
     | No
 }
 
@@ -66,14 +66,14 @@ def R_main () @ R
 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
-    begin case x 
+    case x {
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
 
             corr_case K<@j> in
             let msg_to_verify = nonces<idx j>(nR, nT) in
-            begin case mac_vrfy(k, msg_to_verify, mc) 
+            case mac_vrfy(k, msg_to_verify, mc) {
                 | None => No()
                 | Some m =>
                     // len(m) == plus(..)
@@ -81,19 +81,23 @@ def R_main () @ R
                     if eq(length(mm), |nonce|)  then
                         let mmm: if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())}  else Data<adv> ||nonce|| = mm in
                         let m':if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())} 
-                            else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x = get(NT<@j>)) /\ happened(T_main<@j>()))}) 
+                            else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x == get(NT<@j>)) /\ happened(T_main<@j>()))}) 
                             = mmm in
                         
                         // Checking if m is of type Name(NT<j>) as expected
                         //   and if m == x - these two lines can be removed
-                        // let m'': if sec(K<j>) then x:Name(NT<j>){happened(tag<j>())} else (x:Data<adv>{sec(K<j>) ==> ((x = get(NT<j>)) /\ happened(tag<j>()))}) = m' in
-                        // assert(sec(K<j>) ==> m' = nT);                            
-                        let res : (exists i. (x:(Data<adv> ||nonce||){sec(K<@i>) ==> ((x = get(NT<@i>)) /\ happened(T_main<@i>()))}))
+                        // let m'': if sec(K<j>) then
+                        // x:Name(NT<j>){happened(tag<j>())} else
+                        // (x:Data<adv>{sec(K<j>) ==> ((x == get(NT<j>)) /\ happened(tag<j>()))}) = m' in
+                        // assert(sec(K<j>) ==> m' == nT);                            
+                        let res : (exists i. (x:(Data<adv> ||nonce||){sec(K<@i>)
+                        ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                             = pack<j>(m') in 
                         // assert(eq(length(res), |nonce|));
                         Ok(res)
                     else
                         No()
-            end
-    end
+            }
+    }
+
 

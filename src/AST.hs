@@ -17,7 +17,6 @@ import Data.List
 import Data.Maybe
 import Control.Monad
 import Control.Lens
-import Prettyprinter
 import Data.Type.Equality
 import Error.Diagnose.Position (Position)
 import Unbound.Generics.LocallyNameless
@@ -37,12 +36,13 @@ data Spanned a = Spanned {
     _spanOf :: Ignore Position,
     _val :: a
                  }
-    deriving (Show, Generic, Typeable)
+    deriving (Generic, Typeable)
+
+instance Show a => Show (Spanned a) where
+    show (Spanned _ v) = show v
 
 makeLenses ''Spanned
 
-instance Pretty a => Pretty (Spanned a) where
-    pretty (Spanned _ v) = pretty v
 
 
 mkSpanned :: a -> Spanned a
@@ -109,11 +109,11 @@ data Endpoint =
 
 type EndpointVar = Name Endpoint
 
-
 data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
     | AEApp (Path) [FuncParam] [AExpr]
-    | AEString String
+    | AEHex String
+    | AEPreimage Path ([Idx], [Idx]) [AExpr]
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
@@ -126,11 +126,9 @@ type AExpr = Spanned AExprX
 
 
 data NameExpX = 
-    BaseName ([Idx], [Idx]) Path
-    | ROName Path [Idx] Int
+    NameConst ([Idx], [Idx]) Path (Maybe ([AExpr], Int))
     | PRFName NameExp String
     deriving (Show, Generic, Typeable)
-
 
 type NameExp = Spanned NameExpX
 
@@ -139,11 +137,6 @@ data Locality = Locality Path [Idx]
 
 
 
-
-
-roName :: Path -> [Idx] -> Int -> NameExp
-roName s is i = mkSpanned (ROName s is i)
-
 prfName :: NameExp -> String -> NameExp
 prfName n ae = mkSpanned (PRFName n ae)
 
@@ -151,6 +144,7 @@ data LabelX =
     LName NameExp 
     | LZero
     | LAdv 
+    | LTop
     | LJoin Label Label 
     | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
@@ -169,6 +163,9 @@ zeroLbl = mkSpanned LZero
 advLbl :: Label
 advLbl = mkSpanned LAdv
 
+topLbl :: Label
+topLbl = mkSpanned LTop
+
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)
 
@@ -180,11 +177,17 @@ data PropX =
     PTrue | PFalse | PAnd Prop Prop | POr Prop Prop
     | PNot Prop 
     | PEq AExpr AExpr 
+    | PLetIn AExpr (Bind DataVar Prop)
     | PEqIdx Idx Idx
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
     | PQuantIdx Quant  (Bind IdxVar Prop)
+    | PQuantBV Quant  (Bind DataVar Prop)
+    | PIsConstant AExpr -- Internal use
+    | PRO AExpr AExpr Int
+    | PApp Path [Idx] [AExpr]
+    | PAADOf NameExp AExpr
     deriving (Show, Generic, Typeable)
 
 
@@ -227,7 +230,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce
     | NT_Enc Ty
-    | NT_EncWithNonce Ty Path NoncePattern
+    | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_PRF [(String, (AExpr, NameType))]
@@ -241,9 +244,9 @@ data NoncePattern = NPHere
     deriving (Show, Generic, Typeable)
 
 data TyX = 
-    TData Label Label
+    TData Label Label (Ignore (Maybe String))
     | TDataWithLength Label AExpr
-    | TRefined Ty (Bind DataVar Prop)
+    | TRefined Ty String (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
     | TConst (Path) [FuncParam]
@@ -263,7 +266,11 @@ data TyX =
 type Ty = Spanned TyX
 
 tData :: Label -> Label -> Ty
-tData l1 l2 = mkSpanned $ TData l1 l2
+tData l1 l2 = mkSpanned $ TData l1 l2 (ignore Nothing)
+
+tDataAnn :: Label -> Label -> String -> Ty
+tDataAnn l1 l2 s = mkSpanned $ TData l1 l2 (ignore $ Just s)
+
 
 tDataWithLength :: Label -> AExpr -> Ty
 tDataWithLength l a = mkSpanned $ TDataWithLength l a
@@ -272,8 +279,6 @@ tUnit :: Ty
 tUnit = mkSpanned TUnit
 
 
-tRefined :: Ty -> Bind DataVar Prop -> Ty
-tRefined t p = mkSpanned $ TRefined t p
 
 
 tName :: NameExp -> Ty
@@ -284,8 +289,6 @@ tAdmit = mkSpanned TAdmit
 
 tExistsIdx :: (Bind IdxVar Ty) -> Ty
 tExistsIdx t = mkSpanned (TExistsIdx t)
--- tRefined :: Ty -> Var -> Prop -> Ty
--- tRefined t x p = mkSpanned $ TRefined t x p
 
 data ModuleExpX = 
     ModuleBody IsModuleType (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
@@ -298,8 +301,11 @@ type ModuleExp = Spanned ModuleExpX
 
 -- Decls are surface syntax
 data DeclX = 
-    DeclName String (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality])))
+    DeclName String (Bind ([IdxVar], [IdxVar]) NameDecl) 
+      | DeclSMTOption String String   
     | DeclDefHeader String (Bind ([IdxVar], [IdxVar]) Locality)
+    | DeclPredicate String (Bind ([IdxVar], [DataVar]) Prop)
+    | DeclFun       String (Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
                          Bind [(DataVar, Embed Ty)]
@@ -316,27 +322,28 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
-    | DeclRandOrcl String (Bind [IdxVar] ([AExpr], [NameType])) AdmitUniquenessCheck
-    | DeclCorr (Bind [IdxVar] (Label, Label))
+    | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
 
-data IsModuleType = ModType | ModConcrete
+data ROStrictness = ROStrict (Maybe [Int]) | ROUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
-data AdmitUniquenessCheck = NoAdmitUniqueness | AdmitUniqueness
+data NameDecl = 
+    DeclBaseName NameType [Locality]
+      | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
+      | DeclAbstractName
+      deriving (Show, Generic, Typeable)
+
+data IsModuleType = ModType | ModConcrete
     deriving (Show, Generic, Typeable, Eq)
 
 instance Alpha IsModuleType
 instance Subst AExpr IsModuleType
 instance Subst ResolvedPath IsModuleType
-
-instance Alpha AdmitUniquenessCheck
-instance Subst AExpr AdmitUniquenessCheck
-instance Subst ResolvedPath AdmitUniquenessCheck
 
 data DetFuncOps =
     UninterpFunc
@@ -364,27 +371,34 @@ aeLenConst s = mkSpanned $ AELenConst s
 
 
 aeTrue :: AExpr
-aeTrue = mkSpanned (AEApp (topLevelPath "TRUE") [] [])
+aeTrue = mkSpanned (AEApp (topLevelPath "true") [] [])
 
 data ExprX = 
-    EInput (Bind (DataVar, EndpointVar) Expr)
+    EInput String (Bind (DataVar, EndpointVar) Expr)
     | EOutput AExpr (Maybe Endpoint)
-    | ELet Expr (Maybe Ty) String (Bind DataVar Expr) -- The string is the name for the var
-    | EUnionCase AExpr (Bind DataVar Expr)
+    -- The string is the name for the var
+    -- If this binding is generated by ANF, the (Maybe AExpr) contains the AExpr from which it was generated
+    | ELet Expr (Maybe Ty) (Maybe AExpr) String (Bind DataVar Expr) 
+    | EBlock Expr -- Boundary for scoping; introduced by { }
+    | EUnionCase AExpr String (Bind DataVar Expr)
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
+    | EForallBV (Bind DataVar Expr)
+    | EForallIdx (Bind IdxVar Expr)
+    | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
     | EIncCtr Path ([Idx], [Idx])
     | EDebug DebugCommand
+    | ESetOption String String Expr
     | EAssert Prop
     | EAssume Prop
     | EAdmit
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | EPCase Prop Expr
+    | EPCase Prop (Maybe Prop) Expr
     | EFalseElim Expr
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -392,13 +406,16 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
+type ROHint = (Path, ([Idx], [Idx]), [AExpr])
+
 data CryptOp = 
-    CHash Path [Idx] Int
+    CHash [ROHint] Int
       | CPRF String
+      | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
-      | CAEncWithNonce Path ([Idx], [Idx])
-      | CADecWithNonce 
+      | CEncStAEAD Path ([Idx], [Idx])
+      | CDecStAEAD
       | CPKEnc
       | CPKDec
       | CMac
@@ -407,14 +424,22 @@ data CryptOp =
       | CSigVrfy
     deriving (Show, Generic, Typeable)
 
+data BuiltinLemma = 
+      LemmaCRH 
+      | LemmaConstant 
+      | LemmaDisjNotEq 
+      | LemmaCrossDH NameExp NameExp NameExp
+    deriving (Show, Generic, Typeable)
+
 
 
 data DebugCommand = 
     DebugPrintTyOf AExpr
+      | DebugResolveANF AExpr
       | DebugPrint String
       | DebugPrintTy Ty
       | DebugPrintProp Prop
-      | DebugPrintTyContext
+      | DebugPrintTyContext Bool
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
       | DebugPrintModules
@@ -450,6 +475,13 @@ instance Subst ResolvedPath Idx
 instance Subst AExpr Endpoint
 instance Subst ResolvedPath Endpoint
 
+instance Alpha NameDecl
+instance Subst AExpr NameDecl
+instance Subst ResolvedPath NameDecl
+
+instance Alpha ROStrictness
+instance Subst AExpr ROStrictness
+instance Subst ResolvedPath ROStrictness
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
@@ -519,6 +551,9 @@ instance Subst Idx PropX
 instance Subst AExpr PropX
 instance Subst ResolvedPath PropX
 
+tRefined :: Ty -> String -> Prop -> Ty 
+tRefined t s p = mkSpanned $ TRefined t s $ bind (s2n s) p
+
 instance Alpha Quant
 instance Subst Idx Quant
 instance Subst AExpr Quant
@@ -545,227 +580,13 @@ instance Alpha CryptOp
 instance Subst AExpr CryptOp
 instance Subst Idx CryptOp
 instance Subst ResolvedPath CryptOp
---- Pretty instances ---
 
-instance Pretty (Name a) where
-    pretty v = pretty $ show v
-
-instance Pretty Idx where
-    pretty (IVar _ s) = pretty s
-
-instance Pretty NameExpX where
-    pretty (ROName s is i) = pretty "RO<" <> pretty s <> pretty "," <> pretty is <> pretty "," <> pretty i <> pretty ">" 
-    pretty (PRFName n e) = pretty "PRF<" <> pretty n <> pretty ", " <> pretty e <> pretty ">"
-    pretty (BaseName vs n) = 
-        case vs of
-          ([], []) -> pretty n
-          (vs1, vs2) -> pretty n <> pretty "<" <> 
-              pretty (intercalate "," (map (show . pretty) vs1)) <> 
-              pretty "@" <>
-              pretty (intercalate "," (map (show . pretty) vs2)) <> 
-              pretty ">"
-
-prettyBind :: (Alpha a, Alpha b, Pretty a, Pretty b) => Bind b a -> (Doc ann, Doc ann)
-prettyBind b = 
-    let (x, y) = unsafeUnbind b in
-    (pretty x, pretty y)
-
-instance Pretty LblConst where
-    pretty (TyLabelVar s) = pretty s
-
-instance Pretty LabelX where
-    pretty (LName n) = pretty "[" <> pretty n <> pretty "]"
-    pretty LZero = pretty "static"
-    pretty (LAdv) = pretty "adv"
-    pretty (LJoin v1 v2) = pretty v1 <+> pretty "/\\" <+> pretty v2
-    pretty (LConst s) = pretty s
-    pretty (LRangeIdx l) = 
-        let (b, l') = prettyBind l in
-        pretty "/\\_" <> b <+> pretty "(" <> l' <> pretty ")"
-
-instance Pretty (Path) where
-    pretty x = pretty $ show x
-
-instance Pretty TyX where
-    pretty TUnit =
-        pretty "unit"
-    pretty (TBool l) = 
-            pretty "Bool<" <+> pretty l <> pretty ">"
-    pretty (TData l1 l2) = 
-            pretty "Data <" <> pretty l1 <> pretty ", |" <> pretty l2 <> pretty "|>"
-    pretty (TDataWithLength l1 a) = 
-            pretty "Data <" <> pretty l1 <> pretty ">" <+> pretty "|" <> pretty a <> pretty "|"
-    pretty (TRefined t xp) = 
-        let (x, p) = prettyBind xp in
-        x <> pretty ":" <> parens (pretty t) <> braces p
-    pretty (TOption t) = 
-            pretty "Option" <+> pretty t
-    pretty (TCase p t1 t2) = 
-            pretty "if" <+> pretty p <+> pretty "then" <+> pretty t1 <> pretty " else " <> pretty t2 
-    pretty (TConst n ps) =
-            pretty n <> pretty "<" <> pretty (intercalate "," (map (show . pretty) ps)) <> pretty ">"
-    pretty (TName n) =
-            pretty "Name(" <> pretty n <> pretty ")"
-    pretty (TVK n) =
-            pretty "vk(" <> pretty n <> pretty ")"
-    pretty (TDH_PK n) =
-            pretty "dhpk(" <> pretty n <> pretty ")"
-    pretty (TEnc_PK n) =
-            pretty "encpk(" <> pretty n <> pretty ")"
-    pretty (TSS n m) =
-            pretty "shared_secret(" <> pretty n <> pretty ", " <> pretty m <> pretty ")"
-    pretty TAdmit = pretty "admit"
-    pretty (TExistsIdx it) = 
-        let (i, t) = prettyBind it in
-        pretty "exists" <+> i <> pretty "." <+> t
-    pretty (TUnion t1 t2) =
-        pretty "Union<" <> pretty t1 <> pretty "," <> pretty t2 <> pretty ">"
-
-instance Pretty Quant where
-    pretty Forall = pretty "forall"
-    pretty Exists = pretty "exists"
-
-instance Pretty PropX where 
-    pretty PTrue = pretty "true"
-    pretty PFalse = pretty "false"
-    pretty (PAnd p1 p2) = pretty p1 <+> pretty "&&" <+> pretty p2
-    pretty (POr p1 p2) = pretty p1 <+> pretty "||" <+> pretty p2
-    pretty (PNot p) = pretty "!" <+> pretty p
-    pretty (PEq e1 e2) = pretty e1 <+> pretty "=" <+> pretty e2
-    pretty (PEqIdx e1 e2) = pretty e1 <+> pretty "=idx" <+> pretty e2
-    pretty (PImpl p1 p2) = pretty p1 <+> pretty "==>" <+> pretty p2
-    pretty (PFlow l1 l2) = pretty l1 <+> pretty "<=" <+> pretty l2
-    pretty (PQuantIdx q b) = 
-        let (x, p) = prettyBind b in
-        pretty q <+> x <+> pretty ": idx" <> pretty "." <+> p
-    pretty (PHappened s ixs xs) = 
-        let pids = 
-                case ixs of
-                  ([], []) -> mempty
-                  (v1, v2) -> pretty "<" <> 
-                         pretty (intercalate "," (map (show . pretty) v1)) <> 
-                         pretty "@" <>
-                         pretty (intercalate "," (map (show . pretty) v2)) <> 
-                         pretty ">" in 
-        pretty "happened(" <> pretty s <> pids <> tupled (map pretty xs) <> pretty ")"
-
-instance Pretty NameTypeX where
-    pretty (NT_Sig ty) = pretty "sig" <+> pretty ty
-    pretty (NT_EncWithNonce ty p pat) = pretty "enc_with_nonce" <+> pretty ty <+> pretty p
-    pretty (NT_Enc ty) = pretty "enc" <+> pretty ty
-    pretty (NT_PKE ty) = pretty "pke" <+> pretty ty
-    pretty (NT_MAC ty) = pretty "mac" <+> pretty ty
-    pretty (NT_PRF xs) = pretty "prf" <+> pretty "[" <> mconcat (map (\(ae, nt) -> pretty ae <+> pretty "->" <+> pretty nt) xs) <> pretty "]"
-    pretty NT_DH = pretty "DH"
-    pretty NT_Nonce = pretty "nonce"
+instance Alpha BuiltinLemma
+instance Subst AExpr BuiltinLemma
+instance Subst Idx BuiltinLemma
+instance Subst ResolvedPath BuiltinLemma
 
 
-instance Pretty AExprX where
-    pretty (AEVar s n) = pretty (unignore s)
-    pretty (AEApp f _ as) = pretty f <> tupled (map pretty as)
-    pretty (AEString s) = pretty "\"" <> pretty s <> pretty "\""
-    pretty (AELenConst s) = pretty "|" <> pretty s <> pretty "|"
-    pretty (AEInt i) = pretty i
-    pretty (AEGet ne) = pretty "get" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEGetEncPK ne) = pretty "get_encpk" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEGetVK ne) = pretty "get_vk" <> pretty "(" <> pretty ne <> pretty ")"
-    pretty (AEPackIdx s a) = pretty "pack" <> pretty "<" <> pretty s <> pretty ">(" <> pretty a <> pretty ")"
-
-instance Pretty CryptOp where
-    pretty (CHash p is i) = 
-        pretty "RO" <+> pretty p <+> pretty is <+> pretty i
-    pretty (CPRF x) = 
-        pretty "PRF" <+> pretty x 
-    pretty (CAEnc) = pretty "aenc"
-    pretty (CADec) = pretty "adec"
-    pretty CPKEnc = pretty "pkenc"
-    pretty CPKDec = pretty "pkdec"
-    pretty CMac = pretty "mac"
-    pretty CMacVrfy = pretty "mac_vrfy"
-    pretty CSign = pretty "sign"
-    pretty CSigVrfy = pretty "vrfy"
-
-instance Pretty ExprX where 
-    pretty (ECrypt cop as) = 
-        pretty cop <> (mconcat (map pretty as))
-    pretty (EInput k) = 
-        let ((x, i), e) = unsafeUnbind k in
-        pretty "input" <+> pretty x <> pretty ", " <> pretty i <> pretty " in " <> pretty e
-    pretty (EOutput e l) = pretty "output" <+> pretty e <+> (case l of
-       Nothing -> pretty ""
-       Just s -> pretty "to" <+> pretty s)
-    pretty (ELet e1 tyAnn sx xk) = 
-        let (x, k) = prettyBind xk in
-        let tann = case tyAnn of
-                     Nothing -> mempty
-                     Just t -> pretty ":" <+> pretty t
-        in
-        pretty "let" <+> x <+> tann <+> pretty "=" <+> pretty e1 <+> pretty "in" <> line <> k
-    pretty (EUnionCase a xk) = 
-        let (x, k) = prettyBind xk in
-        pretty "union_case" <+> x <+> pretty "=" <> pretty a <+>  pretty "in" <+> k
-    pretty (EUnpack a k) = pretty "unpack a .... TODO"
-    pretty (EIf t e1 e2) = 
-        pretty "if" <+> pretty t <+> pretty "then" <+> pretty e1 <+> pretty "else" <+> pretty e2
-    pretty (ERet ae) = pretty ae
-    pretty (EAdmit) = pretty "admit"
-    pretty (ECall f is as) = 
-        let inds = case is of
-                     ([], []) -> mempty
-                     (v1, v2) -> pretty "<" <> mconcat (map pretty v1) <> pretty "@" <> mconcat (map pretty v2) <> pretty ">"
-        in
-        pretty "call" <> inds <+> pretty f <> tupled (map pretty as)
-    pretty (ECase t xs) = 
-        let pcases = 
-                map (\(c, o) -> 
-                    case o of
-                      Left e -> pretty "|" <+> pretty c <+> pretty "=>" <+> pretty e
-                      Right (_, xe) -> let (x, e) = prettyBind xe in pretty "|" <+> pretty c <+> x <+> pretty "=>" <+> e
-                    ) xs in
-        pretty "case" <+> pretty t <> line <> vsep pcases
-    pretty (EPCase p e) = 
-        pretty "decide" <+> pretty p <+> pretty "in" <+> pretty e
-    pretty (EDebug dc) = pretty "debug" <+> pretty dc
-    pretty (EAssert p) = pretty "assert" <+> pretty p
-    pretty (EAssume p) = pretty "assume" <+> pretty p
-    pretty (EFalseElim k) = pretty "false_elim in" <+> pretty k
-    pretty (ETLookup n a) = pretty "lookup" <> tupled [pretty a]
-    pretty (ETWrite n a a') = pretty "write" <> tupled [pretty a, pretty a']
-    pretty _ = pretty "unimp"
-
-instance Pretty DebugCommand where
-    pretty (DebugPrintTyOf ae) = pretty "debugPrintTyOf(" <> pretty ae <> pretty ")"
-    pretty (DebugPrint s) = pretty "debugPrint(" <> pretty s <> pretty ")"
-    pretty (DebugPrintTy t) = pretty "debugPrintTy(" <> pretty t <> pretty ")"
-    pretty (DebugPrintProp t) = pretty "debugPrintProp(" <> pretty t <> pretty ")"
-    pretty (DebugPrintTyContext) = pretty "debugPrintTyContext"
-    pretty (DebugPrintExpr e) = pretty "debugPrintExpr(" <> pretty e <> pretty ")"
-    pretty (DebugPrintLabel l) = pretty "debugPrintLabel(" <> pretty l <> pretty ")"
-
-instance Pretty FuncParam where
-    pretty (ParamStr s) = pretty s
-    pretty (ParamAExpr a) = pretty a
-    pretty (ParamLbl l) = pretty l
-    pretty (ParamTy t) = pretty t
-    pretty (ParamIdx i) = pretty i
-    pretty (ParamName ne) = pretty ne
-
-instance Pretty Endpoint where
-    pretty (Endpoint  x) = pretty x
-    pretty (EndpointLocality l) = pretty "endpoint(" <> pretty l <> pretty ")"
-
-instance Pretty Locality where
-    pretty (Locality s xs) = pretty s <> angles (mconcat $ map pretty xs)
-
-instance Pretty DeclX where
-    pretty d = pretty (show d)
-
-instance Pretty ModuleExpX where
-    pretty (ModuleBody _ nk) = 
-        let (n, k) = prettyBind nk in
-        angles (n <> pretty "." <> k)
-    pretty (ModuleVar p) = pretty p
-    pretty x = pretty $ show x
 
 
 -- Wrapper datatype for native comparison up to alpha equivalence. Used for
@@ -780,5 +601,5 @@ instance Alpha a => Ord (AlphaOrd a) where
 
 
 tLemma :: Prop -> Ty
-tLemma p = tRefined tUnit (bind (s2n "._") p)
+tLemma p = tRefined tUnit "._" p 
 

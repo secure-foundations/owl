@@ -7,6 +7,7 @@ import Prettyprinter
 import AST 
 import Control.Lens
 import SMTBase
+import Pretty
 import TypingBase
 import Control.Monad
 import Control.Monad.Reader
@@ -25,6 +26,8 @@ sFlows x y = SApp [SAtom "Flows", x, y]
 sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
+
+
 nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
 nameDefFlows n nt = do
     case nt^.val of 
@@ -33,7 +36,7 @@ nameDefFlows n nt = do
       NT_Enc t -> do
           l <- liftCheck $ coveringLabel' t
           return $ [(l, mkSpanned $ LName n)]
-      NT_EncWithNonce t _ _ -> do
+      NT_StAEAD t _ _ _ -> do
           l <- liftCheck $ coveringLabel' t
           return $ [(l, mkSpanned $ LName n)]
       NT_PKE t -> do
@@ -58,24 +61,24 @@ smtLabelSetup = do
     forM_ fas $ \(l1, l2) -> do
         v1 <- symLabel l1
         v2 <- symLabel l2
-        emitComment $ "Flow decl: " ++ show (pretty l1) ++ " <= " ++ show (pretty l2)
+        emitComment $ "Flow decl: " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2)
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv
     afcs <- liftCheck $ collectAdvCorrConstraints 
     ladv <- symLabel advLbl
-    forM_ afcs $ \ils -> do 
-        (is, (l1, l2)) <- liftCheck $ unbind ils
-        sIE <- use symIndexEnv
-        symIndexEnv  %= (M.union $ M.fromList $ map (\i -> (i, SAtom $ show i)) is)
-        local (over inScopeIndices $ (++) $ map (\i -> (i, IdxGhost)) is) $ do 
-            v1 <- symLabel l1
-            v2 <- symLabel l2
-            emitAssertion $ sForall 
-                (map (\i -> (SAtom $ show i, indexSort)) is)
-                (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
-                []
-        symIndexEnv .= sIE
+    forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
+        ((is, xs), (l1, l2)) <- liftCheck $ unbind ils
+        withIndices (map (\i -> (i, IdxGhost)) is) $ do
+            withSMTVars xs $ do 
+                v1 <- symLabel l1
+                v2 <- symLabel l2
+                emitAssertion $ sForall 
+                    (map (\i -> (SAtom $ show i, indexSort)) is ++ map (\x -> (SAtom $ show x, bitstringSort)) xs)
+                    (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
+                    []
+                    ("advConstraint_" ++ show j)
+
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l
@@ -87,6 +90,7 @@ simplLabel l =
       LName _ -> return l
       LZero -> return l
       LAdv -> return l
+      LTop -> return l
       LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
       LRangeIdx il -> do
@@ -114,6 +118,7 @@ canonLabel l = do
       LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
       LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
       LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
+      LTop -> return $ CanonAnd [CanonNoBig $ CanonTop]
       LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
@@ -129,6 +134,7 @@ canonRange is l =
           canonRange (i : is) l'
       LZero -> return (is, CanonZero)
       LAdv -> return (is, CanonAdv)
+      LTop -> return (is, CanonTop)
       LConst s -> return (is, CanonConst s)
       LName ne -> return (is, CanonLName ne)
 
@@ -149,7 +155,7 @@ symCanonBig c = do
               CanonBig il -> do
                   (is, l) <- liftCheck $ unbind il -- All the i's must be relevant here
                   x <- freshSMTName
-                  emitComment $ "label for " ++ show (pretty c)
+                  emitComment $ "label for " ++ show (owlpretty c)
                   emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
                   ivs <- mapM (\_ -> freshSMTIndexName) is
                   iEnv <- use symIndexEnv
@@ -157,7 +163,7 @@ symCanonBig c = do
                       symIndexEnv %= (M.insert (s2n iv) (SAtom iv))
                   lv <- symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
                   symIndexEnv .= iEnv
-                  emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) []
+                  emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) [] ("big_" ++ x)
                   return $ SAtom x
         labelVals %= M.insert (AlphaOrd c) v
         return v
@@ -173,6 +179,7 @@ symCanonAtom c =
         return $ SApp [SAtom "LabelOf", n]
       CanonZero -> return $ SAtom "%zeroLbl"
       CanonAdv -> return $ SAtom "%adv"
+      CanonTop -> return $ SAtom "%top"
       CanonConst s -> getSymLblConst s
 
 getSymLblConst :: LblConst -> Sym SExp
@@ -199,6 +206,7 @@ data SymLbl =
     SName NameExp
       | SConst LblConst
       | SAdv
+      | STop
       | SRange (Bind IdxVar SymLbl)
       deriving (Show, Generic, Typeable)
 
@@ -211,6 +219,7 @@ mkSymLbl l =
       LName n -> return $ S.singleton $ AlphaOrd $ SName n
       LConst s -> return $ S.singleton $ AlphaOrd $ SConst s
       LAdv -> return $ S.singleton $ AlphaOrd SAdv
+      LTop -> return $ S.singleton $ AlphaOrd STop
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeIdx xl -> do
           (xi, l) <- unbind xl
@@ -225,6 +234,7 @@ lblFromSym s =
     case s of
       SName n -> return $ nameLbl n
       SAdv -> return advLbl
+      STop -> return topLbl
       SConst n -> return $ lblConst n
       SRange xl -> do
           (x, l) <- unbind xl

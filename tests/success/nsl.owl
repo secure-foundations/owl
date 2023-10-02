@@ -41,20 +41,26 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
     corr_case skA in
     corr_case nA in
     corr_case nB in
-    let c : if sec(skA) then Union<nsl_bob_message, Data<adv> > else Data<adv> = pkdec(get(skA), i) in 
-    union_case x = c in         
-    union_case nA' = _nbA(x) in 
-    let nB' = _nbB(x) in 
-    let b1 = checknonce(get(nA), nA') in 
-    let b2 = eq(length(nB'), |nonce|) in 
-    if b1 && b2 then 
-        false_elim in 
-        let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
-        let _ = output c' to endpoint(bob) in
-        let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
-        res
-    else
-        NRNone()
+    case pkdec(get(skA), i) { 
+        | None => NRNone()
+        | Some c =>
+            union_case x = c in 
+            union_case nA' = _nbA(x) in 
+            let nB' = _nbB(x) in 
+            let b1 = checknonce(get(nA), nA') in 
+            let b2 = eq(length(nB'), |nonce|) in 
+            if b1 && b2 then 
+                false_elim in 
+                let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
+                let _ = output c' to endpoint(bob) in
+                let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
+                res
+            else {
+                false_elim in 
+                assert ([nA] /\ [nB] <= adv /\ [nA] /\ [nB]);
+                NRNone()
+            }
+    }
 
 def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) = 
     let pkA = get_encpk(skA) in
@@ -62,28 +68,38 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
     corr_case skB in
     corr_case nA in
     corr_case nB in
-    let m = pkdec(get(skB), i) in
-    union_case x = m in
-    case x 
-    | Msg1 nA' =>  
-        if eq(length(nA'), |nonce|) then 
-            let p = nsl_bob_message(nA', get(nB)) in 
-            let c = pkenc(pkA, p) in
-            output c to endpoint(alice);
-            input i' in
-            let m' = pkdec(get(skB), i) in
-            union_case x' = m in
-            begin case x' 
-            | Msg1 _ => NRNone()
-            | Msg3 p => 
-                let b1 = checknonce(get(nB), _na3B(p)) in 
-                let b2 = checknonce(nA', _na3A(p)) in 
-                if b1 && b2 then 
-                    false_elim in
-                    let res: if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = 
-                        NRSome(nsl_result(nA', get(nB))) in
-                    res
-                else NRNone()
-            end
-        else NRNone()
-    | Msg3 _ => NRNone()
+    case pkdec(get(skB), i) {
+    | None => NRNone()
+    | Some payload' =>
+        union_case payload = payload' in 
+        case payload {
+        | Msg1 nA' =>  
+            if eq(length(nA'), |nonce|) then 
+                let p = nsl_bob_message(nA', get(nB)) in 
+                let c = pkenc(pkA, p) in
+                output c to endpoint(alice);
+                input i' in
+                case pkdec(get(skB), i') { 
+                    | None => NRNone()
+                    | Some payload2' =>
+                        union_case payload2 = payload2' in 
+                        case payload2 {
+                            | Msg1 _ => NRNone()
+                            | Msg3 p => 
+                                let b1 = checknonce(get(nB), _na3B(p)) in 
+                                let b2 = checknonce(nA', _na3A(p)) in 
+                                if b1 && b2 then 
+                                    false_elim in
+                                    let res: if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = 
+                                        NRSome(nsl_result(nA', get(nB))) in
+                                    res
+                                else 
+                                    false_elim in
+                                    NRNone()
+                        }
+                }
+            else false_elim in NRNone()
+         | Msg3 _ => NRNone()
+        }
+    }
+                                    

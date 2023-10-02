@@ -54,25 +54,29 @@ def B_main<j> () @ B
     corr_case pkB in
 
     input inp in
-    let mm = pkdec(privKey, inp) in
-    union_case m = mm in
-    unpack i, m' = m in
-    let n0' = m1_n0<idx i>(m') in
-    let m1_pkA_e = m1_pkA<idx i>(m') in
-    case m1_pkA_e
-    | m1_pkA_tag m1_pkA =>
-        let b1 = eq(m1_pkA, get_encpk(pkA)) in    // let b2 = eq(n0', |nonce|) in
-        let b2 = checknonce(n0', get(n0<j>)) in // TODO: Check
-        if b1 then
-            if b2 then
-                let msg_to_enc        = m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)) in
-                let msg_to_enc_packed = (pack<j>(msg_to_enc)) in
-                let pubKeyA = get_encpk(pkA) in
-                let encm = pkenc(pubKeyA, msg_to_enc_packed) in
-                let _ = output encm to endpoint(A) in
-                ()
-            else
-                ()
-        else
-            ()
+    case pkdec(privKey, inp) {
+        | None => ()
+        | Some mm => 
+            union_case m = mm in
+            unpack i, m' = m in
+            let n0' = m1_n0<idx i>(m') in
+            let m1_pkA_e = m1_pkA<idx i>(m') in
+            case m1_pkA_e {
+            | m1_pkA_tag m1_pkA =>
+                let b1 = eq(m1_pkA, get_encpk(pkA)) in    // let b2 = eq(n0', |nonce|) in
+                let b2 = checknonce(n0', get(n0<j>)) in // TODO: Check
+                if b1 then
+                    if b2 then
+                        let msg_to_enc        = m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)) in
+                        let msg_to_enc_packed = (pack<j>(msg_to_enc)) in
+                        let pubKeyA = get_encpk(pkA) in
+                        let encm = pkenc(pubKeyA, msg_to_enc_packed) in
+                        let _ = output encm to endpoint(A) in
+                        ()
+                    else
+                        ()
+                else
+                    ()
+            }
+    }
 

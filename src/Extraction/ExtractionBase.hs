@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Lens
 import Prettyprinter
+import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
@@ -47,27 +48,27 @@ liftCheck c = do
 data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
     deriving (Show, Eq, Generic, Typeable)
 
-instance Pretty RustTy where
-  pretty VecU8 = pretty "Vec<u8>"
-  pretty RcVecU8 = pretty "Rc<Vec<u8>>"
-  pretty Bool = pretty "bool"
-  pretty Number = pretty "usize" --should just work
-  pretty String = pretty "String"
-  pretty Unit = pretty "()"
-  pretty (ADT s) = pretty s
-  pretty (Option r) = pretty "Option" <> angles (pretty r)
+instance OwlPretty RustTy where
+  owlpretty VecU8 = owlpretty "Vec<u8>"
+  owlpretty RcVecU8 = owlpretty "Rc<Vec<u8>>"
+  owlpretty Bool = owlpretty "bool"
+  owlpretty Number = owlpretty "usize" --should just work
+  owlpretty String = owlpretty "String"
+  owlpretty Unit = owlpretty "()"
+  owlpretty (ADT s) = owlpretty s
+  owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
 
 data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
     deriving (Show, Eq, Generic, Typeable)
 
-instance Pretty SpecTy where
-  pretty SpecSeqU8 = pretty "Seq<u8>"
-  pretty SpecBool = pretty "bool"
-  pretty SpecNumber = pretty "usize"
-  pretty SpecString = pretty "String"
-  pretty SpecUnit = pretty "()"
-  pretty (SpecADT s) = pretty s
-  pretty (SpecOption r) = pretty "Option" <> angles (pretty r)
+instance OwlPretty SpecTy where
+  owlpretty SpecSeqU8 = owlpretty "Seq<u8>"
+  owlpretty SpecBool = owlpretty "bool"
+  owlpretty SpecNumber = owlpretty "usize"
+  owlpretty SpecString = owlpretty "String"
+  owlpretty SpecUnit = owlpretty "()"
+  owlpretty (SpecADT s) = owlpretty s
+  owlpretty (SpecOption r) = owlpretty "Option" <> angles (owlpretty r)
 
 data Env = Env {
     _path :: String,
@@ -80,7 +81,7 @@ data Env = Env {
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
     _enums :: M.Map (S.Set String) String,
-    _oracles :: M.Map String String, -- how to print the output length
+    _oracles :: M.Map (String, Int) String, -- how to print the output length
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
     _curRetTy :: Maybe String -- return type of the def currently being extracted (needed for type annotations)
@@ -101,10 +102,10 @@ data Layout =
   | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
     deriving (Show, Eq, Generic, Typeable)
 
-instance Pretty Layout where
-    pretty (LBytes i) = pretty "bytes" <> parens (pretty i)
-    pretty (LStruct name fields) = pretty "struct" <+> pretty name <> pretty ":" <+> pretty fields
-    pretty (LEnum name cases) = pretty "enum" <+> pretty name <> pretty ":" <+> pretty (M.keys cases)
+instance OwlPretty Layout where
+    owlpretty (LBytes i) = owlpretty "bytes" <> parens (owlpretty i)
+    owlpretty (LStruct name fields) = owlpretty "struct" <+> owlpretty name <> owlpretty ":" <+> owlpretty fields
+    owlpretty (LEnum name cases) = owlpretty "enum" <+> owlpretty name <> owlpretty ":" <+> owlpretty (M.keys cases)
 
 data ExtractionError =
       CantLayoutType CTy
@@ -120,40 +121,46 @@ data ExtractionError =
     | NameWithTooManySids String
     | UnsupportedSharedIndices String
     | CouldntParseInclude String
+    | OddLengthHexConst
+    | PreimageInExec String
     | ErrSomethingFailed String
 
-instance Pretty ExtractionError where
-    pretty (CantLayoutType ct) =
-        pretty "Can't make a layout for type:" <+> pretty ct
-    pretty (TypeError s) =
-        pretty "Type error during extraction:" <+> pretty s
-    pretty (UndefinedSymbol s) =
-        pretty "Undefined symbol: " <+> pretty s
-    pretty OutputWithUnknownDestination =
-        pretty "Found a call to `output` without a destination specified. For extraction, all outputs must have a destination locality specified."
-    pretty (LocalityWithNoMain s) =
-        pretty "Locality" <+> pretty s <+> pretty "does not have a defined main function. For extraction, there should be a defined entry point function that must not take arguments: def" <+> pretty s <> pretty "_main () @" <+> pretty s
-    pretty (UnsupportedOracleReturnType s) =
-        pretty "Oracle" <+> pretty s <+> pretty "does not return a supported oracle return type for extraction."
-    pretty (UnsupportedNameExp ne) =
-        pretty "Name expression" <+> pretty ne <+> pretty "is unsupported for extraction."
-    pretty (UnsupportedNameType nt) =
-        pretty "Name type" <+> pretty nt <+> pretty "is unsupported for extraction."
-    pretty (UnsupportedDecl s) =
-        pretty "Unsupported decl type for extraction:" <+> pretty s
-    pretty (DefWithTooManySids s) =
-        pretty "Owl procedure" <+> pretty s <+> pretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
-    pretty (NameWithTooManySids s) =
-        pretty "Owl name" <+> pretty s <+> pretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
-    pretty (UnsupportedSharedIndices s) =
-        pretty "Unsupported sharing of indexed name:" <+> pretty s
-    pretty (CouldntParseInclude s) =
-        pretty "Couldn't parse included file:" <+> pretty s
-    pretty (ErrSomethingFailed s) =
-        pretty "Extraction failed with message:" <+> pretty s
+instance OwlPretty ExtractionError where
+    owlpretty (CantLayoutType ct) =
+        owlpretty "Can't make a layout for type:" <+> owlpretty ct
+    owlpretty (TypeError s) =
+        owlpretty "Type error during extraction:" <+> owlpretty s
+    owlpretty (UndefinedSymbol s) =
+        owlpretty "Undefined symbol: " <+> owlpretty s
+    owlpretty OutputWithUnknownDestination =
+        owlpretty "Found a call to `output` without a destination specified. For extraction, all outputs must have a destination locality specified."
+    owlpretty (LocalityWithNoMain s) =
+        owlpretty "Locality" <+> owlpretty s <+> owlpretty "does not have a defined main function. For extraction, there should be a defined entry point function that must not take arguments: def" <+> owlpretty s <> owlpretty "_main () @" <+> owlpretty s
+    owlpretty (UnsupportedOracleReturnType s) =
+        owlpretty "Oracle" <+> owlpretty s <+> owlpretty "does not return a supported oracle return type for extraction."
+    owlpretty (UnsupportedNameExp ne) =
+        owlpretty "Name expression" <+> owlpretty ne <+> owlpretty "is unsupported for extraction."
+    owlpretty (UnsupportedNameType nt) =
+        owlpretty "Name type" <+> owlpretty nt <+> owlpretty "is unsupported for extraction."
+    owlpretty (UnsupportedDecl s) =
+        owlpretty "Unsupported decl type for extraction:" <+> owlpretty s
+    owlpretty (DefWithTooManySids s) =
+        owlpretty "Owl procedure" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
+    owlpretty (NameWithTooManySids s) =
+        owlpretty "Owl name" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
+    owlpretty (UnsupportedSharedIndices s) =
+        owlpretty "Unsupported sharing of indexed name:" <+> owlpretty s
+    owlpretty (CouldntParseInclude s) =
+        owlpretty "Couldn't parse included file:" <+> owlpretty s
+    owlpretty OddLengthHexConst =
+        owlpretty "Found a hex constant with an odd length, which should not be allowed."
+    owlpretty (PreimageInExec s) =
+        owlpretty "Found a call to `preimage`, which is not allowed in exec code:" <+> owlpretty s
+    owlpretty (ErrSomethingFailed s) =
+        owlpretty "Extraction failed with message:" <+> owlpretty s
 
 printErr :: ExtractionError -> IO ()
-printErr e = print $ pretty "Extraction error:" <+> pretty e
+printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 
 debugPrint :: Show s => s -> ExtractionMonad ()
 debugPrint = liftIO . hPrint stderr
@@ -161,14 +168,14 @@ debugPrint = liftIO . hPrint stderr
 replacePrimes :: String -> String
 replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
-replacePrimes' :: Doc ann -> Doc ann
-replacePrimes' = pretty . replacePrimes . show
+replacePrimes' :: OwlDoc -> OwlDoc
+replacePrimes' = owlpretty . replacePrimes . show
 
 rustifyName :: String -> String
 rustifyName s = "owl_" ++ replacePrimes s
 
-rustifyName' :: Doc ann -> Doc ann
-rustifyName' = pretty . rustifyName . show
+rustifyName' :: OwlDoc -> OwlDoc
+rustifyName' = owlpretty . rustifyName . show
 
 unrustifyName :: String -> String
 unrustifyName = drop 4
@@ -312,7 +319,6 @@ printOwlOp :: String -> [(RustTy, String)] -> String
 printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
 
 
--- NB: Owl puts the key first in enc and dec, Rust puts the plaintext/ciphertext first
 initFuncs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String)
 initFuncs = 
     let eqChecker = (Bool, \args -> case args of
@@ -336,9 +342,9 @@ initFuncs =
                     [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                     _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
             )),
-            ("UNIT", (Unit, \_ -> return "()")),
-            ("TRUE", (Bool, \_ -> return "true")),
-            ("FALSE", (Bool, \_ -> return "false")),
+            ("unit", (Unit, \_ -> return "()")),
+            ("true", (Bool, \_ -> return "true")),
+            ("false", (Bool, \_ -> return "false")),
             ("Some", (Option RcVecU8, \args -> case args of
                     [(_,x)] -> return $ "Some(" ++ x ++ ")"
                     _ -> throwError $ TypeError $ "got wrong number of args for Some"
@@ -391,6 +397,7 @@ lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> Extr
 lookupFunc fpath = do
     fs <- use funcs
     f <- tailPath fpath
+    -- debugPrint $ owlpretty "lookup" <+> pretty f <+> pretty "in" <+> pretty (M.keys fs)
     return $ fs M.!? f
     
 
@@ -398,7 +405,7 @@ lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, Str
 lookupAdtFunc fn = do
     ufs <- use owlUserFuncs
     adtfs <- use adtFuncs
-    -- debugPrint $ pretty "lookupAdtFunc of" <+> pretty fn <+> pretty "in" <+> pretty ufs
+    -- debugPrint $ owlpretty "lookupAdtFunc of" <+> owlpretty fn <+> owlpretty "in" <+> owlpretty ufs
     case lookup fn ufs of
         -- special handling for struct constructors, since their names are path-scoped
         Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
@@ -409,9 +416,10 @@ lookupAdtFunc fn = do
 
 flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  BaseName _ s -> do
+  NameConst _ s _ -> do
       p <- flattenPath s
       return $ rustifyName p
+  _ -> throwError $ UnsupportedNameExp n
 
 
 rustifyArgTy :: CTy -> ExtractionMonad RustTy
@@ -458,8 +466,8 @@ rustifySpecTy ct = do
     return $ specTyOf rt
 
 
-rcClone :: Doc ann
-rcClone = pretty "rc_clone"
+rcClone :: OwlDoc
+rcClone = owlpretty "rc_clone"
 
 getCurRetTy :: ExtractionMonad String
 getCurRetTy = do
@@ -477,3 +485,10 @@ viewVar String s = s
 viewVar Unit s = s
 viewVar (ADT _) s = s ++ "data.view()" -- TODO nesting?
 viewVar (Option rt) s = s ++ ".view()"
+
+hexStringToByteList :: String -> ExtractionMonad OwlDoc
+hexStringToByteList [] = return $ owlpretty ""
+hexStringToByteList (h1 : h2 : t) = do
+    t' <- hexStringToByteList t
+    return $ owlpretty "0x" <> owlpretty h1 <> owlpretty h2 <> owlpretty "u8," <+> t'
+hexStringToByteList _ = throwError OddLengthHexConst

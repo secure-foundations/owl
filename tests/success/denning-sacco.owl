@@ -37,6 +37,9 @@ struct tickets {
 
 name skS : sigkey signed_by_pkS @ S
 
+name A_username : nonce @ A, B
+name B_username : nonce @ A, B
+
 def S_main () @ S : Unit =
     let sigK = get(skS) in
     input inp in
@@ -56,8 +59,6 @@ enum A_result {
     | A_No
 }
 
-name A_username : nonce @ A, B
-name B_username : nonce @ A, B
 
 def A_main() @ A 
     requires [A_username] /\ [B_username] <= adv
@@ -71,17 +72,20 @@ def A_main() @ A
 
     let pkA = get_encpk(skA) in
     let msg_to_vrfy = signed_by_pkS(a, _pkA(pkA), get(T)) in
-    case vrfy(get_vk(skS), msg_to_vrfy, s1) 
+    case vrfy(get_vk(skS), msg_to_vrfy, s1) {
         | None => A_No()
         | Some s => 
-            case vrfy(get_vk(skS), t2, s2) 
+            case vrfy(get_vk(skS), t2, s2) {
                 | None => A_No()
                 | Some s =>
-                    case _pk(s) 
+                    case _pk(s) {
                         | _pkA _ => A_No()
                         | _pkB o =>
                             let _ = output inp to endpoint(B) in
                             A_Ok(o)
+                    }
+            }
+    }
 
 
 enum B_result {
@@ -99,12 +103,15 @@ def B_main() @ B
 
     let pkB = get_encpk(skB) in
     let msg_to_vrfy = signed_by_pkS(b, _pkB(pkB), get(T)) in
-    case vrfy(get_vk(skS), msg_to_vrfy, s2) 
+    case vrfy(get_vk(skS), msg_to_vrfy, s2) {
         | None => B_No()
         | Some s => 
-            case vrfy(get_vk(skS), t1, s1) 
+            case vrfy(get_vk(skS), t1, s1) {
                 | None => B_No()
                 | Some s =>
-                    case _pk(s)
+                    case _pk(s) {
                         | _pkB _ => B_No()
                         | _pkA o => B_Ok(o)
+                    }
+            }
+    }

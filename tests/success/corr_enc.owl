@@ -10,12 +10,12 @@ def alice (vkB : vk(skB)) @ alice
     : Unit = 
     input t, _ in 
     input m, _ in 
-    corr_case skB in (
-    case vrfy(vkB, t, m) 
+    corr_case skB in 
+    case vrfy(vkB, t, m) {
     | Some k' => 
         let k'' : if sec(skB) then Name(k) else Data<adv> = k' in
-        let c : if sec(skB) then Data<static> else Data<adv> = aenc(k'', get(x)) in
+        let c : if sec(skB) then Data<adv> else Data<adv> = aenc(k'', get(x)) in
         output c
     | None => ()
-    )
+    }
 

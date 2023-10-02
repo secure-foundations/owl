@@ -19,10 +19,11 @@ def client_main () @ client
     let tgt = _authserver_msg_1(i) in
     if eq(length(tgt), cipherlen(|enckey|)) then 
         corr_case K in
-        case adec(get(K), _authserver_msg_2(i)) 
+        case adec(get(K), _authserver_msg_2(i)) {
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
+        }
     else ()
     
 def authserver_main () @ authserver
