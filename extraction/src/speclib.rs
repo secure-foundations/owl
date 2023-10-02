@@ -136,25 +136,6 @@ pub open spec(checked) fn enc_with_nonce(k: Seq<u8>, x: Seq<u8>, nonce: usize) -
 pub open spec(checked) fn dec_with_nonce(k: Seq<u8>, nonce: usize, c: Seq<u8>) -> (x: Option<Seq<u8>>)
 { unimplemented!() }
 
-// equality checking
-pub trait OwlSpecEq where Self:Sized {
-    spec fn owlSpec_eq(self, other: Self) -> bool;
-}
-
-impl OwlSpecEq for usize {
-    #[verifier::inline]
-    open spec fn owlSpec_eq(self, other: Self) -> bool {
-        self == other
-    }
-}
-
-impl OwlSpecEq for Seq<u8> {
-    #[verifier::inline]
-    open spec fn owlSpec_eq(self, other: Self) -> bool {
-        self == other
-    }
-}
-
 pub open spec fn andb(x: bool, y: bool) -> bool
 {
     x && y
@@ -463,70 +444,71 @@ pub mod itree {
     ///// Parsing Owl code into an ITree /////////////////
     //////////////////////////////////////////////////////
 
+    #[allow(unused_macros)]
     #[macro_export]
     macro_rules! owl_spec {
-        ($mut_state:ident, $mut_type:ident, ($($tt:tt)*)) => { owl_spec!($mut_state, $mut_type, $($tt)*) };
-        ($mut_state:ident, $mut_type:ident, {$($tt:tt)*}) => { owl_spec!($mut_state, $mut_type, $($tt)*) }; // NB: this one has curly braces {}, above has parens (), don't delete!
-        ($mut_state:ident, $mut_type:ident, (input ($var:ident, $evar:ident)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, $evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
-        };
-        ($mut_state:ident, $mut_type:ident, (input ($var:ident, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|$var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
-        };
-        ($mut_state:ident, $mut_type:ident, (input (_, _)) in $($next:tt)*) => {
-            (ITree::Input(closure_to_fn_spec(|_var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)})))
-        };
-        ($mut_state:ident, $mut_type:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => {
+        ($mut_state:ident, $mut_type:ident, ($($tt:tt)*)) => { verus_proof_expr!{ owl_spec!($mut_state, $mut_type, $($tt)*) } };
+        ($mut_state:ident, $mut_type:ident, {$($tt:tt)*}) => { verus_proof_expr!{ owl_spec!($mut_state, $mut_type, $($tt)*) } }; // NB: this one has curly braces {}, above has parens (), don't delete!
+        ($mut_state:ident, $mut_type:ident, (input ($var:ident, $evar:ident)) in $($next:tt)*) => { verus_proof_expr!{
+            (ITree::Input(|$var, $evar| {owl_spec!($mut_state, $mut_type, $($next)*)}))
+        }};
+        ($mut_state:ident, $mut_type:ident, (input ($var:ident, _)) in $($next:tt)*) => { verus_proof_expr!{
+            (ITree::Input(|$var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)}))
+        }};
+        ($mut_state:ident, $mut_type:ident, (input (_, _)) in $($next:tt)*) => { verus_proof_expr!{
+            (ITree::Input(|_var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)}))
+        }};
+        ($mut_state:ident, $mut_type:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($mut_state, $mut_type, $($next)*))))
-        };
+        }};
         // vvv check this
-        ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => {
+        ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => { verus_proof_expr!{
             (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(((), $mut_state)))))
-        };
-        ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => {
-            (ITree::Sample($n, closure_to_fn_spec(|coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))})))
-        };
-        ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => {
-            ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1, .. $mut_state}))
-        };
+        }};
+        ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => { verus_proof_expr!{
+            (ITree::Sample($n, |coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))}))
+        }};
+        ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => { verus_exec_expr!{ // need `exec` so that + uses usize not nat
+            ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1usize, .. $mut_state}))
+        }};
         // Special case handling of tail calls, which need an explicit `bind` to the identity function
         // in order to work with the spec of `split_bind`
-        ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => {
+        ($mut_state:ident, $mut_type:ident, call ($($e:tt)*)) => { verus_proof_expr!{
             ($($e)*)
-                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| ITree::Ret(tmp) ))
-        };
-        ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => {
+                .bind( |tmp : (_, $mut_type)| ITree::Ret(tmp) )
+        }};
+        ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => { verus_proof_expr!{
             ITree::Ret(($($e)*, $mut_state))
-        };
-        ($mut_state:ident, $mut_type:ident, case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => {
+        }};
+        ($mut_state:ident, $mut_type:ident, case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => { verus_proof_expr!{
             match $e {
                 $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
             }
-        };
-        ($mut_state:ident, $mut_type:ident, if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => {
+        }};
+        ($mut_state:ident, $mut_type:ident, if ($e:expr) then ( $($e1:tt)* ) else ( $($e2:tt)* )) => { verus_proof_expr!{
             if $e {
                 owl_spec!($mut_state, $mut_type, $($e1)*)
             } else {
                 owl_spec!($mut_state, $mut_type, $($e2)*)
             }
-        };
+        }};
         // Special-case handling of `let _ = ...` pattern for RHS returning ()
-        ($mut_state:ident, $mut_type:ident, let _ = (call($($e:tt)*)) in $($next:tt)*) => {
+        ($mut_state:ident, $mut_type:ident, let _ = (call($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             ($($e)*)
-                .bind( closure_to_fn_spec(|tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
-        };
-        ($mut_state:ident, $mut_type:ident, let _ = ($($e:tt)*) in $($next:tt)*) => {
+                .bind( |tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) })
+        }};
+        ($mut_state:ident, $mut_type:ident, let _ = ($($e:tt)*) in $($next:tt)*) => { verus_proof_expr!{
             owl_spec!($mut_state, $mut_type, $($e)* )
-                .bind( closure_to_fn_spec(|tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
-        };
-        ($mut_state:ident, $mut_type:ident, let $var:ident = (call($($e:tt)*)) in $($next:tt)*) => {
+                .bind( |tmp : ((), $mut_type)| { let (_, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) })
+        }};
+        ($mut_state:ident, $mut_type:ident, let $var:ident = (call($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             ($($e)*)
-                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
-        };
-        ($mut_state:ident, $mut_type:ident, let $var:ident = ($($e:tt)*) in $($next:tt)*) => {
+                .bind( |tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) })
+        }};
+        ($mut_state:ident, $mut_type:ident, let $var:ident = ($($e:tt)*) in $($next:tt)*) => { verus_proof_expr!{
             owl_spec!($mut_state, $mut_type, $($e)* )
-                .bind( closure_to_fn_spec(|tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) }))
-        };
+                .bind( |tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) })
+        }};
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }
