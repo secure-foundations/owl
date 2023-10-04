@@ -458,10 +458,16 @@ extractCryptOp binds op owlArgs = do
             let encOp = owlpretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (RcVecU8, genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec" [k, x])
-        (CEncStAEAD np _, [k, x]) -> do 
+        (CEncStAEAD np _, [k, x, _]) -> do 
             n <- flattenPath np
-            return (RcVecU8, owlpretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "mut_state." ++ rustifyName n)])
-        (CDecStAEAD, [k, n, c]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
+            let encOp = owlpretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "&mut mut_state." ++ rustifyName n)]
+            let unwrapped = 
+                    owlpretty "match" <+> encOp <+> braces (
+                        owlpretty "Ok(ctxt) => ctxt," <> line <>
+                        owlpretty "Err(e) => { return Err(e) },"
+                    )
+            return (RcVecU8, unwrapped)
+        (CDecStAEAD, [k, _, c, n]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
         (CPKEnc, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkenc" [k, x])
         (CPKDec, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkdec" [k, x])
         (CMac, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_mac" [k, x])
@@ -711,13 +717,13 @@ extractExpr inK loc binds (CIncCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
     let incr = 
-            owlpretty "if" <+> ctrName <> owlpretty "> usize::MAX - 1 { return Err(OwlError::IntegerOverflow); }" <> owlpretty ";" <> line <> 
+            owlpretty "if" <+> ctrName <+> owlpretty "> usize::MAX - 1 { return Err(OwlError::IntegerOverflow); }" <> owlpretty ";" <> line <> 
             ctrName <+> owlpretty "=" <+> ctrName <+> owlpretty "+ 1;"
     return (binds, Unit, owlpretty "", line <> incr)
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
-    return (binds, Unit, owlpretty "", ctrName)
+    return (binds, Number, owlpretty "", ctrName)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad String
@@ -898,7 +904,7 @@ preprocessModBody mb = do
         sortCtr lookupLoc locMap (name, b) = do
             let ((sids, pids), Locality locP _) = unsafeUnbind b
             case (sids, pids) of
-                ([], []) -> do
+                ([], _) -> do
                     locName <- lookupLoc =<< flattenPath locP
                     let f (i, l, s, d, t, c) = (i, l, s, d, t, c ++ [name])
                     return $ M.adjust f locName locMap
@@ -1096,9 +1102,9 @@ entryPoint locMap sharedNames pubKeys mainNames = do
     sharedNameInits <- mapM genSharedNameInit sharedNames
     let salt = genSalt
     let writeConfigs = map (writeConfig (map (\(p,_,_) -> p) pubKeys)) $ M.assocs locMap
-    let idxLocCounts = map genIdxLocCount $ M.assocs locMap
+    -- let idxLocCounts = map genIdxLocCount $ M.assocs locMap
     let config = owlpretty "if" <+> (hsep . punctuate (owlpretty " && ") . map owlpretty $ ["args.len() >= 3", "args[1] == \"config\""]) <>
-            (braces . vsep $ [vsep idxLocCounts, vsep sharedNameInits, salt, vsep writeConfigs]) <> owlpretty "else"
+            (braces . vsep $ [{- vsep idxLocCounts, -} vsep sharedNameInits, salt, vsep writeConfigs]) <> owlpretty "else"
     allLocsMainNames <- mapM (\l -> do
                                     let nSidArgs = mainNames M.!? l
                                     case nSidArgs of
@@ -1113,22 +1119,22 @@ entryPoint locMap sharedNames pubKeys mainNames = do
         braces (owlpretty "println!(\"Incorrect usage\");") <> line <>
         rbrace <> line <> line 
     where
-        genIdxLocCount (lname, (npids,_,_,_,_,_)) =
-            if npids == 0 then owlpretty "" else
-                owlpretty "let n_" <> owlpretty (locName lname) <+> owlpretty "= get_num_from_cmdline" <> (parens . dquotes $ owlpretty lname) <> owlpretty ";"
+        -- genIdxLocCount (lname, (npids,_,_,_,_,_)) =
+        --     if npids == 0 then owlpretty "" else
+        --         owlpretty "let n_" <> owlpretty (locName lname) <+> owlpretty "= get_num_from_cmdline" <> (parens . dquotes $ owlpretty lname) <> owlpretty ";"
 
         genSharedNameInit ((name, nt, _), locs) = do
             let rName = rustifyName name
             let nTotalPids = sum . map snd $ locs
-            if nTotalPids == 0 then
+            if nTotalPids == 0 || nTotalPids == 1 then
                 nameInit name nt
-            else if nTotalPids == 1 then do
-                idxLocName <- case find (\(_,n) -> n == 1) locs of
-                                Just (l,_) -> return l
-                                Nothing -> throwError $ ErrSomethingFailed "should be unreachable"
-                ni <- nameInit "tmp" nt
-                return $ owlpretty "let mut" <+> owlpretty (rustifyName name) <+> owlpretty "= HashMap::new();" <> line <>
-                    owlpretty "for i in 0..n_" <> owlpretty (locName idxLocName) <> braces (ni <+> owlpretty (rustifyName name) <> owlpretty ".insert(i, owl_tmp);")
+            -- else if nTotalPids == 1 then do
+            --     idxLocName <- case find (\(_,n) -> n == 1) locs of
+            --                     Just (l,_) -> return l
+            --                     Nothing -> throwError $ ErrSomethingFailed "should be unreachable"
+            --     ni <- nameInit "tmp" nt
+            --     return $ owlpretty "let mut" <+> owlpretty (rustifyName name) <+> owlpretty "= HashMap::new();" <> line <>
+            --         owlpretty "for i in 0..n_" <> owlpretty (locName idxLocName) <> braces (ni <+> owlpretty (rustifyName name) <> owlpretty ".insert(i, owl_tmp);")
             else throwError $ UnsupportedSharedIndices "can't have a name shared by multiple PID-parameterized localities"
 
         genSalt = owlpretty "let" <+> owlpretty "salt" <+> owlpretty "=" <+> owlpretty "owl_util::gen_rand_bytes(64);" -- use 64 byte salt
@@ -1143,8 +1149,8 @@ entryPoint locMap sharedNames pubKeys mainNames = do
             owlpretty "let" <+> owlpretty (cfgName loc) <> owlpretty "_config_serialized" <+> owlpretty "=" <+>
                     owlpretty "serialize_" <> owlpretty (cfgName loc) <> owlpretty "_config" <> parens (owlpretty "&" <> owlpretty (cfgName loc) <> owlpretty "_config") <> owlpretty ";" <> line <>
             owlpretty "let mut" <+> owlpretty (cfgName loc) <> owlpretty "_f" <+> owlpretty "=" <+>
-                owlpretty "fs::File::create(format!(\"{}/{}" <> (if npids == 0 then owlpretty "" else owlpretty "_{}") <> owlpretty ".owl_config\", &args[2]," <+>
-                    dquotes (owlpretty (cfgName loc)) <> (if npids == 0 then owlpretty "" else owlpretty ",i") <> owlpretty ")).expect(\"Can't create config file\");" <> line <>
+                owlpretty "fs::File::create(format!(\"{}/{}" {- <> (if npids == 0 then owlpretty "" else owlpretty "_{}") -} <> owlpretty ".owl_config\", &args[2]," <+> 
+                    dquotes (owlpretty (cfgName loc)) {- <> (if npids == 0 then owlpretty "" else owlpretty ",i") -} <> owlpretty ")).expect(\"Can't create config file\");" <> line <>
             owlpretty (cfgName loc) <> owlpretty "_f" <> owlpretty ".write_all" <> parens (owlpretty (cfgName loc) <> owlpretty "_config_serialized.as_bytes()")
                                 <> owlpretty ".expect(\"Can't write config file\");"
             -- (if npids == 0 then owlpretty "" else rbrace)

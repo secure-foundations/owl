@@ -171,13 +171,15 @@ pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Rc<Vec<u8>>)
 
 
 #[verifier(external_body)]
-pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Rc<Vec<u8>>)
+pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: &mut usize) -> (res: Result<Rc<Vec<u8>>, OwlError>)
     ensures
-        ctxt@ == enc_with_nonce(k@, msg@, nonce)
+        res.is_Ok() ==> (res.get_Ok_0()@, *nonce) == enc_with_nonce(k@, msg@, *old(nonce)),
+        // *nonce == *old(nonce) + 1,
 {
+    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(nonce_size(), 0u8);
-    match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], &[]) {
+    let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], &[]) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
@@ -187,7 +189,9 @@ pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: usize) -> (ctxt: Rc<
             // dbg!(e);
             rc_new(vec![])
         }
-    }
+    };
+    *nonce += 1;
+    Ok(res)
 }
 
 #[verifier(external_body)]

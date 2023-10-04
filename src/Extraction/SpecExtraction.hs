@@ -204,10 +204,10 @@ extractCryptOp op owlArgs = do
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        (CEncStAEAD np _, [k, x]) -> do
+        (CEncStAEAD np _, [k, x, _]) -> do
             n <- flattenPath np
-            return $ noSamp "enc_with_nonce" [k, x, owlpretty "mut_state." <> owlpretty (rustifyName n)]
-        (CDecStAEAD, [k, n, c]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
+            return $ noSamp "enc_with_nonce" [k, x, owlpretty (rustifyName n)]
+        (CDecStAEAD, [k, _, c, n]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
         (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]
@@ -280,10 +280,10 @@ extractExpr (CCase a xs) = do
     return $ parens $ owlpretty "case" <+> parens a' <> line <> braces (vsep pcases)
 extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
-extractExpr (CIncCtr p ([], [])) = do
+extractExpr (CIncCtr p ([], _)) = do
     p' <- flattenPath p
     return $ parens $ parens (owlpretty "inc_counter" <> tupled [owlpretty (rustifyName p')])
-extractExpr (CGetCtr p ([], [])) = do
+extractExpr (CGetCtr p ([], _)) = do
     p' <- flattenPath p
     return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c

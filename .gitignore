@@ -7,4 +7,5 @@ stack.yaml.lock
 main
 *.owl_config
 .owl-log/
+.z3log/
 *.smtcache
