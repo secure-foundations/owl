@@ -171,15 +171,15 @@ pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Rc<Vec<u8>>)
 
 
 #[verifier(external_body)]
-pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: &mut usize) -> (res: Result<Rc<Vec<u8>>, OwlError>)
+pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Rc<Vec<u8>>, OwlError>)
     ensures
-        res.is_Ok() ==> (res.get_Ok_0()@, *nonce) == enc_with_nonce(k@, msg@, *old(nonce)),
+        res.is_Ok() ==> (res.get_Ok_0()@, *nonce) == enc_st_aead(k@, msg@, *old(nonce), aad@),
         // *nonce == *old(nonce) + 1,
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(nonce_size(), 0u8);
-    let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], &[]) {
+    let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
@@ -195,9 +195,9 @@ pub exec fn owl_enc_with_nonce(k: &[u8], msg: &[u8], nonce: &mut usize) -> (res:
 }
 
 #[verifier(external_body)]
-pub exec fn owl_dec_with_nonce(k: &[u8], nonce: usize, c: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
+pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: usize, aad: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        view_option(x) == dec_with_nonce(k@, nonce, c@)
+        view_option(x) == dec_st_aead(k@, c@, nonce, aad@)
         // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
         //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
         // dec(k@, c@).is_None() ==> x.is_None(),
@@ -205,7 +205,7 @@ pub exec fn owl_dec_with_nonce(k: &[u8], nonce: usize, c: &[u8]) -> (x: Option<R
 {
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(nonce_size(), 0u8);
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &iv, &[]) {
+    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &iv, aad) {
         Ok(p) => Some(rc_new(p)),
         Err(_e) => {
             // dbg!(e);

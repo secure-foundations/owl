@@ -1,32 +1,36 @@
 locality alice : 1
 locality bob : 1
 
-func f 
-    arity 0
+// func f 
+//     arity 0
 
 name X<@i> : nonce @ alice<i>
+name aad_val<@i> : nonce @ alice<i>
+corr<i> adv ==> [aad_val<@i>]
 counter N<@i> @ alice<i>
 counter M<@i> @ bob<i>
 name k<@i> : st_aead Name(X<@i>)
-    aad x. (x == f())
+    aad x. (x == get(aad_val<@i>))
     nonce N
     nonce_pattern *
     @ alice<i>
 
-def tst<@i>() @ alice<i> : Unit = 
+def alice_main<@i>() @ alice<i> : Unit = 
     inc_counter N<@i>;
     let x = get_counter N<@i> in 
-    assert (aad(k<@i>)[f()]);
-    let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), f()) in 
-    output c;
+    assert (aad(k<@i>)[get(aad_val<@i>)]);
+    let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), get(aad_val<@i>)) in 
+    output c to endpoint(alice<i>);
     corr_case k<@i> in
     input h in 
     case st_aead_dec(get(k<@i>), c, h, x) {
      | None => ()
      | Some _y => 
-        let y : if sec(k<@i>) then (_:Name(X<@i>){h == f()}) else Data<adv> = _y in
+        let y : if sec(k<@i>) then (_:Name(X<@i>){h == get(aad_val<@i>)}) else Data<adv> = _y in
         ()
     }
+
+def bob_main<@i>() @ bob<i> : Unit = ()
 
     
 

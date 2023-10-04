@@ -458,16 +458,16 @@ extractCryptOp binds op owlArgs = do
             let encOp = owlpretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (RcVecU8, genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec" [k, x])
-        (CEncStAEAD np _, [k, x, _]) -> do 
+        (CEncStAEAD np _, [k, x, aad]) -> do 
             n <- flattenPath np
-            let encOp = owlpretty $ printOwlOp "owl_enc_with_nonce" [k, x, (Number, "&mut mut_state." ++ rustifyName n)]
+            let encOp = owlpretty $ printOwlOp "owl_enc_st_aead" [k, x, (Number, "&mut mut_state." ++ rustifyName n), aad]
             let unwrapped = 
                     owlpretty "match" <+> encOp <+> braces (
                         owlpretty "Ok(ctxt) => ctxt," <> line <>
                         owlpretty "Err(e) => { return Err(e) },"
                     )
             return (RcVecU8, unwrapped)
-        (CDecStAEAD, [k, _, c, n]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec_with_nonce" [k, n, c])
+        (CDecStAEAD, [k, c, aad, n]) -> do return (Option RcVecU8, owlpretty $ printOwlOp "owl_dec_st_aead" [k, c, n, aad])
         (CPKEnc, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkenc" [k, x])
         (CPKDec, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_pkdec" [k, x])
         (CMac, [k, x]) -> do return (RcVecU8, owlpretty $ printOwlOp "owl_mac" [k, x])

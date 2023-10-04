@@ -204,10 +204,10 @@ extractCryptOp op owlArgs = do
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        (CEncStAEAD np _, [k, x, _]) -> do
+        (CEncStAEAD np _, [k, x, aad]) -> do
             n <- flattenPath np
-            return $ noSamp "enc_with_nonce" [k, x, owlpretty (rustifyName n)]
-        (CDecStAEAD, [k, _, c, n]) -> do return $ noSamp "dec_with_nonce" [k, n, c]
+            return $ noSamp "enc_st_aead" [k, x, owlpretty (rustifyName n), aad]
+        (CDecStAEAD, [k, c, aad, n]) -> do return $ noSamp "dec_st_aead" [k, c, n, aad]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
         (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]

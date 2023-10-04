@@ -129,18 +129,18 @@ pub closed spec(checked) fn mac_vrfy(mackey: Seq<u8>, msg: Seq<u8>, mac: Seq<u8>
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn enc_with_nonce_inner(k: Seq<u8>, x: Seq<u8>, nonce: usize) -> (c: Seq<u8>)
+pub closed spec(checked) fn enc_st_aead_inner(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (c: Seq<u8>)
 { unimplemented!() }
 
-pub open spec(checked) fn enc_with_nonce(k: Seq<u8>, x: Seq<u8>, nonce: usize) -> 
+pub open spec(checked) fn enc_st_aead(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad: Seq<u8>) -> 
     (res: (Seq<u8>, usize))
 { 
     // We ignore the possibility of overflow here
-    (enc_with_nonce_inner(k,x,nonce), #[verifier::truncate] ((nonce + 1usize) as usize))
+    (enc_st_aead_inner(k,x,nonce, aad), #[verifier::truncate] ((nonce + 1usize) as usize))
 }
 
 #[verifier(external_body)]
-pub open spec(checked) fn dec_with_nonce(k: Seq<u8>, nonce: usize, c: Seq<u8>) -> (x: Option<Seq<u8>>)
+pub open spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
 { unimplemented!() }
 
 pub open spec fn andb(x: bool, y: bool) -> bool
@@ -484,9 +484,9 @@ pub mod itree {
             ($($e)*)
                 .bind( |tmp : (_, $mut_type)| ITree::Ret(tmp) )
         }};
-        ($mut_state:ident, $mut_type:ident, ret (enc_with_nonce($k:expr, $x:expr, $nonce:ident))) => { verus_proof_expr!{
+        ($mut_state:ident, $mut_type:ident, ret (enc_st_aead($k:expr, $x:expr, $nonce:ident, $aad:expr))) => { verus_proof_expr!{
             {
-                let (c, new_nonce) = enc_with_nonce($k, $x, $mut_state.$nonce);
+                let (c, new_nonce) = enc_st_aead($k, $x, $mut_state.$nonce, $aad);
                 ITree::Ret((c, $mut_type {$nonce: new_nonce, .. $mut_state}))
             }
         }};
