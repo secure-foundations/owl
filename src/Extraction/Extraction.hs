@@ -539,7 +539,6 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                 Just (adt, rt, needsParse, f) -> do
                     if needsParse && length args == 1 then do
                         -- We are in a case requiring parsing. Check if we have already parsed 
-                        -- let arg = head args
                         resolvedArgs <- mapM (resolveANF binds) owlArgs
                         debugPrint $ owlpretty adt <> tupled (map owlpretty resolvedArgs)
                         oopt <- lookupAdtCall (adt, resolvedArgs)
