@@ -1403,11 +1403,12 @@ parseParam =
         return $ ParamTy t)
     <|>
     (try $ do
-        reserved "idx"
-        ot <- try $ optionMaybe $ do
-            alt 
-                (symbol "session" >> return IdxSession)
-                (symbol "pid" >> return IdxPId)
+        ot <- try $ 
+            (reserved "idx" >> return Nothing)
+            <|>
+            (reserved "session" >> (return $ Just IdxSession))
+            <|>
+            (reserved "pid" >> (return $ Just IdxPId))
         i <- parseIdx
         return $ ParamIdx i ot)
     <|>

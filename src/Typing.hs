@@ -1939,7 +1939,9 @@ checkROHint (p, (is, ps), args) = local (set tcScope TcGhost) $ do
     return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs args) $ (pre_, req_, nts_) 
 
 findGoodROHint :: AExpr -> Int -> [((AExpr, Prop, [NameType]), ROHint)] -> Check NameExp
-findGoodROHint a _ [] = typeError $ "Cannot prove " ++ show (owlpretty a) ++ " matches given hints"
+findGoodROHint a _ [] = do
+    a' <- resolveANF a
+    typeError $ "Cannot prove " ++ show (owlpretty a') ++ " matches given hints"
 findGoodROHint a i (((a', p', _), (pth, inds, args)) : xs) = do
     (_, b) <- SMT.smtTypingQuery "findGoodROHint" $ SMT.symAssert $ pAnd p' (pEq a a')
     if b then return (mkSpanned $ NameConst inds pth (Just (args, i))) else findGoodROHint a i xs
