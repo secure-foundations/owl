@@ -53,7 +53,7 @@ name msg1_C1 : RO[e_init] strict crh(construction()) ++ e_init -> nonce
     uniqueness_by ()
 
 
-counter aead_counter_msg1_C2<@n> @ Initiator<n>
+counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 name msg1_C2<@n,m> : RO[e_init] strict{0} get(msg1_C1[e_init;0]) ++ dh_combine(e_init, get(S_resp<@m>)) -> nonce || 
     st_aead dhpk(S_init<@n>)
@@ -67,7 +67,7 @@ name msg1_C2<@n,m> : RO[e_init] strict{0} get(msg1_C1[e_init;0]) ++ dh_combine(e
 
 type Empty = (x:Data<adv>{false})
 
-counter aead_counter_msg1_C3<@n> @ Initiator<n>
+counter aead_counter_msg1_C3<i@n> @ Initiator<n>
 
 predicate valid_init_ephemeral<n>(x) = exists i:idx. x == dhpk(get(E_init<i@n>))
 
@@ -101,7 +101,7 @@ get(msg2_C5<@n,m>[e_init,e_resp, ss;0]) ++ dh_combine(e_resp, get(S_init<@n>)) -
     uniqueness_by { disjoint_not_eq_lemma(get(msg2_C5<i,j@n,m>[;0]), crh(construction())); () }
 
 
-counter aead_counter_msg2_C7<@m> @ Responder<m>
+counter aead_counter_msg2_C7<j@m> @ Responder<m>
 
 
 predicate valid_resp_ephemeral<m>(x) = exists j:idx. x == dhpk(get(E_resp<j@m>))
@@ -137,10 +137,10 @@ type payload_i2r = Data<adv /\ [channel_secret], |adv|>
 type payload_r2i = Data<adv /\ [channel_secret], |adv|>
 */
 
-counter N_init_send<@n> @ Initiator<n>
-counter N_init_recv<@n> @ Initiator<n>
-counter N_resp_send<@m> @ Responder<m>
-counter N_resp_recv<@m> @ Responder<m>
+counter N_init_send<i@n> @ Initiator<n>
+counter N_init_recv<i@n> @ Initiator<n>
+counter N_resp_send<j@m> @ Responder<m>
+counter N_resp_recv<j@m> @ Responder<m>
 
 // T_init_send = T_resp_recv || T_resp_send = T_init_recv
 name transp_T<@n,m> : RO[e_init, e_resp, ss] get(msg2_C7<@n,m>[e_init, e_resp, ss;0]) ++ 0x -> 
@@ -283,13 +283,13 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let C2 = hash<msg1_C2<@n,m>[e_init];0>(C1, dh_combine(dhpk_S_resp, get(E_init<i@n>))) in
     let k0 = hash<msg1_C2<@n,m>[e_init];1>(C1, dh_combine(dhpk_S_resp, get(E_init<i@n>))) in
     let msg1_static : Data<adv> |cipherlen(|group|)|
-        = st_aead_enc<aead_counter_msg1_C2<@n>>(k0, dhpk(get(S_init<@n>)), H2) in 
+        = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, dhpk(get(S_init<@n>)), H2) in 
     let H3 = crh(H2 ++ msg1_static) in
     let C3 = hash<msg1_C3<@n,m>[e_init];0>(C2, dh_combine(dhpk_S_resp, get(S_init<@n>))) in
     let k1 = hash<msg1_C3<@n,m>[e_init];1>(C2, dh_combine(dhpk_S_resp, get(S_init<@n>))) in
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp : Data<adv> |cipherlen(12)| =
-        st_aead_enc<aead_counter_msg1_C3<@n>>(k1, timestamp, H3) in 
+        st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
     let H4 = crh(H3 ++ timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
@@ -492,7 +492,7 @@ def generate_msg2<j@n,m> (msg1_val:
     let k0 = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];2>(C6, psk) in
     let H6 = crh(H5 ++ tau) in
     let emptystring = 0x in
-    let msg2_empty = st_aead_enc<aead_counter_msg2_C7<@m>>(k0, emptystring, H6) in
+    let msg2_empty = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, emptystring, H6) in
     let H7 = crh(H6 ++ msg2_empty) in
     let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
     let msg2_reserved = padding() in 
@@ -532,7 +532,7 @@ def transp_send_init<i> (transp_keys_val : (x:transp_keys{valid_transp_keys_init
     let transp_reserved = padding() in 
     guard eq(length(transp_receiver), 4) in 
 
-    let transp_packet = st_aead_enc<N_init_send>(i2r, plaintext, 0x) in
+    let transp_packet = st_aead_enc<N_init_send<i@n>>(i2r, plaintext, 0x) in
 
     let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in
@@ -583,7 +583,7 @@ def transp_send_resp (transp_keys_val : transp_keys_resp_t, plaintext : Data<adv
     let transp_reserved = padding() in 
     guard eq(length(transp_receiver), 4) in 
 
-    let transp_packet = st_aead_enc<N_resp_send>(r2i, plaintext, 0x) in
+    let transp_packet = st_aead_enc<N_resp_send<j@m>>(r2i, plaintext, 0x) in
 
     let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in
