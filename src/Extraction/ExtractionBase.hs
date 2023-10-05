@@ -81,7 +81,7 @@ data Env = Env {
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
     _enums :: M.Map (S.Set String) String,
-    _oracles :: M.Map String (String, M.Map Int (String, String)), -- how to print the output length, where to slice to get the subparts
+    _oracles :: M.Map String ([String], M.Map Int ([String], [String])), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
@@ -296,16 +296,16 @@ hmacLen = 64
 
 initLenConsts :: M.Map String Int
 initLenConsts = M.fromList [
-        ("owl_signature", 256),
-        ("owl_enckey", aeadKeySize defaultCipher),
-        ("owl_nonce", aeadNonceSize defaultCipher),
-        ("owl_mackey", hmacKeySize),
-        ("owl_maclen", hmacLen),
-        ("owl_pkekey", pkeKeySize),
-        ("owl_sigkey", sigKeySize),
-        ("owl_vk", vkSize),
-        ("owl_DH", dhSize),
-        ("owl_tag", 1)
+        (rustifyName "signature", 256),
+        (rustifyName "enckey", aeadKeySize defaultCipher),
+        (rustifyName "nonce", aeadNonceSize defaultCipher),
+        (rustifyName "mackey", hmacKeySize),
+        (rustifyName "maclen", hmacLen),
+        (rustifyName "pkekey", pkeKeySize),
+        (rustifyName "sigkey", sigKeySize),
+        (rustifyName "vk", vkSize),
+        (rustifyName "DH", dhSize),
+        (rustifyName "tag", 1)
     ]
 
 initTypeLayouts :: M.Map String Layout

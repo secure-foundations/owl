@@ -210,7 +210,7 @@ extractCryptOp op owlArgs = do
                 Just p -> return p
             return $ 
                 owlpretty "ret" <> parens 
-                    (owlpretty "kdf" <> tupled [parens (pretty (map toUpper outLen)) <> owlpretty " as usize", x] <> owlpretty ".subrange" <> tupled [owlpretty (map toUpper start), owlpretty (map toUpper end)])
+                    (owlpretty "kdf" <> tupled [parens (printOrclLen outLen) <> owlpretty " as usize", x] <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -227,6 +227,7 @@ extractCryptOp op owlArgs = do
         (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     where
         noSamp name args = owlpretty "ret" <> parens (owlpretty name <> tupled args)
+        printOrclLen = owlpretty . intercalate "+" . map (\x -> if x == "0" then "0" else specLenConsts M.! x) 
 
 -- the Bool arg is whether the case has arguments
 specCaseName :: Bool -> String -> String

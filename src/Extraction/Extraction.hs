@@ -447,13 +447,17 @@ extractCryptOp binds op owlArgs = do
             orcls <- use oracles
             (outLen, sliceIdxs) <- case orcls M.!? roname of
                 Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
-                Just outLen -> return outLen
+                Just (outLen', sliceIdxs) -> do
+                    outLen'' <- mapM printLenConst outLen'
+                    return (intercalate "+" outLen'', sliceIdxs)
             (start, end) <- case sliceIdxs M.!? i of
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
-                Just p -> return p
+                Just (s', e') -> do
+                    s'' <- mapM printLenConst s'
+                    e'' <- mapM printLenConst e'
+                    return (intercalate "+" s'', intercalate "+" e'')
             -- Check if we have already evaluated this RO; if not, evaluate it
             resolvedArgs <- mapM (resolveANF binds) owlArgs
-            debugPrint $ owlpretty roname <> tupled (map owlpretty resolvedArgs)
             oopt <- lookupHashCall (roname, resolvedArgs)
             (genOrcl, orclName) <- case oopt of
                 Just (RcVecU8, name) -> return (pretty "", name)
@@ -502,6 +506,11 @@ extractCryptOp binds op owlArgs = do
         (CSigVrfy, [k, x, v]) -> do return (Option RcVecU8, owlpretty "", owlpretty $ printOwlOp "owl_vrfy" [k, x, v])
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
     return (rt, preArgs <> line <> preCryptOp, str)
+    where 
+        printLenConst "0" = return "0"
+        printLenConst "nonce" = return "nonce_size()"
+        printLenConst "enckey" = return "key_size()"
+        printLenConst s = throwError $ UndefinedSymbol $ "unrecognized oracle length const: " ++ s
 
 
 extractAExpr :: M.Map String (RustTy, Maybe AExpr) -> AExprX -> ExtractionMonad (RustTy, OwlDoc, OwlDoc)
@@ -789,9 +798,9 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     let (Locality lpath _) = loc
     lname <- flattenPath lpath
     concreteBody <- concretify owlBody
-    debugPrint $ owlpretty concreteBody
+    -- debugPrint $ owlpretty concreteBody
     anfBody <- concretify =<< ANF.anf owlBody
-    debugPrint $ owlpretty anfBody
+    -- debugPrint $ owlpretty anfBody
     rustArgs <- mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
@@ -937,13 +946,13 @@ preprocessModBody mb = do
                 let (_, (arg, _, rtys)) = unsafeUnbind b
                 (totLen, sliceMap) <- foldM (\(t, m) (i, rty) -> do
                         rtstr <- case rty ^. val of
-                            NT_Nonce -> return "nonce_size()"
-                            NT_Enc _ -> return "key_size()"
-                            NT_StAEAD {} -> return "key_size()"
+                            NT_Nonce -> return "nonce"
+                            NT_Enc _ -> return "enckey"
+                            NT_StAEAD {} -> return "enckey"
                             _ -> throwError $ UnsupportedOracleReturnType name
-                        return (t ++ [rtstr], M.insert i (intercalate "+" t, intercalate "+" $ t ++ [rtstr]) m)
+                        return (t ++ [rtstr], M.insert i (t, t ++ [rtstr]) m)
                     ) (["0"], M.empty) (zip [0..] rtys)
-                oracles %= M.insert name (intercalate "+" totLen, sliceMap)
+                oracles %= M.insert name (totLen, sliceMap)
                 return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
               TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
