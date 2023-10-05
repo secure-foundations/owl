@@ -143,6 +143,7 @@ initDetFuncs = withNormalizedTys $ [
           ([], [(x, t)]) -> do
               return $ TOption t
           ([ParamTy t], [(x, t1)]) -> do
+              checkTy t
               b <- isSubtype t1 t
               l <- coveringLabel t1
               if b then return (TOption t) else return (TData l l $ ignore (Just $ "error on Some")) 
@@ -150,6 +151,7 @@ initDetFuncs = withNormalizedTys $ [
     ("None", (0, \ps args -> do
         case (ps, args) of
           ([ParamTy t], []) -> do
+              checkTy t
               return (TOption t)
           _ -> typeError $ show $ ErrBadArgs "None" (map snd args))),
     ("andb", (2, \ps args -> do
@@ -1244,10 +1246,8 @@ checkProp p =
               (x, p) <- unbind xp
               withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp p 
           PApp s is xs -> do
-              -- TODO: check arity is correct
-              mapM_ checkIdx is
-              _ <- mapM inferAExpr xs
-              return ()
+              p <- extractPredicate s is xs
+              checkProp p
           PAADOf ne x -> do
               _ <- inferAExpr x
               ni <- getNameInfo ne
