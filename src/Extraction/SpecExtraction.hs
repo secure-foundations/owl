@@ -12,6 +12,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
+import Data.Char
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Reader
@@ -198,9 +199,18 @@ extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad OwlDoc
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        (CHash _ _, [x]) -> do
-            debugPrint "TODO CHash args"
-            return $ noSamp "kdf" [x]
+        (CHash ((ropath,_,_):_) i, [x]) -> do
+            roname <- flattenPath ropath
+            orcls <- use oracles
+            (outLen, sliceIdxs) <- case orcls M.!? roname of
+                Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
+                Just p -> return p
+            (start, end) <- case sliceIdxs M.!? i of
+                Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
+                Just p -> return p
+            return $ 
+                owlpretty "ret" <> parens 
+                    (owlpretty "kdf" <> tupled [parens (pretty (map toUpper outLen)) <> owlpretty " as usize", x] <> owlpretty ".subrange" <> tupled [owlpretty (map toUpper start), owlpretty (map toUpper end)])
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -239,14 +249,14 @@ extractExpr (COutput a l) = do
         s' <- extractEndpoint s
         return $ owlpretty "to" <+> parens s'
     return $ parens $ owlpretty "output " <> parens a' <+> l'
-extractExpr (CLet (COutput a l) xk) = do
+extractExpr (CLet (COutput a l) _ xk) = do
     let (_, k) = unsafeUnbind xk
     o <- extractExpr (COutput a l)
     k' <- extractExpr k
     return $ o <+> owlpretty "in" <> line <> k'
-extractExpr (CLet CSkip xk) =
+extractExpr (CLet CSkip _ xk) =
     let (_, k) = unsafeUnbind xk in extractExpr k
-extractExpr (CLet e xk) = do
+extractExpr (CLet e _ xk) = do
     let (x, k) = unsafeUnbind xk
     e' <- extractExpr e
     k' <- extractExpr k

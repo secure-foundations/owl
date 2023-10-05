@@ -89,7 +89,7 @@ data CExpr =
     CSkip
     | CInput (Bind (DataVar, EndpointVar) CExpr)
     | COutput AExpr (Maybe Endpoint)
-    | CLet CExpr (Bind DataVar CExpr)
+    | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
     | CIf AExpr CExpr CExpr
     | CRet AExpr
     | CCall Path ([Idx], [Idx]) [AExpr]
@@ -112,11 +112,11 @@ concretify e =
           c <- concretify e
           return $ CInput $ bind xe c
       EOutput a eo -> return $ COutput a eo
-      ELet e1 _ _ _ xk -> do
+      ELet e1 _ oanf _ xk -> do
           e1' <- concretify e1
           let (x, k) = unsafeUnbind xk
           k' <- concretify k
-          return $ CLet e1' (bind x k')
+          return $ CLet e1' oanf (bind x k')
       EUnionCase a s xk -> do
           (x, k) <- unbind xk
           k' <- concretify k
@@ -151,7 +151,7 @@ concretify e =
                     k' <- concretify k
                     return (c, Right $ bind x k')
           avar <- fresh $ s2n "caseval"
-          return $ CLet a' (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
+          return $ CLet a' Nothing (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
       EPCase _ _ k -> concretify k
       EFalseElim e -> concretify e
       ETLookup n a -> return $ CTLookup n a
@@ -192,13 +192,13 @@ instance OwlPretty CExpr where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CInput xsk) = 
         let (x, sk) = owlprettyBind xsk in
-        owlpretty "input" <+> x <> comma <+> sk
+        owlpretty "input" <+> x <> pretty ";" <+> sk
     owlpretty (COutput a l) = owlpretty "output " <> owlpretty a <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
-    owlpretty (CLet e xk) =
+    owlpretty (CLet e oanf xk) =
         let (x, k) = owlprettyBind xk in
-        owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
+        owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
     owlpretty (CIf a e1 e2) =
         owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
     owlpretty (CRet a) = owlpretty "ret " <> owlpretty a

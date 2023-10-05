@@ -132,7 +132,8 @@ pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Rc<Vec<u8>>)
 
 #[verifier(external_body)]
 pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h: Rc<Vec<u8>>) 
-    ensures h@ == kdf(ikm@)
+    ensures h@ == kdf(len@, ikm@),
+            h@.len() == len
 {
     rc_new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
 }

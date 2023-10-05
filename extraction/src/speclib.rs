@@ -109,7 +109,7 @@ pub closed spec(checked) fn dh_combine(pubkey: Seq<u8>, privkey: Seq<u8>) -> (ss
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn kdf(x: Seq<u8>) -> (h: Seq<u8>)
+pub closed spec(checked) fn kdf(len: usize, x: Seq<u8>) -> (h: Seq<u8>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -484,6 +484,7 @@ pub mod itree {
             ($($e)*)
                 .bind( |tmp : (_, $mut_type)| ITree::Ret(tmp) )
         }};
+        // special case handling of `enc_st_aead`, which needs to increment the nonce counter, and so is stateful
         ($mut_state:ident, $mut_type:ident, ret (enc_st_aead($k:expr, $x:expr, $nonce:ident, $aad:expr))) => { verus_proof_expr!{
             {
                 let (c, new_nonce) = enc_st_aead($k, $x, $mut_state.$nonce, $aad);

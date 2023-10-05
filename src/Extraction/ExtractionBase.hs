@@ -81,10 +81,12 @@ data Env = Env {
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
     _enums :: M.Map (S.Set String) String,
-    _oracles :: M.Map (String, Int) String, -- how to print the output length
+    _oracles :: M.Map String (String, M.Map Int (String, String)), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
-    _curRetTy :: Maybe String -- return type of the def currently being extracted (needed for type annotations)
+    _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
+    _hashCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (roname, aexpr args), can't use M.Map with AExpr keys
+    _parseCalls :: M.Map AExpr (RustTy, String)
 }
 
 data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
@@ -382,7 +384,7 @@ initFuncs =
         ] 
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing [] M.empty
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -492,3 +494,40 @@ hexStringToByteList (h1 : h2 : t) = do
     t' <- hexStringToByteList t
     return $ owlpretty "0x" <> owlpretty h1 <> owlpretty h2 <> owlpretty "u8," <+> t'
 hexStringToByteList _ = throwError OddLengthHexConst
+
+resolveANF :: M.Map String (a, Maybe AExpr) -> AExpr -> ExtractionMonad AExpr
+resolveANF binds a = do
+    case a^.val of
+        AEVar s x -> do 
+            case binds M.!? (rustifyName . show $ x) of
+                Nothing -> throwError $ ErrSomethingFailed $ "resolveANF failed on: " ++ show x ++ ", " ++ show s 
+                Just (_, ianf) -> 
+                    case ianf of 
+                    Nothing -> return a
+                    Just a' -> resolveANF binds a'
+        AEApp f ps args -> do
+            args' <- mapM (resolveANF binds) args
+            return $ mkSpanned $ AEApp f ps args'
+        AEHex _ -> return a
+        AEPreimage f ps args -> do
+            args' <- mapM (resolveANF binds) args
+            return $ mkSpanned $ AEPreimage f ps args'
+        AEGet _ -> return a
+        AEGetEncPK _ -> return a
+        AEGetVK _ -> return a
+        AEPackIdx i a2 -> do
+            a2' <- resolveANF binds a2
+            return $ mkSpanned $ AEPackIdx i a2'
+        AELenConst _ -> return a
+        AEInt _ -> return a
+
+
+lookupHashCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
+lookupHashCall (roname, args) = do
+    hcs <- use hashCalls
+    return $ go hcs where
+        go [] = Nothing
+        go (((hro, hargs), r) : tl) =
+            if hro == roname && all (uncurry aeq) (zip args hargs)
+            then Just r
+            else go tl
