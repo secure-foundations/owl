@@ -76,7 +76,7 @@ data Env = Env {
     _hmacMode :: HMACMode,
     _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String (RustTy, [(RustTy, String)] -> ExtractionMonad String), -- return type, how to print
-    _adtFuncs :: M.Map String (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)),
+    _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
     _specAdtFuncs :: S.Set String,
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
@@ -86,7 +86,7 @@ data Env = Env {
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
     _hashCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (roname, aexpr args), can't use M.Map with AExpr keys
-    _parseCalls :: M.Map AExpr (RustTy, String)
+    _adtCalls :: [((String, [AExpr]), (RustTy, String))] -- key is (adt name, aexpr args)
 }
 
 data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
@@ -384,7 +384,7 @@ initFuncs =
         ] 
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing [] M.empty
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing [] []
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -403,7 +403,7 @@ lookupFunc fpath = do
     return $ fs M.!? f
     
 
-lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, [(RustTy, String)] -> ExtractionMonad (Maybe (String, String), String)))
+lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad String))
 lookupAdtFunc fn = do
     ufs <- use owlUserFuncs
     adtfs <- use adtFuncs
@@ -522,12 +522,19 @@ resolveANF binds a = do
         AEInt _ -> return a
 
 
+lookupStringAExprMap :: [((String, [AExpr]), a)] -> (String, [AExpr]) -> Maybe a
+lookupStringAExprMap [] (n, args) = Nothing
+lookupStringAExprMap (((ln, largs), r) : tl) (n, args) =
+    if n == ln && all (uncurry aeq) (zip args largs)
+    then Just r
+    else lookupStringAExprMap tl (n, args)
+
 lookupHashCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
-lookupHashCall (roname, args) = do
+lookupHashCall k = do
     hcs <- use hashCalls
-    return $ go hcs where
-        go [] = Nothing
-        go (((hro, hargs), r) : tl) =
-            if hro == roname && all (uncurry aeq) (zip args hargs)
-            then Just r
-            else go tl
+    return $ lookupStringAExprMap hcs k
+
+lookupAdtCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
+lookupAdtCall k = do
+    adtcs <- use adtCalls
+    return $ lookupStringAExprMap adtcs k

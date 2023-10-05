@@ -156,29 +156,29 @@ extractStruct owlName owlFields = do
         mkStructFuncs owlName parsingOutcomeName owlFields = return $
             M.fromList $
                 -- don't need to check arity
-                (owlName, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
+                (owlName, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
                         owlpretty "construct_" <> (owlpretty . rustifyName) owlName <>
                             (parens . hsep . punctuate comma . map (\(t,a) -> owlpretty "&" <> (case t of
                                 ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
                                 RcVecU8 -> parens (owlpretty "*" <> owlpretty a) <> owlpretty ".as_slice()"
                                 VecU8 -> owlpretty a <> owlpretty ".as_slice()"
                                 _ -> owlpretty a))
-                            $ args)
+                            $ args
                         ))) :
-                map (\(owlField, _) -> (owlField, (rustifyName owlName, RcVecU8, \args -> do
+                map (\(owlField, _) -> (owlField, (rustifyName owlName, RcVecU8, True, \args -> do
                     case args of
                       (ADT _, arg) : _ -> do
-                        return $ (Nothing, show $
+                        return $ show $
                             owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <> 
-                                parens (owlpretty "&mut" <+> owlpretty arg) <> owlpretty "))")
+                                parens (owlpretty "&mut" <+> owlpretty arg) <> owlpretty "))"
                       (VecU8, arg) : _ -> do
-                        return $ (Just (arg, owlName), show $
+                        return $ show $
                             owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <>
-                                parens (owlpretty "&mut" <+> owlpretty owlName) <> owlpretty "))")
+                                parens (owlpretty "&mut" <+> owlpretty arg) <> owlpretty "))"
                       (RcVecU8, arg) : _ -> do
-                        return $ (Just (arg, owlName), show $
+                        return $ show $
                             owlpretty "rc_new(slice_to_vec(get_" <> (owlpretty . rustifyName) owlField <> owlpretty "_" <> (owlpretty . rustifyName) owlName <>
-                                parens (owlpretty "&mut" <+> owlpretty owlName) <> owlpretty "))")
+                                parens (owlpretty "&mut" <+> owlpretty arg) <> owlpretty "))"
                       _ -> throwError $ TypeError $ "attempt to get from " ++ owlName ++ " with bad args"
                 ))) owlFields
 
@@ -287,7 +287,7 @@ extractStruct owlName owlFields = do
             -- TODO make this better
             owlpretty "ensures res@ ===" <+> owlpretty (unrustifyName fieldName) <> parens (owlpretty "old(arg).data@") <> line <>
             lbrace <> line <>
-            owlpretty "parse_into_" <> owlpretty name <> parens (owlpretty "arg") <> owlpretty ";" <> line <>
+            owlpretty "// parse_into_" <> owlpretty name <> parens (owlpretty "arg") <> owlpretty ";" <> line <>
             owlpretty "match arg.parsing_outcome {" <> line <>
             success_pattern <+> owlpretty "=>" <+>
                 owlpretty "slice_subrange(&(*arg.data).as_slice(), idx_" <> owlpretty structIdx <> owlpretty ", idx_" <> owlpretty (structIdx + 1) <> owlpretty ")," <> line <>
@@ -322,13 +322,13 @@ extractEnum owlName owlCases' = do
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
-                map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), \args -> return $ (Nothing, show $
+                map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
                     owlpretty "construct_" <> (owlpretty . rustifyName) owlName <> owlpretty "_" <> (owlpretty . rustifyName) owlCase <>
                         (parens . hsep . punctuate comma . map (\(t,a) -> owlpretty "&" <> (case t of
                                 ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
                                 RcVecU8 -> parens (owlpretty "*" <> owlpretty a) <> owlpretty ".as_slice()"
                                 VecU8 -> owlpretty a <> owlpretty ".as_slice()"
-                                _ -> owlpretty a)) $ args)
+                                _ -> owlpretty a)) $ args
                 )))) $ M.assocs owlCases
 
         genEnumParsingOutcomeDef parsingOutcomeName = return $
@@ -536,16 +536,31 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
         Nothing -> do
             adtf <- lookupAdtFunc =<< flattenPath owlFn
             case adtf of
-                Just (adt, rt, f) -> do
-                    resolvedArgs <- mapM (resolveANF binds) owlArgs
-                    debugPrint $ owlpretty owlFn <> tupled (map owlpretty resolvedArgs)
-                    (argvaropt, str) <- f args
-                    let s = case argvaropt of
-                            Nothing -> owlpretty ""
-                            Just (arg,var) ->
-                                owlpretty "let mut" <+> owlpretty var <+> owlpretty "=" <+> owlpretty adt <+> braces (owlpretty "data:" <+> owlpretty arg <> comma <+> owlpretty "parsing_outcome:" <+> owlpretty adt <> owlpretty "_ParsingOutcome::Failure") <> owlpretty ";" <> line <>
-                                owlpretty "// parse_into_" <> owlpretty adt <> parens (owlpretty "&mut" <+> owlpretty var) <> owlpretty ";"
-                    return (rt, preArgs <> s, owlpretty str)
+                Just (adt, rt, needsParse, f) -> do
+                    if needsParse && length args == 1 then do
+                        -- We are in a case requiring parsing. Check if we have already parsed 
+                        -- let arg = head args
+                        resolvedArgs <- mapM (resolveANF binds) owlArgs
+                        debugPrint $ owlpretty adt <> tupled (map owlpretty resolvedArgs)
+                        oopt <- lookupAdtCall (adt, resolvedArgs)
+                        (doParse, str) <- case oopt of
+                            Just arg -> do
+                                str <- f [arg]
+                                return (pretty "", str) 
+                            Nothing -> do
+                                p <- flattenPath owlFn
+                                var' <- fresh . s2n $ adt ++ "_" ++ p
+                                let var = rustifyName . show $ var'
+                                adtCalls %= (:) ((adt, resolvedArgs), (ADT adt, var))
+                                let doParse = 
+                                        owlpretty "let mut" <+> owlpretty var <+> owlpretty "=" <+> owlpretty adt <+> braces (owlpretty "data:" <+> owlpretty (map snd args) <> comma <+> owlpretty "parsing_outcome:" <+> owlpretty adt <> owlpretty "_ParsingOutcome::Failure") <> owlpretty ";" <> line <>
+                                        owlpretty "parse_into_" <> owlpretty adt <> parens (owlpretty "&mut" <+> owlpretty var) <> owlpretty ";"
+                                str <- f [(ADT adt, var)]
+                                return (doParse, str)
+                        return (rt, preArgs <> doParse, owlpretty str)
+                    else do
+                        str <- f args
+                        return (rt, preArgs, owlpretty str)
                 Nothing ->
                     throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEHex s) = do
