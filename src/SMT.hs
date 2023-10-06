@@ -170,6 +170,7 @@ mkCrossDisjointness fdfs = do
 
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()
 mkSelfDisjointness fdfs = do
+    -- TODO: factor in preqreqs?
     forM_ fdfs $ \fd -> 
         withSMTNameDef fd $ \(sn, pth) oi ((is1, ps1), xs1) _ ->  do
             withSMTNameDef fd $ \_ _ ((is2, ps2), xs2) _ -> do
