@@ -191,6 +191,7 @@ def bob (
                         let _ = output msg4_BtoA(x1') in
                         bob_Some(kab)
                     else
+                        false_elim in 
                         bob_None()
             }
     }

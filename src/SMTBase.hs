@@ -117,6 +117,7 @@ data SolverEnv = SolverEnv {
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),
+    _predInterps :: M.Map String SExp,
     _smtLog :: [SExp],
     _trivialVC :: Bool,
     _freshSMTCtr :: Int
@@ -124,7 +125,7 @@ data SolverEnv = SolverEnv {
 
 makeLenses ''SolverEnv
 
-initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
+initSolverEnv = SolverEnv M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
 
 newtype Sym a = Sym {unSym :: ReaderT Env (StateT SolverEnv (ExceptT String IO)) a }
     deriving (Functor, Applicative, Monad, MonadReader Env, MonadState SolverEnv, MonadIO)
@@ -246,6 +247,11 @@ queryZ3 logsmt filepath z3results mp q = do
     case M.lookup hq m of
       Just res -> return $ Right (res, Nothing)
       Nothing -> do 
+          ofn  <- case logsmt of
+                    False -> return Nothing
+                    True -> do
+                        b <- logSMT filepath $ q
+                        return $ Just b
           resp <- readProcessWithExitCode "z3" ["-smt2", "-st", "-in"] q
           case resp of
             (ExitSuccess, s, _) -> do                           
@@ -256,18 +262,15 @@ queryZ3 logsmt filepath z3results mp q = do
                     putStrLn q
                     return $ Left $ "Z3 ERROR: " ++ show err
                 Right z3result -> do
-                    fn <- case logsmt of
-                            False -> return Nothing
-                            True -> do
-                              b <- logSMT filepath $ q
-                              modifyIORef z3results ((b, z3result) :)
-                              return $ Just b
+                    case ofn of
+                      Nothing -> return ()
+                      Just b -> modifyIORef z3results ((b, z3result) :)
                     atomicModifyIORef' mp $ \m -> (M.insert hq (P._isUnsat z3result) m, ())
-                    return $ Right (P._isUnsat z3result, fn)
+                    return $ Right (P._isUnsat z3result, ofn)
             (_, err, _) -> return (Left err)
 
-fromSMT :: Sym () -> Sym () -> Check (Maybe String, Bool)
-fromSMT setup k = do
+fromSMT :: String -> Sym () -> Sym () -> Check (Maybe String, Bool)
+fromSMT s setup k = traceFn ("fromSMT: " ++ s) $ do
     oq <- getSMTQuery setup k
     case oq of
       Nothing -> return (Nothing, True)
@@ -411,6 +414,7 @@ lengthConstant s =
       "prfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "PRFkey"]
       "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
       "signature" -> return $ SAtom "SignatureLen"
+      "group" -> return $ SAtom "GroupLen"
       "vk" -> return $ SAtom "VKLen"
       "maclen" -> return $ SAtom "MAClen"
       "tag" -> return $ SAtom "Taglen"
@@ -460,7 +464,6 @@ interpretAExp ae' = do
           aes <- liftCheck $ getROPreimage p ps as
           interpretAExp aes
       AEGet ne -> do
-          liftCheck $ debug $ owlpretty "AEGet" <+> owlpretty ne
           symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
@@ -554,7 +557,6 @@ flattenNameDefs xs = do
             
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
-    liftCheck $ debug $ owlpretty "getSymName" <+> owlpretty ne
     ne' <- liftCheck $ normalizeNameExp ne
     case ne'^.val of
       NameConst (is1, is2) s oi -> do
@@ -569,7 +571,6 @@ getSymName ne = do
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
-    liftCheck $ debug $ owlpretty "symNameExp" <+> owlpretty ne
     n <- getSymName ne
     return $ SApp [SAtom "ValueOf", n]
 

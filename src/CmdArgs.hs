@@ -8,7 +8,7 @@ import Control.Lens
 import System.Directory
 
 data Flags = Flags { 
-    _fDebug :: Bool,
+    _fDebug :: Maybe String,
     _fLogSMT :: Bool,
     _fCleanCache :: Bool,
     _fExtract :: Bool,
@@ -26,8 +26,8 @@ makeLenses ''Flags
 parseArgs :: Parser Flags
 parseArgs = 
       Flags <$> 
-          switch
-          ( long "debug" <> short 'd' <> help "Print debugging messages" )
+      option (Just <$> str)
+          ( long "debug" <> short 'd' <> help "Log debugging messages to file" <> value Nothing )
       <*>
           switch
           ( long "log-smt" <> short 'l' <> help "Log SMT queries" )

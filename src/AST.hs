@@ -399,7 +399,7 @@ data ExprX =
     | ECall Path ([Idx], [Idx]) [AExpr]
     | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
     | EPCase Prop (Maybe Prop) Expr
-    | EFalseElim Expr
+    | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
     deriving (Show, Generic, Typeable)
@@ -445,12 +445,15 @@ data DebugCommand =
       | DebugPrintModules
     deriving (Show, Generic, Typeable)
 
+data IdxType = IdxSession | IdxPId | IdxGhost
+      deriving (Eq, Show, Generic, Typeable)
+
 data FuncParam = 
       ParamAExpr AExpr
       | ParamStr String
       | ParamLbl Label
       | ParamTy Ty
-      | ParamIdx Idx
+      | ParamIdx Idx (Maybe IdxType)
       | ParamName NameExp
       deriving (Show, Generic, Typeable)
 
@@ -511,10 +514,16 @@ instance Subst Idx NoncePattern
 instance Subst AExpr NoncePattern
 instance Subst ResolvedPath NoncePattern
 
+instance Alpha IdxType
+instance Subst Idx IdxType
+instance Subst AExpr IdxType
+instance Subst ResolvedPath IdxType
+
 instance Alpha FuncParam
 instance Subst Idx FuncParam
 instance Subst AExpr FuncParam
 instance Subst ResolvedPath FuncParam
+
 
 instance Alpha LabelX
 instance Subst Idx LabelX

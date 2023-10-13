@@ -109,13 +109,18 @@ instance  OwlPretty TyX where
             owlpretty "Data <" <> owlpretty l1 <> owlpretty ">" <+> owlpretty "|" <> owlpretty a <> owlpretty "|"
     owlpretty (TRefined t s xp) = 
         let (x, p) = owlprettyBind xp in
-        owlpretty s <> owlpretty ":" <> parens (owlpretty t) <> braces (align p)
+        owlpretty s <> owlpretty ":" <> parens (owlpretty t) <> braces (nest 6 p)
     owlpretty (TOption t) = 
             owlpretty "Option" <+> owlpretty t
     owlpretty (TCase p t1 t2) = 
             owlpretty "if" <+> owlpretty p <+> owlpretty "then" <+> owlpretty t1 <> owlpretty " else " <> owlpretty t2 
     owlpretty (TConst n ps) =
-            owlpretty n <> owlpretty "<" <> hsep (intersperse (pretty ",") (map owlpretty ps))  <> owlpretty ">"
+            let args = 
+                    case ps of 
+                      [] -> mempty
+                      _ -> owlpretty "<" <> hsep (intersperse (pretty ",") (map owlpretty ps))  <> owlpretty ">"
+            in
+            owlpretty n <> args
     owlpretty (TName n) =
             owlpretty "Name(" <> owlpretty n <> owlpretty ")"
     owlpretty (TVK n) =
@@ -212,7 +217,7 @@ instance  OwlPretty NameTypeX where
 instance  OwlPretty AExprX where
     owlpretty (AEVar s n) = owlpretty (unignore s)
     owlpretty (AEApp f _ as) = 
-        case (f, as) of
+        Prettyprinter.group $ case (f, as) of
           (PRes (PDot PTop "plus"), [x, y]) -> owlpretty x <+> owlpretty "+" <+> owlpretty y
           (PRes (PDot PTop "concat"), [x, y]) -> owlpretty x <+> owlpretty "++" <+> owlpretty y
           (PRes (PDot PTop "zero"), []) -> owlpretty "0"
@@ -307,7 +312,7 @@ instance  OwlPretty ExprX where
     owlpretty (ESetOption s1 s2 e) = owlpretty "set_option" <+> owlpretty (show s1) <+> owlpretty "=" <+> owlpretty (show s2) <+> owlpretty "in" <+> owlpretty e                                         
     owlpretty (EAssert p) = owlpretty "assert" <+> owlpretty p
     owlpretty (EAssume p) = owlpretty "assume" <+> owlpretty p
-    owlpretty (EFalseElim k) = owlpretty "false_elim in" <+> owlpretty k
+    owlpretty (EFalseElim k p) = owlpretty "false_elim in" <+> owlpretty k <+> owlpretty "when" <+> owlpretty p
     owlpretty (ETLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
     owlpretty (ETWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
     owlpretty _ = owlpretty "unimp"
@@ -327,7 +332,7 @@ instance  OwlPretty FuncParam where
     owlpretty (ParamAExpr a) = owlpretty a
     owlpretty (ParamLbl l) = owlpretty l
     owlpretty (ParamTy t) = owlpretty t
-    owlpretty (ParamIdx i) = owlpretty i
+    owlpretty (ParamIdx i _) = owlpretty i
     owlpretty (ParamName ne) = owlpretty ne
 
 instance  OwlPretty Endpoint where
