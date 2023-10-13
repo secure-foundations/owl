@@ -160,9 +160,9 @@ anf e =
       ESetOption s1 s2 k -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
-      EFalseElim k -> do 
+      EFalseElim k op -> do 
          k' <- anf k
-         return $ Spanned (e^.spanOf) $ EFalseElim k'
+         return $ Spanned (e^.spanOf) $ EFalseElim k' op
       ETLookup t a -> do
          ea <- anfAExpr a
          elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ ETLookup t $ aevar (a^.spanOf) y

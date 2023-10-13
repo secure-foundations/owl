@@ -1,0 +1,14 @@
+locality alice
+
+name n : nonce @ alice
+name m : nonce @ alice
+
+name h1 : RO[x] strict (get(n) ++ x ++ x) -> nonce
+name h2 : RO[x] strict (get(h1[x;0]) ++ get(m) ++ x) -> nonce
+
+def tst() @ alice : Unit = 
+    input i in 
+    let k1 = hash<h1[i]>(get(n) ++ i, i) in
+    let k2 = hash<h2[i]>(k1, get(m), i) in
+    assert (([h2[i;0]] <= adv) ==> ([m] <= adv) /\ ([n] <= adv))
+

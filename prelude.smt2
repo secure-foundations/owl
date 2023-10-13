@@ -212,22 +212,72 @@
     :qid hastype_enum
 )))
 
-;; TODO: move this
-(declare-const group_len Bits)
-(declare-const exponent_len Bits)
-(assert (not (= group_len (I2B 0))))
-(assert (not (= exponent_len (I2B 0))))
+
+(declare-sort Name)
+(declare-fun ValueOf (Name) Bits)
+(declare-fun TName (Name) Type)
+(assert (forall ((x Bits) (n Name)) (!
+    (= (HasType x (TName n))
+        (= TRUE (eq x (ValueOf n))))
+    :pattern (HasType x (TName n))
+    :qid hastype_name
+)))
+
+(declare-fun PRFName (Name String) Name)
+
+(declare-sort NameKind)
+(declare-fun NameKindLength (NameKind) Int)
+(declare-const Enckey NameKind)
+(declare-const Nonce NameKind)
+(assert (>= (NameKindLength Nonce) 32))
+(declare-const Sigkey NameKind)
+(declare-const DHkey NameKind)
+(declare-const PKEkey NameKind)
+(declare-const PRFkey NameKind)
+(declare-const MACkey NameKind)
+(declare-fun HasNameKind (Name NameKind) Bool)
+(assert (forall ((n Name) (k NameKind)) (!
+    (= (HasNameKind n k) (= (I2B (NameKindLength k)) (length (ValueOf n))))
+    :pattern (HasNameKind n k)
+    :qid hasnamekind_length
+)))
+
+
+(declare-const SignatureLen Int)
+(assert (> SignatureLen 0))
+
+(declare-const VKLen Int)
+(assert (> VKLen 0))
+
+(declare-const MAClen Int)
+(assert (> MAClen 0))
+
+(declare-const Taglen Int)
+(assert (> Taglen 0))
+
+(declare-const Counterlen Int)
+(assert (> Counterlen 0))
+
+(declare-const GroupLen Int)
+(assert (> GroupLen 0))
 (declare-fun dhpk (Bits) Bits)
 (declare-fun IsExponent (Bits) Bool)
 (declare-fun is_group_elem (Bits) Bits)
 (assert (forall ((x Bits)) (!
-    (=> (IsExponent x) (= (length x) exponent_len))
+    (=> (IsExponent x) (= (length x) (I2B (NameKindLength DHkey))))
     :pattern (IsExponent x)
     :qid is_exponent_length
 )))
 
+(assert (forall ((n Name)) (!
+    (=> (HasNameKind n DHkey)
+        (IsExponent (ValueOf n)))
+    :pattern (HasNameKind n DHkey)
+    :qid dhkey_isexponent
+)))
+
 (assert (forall ((x Bits)) (!
-    (=> (= TRUE (is_group_elem x)) (= (length x) group_len))
+    (=> (= TRUE (is_group_elem x)) (= (length x) (I2B GroupLen)))
     :pattern (is_group_elem x)
     :qid is_group_elem_def
 )))
@@ -262,7 +312,7 @@
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
     (=> (and (IsExponent x) (IsExponent y) (= TRUE (is_group_elem z))
              (= TRUE (eq (dh_combine z x) (dh_combine z y))))
-        (= x y))
+        (= TRUE (eq x y)))
     :pattern (eq (dh_combine z x) (dh_combine z y))
     :qid dh_combine_inj_1
 )))
@@ -284,57 +334,6 @@
     :qid dhpk_inj
  )))
 
-
-(declare-sort Name)
-(declare-fun ValueOf (Name) Bits)
-(declare-fun TName (Name) Type)
-(assert (forall ((x Bits) (n Name)) (!
-    (= (HasType x (TName n))
-        (= TRUE (eq x (ValueOf n))))
-    :pattern (HasType x (TName n))
-    :qid hastype_name
-)))
-
-(declare-fun PRFName (Name String) Name)
-
-(declare-sort NameKind)
-(declare-fun NameKindLength (NameKind) Int)
-(declare-const Enckey NameKind)
-(declare-const Nonce NameKind)
-(assert (>= (NameKindLength Nonce) 32))
-(declare-const Sigkey NameKind)
-(declare-const DHkey NameKind)
-(declare-const PKEkey NameKind)
-(declare-const PRFkey NameKind)
-(declare-const MACkey NameKind)
-(declare-fun HasNameKind (Name NameKind) Bool)
-(assert (forall ((n Name) (k NameKind)) (!
-    (= (HasNameKind n k) (= (I2B (NameKindLength k)) (length (ValueOf n))))
-    :pattern (HasNameKind n k)
-    :qid hasnamekind_length
-)))
-
-(assert (forall ((n Name)) (!
-    (=> (HasNameKind n DHkey)
-        (IsExponent (ValueOf n)))
-    :pattern (HasNameKind n DHkey)
-    :qid dhkey_isexponent
-)))
-
-(declare-const SignatureLen Int)
-(assert (> SignatureLen 0))
-
-(declare-const VKLen Int)
-(assert (> VKLen 0))
-
-(declare-const MAClen Int)
-(assert (> MAClen 0))
-
-(declare-const Taglen Int)
-(assert (> Taglen 0))
-
-(declare-const Counterlen Int)
-(assert (> Counterlen 0))
 
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
@@ -494,5 +493,4 @@
     :pattern ((eq y c) (RO x y i))
     :qid ro_neq_constant
 )))
-
 

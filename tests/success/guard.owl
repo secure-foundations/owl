@@ -1,0 +1,7 @@
+locality alice
+name n : nonce @ alice
+
+def main() @ alice : Option Bool<adv> =
+    input i in 
+    guard eq(i, 1) in 
+    Some(true)
