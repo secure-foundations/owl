@@ -225,6 +225,7 @@ extractStruct owlName owlFields = do
             owlpretty "ensures" <+>
                 -- TODO improve
                 owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_Some() ==> arg.data@ === old(arg).data@" <> comma <> line <>
+                -- owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_Some() ==> arg.data@ ===" <+> owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).get_Some_0()" <> comma <> line <>
                 owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_None() ==> arg.data@ === seq![] // TODO" <> comma <> line <>
             lbrace <> line <>
                 owlpretty "match arg.parsing_outcome" <+> lbrace <> line <> 
@@ -285,7 +286,10 @@ extractStruct owlName owlFields = do
             -- return $
             owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "get_" <> owlpretty fieldName <> owlpretty "_" <> owlpretty name <> parens (owlpretty "arg: &mut" <+> owlpretty name) <+> owlpretty "->" <+> owlpretty "(res: &[u8])" <+> line <>
             -- TODO make this better
-            owlpretty "ensures res@ ===" <+> owlpretty (unrustifyName fieldName) <> parens (owlpretty "old(arg).data@") <> line <>
+            owlpretty "ensures" <+> 
+                owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_Some() ==>" <+> owlpretty "res@ ===" <+> owlpretty (unrustifyName fieldName) <> parens (owlpretty "old(arg).data@") <> comma <> line <>
+                owlpretty "parse_" <> owlpretty (specName . unrustifyName $ name) <> owlpretty "(arg.data@).is_None() ==>" <+> owlpretty "res@ === seq![]" <> comma <> line <>
+                owlpretty "arg.data@ ===" <+> owlpretty "old(arg).data@," <> line <>
             lbrace <> line <>
             owlpretty "// parse_into_" <> owlpretty name <> parens (owlpretty "arg") <> owlpretty ";" <> line <>
             owlpretty "match arg.parsing_outcome {" <> line <>
