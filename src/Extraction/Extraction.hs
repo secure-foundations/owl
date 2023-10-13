@@ -544,7 +544,7 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                     if needsParse && length args == 1 then do
                         -- We are in a case requiring parsing. Check if we have already parsed 
                         resolvedArgs <- mapM (resolveANF binds) owlArgs
-                        debugPrint $ owlpretty adt <> tupled (map owlpretty resolvedArgs)
+                        -- debugPrint $ owlpretty adt <> tupled (map owlpretty resolvedArgs)
                         oopt <- lookupAdtCall (adt, resolvedArgs)
                         (doParse, str) <- case oopt of
                             Just arg -> do
@@ -811,7 +811,7 @@ makeFunc owlName _ owlArgs owlRetTy = do
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
 extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
 extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
-    debugPrint $ "Extracting def " ++ owlName 
+    -- debugPrint $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     let (Locality lpath _) = loc
     lname <- flattenPath lpath
