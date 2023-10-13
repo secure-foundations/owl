@@ -116,11 +116,6 @@ resolveError pos msg = do
     printDiagnostic stdout True True 4 defaultStyle diag 
     Resolve $ lift $ throwError () 
 
-debug :: Doc ann -> Resolve ()
-debug d = do
-    b <- view $ flags . fDebug
-    when b $ liftIO $ putStrLn $ show d
-
 resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
@@ -389,12 +384,11 @@ resolveFuncParam f =
       ParamLbl l -> ParamLbl <$> resolveLabel l
       ParamTy l -> ParamTy <$> resolveTy l
       ParamName n -> ParamName <$> resolveNameExp n
-      ParamIdx _ -> return f
+      ParamIdx _ _ -> return f
 
 
 resolvePath pos pt p = do
     p' <- resolvePath' pos pt p
-    debug $ owlpretty "Resolved " <> owlpretty p <> owlpretty " to " <> owlpretty p'
     return p'
 
 resolvePath' :: Ignore Position -> PathType -> Path -> Resolve Path
@@ -402,7 +396,6 @@ resolvePath' pos pt p =
     case p of
       PRes _ -> return p
       PUnresolvedPath x xs -> do
-          debug $ owlpretty "Resolving " <> owlpretty p
           mp <- view modPaths
           res <- case lookup x mp of
                   Just (b, p) -> do
@@ -635,9 +628,10 @@ resolveExpr e =
       ESetOption s1 s2 k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
-      EFalseElim k -> do
+      EFalseElim k op -> do
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EFalseElim k'
+          op' <- traverse resolveProp op
+          return $ Spanned (e^.spanOf) $ EFalseElim k' op'
       ETLookup p a -> do
           p' <- resolvePath (e^.spanOf) PTTbl p
           a' <- resolveAExpr a

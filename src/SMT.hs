@@ -38,7 +38,7 @@ smtSetup = do
             smtLabelSetup 
             setupTyEnv 
 
-smtTypingQuery = fromSMT smtSetup
+smtTypingQuery s = fromSMT s smtSetup
 
 setupSMTOptions :: Sym ()
 setupSMTOptions = do
@@ -170,6 +170,7 @@ mkCrossDisjointness fdfs = do
 
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()
 mkSelfDisjointness fdfs = do
+    -- TODO: factor in preqreqs?
     forM_ fdfs $ \fd -> 
         withSMTNameDef fd $ \(sn, pth) oi ((is1, ps1), xs1) _ ->  do
             withSMTNameDef fd $ \_ _ ((is2, ps2), xs2) _ -> do
@@ -284,6 +285,34 @@ lookupIndex x xs = go 0 xs
 builtInSMTFuncs :: [String]
 builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh"]
 
+mkPred :: Path -> Sym SExp  
+mkPred pth@(PRes (PDot p s)) = do
+    pis <- use predInterps
+    sn <- smtName pth
+    case M.lookup sn pis of
+      Just v -> return v
+      Nothing ->  do
+          md <- liftCheck $ openModule p
+          case lookup s (md^.predicates) of
+            Nothing -> error $ "Predicate " ++ show pth ++ " not found. " 
+            Just b -> do
+                ((ixs, xs), pr) <- liftCheck $ unbind b
+                let ivs = map (\i -> (SAtom (show i), indexSort)) ixs
+                let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
+                withIndices (map (\i -> (i, IdxGhost)) ixs) $ 
+                    withSMTVars xs $ do
+                        v <- interpretProp pr
+                        emit $ SApp [SAtom "declare-fun", SAtom sn, SApp (replicate (length ixs) indexSort ++ replicate (length xs) bitstringSort), SAtom "Bool"]
+                        let ax = sForall
+                                    (ivs ++ xvs)
+                                    (SApp [SAtom "=", sApp (SAtom sn : (map fst ivs) ++ (map fst xvs)), v])
+                                    [sApp (SAtom sn : (map fst ivs) ++ (map fst xvs))]
+                                    ("predDef_" ++ sn)
+                        emitAssertion $ ax
+                        return ()
+                predInterps %= (M.insert sn (SAtom sn))
+                return $ SAtom sn
+
 setupFunc :: (ResolvedPath, Int) -> Sym ()
 setupFunc (s, ar) = do
     fs <- use funcInterps
@@ -346,7 +375,6 @@ smtTy t =
           vt <- smtTy t
           return $ sEnumType [SAtom "Unit", vt]
       TName n -> do
-          liftCheck $ debug $ owlpretty "TName" <+> owlpretty n
           vn <- getSymName n
           return $ SApp [SAtom "TName", vn]
       TVK n -> do
@@ -420,7 +448,7 @@ tyConstraints t v = do
 
 
 interpretProp :: Prop -> Sym SExp
-interpretProp p = 
+interpretProp p = do
     case p^.val of
       PTrue -> return sTrue
       PFalse -> return sFalse
@@ -436,8 +464,10 @@ interpretProp p =
           (x, p) <- liftCheck $ unbind xp
           interpretProp $ subst x a p
       PApp s is ps -> do 
-          p <- liftCheck $ extractPredicate s is ps
-          interpretProp p
+          vs <- mkPred s 
+          ixs <- mapM symIndex is
+          vps <- mapM interpretAExp ps
+          return $ sApp (vs : ixs ++ vps)
       PAADOf ne a -> do
           p <- liftCheck $ extractAAD ne a
           interpretProp p
@@ -485,9 +515,10 @@ mkSList sort [] = SApp [SAtom "as", SAtom "nil", SAtom ("(List " ++ sort ++")")]
 mkSList sort (x:xs) = SApp [SAtom "insert", x, mkSList sort xs]
     
 subTypeCheck :: Ty -> Ty -> Sym ()
-subTypeCheck t1 t2 = do
+subTypeCheck t1 t2 = traceFn ("subTypeCheck(" ++ show (tupled $ map owlpretty [t1, t2]) ++ ")") $ do
     v <- mkTy Nothing t1
     c <- tyConstraints t2 v
+
     emitComment $ "Checking subtype " ++ show (owlpretty t1) ++ " <= " ++ show (owlpretty t2)
     emitToProve c
 
@@ -520,7 +551,7 @@ symCheckEqTopLevel eghosts es = do
         emitToProve $ sAnd $ map (\(x, y) -> sEq x y) $ zip v_es v_eghosts 
 
 symAssert :: Prop -> Sym ()
-symAssert p = do
+symAssert p = traceFn ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
     b <- interpretProp p
     emitComment $ "Proving prop " ++ show (owlpretty p)
     emitToProve b

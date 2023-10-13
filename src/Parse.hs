@@ -1249,9 +1249,12 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "false_elim"
+        op <- optionMaybe $ do
+            reserved "when"
+            parseProp
         reserved "in"
         e <- parseExpr
-        return $ EFalseElim e
+        return $ EFalseElim e op
         )
     <|>
     (parseSpanned $ do
@@ -1400,9 +1403,14 @@ parseParam =
         return $ ParamTy t)
     <|>
     (try $ do
-        reserved "idx"
+        ot <- try $ 
+            (reserved "idx" >> return Nothing)
+            <|>
+            (reserved "session" >> (return $ Just IdxSession))
+            <|>
+            (reserved "pid" >> (return $ Just IdxPId))
         i <- parseIdx
-        return $ ParamIdx i)
+        return $ ParamIdx i ot)
     <|>
     (try $ do
         reserved "name"
