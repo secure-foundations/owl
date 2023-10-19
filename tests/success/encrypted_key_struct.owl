@@ -32,7 +32,9 @@ def alice_main () @ alice
     input i in 
     corr_case k_data in 
     let result = case adec(get(k_data), i) {
-     | Some j => SomeResult(_y(j))
+     | Some j => 
+        parse j as t(x, y) in SomeResult(y)
+                           otherwise NoResult()
      | None => NoResult()
     }
     in

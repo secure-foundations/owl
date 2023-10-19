@@ -1119,6 +1119,16 @@ extractEnum ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
+obtainStructInfo :: Ty -> Check [(String, Ty)]
+obtainStructInfo t =
+    case t^.val of
+      TConst s ps -> do 
+          td <- getTyDef s
+          case td of
+            StructDef sd -> extractStruct ps (show $ owlpretty t) sd
+            _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
+      _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
+
 extractStruct :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
 extractStruct ps s b = do
     idxs <- getStructParams ps

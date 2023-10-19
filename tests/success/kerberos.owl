@@ -188,21 +188,23 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
-    let service_ticket = _ticketserver_msg_1(i') in
-    case adec(ak, _ticketserver_msg_2(i')) {
-        | None => ()
-        | Some res =>
-            case res as AKEnum {
-                | ClientRequest => () 
-                | TicketResponse sk => 
-                    let m' = aenc(sk, username) in
-                    let p' = client_to_service_msg(service_ticket, m') in
-                    let _ = output p' to endpoint(service) in 
-                    // wait for service's response
-                    input _ in () 
-                otherwise => ()
-            }
-    }
+    parse i' as ticketserver_msg(service_ticket, c) in {  
+        case adec(ak, c) {
+            | None => ()
+            | Some res =>
+                case res as AKEnum {
+                    | ClientRequest => () 
+                    | TicketResponse sk => 
+                        let m' = aenc(sk, username) in
+                        let p' = client_to_service_msg(service_ticket, m') in
+                        let _ = output p' to endpoint(service) in 
+                        // wait for service's response
+                        input _ in () 
+                    otherwise => ()
+                }
+        }
+    } 
+    otherwise ()
 
 def client_kerberos_tmpcopy (ak: if sec(K) then Name(AK) else Data<adv>, tgt :
 Data<adv>, username : Data<adv>) @ client
@@ -214,21 +216,23 @@ Data<adv>, username : Data<adv>) @ client
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
-    let service_ticket = _ticketserver_msg_1(i') in
-    case adec(ak, _ticketserver_msg_2(i')) {
-        | None => ()
-        | Some res =>
-            case res as AKEnum {
-                | ClientRequest => () 
-                | TicketResponse sk => 
-                    let m' = aenc(sk, username) in
-                    let p' = client_to_service_msg(service_ticket, m') in
-                    let _ = output p' to endpoint(service) in 
-                    // wait for service's response
-                    input _ in () 
-                otherwise => ()
-            }
+    parse i' as ticketserver_msg(service_ticket, c) in { 
+        case adec(ak, c) {
+            | None => ()
+            | Some res =>
+                case res as AKEnum {
+                    | ClientRequest => () 
+                    | TicketResponse sk => 
+                        let m' = aenc(sk, username) in
+                        let p' = client_to_service_msg(service_ticket, m') in
+                        let _ = output p' to endpoint(service) in 
+                        // wait for service's response
+                        input _ in () 
+                    otherwise => ()
+                }
+        }
     }
+    otherwise ()
 
 
 
@@ -257,32 +261,34 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
         | None => ()
         | Some p' => 
             union_case p = p' in 
-            let certA = _AuthCert(p) in 
+            parse p as ClientPKResponse(certA, vka, k, ksig) in { 
              // certA = signature of verkeyA signed by sigkeyCA
              corr_case sigkeyCA in
-             
-             case vrfy(vkCA, certA, _vkA(p)) {// get verkeyA = vk(sigkeyA)
-                | Some res =>
-                    case res {
-                      | ClientCert _ => ()
-                      | AuthCert vkA => 
-                        // now use verkeyA to verify signed_k
-                        corr_case sigkeyA in
-                        case vrfy(vkA, _k(p), _sigofK(p)) { // get K, sign(sigkeyA, k)
-                            | Some k =>
-                                // finally, decrypt AK using k
-                                corr_case K in
-                                case adec(k, enc_ak) { 
-                                    | Some ak =>
-                                        call client_kerberos_tmpcopy(ak, tgt, username)
-                                    | None => ()
-                                }
-                            | None => ()
+                 case vrfy(vkCA, certA, vka) {// get verkeyA = vk(sigkeyA)
+                    | Some res =>
+                        case res {
+                          | ClientCert _ => ()
+                          | AuthCert vkA => 
+                            // now use verkeyA to verify signed_k
+                            corr_case sigkeyA in
+                            case vrfy(vkA, k, ksig) { // get K, sign(sigkeyA, k)
+                                | Some k =>
+                                    // finally, decrypt AK using k
+                                    corr_case K in
+                                    case adec(k, enc_ak) { 
+                                        | Some ak =>
+                                            call client_kerberos_tmpcopy(ak, tgt, username)
+                                        | None => ()
+                                    }
+                                | None => ()
+                            }
                         }
-                    }
-                | None => ()
-             }
+                    | None => ()
+                 }
+            }
+            otherwise ()
     }
+                 
     
 
 def client_main () @ client
@@ -294,16 +300,18 @@ def client_main () @ client
     // i = tgt, aenc(kC, AK)
     input i in 
 
-    let tgt = _authserver_msg_1(i) in
+    parse i as authserver_msg(tgt, c) in {
     let b = eq(length(tgt), cipherlen(|enckey|)) in
     if b then 
         corr_case kC in
-        case adec(get(kC), _authserver_msg_2(i)) {
+        case adec(get(kC), c) {
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
         }
     else ()
+    }
+    otherwise ()
 
 
 def authserver_main () @ authserver
@@ -330,12 +338,13 @@ def ticketserver_main () @ ticketserver
     input i in 
     
     corr_case kT in
-    case adec(get(kT), _client_to_ticketserver_msg_1(i)) {
+    parse i as client_to_ticketserver_msg(c, t) in {
+    case adec(get(kT), c) {
          | None => ()
          | Some ak =>
          
              corr_case AK in
-             case adec(ak, _client_to_ticketserver_msg_2(i)) {
+             case adec(ak, t) {
                  | Some ClientRequest =>
                      let st = aenc(get(kS), get(SK)) in
                      let m = aenc(ak, TicketResponse(get(SK))) in
@@ -344,6 +353,8 @@ def ticketserver_main () @ ticketserver
                  | None => ()
              }
     }
+    }
+    otherwise ()
 
 
 def service_main () @ service
@@ -353,11 +364,12 @@ def service_main () @ service
     input i in
     
     corr_case kS in
-    case adec(get(kS), _client_to_service_msg_1(i)) {
+    parse i as client_to_service_msg(c1, c2) in {
+    case adec(get(kS), c1) {
          | None => ()
          | Some sk =>
              corr_case SK in
-             case adec(sk, _client_to_service_msg_2(i)) {
+             case adec(sk, c2) {
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
@@ -365,6 +377,8 @@ def service_main () @ service
                      else ()
              }
     }
+    } 
+    otherwise ()
 
 def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC : encpk(seckeyCnew)) @ authserver
     requires    ([K] <= [sigkeyC]) /\
@@ -373,58 +387,58 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
 
     // i = {{verkeyC}}_CA, verkeyC, {{username}}_sigkeyC, username
     input i in 
-    let un = _pkinit_client_to_authserver_msg_4(i) in
-    let signed_un = _pkinit_client_to_authserver_msg_3(i) in
+    parse i as pkinit_client_to_authserver_msg(certC, vkc, signed_un, un) in {
+        // check that we got a good certificate
+        case certC as CertAuthMsgs {// get client vertificate
+             | ClientCert certC =>
+             
+                 // check that certC is valid for vkC
+                corr_case sigkeyCA in
+                 case vrfy(vkCA, certC, vkc) { 
+                     | None => ()
+                     | Some vkC =>
+                     
+                         // use verkeyC to verify the username
+                         corr_case sigkeyC in
+                         case vrfy(vkC, signed_un, un) {
+                             | None => ()
+                             | Some username =>
+                             
+                                 // signed username is equal to the client we expected
+                                 // TODO: check that a signed timestamp is still fresh
+                                 if eq(username, get(uname)) then
 
-    // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) as CertAuthMsgs {// get client vertificate
-         | ClientCert certC =>
-         
-             // check that certC is valid for vkC
-            corr_case sigkeyCA in
-             case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) { 
-                 | None => ()
-                 | Some vkC =>
-                 
-                     // use verkeyC to verify the username
-                     corr_case sigkeyC in
-                     case vrfy(vkC, signed_un, un) {
-                         | None => ()
-                         | Some username =>
-                         
-                             // signed username is equal to the client we expected
-                             // TODO: check that a signed timestamp is still fresh
-                             if eq(username, get(uname)) then
-
-                                // sign/encrypt/send outputs to client
-                                let tgt = aenc(get(kT), get(AK)) in
-                                output tgt to endpoint(client);
-                                
-                                let enc_ak = aenc(get(K), get(AK)) in
-                                output enc_ak to endpoint(client);
-                                
-                                // bundle msg and encrypt with pubkeyC
-                                let sA = get(sigkeyA) in
-                                let k''= get(K) in
-                                // let signed_k : Data<adv> ||signature||= sign(sA, k'') in
-                                let signed_k = sign(sA, k'') in
-                                let b = eq(length(signed_k), |signature|) in
-                                if b then
-                                    let field1 : Data<adv>||signature|| = certA in 
-                                    let field2 : vk(sigkeyA) = get_vk(sigkeyA) in 
-                                    let field3 : Name(K) = get(K) in 
-                                    // let field4 : Data<adv>||signature|| = signed_k in 
-                                    let field4 = signed_k in 
-                                    let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
-                                    let msg = pkenc(pkC, str) in
-                                    output msg to endpoint(client); ()
-                                else ()
-                             else ()
-                     }
-             }
-          | AuthCert x => ()
-          otherwise => ()
+                                    // sign/encrypt/send outputs to client
+                                    let tgt = aenc(get(kT), get(AK)) in
+                                    output tgt to endpoint(client);
+                                    
+                                    let enc_ak = aenc(get(K), get(AK)) in
+                                    output enc_ak to endpoint(client);
+                                    
+                                    // bundle msg and encrypt with pubkeyC
+                                    let sA = get(sigkeyA) in
+                                    let k''= get(K) in
+                                    // let signed_k : Data<adv> ||signature||= sign(sA, k'') in
+                                    let signed_k = sign(sA, k'') in
+                                    let b = eq(length(signed_k), |signature|) in
+                                    if b then
+                                        let field1 : Data<adv>||signature|| = certA in 
+                                        let field2 : vk(sigkeyA) = get_vk(sigkeyA) in 
+                                        let field3 : Name(K) = get(K) in 
+                                        // let field4 : Data<adv>||signature|| = signed_k in 
+                                        let field4 = signed_k in 
+                                        let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
+                                        let msg = pkenc(pkC, str) in
+                                        output msg to endpoint(client); ()
+                                    else ()
+                                 else ()
+                         }
+                 }
+              | AuthCert x => ()
+              otherwise => ()
+        }
     }
+    otherwise ()
 
 
 // not really needed, just to satisfy extraction

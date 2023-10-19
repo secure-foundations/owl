@@ -397,6 +397,7 @@ data ExprX =
     | EAdmit
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
+    | EParse AExpr Ty (Maybe Expr) (Bind [(DataVar, Ignore String)] Expr)
     | ECase Expr (Maybe (Ty, Expr)) [(String, Either Expr (Ignore String, Bind DataVar Expr))] 
         -- The (Ignore String) part is the name for the var
     | EPCase Prop (Maybe Prop) Expr

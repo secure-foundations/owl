@@ -613,6 +613,13 @@ resolveExpr e =
           p' <- resolvePath (e^.spanOf) PTDef p
           as' <- mapM resolveAExpr as
           return $ Spanned (e^.spanOf) $ ECall p' is as' 
+      EParse a t ok bk -> do
+          a' <- resolveAExpr a
+          t' <- resolveTy t
+          ok' <- traverse resolveExpr ok
+          (b, k) <- unbind bk
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ EParse a' t' ok' $ bind b k'
       ECase a otk cases -> do
           a' <- resolveExpr a
           otk' <- traverse (\(t, k) -> do

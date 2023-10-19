@@ -289,6 +289,8 @@ interpUserFunc pth md (StructConstructor tv) = do
               else trivialTypeOf (map snd xs))
       _ -> typeError $ "Unknown struct: " ++ show tv
 interpUserFunc pth md (StructProjector tv field) = do
+    tc <- view tcScope  
+    assert ("Struct accessors can only be called in ghost. Use a parse expression") $ tc `aeq` TcGhost
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
           let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
@@ -1465,6 +1467,12 @@ stripTy x t =
           t' <- stripTy x t
           return $ mkSpanned $ TExistsIdx $ bind i t
 
+stripTys :: [DataVar] -> Ty -> Check Ty
+stripTys [] t = return t
+stripTys (x:xs) t = do
+    t' <- stripTy x t
+    stripTys xs t'
+
 checkEndpoint :: Endpoint -> Check ()
 checkEndpoint (Endpoint x) = do
     s <- view $ endpointContext
@@ -1795,6 +1803,31 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                   r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
                   popLogTypecheckScope
               normalizeTy retT
+      EParse a t ok bk -> do
+          t1 <- inferAExpr a
+          checkTy t
+          sinfo <- obtainStructInfo t
+          b <- isSubtype t1 t
+          otherwiseCase <- case ok of
+                             Nothing -> return Nothing
+                             Just k' -> Just <$> checkExpr ot k'
+          case b of
+            True -> do -- Well-typed case
+                (b, k) <- unbind bk
+                assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
+                tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b sinfo)) $ checkExpr ot k   
+                stripTys (map fst b) tk
+            False -> do -- Ill-typed case
+                (b, k) <- unbind bk
+                assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
+                l <- coveringLabel t1
+                let lt = tData l l -- TODO: model validation of parsing
+                tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
+                tk2 <- case otherwiseCase of
+                         Nothing -> typeError "Parse statement needs an otherwise case here"
+                         Just t' -> return t'
+                assertSubtype tk2 tk
+                return tk
       (ECase e1 otk cases) -> do
           t <- checkExpr Nothing e1
           t <- stripRefinements <$> normalizeTy t

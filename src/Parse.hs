@@ -1224,6 +1224,23 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
+        reserved "parse"
+        a <- parseAExpr
+        reserved "as"
+        t <- parseTy
+        symbol "("
+        xs <- identifier `sepBy1` (symbol ",")
+        symbol ")"
+        reserved "in"
+        k <- parseExpr
+        ok <- optionMaybe $ do
+            reserved "otherwise"
+            parseExpr
+        return $ EParse a t ok (bind (map (\x -> (s2n x, ignore x)) xs) k)
+
+        )
+    <|>
+    (parseSpanned $ do
         reserved "assert"
         p <- parseProp
         return $ EAssert p
