@@ -78,11 +78,12 @@ def A_main() @ A
             case vrfy(get_vk(skS), t2, s2) {
                 | None => A_No()
                 | Some s =>
-                    case _pk(s) {
+                    case _pk(s) as pk {
                         | _pkA _ => A_No()
                         | _pkB o =>
                             let _ = output inp to endpoint(B) in
                             A_Ok(o)
+                        otherwise => A_No()
                     }
             }
     }
@@ -109,9 +110,10 @@ def B_main() @ B
             case vrfy(get_vk(skS), t1, s1) {
                 | None => B_No()
                 | Some s =>
-                    case _pk(s) {
+                    case _pk(s) as pk {
                         | _pkB _ => B_No()
                         | _pkA o => B_Ok(o)
+                        otherwise => B_No()
                     }
             }
     }

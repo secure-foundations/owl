@@ -880,6 +880,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         (is, bdy) <- unbind b
         local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
             mapM_ checkTy $ catMaybes $ map snd bdy
+        assert ("Enum cases must be unique") $ uniq $ map fst bdy
         assert (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
         let constrs = map (\(x, ot) -> (x, EnumConstructor n x)) bdy 
         let tests = map (\(x, ot) -> (x ++ "?", EnumTest n x)) bdy
@@ -1794,53 +1795,55 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                   r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
                   popLogTypecheckScope
               normalizeTy retT
-      (ECase e1 cases) -> do
+      (ECase e1 otk cases) -> do
           t <- checkExpr Nothing e1
-          t <- normalizeTy t
-          let t' = stripRefinements t
-          (l, otcases) <- case t'^.val of
-                            TData l1 l2 _ -> return (l1, Left (tData l1 l2))
-                            TOption to -> return (advLbl, Right $ [("Some", Just to), ("None", Nothing)])
-                            TConst s ps -> do
-                                td <- getTyDef s
-                                case td of
-                                  EnumDef b -> do
-                                      bdy <- extractEnum ps (show s) b
-                                      return (advLbl, Right bdy)
-                            _ -> typeError $ "Unknown type for case expression: " ++ show (owlpretty t')
-          assert (show $ owlpretty "Empty cases on case expression") $ length cases > 0
-          flowCheck l advLbl
-          branch_tys <- 
-              case otcases of
-                Left td -> do
-                    forM cases $ \(c, ocase) -> 
-                        case ocase of
-                          Left e -> checkExpr ot e
-                          Right (sb, xe) -> do
-                              (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, Nothing, td))] $ checkExpr ot e
-                              case ot of
-                                 Just _ -> return t
-                                 Nothing -> stripTy x t
-                Right tcases -> do
-                    forM tcases $ \(c, ot') ->
-                        case (ot', lookup c cases) of
-                          (_, Nothing) -> typeError $ show $ owlpretty "Case not found: " <> owlpretty c
-                          (Nothing, Just (Left e)) -> checkExpr ot e
-                          (Just tc, Just (Right (sb, xe))) -> do
-                              (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, Nothing, tc))] $ checkExpr ot e
-                              case ot of
-                                Just _ -> return t
-                                Nothing -> stripTy x t
-                          (_, _) -> typeError $ show $ owlpretty "Mismatch on case: " <> owlpretty c
+          t <- stripRefinements <$> normalizeTy t
+          (wfCase, tcases, ok) <- case otk of
+            Just (tAnn, k) -> do
+                checkTy tAnn
+                tAnn' <- normalizeTy tAnn
+                tc <- withSpan (e1^.spanOf) $ obtainTyCases tAnn' ""
+                b <- isSubtype t tAnn'
+                return (b, tc, Just k)
+            Nothing -> do
+                tc <- withSpan (e1^.spanOf) $ obtainTyCases t ". Try adding an annotation to the case statement."
+                return (True, tc, Nothing)
+          lt <- coveringLabel t
+          when (not wfCase) $ do
+              flowCheck lt advLbl
+          assert ("Duplicate case") $ uniq (map fst cases)
+          assert ("Cases must not be nonempty") $ length cases > 0
+          assert ("Cases do are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
+          branch_ts <- forM cases $ \(c, ocase) -> do
+              let (Just otcase) = lookup c tcases
+              case (otcase, ocase) of
+                (Nothing, Left ek) -> checkExpr ot ek
+                (Just t1, Right (s, xk)) -> do
+                    (x, k) <- unbind xk
+                    let xt = if wfCase then t1 else tData lt lt 
+                    tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
+                    case ot of
+                      Just _ -> return tout
+                      Nothing -> stripTy x tout
+                _ -> do
+                    let ar1 = case otcase of
+                                  Nothing -> 0
+                                  Just _ -> 1
+                    let ar2 = case ocase of
+                                  Left _ -> 0
+                                  Right _ -> 1
+                    typeError $ "Mismatch on branch case" ++ c ++ ": expected arity " ++ show ar1 ++ ", got " ++ show ar2
+          branch_ts' <- case ok of
+                          Nothing -> return branch_ts
+                          Just k -> do 
+                              t <- checkExpr ot k
+                              return (t : branch_ts)
           case ot of
-            Just t -> return t
+            Just tout -> return tout
             Nothing -> do -- Need to synthesize type here. Take the first one
-                let t = head branch_tys
-                forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
+                let t = head branch_ts'
+                forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
                 return t
-
 
 doAEnc t1 x t args =
   case extractNameFromType t1 of
@@ -1857,7 +1860,7 @@ doAEnc t1 x t args =
     _ -> do
         mkSpanned <$> trivialTypeOf [t1, t]
 
-doADec t1 t args = 
+doADec t1 t args = do
     case extractNameFromType t1 of
       Just k -> do
           nt <-  local (set tcScope TcGhost) $ getNameType k
@@ -1868,17 +1871,20 @@ doADec t1 t args =
                 if ((not b2) && b) then do
                     -- Honest
                     return $ mkSpanned $ TOption t'
-                else if b then do
-                    l_corr <- coveringLabelOf [t1, t]
-                    return $ mkSpanned $ TOption $ tDataAnn l_corr l_corr "Corrupt adec" -- Change here
+                else if (b && b2) then do
+                    return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec"
                 else do
                     l_corr <- coveringLabelOf [t1, t]
                     -- Corrupt
-                    return $ tDataAnn l_corr l_corr "Corrupt adec"-- Change here
+                    return $ tDataAnn l_corr l_corr "Corrupt adec"
             _ -> typeError $ show $  ErrWrongNameType k "encryption key" nt
       _ -> do
-          l <- coveringLabelOf [t1, t]
-          return $ tData l l -- Change here
+          b1 <- tyFlowsTo t1 advLbl
+          b2 <- tyFlowsTo t advLbl
+          if b1 && b2 then return (mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec")
+          else do 
+              l <- coveringLabelOf [t1, t]
+              return $ tData l l 
 
 owlprettyMaybe :: OwlPretty a => Maybe a -> OwlDoc
 owlprettyMaybe x = 
@@ -2076,15 +2082,16 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                       if (not b1) && b2 && b3 && b4 then do
                             (x, aad) <- unbind xaad
                             return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y aad
-                      else if (b2 && b3 && b4) then do 
-                          l <- coveringLabelOf [t1, t, t2, tnonce]
-                          return $ mkSpanned $ TOption $ tData l l
-                      else do
-                            -- Corrupt
-                            l <- coveringLabel t
-                            let l_corr = joinLbl (nameLbl k) l
-                            return $ tData l_corr l_corr
-                  _ -> mkSpanned <$> trivialTypeOf (map snd args)         
+                      else if (b1 && b2 && b3 && b4) then do 
+                          return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
+                      else (mkSpanned <$> trivialTypeOf (map snd args))
+                  _ -> do
+                      l <- coveringLabelOf [t1, t, t2, tnonce]
+                      b <- flowsTo l advLbl
+                      if b then 
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
+                      else 
+                          return $ tDataAnn l l "corrupt dec"
       CPKDec -> do 
           assert ("Wrong number of arguments to pk decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
@@ -2100,9 +2107,10 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                     if b1 && (not b2) then do
                         -- TODO: is this complete?
                         return $ mkSpanned $ TOption $ mkSpanned $ TUnion t' $ tDataAnn advLbl advLbl "adversarial message"
-                    else do
+                    else if b1 && b2 then do 
                         let l_corr = joinLbl (nameLbl k) l
-                        return $ mkSpanned $ TOption $ tDataAnn l_corr l_corr "corrupt pkdec"
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt pkdec"
+                    else mkSpanned <$> trivialTypeOf [t1, t]
       CPKEnc -> do 
           assert ("Wrong number of arguments to pk encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
@@ -2137,7 +2145,10 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           case extractNameFromType t1 of
             Nothing -> do
                 l <- coveringLabelOf [t1, mt, t] 
-                return $ tData l l -- Change here
+                b <- flowsTo l advLbl
+                if b then 
+                    return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt mac"
+                else return $ tData l l
             Just k -> do
                 nt <- local (set tcScope TcGhost) $ getNameType k
                 case nt^.val of
@@ -2149,6 +2160,8 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                       b3 <- flowsTo  (nameLbl k) advLbl
                       if (b1 && b2 && (not b3)) then
                         return $ mkSpanned $ TOption (tRefined t' ".res" $ (pEq (aeVar ".res") m))
+                      else if (b1 && b2 && b3) then 
+                        return $ mkSpanned $ TOption $ mkSpanned $ (TData advLbl advLbl (ignore $ Just "corrupt mac")) -- Change here
                       else
                         let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
                         return $ mkSpanned $ (TData l_corr l_corr (ignore $ Just "corrupt mac")) -- Change here
@@ -2171,7 +2184,11 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           case extractVKFromType t1 of
             Nothing -> do
                 l <- coveringLabelOf [t1, t2, t3]
-                return $ mkSpanned $ TData l l (ignore $ Just $ "corrupt vrfy") 
+                b <- flowsTo l advLbl
+                if b then 
+                    return $ mkSpanned $ TOption $ mkSpanned $ TData advLbl advLbl (ignore $ Just $ "corrupt vrfy") 
+                else 
+                    return $ mkSpanned $ TData l l (ignore $ Just $ "corrupt vrfy") 
             Just k -> do 
                 nt <-  local (set tcScope TcGhost) $ getNameType k
                 case nt^.val of
@@ -2182,9 +2199,13 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                       b2 <- tyFlowsTo t3 l'
                       b3 <- flowsTo (nameLbl k) advLbl
                       if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
-                                                else do
-                                                 l_corr <- coveringLabelOf [t1, t2, t3]
-                                                 return $ mkSpanned $ (TData l_corr l_corr $ ignore $ Just "corrupt vrfy") -- Change here
+                      else do
+                          b1' <- tyFlowsTo t2 advLbl
+                          b2' <- tyFlowsTo t3 advLbl
+                          if (b1' && b2' && b3) then return $ mkSpanned $ TOption $ mkSpanned $ TData advLbl advLbl (ignore $ Just "corrupt vrfy")
+                          else do
+                             l_corr <- coveringLabelOf [t1, t2, t3]
+                             return $ mkSpanned $ (TData l_corr l_corr $ ignore $ Just "corrupt vrfy") 
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
 ---- Entry point ----

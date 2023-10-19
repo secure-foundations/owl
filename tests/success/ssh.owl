@@ -92,12 +92,13 @@ def PFA_FW (k11: if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PFA
     case adec(k11, inp) {
         | None => ()
         | Some m' =>
-            case m' {
+            case m' as sign_request_response {
             | _res _ => ()
             | _req hh =>
                 let signed = sign(get(skPFA), _signed_by_PFA_hash(hh)) in
                 let msg_to_send_PDIS = aenc(k11, _res(_res(signed))) in
                 let _ = output msg_to_send_PDIS to endpoint(PDIS) in ()
+            otherwise => ()
             }
     }
     
@@ -130,13 +131,14 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
             case adec(k11, inp2) {
                 | None => ()
                 | Some m' =>
-                    case m' {
+                    case m' as sign_request_response {
                         | _req _ => ()
                         | _res h2 =>
                             // enc that with k and send to SDIS
                             let msg_to_send_SDIS = aenc(k, h2) in // _m2(r) == "sign answer"
                             let _ = output msg_to_send_SDIS to endpoint(SDIS) in
                             ()
+                        otherwise => ()
                     }
             }                
     }                
@@ -153,7 +155,7 @@ def SDIS_actual () @ SDIS
     case vrfy(vkPDIS, _pdis1_2(inp), _pdis2_2(inp)) {
         | None => ()
         | Some m =>
-            case m {
+            case m as dhpk_b {
                 | _comm_with_pfa _ => ()
                 | _comm_with_sdis g_pow_b1 =>
                     let ss   = dh_combine(g_pow_b1, get(c)) in
@@ -168,6 +170,7 @@ def SDIS_actual () @ SDIS
                             // m'' is the signature which was forwarded using the agent from the client
                             ()
                     }
+                otherwise => ()
             }
     }
 
@@ -184,7 +187,7 @@ def PFA_KE () @ PFA
     case vrfy(vkPDIS, _pdis1_1(inp), _pdis2_1(inp)) {
         | None => ()
         | Some m =>
-            case m {
+            case m as dhpk_b {
             | _comm_with_sdis _ => ()
             | _comm_with_pfa g_pow_b =>
                 corr_case a in 
@@ -193,6 +196,7 @@ def PFA_KE () @ PFA
                 pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
                 let k11    = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
                 call PFA_FW (k11)
+            otherwise => ()
             }
     }
 
@@ -209,7 +213,7 @@ def PDIS_KE () @ PDIS
     case vrfy(vkPFA, _pfa1(inp), _pfa2(inp)) {
         | None => ()
         | Some m =>
-            case m {
+            case m as signed_by_PFA {
                 | _signed_by_PFA_hash _ => ()
                 | _signed_by_PFA_g_pow_a g_pow_a =>
                     corr_case a in
@@ -219,6 +223,7 @@ def PDIS_KE () @ PDIS
                     let k11  = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
                     let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
                     call PDIS_actual(k11)
+                otherwise => ()
             }
     }
 

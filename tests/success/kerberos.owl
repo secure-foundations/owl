@@ -192,14 +192,15 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     case adec(ak, _ticketserver_msg_2(i')) {
         | None => ()
         | Some res =>
-            case res {
+            case res as AKEnum {
                 | ClientRequest => () 
                 | TicketResponse sk => 
-                let m' = aenc(sk, username) in
-                let p' = client_to_service_msg(service_ticket, m') in
-                let _ = output p' to endpoint(service) in 
-                // wait for service's response
-                input _ in () 
+                    let m' = aenc(sk, username) in
+                    let p' = client_to_service_msg(service_ticket, m') in
+                    let _ = output p' to endpoint(service) in 
+                    // wait for service's response
+                    input _ in () 
+                otherwise => ()
             }
     }
 
@@ -217,14 +218,15 @@ Data<adv>, username : Data<adv>) @ client
     case adec(ak, _ticketserver_msg_2(i')) {
         | None => ()
         | Some res =>
-            case res {
+            case res as AKEnum {
                 | ClientRequest => () 
                 | TicketResponse sk => 
-                let m' = aenc(sk, username) in
-                let p' = client_to_service_msg(service_ticket, m') in
-                let _ = output p' to endpoint(service) in 
-                // wait for service's response
-                input _ in () 
+                    let m' = aenc(sk, username) in
+                    let p' = client_to_service_msg(service_ticket, m') in
+                    let _ = output p' to endpoint(service) in 
+                    // wait for service's response
+                    input _ in () 
+                otherwise => ()
             }
     }
 
@@ -375,7 +377,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
     let signed_un = _pkinit_client_to_authserver_msg_3(i) in
 
     // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
+    case _pkinit_client_to_authserver_msg_1(i) as CertAuthMsgs {// get client vertificate
          | ClientCert certC =>
          
              // check that certC is valid for vkC
@@ -421,6 +423,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
                      }
              }
           | AuthCert x => ()
+          otherwise => ()
     }
 
 

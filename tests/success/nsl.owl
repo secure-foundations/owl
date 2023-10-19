@@ -72,7 +72,7 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
     | None => NRNone()
     | Some payload' =>
         union_case payload = payload' in 
-        case payload {
+        case payload as nsl_alice_message {
         | Msg1 nA' =>  
             if eq(length(nA'), |nonce|) then 
                 let p = nsl_bob_message(nA', get(nB)) in 
@@ -83,7 +83,7 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
                     | None => NRNone()
                     | Some payload2' =>
                         union_case payload2 = payload2' in 
-                        case payload2 {
+                        case payload2 as nsl_alice_message {
                             | Msg1 _ => NRNone()
                             | Msg3 p => 
                                 let b1 = checknonce(get(nB), _na3B(p)) in 
@@ -96,10 +96,12 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
                                 else 
                                     false_elim in
                                     NRNone()
+                            otherwise => NRNone()
                         }
                 }
             else false_elim in NRNone()
          | Msg3 _ => NRNone()
+         otherwise => NRNone()
         }
     }
                                     

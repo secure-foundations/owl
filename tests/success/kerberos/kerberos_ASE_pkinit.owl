@@ -133,7 +133,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
     corr_case K in 
 
     // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
+    case _pkinit_client_to_authserver_msg_1(i) as CertAuthMsgs {// get client vertificate
             | ClientCert certC =>
             
                 // check that certC is valid for vkC
@@ -175,6 +175,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
                         }
                 }
             | AuthCert x => ()
+            otherwise => ()
     }
 
 

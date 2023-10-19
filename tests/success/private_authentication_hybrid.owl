@@ -75,7 +75,7 @@ def B_main<j> () @ B
                 unpack i, m' = m in
                 let n0' = m1_n0<idx i>(m') in
                 let m1_pkA_e = m1_pkA<idx i>(m') in
-                case m1_pkA_e {
+                case m1_pkA_e as m1_pkA_enum {
                 | m1_pkA_tag m1_pkA =>
                     if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
                         let hybridKB          = get(hybrid_skB) in
@@ -86,6 +86,7 @@ def B_main<j> () @ B
                         let _ = output encm to endpoint(A) in
                         ()
                     else ()
+                otherwise => ()
                 }
             }
     }

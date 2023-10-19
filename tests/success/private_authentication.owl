@@ -61,7 +61,7 @@ def B_main<j> () @ B
             unpack i, m' = m in
             let n0' = m1_n0<idx i>(m') in
             let m1_pkA_e = m1_pkA<idx i>(m') in
-            case m1_pkA_e {
+            case m1_pkA_e as m1_pkA_enum {
             | m1_pkA_tag m1_pkA =>
                 let b1 = eq(m1_pkA, get_encpk(pkA)) in    // let b2 = eq(n0', |nonce|) in
                 let b2 = checknonce(n0', get(n0<j>)) in // TODO: Check
@@ -77,6 +77,7 @@ def B_main<j> () @ B
                         ()
                 else
                     ()
+            otherwise => ()
             }
     }
 

@@ -155,7 +155,7 @@ def Bob_main<i> () @ Bob
         input inp2 in
         let tkt', x = msg4_tkt(inp2), msg4_x(inp2) in
 
-        case tkt'  {
+        case tkt' as encd_by_kB  {
         | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
         | e2 tkt =>
              case adec(kB, tkt) {
@@ -163,7 +163,7 @@ def Bob_main<i> () @ Bob
                 | Some res =>
                     unpack i', res' = res in
                     unpack j', res'' = res' in
-                    case res'' {
+                    case res'' as kB_messages<idx i', idx j'> {
                         | mB1 _ => pack<j'>(bob_None<idx i, idx j'>())
                         | mB2 msg2 =>
                             let A''  = _A_kB2<idx i', idx j'>(msg2) in
@@ -186,8 +186,10 @@ def Bob_main<i> () @ Bob
                                   }
                             else
                                 pack<j'>(bob_None<idx i, idx j'>())
+                        otherwise => pack<j_>(bob_None<idx i, idx j_>())
                     }
                 }
+            otherwise => pack<j_>(bob_None<idx i, idx j_>())
         }
     else
         pack<j_>(bob_None<idx i, idx j_>())
@@ -204,7 +206,7 @@ def AS_main<i> () @ AS
     let B' = msg2_B(inp) in
     if eq(length(B'), |nonce|)  then
         let x' = msg2_x(inp) in
-        case x' {
+        case x' as encd_by_kB {
             | e2 _ => ()
             | e1 x'' => 
                 case adec(kB, x'') {
@@ -213,7 +215,7 @@ def AS_main<i> () @ AS
                         unpack i1, res' = res in
                         unpack j1, res'' = res' in
 
-                        case res'' {
+                        case res'' as kB_messages<idx i1, idx j1> {
                             | mB1 msg1 =>
                                 let A'  = _A_kB1<idx i1>(msg1) in
                                 let nA' = _nA_kB1<idx i1>(msg1) in
@@ -228,8 +230,10 @@ def AS_main<i> () @ AS
                                         ()
                                 else ()
                             | mB2 _ => ()
+                            otherwise => ()
                         }
                 }
+            otherwise => ()
         }
     else ()
 

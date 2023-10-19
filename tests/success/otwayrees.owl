@@ -136,7 +136,7 @@ def alice (
     case adec(kA, st) {
         | None => alice_None()
         | Some res =>
-            case res {
+            case res as kA_messages {
                 | mA1 _ => alice_None()
                 | mA2 msg2 =>
                     let b = checknonce(_nA2(msg2), nA) in
@@ -146,6 +146,7 @@ def alice (
                         alice_Some(kab)
                     else
                         alice_None()
+                otherwise => alice_None()
             }
     }
 // ************************************************************************
@@ -190,7 +191,7 @@ def bob (
     case adec(kB, x2') {
         | None => bob_None()
         | Some res =>
-            case res {
+            case res as kB_messages {
                 | mB1 _ => bob_None()
                 | mB2 msg2 =>
                     let b = checknonce(_nB2(msg2), nB) in
@@ -200,6 +201,7 @@ def bob (
                         bob_Some(kab)
                     else
                         bob_None()
+                otherwise => bob_None()
             }
     }
 // ************************************************************************
@@ -225,13 +227,13 @@ def server (
     case adec(kA, x1) {
         | None => ()
         | Some resA =>
-            case resA {
+            case resA as kA_messages {
                 | mA1 msg1A =>
                     // attempt to decrypt the second message only after the first one decrypts correctly
                     case adec(kB, x2) {
                         | None => ()
                         | Some resB =>
-                            case resB {
+                            case resB as kB_messages {
                                 | mB1 msg1B =>
                                     let _ = check_equal(A, _AA(msg1A), _AB(msg1B)) in
                                     let _ = check_equal(B, _BA(msg1A), _BB(msg1B)) in
@@ -245,9 +247,11 @@ def server (
                                     let _ = output msg3_StoB(M, encmA, encmB)
                                     in ()
                                 | mB2 _ => ()
+                                otherwise => ()
                             }
                     }
                 | mA2 _ => ()
+                otherwise => ()
             }
     }
 

@@ -89,7 +89,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                 corr_case sigkeyCA in
                 case vrfy(vkCA, certA, _vkA(p)) { // get verkeyA = vk(sigkeyA)
                     | Some res =>
-                        case res {
+                        case res as CertAuthMsgs {
                         | ClientCert _ => None<ty:client_stage1_t>()
                         | AuthCert vkA => 
                             // now use verkeyA to verify signed_k
@@ -110,6 +110,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                                     }
                                 | None => None<ty:client_stage1_t>()
                             }
+                        otherwise => None<ty:client_stage1_t>()
                         }
                     | None => None<ty:client_stage1_t>()
                 }
@@ -141,7 +142,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
         corr_case K in 
 
         // check that we got a good certificate
-        case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
+        case _pkinit_client_to_authserver_msg_1(i) as CertAuthMsgs {// get client vertificate
                 | ClientCert certC =>
                 
                     // check that certC is valid for vkC
@@ -183,6 +184,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
                             }
                     }
                 | AuthCert x => ()
+                otherwise => ()
         }
 
 

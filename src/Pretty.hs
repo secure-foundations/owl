@@ -298,14 +298,20 @@ instance  OwlPretty ExprX where
                      (v1, v2) -> owlpretty "<" <> mconcat (map owlpretty v1) <> owlpretty "@" <> mconcat (map owlpretty v2) <> owlpretty ">"
         in
         owlpretty "call" <> inds <+> owlpretty f <> tupled (map owlpretty as)
-    owlpretty (ECase t xs) = 
-        let pcases = 
+    owlpretty (ECase t otk xs) = 
+        let tyann = case otk of
+                      Nothing -> mempty
+                      Just (t, _) -> owlpretty "as" <+> owlpretty t
+            otherwise = case otk of
+                      Nothing -> mempty
+                      Just (_, k) -> owlpretty "otherwise =>" <+> owlpretty k
+            pcases = 
                 map (\(c, o) -> 
                     case o of
                       Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
                       Right (_, xe) -> let (x, e) = owlprettyBind xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
-        owlpretty "case" <+> owlpretty t <> line <> vsep pcases
+        owlpretty "case" <+> tyann <+> owlpretty t <> line <> vsep pcases <+> otherwise
     owlpretty (EPCase p op e) = 
         owlpretty "pcase" <+> parens (owlpretty p) <+> owlpretty "in" <+> owlpretty e
     owlpretty (EDebug dc) = owlpretty "debug" <+> owlpretty dc

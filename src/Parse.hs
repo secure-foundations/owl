@@ -1199,6 +1199,9 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "case"
         x <- parseExpr
+        ot <- optionMaybe $ do
+            symbol "as"
+            parseTy
         symbol "{"
         xs <- many1 $ do
           symbol "|"
@@ -1209,8 +1212,15 @@ parseExprTerm =
           return (c, case ov of
                        Nothing -> Left e
                        Just x -> Right (ignore x, bind (s2n x) e))
+        otk <- case ot of
+                 Nothing -> return Nothing
+                 Just t -> do 
+                     symbol "otherwise"
+                     symbol "=>"
+                     k <- parseExpr
+                     return $ Just (t, k)
         symbol "}"
-        return $ ECase x xs 
+        return $ ECase x otk xs 
     )
     <|>
     (parseSpanned $ do

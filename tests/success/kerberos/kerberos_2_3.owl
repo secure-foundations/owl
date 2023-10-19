@@ -60,7 +60,7 @@ def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
     case adec(ak, _ticketserver_msg_2(i')) {
         | None => ()
         | Some res =>
-            case res {
+            case res as AKEnum {
                 | ClientRequest => () 
                 | TicketResponse sk => 
                 let m' =  aenc(sk, username) in
@@ -68,5 +68,6 @@ def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
                 let _ = output p' to endpoint(service) in 
                 // wait for service's response
                 input _ in () 
+                otherwise => ()
             }
     }
