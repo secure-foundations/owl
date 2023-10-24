@@ -1007,26 +1007,84 @@ checkROSelfDisjoint roname b = do
                                 assert ("RO self disjointness check failed: " ++ roname) b
                                         
 
+checkNoTopLbl :: Label -> Check ()
+checkNoTopLbl l = 
+    case l^.val of
+      LTop -> typeError $ "Top label not allowed here"
+      LJoin l1 l2 -> do
+          checkNoTopLbl l1
+          checkNoTopLbl l2
+      LRangeIdx il -> do
+          (i, l) <- unbind il
+          local (over (inScopeIndices) $ insert i IdxGhost) $ checkNoTopLbl l
+      _ -> return ()
+
+
+checkNoTopTy :: Ty -> Check ()
+checkNoTopTy t = 
+    case t^.val of
+      TData l1 l2 _ -> do
+          checkNoTopLbl l1
+          checkNoTopLbl l2
+      TDataWithLength l _ -> checkNoTopLbl l
+      TRefined t _ _ -> checkNoTopTy t
+      TOption t -> checkNoTopTy t
+      TCase _ t1 t2 -> do
+          checkNoTopTy t1
+          checkNoTopTy t2
+      TBool l -> checkNoTopLbl l
+      TUnion t1 t2 -> do
+          checkNoTopTy t1
+          checkNoTopTy t2
+      TAdmit -> typeError $ "Admit type not allowed here"
+      TExistsIdx it -> do
+          (i, t) <- unbind it
+          local (over (inScopeIndices) $ insert i IdxGhost) $ checkNoTopTy t
+      TConst s ps -> do
+          td <- getTyDef s
+          forM_ ps checkParam
+          forM_ ps $ \p -> 
+              case p of
+                ParamLbl l -> checkNoTopLbl l
+                ParamTy t -> checkNoTopTy t
+                _ -> return ()
+          case td of
+            TyAbstract -> return ()
+            TyAbbrev t1 -> checkNoTopTy t1
+            StructDef ib -> do
+                sd <- extractStruct ps (show s) ib
+                forM_ sd $ \(_, t) -> checkNoTopTy t
+            EnumDef b -> do
+                ed <- extractEnum ps (show s) b
+                forM_ ed $ \(_, ot) -> traverse checkNoTopTy ot
+      _ -> return ()      
+          
+
 
 
 checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 
     case nt^.val of
       NT_DH -> return ()
-      NT_Sig t -> checkTy t
+      NT_Sig t -> do
+          checkTy t
+          checkNoTopTy t
       NT_Nonce -> return ()
       NT_PRF xs -> do
           assert ("PRF value labels not unique") $ uniq $ map fst xs
           forM_ xs (\(_, (a, t)) -> do
               _ <- inferAExpr a
-              checkNameType t)
+              checkNameType t
+              )
           (_, b) <- SMT.smtTypingQuery "prf" $ SMT.symListUniq (map (fst . snd) xs)
           assert "PRF uniqueness check failed" b
       NT_Enc t -> do
         checkTy t
+        checkNoTopTy t
         checkTyPubLen t
       NT_StAEAD t xaad p np -> do
           checkTy t
+          checkNoTopTy t
           checkTyPubLen t
           (x, aad) <- unbind xaad
           withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp aad
@@ -1034,8 +1092,12 @@ checkNameType nt = withSpan (nt^.spanOf) $
           checkCounter p
       NT_PKE t -> do
           checkTy t
+          checkNoTopTy t
           checkTyPubLen t
-      NT_MAC t -> checkTy t
+      NT_MAC t -> do
+          checkTy t
+          checkNoTopTy t
+
 
 checkNoncePattern :: NoncePattern -> Check ()
 checkNoncePattern NPHere = return ()
