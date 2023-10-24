@@ -45,8 +45,8 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
         | None => NRNone()
         | Some c =>
             union_case x = c in 
-            union_case nA' = _nbA(x) in 
-            let nB' = _nbB(x) in 
+            parse x as nsl_bob_message(nA_, nB') in
+            union_case nA' = nA_ in 
             let b1 = checknonce(get(nA), nA') in 
             let b2 = eq(length(nB'), |nonce|) in 
             if b1 && b2 then 
@@ -60,6 +60,7 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
                 assert ([nA] /\ [nB] <= adv /\ [nA] /\ [nB]);
                 NRNone()
             }
+            otherwise NRNone()
     }
 
 def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) = 
@@ -86,8 +87,9 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
                         case payload2 as nsl_alice_message {
                             | Msg1 _ => NRNone()
                             | Msg3 p => 
-                                let b1 = checknonce(get(nB), _na3B(p)) in 
-                                let b2 = checknonce(nA', _na3A(p)) in 
+                                parse p as nsl_alice_msg3(nA3A, nA3B) in
+                                let b1 = checknonce(get(nB), nA3B) in 
+                                let b2 = checknonce(nA', nA3A) in 
                                 if b1 && b2 then 
                                     false_elim in
                                     let res: if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = 
@@ -96,6 +98,7 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
                                 else 
                                     false_elim in
                                     NRNone()
+                                otherwise NRNone()
                             otherwise => NRNone()
                         }
                 }

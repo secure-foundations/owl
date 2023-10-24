@@ -76,18 +76,17 @@ def client_pkinit (certC : Data<adv> ||signature||) @ client
         | Some p' => 
             union_case p = p' in 
             // p = {certA, verkeyA, [k]_sigkeyA, k}
-
-            let certA = _AuthCert(p) in 
+            parse p as ClientPKResponse(certA, vka, k, ksig) in 
             // certA = signature of verkeyA signed by sigkeyCA
             corr_case sigkeyCA in
-            case vrfy(vkCA, certA, _vkA(p)) {// get verkeyA = vk(sigkeyA)
+            case vrfy(vkCA, certA, vka) {// get verkeyA = vk(sigkeyA)
                 | Some res =>
                     case res {
                     | ClientCert _ => ()
                     | AuthCert vkA => 
                         // now use verkeyA to verify signed_k
                         corr_case sigkeyA in
-                        case vrfy(vkA, _k(p), _sigofK(p)) { // get K, sign(sigkeyA, k)
+                        case vrfy(vkA, k, ksig) { // get K, sign(sigkeyA, k)
                             | Some k =>
                                 // finally, decrypt AK using k
                                 corr_case K in
@@ -104,6 +103,7 @@ def client_pkinit (certC : Data<adv> ||signature||) @ client
                     }
                 | None => ()
             }
+            otherwise ()
         }
 
 def client_main () @ client 
@@ -126,18 +126,17 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
 
     // i = {{verkeyC}}_CA, verkeyC, {{username}}_sigkeyC, username
     input i in 
-    let un = _pkinit_client_to_authserver_msg_4(i) in
-    let signed_un = _pkinit_client_to_authserver_msg_3(i) in
     corr_case sigkeyCA in
     corr_case sigkeyC in
     corr_case K in 
 
     // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) as CertAuthMsgs {// get client vertificate
+    parse i as pkinit_client_to_authserver_msg(certC, vkc, signed_un, un) in
+    case certC as CertAuthMsgs {// get client vertificate
             | ClientCert certC =>
             
                 // check that certC is valid for vkC
-                case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) {
+                case vrfy(vkCA, certC, vkc) {
                     | None => ()
                     | Some vkC =>
                     
@@ -177,6 +176,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||) @ authserver
             | AuthCert x => ()
             otherwise => ()
     }
+    otherwise ()
 
 
 def authserver_main () @ authserver

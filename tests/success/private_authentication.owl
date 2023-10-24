@@ -59,8 +59,8 @@ def B_main<j> () @ B
         | Some mm => 
             union_case m = mm in
             unpack i, m' = m in
-            let n0' = m1_n0<idx i>(m') in
-            let m1_pkA_e = m1_pkA<idx i>(m') in
+            
+            parse m' as m1<idx i>(n0', _, m1_pkA_e) in 
             case m1_pkA_e as m1_pkA_enum {
             | m1_pkA_tag m1_pkA =>
                 let b1 = eq(m1_pkA, get_encpk(pkA)) in    // let b2 = eq(n0', |nonce|) in
@@ -79,5 +79,6 @@ def B_main<j> () @ B
                     ()
             otherwise => ()
             }
+            otherwise ()
     }
 

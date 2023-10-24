@@ -43,7 +43,7 @@ name B_username : nonce @ A, B
 def S_main () @ S : Unit =
     let sigK = get(skS) in
     input inp in
-    let a, b = _A(inp), _B(inp) in
+    parse inp as addrs(a, b) in 
     // check lengths
     if eq(length(a), |nonce|) && eq(length(b), |nonce|) then
         let msg_to_sign_1 = signed_by_pkS(a, _pkA(get_encpk(skA)), get(T)) in
@@ -53,6 +53,7 @@ def S_main () @ S : Unit =
         let _ = output tickets(sig1, sig2, msg_to_sign_1, msg_to_sign_2) to endpoint(A) in
         ()        
     else ()
+    otherwise ()
 
 enum A_result {
     | A_Ok if sec(skS) then encpk(skB) else Data<adv>
@@ -67,7 +68,7 @@ def A_main() @ A
     let b = get(B_username) in    
     let _ = output addrs(a, b) to endpoint(S) in
     input inp in
-    let t1, t2, s1, s2 = _t1(inp), _t2(inp), _s1(inp), _s2(inp) in
+    parse inp as tickets(s1, s2, t1, t2) in 
     corr_case skS in 
 
     let pkA = get_encpk(skA) in
@@ -78,15 +79,18 @@ def A_main() @ A
             case vrfy(get_vk(skS), t2, s2) {
                 | None => A_No()
                 | Some s =>
-                    case _pk(s) as pk {
+                    parse s as signed_by_pkS(_, pks, _) in     
+                    case pks as pk {
                         | _pkA _ => A_No()
                         | _pkB o =>
                             let _ = output inp to endpoint(B) in
                             A_Ok(o)
                         otherwise => A_No()
                     }
+                    otherwise A_No()
             }
     }
+    otherwise A_No()
 
 
 enum B_result {
@@ -99,7 +103,7 @@ def B_main() @ B
 : B_result =
     let b = get(B_username) in
     input inp in
-    let t1, t2, s1, s2 = _t1(inp), _t2(inp), _s1(inp), _s2(inp) in
+    parse inp as tickets(s1, s2, t1, t2) in 
     corr_case skS in 
 
     let pkB = get_encpk(skB) in
@@ -110,10 +114,13 @@ def B_main() @ B
             case vrfy(get_vk(skS), t1, s1) {
                 | None => B_No()
                 | Some s =>
-                    case _pk(s) as pk {
+                    parse s as signed_by_pkS(_, pks, _) in
+                    case pks as pk {
                         | _pkB _ => B_No()
                         | _pkA o => B_Ok(o)
                         otherwise => B_No()
                     }
+                    otherwise B_No()
             }
     }
+    otherwise B_No()

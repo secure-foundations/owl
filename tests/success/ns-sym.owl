@@ -92,9 +92,7 @@ def alice (
   case adec(kA, i) {
     | None => alice_None()
     | Some res =>
-        let res' = res in 
-        let kAB : if sec(KA) then Name(KAB) else Data<adv> = _kAB2(res) in
-        let m1 = _x(res) in
+        parse res as kA_message(nA', kAB, B', m1) in    
         let _ = output m1 in
 
         input i in
@@ -107,6 +105,7 @@ def alice (
                 let _ = output encm in
                 alice_Some(kAB)
         }
+        otherwise alice_None()
   }
 // ************************************************************************
 
@@ -117,19 +116,18 @@ def server () @ AS
     // requires ([NA] <= adv)
 : Unit =
     input i in
-    let A'  = msg1_A(i) in
-    let B'  = msg1_B(i) in
-    let nA' = msg1_nA(i) in
-    let kAB = get(KAB) in
-    let kA  = get(KA) in
-    let kB  = get(KB) in
+    parse i as msg1_AtoS(A', B', nA') in
+        let kAB = get(KAB) in
+        let kA  = get(KA) in
+        let kB  = get(KB) in
 
-    let m1 : kB_message = kB_message(kAB, A') in
-    let encm1 = aenc(kB, m1) in
+        let m1 : kB_message = kB_message(kAB, A') in
+        let encm1 = aenc(kB, m1) in
 
-    let m2 = kA_message(nA', kAB, B', encm1) in
-    let encm2 = aenc(kA, m2) in
-    let _ = output encm2 in ()
+        let m2 = kA_message(nA', kAB, B', encm1) in
+        let encm2 = aenc(kA, m2) in
+        let _ = output encm2 in ()
+    otherwise ()
 // ************************************************************************
 
 
@@ -143,18 +141,18 @@ def bob () @ Bob
     case adec(kB, i) {
         | None => bob_None()
         | Some res =>
-            let A' = _A(res) in
-            let kAB' : if sec(KB) then Name(KAB) else Data<adv> = _kAB1(res) in
-            let nB = get(NB) in
-            let encm = aenc(kAB', nonceB(nB)) in
-            output encm;
+            parse res as kB_message(kAB', A') in
+                let nB = get(NB) in
+                let encm = aenc(kAB', nonceB(nB)) in
+                output encm;
 
-            input i2 in
-            case adec(kAB', i2) {
-                | None => bob_None()
-                | Some res =>
-                    let _ = check_nonce(res, nB) in
-                    bob_Some(kAB')
-            }
+                input i2 in
+                case adec(kAB', i2) {
+                    | None => bob_None()
+                    | Some res =>
+                        let _ = check_nonce(res, nB) in
+                        bob_Some(kAB')
+                }
+            otherwise bob_None()
     }
 // ************************************************************************

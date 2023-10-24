@@ -62,8 +62,8 @@ def R_main () @ R
 
     input inp in
 
-    let nT, mc = _nT2(inp), _m(inp) in
-
+    
+    parse inp as s(nT, mc) in 
     let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
 
     case x {
@@ -77,7 +77,7 @@ def R_main () @ R
                 | None => No()
                 | Some m =>
                     // len(m) == plus(..)
-                    let mm = _nT1<idx j>(m) in                    
+                    parse m as nonces<idx j>(nR, mm) in 
                     if eq(length(mm), |nonce|)  then
                         let mmm: if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())}  else Data<adv> ||nonce|| = mm in
                         let m':if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())} 
@@ -97,7 +97,9 @@ def R_main () @ R
                         Ok(res)
                     else
                         No()
+                    otherwise No()
             }
     }
+    otherwise No()
 
 

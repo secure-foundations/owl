@@ -22,8 +22,7 @@ def a<i> () @ alice : Unit =
         // instead of "j" won't work below.
         let j : Data<adv> |some_length()| = i in
         let foo : t<idx i>  = t<idx i>(get(X<i>), j) in
-        let x' = _x<idx i>(foo) in 
-        let y' = _y<idx i>(foo) in 
+        parse foo as t<idx i>(x', y') in 
         // When we print, we see that foo has type t
         debug printTyContext;
         ()
@@ -36,8 +35,8 @@ def b<i> () @ alice : Unit =
     debug "=======";
     input i in
     let foo = t<idx i>(get(X<i>), i) in
-    let x' = _x<idx i>(foo) in 
-    let y' = _y<idx i>(foo) in 
+    parse foo as t<idx i>(x', y') in 
     // When we print, we see that foo only has type Data<[X] /\ adv>
     debug printTyContext;
     ()
+    otherwise ()

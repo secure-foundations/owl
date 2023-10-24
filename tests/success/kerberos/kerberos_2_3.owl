@@ -8,12 +8,13 @@ def ticketserver_main () @ ticketserver
     input i in 
     
     corr_case kT in
-    case adec(get(kT), _client_to_ticketserver_msg_1(i)) {
+    parse i as client_to_ticketserver_msg(c, t) in 
+    case adec(get(kT), c) {
          | None => ()
          | Some ak =>
          
              corr_case AK in
-             case adec(ak, _client_to_ticketserver_msg_2(i)) {
+             case adec(ak, t) {
                  | Some ClientRequest =>
                      let st =  aenc(get(kS), get(SK)) in
                      let m =  aenc(ak, TicketResponse(get(SK))) in
@@ -22,6 +23,7 @@ def ticketserver_main () @ ticketserver
                  | None => ()
              }
     }
+    otherwise ()
 
 
 def service_main () @ service
@@ -31,11 +33,12 @@ def service_main () @ service
     input i in
     
     corr_case kS in
-    case adec(get(kS), _client_to_service_msg_1(i)) {
+    parse i as client_to_service_msg(c1, c2) in 
+    case adec(get(kS), c1) {
          | None => ()
          | Some sk =>
              corr_case SK in
-             case adec(sk, _client_to_service_msg_2(i)) {
+             case adec(sk, c2) {
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
@@ -43,6 +46,7 @@ def service_main () @ service
                      else ()
              }
     }
+    otherwise ()
 
 // called by the respective client_main() functions for the two versions of kerberos
 def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
@@ -56,8 +60,8 @@ def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
-    let service_ticket = _ticketserver_msg_1(i') in
-    case adec(ak, _ticketserver_msg_2(i')) {
+    parse i' as ticketserver_msg(service_ticket, c) in 
+    case adec(ak, c) {
         | None => ()
         | Some res =>
             case res as AKEnum {
@@ -71,3 +75,4 @@ def client_kerberos (ak: if sec(K) then Name(AK) else Data<adv>, tgt : Data<adv>
                 otherwise => ()
             }
     }
+    otherwise ()
