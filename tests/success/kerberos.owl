@@ -387,58 +387,6 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
 
     // i = {{verkeyC}}_CA, verkeyC, {{username}}_sigkeyC, username
     input i in 
-<<<<<<< HEAD
-    let un = _pkinit_client_to_authserver_msg_4(i) in
-    let signed_un = _pkinit_client_to_authserver_msg_3(i) in
-
-    // check that we got a good certificate
-    case _pkinit_client_to_authserver_msg_1(i) {// get client vertificate
-         | ClientCert certC =>
-         
-             // check that certC is valid for vkC
-            corr_case sigkeyCA in
-             case vrfy(vkCA, certC, _pkinit_client_to_authserver_msg_2(i)) { 
-                 | None => ()
-                 | Some vkC =>
-                 
-                     // use verkeyC to verify the username
-                     corr_case sigkeyC in
-                     case vrfy(vkC, signed_un, un) {
-                         | None => ()
-                         | Some username =>
-                         
-                             // signed username is equal to the client we expected
-                             // TODO: check that a signed timestamp is still fresh
-                             if eq(username, get(uname)) then
-
-                                // sign/encrypt/send outputs to client
-                                let tgt = aenc(get(kT), get(AK)) in
-                                output tgt to endpoint(client);
-                                
-                                let enc_ak = aenc(get(K), get(AK)) in
-                                output enc_ak to endpoint(client);
-                                
-                                // bundle msg and encrypt with pubkeyC
-                                let sA = get(sigkeyA) in
-                                let kk = get(K) in
-                                // let signed_k : Data<adv> ||signature||= sign(sA, k'') in
-                                let signed_k = sign(sA, kk) in
-                                let b = eq(length(signed_k), |signature|) in
-                                if b then
-                                    let field1 : Data<adv>||signature|| = certA in 
-                                    let field2 : vk(sigkeyA) = get_vk(sigkeyA) in 
-                                    let field3 : Name(K) = get(K) in 
-                                    // let field4 : Data<adv>||signature|| = signed_k in 
-                                    let field4 = signed_k in 
-                                    let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
-                                    let msg = pkenc(pkC, str) in
-                                    output msg to endpoint(client); ()
-                                else ()
-                             else ()
-                     }
-             }
-          | AuthCert x => ()
-=======
     parse i as pkinit_client_to_authserver_msg(certC, vkc, signed_un, un) in {
         // check that we got a good certificate
         case certC as CertAuthMsgs {// get client vertificate
@@ -489,7 +437,6 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
               | AuthCert x => ()
               otherwise => ()
         }
->>>>>>> parsing_fixes
     }
     otherwise ()
 
