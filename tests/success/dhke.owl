@@ -46,7 +46,8 @@ def alice_main () @ alice
     let _ = output a to endpoint(bob) in
     input i, _ in 
     corr_case skB in
-    case vrfy(vkB, _b1(i), _b2(i)) {
+    parse i as bob_msg(b1, b2) in 
+    case vrfy(vkB, b1, b2) {
      | Some bobs_pk => 
        corr_case X in
        corr_case Y in
@@ -59,6 +60,7 @@ def alice_main () @ alice
        ()
      | None => ()
     }
+    otherwise ()
 
 
 def bob_main () @ bob 
@@ -70,7 +72,8 @@ def bob_main () @ bob
     input i, _ in 
     corr_case skA in
 
-    case vrfy(vkA, _a1(i), _a2(i)) {
+    parse i as alice_msg(a1, a2) in 
+    case vrfy(vkA, a1, a2) {
      | Some pkX => 
        corr_case X in
        corr_case Y in
@@ -89,10 +92,4 @@ def bob_main () @ bob
        }
      | None => ()
     }
-
-/* The problem that needs to be solved by extra typing is:
-    - If pkY is adv controlled,
-    - Then "shared secret" ss is adv controlled,
-    - Which means H(ss) is adv controlled,
-    - So encrypting d under H(ss) will leak d.
-    */
+    otherwise ()

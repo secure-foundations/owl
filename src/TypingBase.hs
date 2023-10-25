@@ -1099,6 +1099,18 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
+obtainTyCases :: Ty -> String -> Check [(String, Maybe Ty)]
+obtainTyCases t err = 
+    case t^.val of
+      TConst s ps -> do
+          td <- getTyDef s
+          case td of
+            EnumDef b -> extractEnum ps (show s) b
+            _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
+      TOption t0 -> return [("None", Nothing), ("Some", Just t0)]
+      _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
+
+
 extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
 extractEnum ps s b = do
     idxs <- getEnumParams ps
@@ -1106,6 +1118,16 @@ extractEnum ps s b = do
     assert (show $ owlpretty "Wrong index arity for enum " <> owlpretty s) $ length idxs == length is  
     let bdy = substs (zip is idxs) bdy'
     return bdy
+
+obtainStructInfo :: Ty -> Check [(String, Ty)]
+obtainStructInfo t =
+    case t^.val of
+      TConst s ps -> do 
+          td <- getTyDef s
+          case td of
+            StructDef sd -> extractStruct ps (show $ owlpretty t) sd
+            _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
+      _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
 
 extractStruct :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
 extractStruct ps s b = do
@@ -1152,11 +1174,10 @@ coveringLabel' t =
                 ls <- forM xs $ \(_, t) -> coveringLabel' t
                 return $ foldr joinLbl zeroLbl ls
       TAdmit -> return $ zeroLbl -- mostly a placeholder
-      TCase _ t1 t2 -> do -- If the covering label is the same, then we just return it. Otherwise we fail
+      TCase _ t1 t2 -> do 
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
-          if (l1 `aeq` l2) then return l1 else 
-              typeError $ show $ owlpretty "Difficult case for coveringLabel': TCase" <+> owlpretty l1 <+> owlpretty l2
+          return $ joinLbl l1 l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
           l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t

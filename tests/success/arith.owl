@@ -12,9 +12,7 @@ def amain (a : t) @ alice : Unit =
     assert 2 * (3 + 4) == 14;
     assert |nonce| + |nonce| == 2 * |nonce|;
     assert zero() == 0;
-    let x' = x(a) in 
-    let y' = y(a) in 
-    let z' = z(a) in 
+    parse a as t(x', y', z') in 
     let a' = t(x', y', z') in
     assert (length(a') == |nonce| + |nonce| + |nonce|);
     assert (length(a') == 3 * |nonce|);

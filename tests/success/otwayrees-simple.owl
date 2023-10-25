@@ -129,15 +129,17 @@ def alice (
     case adec(kA, st) {
         | None => alice_None()
         | Some res =>
-            case res {
+            case res as kA_messages {
                 | mA1 _ => alice_None()
                 | mA2 msg2 =>
-                    let b = checknonce(_nA2(msg2), nA) in
+                    parse msg2 as kA_message_2(nA', kab) in 
+                    let b = checknonce(nA', nA) in
                     if b then
-                        let kab:if sec(KA) then Name(kAB) else Data<adv> = _kABA(msg2) in
                         alice_Some(kab)
                     else
                         alice_None()
+                    otherwise alice_None()
+                otherwise => alice_None()
             }
     }
 // ************************************************************************
@@ -160,9 +162,8 @@ def bob (
     let kB:Name(KB) = get(KB) in
 
     input i in 
-    let A'    = msg1_A(i) in
-    let B'    = msg1_B(i) in 
-    let encm' = msg1_x(i) in 
+    corr_case KB in
+    parse i as msg1_AtoB(A', B', encm') in
 
     // let _ = check_session_identifier(M') in
     let _ = check_valid_username(A') in
@@ -174,27 +175,29 @@ def bob (
     let _ = output msg2_BToS(A', B, encm', encm) in
 
     input i in 
-    let x1' = msg3_x1(i) in
-    let x2' = msg3_x2(i) in
+    parse i as msg3_StoB(x1', x2') in 
 
     // let _ = check_session_identifier(M') in
-    corr_case KB in
     case adec(kB, x2') {
         | None => bob_None()
         | Some res =>
-            case res {
+            case res as kB_messages { 
                 | mB1 _ => bob_None()
                 | mB2 msg2 =>
-                    let b = checknonce(_nB2(msg2), nB) in
+                    parse msg2 as kB_message_2(nB', kab) in 
+                    let b = checknonce(nB', nB) in
                     if b then
-                        let kab:if sec(KB) then Name(kAB) else Data<adv> = _kABB(msg2) in
                         let _ = output msg4_BtoA(x1') in
                         bob_Some(kab)
                     else
                         false_elim in 
                         bob_None()
+                    otherwise bob_None()
+                otherwise => bob_None()
             }
     }
+    otherwise bob_None()
+    otherwise bob_None()
 // ************************************************************************
 
 // ************************************************************************
@@ -210,39 +213,40 @@ def server (
     corr_case KB in
 
     input i in
-    let A = msg2_A(i) in
-    let B = msg2_B(i) in
-    let x1 = msg2_x1(i) in
-    let x2 = msg2_x2(i) in
+    parse i as msg2_BToS(A, B, x1, x2) in 
 
     case adec(kA, x1) {
         | None => ()
         | Some resA =>
-            case resA {
+            case resA as kA_messages {
                 | mA1 msg1A =>
                     // attempt to decrypt the second message only after the first one decrypts correctly
                     case adec(kB, x2) {
                         | None => ()
                         | Some resB =>
-                            case resB {
+                            case resB as kB_messages {
                                 | mB1 msg1B =>
-                                    let _ = check_equal(A, _AA(msg1A), _AB(msg1B)) in
-                                    let _ = check_equal(B, _BA(msg1A), _BB(msg1B)) in
+                                    parse msg1A as kA_message_1(nA, AA, BA) in 
+                                    parse msg1B as kB_message_1(nB, AB, BB) in
+                                    let _ = check_equal(A, AA, AB) in
+                                    let _ = check_equal(B, BA, BB) in
                                     // let _ = check_equal(M, _mA(msg1A), _mB(msg1B)) in
-
-                                    let nA = _nA1(msg1A) in
-                                    let nB = _nB1(msg1B) in
 
                                     let encmA = aenc(kA, mA2(kA_message_2(nA, kab))) in
                                     let encmB = aenc(kB, mB2(kB_message_2(nB, kab))) in
                                     let _ = output msg3_StoB(encmA, encmB)
                                     in ()
+                                    otherwise ()
+                                    otherwise ()
                                 | mB2 _ => ()
+                                otherwise => ()
                             }
                     }
                 | mA2 _ => ()
+                otherwise => ()
             }
     }
+    otherwise ()
 
 // ************************************************************************
 

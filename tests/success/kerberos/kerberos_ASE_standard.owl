@@ -16,15 +16,16 @@ def client_main () @ client
     // i = tgt, aenc(K, AK)
     input i in 
 
-    let tgt = _authserver_msg_1(i) in
+    parse i as authserver_msg(tgt, c) in 
     if eq(length(tgt), cipherlen(|enckey|)) then 
         corr_case K in
-        case adec(get(K), _authserver_msg_2(i)) {
+        case adec(get(K), c) {
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
         }
     else ()
+    otherwise ()
     
 def authserver_main () @ authserver
     : Unit =

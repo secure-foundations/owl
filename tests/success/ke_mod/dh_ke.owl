@@ -39,7 +39,8 @@ module DH_KE (P : Params) : KE(P) = {
                 let _ = output a to endpoint(P.Client) in
                 input i, _ in 
                 corr_case skC in
-                case vrfy(vkC, _c1(i), _c2(i)) {
+                parse i as client_msg(c1, c2) in 
+                case vrfy(vkC, c1, c2) {
                  | Some client_pk => 
                    corr_case S in 
                    corr_case C in 
@@ -54,6 +55,7 @@ module DH_KE (P : Params) : KE(P) = {
                    ()
                  | None => ()
                 }
+                otherwise ()
 
 
             def ke_Client () @ P.Client
@@ -64,7 +66,8 @@ module DH_KE (P : Params) : KE(P) = {
                 let _ = output b to endpoint(P.Server) in
                 input i, _ in 
                 corr_case skS in
-                case vrfy(vkS, _s1(i), _s2(i)) {
+                parse i as server_msg(s1, s2) in 
+                case vrfy(vkS, s1, s2) {
                  | Some server_pk => 
                    let ss  = dh_combine(server_pk, get(C)) in
                    pcase (ss == dh_combine(dhpk(get(C)), get(S))) in  
@@ -82,6 +85,7 @@ module DH_KE (P : Params) : KE(P) = {
                    }
                  | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
                 }
+                otherwise None<ty: if sec(k) then Name(k) else Data<adv> >()
 }
                  
 

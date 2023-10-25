@@ -139,7 +139,7 @@ concretify e =
       EAssume _ -> error "Concretify on assume"
       EAdmit -> error "Concretify on admit"
       ECall a b c -> return $ CCall a b c
-      ECase a cases -> do
+      ECase a otk cases -> do -- TODO: concretify anntation
           a' <- concretify a
           cases' <- forM cases $ \(c, o) ->
               case o of
