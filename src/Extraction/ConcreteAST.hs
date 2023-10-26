@@ -90,10 +90,12 @@ data CExpr =
     | CInput (Bind (DataVar, EndpointVar) CExpr)
     | COutput AExpr (Maybe Endpoint)
     | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
+    | CBlock CExpr -- Boundary for scoping; introduced by { }
     | CIf AExpr CExpr CExpr
     | CRet AExpr
     | CCall Path ([Idx], [Idx]) [AExpr]
-    | CCase AExpr [(String, Either CExpr (Bind DataVar CExpr))]
+    | CParse AExpr CTy (Maybe CExpr) (Bind [(DataVar, Ignore String)] CExpr)
+    | CCase AExpr (Maybe (CTy, CExpr)) [(String, Either CExpr (Bind DataVar CExpr))]
     | CTLookup Path AExpr
     | CTWrite Path AExpr AExpr
     | CCrypt CryptOp [AExpr]
@@ -107,58 +109,78 @@ instance Subst AExpr CExpr
 concretify :: Fresh m => Expr -> m CExpr
 concretify e =
     case e^.val of
-      EInput _ xse -> do
-          let (xe, e) = unsafeUnbind xse
-          c <- concretify e
-          return $ CInput $ bind xe c
-      EOutput a eo -> return $ COutput a eo
-      ELet e1 _ oanf _ xk -> do
-          e1' <- concretify e1
-          let (x, k) = unsafeUnbind xk
-          k' <- concretify k
-          return $ CLet e1' oanf (bind x k')
-      EUnionCase a s xk -> do
-          (x, k) <- unbind xk
-          k' <- concretify k
-          return $ subst x a k'
-      EUnpack a ixk -> do
-          ((i, x), k) <- unbind ixk
-          k' <- concretify k
-          return $ subst x a k' -- i is dangling here, but that shouldn't matter
-      EChooseIdx _ ixk -> do
-          (i, k) <- unbind ixk
-          k' <- concretify k
-          return k' -- i is free here; irrelevant
-      EIf a e1 e2 -> do
-          c1 <- concretify e1
-          c2 <- concretify e2
-          return $ CIf a c1 c2
-      ERet a -> return $ CRet a
-      EDebug _ -> return $ CSkip 
-      EAssert _ -> return $ CSkip
-      EAssume _ -> error "Concretify on assume"
-      EAdmit -> error "Concretify on admit"
-      ECall a b c -> return $ CCall a b c
-      ECase a otk cases -> do -- TODO: concretify anntation
-          a' <- concretify a
-          cases' <- forM cases $ \(c, o) ->
-              case o of
-                Left e -> do
-                    e' <- concretify e
-                    return (c, Left e')
-                Right (_, xk) -> do
-                    let (x, k) = unsafeUnbind xk
+        EInput _ xse -> do
+            let (xe, e) = unsafeUnbind xse
+            c <- concretify e
+            return $ CInput $ bind xe c
+        EOutput a eo -> return $ COutput a eo
+        ELet e1 _ oanf _ xk -> do
+            e1' <- concretify e1
+            let (x, k) = unsafeUnbind xk
+            k' <- concretify k
+            return $ CLet e1' oanf (bind x k')
+        EBlock e -> do
+            c <- concretify e
+            return $ CBlock c
+        EUnionCase a s xk -> do
+            (x, k) <- unbind xk
+            k' <- concretify k
+            return $ subst x a k'
+        EUnpack a ixk -> do
+            ((i, x), k) <- unbind ixk
+            k' <- concretify k
+            return $ subst x a k' -- i is dangling here, but that shouldn't matter
+        EChooseIdx _ ixk -> do
+            (i, k) <- unbind ixk
+            k' <- concretify k
+            return k' -- i is free here; irrelevant
+        EIf a e1 e2 -> do
+            c1 <- concretify e1
+            c2 <- concretify e2
+            return $ CIf a c1 c2
+        EGuard ae e -> error "TODO concretify EGuard"
+        ERet a -> return $ CRet a
+        EDebug _ -> return CSkip 
+        EAssert _ -> return CSkip
+        EAssume _ -> error "Concretify on assume"
+        EAdmit -> error "Concretify on admit"
+        EForallBV _ -> return CSkip
+        EForallIdx _ -> return CSkip
+        ECall a b c -> return $ CCall a b c
+        EParse ae t ok bindpat -> do
+            let (pats, k) = unsafeUnbind bindpat
+            k' <- concretify k
+            ok' <- traverse concretify ok
+            t' <- concretifyTy t
+            return $ CParse ae t' ok' (bind pats k')
+        ECase a otk cases -> do -- TODO: concretify annotation
+            a' <- concretify a
+            cases' <- forM cases $ \(c, o) ->
+                case o of
+                    Left e -> do
+                        e' <- concretify e
+                        return (c, Left e')
+                    Right (_, xk) -> do
+                        let (x, k) = unsafeUnbind xk
+                        k' <- concretify k
+                        return (c, Right $ bind x k')
+            avar <- fresh $ s2n "caseval"
+            otk' <- case otk of
+                Nothing -> return Nothing
+                Just (t,k) -> do
+                    t' <- concretifyTy t
                     k' <- concretify k
-                    return (c, Right $ bind x k')
-          avar <- fresh $ s2n "caseval"
-          return $ CLet a' Nothing (bind avar $ (CCase (mkSpanned $ AEVar (ignore $ show avar) avar) cases'))
-      EPCase _ _ k -> concretify k
-      EFalseElim e _ -> concretify e
-      ETLookup n a -> return $ CTLookup n a
-      ETWrite n a a2 -> return $ CTWrite n a a2
-      ECrypt op args -> return $ CCrypt op args
-      EIncCtr p idxs -> return $ CIncCtr p idxs
-      EGetCtr p idxs -> return $ CGetCtr p idxs
+                    return $ Just (t', k')
+            return $ CLet a' Nothing (bind avar $ CCase (mkSpanned $ AEVar (ignore $ show avar) avar) otk' cases')
+        EPCase _ _ k -> concretify k
+        EFalseElim e _ -> concretify e
+        ETLookup n a -> return $ CTLookup n a
+        ETWrite n a a2 -> return $ CTWrite n a a2
+        ECrypt op args -> return $ CCrypt op args
+        EIncCtr p idxs -> return $ CIncCtr p idxs
+        EGetCtr p idxs -> return $ CGetCtr p idxs
+        ESetOption _ _ e -> concretify e
+        -- _ -> error $ "Concretify on " ++ show (owlpretty e)
 
 doConcretify :: Expr -> CExpr
 doConcretify = runFreshM . concretify
@@ -199,6 +221,7 @@ instance OwlPretty CExpr where
     owlpretty (CLet e oanf xk) =
         let (x, k) = owlprettyBind xk in
         owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
+    owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
     owlpretty (CIf a e1 e2) =
         owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
     owlpretty (CRet a) = owlpretty "ret " <> owlpretty a
@@ -208,7 +231,7 @@ instance OwlPretty CExpr where
                      (v1, v2) -> owlpretty "<" <> mconcat (map owlpretty v1) <> owlpretty "@" <> mconcat (map owlpretty v2) <> owlpretty ">"
         in
         owlpretty f <> inds <> tupled (map owlpretty as)
-    owlpretty (CCase a xs) =
+    owlpretty (CCase a otk xs) =
         let pcases =
                 map (\(c, o) ->
                     case o of
@@ -221,3 +244,6 @@ instance OwlPretty CExpr where
     owlpretty (CCrypt cop as) = owlpretty cop <> tupled (map owlpretty as)
     owlpretty (CIncCtr p idxs) = owlpretty "inc_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CGetCtr p idxs) = owlpretty "get_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
+    owlpretty (CParse ae t ok bindpat) = 
+        let (pats, k) = owlprettyBind bindpat in
+        owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> parens pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k

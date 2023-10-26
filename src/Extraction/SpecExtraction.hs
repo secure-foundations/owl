@@ -275,7 +275,8 @@ extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
     ftail <- flattenPath f
     return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
-extractExpr (CCase a xs) = do
+extractExpr (CCase a otk xs) = do
+    debugPrint "TODO CCase parsing in spec extraction"
     a' <- extractAExpr a
     pcases <-
             mapM (\(c, o) ->
