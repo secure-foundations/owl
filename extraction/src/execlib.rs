@@ -18,6 +18,13 @@ pub exec fn rc_vec_eq(v1: &Rc<Vec<u8>>, v2: &Rc<Vec<u8>>) -> (res: bool)
 }
 
 #[verifier(external_body)]
+pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
+    ensures res@ == v@
+{
+    v.clone()
+}
+
+#[verifier(external_body)]
 pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
     ensures v@ == old(v)@.add(s@)
 {

@@ -298,6 +298,17 @@ extractExpr (CIncCtr p ([], _)) = do
 extractExpr (CGetCtr p ([], _)) = do
     p' <- flattenPath p
     return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
+extractExpr (CParse a (CTConst p) (Just badk) bindpat) = do 
+    t <- tailPath p
+    let (pats, k) = unsafeUnbind bindpat
+    fs <- lookupStruct . rustifyName $ t
+    let patfields = zip (map (unignore . snd) pats) fs
+    let printPat (v, (f, _)) = owlpretty (specName f) <+> owlpretty ":" <+> owlpretty v
+    let patfields' = map printPat patfields
+    a' <- extractAExpr a
+    k' <- extractExpr k
+    badk' <- extractExpr badk
+    return $ parens $ owlpretty "parse" <+> parens (owlpretty "parse_" <> owlpretty (specName t) <> parens a') <+> owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> owlpretty "otherwise" <+> parens badk' <+> owlpretty "in" <> line <> k'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']

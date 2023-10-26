@@ -80,6 +80,7 @@ data Env = Env {
     _specAdtFuncs :: S.Set String,
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
+    _structs :: M.Map String [(String, RustTy)], -- rust type for each field
     _enums :: M.Map (S.Set String) String,
     _oracles :: M.Map String ([String], M.Map Int ([String], [String])), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
@@ -311,10 +312,11 @@ initLenConsts = M.fromList [
 initTypeLayouts :: M.Map String Layout
 initTypeLayouts = M.map LBytes initLenConsts
 
+-- Confirm: we call `serialize` when we need to treat an ADT as a sequence of bytes for a crypto op
 printOwlArg :: (RustTy, String) -> String
 printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ").as_slice()"
 printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
-printOwlArg (ADT _, s) = "&(*" ++ s ++ ".data).as_slice()"
+printOwlArg (ADT name, s) = "&(serialize_" ++ name ++ "(&" ++ s ++ ")).as_slice()"
 printOwlArg (_, s) = s
 
 printOwlOp :: String -> [(RustTy, String)] -> String
@@ -384,7 +386,7 @@ initFuncs =
         ] 
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty S.empty 0 Nothing [] []
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] []
 
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
@@ -402,6 +404,12 @@ lookupFunc fpath = do
     -- debugPrint $ owlpretty "lookup" <+> pretty f <+> pretty "in" <+> pretty (M.keys fs)
     return $ fs M.!? f
     
+lookupStruct :: String -> ExtractionMonad [(String, RustTy)]
+lookupStruct s = do
+    ss <- use structs
+    case ss M.!? s of
+        Just fs -> return fs
+        Nothing -> throwError $ TypeError $ "struct not found: " ++ s
 
 lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad String))
 lookupAdtFunc fn = do
