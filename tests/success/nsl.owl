@@ -46,10 +46,8 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
         | Some c =>
             union_case x = c in 
             parse x as nsl_bob_message(nA_, nB') in
-            union_case nA' = nA_ in 
-            let b1 = checknonce(get(nA), nA') in 
-            let b2 = eq(length(nB'), |nonce|) in 
-            if b1 && b2 then 
+            union_case nA' = nA_ in            
+            if checknonce(get(nA), nA') then 
                 false_elim in 
                 let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
                 let _ = output c' to endpoint(bob) in

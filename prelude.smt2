@@ -246,6 +246,9 @@
 (declare-const SignatureLen Int)
 (assert (> SignatureLen 0))
 
+(declare-const PKEPubLen Int)
+(assert (> PKEPubLen 0))
+
 (declare-const VKLen Int)
 (assert (> VKLen 0))
 

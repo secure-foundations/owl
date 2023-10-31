@@ -302,7 +302,7 @@ initLenConsts = M.fromList [
         (rustifyName "nonce", aeadNonceSize defaultCipher),
         (rustifyName "mackey", hmacKeySize),
         (rustifyName "maclen", hmacLen),
-        (rustifyName "pkekey", pkeKeySize),
+        (rustifyName "pke_sk", pkeKeySize),
         (rustifyName "sigkey", sigKeySize),
         (rustifyName "vk", vkSize),
         (rustifyName "DH", dhSize),

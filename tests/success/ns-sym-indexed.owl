@@ -131,17 +131,14 @@ def AS_main<i> () @ AS
 : Unit =
     input inp in
     parse inp as msg1_AtoS(A', B', nA') in 
-    let kAB = get(KAB<i>) in
-    let kAB' = pack<i>(kAB) in
-    let kA  = get(KA) in
-    let kB  = get(KB) in
-
-    if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) && eq(length(B'), |nonce|) then
+        let kAB = get(KAB<i>) in
+        let kAB' = pack<i>(kAB) in
+        let kA  = get(KA) in
+        let kB  = get(KB) in
         let encm1 = aenc(kB, kB_message(kAB', A')) in
         let encm2 = aenc(kA, kA_message(nA', kAB', B', encm1)) in
         let _ = output encm2 to endpoint(Alice) in ()
-    else let _ = output 0 to endpoint(Alice) in ()    
-    otherwise ()
+    otherwise let _ = output 0 to endpoint(Alice) in ()
 // ************************************************************************
 
 

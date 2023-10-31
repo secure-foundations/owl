@@ -1883,8 +1883,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
                 l <- coveringLabel t1
-                let lt = tData l l -- TODO: model validation of parsing
-                tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
+                validatedTys <- getValidatedStructTys (show $ owlpretty t) l sinfo
+                -- let lt = tData l l 
+                -- tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
+                tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)) $ checkExpr ot k
                 tk2 <- case otherwiseCase of
                          Nothing -> typeError "Parse statement needs an otherwise case here"
                          Just t' -> return t'
@@ -1908,14 +1910,22 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
               flowCheck lt advLbl
           assert ("Duplicate case") $ uniq (map fst cases)
           assert ("Cases must not be nonempty") $ length cases > 0
-          assert ("Cases do are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
+          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
           branch_ts <- forM cases $ \(c, ocase) -> do
               let (Just otcase) = lookup c tcases
               case (otcase, ocase) of
                 (Nothing, Left ek) -> checkExpr ot ek
                 (Just t1, Right (s, xk)) -> do
                     (x, k) <- unbind xk
-                    let xt = if wfCase then t1 else tData lt lt 
+                    -- Generate type of bound case variable. Note that if this is a parsing `case` statement,
+                    -- we need to generate a type that incorporates the length information obtained from parsing.
+                    -- For enums, the payload is allowed to have an unknown length, since it can be parsed with a
+                    -- `tail` combinator.
+                    xt <- if wfCase then return t1 else do
+                        t' <- getValidatedTy lt t1
+                        return $ case t' of
+                            Nothing -> tData lt lt
+                            Just t' -> t'
                     tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
                     case ot of
                       Just _ -> return tout
@@ -1939,6 +1949,73 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 let t = head branch_ts'
                 forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
                 return t
+
+-- Generate types for the parsed struct fields that incorporate the length information generated from parsing.
+-- Note: we allow the last field in the struct to have a statically unknowable length, since it can be parsed with 
+-- a `tail` combinator.
+getValidatedStructTys :: String -> Label -> [(String, Ty)] -> Check [(String, Ty)]
+getValidatedStructTys structTy albl sinfo = do
+    maybeTys <- mapM (\(n,t) -> getValidatedTy albl t) sinfo
+    case allowLastUnknownLen (tData albl albl) maybeTys of
+        Nothing -> do
+            warn $ "Unparsable struct type: " ++ structTy ++ ", no length info generated from parsing"
+            return $ zip (map fst sinfo) (repeat $ tData albl albl)
+        Just tys -> return $ zip (map fst sinfo) tys
+    where
+    -- Like `Data.Traversable.sequence`, but uses the default value for the last element if it is `Nothing`.
+    allowLastUnknownLen :: a -> [Maybe a] -> Maybe [a]
+    allowLastUnknownLen _ [] = Just []
+    allowLastUnknownLen def [Nothing] = Just [def]
+    allowLastUnknownLen def (h:t) = (:) <$> h <*> allowLastUnknownLen def t
+
+getValidatedTy :: Label -> Ty -> Check (Maybe Ty)
+getValidatedTy albl t = local (set tcScope TcGhost) $ do
+    case t ^. val of
+        TData _ _ _ -> do
+            return Nothing
+        TDataWithLength _ ae -> do
+            t <- inferAExpr ae
+            l <- tyLenLbl t
+            b <- flowsTo l zeroLbl
+            return $ if b then Just $ tDataWithLength albl ae else Nothing
+        TRefined t' _ _ -> getValidatedTy albl t' -- Refinement not guaranteed to hold by parsing
+        TOption t' -> do 
+            t'' <- getValidatedTy albl t'
+            case t'' of
+              Nothing -> return Nothing
+              Just t'' -> return $ Just $ mkSpanned $ TOption t''
+        TCase _ _ _ -> return Nothing
+        TConst _ _ -> return $ Just $ tData albl albl -- TODO: These are ADTs that are not parsed yet
+        TBool _ -> return $ Just $ mkSpanned $ TBool albl
+        TUnion _ _ -> return Nothing
+        TUnit -> return $ Just tUnit
+        TName ne -> do
+            nameLen <- getLenConst ne
+            return $ Just $ tDataWithLength albl nameLen
+        TVK _ -> return $ Just $ tDataWithLength albl (aeLenConst "vk")
+        TDH_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
+        TEnc_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "pke_pk")
+        TSS _ _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
+        TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
+        TExistsIdx ity -> do
+            (i, ty) <- unbind ity
+            local (over inScopeIndices $ insert i IdxGhost) $ getValidatedTy albl ty
+    where     
+    getLenConst :: NameExp -> Check AExpr
+    getLenConst ne = do
+        ntLclsOpt <- getNameInfo ne
+        case ntLclsOpt of
+            Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
+            Just (nt, _) -> 
+                case nt^.val of
+                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                    NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+                    NT_DH -> return $ mkSpanned $ AELenConst "group"
+                    NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
+                    NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
+                    NT_PRF _ -> typeError $ "Unparsable name type: " ++ show (owlpretty nt)
 
 doAEnc t1 x t args =
   case extractNameFromType t1 of

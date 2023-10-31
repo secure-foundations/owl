@@ -18,17 +18,15 @@ module Kerberos_SKINIT(P : Params) : Kerberos_Stage1(P) = {
         // i = tgt, aenc(K, AK)
         input i in 
 
-        parse i as P.authserver_msg(tgt, c) in 
-        if eq(length(tgt), cipherlen(|enckey|)) then 
-            corr_case K in
-            case adec(get(K), c) {
-                | None => None<ty:client_stage1_t>()
-                | Some ak => 
-                   if eq(length(ak), |enckey|) then Some(client_stage1_t(ak,
-                       tgt, username)) else None<ty:client_stage1_t>()
-            }
-        else None<ty:client_stage1_t>()
-        otherwise None<ty:client_stage1_t>()
+        parse i as P.authserver_msg(tgt, c) in {
+        corr_case K in
+        case adec(get(K), c) {
+            | None => None<ty:client_stage1_t>()
+            | Some ak => 
+                if eq(length(ak), |enckey|) then Some(client_stage1_t(ak,
+                    tgt, username)) else None<ty:client_stage1_t>()
+        }
+        } otherwise None<ty:client_stage1_t>()
 
     def authserver_main () @ P.authserver
         : Unit =
