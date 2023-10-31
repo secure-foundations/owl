@@ -1883,7 +1883,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
                 l <- coveringLabel t1
-                validatedTys <- getValidatedStructTys l sinfo
+                validatedTys <- getValidatedStructTys (show $ owlpretty t) l sinfo
                 -- let lt = tData l l 
                 -- tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
                 tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)) $ checkExpr ot k
@@ -1917,7 +1917,15 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 (Nothing, Left ek) -> checkExpr ot ek
                 (Just t1, Right (s, xk)) -> do
                     (x, k) <- unbind xk
-                    xt <- if wfCase then return t1 else getValidatedTy lt t1
+                    -- Generate type of bound case variable. Note that if this is a parsing `case` statement,
+                    -- we need to generate a type that incorporates the length information obtained from parsing.
+                    -- For enums, the payload is allowed to have an unknown length, since it can be parsed with a
+                    -- `tail` combinator.
+                    xt <- if wfCase then return t1 else do
+                        t' <- getValidatedTy lt t1
+                        return $ case t' of
+                            Nothing -> tData lt lt
+                            Just t' -> t'
                     tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
                     case ot of
                       Just _ -> return tout
@@ -1942,34 +1950,56 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
                 return t
 
-getValidatedStructTys :: Label -> [(String, Ty)] -> Check [(String, Ty)]
-getValidatedStructTys albl sinfo = local (set tcScope TcGhost) $ 
-    mapM (\(n,t) -> do t' <- getValidatedTy albl t ; return (n, t')) sinfo
+-- Generate types for the parsed struct fields that incorporate the length information generated from parsing.
+-- Note: we allow the last field in the struct to have a statically unknowable length, since it can be parsed with 
+-- a `tail` combinator.
+getValidatedStructTys :: String -> Label -> [(String, Ty)] -> Check [(String, Ty)]
+getValidatedStructTys structTy albl sinfo = do
+    maybeTys <- mapM (\(n,t) -> getValidatedTy albl t) sinfo
+    case allowLastUnknownLen (tData albl albl) maybeTys of
+        Nothing -> do
+            warn $ "Unparsable struct type: " ++ structTy ++ ", no length info generated from parsing"
+            return $ zip (map fst sinfo) (repeat $ tData albl albl)
+        Just tys -> return $ zip (map fst sinfo) tys
+    where
+    -- Like `Data.Traversable.sequence`, but uses the default value for the last element if it is `Nothing`.
+    allowLastUnknownLen :: a -> [Maybe a] -> Maybe [a]
+    allowLastUnknownLen _ [] = Just []
+    allowLastUnknownLen def [Nothing] = Just [def]
+    allowLastUnknownLen def (h:t) = (:) <$> h <*> allowLastUnknownLen def t
 
-
-getValidatedTy :: Label -> Ty -> Check Ty
-getValidatedTy albl t = do
+getValidatedTy :: Label -> Ty -> Check (Maybe Ty)
+getValidatedTy albl t = local (set tcScope TcGhost) $ do
     case t ^. val of
-        TData _ _ _ -> return $ tData albl albl
-        TDataWithLength _ ae -> return $ tDataWithLength albl ae
+        TData _ _ _ -> do
+            return Nothing
+        TDataWithLength _ ae -> do
+            t <- inferAExpr ae
+            l <- tyLenLbl t
+            b <- flowsTo l zeroLbl
+            return $ if b then Just $ tDataWithLength albl ae else Nothing
         TRefined t' _ _ -> getValidatedTy albl t' -- Refinement not guaranteed to hold by parsing
         TOption t' -> do 
             t'' <- getValidatedTy albl t'
-            return $ mkSpanned $ TOption t''
-        TCase _ _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
-        TConst _ _ -> return $ tData albl albl -- TODO: These are ADTs that are not parsed yet
-        TBool _ -> return $ mkSpanned $ TBool albl
-        TUnion _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
-        TUnit -> return tUnit
+            case t'' of
+              Nothing -> return Nothing
+              Just t'' -> return $ Just $ mkSpanned $ TOption t''
+        TCase _ _ _ -> return Nothing
+        TConst _ _ -> return $ Just $ tData albl albl -- TODO: These are ADTs that are not parsed yet
+        TBool _ -> return $ Just $ mkSpanned $ TBool albl
+        TUnion _ _ -> return Nothing
+        TUnit -> return $ Just tUnit
         TName ne -> do
             nameLen <- getLenConst ne
-            return $ tDataWithLength albl nameLen
-        TVK _ -> return $ tDataWithLength albl (aeLenConst "vk")
-        TDH_PK _ -> return $ tDataWithLength albl (aeLenConst "group")
-        TEnc_PK _ -> return $ tDataWithLength albl (aeLenConst "pke_pk")
-        TSS _ _ -> return $ tDataWithLength albl (aeLenConst "group")
+            return $ Just $ tDataWithLength albl nameLen
+        TVK _ -> return $ Just $ tDataWithLength albl (aeLenConst "vk")
+        TDH_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
+        TEnc_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "pke_pk")
+        TSS _ _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
         TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
-        TExistsIdx _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+        TExistsIdx ity -> do
+            (i, ty) <- unbind ity
+            local (over inScopeIndices $ insert i IdxGhost) $ getValidatedTy albl ty
     where     
     getLenConst :: NameExp -> Check AExpr
     getLenConst ne = do
