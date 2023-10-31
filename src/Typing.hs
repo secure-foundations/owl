@@ -1910,14 +1910,14 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
               flowCheck lt advLbl
           assert ("Duplicate case") $ uniq (map fst cases)
           assert ("Cases must not be nonempty") $ length cases > 0
-          assert ("Cases do are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
+          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
           branch_ts <- forM cases $ \(c, ocase) -> do
               let (Just otcase) = lookup c tcases
               case (otcase, ocase) of
                 (Nothing, Left ek) -> checkExpr ot ek
                 (Just t1, Right (s, xk)) -> do
                     (x, k) <- unbind xk
-                    let xt = if wfCase then t1 else tData lt lt 
+                    xt <- if wfCase then return t1 else getValidatedTy lt t1
                     tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
                     case ot of
                       Just _ -> return tout
@@ -1944,30 +1944,33 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
 
 getValidatedStructTys :: Label -> [(String, Ty)] -> Check [(String, Ty)]
 getValidatedStructTys albl sinfo = local (set tcScope TcGhost) $ 
-    mapM (\(n,t) -> do t' <- getValidatedStructTy albl t ; return (n, t')) sinfo where
-    getValidatedStructTy :: Label -> Ty -> Check Ty
-    getValidatedStructTy albl t = case t ^. val of
-            TData _ _ _ -> return $ tData albl albl
-            TDataWithLength _ ae -> return $ tDataWithLength albl ae
-            TRefined t' _ _ -> getValidatedStructTy albl t' -- Refinement not guaranteed to hold by parsing
-            TOption t' -> do 
-                t'' <- getValidatedStructTy albl t'
-                return $ mkSpanned $ TOption t''
-            TCase _ _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
-            TConst _ _ -> return $ tData albl albl -- TODO: These are ADTs that are not parsed yet
-            TBool _ -> return $ mkSpanned $ TBool albl
-            TUnion _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
-            TUnit -> return tUnit
-            TName ne -> do
-                nameLen <- getLenConst ne
-                return $ tDataWithLength albl nameLen
-            TVK _ -> return $ tDataWithLength albl (aeLenConst "vk")
-            TDH_PK _ -> return $ tDataWithLength albl (aeLenConst "group")
-            TEnc_PK _ -> return $ tDataWithLength albl (aeLenConst "pke_pk")
-            TSS _ _ -> return $ tDataWithLength albl (aeLenConst "group")
-            TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
-            TExistsIdx _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
-    
+    mapM (\(n,t) -> do t' <- getValidatedTy albl t ; return (n, t')) sinfo
+
+
+getValidatedTy :: Label -> Ty -> Check Ty
+getValidatedTy albl t = do
+    case t ^. val of
+        TData _ _ _ -> return $ tData albl albl
+        TDataWithLength _ ae -> return $ tDataWithLength albl ae
+        TRefined t' _ _ -> getValidatedTy albl t' -- Refinement not guaranteed to hold by parsing
+        TOption t' -> do 
+            t'' <- getValidatedTy albl t'
+            return $ mkSpanned $ TOption t''
+        TCase _ _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+        TConst _ _ -> return $ tData albl albl -- TODO: These are ADTs that are not parsed yet
+        TBool _ -> return $ mkSpanned $ TBool albl
+        TUnion _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+        TUnit -> return tUnit
+        TName ne -> do
+            nameLen <- getLenConst ne
+            return $ tDataWithLength albl nameLen
+        TVK _ -> return $ tDataWithLength albl (aeLenConst "vk")
+        TDH_PK _ -> return $ tDataWithLength albl (aeLenConst "group")
+        TEnc_PK _ -> return $ tDataWithLength albl (aeLenConst "pke_pk")
+        TSS _ _ -> return $ tDataWithLength albl (aeLenConst "group")
+        TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
+        TExistsIdx _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+    where     
     getLenConst :: NameExp -> Check AExpr
     getLenConst ne = do
         ntLclsOpt <- getNameInfo ne
