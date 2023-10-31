@@ -1,0 +1,21 @@
+locality alice
+
+name A : nonce @ alice
+struct t {
+    a : Name(A),
+    b : Data<adv> | |enckey| |,
+    c : Data<adv> | 4 |,
+    d : Data<adv> | |pke_pk| |
+}
+
+def alice_main() @ alice : Unit =
+    input i in
+    parse i as t(a, b, c, d) in
+        // debug printTyOf(a); // Data<adv> ||nonce||
+        assert(length(a) == |nonce|);
+        assert(length(b) == |enckey|);
+        assert(length(c) == 4);
+        assert(length(d) == |pke_pk|);
+        ()
+    otherwise
+        ()

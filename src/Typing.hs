@@ -1964,9 +1964,9 @@ getValidatedStructTys albl sinfo = local (set tcScope TcGhost) $
             TVK _ -> return $ tDataWithLength albl (aeLenConst "vk")
             TDH_PK _ -> return $ tDataWithLength albl (aeLenConst "group")
             TEnc_PK _ -> return $ tDataWithLength albl (aeLenConst "pke_pk")
-            TSS sp sp' -> return $ tDataWithLength albl (aeLenConst "group")
+            TSS _ _ -> return $ tDataWithLength albl (aeLenConst "group")
             TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
-            TExistsIdx bi -> return $ tData albl albl -- Unparsable type, so validation adds no info
+            TExistsIdx _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
     
     getLenConst :: NameExp -> Check AExpr
     getLenConst ne = do

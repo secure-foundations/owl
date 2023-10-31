@@ -301,17 +301,13 @@ def client_main () @ client
     input i in 
 
     parse i as authserver_msg(tgt, c) in {
-    let b = eq(length(tgt), cipherlen(|enckey|)) in
-    if b then 
         corr_case kC in
         case adec(get(kC), c) {
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
         }
-    else ()
-    }
-    otherwise ()
+    } otherwise ()
 
 
 def authserver_main () @ authserver

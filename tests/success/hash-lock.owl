@@ -78,7 +78,6 @@ def R_main () @ R
                 | Some m =>
                     // len(m) == plus(..)
                     parse m as nonces<idx j>(nR, mm) in 
-                    if eq(length(mm), |nonce|)  then
                         let mmm: if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())}  else Data<adv> ||nonce|| = mm in
                         let m':if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())} 
                             else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x == get(NT<@j>)) /\ happened(T_main<@j>()))}) 
@@ -95,8 +94,6 @@ def R_main () @ R
                             = pack<j>(m') in 
                         // assert(eq(length(res), |nonce|));
                         Ok(res)
-                    else
-                        No()
                     otherwise No()
             }
     }

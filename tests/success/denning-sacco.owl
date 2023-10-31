@@ -44,15 +44,12 @@ def S_main () @ S : Unit =
     let sigK = get(skS) in
     input inp in
     parse inp as addrs(a, b) in 
-    // check lengths
-    if eq(length(a), |nonce|) && eq(length(b), |nonce|) then
         let msg_to_sign_1 = signed_by_pkS(a, _pkA(get_encpk(skA)), get(T)) in
         let msg_to_sign_2 = signed_by_pkS(b, _pkB(get_encpk(skB)), get(T)) in
         let sig1 = sign(sigK, msg_to_sign_1) in
         let sig2 = sign(sigK, msg_to_sign_2) in
         let _ = output tickets(sig1, sig2, msg_to_sign_1, msg_to_sign_2) to endpoint(A) in
         ()        
-    else ()
     otherwise ()
 
 enum A_result {
