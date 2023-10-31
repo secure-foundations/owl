@@ -9,7 +9,6 @@ struct t {
 }
 
 name P : nonce @ alice
-name Q : nonce @ alice
 enum s { 
     | P Name(P)
     | Q Data<adv> | |pke_sk| |
