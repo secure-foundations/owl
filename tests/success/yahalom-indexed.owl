@@ -191,6 +191,7 @@ def Bob_main<i> () @ Bob
         }
         otherwise pack<j_>(bob_None<idx i, idx j_>())
     else
+        false_elim in
         pack<j_>(bob_None<idx i, idx j_>())
     }
     otherwise pack<j_>(bob_None<idx i, idx j_>())

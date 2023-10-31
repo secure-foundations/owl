@@ -409,13 +409,14 @@ lengthConstant s =
       "nonce" -> return $ SApp [SAtom "NameKindLength", SAtom "Nonce"]    
       "DH" -> return $ SApp [SAtom "NameKindLength", SAtom "DHkey"]
       "enckey" -> return $ SApp [SAtom "NameKindLength", SAtom "Enckey"]
-      "pkekey" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
+      "pke_sk" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
       "sigkey" -> return $ SApp [SAtom "NameKindLength", SAtom "Sigkey"]
       "prfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "PRFkey"]
       "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
       "signature" -> return $ SAtom "SignatureLen"
       "group" -> return $ SAtom "GroupLen"
       "vk" -> return $ SAtom "VKLen"
+      "pke_pk" -> return $ SAtom "PKEPubLen"
       "maclen" -> return $ SAtom "MAClen"
       "tag" -> return $ SAtom "Taglen"
       "counter" -> return $ SAtom "Counterlen"

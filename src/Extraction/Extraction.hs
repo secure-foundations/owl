@@ -270,7 +270,7 @@ initLenConsts = M.fromList [
         ("owl_nonce", aeadNonceSize defaultCipher),
         ("owl_mackey", hmacKeySize),
         ("owl_maclen", hmacLen),
-        ("owl_pkekey", pkeKeySize),
+        ("owl_pke_sk", pkeKeySize),
         ("owl_sigkey", sigKeySize),
         ("owl_vk", vkSize),
         ("owl_DH", dhSize),

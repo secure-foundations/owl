@@ -1883,8 +1883,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
                 l <- coveringLabel t1
-                let lt = tData l l -- TODO: model validation of parsing
-                tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
+                validatedTys <- getValidatedStructTys l sinfo
+                -- let lt = tData l l 
+                -- tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
+                tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)) $ checkExpr ot k
                 tk2 <- case otherwiseCase of
                          Nothing -> typeError "Parse statement needs an otherwise case here"
                          Just t' -> return t'
@@ -1939,6 +1941,48 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 let t = head branch_ts'
                 forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
                 return t
+
+getValidatedStructTys :: Label -> [(String, Ty)] -> Check [(String, Ty)]
+getValidatedStructTys albl sinfo = local (set tcScope TcGhost) $ 
+    mapM (\(n,t) -> do t' <- getValidatedStructTy albl t ; return (n, t')) sinfo where
+    getValidatedStructTy :: Label -> Ty -> Check Ty
+    getValidatedStructTy albl t = case t ^. val of
+            TData _ _ _ -> return $ tData albl albl
+            TDataWithLength _ ae -> return $ tDataWithLength albl ae
+            TRefined t' _ _ -> getValidatedStructTy albl t' -- Refinement not guaranteed to hold by parsing
+            TOption t' -> do 
+                t'' <- getValidatedStructTy albl t'
+                return $ mkSpanned $ TOption t''
+            TCase _ _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+            TConst _ _ -> return $ tData albl albl -- TODO: These are ADTs that are not parsed yet
+            TBool _ -> return $ mkSpanned $ TBool albl
+            TUnion _ _ -> return $ tData albl albl -- Unparsable type, so validation adds no info
+            TUnit -> return tUnit
+            TName ne -> do
+                nameLen <- getLenConst ne
+                return $ tDataWithLength albl nameLen
+            TVK _ -> return $ tDataWithLength albl (aeLenConst "vk")
+            TDH_PK _ -> return $ tDataWithLength albl (aeLenConst "group")
+            TEnc_PK _ -> return $ tDataWithLength albl (aeLenConst "pke_pk")
+            TSS sp sp' -> return $ tDataWithLength albl (aeLenConst "group")
+            TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
+            TExistsIdx bi -> return $ tData albl albl -- Unparsable type, so validation adds no info
+    
+    getLenConst :: NameExp -> Check AExpr
+    getLenConst ne = do
+        ntLclsOpt <- getNameInfo ne
+        case ntLclsOpt of
+            Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
+            Just (nt, _) -> 
+                case nt^.val of
+                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                    NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+                    NT_DH -> return $ mkSpanned $ AELenConst "group"
+                    NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
+                    NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
+                    NT_PRF _ -> typeError $ "Unparsable name type: " ++ show (owlpretty nt)
 
 doAEnc t1 x t args =
   case extractNameFromType t1 of

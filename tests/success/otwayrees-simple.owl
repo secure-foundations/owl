@@ -137,6 +137,7 @@ def alice (
                     if b then
                         alice_Some(kab)
                     else
+                        false_elim in
                         alice_None()
                     otherwise alice_None()
                 otherwise => alice_None()
