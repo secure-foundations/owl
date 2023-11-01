@@ -1985,7 +1985,34 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
               Nothing -> return Nothing
               Just t'' -> return $ Just $ mkSpanned $ TOption t''
         TCase _ _ _ -> return Nothing
-        TConst _ _ -> return $ Just $ tData albl albl -- TODO: These are ADTs that are not parsed yet
+        TConst s ps -> do
+            td <- getTyDef s
+            case td of
+              EnumDef b -> do
+                -- Check that all cases are validatable:
+                caseTys <- mapMaybe snd <$> extractEnum ps (show s) b
+                validatedTys <- mapM (getValidatedTy albl) caseTys
+                case sequence validatedTys of
+                    Nothing -> do
+                        warn $ "Unparsable enum type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
+                        return Nothing -- Unparsable nested enum type
+                    Just _ -> 
+                        -- All cases are parsable, but since we don't have a structural representation of the validated
+                        -- enum, we just return Data<albl> and require a second `case` statement to parse it.
+                        return $ Just $ tData albl albl 
+              StructDef b -> do
+                memberTys <- map snd <$> extractStruct ps (show s) b
+                validatedTys <- mapM (getValidatedTy albl) memberTys
+                case sequence validatedTys of
+                    Nothing -> do
+                        warn $ "Unparsable struct type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
+                        return Nothing -- Unparsable nested struct type
+                    Just _ -> do
+                        -- All cases are parsable, but since we don't have a structural representation of the validated
+                        -- struct, we just return Data<albl> and require a second `parse` statement to parse it.
+                        return $ Just $ tData albl albl
+              TyAbbrev t' -> getValidatedTy albl t'
+              TyAbstract -> typeError $ "Abstract type " ++ show (owlpretty t) ++ " is unparsable"
         TBool _ -> return $ Just $ mkSpanned $ TBool albl
         TUnion _ _ -> return Nothing
         TUnit -> return $ Just tUnit
