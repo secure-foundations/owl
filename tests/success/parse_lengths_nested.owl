@@ -1,0 +1,46 @@
+locality alice
+name A : nonce @ alice
+name P : nonce @ alice
+name V : nonce @ alice
+
+struct q {
+    u : Data<adv> | |pke_pk| |,
+    v : Name(V)
+}
+
+enum s { 
+    | P Name(P)
+    | Q q
+    | R
+}
+
+struct t {
+    a : Name(A),
+    b : Data<adv> | |enckey| |,
+    c : Data<adv> | 4 |,
+    s : s
+}
+
+def alice_main() @ alice : Unit =
+    input i in
+    parse i as t(a, b, c, s) in {
+    // debug printTyOf(a); // Data<adv> ||nonce||
+    // debug printTyOf(s); // Data<adv>
+    assert(length(a) == |nonce|);
+    assert(length(b) == |enckey|);
+    assert(length(c) == 4);
+    case s as s {
+    | P p =>         
+        // debug printTyOf(p); // Data<adv> ||nonce||
+        assert(length(p) == |nonce|); ()
+    | Q q => 
+        // debug printTyOf(q); // Data<adv>
+        parse q as q(u, v) in {
+        assert(length(u) == |pke_pk|);
+        assert(length(v) == |nonce|);
+        ()
+        } otherwise ()
+    | R => ()
+    otherwise => ()
+    }
+    } otherwise ()
