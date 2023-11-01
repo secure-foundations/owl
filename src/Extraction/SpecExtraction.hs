@@ -308,7 +308,7 @@ extractExpr (CParse a (CTConst p) (Just badk) bindpat) = do
     a' <- extractAExpr a
     k' <- extractExpr k
     badk' <- extractExpr badk
-    return $ parens $ owlpretty "parse" <+> parens (owlpretty "parse_" <> owlpretty (specName t) <> parens a') <+> owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> owlpretty "otherwise" <+> parens badk' <+> owlpretty "in" <> line <> k'
+    return $ parens $ owlpretty "parse" <+> parens (owlpretty "parse_" <> owlpretty (specName t) <> parens a') <+> owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> owlpretty "otherwise" <+> parens badk'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']

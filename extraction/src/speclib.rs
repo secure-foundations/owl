@@ -494,7 +494,7 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => { verus_proof_expr!{
             ITree::Ret(($($e)*, $mut_state))
         }};
-        ($mut_state:ident, $mut_type:ident, parse ($parser:ident($a:ident)) as ($tpat:expr) otherwise ($($otw:tt)*) in $($next:tt)*) => { verus_proof_expr!{
+        ($mut_state:ident, $mut_type:ident, parse ($parser:ident($a:ident)) as ($tpat:expr) in { $($next:tt)* } otherwise ($($otw:tt)*)) => { verus_proof_expr!{
             if let Some(parseval) = $parser($a) {
                 let $tpat = parseval;
                 owl_spec!($mut_state, $mut_type, $($next)*)
