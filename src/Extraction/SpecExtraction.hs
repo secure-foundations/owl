@@ -280,20 +280,26 @@ extractExpr (CCall f is as) = do
     ftail <- flattenPath f
     return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
 extractExpr (CCase a otk xs) = do
-    debugPrint "TODO CCase parsing in spec extraction"
     a' <- extractAExpr a
+    (parseCall, badk) <- case otk of
+            Just (CTConst p, bk) -> do
+                t <- tailPath p
+                bk' <- extractExpr bk
+                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk')
+            Nothing -> return (a', owlpretty "")
+            Just (t, _) -> throwError $ TypeError $ "got parsing case statement with bad type " ++ show t
     pcases <-
             mapM (\(c, o) ->
                 case o of
                 Left e -> do
                     e' <- extractExpr e
-                    return $ owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
                     e' <- extractExpr e
-                    return $ owlpretty (specCaseName True c) <+> parens (extractVar x) <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> owlpretty (specCaseName True c) <+> parens (extractVar x) <+> owlpretty "=>" <+> braces e' <> comma
                 ) xs
-    return $ parens $ owlpretty "case" <+> parens a' <> line <> braces (vsep pcases)
+    return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
 extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
 extractExpr (CIncCtr p ([], _)) = do
@@ -302,7 +308,7 @@ extractExpr (CIncCtr p ([], _)) = do
 extractExpr (CGetCtr p ([], _)) = do
     p' <- flattenPath p
     return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
-extractExpr (CParse a (CTConst p) (Just badk) bindpat) = do 
+extractExpr (CParse a (CTConst p) otk bindpat) = do 
     t <- tailPath p
     let (pats, k) = unsafeUnbind bindpat
     fs <- lookupStruct . rustifyName $ t
@@ -311,8 +317,16 @@ extractExpr (CParse a (CTConst p) (Just badk) bindpat) = do
     let patfields' = map printPat patfields
     a' <- extractAExpr a
     k' <- extractExpr k
-    badk' <- extractExpr badk
-    return $ parens $ owlpretty "parse" <+> parens (owlpretty "parse_" <> owlpretty (specName t) <> parens a') <+> owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> owlpretty "otherwise" <+> parens badk'
+    (parseCall, badk) <- case otk of
+            Just bk -> do
+                bk' <- extractExpr bk
+                return $ (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk')
+            Nothing -> return $ (a', owlpretty "")
+    return $ parens $ 
+        owlpretty "parse" <+> parens parseCall <+> 
+        owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> 
+        owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> 
+        badk
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']

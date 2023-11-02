@@ -153,7 +153,7 @@ concretify e =
             ok' <- traverse concretify ok
             t' <- concretifyTy t
             return $ CParse ae t' ok' (bind pats k')
-        ECase a otk cases -> do -- TODO: concretify annotation
+        ECase a otk cases -> do 
             a' <- concretify a
             cases' <- forM cases $ \(c, o) ->
                 case o of

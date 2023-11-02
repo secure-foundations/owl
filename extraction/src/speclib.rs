@@ -449,11 +449,11 @@ pub mod itree {
             (ITree::Input(|_var, _evar| {owl_spec!($mut_state, $mut_type, $($next)*)}))
         }};
         ($mut_state:ident, $mut_type:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(owl_spec!($mut_state, $mut_type, $($next)*))))
+            (ITree::Output(($($e)*).as_seq(), $($endpoint)*, Box::new(owl_spec!($mut_state, $mut_type, $($next)*))))
         }};
         // vvv check this
         ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => { verus_proof_expr!{
-            (ITree::Output($($e)*, $($endpoint)*, Box::new(ITree::Ret(((), $mut_state)))))
+            (ITree::Output(($($e)*).as_seq(), $($endpoint)*, Box::new(ITree::Ret(((), $mut_state)))))
         }};
         ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => { verus_proof_expr!{
             (ITree::Sample($n, |coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))}))
@@ -490,7 +490,27 @@ pub mod itree {
                 owl_spec!($mut_state, $mut_type, $($otw)*)
             }
         }};
-        ($mut_state:ident, $mut_type:ident, case ($e:expr) { $( $pattern:pat => { $($branch:tt)* },)* }) => { verus_proof_expr!{
+        ($mut_state:ident, $mut_type:ident, 
+            parse ($a:ident) as 
+                ($structTy:ident { $($fieldName:ident : $varName:ident),* } ) 
+            in { $($next:tt)* }) => 
+        { {
+            let $structTy { $($fieldName),* } = $a;
+            $(let $varName = $fieldName.as_seq();)*
+            owl_spec!($mut_state, $mut_type, $($next)*)
+        }};
+        ($mut_state:ident, $mut_type:ident, 
+            case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
+        { verus_proof_expr!{
+            if let Some(parseval) = $parser($a) {
+                match parseval {
+                    $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
+                }
+            } else {
+                owl_spec!($mut_state, $mut_type, $($otw)*)
+            }
+        }};
+        ($mut_state:ident, $mut_type:ident, case ($e:expr) { $(| $pattern:pat => { $($branch:tt)* },)* }) => { verus_proof_expr!{
             match $e {
                 $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
             }
