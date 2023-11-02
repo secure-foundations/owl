@@ -61,12 +61,8 @@ main = do
                                   -- putStrLn $ show rust_code
                                   writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
-                                  -- Temporarily use a different formatter since rustfmt 
-                                  -- doesn't look inside of the verus! macro
-                                  -- callProcess "genemichaels" [extfn]
                                   writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
                                   appendFile libfn $ show lib_code
-                                  -- callProcess "genemichaels" [libfn]
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           

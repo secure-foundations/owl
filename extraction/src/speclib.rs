@@ -22,32 +22,15 @@ pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
     }
 }
 
-// pub trait ViewOption {
-//     type V;
-//     spec fn view_option(&self) -> Self::V;
-// }
+pub trait OwlSpecSerialize {
+    spec fn as_seq(self) -> Seq<u8> where Self: Sized;
+}
 
-// impl<T:View> ViewOption for Option<T>
-// {
-//     type V = Option<T::V>;
-
-//     #[verifier::inline]
-//     open spec fn view_option(&self) -> Option<T::V> {
-//         match self {
-//             Option::Some(x) => Option::Some(x.view()),
-//             Option::None    => Option::None
-//         }    
-//     }
-// }
-
-// impl<T,S> ViewOption for T where T: View<V = S> {
-//     type V = S;
-
-//     #[verifier::inline]
-//     open spec fn view_option(&self) -> V {
-//         self.view()
-//     }
-// }
+impl OwlSpecSerialize for Seq<u8> {
+    open spec fn as_seq(self) -> Seq<u8> {
+        self
+    }
+}
 
 
 #[verifier(external_body)]
@@ -494,9 +477,14 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => { verus_proof_expr!{
             ITree::Ret(($($e)*, $mut_state))
         }};
-        ($mut_state:ident, $mut_type:ident, parse ($parser:ident($a:ident)) as ($tpat:expr) in { $($next:tt)* } otherwise ($($otw:tt)*)) => { verus_proof_expr!{
+        ($mut_state:ident, $mut_type:ident, 
+            parse ($parser:ident($a:ident)) as 
+                ($structTy:ident { $($fieldName:ident : $varName:ident),* } ) 
+            in { $($next:tt)* } otherwise ($($otw:tt)*)) => 
+        { {
             if let Some(parseval) = $parser($a) {
-                let $tpat = parseval;
+                let $structTy { $($fieldName),* } = parseval;
+                $(let $varName = $fieldName.as_seq();)*
                 owl_spec!($mut_state, $mut_type, $($next)*)
             } else {
                 owl_spec!($mut_state, $mut_type, $($otw)*)

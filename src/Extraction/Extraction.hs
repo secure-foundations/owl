@@ -129,8 +129,9 @@ layoutEnum name cases = do
 
 rustFieldTy :: CTy -> ExtractionMonad RustTy
 rustFieldTy (CTOption ct) = Option <$> rustFieldTy ct
-rustFieldTy (CTConst (PUnresolvedVar n)) = do
-    l <- lookupTyLayout . rustifyName $ show n
+rustFieldTy (CTConst p) = do
+    n <- flattenPath p
+    l <- lookupTyLayout . rustifyName $ n
     return $ case l of
         LBytes _ -> RcVecU8
         LStruct s _ -> ADT s
@@ -784,7 +785,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                     : owlpretty "mut_state: &mut" <+> owlpretty (stateName lname)
                     -- : map (\(a,_) -> owlpretty a <+> owlpretty ": usize") sidArgs
                     : map extractArg owlArgs
-            let rtPrettied = owlpretty "->" <+> parens (owlpretty "res: Result<" <> tupled [owlpretty rt, itree] <> owlpretty ", OwlError>")
+            let rtPrettied = owlpretty "->" <+> parens (owlpretty "res: Result<" <> (parens . hsep . punctuate comma) [owlpretty rt, itree] <> owlpretty ", OwlError>")
             let viewRes = parens $ 
                     (case rt of
                         Unit -> owlpretty "()"
@@ -810,7 +811,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                 owlpretty "res" <>
             line)
 
-nameInit :: String -> NameType -> ExtractionMonad (OwlDoc)
+nameInit :: String -> NameType -> ExtractionMonad OwlDoc
 nameInit s nt = case nt^.val of
     NT_Nonce -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
     NT_Enc _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"

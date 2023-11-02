@@ -50,7 +50,10 @@ genParserSerializer name = do
                     owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
                     owlpretty "todo!()" <> line
                 )
-    return $ vsep [parser, serializer]
+    let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
+                    owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
+                )
+    return $ vsep $ punctuate line [parser, serializer, implOwlSpecSerialize]
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
 extractStruct owlName owlFields = do
