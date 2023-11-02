@@ -145,8 +145,43 @@ rustFieldTy _ = return VecU8
 ---------------------------------------------------------------------------------------
 -- ADT extraction
 
+genParsleyWrappers :: String -> OwlDoc
+genParsleyWrappers owlName = 
+    let name = rustifyName owlName in
+    let specname = specName owlName in
+    let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
+    let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
+    -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
+    --             owlpretty (specName owlName) <> 
+    --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
+    --         ) 
+    -- let parseEnsuresField (n,_) = 
+    --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
+    --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
+    -- exec parser
+    owlpretty "#[verifier(external_body)] // TODO should be provable once parsley integrated" <> line <>
+    owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
+        owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
+        owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
+        owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
+        owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
+        -- vsep (map parseEnsuresField rustFields) <> line <>
+    lbrace <> line <>
+        owlpretty "todo!() // call parsley exec parser" <> line <>
+    rbrace <> line <> line <>
+    -- exec serializer
+    owlpretty "#[verifier(external_body)] // TODO should be provable once parsley integrated" <> line <>
+    owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
+        owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
+        owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
+    lbrace <> line <>
+        owlpretty "todo!() // call parsley exec serializer and unwrap" <> line <>
+    rbrace <> line <> line
+
+
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
 extractStruct owlName owlFields = do
+    structSpec <- Spec.extractStruct owlName owlFields
     let name = rustifyName owlName
     let fields = map (\(s,t) -> (rustifyName s, doConcretifyTy t)) owlFields
     rustFields <- mapM (\(s,t) -> do t' <- rustFieldTy (doConcretifyTy t) ; return (s, t')) owlFields
@@ -160,13 +195,13 @@ extractStruct owlName owlFields = do
     layoutFields <- case layout of
         LStruct _ fs -> return fs
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
-    parsleyWrappers <- genParsleyWrappers owlName rustFields
+    viewImpl <- genViewImpl owlName rustFields
+    let parsleyWrappers = genParsleyWrappers owlName 
     structFuncs <- mkStructFuncs owlName owlFields
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
     structs %= M.insert name rustFields
-    structSpec <- Spec.extractStruct owlName owlFields
-    return $ (vsep $ [typeDef, parsleyWrappers], structSpec)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec)
     where
         mkStructFuncs owlName owlFields = return $
             M.fromList $
@@ -188,170 +223,75 @@ extractStruct owlName owlFields = do
                       _ -> throwError $ TypeError $ "attempt to get from " ++ owlName ++ " with bad args"
                 ))) owlFields
 
-        genParsleyWrappers owlName rustFields = do
-            let name = rustifyName owlName 
-            let specname = specName owlName 
-            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") 
-            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
-                        owlpretty (specName owlName) <> 
-                        (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
-                    ) 
-            let parseEnsuresField (n,_) = 
-                    owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
-                                                 specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
-            return $
-                -- exec parser
-                owlpretty "#[verifier(external_body)] // TODO remove once parsley integrated" <> line <>
-                owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
-                    owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
-                    owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
-                    owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
-                    vsep (map parseEnsuresField rustFields) <> line <>
-                lbrace <> line <>
-                    owlpretty "todo!() // call parsley exec parser" <> line <>
-                rbrace <> line <> line <>
-                -- exec serializer
-                owlpretty "#[verifier(external_body)] // TODO remove once parsley integrated" <> line <>
-                owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
-                    owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
-                    owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
-                lbrace <> line <>
-                    owlpretty "todo!() // call parsley exec serializer and unwrap" <> line <>
-                rbrace <> line <> line
+        genViewImpl owlName rustFields = do
+            let name = rustifyName owlName
+            let specname = specName owlName
+            return $ owlpretty "impl View for" <+> owlpretty name <> braces (line <>
+                    owlpretty "type V =" <+> owlpretty specname <> owlpretty ";" <> line <>
+                    owlpretty "open spec fn view(&self) ->" <+> owlpretty specname <> braces (line <>
+                        owlpretty specname <> braces (line <>
+                            vsep (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".view(),") rustFields)
+                        <> line)
+                    <> line)
+                <> line)
+
 
 extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
 extractEnum owlName owlCases' = do
+    enumSpec <- Spec.extractEnum owlName owlCases'
     let owlCases = M.fromList owlCases'
     let name = rustifyName owlName
     let parsingOutcomeName = name ++ "_ParsingOutcome"
     let cases = M.mapKeys rustifyName $ M.map (fmap doConcretifyTy) owlCases
+    rustCases <- mapM (\o -> case o of Just t -> (do t' <- rustFieldTy $ doConcretifyTy t; return (Just t')); Nothing -> return Nothing) owlCases
+    let rustCases' = M.mapKeys rustifyName rustCases
+    let typeDef = 
+            owlpretty "/* TODO this will be generated by parsley */" <> line <>
+            owlpretty "#[is_variant]" <> line <> owlpretty "pub enum" <+> owlpretty name <+> braces (line <> (
+                        vsep . punctuate comma . map (\(n, t) -> owlpretty n <> parens (owlpretty t)) $ M.assocs rustCases'
+                    ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
     layout <- layoutEnum name cases
     layoutCases <- case layout of
-      LEnum _ cs -> return cs
-      _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
-    let tagsComment = owlpretty "//" <+> owlpretty (M.foldlWithKey (\s name (tag,_) -> s ++ name ++ " -> " ++ show tag ++ ", ") "" layoutCases)
-    let typeDef = tagsComment <> line <> owlpretty "pub struct" <+> owlpretty name <+> owlpretty "{ pub data: Rc<Vec<u8>>, pub parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "}"    
-    parsingOutcomeDef <- genEnumParsingOutcomeDef parsingOutcomeName
-    lenValidFnDef <- genLenValidFnDef name layoutCases
-    parseFnDef <- genParseFnDef name parsingOutcomeName layout
-    constructorDefs <- genConstructorDefs name parsingOutcomeName layout layoutCases
+        LEnum _ cs -> return cs
+        _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
+
+    viewImpl <- genViewImpl owlName rustCases
+    let parsleyWrappers = genParsleyWrappers owlName
     enumFuncs <- mkEnumFuncs owlName owlCases
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) owlName
-    enumSpec <- Spec.extractEnum owlName owlCases'
-    return $ (vsep $ [typeDef, parsingOutcomeDef, lenValidFnDef, parseFnDef] ++ constructorDefs, enumSpec)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
-                    owlpretty "construct_" <> (owlpretty . rustifyName) owlName <> owlpretty "_" <> (owlpretty . rustifyName) owlCase <>
-                        (parens . hsep . punctuate comma . map (\(t,a) -> owlpretty "&" <> (case t of
-                                ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
-                                RcVecU8 -> parens (owlpretty "*" <> owlpretty a) <> owlpretty ".as_slice()"
-                                VecU8 -> owlpretty a <> owlpretty ".as_slice()"
+                    (owlpretty . rustifyName) owlCase <>
+                        (parens . hsep . punctuate comma . map (\(t,a) -> (case t of
+                                -- ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
+                                RcVecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&*" <> owlpretty a)
+                                VecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&" <> owlpretty a)
                                 _ -> owlpretty a)) $ args
                 )))) $ M.assocs owlCases
 
-        genEnumParsingOutcomeDef parsingOutcomeName = return $
-            owlpretty "// #[derive(PartialEq, Eq, Debug)]" <> line <>
-            -- owlpretty "#[is_variant] #[derive(Clone)]" <> line <>
-            owlpretty "pub enum" <+> owlpretty parsingOutcomeName <+>
-            vsep [  lbrace,
-                    owlpretty "Success" <> comma,
-                    owlpretty "Failure" <> comma,
-                    rbrace]
+        genViewImpl owlName rustCases = do
+            let name = rustifyName owlName
+            let specname = specName owlName
+            return $ owlpretty "impl View for" <+> owlpretty name <> braces (line <>
+                    owlpretty "type V =" <+> owlpretty specname <> owlpretty ";" <> line <>
+                    owlpretty "open spec fn view(&self) ->" <+> owlpretty specname <> braces (line <>
+                        owlpretty "match self" <+> braces (line <>
+                            (vsep . punctuate comma . map (\(c, topt) ->
+                                    let (binder, viewBinder) = case topt of 
+                                            Just _ -> (owlpretty "v", owlpretty "v.view()")
+                                            Nothing -> (owlpretty "", owlpretty "")
+                                    in
+                                    owlpretty (rustifyName c) <> parens binder <+> owlpretty "=>" <+> owlpretty (specName c) <> parens viewBinder
+                                ) $ M.assocs rustCases)
+                        <> line)
+                    <> line)
+                <> line)
 
-        genLenValidFnDef name layoutCases =
-            let caseCheckers = map caseChecker $ M.assocs layoutCases in
-            return $ owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "len_valid_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+>
-                owlpretty " -> Option<usize>" <+> lbrace <> line <>
-            owlpretty "if arg.len() < 1 { return None; } else " <> line <>
-            vsep (punctuate (owlpretty " else ") caseCheckers) <> line <>
-            owlpretty "else { return None; }" <> line <>
-            rbrace
-        caseChecker (t, (n, l)) = case l of
-            Just (LBytes nb)      ->
-                owlpretty "if *slice_index_get(arg, 0) ==" <+> owlpretty n <> owlpretty "u8" <+> owlpretty "&&" <+> owlpretty "arg.len() >=" <+> owlpretty (1 + nb) <+>
-                braces (owlpretty " return Some(" <+> owlpretty (1 + nb) <> owlpretty "); ")
-            Just (LStruct sn sfs) ->
-                owlpretty "if *slice_index_get(arg, 0) ==" <+> owlpretty n <> owlpretty "u8" <+> braces (
-                    owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty sn <> parens (owlpretty "&arg[1..]") <+> lbrace <> line <>
-                    owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "_" | _ <- [0..(length sfs - 1)]] ++ [owlpretty "l"]) <+>
-                        owlpretty "=>" <+> braces (owlpretty "return Some(1 + l);") <> line <>
-                    owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
-                    rbrace
-                )
-            Just (LEnum en _)     ->
-                owlpretty "if arg[0] ==" <+> owlpretty n <+> braces (
-                    owlpretty "let start_" <> owlpretty n <+> owlpretty "= i;" <> line <>
-                    owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty en <> parens (owlpretty "&arg[1..]") <+> lbrace <> line <>
-                    owlpretty "Some(l) => " <> braces (owlpretty "return Some(1 + l);") <> line <>
-                    owlpretty "None => " <> braces (owlpretty "return None;") <> line <>
-                    rbrace
-                )
-            Nothing ->
-                owlpretty "if arg[0] ==" <+> owlpretty n <+> braces ( owlpretty "return Some(arg.len());" )
-
-        genParseFnDef name parsingOutcomeName layout = return $
-            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "parse_into_" <> owlpretty name <> parens (owlpretty "arg: &mut" <+> owlpretty name) <+> lbrace <> line <>
-                owlpretty "match arg.parsing_outcome" <+> lbrace <> line <> 
-                    owlpretty parsingOutcomeName <> owlpretty "::Failure =>" <+> lbrace <> line <>
-                        owlpretty "match len_valid_" <> owlpretty name <> parens (owlpretty "&(*arg.data).as_slice()") <+> lbrace <> line <>
-                            owlpretty "Some(l)" <+>
-                                owlpretty "=>" <+> braces (owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Success;") <> line <>
-                            owlpretty "None => " <> braces (
-                                    owlpretty "arg.data =" <+> owlpretty "rc_new(vec_u8_from_elem(0," <+> owlpretty (lenLayoutFailure layout) <> owlpretty "));" <> line <>
-                                    owlpretty "arg.parsing_outcome =" <+> owlpretty parsingOutcomeName <> owlpretty "::Failure;"
-                                ) <> line <>
-                        rbrace <> line <>
-                    rbrace <> comma <> line <>
-                    owlpretty "_ => {}" <>
-                rbrace <> line <>
-            rbrace
-
-        genConstructorDefs name parsingOutcomeName layout layoutCases =
-            return $ map (genConstructorDef name parsingOutcomeName) $ M.assocs layoutCases
-
-        genConstructorDef :: String -> String -> (String, (Int, Maybe Layout)) -> OwlDoc
-        genConstructorDef name parsingOutcomeName (tagName, (tag, Just (LBytes 0))) = -- special case for a case with no payload, where the constructor takes no arg
-            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "construct_" <> owlpretty name <> owlpretty "_" <> owlpretty tagName <> owlpretty "()" <+> owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty name) <+> line <> 
-            -- TODO improve
-            owlpretty "ensures" <+> owlpretty "res.data.view() ===" <+> owlpretty (unrustifyName tagName) <> owlpretty "()" <> line <>
-            lbrace <> line <>
-                owlpretty "let v = vec_u8_from_elem(" <> owlpretty tag <> owlpretty "u8, 1);" <> line <>
-                owlpretty "let res =" <+> owlpretty name <+> owlpretty "{ data: rc_new(v), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <> owlpretty "};" <> line <>                owlpretty "res" <> line <>
-            rbrace
-
-        genConstructorDef name parsingOutcomeName (tagName, (tag, tagLayout)) =
-            -- Failure case for struct is always a zero tag with no payload
-            let failureReturn = owlpretty "return" <+> owlpretty name <+> braces (owlpretty "data: rc_new(vec_u8_from_elem(0, 1)), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Failure") <> owlpretty ";" in
-            let checkAndExtender = case tagLayout of
-                    Just (LBytes nb)    ->
-                        owlpretty "if" <+> owlpretty "arg.len()" <+> owlpretty "<" <+> owlpretty nb <+> braces failureReturn <> line <>
-                        owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, " <> owlpretty nb <> owlpretty ")") <> owlpretty ";" <> line
-                    Just (LStruct sn sfs) ->
-                        owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty sn <> parens (owlpretty "arg") <+> lbrace <> line <>
-                        owlpretty "Some" <> (parens . parens . hsep . punctuate comma $ [owlpretty "_" | _ <- [0..(length sfs - 1)]] ++ [owlpretty "l"]) <+>
-                            owlpretty "=>" <+> braces (owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, l)") <> owlpretty ";") <> line <>
-                        owlpretty "None => " <> braces failureReturn <> line <>
-                        rbrace
-                    Just (LEnum en _)   ->
-                        owlpretty "match" <+> owlpretty "len_valid_" <> owlpretty en <> parens (owlpretty "arg") <+> lbrace <> line <>
-                        owlpretty "Some(l) => " <> braces (owlpretty "extend_vec_u8" <> parens (owlpretty "&mut v," <+> owlpretty "slice_subrange(arg, 0, l)") <> owlpretty ";") <> line <>
-                        owlpretty "None => " <> braces failureReturn <> line <>
-                        rbrace
-                    Nothing ->
-                        owlpretty "extend_vec_u8(&mut v, arg);"
-                in
-            owlpretty "#[verifier(external_body)] pub fn" <+> owlpretty "construct_" <> owlpretty name <> owlpretty "_" <> owlpretty tagName <> parens (owlpretty "arg: &[u8]") <+> owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty name) <+> line <>
-            owlpretty "ensures" <+> owlpretty "res.data.view() ===" <+> owlpretty (unrustifyName tagName) <> parens (owlpretty "arg@") <> line <>
-            lbrace <> line <>
-                owlpretty "let mut v = vec_u8_from_elem(" <> owlpretty tag <> owlpretty "u8, 1);" <> line <>
-                checkAndExtender <> line <>
-                owlpretty "let res =" <+> owlpretty name <+> owlpretty "{data: rc_new(v), parsing_outcome: " <+> owlpretty parsingOutcomeName <> owlpretty "::Success" <> owlpretty "};" <> line <>
-                owlpretty "res" <> line <>
-            rbrace
 
 -------------------------------------------------------------------------------------------
 -- Code generation
@@ -789,8 +729,8 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
             let viewRes = parens $ 
                     (case rt of
                         Unit -> owlpretty "()"
-                        ADT _ -> owlpretty "res.get_Ok_0().0.data.view()"
-                        Option (ADT _) -> owlpretty "view_option(res.get_Ok_0().0).data"
+                        ADT _ -> owlpretty "res.get_Ok_0().0.view().as_seq()"
+                        Option (ADT _) -> owlpretty "view_option(res.get_Ok_0().0)"
                         Option _ -> owlpretty "view_option(res.get_Ok_0().0)"
                         _ -> owlpretty "res.get_Ok_0().0.view()")
                     <> owlpretty ", *mut_state"

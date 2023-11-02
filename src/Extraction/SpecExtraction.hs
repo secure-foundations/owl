@@ -265,6 +265,7 @@ extractExpr (CLet e _ xk) = do
     e' <- extractExpr e
     k' <- extractExpr k
     return $ owlpretty "let" <+> extractVar x <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
+extractExpr (CBlock e) = extractExpr e
 extractExpr (CIf a e1 e2) = do
     a' <- extractAExpr a
     e1' <- extractExpr e1
@@ -306,7 +307,7 @@ extractExpr (CParse a (CTConst p) (Just badk) bindpat) = do
     let (pats, k) = unsafeUnbind bindpat
     fs <- lookupStruct . rustifyName $ t
     let patfields = zip (map (unignore . snd) pats) fs
-    let printPat (v, (f, _)) = owlpretty (specName f) <+> owlpretty ":" <+> owlpretty v
+    let printPat (v, (f, _)) = owlpretty (specName f) <+> owlpretty ":" <+> owlpretty (replacePrimes v)
     let patfields' = map printPat patfields
     a' <- extractAExpr a
     k' <- extractExpr k
