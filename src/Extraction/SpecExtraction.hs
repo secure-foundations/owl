@@ -151,17 +151,23 @@ specLenConsts = M.fromList [
     ]
 
 extractEndpoint :: Endpoint -> ExtractionMonad OwlDoc
-extractEndpoint (Endpoint evar) = return $ extractVar evar
+extractEndpoint (Endpoint evar) = extractVar evar
 extractEndpoint (EndpointLocality (Locality s _)) = do
     l <- flattenPath s
     return $ owlpretty "Endpoint::Loc_" <> owlpretty l
 
-extractVar :: Name a -> OwlDoc
-extractVar = owlpretty . replacePrimes . name2String
+extractVarString :: String -> ExtractionMonad String
+extractVarString "_" = show <$> fresh (string2Name "_unused")
+extractVarString s = return $ replacePrimes s
+
+extractVar :: Name a -> ExtractionMonad OwlDoc
+extractVar v = do
+    v' <- extractVarString (name2String v)
+    return $ owlpretty v'
 
 extractAExpr :: AExpr -> ExtractionMonad OwlDoc
 extractAExpr ae = extractAExpr' (ae ^. val) where
-    extractAExpr' (AEVar s n) = return $ extractVar n
+    extractAExpr' (AEVar s n) = extractVar n
     extractAExpr' (AEApp f _ as) = do
         as' <- mapM extractAExpr as
         ftail <- tailPath f
@@ -244,7 +250,9 @@ extractExpr CSkip = return $ owlpretty "ret(())" -- skip should be erased
 extractExpr (CInput xsk) = do
     let ((x, ev), sk) = unsafeUnbind xsk
     sk' <- extractExpr sk
-    return $ parens (owlpretty "input" <+> tupled [extractVar x, extractVar ev]) <+> owlpretty "in" <> line <> sk'
+    x' <- extractVar x
+    ev' <- extractVar ev
+    return $ parens (owlpretty "input" <+> tupled [x', ev']) <+> owlpretty "in" <> line <> sk'
 extractExpr (COutput a l) = do
     a' <- extractAExpr a
     l' <- case l of
@@ -262,7 +270,7 @@ extractExpr (CLet CSkip _ xk) =
     let (_, k) = unsafeUnbind xk in extractExpr k
 extractExpr (CLet e _ xk) = do
     let (x, k) = unsafeUnbind xk
-    let x' = extractVar x
+    x' <- extractVar x
     e' <- extractExpr e
     k' <- extractExpr k
     return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
@@ -297,8 +305,9 @@ extractExpr (CCase a otk xs) = do
                     return $ owlpretty "|" <+> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
+                    x' <- extractVar x
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> owlpretty (specCaseName True c) <+> parens (extractVar x) <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
                 ) xs
     return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
 extractExpr (CCrypt cop args) = do
@@ -314,8 +323,10 @@ extractExpr (CParse a (CTConst p) otk bindpat) = do
     let (pats, k) = unsafeUnbind bindpat
     fs <- lookupStruct . rustifyName $ t
     let patfields = zip (map (unignore . snd) pats) fs
-    let printPat (v, (f, _)) = owlpretty (specName f) <+> owlpretty ":" <+> owlpretty (replacePrimes v)
-    let patfields' = map printPat patfields
+    let printPat (v, (f, _)) = do
+            v' <- extractVarString v
+            return $ owlpretty (specName f) <+> owlpretty ":" <+> owlpretty v'
+    patfields' <- mapM printPat patfields
     a' <- extractAExpr a
     k' <- extractExpr k
     (parseCall, badk) <- case otk of
@@ -335,7 +346,8 @@ extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemente
 specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
 specExtractArg (v, t) = do
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
-    return $ extractVar v <> owlpretty ":" <+> (owlpretty . specTyOf $ st)
+    v' <- extractVar v
+    return $ v' <> owlpretty ":" <+> (owlpretty . specTyOf $ st)
 
 
 extractDef :: String -> Locality -> CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc

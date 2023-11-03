@@ -627,12 +627,12 @@ extractExpr inK loc binds (CParse ae (CTConst p) (Just badk) bindpat) = do
     let pats' = map fst pats
     fs <- lookupStruct . rustifyName $ t
     let patfields = zip pats' fs
-    let binds' = M.fromList (map (\(v, (_,r)) -> (rustifyName . show $ v, (r, Nothing))) patfields) `M.union` binds
+    let binds' = M.fromList (map (\(v, (_,r)) -> (rustifyName . show $ v, (Rc r, Nothing))) patfields) `M.union` binds
     (rtAe, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, _, _, badkPrettied) <- extractExpr inK loc binds badk
     (_, rt, preK, kPrettied) <- extractExpr inK loc binds' k
     let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
-                                        owlpretty "=" <+> owlpretty "parseval." <> owlpretty (rustifyName f) <> owlpretty ";"
+                                        owlpretty "=" <+> rcNew <> parens (owlpretty "parseval." <> owlpretty (rustifyName f)) <> owlpretty ";"
     let e =
             owlpretty "if let Some(parseval) = parse_" <> owlpretty (rustifyName t) <> parens (owlpretty $ printOwlArg (rtAe, show aePrettied)) <> owlpretty " {" <> line <>
                 vsep (map destructStruct patfields) <> line <> 

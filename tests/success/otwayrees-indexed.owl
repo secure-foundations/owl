@@ -210,7 +210,7 @@ def Bob_main<i> (
         | mA1_enc v =>
             // if eq(length(M'), |nonce|) && eq(length(A'), |nonce|) && eq(length(v), cipherlen((4 * |nonce|) + |tag|)) then
             let v' = mA1_enc(v) in
-            let v'':encd_kA_message = mA1_enc(v') in
+            // let v'':encd_kA_message = mA1_enc(v') in
 
             // let temp:kB_message_1<idx i> = kB_message_1<idx i>(nB, M', A', B) in // adding the annotation gets rid of the length...
             let encm = aenc(kB, pack<i>(pack<j>(mB1<idx i, idx j>(kB_message_1<idx i>(nB, M', A', B))))) in
