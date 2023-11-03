@@ -45,19 +45,19 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
-data RustTy = VecU8 | RcVecU8 | Bool | Number | String | Unit | ADT String | Option RustTy
+data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty RustTy where
   owlpretty VecU8 = owlpretty "Vec<u8>"
-  owlpretty RcVecU8 = owlpretty "Rc<Vec<u8>>"
   owlpretty Bool = owlpretty "bool"
   owlpretty Number = owlpretty "usize" --should just work
   owlpretty String = owlpretty "String"
   owlpretty Unit = owlpretty "()"
   owlpretty (ADT s) = owlpretty s
   owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
-
+  owlpretty (Rc r) = owlpretty "Rc" <> angles (owlpretty r)
+ 
 data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
     deriving (Show, Eq, Generic, Typeable)
 
@@ -81,7 +81,7 @@ data Env = Env {
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
     _structs :: M.Map String [(String, RustTy)], -- rust type for each field
-    _enums :: M.Map (S.Set String) String,
+    _enums :: M.Map (S.Set String) (String, M.Map String (Maybe RustTy)),
     _oracles :: M.Map String ([String], M.Map Int ([String], [String])), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
@@ -283,6 +283,9 @@ useHmacKeySize = return hmacKeySize
 pkeKeySize :: Int
 pkeKeySize = 1219
 
+pkePubKeySize :: Int
+pkePubKeySize = 1219
+
 sigKeySize :: Int
 sigKeySize = 1219
 
@@ -303,6 +306,7 @@ initLenConsts = M.fromList [
         (rustifyName "mackey", hmacKeySize),
         (rustifyName "maclen", hmacLen),
         (rustifyName "pke_sk", pkeKeySize),
+        (rustifyName "pke_pk", pkePubKeySize),
         (rustifyName "sigkey", sigKeySize),
         (rustifyName "vk", vkSize),
         (rustifyName "DH", dhSize),
@@ -314,9 +318,10 @@ initTypeLayouts = M.map LBytes initLenConsts
 
 -- Confirm: we call `serialize` when we need to treat an ADT as a sequence of bytes for a crypto op
 printOwlArg :: (RustTy, String) -> String
-printOwlArg (RcVecU8, s) = "&(*" ++ s ++ ").as_slice()"
+printOwlArg (Rc VecU8, s) = "&(*" ++ s ++ ").as_slice()"
 printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
 printOwlArg (ADT name, s) = "&(serialize_" ++ name ++ "(&" ++ s ++ ")).as_slice()"
+printOwlArg (Rc (ADT name), s) = "&(serialize_" ++ name ++ "(&(*" ++ s ++ "))).as_slice()"
 printOwlArg (_, s) = s
 
 printOwlOp :: String -> [(RustTy, String)] -> String
@@ -331,31 +336,31 @@ initFuncs =
                                 [(String, x), (String, y)] -> return $ x ++ " == " ++ y
                                 [(Unit, x), (Unit, y)] -> return $ x ++ " == " ++ y
                                 [(ADT _,x), (ADT _,y)] -> return $ "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
-                                [(RcVecU8, x), (RcVecU8, y)] -> return $ "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")"
+                                [(Rc VecU8, x), (Rc VecU8, y)] -> return $ "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")"
                                 [(VecU8, x), (VecU8, y)] -> return $ "vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)"
                                 _ -> throwError $ TypeError $ "got wrong args for eq"
                         ) 
     in M.fromList [
             ("eq", eqChecker),
             ("checknonce", eqChecker),
-            ("dhpk", (RcVecU8, \args -> case args of
+            ("dhpk", (Rc VecU8, \args -> case args of
                     [x] -> do return $ printOwlOp "owl_dhpk" [x] -- return $ x ++ ".owl_dhpk()"
                     _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
             )),
-            ("dh_combine", (RcVecU8, \args -> case args of
+            ("dh_combine", (Rc VecU8, \args -> case args of
                     [pk, sk] -> do return $ printOwlOp "owl_dh_combine" [pk, sk] --  return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                     _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
             )),
             ("unit", (Unit, \_ -> return "()")),
             ("true", (Bool, \_ -> return "true")),
             ("false", (Bool, \_ -> return "false")),
-            ("Some", (Option RcVecU8, \args -> case args of
+            ("Some", (Option (Rc VecU8), \args -> case args of
                     [(_,x)] -> return $ "Some(" ++ x ++ ")"
                     _ -> throwError $ TypeError $ "got wrong number of args for Some"
             )),
-            ("None", (Option RcVecU8, \_ -> return "Option::<Rc<Vec<u8>>>::None")),
+            ("None", (Option (Rc VecU8), \_ -> return "Option::<Rc<Vec<u8>>>::None")),
             ("length", (Number, \args -> case args of
-                    [(RcVecU8,x)] -> return $ "(*" ++ x ++ ").len()"
+                    [(Rc VecU8,x)] -> return $ "(*" ++ x ++ ").len()"
                     [(_,x)] -> return $ x ++ ".len()"
                     _ -> throwError $ TypeError $ "got wrong number of args for length"
             )),
@@ -436,48 +441,62 @@ rustifyArgTy :: CTy -> ExtractionMonad RustTy
 rustifyArgTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyArgTy (CTConst (PUnresolvedVar n)) = do
-    l <- lookupTyLayout . rustifyName $ show n
+rustifyArgTy (CTConst p) = do
+    n <- flattenPath p
+    l <- lookupTyLayout . rustifyName $ n
     return $ case l of
-        LBytes _ -> RcVecU8
+        LBytes _ -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
-rustifyArgTy _ = return RcVecU8
+rustifyArgTy _ = return $ Rc VecU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
 rustifyRetTy (CTOption ct) = do
     rt <- rustifyArgTy ct
     return $ Option rt
-rustifyRetTy (CTConst (PUnresolvedVar n)) = do
-    l <- lookupTyLayout . rustifyName $ show n
+rustifyRetTy (CTConst p) = do
+    n <- flattenPath p
+    l <- lookupTyLayout . rustifyName $ n
     return $ case l of
-        LBytes _ -> RcVecU8
+        LBytes _ -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool
 rustifyRetTy CTUnit = return Unit
-rustifyRetTy _ = return RcVecU8
+rustifyRetTy _ = return $ Rc VecU8
+
+-- For computing data structure members
+specDataTyOf :: RustTy -> SpecTy
+specDataTyOf VecU8 = SpecSeqU8
+specDataTyOf Bool = SpecBool
+specDataTyOf Number = SpecNumber
+specDataTyOf String = SpecString
+specDataTyOf Unit = SpecUnit
+specDataTyOf (ADT s) = SpecADT (specName . unrustifyName $ s)
+specDataTyOf (Option rt) = SpecOption (specDataTyOf rt)
+specDataTyOf (Rc rt) = specDataTyOf rt
+
+rustifySpecDataTy :: CTy -> ExtractionMonad SpecTy
+rustifySpecDataTy ct = do
+    rt <- rustifyArgTy ct
+    return $ specDataTyOf rt
 
 specTyOf :: RustTy -> SpecTy
-specTyOf VecU8 = SpecSeqU8
-specTyOf RcVecU8 = SpecSeqU8
-specTyOf Bool = SpecBool
-specTyOf Number = SpecNumber
-specTyOf String = SpecString
-specTyOf Unit = SpecUnit
-specTyOf (ADT _) = SpecSeqU8 -- TODO nesting?
-specTyOf (Option rt) = SpecOption (specTyOf rt)
+specTyOf (ADT s) = SpecSeqU8 -- in itree specs, everything is maintained as Seq<u8>
+specTyOf r = specDataTyOf r
 
 rustifySpecTy :: CTy -> ExtractionMonad SpecTy
 rustifySpecTy ct = do
     rt <- rustifyArgTy ct
     return $ specTyOf rt
 
-
 rcClone :: OwlDoc
-rcClone = owlpretty "rc_clone"
+rcClone = owlpretty "Rc::clone"
+
+rcNew :: OwlDoc
+rcNew = owlpretty "Rc::new"
 
 getCurRetTy :: ExtractionMonad String
 getCurRetTy = do
@@ -488,13 +507,13 @@ getCurRetTy = do
 
 viewVar :: RustTy -> String -> String
 viewVar VecU8 s = s ++ ".view()"
-viewVar RcVecU8 s = s ++ ".view()"
 viewVar Bool s = s
 viewVar Number s = s
 viewVar String s = s
 viewVar Unit s = s
-viewVar (ADT _) s = s ++ "data.view()" -- TODO nesting?
+viewVar (ADT _) s = s ++ ".view()" -- TODO nesting?
 viewVar (Option rt) s = s ++ ".view()"
+viewVar (Rc rt) s = viewVar rt s
 
 hexStringToByteList :: String -> ExtractionMonad OwlDoc
 hexStringToByteList [] = return $ owlpretty ""

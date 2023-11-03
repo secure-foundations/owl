@@ -9,9 +9,9 @@ struct q {
 }
 
 enum s { 
-    | P Name(P)
-    | Q q
-    | R
+    | PP Name(P)
+    | QQ q
+    | RR
 }
 
 struct t {
@@ -30,17 +30,17 @@ def alice_main() @ alice : Unit =
     assert(length(b) == |enckey|);
     assert(length(c) == 4);
     case s as s {
-    | P p =>         
+    | PP p =>         
         // debug printTyOf(p); // Data<adv> ||nonce||
         assert(length(p) == |nonce|); ()
-    | Q q => 
+    | QQ q => 
         // debug printTyOf(q); // Data<adv>
         parse q as q(u, v) in {
         assert(length(u) == |pke_pk|);
         assert(length(v) == |nonce|);
         ()
         } otherwise ()
-    | R => ()
+    | RR => ()
     otherwise => ()
     }
     } otherwise ()

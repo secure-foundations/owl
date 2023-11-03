@@ -240,7 +240,7 @@ specCaseName True c = specName c
 specCaseName False c = specName c ++ "()"
 
 extractExpr :: CExpr -> ExtractionMonad OwlDoc
-extractExpr CSkip = return $ owlpretty "skip"
+extractExpr CSkip = return $ owlpretty "ret(())" -- skip should be erased
 extractExpr (CInput xsk) = do
     let ((x, ev), sk) = unsafeUnbind xsk
     sk' <- extractExpr sk
@@ -262,9 +262,10 @@ extractExpr (CLet CSkip _ xk) =
     let (_, k) = unsafeUnbind xk in extractExpr k
 extractExpr (CLet e _ xk) = do
     let (x, k) = unsafeUnbind xk
+    let x' = extractVar x
     e' <- extractExpr e
     k' <- extractExpr k
-    return $ owlpretty "let" <+> extractVar x <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
+    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
 extractExpr (CBlock e) = extractExpr e
 extractExpr (CIf a e1 e2) = do
     a' <- extractAExpr a
