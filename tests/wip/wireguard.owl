@@ -669,3 +669,4 @@ def transp_recv_resp (transp_keys_val : transp_keys_resp_t, c : Data<adv>) @ Res
     corr_case transp_T[;0] when (eph_init == dhpk(get(E_init))) in
     corr_case transp_T_resp_corr[eph_init;0] when (eph_init != dhpk(get(E_init))) in
     st_aead_dec(i2r, pkt, 0x, ctr)
+
