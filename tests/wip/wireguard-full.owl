@@ -518,7 +518,7 @@ def generate_msg2<j@n,m> (msg1_val:
     // let H4 = _responder_msg1_H4(msg1_val) in
     // let ephemeral' = _responder_msg1_ephemeral(msg1_val) in
     // let msg2_receiver = _responder_msg1_sender(msg1_val) in
-    parse msg1_val as responder_msg1_val(C3', H4, ephemeral', msg2_receiver) in {
+    parse msg1_val as responder_msg1_val(C3, H4, ephemeral', msg2_receiver) in {
     // let C3 : x:(Data <top> ||nonce||){x == _responder_msg1_C3( msg1_val )} = C3' in
     pcase ((exists i:idx. ephemeral' == dhpk(get(E_init<i@n>)))) in 
     choose_idx i | ephemeral' == dhpk(get(E_init<i@n>)) in

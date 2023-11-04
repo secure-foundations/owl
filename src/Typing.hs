@@ -1877,13 +1877,16 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             True -> do -- Well-typed case
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
-                tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b sinfo)) $ checkExpr ot k   
+                bindings <- forM (zip b sinfo) $ \((x, s), (_, t, f)) -> do 
+                    let t' = tRefined t ".res" $ f a (aeVar ".res")
+                    return (x, (s, Nothing, t'))
+                tk <- withVars bindings $ checkExpr ot k   
                 stripTys (map fst b) tk
             False -> do -- Ill-typed case
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
                 l <- coveringLabel t1
-                validatedTys <- getValidatedStructTys (show $ owlpretty t) l sinfo
+                validatedTys <- getValidatedStructTys (show $ owlpretty t) l $ map (\(x, t, _) -> (x, t)) sinfo
                 -- let lt = tData l l 
                 -- tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
                 tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)) $ checkExpr ot k

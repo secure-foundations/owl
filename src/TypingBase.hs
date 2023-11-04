@@ -1119,13 +1119,17 @@ extractEnum ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-obtainStructInfo :: Ty -> Check [(String, Ty)]
+-- Last element is the refinement on the type; first argument = struct value, second argument = field value 
+obtainStructInfo :: Ty -> Check [(String, Ty, AExpr -> AExpr -> Prop)]
 obtainStructInfo t =
     case t^.val of
-      TConst s ps -> do 
+      TConst s@(PRes (PDot pth _)) ps -> do 
           td <- getTyDef s
           case td of
-            StructDef sd -> extractStruct ps (show $ owlpretty t) sd
+            StructDef sd -> do
+                proj_ts <- extractStruct ps (show $ owlpretty t) sd
+                forM proj_ts $ \(fs, t) -> do 
+                    return (fs, t, \struct fld -> pEq fld (mkSpanned $ AEApp (PRes $ PDot pth fs) ps [struct]))
             _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
       _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
 
