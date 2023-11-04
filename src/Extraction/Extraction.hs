@@ -917,7 +917,8 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
                 owlpretty "pub struct" <+> owlpretty (stateName loc) <+> braces mfs <> line <>
                 owlpretty "impl" <+> owlpretty (stateName loc) <+> braces (line <> initMutState) <>
                 owlpretty "pub struct" <+> owlpretty (cfgName loc) <+> braces sfs <> line <>
-                owlpretty "impl" <+> owlpretty (cfgName loc) <+> braces (line <> initLoc <+> vsep ({- indexedNameGetters ++ sharedIndexedNameGetters ++ -} fns)),
+                owlpretty "impl" <+> owlpretty (cfgName loc) <+> braces (line <> initLoc <+> vsep fns)
+                <> line <> line,
                 vsep fnspecs,
                 configDef)
         Nothing -> throwError $ LocalityWithNoMain loc
