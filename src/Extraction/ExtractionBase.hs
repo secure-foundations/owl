@@ -401,7 +401,7 @@ initFuncs =
                     _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
             )),
             ("is_group_elem", (\args -> case args of
-                    [(_,x)] -> return $ (Bool, "owl_is_group_elem(&" ++ x ++ ")")
+                    [x] -> return $ (Bool, printOwlOp "owl_is_group_elem" [x])
                     _ -> throwError $ TypeError $ "got wrong number of args for is_group_elem"
             )),
             ("concat", (\args -> case args of
@@ -556,6 +556,8 @@ rustifySpecDataTy ct = do
 
 specTyOf :: RustTy -> SpecTy
 specTyOf (ADT s) = SpecSeqU8 -- in itree specs, everything is maintained as Seq<u8>
+specTyOf (Option rt) = SpecOption (specTyOf rt)
+specTyOf (Rc rt) = specTyOf rt
 specTyOf r = specDataTyOf r
 
 rustifySpecTy :: CTy -> ExtractionMonad SpecTy

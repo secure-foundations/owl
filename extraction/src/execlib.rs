@@ -214,17 +214,15 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 }
 
 #[verifier(external_body)]
-pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: usize, aad: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
+pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        view_option(x) == dec_st_aead(k@, c@, nonce, aad@)
+        view_option(x) == dec_st_aead(k@, c@, nonce@, aad@)
         // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
         //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
         // dec(k@, c@).is_None() ==> x.is_None(),
         // k@.len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(nonce_size(), 0u8);
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &iv, aad) {
+    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
         Ok(p) => Some(Rc::new(p)),
         Err(_e) => {
             // dbg!(e);
@@ -258,7 +256,9 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
 pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
     ensures res@ == counter_as_bytes(x@)
 {
-    todo!("implement counter_as_bytes")
+    let mut v = x.to_le_bytes().to_vec();
+    v.resize(nonce_size(), 0u8);
+    v
 }
 
 } // verus!

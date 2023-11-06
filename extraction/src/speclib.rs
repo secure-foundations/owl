@@ -22,6 +22,15 @@ pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
     }
 }
 
+pub open spec fn option_as_seq<T: OwlSpecSerialize>(v: Option<T>) -> Option<Seq<u8>>
+{
+    match v {
+        Option::Some(x) => Option::Some(x.as_seq()),
+        Option::None    => Option::None
+    }
+}
+
+
 pub trait OwlSpecSerialize {
     spec fn as_seq(self) -> Seq<u8> where Self: Sized;
 }
@@ -32,6 +41,20 @@ impl OwlSpecSerialize for Seq<u8> {
     }
 }
 
+pub trait OwlSpecAsCtr {
+    spec fn as_ctr(self) -> usize where Self: Sized;
+}
+
+impl OwlSpecAsCtr for Seq<u8> {
+    open spec fn as_ctr(self) -> usize {
+        bytes_as_counter(self)
+    }
+}
+
+// Rust cannot infer that the type of seq![] is Seq<u8>, so we annotate explicitly
+pub open spec fn empty_seq_u8() -> Seq<u8> {
+    seq![]
+}
 
 pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
     a.add(b)
@@ -128,7 +151,7 @@ pub open spec(checked) fn enc_st_aead(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad:
 }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
+pub closed spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: Seq<u8>, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -523,7 +546,7 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{
-            if let Some(parseval) = $parser($a) {
+            if let Some(parseval) = $parser($a.as_seq()) {
                 match parseval {
                     $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
                 }

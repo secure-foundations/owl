@@ -379,8 +379,8 @@ extractCryptOp binds op owlArgs = do
             return (Rc VecU8, owlpretty "", unwrapped)
         (CDecStAEAD, [k, c, aad, (nty, narg)]) -> do 
             let n = case nty of
-                    Number -> (nty, narg)
-                    _ -> (Number, printOwlOp "owl_bytes_as_counter" [(nty, narg)])
+                    Number -> (VecU8, printOwlOp "owl_counter_as_bytes" [(nty, narg)])
+                    _ -> (nty, narg)
             return (Option $ Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_dec_st_aead" [k, c, n, aad])
         (CPKEnc, [k, x]) -> do return (Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_pkenc" [k, x])
         (CPKDec, [k, x]) -> do return (Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_pkdec" [k, x])
@@ -672,7 +672,7 @@ extractExpr inK loc binds (CIncCtr ctr idxs) = do
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
-    return (binds, Number, owlpretty "", ctrName)
+    return (binds, VecU8, owlpretty "", owlpretty "owl_counter_as_bytes" <> parens (owlpretty "&" <> ctrName))
 extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do 
     t <- flattenPath p
     let (pats, k) = unsafeUnbind bindpat
@@ -766,17 +766,17 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
-    body <- case anfBody of
+    (attr, body) <- case anfBody of
         Just anfBody' -> do
             (_, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
-            return $ preBody <> line <> body
-        Nothing -> return $ owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)"
+            return (owlpretty "", preBody <> line <> body)
+        Nothing -> return (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)")
     curRetTy .= Nothing
     decl <- genFuncDecl name lname rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
     let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else owlpretty ""
     return $ (
-        decl <+> lbrace <> line <> 
+        attr <> decl <+> lbrace <> line <> 
             unwrapItreeArg <> intoOk body <>
         rbrace <> line <> line <> 
         mainWrapper
@@ -796,7 +796,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                     (case rt of
                         Unit -> owlpretty "()"
                         ADT _ -> owlpretty "res.get_Ok_0().0.view().as_seq()"
-                        Option (ADT _) -> owlpretty "view_option(res.get_Ok_0().0)"
+                        Option (ADT _) -> owlpretty "option_as_seq(view_option(res.get_Ok_0().0))"
                         Option _ -> owlpretty "view_option(res.get_Ok_0().0)"
                         _ -> owlpretty "res.get_Ok_0().0.view()")
                     <> owlpretty ", *mut_state"

@@ -131,7 +131,7 @@ specBuiltinFuncs = M.fromList [
         ("false", \_ -> owlpretty "false"),
         ("Some", \a -> owlpretty "Option::Some" <> tupled a),
         ("None", \_ -> owlpretty "Option::None"),
-        ("eq", \[a1, a2] -> a1 <+> owlpretty "==" <+> a2),
+        ("eq", \[a1, a2] -> a1 <> owlpretty "" <+> owlpretty "==" <+> a2 <> owlpretty ""),
         ("checknonce", \[a1, a2] -> a1 <+> owlpretty "==" <+> parens a2)
     ]
 
@@ -196,7 +196,10 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
         -- return $ owlpretty f' <> tupled as'
     extractAExpr' (AEHex s) = do
         bytelist <- hexStringToByteList s
-        return $ owlpretty "seq![" <> bytelist <> owlpretty "]"
+        if null s then
+            return $ owlpretty "empty_seq_u8()"
+        else
+            return $ owlpretty "seq![" <> bytelist <> owlpretty "]"
     extractAExpr' (AELenConst s) = do
         case specLenConsts M.!? s of
             Nothing -> throwError $ ErrSomethingFailed $ "TODO add spec len const " ++ s
@@ -333,7 +336,7 @@ extractExpr (CIncCtr p (_, _)) = do
     return $ parens $ parens (owlpretty "inc_counter" <> tupled [owlpretty (rustifyName p')])
 extractExpr (CGetCtr p (_, _)) = do
     p' <- flattenPath p
-    return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
+    return $ parens $ owlpretty "ret" <> parens (owlpretty "counter_as_bytes" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p')))
 extractExpr (CParse a (CTConst p) otk bindpat) = do 
     t <- tailPath p
     let (pats, k) = unsafeUnbind bindpat
@@ -363,7 +366,7 @@ specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
 specExtractArg (v, t) = do
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
     v' <- extractVar v
-    return $ v' <> owlpretty ":" <+> (owlpretty . specTyOf $ st)
+    return $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
 
 
 extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
