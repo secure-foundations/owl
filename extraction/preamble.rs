@@ -39,6 +39,9 @@ pub open const spec fn NONCE_SIZE() -> usize { owl_aead::spec_nonce_size(CIPHER(
 pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE() { owl_aead::nonce_size(cipher()) }
 pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sha512 }
 pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
+pub open const spec fn MACKEY_SIZE() -> usize { owl_hmac::spec_key_size(HMAC_MODE()) }
+pub const fn mackey_size() -> (r:usize) ensures r == MACKEY_SIZE() { owl_hmac::key_size(hmac_mode()) }
+
 
 #[verifier(external_type_specification)]
 #[verifier(external_body)]

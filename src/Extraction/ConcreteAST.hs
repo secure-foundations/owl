@@ -138,7 +138,13 @@ concretify e =
             c1 <- concretify e1
             c2 <- concretify e2
             return $ CIf a c1 c2
-        EGuard ae e -> error "TODO concretify EGuard"
+        EGuard ae e -> do
+            -- The aexpr must have type bool, and the expr must have type Option<_>
+            -- During concretization we desugar into an if statement
+            c <- concretify e
+            -- During typechecking the option needs to carry around its type, but during 
+            -- extraction this is not required, so we just leave it blank
+            return $ CIf ae c (CRet (mkSpanned (AEApp (topLevelPath "None") [] [])))
         ERet a -> return $ CRet a
         EDebug _ -> return CSkip 
         EAssert _ -> return CSkip

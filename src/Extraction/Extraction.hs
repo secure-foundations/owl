@@ -315,9 +315,10 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, preCryptOp, str) <- case (op, args) of
-        (CHash ((ropath,_,_):_) i, [x]) -> do 
+        (CHash ((ropath,_,_):_) i, args) -> do 
             -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
             -- so we can just use the first one to calculate the length to extract to
+            when (length args > 1) $ debugPrint "ERROR TODO implement multi-arg hash"
             roname <- flattenPath ropath
             orcls <- use oracles
             (outLen, sliceIdxs) <- case orcls M.!? roname of
@@ -342,7 +343,7 @@ extractCryptOp binds op owlArgs = do
                     hashCalls %= (:) ((roname, resolvedArgs), (Rc VecU8, rovar))
                     let genOrcl = 
                             owlpretty "let" <+> owlpretty rovar <+> owlpretty "=" <+>
-                            owlpretty (printOwlOp "owl_extract_expand_to_len" [(Rc VecU8, "self.salt"), (Number, outLen), x]) <> owlpretty ";"
+                            owlpretty (printOwlOp "owl_extract_expand_to_len" ([(Rc VecU8, "self.salt"), (Number, outLen)] ++ args)) <> owlpretty ";"
                     return (genOrcl, rovar)
                 _ -> throwError $ ErrSomethingFailed "precomputed hash value has wrong type"
             let sliceOrcl = rcNew <> parens (
@@ -379,14 +380,29 @@ extractCryptOp binds op owlArgs = do
         (CMacVrfy, [k, x, v]) -> do return (Option $ Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
         (CSign, [k, x]) -> do return (Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_sign" [k, x])
         (CSigVrfy, [k, x, v]) -> do return (Option $ Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_vrfy" [k, x, v])
-        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show op ++ "(" ++ show args ++ ")"
+        (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show (owlpretty op) ++ "(" ++ show (map owlpretty args) ++ ")"
     return (rt, preArgs <> line <> preCryptOp, str)
     where 
         printLenConst "0" = return "0"
         printLenConst "nonce" = return "nonce_size()"
         printLenConst "enckey" = return "key_size()"
+        printLenConst "mackey" = return "mackey_size()"
         printLenConst s = throwError $ UndefinedSymbol $ "unrecognized oracle length const: " ++ s
 
+
+-- Compute return type as well
+extractUserFunc :: String -> OwlFunDef -> ExtractionMonad (OwlDoc, RustTy)
+extractUserFunc owlName o = do
+    ((_, args), ae) <- unbind o
+    let binds = M.fromList $ map (\x -> (rustifyName . show $ x, (VecU8, Nothing))) args
+    (rt, pre, aePrettied) <- extractAExpr binds (ae ^. val)
+    let body = pre <> line <> aePrettied
+    let declArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ":" <+> owlpretty "&[u8]") args
+    let viewArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ".view()") args
+    let decl = owlpretty "pub exec fn" <+> owlpretty (rustifyName owlName) <> tupled declArgs <+> 
+                    owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty rt) <> line
+    let reqEns = owlpretty "ensures res.view() ==" <+> owlpretty owlName <> tupled viewArgs <> line
+    return (decl <> reqEns <> braces (line <> body <> line), rt)
 
 extractAExpr :: M.Map String (RustTy, Maybe AExpr) -> AExprX -> ExtractionMonad (RustTy, OwlDoc, OwlDoc)
 extractAExpr binds (AEVar _ owlV) = do
@@ -436,11 +452,27 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
                     -- else do
                         str <- f args
                         return (rt, preArgs, owlpretty str)
-                Nothing ->
-                    throwError $ UndefinedSymbol $ show owlFn
+                Nothing -> do
+                    userf <- lookupUserFunc =<< flattenPath owlFn
+                    case userf of
+                        Just b -> do
+                            n <- flattenPath owlFn
+                            ufcs <- use userFuncsCompiled
+                            -- We only compile the user funcs that are needed in exec code. Check if this one has already been compiled
+                            case ufcs M.!? n of
+                                Just (rt, f) -> return ()
+                                Nothing -> do
+                                    (exec, rt) <- extractUserFunc n b
+                                    spec <- Spec.extractUserFunc n rt b
+                                    userFuncsCompiled %= M.insert (rustifyName n) (spec, exec)
+                                    return ()
+                            return (VecU8, preArgs, 
+                                owlpretty (rustifyName n) <> 
+                                tupled (map (\(r,_,p) -> owlpretty $ printOwlArg (r, show p)) argsPretties))
+                        Nothing -> throwError $ UndefinedSymbol $ show owlFn
 extractAExpr binds (AEHex s) = do
     bytelist <- hexStringToByteList s
-    return (VecU8, owlpretty "", owlpretty "vec![" <> bytelist <> owlpretty "]")
+    return (VecU8, owlpretty "", owlpretty "mk_vec_u8![" <> bytelist <> owlpretty "]")
 extractAExpr binds (AEInt n) = return (Number, owlpretty "", owlpretty n)
 extractAExpr binds (AEGet nameExp) = do
     fnameExp <- flattenNameExp nameExp
@@ -633,24 +665,37 @@ extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
     return (binds, Number, owlpretty "", ctrName)
-extractExpr inK loc binds (CParse ae (CTConst p) (Just badk) bindpat) = do 
-    t <- tailPath p
+extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do 
+    t <- flattenPath p
     let (pats, k) = unsafeUnbind bindpat
     let pats' = map fst pats
     fs <- lookupStruct . rustifyName $ t
     let patfields = zip pats' fs
     let binds' = M.fromList (map (\(v, (_,r)) -> (rustifyName . show $ v, (Rc r, Nothing))) patfields) `M.union` binds
     (rtAe, preAe, aePrettied) <- extractAExpr binds $ ae^.val
-    (_, _, _, badkPrettied) <- extractExpr inK loc binds badk
     (_, rt, preK, kPrettied) <- extractExpr inK loc binds' k
-    let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
-                                        owlpretty "=" <+> rcNew <> parens (owlpretty "parseval." <> owlpretty (rustifyName f)) <> owlpretty ";"
-    let e =
-            owlpretty "if let Some(parseval) = parse_" <> owlpretty (rustifyName t) <> parens (owlpretty $ printOwlArg (rtAe, show aePrettied)) <> owlpretty " {" <> line <>
-                vsep (map destructStruct patfields) <> line <> 
-                kPrettied <> line <> 
-            owlpretty "} else {" <> line <> badkPrettied <> line <> owlpretty "}"
-    return (binds, rt, preAe <> preK, e)
+    case (rtAe, badkopt) of
+        (ADT r, _) | r == rustifyName t -> do
+            -- Either we are in the well-typed case, or we are in the case where Parsley has parsed deeply but Owl can only represent a shallow parse
+            let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
+                                            owlpretty "=" <+> rcNew <> parens (owlpretty "parseval." <> owlpretty (rustifyName f)) <> owlpretty ";"
+            let e =
+                    owlpretty "let parseval = " <+> aePrettied <> owlpretty ";" <> line <>
+                        vsep (map destructStruct patfields) <> line <> 
+                        kPrettied 
+            return (binds, rt, preAe <> preK, e)
+        (_, Just badk) -> do
+            (_, _, _, badkPrettied) <- extractExpr inK loc binds badk
+            let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
+                                            owlpretty "=" <+> rcNew <> parens (owlpretty "parseval." <> owlpretty (rustifyName f)) <> owlpretty ";"
+            let e =
+                    owlpretty "if let Some(parseval) = parse_" <> owlpretty (rustifyName t) <> parens (owlpretty $ printOwlArg (rtAe, show aePrettied)) <> owlpretty " {" <> line <>
+                        vsep (map destructStruct patfields) <> line <> 
+                        kPrettied <> line <> 
+                    owlpretty "} else {" <> line <> badkPrettied <> line <> owlpretty "}"
+            return (binds, rt, preAe <> preK, e)
+        _ -> do throwError $ TypeError $ 
+                    "Mismatched types for parse expr: want to parse as" ++ show owlT ++ " but arg inferred to have type " ++ show rtAe
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad String
@@ -695,28 +740,36 @@ makeFunc owlName _ owlArgs owlRetTy = do
 
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
-extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
+extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Maybe Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
 extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     debugLog $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     let (Locality lpath _) = loc
     lname <- flattenPath lpath
-    concreteBody <- concretify owlBody
-    -- debugPrint $ owlpretty concreteBody
-    anfBody <- concretify =<< ANF.anf owlBody
-    -- debugPrint $ owlpretty anfBody
+    (concreteBody, anfBody) <- case owlBody of
+        Just owlBody' -> do               
+            concreteBody <- concretify owlBody'
+            -- debugPrint $ owlpretty concreteBody
+            anfBody <- concretify =<< ANF.anf owlBody'
+            -- debugPrint $ owlpretty anfBody
+            return (Just concreteBody, Just anfBody)
+        Nothing -> return (Nothing, Nothing)
     rustArgs <- mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
-    (_, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody
+    (rtb, body) <- case anfBody of
+        Just anfBody' -> do
+            (_, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
+            return (rtb, preBody <> line <> body)
+        Nothing -> return (rtb, owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)")
     curRetTy .= Nothing
     decl <- genFuncDecl name lname rustArgs rtb
     defSpec <- Spec.extractDef owlName loc concreteBody owlArgs (specTyOf rtb)
     let mainWrapper = if isMain then genMainWrapper owlName lname rtb (specTyOf rtb) else owlpretty ""
     return $ (
         decl <+> lbrace <> line <> 
-            unwrapItreeArg <> intoOk (preBody <> line <> body <> line) <>
+            unwrapItreeArg <> intoOk body <>
         rbrace <> line <> line <> 
         mainWrapper
         , defSpec)
@@ -774,7 +827,7 @@ nameInit s nt = case nt^.val of
 
 type LocalityName = String
 type NameData = (String, NameType, Int) -- name, type, number of processID indices
-type DefData = (String, Locality, [(DataVar, Embed Ty)], Ty, Expr) -- func name, locality, arguments, return type, body
+type DefData = (String, Locality, [(DataVar, Embed Ty)], Ty, Maybe Expr) -- func name, locality, arguments, return type, body
 type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [String]) -- number of locality indices, local state, shared state, defs, table names and codomains, names of counters
 
 
@@ -792,13 +845,10 @@ preprocessDefs lookupLoc mb locMap = do
                 when (length sids > 1) $ throwError $ DefWithTooManySids owlName
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc =<< flattenPath locP
-                let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body) 
-                case body of
-                    Nothing -> return m
-                    Just e  -> do
-                        let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, args, retTy, e)], t, c)
-                        makeFunc owlName loc args retTy
-                        return $ M.adjust f locName m
+                let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body)      
+                let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, args, retTy, body)], t, c)
+                makeFunc owlName loc args retTy
+                return $ M.adjust f locName m
 
 -- returns (locality stuff, shared names, public keys)
 preprocessModBody :: TB.ModBody -> ExtractionMonad (LocalityName -> ExtractionMonad LocalityName, M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
@@ -1152,10 +1202,16 @@ extractTyDefs ((tv, td):ds) = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
             return $ (owlpretty "", owlpretty "")
 
-owlprettyFile :: String -> ExtractionMonad (OwlDoc)        
+owlprettyFile :: String -> ExtractionMonad OwlDoc
 owlprettyFile fn = do
     s <- liftIO $ readFile fn
     return $ owlpretty s
+
+printCompiledUserFuncs :: ExtractionMonad OwlDoc
+printCompiledUserFuncs = do
+    ufcs <- use userFuncsCompiled
+    let res = vsep $ map (\(spec, exec) -> spec <> line <> line <> exec <> line <> line) $ M.elems ufcs
+    return res
 
 extractModBody :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc) 
 extractModBody mb = do
@@ -1164,9 +1220,10 @@ extractModBody mb = do
     (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     locMap <- preprocessDefs lookupLoc mb locMap
     (mainNames, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
+    ep <- entryPoint locMap sharedNames pubKeys mainNames
     p <- owlprettyFile "extraction/preamble.rs"
     lp <- owlprettyFile "extraction/lib_preamble.rs"
-    ep <- entryPoint locMap sharedNames pubKeys mainNames
+    userFuncs <- printCompiledUserFuncs
     return (
         p                       <> line <> line <> line <> line <> 
         owlpretty "verus! {"       <> line <> line <> 
@@ -1180,6 +1237,10 @@ extractModBody mb = do
         owlpretty "// ------------------------------------" <> line <> line <>
         tyDefsExtracted         <> line <> line <>
         locsExtracted           <> line <> line <>
+        owlpretty "// ------------------------------------" <> line <>
+        owlpretty "// ------ USER-DEFINED FUNCTIONS ------" <> line <>
+        owlpretty "// ------------------------------------" <> line <> line <>
+        userFuncs         <> line <> line <>
         owlpretty "// ------------------------------------" <> line <>
         owlpretty "// ------------ ENTRY POINT -----------" <> line <>
         owlpretty "// ------------------------------------" <> line <> line <>

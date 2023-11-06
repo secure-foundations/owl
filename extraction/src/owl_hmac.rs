@@ -26,6 +26,19 @@ pub const fn tag_size(mode: &Mode) -> usize {
 }
 
 #[inline]
+pub open const spec fn spec_key_size(mode: Mode) -> usize {
+    64
+}
+
+/// Get the key size of the `Mode` in bytes.
+#[inline]
+pub const fn key_size(mode: Mode) -> (u:usize)
+    ensures u == spec_key_size(mode)
+{
+    64
+}
+
+#[inline]
 pub fn gen_rand_key(_mode: &Mode) -> Vec<u8> {
     gen_rand_bytes(64)
 }

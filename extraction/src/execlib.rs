@@ -31,6 +31,16 @@ pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
     v.extend(s);
 }
 
+
+pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
+    ensures res@ == concat(a@, b@)
+{
+    let mut v = slice_to_vec(a);
+    extend_vec_u8(&mut v, b);
+    v
+}
+
+
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     ensures res@ == Seq::new(n as nat, |i| e)
 {
@@ -47,6 +57,20 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
         proof { assert_seqs_equal!(v@, Seq::new(i as nat, |j| e)); }
     }
     v
+}
+
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! mk_vec_u8 {
+    ($($e:expr),* $(,)?) => {
+        {
+            let mut v = Vec::new();
+            $(
+                v.push($e);
+            )*
+            v
+        }
+    };
 }
 
 // By convention, we include the nonce at the start of the ciphertext. (TODO check wrt wire formats)
@@ -208,6 +232,19 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: usize, aad: &[u8]) -> (x:
     }
 }
 
+#[verifier(external_body)]
+pub exec fn owl_is_group_elem(x: &[u8]) -> (b: bool)
+    ensures b == is_group_elem(x@)
+{
+    todo!("implement is_group_elem")
+}
+
+#[verifier(external_body)]
+pub exec fn owl_crh(x: &[u8]) -> (res: Rc<Vec<u8>>)
+    ensures res@ == crh(x@)
+{
+    todo!("implement crh")
+}
 
 
 } // verus!

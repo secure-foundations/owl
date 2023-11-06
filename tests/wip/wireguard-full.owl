@@ -337,7 +337,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender,
     e_init, msg1_static, msg1_timestamp, msg1_mac1) in
     let msg1_output = msg1(msg1_payload_value) in
-    let _ = output msg1_output in 
+    let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
     let retval = initiator_msg1_val<session i, pid n, pid m>(C3, H4) in
     retval
 
@@ -548,7 +548,7 @@ def generate_msg2<j@n,m> (msg1_val:
         msg2_reserved, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1
     ) in
     let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output in
+    let _ = output msg2_output to endpoint(Initiator<n>) in
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
@@ -586,7 +586,7 @@ def transp_send_init<i@n,m> (transp_keys_val :
 
     let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in
-    let _ = output transp_output in
+    let _ = output transp_output to endpoint(Responder<m>) in
     Some(())
     }
 
@@ -658,7 +658,7 @@ def transp_send_resp<j@n,m> (transp_keys_val :
     let transp_payload_value = 
         transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
     let transp_output = transp(transp_payload_value) in
-    let _ = output transp_output in
+    let _ = output transp_output to endpoint(Initiator<n>) in
     Some(())
     }
 
@@ -709,3 +709,12 @@ def transp_recv_resp<j@n,m> (transp_keys_val :
     } otherwise None<ty: if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>>()
 
 
+
+
+
+///////// Main functions //////////
+// TODO these can be removed once extraction stops demanding them
+
+def Initiator_main<@n>() @ Initiator<n> : Unit = ()
+def Responder_main<@n>() @ Responder<n> : Unit = ()
+def dummy_main<@n,m>() @ dummy<n,m> : Unit = ()

@@ -33,6 +33,11 @@ impl OwlSpecSerialize for Seq<u8> {
 }
 
 
+pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
+    a.add(b)
+}
+
+
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
     recommends k.len() == crate::KEY_SIZE(),
@@ -123,7 +128,15 @@ pub open spec(checked) fn enc_st_aead(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad:
 }
 
 #[verifier(external_body)]
-pub open spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
+pub closed spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn is_group_elem(x: Seq<u8>) -> bool
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn crh(x: Seq<u8>) -> Seq<u8>
 { unimplemented!() }
 
 pub open spec fn andb(x: bool, y: bool) -> bool

@@ -70,6 +70,8 @@ instance OwlPretty SpecTy where
   owlpretty (SpecADT s) = owlpretty s
   owlpretty (SpecOption r) = owlpretty "Option" <> angles (owlpretty r)
 
+type OwlFunDef = Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr
+
 data Env = Env {
     _path :: String,
     _aeadCipherMode :: AEADCipherMode,
@@ -87,7 +89,8 @@ data Env = Env {
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
     _hashCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (roname, aexpr args), can't use M.Map with AExpr keys
-    _adtCalls :: [((String, [AExpr]), (RustTy, String))] -- key is (adt name, aexpr args)
+    _adtCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (adt name, aexpr args)
+    _userFuncsCompiled :: M.Map String (OwlDoc, OwlDoc) -- (compiled spec, compiled exec)
 }
 
 data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
@@ -167,15 +170,15 @@ instance OwlPretty ExtractionError where
 printErr :: ExtractionError -> IO ()
 printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 
-debugPrint :: Show s => s -> ExtractionMonad ()
-debugPrint = liftIO . hPrint stderr
+debugPrint :: String -> ExtractionMonad ()
+debugPrint = liftIO . putStrLn
 
 -- just for dev/debugging
 logExtraction :: Bool
 logExtraction = True
 
-debugLog :: Show s => s -> ExtractionMonad ()
-debugLog s = when logExtraction $ debugPrint s
+debugLog :: String -> ExtractionMonad ()
+debugLog s = when logExtraction $ debugPrint ("    " ++ s)
 
 replacePrimes :: String -> String
 replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
@@ -376,7 +379,7 @@ initFuncs =
                     [(_,x)] -> return $ "Some(" ++ x ++ ")"
                     _ -> throwError $ TypeError $ "got wrong number of args for Some"
             )),
-            ("None", (Option (Rc VecU8), \_ -> return "Option::<Rc<Vec<u8>>>::None")),
+            ("None", (Option (Rc VecU8), \_ -> return "None")),
             ("length", (Number, \args -> case args of
                     [(Rc VecU8,x)] -> return $ "(*" ++ x ++ ").len()"
                     [(_,x)] -> return $ x ++ ".len()"
@@ -397,11 +400,23 @@ initFuncs =
                         return $ x ++ " + " ++ show tsz
                     _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
             )),
-            ("xor", (VecU8, \args -> case args of
-                [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
-                [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
-                _ -> throwError $ TypeError $ "got wrong args for xor"
+            ("is_group_elem", (Bool, \args -> case args of
+                    [(_,x)] -> return $ "owl_is_group_elem(&" ++ x ++ ")"
+                    _ -> throwError $ TypeError $ "got wrong number of args for is_group_elem"
             )),
+            ("concat", (VecU8, \args -> case args of
+                    [x, y] -> return $ printOwlOp "owl_concat" [x, y] 
+                    _ -> throwError $ TypeError $ "got wrong number of args for concat"
+            )),
+            ("crh", (Rc VecU8, \args -> case args of
+                    [x] -> return $ printOwlOp "owl_crh" [x] 
+                    _ -> throwError $ TypeError $ "got wrong number of args for crh"
+            )),
+            -- ("xor", (VecU8, \args -> case args of
+            --     [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
+            --     [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
+            --     _ -> throwError $ TypeError $ "got wrong args for xor"
+            -- )),
             ("andb", (Bool, \args -> case args of
                 [(_,x), (_,y)] -> return $ x ++ " && " ++ y
                 _ -> throwError $ TypeError $ "got wrong args for andb"
@@ -409,7 +424,7 @@ initFuncs =
         ] 
 
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] []
+initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
 
 lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
 lookupTyLayout' n = do
@@ -473,8 +488,15 @@ lookupAdtFunc fn = do
         Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
         Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
         Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
-        Just _ -> throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
+        Just _ -> return Nothing-- throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
         Nothing -> return Nothing
+
+lookupUserFunc :: String -> ExtractionMonad (Maybe OwlFunDef)
+lookupUserFunc fn = do
+    ufs <- use owlUserFuncs
+    case lookup fn ufs of
+        Just (TB.FunDef b) -> return $ Just b
+        _ -> return Nothing
 
 flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of

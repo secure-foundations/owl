@@ -141,7 +141,7 @@ specLenConsts = M.fromList [
         -- ("signature", "256"),
         ("enckey", "KEY_SIZE()"),
         ("nonce", "NONCE_SIZE()"),
-        -- ("mackey", hmacKeySize),
+        ("mackey", "MACKEY_SIZE()"),
         -- ("maclen", hmacLen),
         -- ("pkekey", pkeKeySize),
         -- ("sigkey", sigKeySize),
@@ -164,6 +164,18 @@ extractVar :: Name a -> ExtractionMonad OwlDoc
 extractVar v = do
     v' <- extractVarString (name2String v)
     return $ owlpretty v'
+
+extractUserFunc :: String -> RustTy -> OwlFunDef -> ExtractionMonad OwlDoc
+extractUserFunc owlName rtExec o = do
+    ((_, args), ae) <- unbind o
+    let rtSpec = specTyOf rtExec
+    let binds = M.fromList $ map (\x -> (show x, (VecU8, Nothing))) args
+    body <- extractAExpr ae
+    let declArgs = map (\x -> owlpretty (show x) <> owlpretty ":" <+> owlpretty "Seq<u8>") args
+    let decl = owlpretty "pub open spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
+                    owlpretty "->" <+> owlpretty rtSpec <> line
+    return $ decl <> braces (line <> body <> line)
+
 
 extractAExpr :: AExpr -> ExtractionMonad OwlDoc
 extractAExpr ae = extractAExpr' (ae ^. val) where
@@ -208,7 +220,8 @@ extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad OwlDoc
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        (CHash ((ropath,_,_):_) i, [x]) -> do
+        (CHash ((ropath,_,_):_) i, args) -> do
+            when (length args > 1) $ debugPrint "ERROR TODO implement multi-arg hash"
             roname <- flattenPath ropath
             orcls <- use oracles
             (outLen, sliceIdxs) <- case orcls M.!? roname of
@@ -219,7 +232,7 @@ extractCryptOp op owlArgs = do
                 Just p -> return p
             return $ 
                 owlpretty "ret" <> parens 
-                    (owlpretty "kdf" <> tupled [parens (printOrclLen outLen) <> owlpretty " as usize", x] <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
+                    (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : args) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -312,10 +325,10 @@ extractExpr (CCase a otk xs) = do
     return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
 extractExpr (CCrypt cop args) = do
     parens <$> extractCryptOp cop args
-extractExpr (CIncCtr p ([], _)) = do
+extractExpr (CIncCtr p (_, _)) = do
     p' <- flattenPath p
     return $ parens $ parens (owlpretty "inc_counter" <> tupled [owlpretty (rustifyName p')])
-extractExpr (CGetCtr p ([], _)) = do
+extractExpr (CGetCtr p (_, _)) = do
     p' <- flattenPath p
     return $ parens $ owlpretty "ret" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p'))
 extractExpr (CParse a (CTConst p) otk bindpat) = do 
@@ -350,7 +363,7 @@ specExtractArg (v, t) = do
     return $ v' <> owlpretty ":" <+> (owlpretty . specTyOf $ st)
 
 
-extractDef :: String -> Locality -> CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
+extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
     specArgs <- mapM specExtractArg owlArgs
@@ -359,7 +372,9 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
             : owlpretty "mut_state:" <+> owlpretty (stateName lname)
             : specArgs
     let rtPrettied = owlpretty "-> (res: ITree<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>" <> owlpretty ")"
-    body <- extractExpr concreteBody
+    body <- case concreteBody of
+        Just concreteBody' -> extractExpr concreteBody'
+        Nothing -> return $ owlpretty "todo!(implement " <> owlpretty (specName owlName) <> owlpretty ")"
     return $ owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
         owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
             body
