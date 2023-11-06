@@ -265,8 +265,8 @@ struct initiator_msg1_val<i,n,m> {
 struct transp_keys {
       _transp_keys_initiator : Data<adv> |4|  // value of get_sender_i
     , _transp_keys_responder : Data<adv> |4|  // value of get_sender_r
-    , _transp_keys_init_ephemeral : Data<adv> // TODO should be ghost
-    , _transp_keys_resp_ephemeral : Data<adv> // TODO should be ghost
+    , _transp_keys_init_ephemeral : Data<adv> | |group| | // TODO should be ghost
+    , _transp_keys_resp_ephemeral : Data<adv> | |group| | // TODO should be ghost
     , _transp_keys_T_init_send : Data<top> | |enckey| |
     , _transp_keys_T_resp_send : Data<top> | |enckey| |
 }
@@ -400,8 +400,8 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
 
 struct responder_msg1_val {
       _responder_msg1_C3 : Data<top> | |nonce| | 
-    , _responder_msg1_H4 : Data<adv> // todo
-    , _responder_msg1_ephemeral : Data<adv>
+    , _responder_msg1_H4 : Data<adv> | |crh| |
+    , _responder_msg1_ephemeral : Data<adv> | |group| |
     , _responder_msg1_sender : Data<adv> |4|
 }
 

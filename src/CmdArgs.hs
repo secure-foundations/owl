@@ -37,7 +37,7 @@ parseArgs =
       <*>
           switch 
           ( long "extract" <> short 'e' <> 
-            help "Extract rust code (requires rustfmt to be installed)" )
+            help "Extract rust code" )
       <*>
           switch
           ( long "test" <> help "Do tests")

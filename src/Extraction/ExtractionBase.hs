@@ -82,7 +82,7 @@ data Env = Env {
     _lenConsts :: M.Map String Int,
     _structs :: M.Map String [(String, RustTy)], -- rust type for each field
     _enums :: M.Map (S.Set String) (String, M.Map String (Maybe RustTy)),
-    _oracles :: M.Map String ([String], M.Map Int ([String], [String])), -- how to print the output length, where to slice to get the subparts
+    _oracles :: M.Map String ([String], M.Map Int ([String], [String], Layout)), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
@@ -101,12 +101,14 @@ defaultHMACMode :: HMACMode
 defaultHMACMode = Sha512
 data Layout =
   LBytes Int -- number of bytes
+  | LUnboundedBytes -- Bytes without statically knowable length. Restricted to be the last field in a struct.
   | LStruct String [(String, Layout)] -- field, layout
   | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty Layout where
     owlpretty (LBytes i) = owlpretty "bytes" <> parens (owlpretty i)
+    owlpretty LUnboundedBytes = owlpretty "unbounded_bytes"
     owlpretty (LStruct name fields) = owlpretty "struct" <+> owlpretty name <> owlpretty ":" <+> owlpretty fields
     owlpretty (LEnum name cases) = owlpretty "enum" <+> owlpretty name <> owlpretty ":" <+> owlpretty (M.keys cases)
 
@@ -167,6 +169,13 @@ printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 
 debugPrint :: Show s => s -> ExtractionMonad ()
 debugPrint = liftIO . hPrint stderr
+
+-- just for dev/debugging
+logExtraction :: Bool
+logExtraction = True
+
+debugLog :: Show s => s -> ExtractionMonad ()
+debugLog s = when logExtraction $ debugPrint s
 
 replacePrimes :: String -> String
 replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
@@ -298,6 +307,12 @@ dhSize = 91
 hmacLen :: Int
 hmacLen = 64
 
+counterSize :: Int
+counterSize = 8 -- TODO This is specific to Wireguard---should be a param
+
+crhSize :: Int
+crhSize = 32 -- TODO This is specific to Wireguard
+
 initLenConsts :: M.Map String Int
 initLenConsts = M.fromList [
         (rustifyName "signature", 256),
@@ -310,6 +325,9 @@ initLenConsts = M.fromList [
         (rustifyName "sigkey", sigKeySize),
         (rustifyName "vk", vkSize),
         (rustifyName "DH", dhSize),
+        (rustifyName "group", dhSize),
+        (rustifyName "counter", counterSize),
+        (rustifyName "crh", crhSize),
         (rustifyName "tag", 1)
     ]
 
@@ -393,14 +411,43 @@ initFuncs =
 initEnv :: String -> TB.Map String TB.UserFunc -> Env
 initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] []
 
+lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
+lookupTyLayout' n = do
+    ls <- use typeLayouts
+    return $ ls M.!? n
+
 lookupTyLayout :: String -> ExtractionMonad Layout
 lookupTyLayout n = do
-    ls <- use typeLayouts
-    case ls M.!? n of
+    o <- lookupTyLayout' n
+    case o of
         Just l -> return l
         Nothing -> do
+            ls <- use typeLayouts
             debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show (M.keys ls)
             throwError $ UndefinedSymbol n
+
+lookupNameLayout :: NameExp -> ExtractionMonad Layout
+lookupNameLayout n = do
+    n' <- flattenNameExp n
+    o <- lookupTyLayout' n'
+    case o of
+        Just l -> return l
+        Nothing -> do
+            case n ^. val of
+                NameConst _ p (Just (_, i)) -> do
+                    owlName <- flattenPath p
+                    os <- use oracles
+                    case os M.!? owlName of
+                        Just (_, sliceMap) -> do
+                            case sliceMap M.!? i of
+                                Just (_, _, l) -> return l
+                                Nothing -> throwError $ UndefinedSymbol n'
+                        Nothing -> throwError $ UndefinedSymbol n'
+                _ -> do
+                    ls <- use typeLayouts
+                    debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
+                    throwError $ UndefinedSymbol n'
+
 
 lookupFunc :: Path -> ExtractionMonad (Maybe (RustTy, [(RustTy, String)] -> ExtractionMonad String))
 lookupFunc fpath = do
@@ -446,6 +493,7 @@ rustifyArgTy (CTConst p) = do
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
         LBytes _ -> Rc VecU8
+        LUnboundedBytes -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
@@ -461,6 +509,7 @@ rustifyRetTy (CTConst p) = do
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
         LBytes _ -> Rc VecU8
+        LUnboundedBytes -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool

@@ -43,14 +43,14 @@ import qualified SpecExtraction as Spec
 -- Data representation
 -- For enums, we reserve the zero tag for failure cases, so the first correct tag is 1
 
-lenLayoutFailure :: Layout -> Int
-lenLayoutFailure (LBytes n) = n
-lenLayoutFailure (LStruct _ ls) = foldl' (\ len (_,l) -> lenLayoutFailure l + len) 0 ls
-lenLayoutFailure (LEnum _ map) = 1 -- just put a zero tag and nothing after it
 
-layoutCTy :: CTy -> ExtractionMonad Layout
-layoutCTy CTData = do throwError $ CantLayoutType CTData
-layoutCTy (CTDataWithLength aexp) =
+
+data UnboundedAllowed = UnboundedAllowed | UnboundedDisallowed deriving (Eq, Show)
+
+layoutCTy :: UnboundedAllowed ->  CTy -> ExtractionMonad Layout
+layoutCTy UnboundedAllowed CTData = return LUnboundedBytes
+layoutCTy UnboundedDisallowed CTData = do throwError $ CantLayoutType CTData
+layoutCTy u (CTDataWithLength aexp) =
     let helper ae =
             case ae^.val of
             AELenConst s -> do
@@ -84,48 +84,59 @@ layoutCTy (CTDataWithLength aexp) =
             _ -> throwError $ CantLayoutType (CTDataWithLength aexp)
     in
     helper aexp
-layoutCTy (CTOption ct) = do
-    lct <- layoutCTy ct
+layoutCTy u (CTOption ct) = do
+    lct <- layoutCTy u ct
     return $ LEnum "builtin_option" $ M.fromList [("Some", (1, Just $ lct)), ("None", (2, Just $ LBytes 0))]
-layoutCTy (CTConst p) = do
+layoutCTy u (CTConst p) = do
     p' <- flattenPath p
-    lookupTyLayout . rustifyName $ p'
-layoutCTy CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
-layoutCTy CTUnit = return $ LBytes 1
-layoutCTy (CTName n) = do
+    l <- lookupTyLayout . rustifyName $ p'
+    case u of
+        UnboundedAllowed -> return l
+        UnboundedDisallowed -> if isNestable l then return l else throwError $ CantLayoutType (CTConst p)
+layoutCTy u CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
+layoutCTy u CTUnit = return $ LBytes 1
+layoutCTy u (CTName n) = lookupNameLayout n
+layoutCTy u (CTVK n) = do
     lookupTyLayout =<< flattenNameExp n
-layoutCTy (CTVK n) = do
+layoutCTy u (CTDH_PK n) = do
     lookupTyLayout =<< flattenNameExp n
-layoutCTy (CTDH_PK n) = do
+layoutCTy u (CTEnc_PK n) = do
     lookupTyLayout =<< flattenNameExp n
-layoutCTy (CTEnc_PK n) = do
-    lookupTyLayout =<< flattenNameExp n
-layoutCTy (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
+layoutCTy u (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
 
-layoutStruct :: String -> [(String, CTy)] -> ExtractionMonad Layout
-layoutStruct name fields = do
+isNestable :: Layout -> Bool
+isNestable (LBytes _) = True
+isNestable LUnboundedBytes = False
+isNestable (LStruct _ fields) = all (isNestable . snd) fields
+isNestable (LEnum _ cases) = all isNestable . mapMaybe snd $ M.elems cases
+
+layoutStruct :: UnboundedAllowed -> String -> [(String, CTy)] -> ExtractionMonad Layout
+layoutStruct u name fields = do
     fieldLayouts <- go fields
     return $ LStruct name fieldLayouts
     where
         go [] = return []
+        go [(name, ct)] = do
+            lct <- layoutCTy u ct
+            return [(name, lct)]
         go ((name, ct):fs) = do
-            lct <- layoutCTy ct
+            lct <- layoutCTy UnboundedDisallowed ct
             rest <- go fs
             return $ (name, lct):rest
 
-layoutEnum :: String -> M.Map String (Maybe CTy) -> ExtractionMonad Layout
-layoutEnum name cases = do
+layoutEnum :: UnboundedAllowed -> String -> M.Map String (Maybe CTy) -> ExtractionMonad Layout
+layoutEnum u name cases = do
     let (_, casesTagged) = M.mapAccum tagCase 1 cases
-    caseLayouts <- mapM layoutCase casesTagged
+    caseLayouts <- mapM (layoutCase u) casesTagged
     return $ LEnum name caseLayouts
     where
         tagCase n c = (n+1, (n, c))
-        layoutCase (n, Just ct) = do
+        layoutCase u (n, Just ct) = do
             lcto <- case ct of
                 CTData -> return Nothing
-                _ -> Just <$> layoutCTy ct
+                _ -> Just <$> layoutCTy u ct
             return (n, lcto)
-        layoutCase (n, Nothing) = return (n, Just $ LBytes 0)
+        layoutCase u (n, Nothing) = return (n, Just $ LBytes 0)
 
 rustFieldTy :: CTy -> ExtractionMonad RustTy
 rustFieldTy (CTOption ct) = Option <$> rustFieldTy ct
@@ -134,6 +145,7 @@ rustFieldTy (CTConst p) = do
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
         LBytes _ -> Rc VecU8
+        LUnboundedBytes -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustFieldTy CTBool = return Bool
@@ -182,7 +194,7 @@ genParsleyWrappers owlName =
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
-    -- debugPrint name
+    debugLog $ "Extracting owl struct " <> owlName <> " as verus struct " <> name
     let fields = map (\(s,t) -> (rustifyName s, doConcretifyTy t)) owlFields
     rustFields <- mapM (\(s,t) -> do t' <- rustFieldTy (doConcretifyTy t) ; return (s, t')) owlFields
     let rustFields' = map (\(s,t) -> (rustifyName s, t)) rustFields
@@ -191,7 +203,7 @@ extractStruct owlName owlFields = do
             owlpretty "pub struct" <+> owlpretty name <+> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty "pub" <+> owlpretty n <+> owlpretty ":" <+> owlpretty t) $ rustFields'
                     ) <> line)
-    layout <- layoutStruct name fields
+    layout <- layoutStruct UnboundedAllowed name fields
     layoutFields <- case layout of
         LStruct _ fs -> return fs
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
@@ -241,7 +253,7 @@ extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (OwlDoc, OwlDoc
 extractEnum owlName owlCases' = do
     let owlCases = M.fromList owlCases'
     let name = rustifyName owlName
-    -- debugPrint name
+    debugLog $ "Extracting owl enum " <> owlName <> " as verus enum " <> name
     let cases = M.mapKeys rustifyName $ M.map (fmap doConcretifyTy) owlCases
     rustCases <- mapM (\o -> case o of Just t -> (do t' <- rustFieldTy $ doConcretifyTy t; return (Just t')); Nothing -> return Nothing) owlCases
     let rustCases' = M.mapKeys rustifyName rustCases
@@ -250,7 +262,7 @@ extractEnum owlName owlCases' = do
             owlpretty "#[is_variant]" <> line <> owlpretty "pub enum" <+> owlpretty name <+> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty n <> parens (owlpretty t)) $ M.assocs rustCases'
                     ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
-    layout <- layoutEnum name cases
+    layout <- layoutEnum UnboundedAllowed name cases
     layoutCases <- case layout of
         LEnum _ cs -> return cs
         _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
@@ -315,7 +327,7 @@ extractCryptOp binds op owlArgs = do
                     return (intercalate "+" outLen'', sliceIdxs)
             (start, end) <- case sliceIdxs M.!? i of
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
-                Just (s', e') -> do
+                Just (s', e', _) -> do
                     s'' <- mapM printLenConst s'
                     e'' <- mapM printLenConst e'
                     return (intercalate "+" s'', intercalate "+" e'')
@@ -685,7 +697,7 @@ makeFunc owlName _ owlArgs owlRetTy = do
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
 extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
 extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
-    -- debugPrint $ "Extracting def " ++ owlName 
+    debugLog $ "Extracting def " ++ owlName 
     let name = rustifyName owlName
     let (Locality lpath _) = loc
     lname <- flattenPath lpath
@@ -769,6 +781,7 @@ type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [St
 -- Defer processing of defs until we have all type information
 preprocessDefs :: (LocalityName -> ExtractionMonad LocalityName) -> TB.ModBody -> M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName LocalityData)
 preprocessDefs lookupLoc mb locMap = do
+    debugLog $ "Preprocessing defs"
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs) 
     return locMap
     where
@@ -790,14 +803,14 @@ preprocessDefs lookupLoc mb locMap = do
 -- returns (locality stuff, shared names, public keys)
 preprocessModBody :: TB.ModBody -> ExtractionMonad (LocalityName -> ExtractionMonad LocalityName, M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData])
 preprocessModBody mb = do
-    -- debugPrint "started preprocessing"
+    debugLog "Preprocessing"
     let (locs, locAliases) = sortLocs $ mb ^. TB.localities
     let lookupLoc = lookupLoc' locs locAliases
     let locMap = M.map (\npids -> (npids, [],[],[],[], [])) locs
     locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
     locMap <- foldM (sortCtr lookupLoc) locMap (mb ^. TB.ctrEnv)
     (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameDefs)
-    -- debugPrint "finished preprocessing"
+    debugLog "Finished preprocessing"
     return (lookupLoc, locMap, shared, pubkeys)
     where
         sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
@@ -824,12 +837,15 @@ preprocessModBody mb = do
         sortCtr :: (LocalityName -> ExtractionMonad LocalityName) -> M.Map LocalityName LocalityData -> (String, Bind ([IdxVar], [IdxVar]) Locality) -> ExtractionMonad (M.Map LocalityName LocalityData)
         sortCtr lookupLoc locMap (name, b) = do
             let ((sids, pids), Locality locP _) = unsafeUnbind b
-            case (sids, pids) of
-                ([], _) -> do
-                    locName <- lookupLoc =<< flattenPath locP
-                    let f (i, l, s, d, t, c) = (i, l, s, d, t, c ++ [name])
-                    return $ M.adjust f locName locMap
-                _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
+            when (length sids > 0) $ debugPrint $ "WARNING: ignoring sid indices on counter " ++ name
+            locName <- lookupLoc =<< flattenPath locP
+            let f (i, l, s, d, t, c) = (i, l, s, d, t, c ++ [name])
+            return $ M.adjust f locName locMap
+
+            -- case (sids, pids) of
+            --     ([], _) -> do
+                    -- ...
+                -- _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
 
         sortName :: (LocalityName -> ExtractionMonad LocalityName) 
                     -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
@@ -842,12 +858,21 @@ preprocessModBody mb = do
               TB.RODef _ b -> do
                 let (_, (arg, _, rtys)) = unsafeUnbind b
                 (totLen, sliceMap) <- foldM (\(t, m) (i, rty) -> do
-                        rtstr <- case rty ^. val of
-                            NT_Nonce -> return "nonce"
-                            NT_Enc _ -> return "enckey"
-                            NT_StAEAD {} -> return "enckey"
+                        (rtstr, len) <- case rty ^. val of
+                            NT_Nonce -> do
+                                l <- useAeadNonceSize
+                                return ("nonce", l)
+                            NT_Enc _ -> do
+                                l <- useAeadKeySize
+                                return ("enckey", l)
+                            NT_StAEAD {} -> do
+                                l <- useAeadKeySize
+                                return ("enckey", l)
+                            NT_MAC _ -> do
+                                l <- useHmacKeySize
+                                return ("mackey", l)
                             _ -> throwError $ UnsupportedOracleReturnType name
-                        return (t ++ [rtstr], M.insert i (t, t ++ [rtstr]) m)
+                        return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
                     ) (["0"], M.empty) (zip [0..] rtys)
                 oracles %= M.insert name (totLen, sliceMap)
                 return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
@@ -900,6 +925,7 @@ preprocessModBody mb = do
 -- return (main func name, exec code, spec code, unverified lib code)
 extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, OwlDoc, OwlDoc, OwlDoc)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
+    debugLog $ "Extracting locality " ++ loc
     -- check name sharing is ok
     mapM_ (\(n,_,npids) -> unless (npids == 0 || (idxs == 1 && npids == 1)) $ throwError $ UnsupportedSharedIndices n) sharedNames
     let sfs = cfgFields idxs localNames sharedNames pubKeys tbls
@@ -1022,6 +1048,7 @@ extractLocs pubkeys locMap = do
 
 entryPoint :: M.Map LocalityName LocalityData -> [(NameData, [(LocalityName, Int)])] -> [NameData] -> M.Map LocalityName String -> ExtractionMonad (OwlDoc)
 entryPoint locMap sharedNames pubKeys mainNames = do
+    debugLog $ "Generating entry point"
     let allLocs = M.keys locMap
     sharedNameInits <- mapM genSharedNameInit sharedNames
     let salt = genSalt
@@ -1118,7 +1145,7 @@ extractTyDefs ((tv, td):ds) = do
             let (_, fields') = unsafeUnbind fields
             extractStruct name fields'
         extractTyDef name (TB.TyAbbrev t) = do
-            lct <- layoutCTy . doConcretifyTy $ t
+            lct <- layoutCTy UnboundedAllowed . doConcretifyTy $ t
             typeLayouts %= M.insert (rustifyName name) lct
             return $ (owlpretty "", owlpretty "")
         extractTyDef name TB.TyAbstract = do

@@ -214,7 +214,7 @@ extractCryptOp op owlArgs = do
             (outLen, sliceIdxs) <- case orcls M.!? roname of
                 Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
                 Just p -> return p
-            (start, end) <- case sliceIdxs M.!? i of
+            (start, end, _) <- case sliceIdxs M.!? i of
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
                 Just p -> return p
             return $ 
