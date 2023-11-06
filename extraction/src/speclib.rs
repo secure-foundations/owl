@@ -97,7 +97,7 @@ pub closed spec(checked) fn dh_combine(pubkey: Seq<u8>, privkey: Seq<u8>) -> (ss
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn kdf(len: usize, x: Seq<u8>) -> (h: Seq<u8>)
+pub closed spec(checked) fn kdf(len: usize, salt: Seq<u8>, x: Seq<u8>) -> (h: Seq<u8>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -137,6 +137,14 @@ pub closed spec(checked) fn is_group_elem(x: Seq<u8>) -> bool
 
 #[verifier(external_body)]
 pub closed spec(checked) fn crh(x: Seq<u8>) -> Seq<u8>
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn bytes_as_counter(x: Seq<u8>) -> usize
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn counter_as_bytes(x: usize) -> Seq<u8>
 { unimplemented!() }
 
 pub open spec fn andb(x: bool, y: bool) -> bool
@@ -507,11 +515,11 @@ pub mod itree {
             parse ($a:ident) as 
                 ($structTy:ident { $($fieldName:ident : $varName:ident),* } ) 
             in { $($next:tt)* }) => 
-        {verus_proof_expr! {
+        {verus_proof_expr! {{
             let $structTy { $($fieldName),* } = $a;
             $(let $varName = $fieldName.as_seq();)*
             owl_spec!($mut_state, $mut_type, $($next)*)
-        }};
+        }}};
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{

@@ -221,7 +221,6 @@ extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
         (CHash ((ropath,_,_):_) i, args) -> do
-            when (length args > 1) $ debugPrint "ERROR TODO implement multi-arg hash"
             roname <- flattenPath ropath
             orcls <- use oracles
             (outLen, sliceIdxs) <- case orcls M.!? roname of
@@ -230,9 +229,13 @@ extractCryptOp op owlArgs = do
             (start, end, _) <- case sliceIdxs M.!? i of
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
                 Just p -> return p
+            orclArgs <- case args of
+                [ikm] -> return [owlpretty "*cfg.salt.view()", ikm]
+                [salt, ikm] -> return [salt, ikm]
+                _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
             return $ 
                 owlpretty "ret" <> parens 
-                    (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : args) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
+                    (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : orclArgs) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -349,7 +352,7 @@ extractExpr (CParse a (CTConst p) otk bindpat) = do
             Nothing -> return $ (a', owlpretty "")
     return $ parens $ 
         owlpretty "parse" <+> parens parseCall <+> 
-        owlpretty "as" <+> parens (owlpretty (specName t) <> (braces . hsep . punctuate comma) patfields') <+> 
+        owlpretty "as" <+> parens (owlpretty (specName t) <> braces ((hsep . punctuate (space <> comma)) patfields' <> space)) <+> 
         owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> 
         badk
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
@@ -372,13 +375,15 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
             : owlpretty "mut_state:" <+> owlpretty (stateName lname)
             : specArgs
     let rtPrettied = owlpretty "-> (res: ITree<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>" <> owlpretty ")"
-    body <- case concreteBody of
-        Just concreteBody' -> extractExpr concreteBody'
-        Nothing -> return $ owlpretty "todo!(implement " <> owlpretty (specName owlName) <> owlpretty ")"
-    return $ owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-        owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
-            body
-        <> line) <> line <>
+    (attr, body) <- case concreteBody of
+        Just concreteBody' -> do
+            e <- extractExpr concreteBody'
+            return $ (owlpretty "", owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
+                    e
+                <> line))
+        Nothing -> return $ (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty (specName owlName) <> owlpretty " */)")
+    return $ attr <> owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+        body <> line <>
         rbrace
 
 mkSpecEndpoint :: [String] -> OwlDoc

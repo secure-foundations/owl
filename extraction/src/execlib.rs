@@ -63,13 +63,14 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
 #[macro_export]
 macro_rules! mk_vec_u8 {
     ($($e:expr),* $(,)?) => {
-        {
+        verus_exec_expr!{{
+            #[allow(unused_mut)]
             let mut v = Vec::new();
             $(
                 v.push($e);
             )*
             v
-        }
+        }}
     };
 }
 
@@ -148,8 +149,8 @@ pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Rc<Vec<u8>>)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_extract_expand_to_len(salt: &[u8], len: usize, ikm: &[u8]) -> (h: Rc<Vec<u8>>) 
-    ensures h@ == kdf(len@, ikm@),
+pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8]) -> (h: Rc<Vec<u8>>) 
+    ensures h@ == kdf(len@, salt@, ikm@),
             h@.len() == len
 {
     Rc::new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
@@ -246,5 +247,18 @@ pub exec fn owl_crh(x: &[u8]) -> (res: Rc<Vec<u8>>)
     todo!("implement crh")
 }
 
+#[verifier(external_body)]
+pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
+    ensures res == bytes_as_counter(x@)
+{
+    todo!("implement bytes_as_counter")
+}
+
+#[verifier(external_body)]
+pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
+    ensures res@ == counter_as_bytes(x@)
+{
+    todo!("implement counter_as_bytes")
+}
 
 } // verus!
