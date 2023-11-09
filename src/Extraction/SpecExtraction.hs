@@ -39,21 +39,7 @@ import ExtractionBase
 ----------------------------------------------------------------------------------
 --- Datatype extraction
 
-genParserSerializer :: String -> ExtractionMonad OwlDoc
-genParserSerializer name = do
-    -- TODO nesting design---Seq or ADT args---depends on parsing lib
-    let parser = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
-                    owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
-                    owlpretty "todo!()" <> line
-                )
-    let serializer = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
-                    owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
-                    owlpretty "todo!()" <> line
-                )
-    let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
-                    owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
-                )
-    return $ vsep $ punctuate line [parser, serializer, implOwlSpecSerialize]
+
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
 extractStruct owlName owlFields = do
@@ -62,10 +48,10 @@ extractStruct owlName owlFields = do
     let structDef = owlpretty "pub struct" <+> owlpretty name <> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty "pub" <+> owlpretty (specName n) <+> owlpretty ":" <+> owlpretty t) $ fields
                     ) <> line)
-    parseSerializeDefs <- genParserSerializer name
+    parseSerializeDefs <- genParserSerializer owlName fields
     constructor <- genConstructor owlName fields
-    selectors <- mapM (genFieldSelector owlName) fields
-    return $ vsep $ [structDef, parseSerializeDefs, constructor] ++ selectors
+    -- selectors <- mapM (genFieldSelector owlName) fields
+    return $ vsep $ [structDef, parseSerializeDefs, constructor]
     where
         genConstructor owlName fields = do
             specAdtFuncs %= S.insert owlName
@@ -76,15 +62,48 @@ extractStruct owlName owlFields = do
                 owlpretty "pub open spec fn" <+> owlpretty owlName <> args <+> owlpretty "-> Seq<u8>" <+> braces (line <>
                     body
                 <> line)
-        genFieldSelector owlName (fieldName, fieldTy) = do
-            specAdtFuncs %= S.insert fieldName
-            return $
-                owlpretty "pub open spec fn" <+> owlpretty fieldName <> parens (owlpretty "arg: Seq<u8>") <+> owlpretty "-> Seq<u8>" <+> braces (line <>
-                    owlpretty "match" <+> owlpretty "parse_" <> owlpretty (specName owlName) <> parens (owlpretty "arg") <+> braces (line <>
-                        owlpretty "Some(parsed) => parsed." <> owlpretty (specName fieldName) <> comma <> line <>
-                        owlpretty "None => seq![] // TODO"
-                    <> line)
-                <> line)
+
+        genParserSerializer :: String -> [(String, SpecTy)] -> ExtractionMonad OwlDoc
+        genParserSerializer owlName fields = do
+            let name = specName owlName
+            let mkNestPattern l = 
+                    case l of
+                        [] -> owlpretty ""
+                        [x] -> owlpretty x
+                        x:y:tl -> foldl (\acc v -> parens (acc <+> owlpretty "," <+> owlpretty v)) (parens (owlpretty x <> owlpretty "," <+> owlpretty y)) tl
+            let parserBody = 
+                    owlpretty "let stream = parse_serialize::SpecStream { data : x, start : 0 };" <> line <>
+                    owlpretty "if let Ok((_, _, parsed)) = parse_serialize::spec_parse_" <> owlpretty (rustifyName owlName) <> owlpretty "(stream) {" <> line <>
+                    owlpretty "let" <+> mkNestPattern (map (specName . fst) fields) <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
+                    owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . specName . fst) $ fields)) <> line <>
+                    owlpretty "} else { None }" 
+            let parser = owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
+                            owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
+                            parserBody <> line
+                        )
+            let structLen = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> owlpretty "x." <> owlpretty (specName f) <> owlpretty ".len()") $ fields
+            let serializerBody =
+                    owlpretty "let stream = parse_serialize::SpecStream { data : seq_u8_of_len" <> parens structLen <> owlpretty ", start : 0 };" <> line <>
+                    owlpretty "if let Ok((serialized, n)) = parse_serialize::spec_serialize_" <> owlpretty (rustifyName owlName) <> 
+                            owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "x." ++ specName f) fields )) <> owlpretty ") {" <> line <>
+                    owlpretty "Some(serialized.data.take(n as int))" <> line <>
+                    owlpretty "} else { None }"
+            let serializer = owlpretty "pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                            owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
+                            serializerBody <> line
+                        )
+            let serializerWrapper = owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                            owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
+                            owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
+                            owlpretty "val" <> line <>
+                            owlpretty "} else { seq![] }" <> line
+                        )
+            let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
+                            owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
+                        )
+            return $ vsep $ punctuate line [parser, serializer, serializerWrapper, implOwlSpecSerialize]
+
+
 
 extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad OwlDoc
 extractEnum owlName owlCases = do
@@ -119,6 +138,21 @@ extractEnum owlName owlCases = do
                     )
                 <> line)
 
+        genParserSerializer :: String -> ExtractionMonad OwlDoc
+        genParserSerializer name = do
+            -- TODO nesting design---Seq or ADT args---depends on parsing lib
+            let parser = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
+                            owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
+                            owlpretty "todo!()" <> line
+                        )
+            let serializer = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                            owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
+                            owlpretty "todo!()" <> line
+                        )
+            let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
+                            owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
+                        )
+            return $ vsep $ punctuate line [parser, serializer, implOwlSpecSerialize]
 
 ----------------------------------------------------------------------------------
 --- Code generation
@@ -233,7 +267,7 @@ extractCryptOp op owlArgs = do
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
                 Just p -> return p
             orclArgs <- case args of
-                [ikm] -> return [owlpretty "*cfg.salt.view()", ikm]
+                [ikm] -> return [owlpretty "cfg.salt.view()", ikm]
                 [salt, ikm] -> return [salt, ikm]
                 _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
             return $ 

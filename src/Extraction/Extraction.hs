@@ -28,6 +28,7 @@ import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
+import CmdArgs
 import qualified ANFPass as ANF
 import ConcreteAST
 import System.IO
@@ -37,6 +38,7 @@ import System.FilePath (takeFileName, (</>))
 import qualified TypingBase as TB
 import ExtractionBase
 import qualified SpecExtraction as Spec
+import Data.Char (toLower)
 
 
 -------------------------------------------------------------------------------------------
@@ -157,41 +159,14 @@ rustFieldTy _ = return VecU8
 ---------------------------------------------------------------------------------------
 -- ADT extraction
 
-genParsleyWrappers :: String -> OwlDoc
-genParsleyWrappers owlName = 
-    let name = rustifyName owlName in
-    let specname = specName owlName in
-    let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
-    let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
-    -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
-    --             owlpretty (specName owlName) <> 
-    --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
-    --         ) 
-    -- let parseEnsuresField (n,_) = 
-    --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
-    --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
-    -- exec parser
-    owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
-    owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
-        owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
-        owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
-        owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
-        owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
-        -- vsep (map parseEnsuresField rustFields) <> line <>
-    lbrace <> line <>
-        owlpretty "todo!(\"call parsley exec parser\")" <> line <>
-    rbrace <> line <> line <>
-    -- exec serializer
-    owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
-    owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
-        owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
-        owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
-    lbrace <> line <>
-        owlpretty "todo!(\"call parsley exec serializer and unwrap\")" <> line <>
-    rbrace <> line <> line
 
+veilLayoutOf :: Layout -> OwlDoc
+veilLayoutOf (LBytes n) = owlpretty "[u8; " <> owlpretty n <> owlpretty "]"
+veilLayoutOf LUnboundedBytes = owlpretty "Tail"
+veilLayoutOf (LStruct n _) = owlpretty n
+veilLayoutOf (LEnum n _) = owlpretty n
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
+extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
 extractStruct owlName owlFields = do
     let name = rustifyName owlName
     debugLog $ "Extracting owl struct " <> owlName <> " as verus struct " <> name
@@ -207,14 +182,15 @@ extractStruct owlName owlFields = do
     layoutFields <- case layout of
         LStruct _ fs -> return fs
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
+    veilFmt <- genVeilFormat name layoutFields
     viewImpl <- genViewImpl owlName rustFields
-    let parsleyWrappers = genParsleyWrappers owlName 
+    let parsleyWrappers = genParsleyWrappers owlName rustFields'
     structFuncs <- mkStructFuncs owlName rustFields
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
     structs %= M.insert name rustFields
     structSpec <- Spec.extractStruct owlName owlFields
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec, veilFmt)
     where
         mkStructFuncs owlName owlFields = return $
             M.fromList $
@@ -249,8 +225,88 @@ extractStruct owlName owlFields = do
                     <> line)
                 <> line)
 
+        genVeilFormat name layoutFields = do
+            let genField (f, l) = owlpretty "  " <> owlpretty (map toLower f) <> owlpretty ":" <+> veilLayoutOf l <> comma
+            let fields = map genField layoutFields
+            return $ 
+                owlpretty name <+> owlpretty "=" <+> braces (line <>
+                    vsep fields
+                <> line)
 
-extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (OwlDoc, OwlDoc)
+        genParsleyWrappers :: String -> [(String, RustTy)] -> OwlDoc
+        genParsleyWrappers owlName rustFields' = 
+            let name = rustifyName owlName in
+            let specname = specName owlName in
+            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
+            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
+            let specSerializeInner = owlpretty "serialize_" <> owlpretty specname <> owlpretty "_inner" <> parens (owlpretty "arg.view()") in
+            -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
+            --             owlpretty (specName owlName) <> 
+            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
+            --         ) 
+            -- let parseEnsuresField (n,_) = 
+            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
+            --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
+            -- exec parser
+            let mkNestPattern l = 
+                    case l of
+                        [] -> owlpretty ""
+                        [x] -> owlpretty x
+                        x:y:tl -> foldl (\acc v -> parens (acc <+> owlpretty "," <+> owlpretty v)) (parens (owlpretty x <> owlpretty "," <+> owlpretty y)) tl
+            in
+            let parserBody = 
+                    owlpretty "let vec_arg = slice_to_vec(arg);" <> line <>
+                    owlpretty "assume(vec_arg.view() == vec_arg.into_view());" <> line <>
+                    owlpretty "let stream = parse_serialize::Stream { data : vec_arg, start : 0 };" <> line <>
+                    owlpretty "if let Ok((_, _, parsed)) = parse_serialize::parse_" <> owlpretty (rustifyName owlName) <> owlpretty "(stream) {" <> line <>
+                    owlpretty "let" <+> mkNestPattern (map fst rustFields') <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
+                    (vsep . map (\(f,_) -> owlpretty "assume(" <> owlpretty f <+> owlpretty ".view() ==" <+> owlpretty f <> owlpretty ".into_view());") $ rustFields') <> line <>
+                    owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . fst) $ rustFields')) <> line <>
+                    owlpretty "} else { None }" in
+            let structLen = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> owlpretty "arg." <> owlpretty f <> owlpretty ".len()") $ rustFields' in
+            let serializerBody =
+                    owlpretty "assume" <> parens (structLen <+> owlpretty "< usize::MAX") <> owlpretty "; // TODO do we care about this" <> line <>
+                    (vsep . map (\(f,_) -> owlpretty "assume(arg." <> owlpretty f <+> owlpretty ".view() == arg." <> owlpretty f <> owlpretty ".into_view());") $ rustFields') <> line <>
+                    owlpretty "assume(arg.view() == " <> owlpretty specname <+> braces (
+                            hsep . punctuate comma . map (\(f,_)-> owlpretty (specName (unrustifyName f)) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty f <> owlpretty ".into_view()") $ rustFields'
+                        ) <> owlpretty ");" <> line <>
+                    owlpretty "let stream = parse_serialize::Stream { data : vec_u8_from_elem(0, " <> structLen <> owlpretty "), start : 0 };" <> line <>
+                    owlpretty "let ser_result = parse_serialize::serialize_" <> owlpretty (rustifyName owlName) <> 
+                            owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "clone_vec_u8(&arg." ++ f ++ ")") rustFields' )) <> owlpretty ");" <> line <>
+                    owlpretty "if let Ok((mut serialized, n)) = ser_result {" <> line <>
+                    owlpretty "serialized.data.truncate(n); Some(serialized.data)" <> line <>
+                    owlpretty "} else { None }"
+            in
+            -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+            owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
+                owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
+                owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
+                owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
+                -- vsep (map parseEnsuresField rustFields) <> line <>
+            lbrace <> line <>
+                parserBody <> line <>
+            rbrace <> line <> line <>
+            -- exec serializer
+            -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+            owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
+                owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
+                owlpretty "ensures res.is_Some() ==>" <+> specSerializeInner <> owlpretty ".is_Some()," <> line <>
+                owlpretty "        res.is_None() ==>" <+> specSerializeInner <> owlpretty ".is_None()," <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specSerializeInner <> owlpretty ".get_Some_0()" <> 
+            lbrace <> line <>
+                serializerBody <> line <>
+            rbrace <> line <> line <>
+            owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+>
+                owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
+                owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
+            lbrace <> line <>
+                owlpretty "let res = serialize_" <> owlpretty name <> owlpretty "_inner(arg);" <> line <>
+                owlpretty "assume(res.is_Some()); res.unwrap()" <> line <>
+            rbrace <> line <> line 
+
+
+extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
 extractEnum owlName owlCases' = do
     let owlCases = M.fromList owlCases'
     let name = rustifyName owlName
@@ -267,7 +323,7 @@ extractEnum owlName owlCases' = do
     layoutCases <- case layout of
         LEnum _ cs -> return cs
         _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
-
+    veilFmt <- genVeilFormat name layoutCases
     viewImpl <- genViewImpl owlName rustCases
     let parsleyWrappers = genParsleyWrappers owlName
     enumFuncs <- mkEnumFuncs owlName owlCases
@@ -275,7 +331,7 @@ extractEnum owlName owlCases' = do
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) (owlName, rustCases)
     enumSpec <- Spec.extractEnum owlName owlCases'
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec, veilFmt)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
@@ -305,6 +361,43 @@ extractEnum owlName owlCases' = do
                         <> line)
                     <> line)
                 <> line)
+
+        genVeilFormat name layoutCases = do
+            debugPrint $ "unimplemented: genVeilFormat for enum " ++ name
+            return $ owlpretty ""
+
+        genParsleyWrappers :: String -> OwlDoc
+        genParsleyWrappers owlName = 
+            let name = rustifyName owlName in
+            let specname = specName owlName in
+            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
+            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
+            -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
+            --             owlpretty (specName owlName) <> 
+            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
+            --         ) 
+            -- let parseEnsuresField (n,_) = 
+            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
+            --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
+            -- exec parser
+            owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+            owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
+                owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
+                owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
+                owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
+                -- vsep (map parseEnsuresField rustFields) <> line <>
+            lbrace <> line <>
+                owlpretty "todo!(\"call parsley exec parser\")" <> line <>
+            rbrace <> line <> line <>
+            -- exec serializer
+            owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+            owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
+                owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
+                owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
+            lbrace <> line <>
+                owlpretty "todo!(\"call parsley exec serializer and unwrap\")" <> line <>
+            rbrace <> line <> line
 
 
 -------------------------------------------------------------------------------------------
@@ -672,7 +765,7 @@ extractExpr inK loc binds (CIncCtr ctr idxs) = do
 extractExpr inK loc binds (CGetCtr ctr idxs) = do
     pctr <- flattenPath ctr
     let ctrName = owlpretty "mut_state." <> owlpretty (rustifyName pctr)
-    return (binds, VecU8, owlpretty "", owlpretty "owl_counter_as_bytes" <> parens (owlpretty "&" <> ctrName))
+    return (binds, VecU8, owlpretty "", owlpretty "owl_counter_as_bytes" <> parens (owlpretty "&" <> parens ctrName))
 extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do 
     t <- flattenPath p
     let (pats, k) = unsafeUnbind bindpat
@@ -803,7 +896,9 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
             let defReqEns =
                     owlpretty "requires itree@ ==" <+> owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs) <> line <>
                     owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1)@@.results_in" <> parens viewRes <> line 
-            return $ owlpretty "pub fn" <+> owlpretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
+            return $ 
+                owlpretty "#[verifier::spinoff_prover]" <> line <> 
+                owlpretty "pub fn" <+> owlpretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
         unwrapItreeArg = owlpretty "let tracked mut itree = itree;"
         intoOk rustExpr = owlpretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> owlpretty "};" <> line <> owlpretty "Ok(res_inner)"
         genMainWrapper owlName lname execRetTy specRetTy = 
@@ -1189,12 +1284,15 @@ entryPoint locMap sharedNames pubKeys mainNames = do
 --- Entry point of extraction
 
 
-extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (OwlDoc, OwlDoc)
-extractTyDefs [] = return $ (owlpretty "", owlpretty "")
+extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
+extractTyDefs [] = return $ (owlpretty "", owlpretty "", owlpretty "")
 extractTyDefs ((tv, td):ds) = do
-    (dExtracted, sExtracted) <- extractTyDef tv td
-    (dsExtracted, ssExtracted) <- extractTyDefs ds
-    return $ (dExtracted <> line <> line <> dsExtracted, sExtracted <> line <> line <> ssExtracted)
+    (dExtracted, sExtracted, veilDef) <- extractTyDef tv td
+    (dsExtracted, ssExtracted, veilRest) <- extractTyDefs ds
+    return $ 
+        ( dExtracted <> line <> line <> dsExtracted
+        , sExtracted <> line <> line <> ssExtracted
+        , veilDef <> line <> line <> veilRest)
     where
         extractTyDef name (TB.EnumDef cases) = do
             let (_, cases') = unsafeUnbind cases
@@ -1205,10 +1303,10 @@ extractTyDefs ((tv, td):ds) = do
         extractTyDef name (TB.TyAbbrev t) = do
             lct <- layoutCTy UnboundedAllowed . doConcretifyTy $ t
             typeLayouts %= M.insert (rustifyName name) lct
-            return $ (owlpretty "", owlpretty "")
+            return $ (owlpretty "", owlpretty "", owlpretty "")
         extractTyDef name TB.TyAbstract = do
             typeLayouts %= M.insert (rustifyName name) (LBytes 0) -- Replaced later when instantiated
-            return $ (owlpretty "", owlpretty "")
+            return $ (owlpretty "", owlpretty "", owlpretty "")
 
 owlprettyFile :: String -> ExtractionMonad OwlDoc
 owlprettyFile fn = do
@@ -1221,14 +1319,20 @@ printCompiledUserFuncs = do
     let res = vsep $ map (\(spec, exec) -> spec <> line <> line <> exec <> line <> line) $ M.elems ufcs
     return res
 
-extractModBody :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc) 
+
+extractModBody :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc) 
 extractModBody mb = do
     (lookupLoc, locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
-    (tyDefsExtracted, specTyDefsExtracted) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
+    (tyDefsExtracted, specTyDefsExtracted, veilFile) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     locMap <- preprocessDefs lookupLoc mb locMap
     (mainNames, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
-    -- ep <- entryPoint locMap sharedNames pubKeys mainNames
+    (ep, callMain) <- do 
+        fs <- use flags
+        if fs ^. fExtractHarness then do
+            ep <- entryPoint locMap sharedNames pubKeys mainNames
+            return (ep, owlpretty "fn main() { entrypoint() }" <> line)
+        else return $ (owlpretty "// no entry point", owlpretty "fn main() { /* entrypoint() */ }" <> line)
     p <- owlprettyFile "extraction/preamble.rs"
     lp <- owlprettyFile "extraction/lib_preamble.rs"
     userFuncs <- printCompiledUserFuncs
@@ -1253,12 +1357,13 @@ extractModBody mb = do
         owlpretty "// ------------ ENTRY POINT -----------" <> line <>
         owlpretty "// ------------------------------------" <> line <> line <>
         owlpretty "// no entry point for now" <> line <> line <>
-        --ep                      <> line <> line <>
+        ep                      <> line <> line <>
         owlpretty "} // verus!"    <> line <> line <>
-        owlpretty "fn main() { /* entrypoint() */ }" <> line
+        callMain                <> line <> line
       , lp                      <> line <> line <> line <> line <> 
         libCode
+      , veilFile
       )
 
-extract :: TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc))
-extract tcEnv path modbody = runExtractionMonad tcEnv (initEnv path (modbody ^. TB.userFuncs)) $ extractModBody modbody
+extract :: Flags -> TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
+extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extractModBody modbody

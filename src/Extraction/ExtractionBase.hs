@@ -27,6 +27,7 @@ import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
+import CmdArgs
 import ConcreteAST
 import System.IO
 import qualified TypingBase as TB
@@ -73,6 +74,7 @@ instance OwlPretty SpecTy where
 type OwlFunDef = Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr
 
 data Env = Env {
+    _flags :: Flags,
     _path :: String,
     _aeadCipherMode :: AEADCipherMode,
     _hmacMode :: HMACMode,
@@ -173,13 +175,6 @@ printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 debugPrint :: String -> ExtractionMonad ()
 debugPrint = liftIO . putStrLn
 
--- just for dev/debugging
-logExtraction :: Bool
-logExtraction = True
-
-debugLog :: String -> ExtractionMonad ()
-debugLog s = when logExtraction $ debugPrint ("    " ++ s)
-
 replacePrimes :: String -> String
 replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
@@ -228,6 +223,11 @@ sidName :: String -> String
 sidName x = "sid_" ++ replacePrimes x
 
 makeLenses ''Env
+
+debugLog :: String -> ExtractionMonad ()
+debugLog s = do
+    fs <- use flags
+    when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
 
 instance Fresh ExtractionMonad where
     fresh (Fn s _) = do
@@ -423,8 +423,8 @@ initFuncs =
             ))
         ] 
 
-initEnv :: String -> TB.Map String TB.UserFunc -> Env
-initEnv path userFuncs = Env path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
+initEnv :: Flags -> String -> TB.Map String TB.UserFunc -> Env
+initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
 
 lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
 lookupTyLayout' n = do

@@ -56,6 +56,10 @@ pub open spec fn empty_seq_u8() -> Seq<u8> {
     seq![]
 }
 
+pub open spec fn seq_u8_of_len(n: nat) -> Seq<u8> {
+    Seq::new(n, |i| 0u8)
+}
+
 pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
     a.add(b)
 }

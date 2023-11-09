@@ -12,6 +12,8 @@ data Flags = Flags {
     _fLogSMT :: Bool,
     _fCleanCache :: Bool,
     _fExtract :: Bool,
+    _fExtractHarness :: Bool,
+    _fDebugExtraction :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
@@ -37,7 +39,12 @@ parseArgs =
       <*>
           switch 
           ( long "extract" <> short 'e' <> 
-            help "Extract rust code" )
+            help "Extract Verus code" )
+      <*> flag True False
+          ( long "no-harness" <> 
+            help "Do not generate a testing harness for the extracted code" )
+      <*> switch
+          ( long "debug-extraction" <> long "dbgext" <> help "Debug extraction" )
       <*>
           switch
           ( long "test" <> help "Do tests")
