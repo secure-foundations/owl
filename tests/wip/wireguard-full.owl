@@ -444,9 +444,6 @@ predicate valid_transp_keys_resp<j,n,m>(s) =
         (corr(S_init<@n>) \/ corr(S_resp<@m>))
     )
 
-
-    
-
 def receive_msg1<j@n,m> (dhpk_S_init : dhpk(S_init<@n>)) @ Responder<m>
      : Option (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
      =

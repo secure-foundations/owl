@@ -301,7 +301,7 @@ extractStruct owlName owlFields = do
                 parserBody <> line <>
             rbrace <> line <> line <>
             -- exec serializer
-            -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+            owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
             owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                 owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
                 owlpretty "ensures res.is_Some() ==>" <+> specSerializeInner <> owlpretty ".is_Some()," <> line <>

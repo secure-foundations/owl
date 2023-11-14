@@ -412,16 +412,25 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
             : owlpretty "mut_state:" <+> owlpretty (stateName lname)
             : specArgs
     let rtPrettied = owlpretty "-> (res: ITree<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>" <> owlpretty ")"
-    (attr, body) <- case concreteBody of
+    (body, pureDef) <- case concreteBody of
         Just concreteBody' -> do
             e <- extractExpr concreteBody'
-            return $ (owlpretty "", owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
-                    e
-                <> line))
-        Nothing -> return $ (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty (specName owlName) <> owlpretty " */)")
-    return $ attr <> owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-        body <> line <>
-        rbrace
+            return (e, owlpretty "")
+        Nothing -> do
+            let p = pureDef owlName specArgs specRt
+            specArgVars <- mapM extractVar . map fst $ owlArgs
+            return (parens (owlpretty "ret" <> parens (owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgVars)), p)
+    let defBody = owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
+                    body
+                <> line)
+    return $ owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+        defBody <> line <>
+        rbrace <> line <> line <> pureDef
+    where
+        pureDef owlName specArgs specRt = 
+            owlpretty "#[verifier(external_body)] pub closed spec fn" <+> owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgs <+> 
+            owlpretty "->" <+> owlpretty specRt <+> line <> 
+            braces (owlpretty "unimplemented!()" )
 
 mkSpecEndpoint :: [String] -> OwlDoc
 mkSpecEndpoint lnames =
