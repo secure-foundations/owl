@@ -5,7 +5,7 @@ name n: nonce @ alice
 corr adv ==> [n]
 
 struct s {
-    _tag : Sing(0x00000001),
+    _tag : Const(0x00000001),
     _message : Data<adv> | |nonce| |
 }
 

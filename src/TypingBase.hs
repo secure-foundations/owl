@@ -864,7 +864,9 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
         (ar, k) <- getFuncInfo f
         assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
         mkSpanned <$> k params (zip args ts)
-      (AEHex s) -> return $ tData zeroLbl zeroLbl
+      (AEHex s) -> do
+          assert ("HexConst must have even length") $ length s `mod` 2 == 0
+          return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "prfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
@@ -1187,10 +1189,7 @@ coveringLabel' t =
           l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
-      TSing a -> do
-          t <- inferAExpr a
-          coveringLabel' t
-          
+      THexConst a -> return zeroLbl
 
 tyInfo :: Ty -> OwlDoc
 tyInfo t = 

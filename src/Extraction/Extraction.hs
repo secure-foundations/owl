@@ -105,7 +105,7 @@ layoutCTy u (CTDH_PK n) = do
 layoutCTy u (CTEnc_PK n) = do
     lookupTyLayout =<< flattenNameExp n
 layoutCTy u (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
-layoutCTy u (CTSing s) = return $ LHexConst s
+layoutCTy u (CTHex s) = return $ LHexConst s
 
 isNestable :: Layout -> Bool
 isNestable (LBytes _) = True

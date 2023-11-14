@@ -423,10 +423,9 @@ smtTy t =
                       Just t -> smtTy t
                       Nothing -> return $ SAtom "Unit"
                 return $ sEnumType vts
-      TSing a -> do
-          -- In SMT, we interpret (TSing a) as (x:Data{x == a})
-          v <- interpretAExp a
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` v 
+      THexConst a -> do
+          h <- makeHex a
+          return $ sRefined (SAtom "Data") $ \x -> x `sEq` h 
             
 sIterPair :: [SExp]  -> SExp
 sIterPair [] = error "Got empty list in sIterPair"
