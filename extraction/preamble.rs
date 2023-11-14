@@ -86,4 +86,10 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
     owl_util::gen_rand_bytes(n)
 }
 
+// for debugging purposes, not used by the compiler
+#[verifier(external_body)]
+pub fn debug_print_bytes(x: &[u8]) {
+    println!("debug_print_bytes: {:?}", x);
+}
+
 } // verus!

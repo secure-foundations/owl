@@ -193,8 +193,8 @@ name transp_T<@n,m> : RO[e_init, e_resp, ss] strict get(msg2_C7<@n,m>[e_init, e_
 ////////////////////////////
 // Message formats
 
-struct msg1_payload {
-      _msg1_reserved : Data<adv> |3|
+struct msg1 {
+      _msg1_tag : Sing(0x01000000)
     , _msg1_sender : Data<adv> |4| // bytes??
     , _msg1_ephemeral : Data<adv> | |group| |
     , _msg1_static : Data<adv> | cipherlen(|group|) | 
@@ -204,8 +204,8 @@ struct msg1_payload {
     // , _msg1_mac2: Data<adv> | |maclen| |
 }
 
-struct msg2_payload {
-      _msg2_reserved : Data<adv> |3|
+struct msg2 {
+      _msg2_tag : Sing(0x02000000)
     , _msg2_sender: Data<adv> |4|
     , _msg2_receiver: Data<adv> |4|
     , _msg2_ephemeral: Data<adv> | |group| |
@@ -216,19 +216,11 @@ struct msg2_payload {
 }
 
 
-struct transp_payload {
-      _transp_reserved : Data<adv> |3|
+struct transp {
+      _transp_tag : Sing(0x04000000)
     , _transp_receiver : Data<adv> |4|
     , _transp_counter  : Data<adv> | |counter| | 
     , _transp_packet   : Data<adv> 
-}
-
-
-enum msg {
-    | msg1 msg1_payload     // 0x1
-    | msg2 msg2_payload     // 0x2
-    | unused_tag_filler     // 0x3 (tag not used in wireguard)
-    | transp transp_payload // 0x4
 }
 
 
@@ -236,6 +228,9 @@ enum msg {
 // Primitives
 
 func padding() = 0x000000
+func msg1_tag_value() = 0x01000000
+func msg2_tag_value() = 0x02000000
+func transp_tag_value() = 0x04000000
 
 def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
@@ -328,15 +323,13 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let H4 = crh(H3 ++ timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
-    let msg1_reserved = padding() in 
+    let msg1_tag = msg1_tag_value() in 
 
     let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
-    // TODO this needs to incorporate the tag byte 
     let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
-        msg1_reserved ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
-    let msg1_payload_value = msg1_payload(msg1_reserved, msg1_sender,
-    e_init, msg1_static, msg1_timestamp, msg1_mac1) in
-    let msg1_output = msg1(msg1_payload_value) in
+        msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
+    let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1) in
+    // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
     let retval = initiator_msg1_val<session i, pid n, pid m>(C3, H4) in
     retval
@@ -345,7 +338,7 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
     : Option ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =
     // set_option ":rlimit" "2000000" in 
     input inp in
-    parse inp as msg2_payload(msg2_reserved, msg2_sender, msg2_receiver, msg2_ephemeral', msg2_empty, msg2_mac2) in {
+    parse inp as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral', msg2_empty, msg2_mac2) in {
     parse msg1_val as initiator_msg1_val<idx i, idx n, idx m>(C3, H4) in {
 
     guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
@@ -459,7 +452,7 @@ def receive_msg1<j@n,m> (dhpk_S_init : dhpk(S_init<@n>)) @ Responder<m>
      =
      set_option ":rlimit" "2000000" in 
      input inp in
-     parse inp as msg1_payload(msg1_reserved, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1) in {
+     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1) in {
      guard eq(length(msg1_sender), 4) in 
      guard is_group_elem(msg1_ephemeral') in 
      let C0 = crh(construction()) in
@@ -519,16 +512,16 @@ def generate_msg2<j@n,m> (msg1_val:
     let msg2_empty = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, emptystring, H6) in
     let H7 = crh(H6 ++ msg2_empty) in
     let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
-    let msg2_reserved = padding() in 
+    let msg2_tag = msg2_tag_value() in 
     let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
     // // TODO this needs to incorporate the tag byte
     let msg2_mac1 : Data<adv> | |maclen| | = mac(msg2_mac1_k,
-        msg2_reserved ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
+        msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
         msg2_empty) in 
-    let msg2_payload_value = msg2_payload(
-        msg2_reserved, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1
+    let msg2_output = msg2(
+        msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1
     ) in
-    let msg2_output = msg2(msg2_payload_value) in
+    // let msg2_output = msg2(msg2_payload_value) in
     let _ = output msg2_output to endpoint(Initiator<n>) in
     
     // Calculate transport keys
@@ -556,13 +549,13 @@ def transp_send_init<i@n,m> (transp_keys_val :
     let transp_counter = get_counter N_init_send<i@n> in
 
     // let transp_receiver = _transp_keys_responder(transp_keys_val) in
-    let transp_reserved = padding() in 
+    let transp_tag = transp_tag_value() in 
     guard eq(length(transp_receiver), 4) in 
 
     let transp_packet = st_aead_enc<N_init_send<i@n>>(i2r, plaintext, 0x) in
 
-    let transp_payload_value = transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
-    let transp_output = transp(transp_payload_value) in
+    let transp_output = transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
+    // let transp_output = transp(transp_payload_value) in
     let _ = output transp_output to endpoint(Responder<m>) in
     Some(())
     }
@@ -589,7 +582,7 @@ def transp_recv_init<i@n,m> (transp_keys_val :
 (x:transp_keys{valid_transp_keys_init<i,n,m>[x]}), c : Data<adv>) @ Initiator<n> :   
     Option(if init_recv_secure<i,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
     = 
-    parse c as transp_payload(_, from, ctr, pkt) in {
+    parse c as transp(_, from, ctr, pkt) in {
     parse transp_keys_val as transp_keys(_, responder_name, _, eph_resp, _, r2i') in {
     guard eq(c, responder_name) in 
     pcase (exists j:idx. eph_resp == dhpk(get(E_resp<j@m>))) in 
@@ -621,14 +614,14 @@ def transp_send_resp<j@n,m> (transp_keys_val :
        =  r2i' in       
     let transp_counter = get_counter N_resp_send<j@m> in
 
-    let transp_reserved = padding() in 
+    let transp_tag = transp_tag_value() in 
     guard eq(length(transp_receiver), 4) in 
 
     let transp_packet = st_aead_enc<N_resp_send<j@m>>(r2i, plaintext, 0x) in
 
-    let transp_payload_value = 
-        transp_payload(transp_reserved, transp_receiver, transp_counter, transp_packet) in
-    let transp_output = transp(transp_payload_value) in
+    let transp_output = 
+        transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
+    // let transp_output = transp(transp_payload_value) in
     let _ = output transp_output to endpoint(Initiator<n>) in
     Some(())
     }
@@ -656,7 +649,7 @@ def transp_recv_resp<j@n,m> (transp_keys_val :
 (x:transp_keys{valid_transp_keys_resp<j,n,m>[x]}), c : Data<adv>) @ Responder<m> :   
     Option(if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
     = 
-    parse c as transp_payload(_, from, ctr, pkt) in {
+    parse c as transp(_, from, ctr, pkt) in {
     parse transp_keys_val as transp_keys(initiator_name, _, eph_init, _, i2r', _) in {
     guard eq(c, initiator_name) in 
     pcase (exists i:idx. eph_init == dhpk(get(E_init<i@n>))) in 
