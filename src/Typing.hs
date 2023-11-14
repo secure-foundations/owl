@@ -519,6 +519,7 @@ isSingleton t =
       TDH_PK _ -> True
       TEnc_PK _ -> True
       TSS _ _ -> True
+      THexConst _ -> True
       _ -> False
 
 tyFlowsTo :: Ty -> Label -> Check Bool
