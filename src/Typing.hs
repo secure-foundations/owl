@@ -424,6 +424,7 @@ normalizeTy t0 = local (set tcScope TcGhost) $ do
                 return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
             else normalizeTy t
         TAdmit -> return t0
+        THexConst a -> return t0
 
 normalizeLabel :: Label -> Check Label
 normalizeLabel l = do                
@@ -518,6 +519,7 @@ isSingleton t =
       TDH_PK _ -> True
       TEnc_PK _ -> True
       TSS _ _ -> True
+      THexConst _ -> True
       _ -> False
 
 tyFlowsTo :: Ty -> Label -> Check Bool
@@ -1198,9 +1200,8 @@ checkTy t = withSpan (t^.spanOf) $
               checkTy t1
               checkTy t2
           TAdmit -> return ()
-
-
-
+          THexConst a -> 
+              assert ("HexConst must have even length") $ length a `mod` 2 == 0
 
 
 tyLenLbl :: Ty -> Check Label
@@ -1255,7 +1256,7 @@ tyLenLbl t =
           l <- local (over (inScopeIndices) $ insert i IdxGhost) $ tyLenLbl t
           return $ mkSpanned $ LRangeIdx $ bind i l
       TAdmit -> return zeroLbl
-
+      THexConst a -> return zeroLbl
 
 
 
@@ -1528,6 +1529,7 @@ stripTy x t =
           (i, t) <- unbind it
           t' <- stripTy x t
           return $ mkSpanned $ TExistsIdx $ bind i t
+      THexConst a -> return t
 
 stripTys :: [DataVar] -> Ty -> Check Ty
 stripTys [] t = return t
@@ -2030,6 +2032,7 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
         TExistsIdx ity -> do
             (i, ty) <- unbind ity
             local (over inScopeIndices $ insert i IdxGhost) $ getValidatedTy albl ty
+        THexConst a -> return $ Just t 
     where     
     getLenConst :: NameExp -> Check AExpr
     getLenConst ne = do

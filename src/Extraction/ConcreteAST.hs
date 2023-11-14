@@ -39,6 +39,7 @@ data CTy =
     | CTDH_PK NameExp -- Singleton type
     | CTEnc_PK NameExp -- Singleton type
     | CTSS NameExp NameExp -- Singleton type
+    | CTHex String -- hex constant string
     deriving (Show, Generic, Typeable)
 
 instance Alpha CTy
@@ -81,6 +82,7 @@ concretifyTy t =
     TExistsIdx it -> do
       (_, t) <- unbind it
       concretifyTy t
+    THexConst a -> return $ CTHex a
 
 doConcretifyTy :: Ty -> CTy
 doConcretifyTy = runFreshM . concretifyTy
@@ -213,6 +215,8 @@ instance OwlPretty CTy where
             owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
     owlpretty (CTSS n m) =
             owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
+    owlpretty (CTHex a) =
+            owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
     -- owlpretty (CTUnion t1 t2) =
     --     owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 

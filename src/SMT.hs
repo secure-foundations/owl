@@ -423,7 +423,9 @@ smtTy t =
                       Just t -> smtTy t
                       Nothing -> return $ SAtom "Unit"
                 return $ sEnumType vts
-
+      THexConst a -> do
+          h <- makeHex a
+          return $ sRefined (SAtom "Data") $ \x -> x `sEq` h 
             
 sIterPair :: [SExp]  -> SExp
 sIterPair [] = error "Got empty list in sIterPair"

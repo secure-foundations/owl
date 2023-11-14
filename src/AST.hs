@@ -249,7 +249,7 @@ data TyX =
     | TRefined Ty String (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TConst (Path) [FuncParam]
+    | TConst (Path) [FuncParam] -- Application of type definition (eg, struct or enum)
     | TBool Label
     | TUnion Ty Ty
     | TUnit
@@ -260,6 +260,7 @@ data TyX =
     | TSS NameExp NameExp -- Singleton type
     | TAdmit -- return type of admit 
     | TExistsIdx (Bind IdxVar Ty) -- Label of which idx I am is adversary
+    | THexConst String -- Singleton type; hex constant
     deriving (Show, Generic, Typeable)
 
 
