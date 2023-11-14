@@ -1187,6 +1187,10 @@ coveringLabel' t =
           l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
+      TSing a -> do
+          t <- inferAExpr a
+          coveringLabel' t
+          
 
 tyInfo :: Ty -> OwlDoc
 tyInfo t = 

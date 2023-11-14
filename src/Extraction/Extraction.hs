@@ -105,9 +105,11 @@ layoutCTy u (CTDH_PK n) = do
 layoutCTy u (CTEnc_PK n) = do
     lookupTyLayout =<< flattenNameExp n
 layoutCTy u (CTSS n n') = throwError $ CantLayoutType (CTSS n n')
+layoutCTy u (CTSing s) = return $ LHexConst s
 
 isNestable :: Layout -> Bool
 isNestable (LBytes _) = True
+isNestable (LHexConst _) = True
 isNestable LUnboundedBytes = False
 isNestable (LStruct _ fields) = all (isNestable . snd) fields
 isNestable (LEnum _ cases) = all isNestable . mapMaybe snd $ M.elems cases
@@ -147,6 +149,7 @@ rustFieldTy (CTConst p) = do
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
         LBytes _ -> Rc VecU8
+        LHexConst _ -> Rc VecU8 
         LUnboundedBytes -> Rc VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
@@ -159,12 +162,22 @@ rustFieldTy _ = return VecU8
 ---------------------------------------------------------------------------------------
 -- ADT extraction
 
+prettyFieldName f = owlpretty (map toLower f) <> owlpretty ":" 
 
-veilLayoutOf :: Layout -> OwlDoc
-veilLayoutOf (LBytes n) = owlpretty "[u8; " <> owlpretty n <> owlpretty "]"
-veilLayoutOf LUnboundedBytes = owlpretty "Tail"
-veilLayoutOf (LStruct n _) = owlpretty n
-veilLayoutOf (LEnum n _) = owlpretty n
+veilLayoutOf :: String -> Layout -> OwlDoc
+veilLayoutOf f (LBytes n) = prettyFieldName f <+> owlpretty "[u8; " <> owlpretty n <> owlpretty "]"
+veilLayoutOf f (LHexConst s) =
+    owlpretty "const" <+> prettyFieldName f <+> owlpretty "[u8; " <> owlpretty (show $ length s `div` 2) <> owlpretty "]" <+>
+    owlpretty "=" <+> owlpretty "[" <> (hsep . punctuate comma $ hexStringToByteList' s) <> owlpretty "]"
+    where     
+        hexStringToByteList' :: String -> [OwlDoc]
+        hexStringToByteList' [] = []
+        hexStringToByteList' (h1 : h2 : t) = 
+            (if h1 == '0' then owlpretty "" else owlpretty h1) <> owlpretty h2 : hexStringToByteList' t
+veilLayoutOf f LUnboundedBytes = prettyFieldName f <+> owlpretty "Tail"
+veilLayoutOf f (LStruct n _) = prettyFieldName f <+> owlpretty n
+veilLayoutOf f (LEnum n _) = prettyFieldName f <+> owlpretty n
+        
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
 extractStruct owlName owlFields = do
@@ -226,7 +239,7 @@ extractStruct owlName owlFields = do
                 <> line)
 
         genVeilFormat name layoutFields = do
-            let genField (f, l) = owlpretty "  " <> owlpretty (map toLower f) <> owlpretty ":" <+> veilLayoutOf l <> comma
+            let genField (f, l) = owlpretty "  " <> veilLayoutOf f l <> comma
             let fields = map genField layoutFields
             return $ 
                 owlpretty name <+> owlpretty "=" <+> braces (line <>
@@ -1356,7 +1369,6 @@ extractModBody mb = do
         owlpretty "// ------------------------------------" <> line <>
         owlpretty "// ------------ ENTRY POINT -----------" <> line <>
         owlpretty "// ------------------------------------" <> line <> line <>
-        owlpretty "// no entry point for now" <> line <> line <>
         ep                      <> line <> line <>
         owlpretty "} // verus!"    <> line <> line <>
         callMain                <> line <> line

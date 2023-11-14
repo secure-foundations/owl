@@ -137,6 +137,8 @@ instance  OwlPretty TyX where
         owlpretty "exists" <+> i <> owlpretty "." <+> t
     owlpretty (TUnion t1 t2) =
         owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
+    owlpretty (TSing a) =
+        owlpretty "Sing(" <> owlpretty a <> owlpretty ")"
 
 instance  OwlPretty Quant where
     owlpretty Forall = owlpretty "forall"

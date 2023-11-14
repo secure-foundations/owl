@@ -359,6 +359,9 @@ resolveTy e = do
                       t1' <- resolveTy t1
                       t2' <- resolveTy t2
                       return $ TCase p' t1' t2'
+                  TSing a -> do
+                      a' <- resolveAExpr a
+                      return $ TSing a'
 
 
 resolveNameExp :: NameExp -> Resolve NameExp

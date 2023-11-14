@@ -106,6 +106,7 @@ defaultHMACMode :: HMACMode
 defaultHMACMode = Sha512
 data Layout =
   LBytes Int -- number of bytes
+  | LHexConst String -- hex constant
   | LUnboundedBytes -- Bytes without statically knowable length. Restricted to be the last field in a struct.
   | LStruct String [(String, Layout)] -- field, layout
   | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
@@ -594,6 +595,8 @@ hexStringToByteList (h1 : h2 : t) = do
     t' <- hexStringToByteList t
     return $ owlpretty "0x" <> owlpretty h1 <> owlpretty h2 <> owlpretty "u8," <+> t'
 hexStringToByteList _ = throwError OddLengthHexConst
+
+
 
 resolveANF :: M.Map String (a, Maybe AExpr) -> AExpr -> ExtractionMonad AExpr
 resolveANF binds a = do

@@ -260,6 +260,7 @@ data TyX =
     | TSS NameExp NameExp -- Singleton type
     | TAdmit -- return type of admit 
     | TExistsIdx (Bind IdxVar Ty) -- Label of which idx I am is adversary
+    | TSing AExpr -- Singleton type
     deriving (Show, Generic, Typeable)
 
 
