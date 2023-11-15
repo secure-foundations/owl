@@ -206,7 +206,7 @@ extractUserFunc owlName rtExec o = do
     let binds = M.fromList $ map (\x -> (show x, (VecU8, Nothing))) args
     body <- extractAExpr ae
     let declArgs = map (\x -> owlpretty (show x) <> owlpretty ":" <+> owlpretty "Seq<u8>") args
-    let decl = owlpretty "pub open spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
+    let decl = owlpretty "pub closed spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
                     owlpretty "->" <+> owlpretty rtSpec <> line
     return $ decl <> braces (line <> body <> line)
 

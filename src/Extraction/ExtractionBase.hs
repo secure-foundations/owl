@@ -115,6 +115,7 @@ data Layout =
 instance OwlPretty Layout where
     owlpretty (LBytes i) = owlpretty "bytes" <> parens (owlpretty i)
     owlpretty LUnboundedBytes = owlpretty "unbounded_bytes"
+    owlpretty (LHexConst s) = owlpretty "hex_const" <> parens (owlpretty "0x" <> owlpretty s)
     owlpretty (LStruct name fields) = owlpretty "struct" <+> owlpretty name <> owlpretty ":" <+> owlpretty fields
     owlpretty (LEnum name cases) = owlpretty "enum" <+> owlpretty name <> owlpretty ":" <+> owlpretty (M.keys cases)
 
