@@ -314,6 +314,7 @@ extractStruct owlName owlFields = do
                 owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
                 owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
             lbrace <> line <>
+                owlpretty "reveal" <> parens (owlpretty "serialize_" <> owlpretty specname) <> owlpretty ";" <> line <>
                 owlpretty "let res = serialize_" <> owlpretty name <> owlpretty "_inner(arg);" <> line <>
                 owlpretty "assume(res.is_Some()); res.unwrap()" <> line <>
             rbrace <> line <> line 

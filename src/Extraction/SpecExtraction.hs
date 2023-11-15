@@ -88,11 +88,11 @@ extractStruct owlName owlFields = do
                             owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "x." ++ specName f) fields )) <> owlpretty ") {" <> line <>
                     owlpretty "Some(serialized.data.take(n as int))" <> line <>
                     owlpretty "} else { None }"
-            let serializer = owlpretty "pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
+            let serializer = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
                             serializerBody <> line
                         )
-            let serializerWrapper = owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+            let serializerWrapper = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
                             owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
                             owlpretty "val" <> line <>
