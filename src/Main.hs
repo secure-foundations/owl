@@ -37,12 +37,14 @@ main = do
           s <- readFile fn
           pres <- P.runParserT parseFile () (takeFileName fn) s
           case pres of
-            Left err -> putStrLn $ "parse error: " ++ show err
+            Left err -> do
+              putStrLn $ "parse error: " ++ show err 
+              exitFailure
             Right ast -> do
                 do
                     res <- typeCheckDecls (set fFileContents s args) ast
                     case res of
-                      Left _ -> return ()
+                      Left _ -> exitFailure
                       Right tcEnv -> do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)
