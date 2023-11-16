@@ -92,4 +92,12 @@ pub fn verify(
     mac == value
 }
 
+#[verifier(external_body)]
+pub fn blake2s(input: &[u8]) -> (res: Vec<u8>) {
+    use blake2::Digest;
+    let mut hsh = Blake2s::new();
+    hsh.update(input);
+    hsh.finalize().to_vec()
+}
+
 } // verus!

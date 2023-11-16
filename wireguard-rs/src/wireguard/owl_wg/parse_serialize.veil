@@ -3,8 +3,8 @@
 owl_msg1 = {
   const owl__msg1_tag: [u8; 4] = [1, 0, 0, 0],
   owl__msg1_sender: [u8; 4],
-  owl__msg1_ephemeral: [u8; 91],
-  owl__msg1_static: [u8; 107],
+  owl__msg1_ephemeral: [u8; 32],
+  owl__msg1_static: [u8; 48],
   owl__msg1_timestamp: [u8; 28],
   owl__msg1_mac1: [u8; 64],
 }
@@ -13,7 +13,7 @@ owl_msg2 = {
   const owl__msg2_tag: [u8; 4] = [2, 0, 0, 0],
   owl__msg2_sender: [u8; 4],
   owl__msg2_receiver: [u8; 4],
-  owl__msg2_ephemeral: [u8; 91],
+  owl__msg2_ephemeral: [u8; 32],
   owl__msg2_empty: [u8; 16],
   owl__msg2_mac1: [u8; 64],
 }
@@ -33,8 +33,8 @@ owl_initiator_msg1_val = {
 owl_transp_keys = {
   owl__transp_keys_initiator: [u8; 4],
   owl__transp_keys_responder: [u8; 4],
-  owl__transp_keys_init_ephemeral: [u8; 91],
-  owl__transp_keys_resp_ephemeral: [u8; 91],
+  owl__transp_keys_init_ephemeral: [u8; 32],
+  owl__transp_keys_resp_ephemeral: [u8; 32],
   owl__transp_keys_t_init_send: [u8; 32],
   owl__transp_keys_t_resp_send: [u8; 32],
 }
@@ -42,8 +42,8 @@ owl_transp_keys = {
 owl_responder_msg1_val = {
   owl__responder_msg1_c3: [u8; 12],
   owl__responder_msg1_h4: [u8; 32],
-  owl__responder_msg1_ephemeral: [u8; 91],
-  owl__responder_msg1_sender_pk: [u8; 91],
+  owl__responder_msg1_ephemeral: [u8; 32],
+  owl__responder_msg1_sender_pk: [u8; 32],
   owl__responder_msg1_sender: [u8; 4],
 }
 

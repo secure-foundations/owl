@@ -18,7 +18,7 @@ pub use std::env;
 pub use std::fs;
 pub use std::io::{self, BufRead, Write};
 pub use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-pub use std::rc::Rc;
+pub use std::sync::Arc;
 pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;
@@ -1092,7 +1092,6 @@ pub closed spec fn owlSpec_get_sender_r_pure() -> Seq<u8> {
     unimplemented!()
 }
 
-
 // ------------------------------------
 // ---------- IMPLEMENTATIONS ---------
 // ------------------------------------
@@ -1788,26 +1787,25 @@ impl state_Initiator {
 
 pub struct cfg_Initiator {
     pub listener: TcpListener,
-    pub owl_S_init: Rc<Vec<u8>>,
-    pub owl_E_init: Rc<Vec<u8>>,
-    pub pk_owl_S_resp: Rc<Vec<u8>>,
-    pub pk_owl_S_init: Rc<Vec<u8>>,
-    pub pk_owl_E_resp: Rc<Vec<u8>>,
-    pub pk_owl_E_init: Rc<Vec<u8>>,
-    pub salt: Rc<Vec<u8>>,
+    pub owl_S_init: Arc<Vec<u8>>,
+    pub owl_E_init: Arc<Vec<u8>>,
+    pub pk_owl_S_resp: Arc<Vec<u8>>,
+    pub pk_owl_S_init: Arc<Vec<u8>>,
+    pub pk_owl_E_resp: Arc<Vec<u8>>,
+    pub pk_owl_E_init: Arc<Vec<u8>>,
+    pub salt: Arc<Vec<u8>>,
 }
 
 impl cfg_Initiator {
-      
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_init(
         &self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_transp_keys_val30639: owl_transp_keys,
-        owl_c30638: Rc<Vec<u8>>,
+        owl_c30638: Arc<Vec<u8>>,
     ) -> (res: Result<
-        (Option<Rc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
+        (Option<Arc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
@@ -1824,55 +1822,56 @@ impl cfg_Initiator {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let temp_owl__x33 = { rc_clone(&owl_c30638) };
-            let owl__x33 = rc_clone(&temp_owl__x33);
-            if let Some(parseval) = parse_owl_transp(vec_as_slice(&(*rc_clone(&owl__x33)))) {
-                let owl__6 = rc_new(parseval.owl__transp_tag);
-                let owl_from5 = rc_new(parseval.owl__transp_receiver);
-                let owl_ctr4 = rc_new(parseval.owl__transp_counter);
-                let owl_pkt3 = rc_new(parseval.owl__transp_packet);
+            let temp_owl__x33 = { arc_clone(&owl_c30638) };
+            let owl__x33 = arc_clone(&temp_owl__x33);
+            if let Some(parseval) = parse_owl_transp(vec_as_slice(&(*arc_clone(&owl__x33)))) {
+                let owl__6 = arc_new(parseval.owl__transp_tag);
+                let owl_from5 = arc_new(parseval.owl__transp_receiver);
+                let owl_ctr4 = arc_new(parseval.owl__transp_counter);
+                let owl_pkt3 = arc_new(parseval.owl__transp_packet);
                 {
                     let temp_owl__x32 = { owl_transp_keys_val30639 };
                     let owl__x32 = temp_owl__x32;
                     let parseval = owl__x32;
-                    let owl__12 = rc_new(parseval.owl__transp_keys_initiator);
-                    let owl_responder_name11 = rc_new(parseval.owl__transp_keys_responder);
-                    let owl__10 = rc_new(parseval.owl__transp_keys_init_ephemeral);
-                    let owl_eph_resp9 = rc_new(parseval.owl__transp_keys_resp_ephemeral);
-                    let owl__8 = rc_new(parseval.owl__transp_keys_T_init_send);
-                    let owl_r2i_7 = rc_new(parseval.owl__transp_keys_T_resp_send);
+                    let owl__12 = arc_new(parseval.owl__transp_keys_initiator);
+                    let owl_responder_name11 = arc_new(parseval.owl__transp_keys_responder);
+                    let owl__10 = arc_new(parseval.owl__transp_keys_init_ephemeral);
+                    let owl_eph_resp9 = arc_new(parseval.owl__transp_keys_resp_ephemeral);
+                    let owl__8 = arc_new(parseval.owl__transp_keys_T_init_send);
+                    let owl_r2i_7 = arc_new(parseval.owl__transp_keys_T_resp_send);
                     {
-                        let temp_owl__x28 = { rc_clone(&owl_c30638) };
-                        let owl__x28 = rc_clone(&temp_owl__x28);
-                        let temp_owl__x30 = { rc_clone(&owl_responder_name11) };
-                        let owl__x30 = rc_clone(&temp_owl__x30);
-                        let temp_owl__x31 = { rc_vec_eq(&rc_clone(&owl__x28), &rc_clone(&owl__x30))
+                        let temp_owl__x28 = { arc_clone(&owl_c30638) };
+                        let owl__x28 = arc_clone(&temp_owl__x28);
+                        let temp_owl__x30 = { arc_clone(&owl_responder_name11) };
+                        let owl__x30 = arc_clone(&temp_owl__x30);
+                        let temp_owl__x31 = {
+                        rc_vec_eq(&arc_clone(&owl__x28), &arc_clone(&owl__x30))
                         };
                         let owl__x31 = temp_owl__x31;
                         if owl__x31 {
-                            let temp_owl__x17 = { rc_clone(&owl_r2i_7) };
-                            let owl__x17 = rc_clone(&temp_owl__x17);
-                            let temp_owl__x18 = { rc_clone(&owl__x17) };
-                            let owl__x18 = rc_clone(&temp_owl__x18);
-                            let temp_owl__x21 = { rc_clone(&owl__x18) };
-                            let owl__x21 = rc_clone(&temp_owl__x21);
-                            let temp_owl__x22 = { rc_clone(&owl_pkt3) };
-                            let owl__x22 = rc_clone(&temp_owl__x22);
+                            let temp_owl__x17 = { arc_clone(&owl_r2i_7) };
+                            let owl__x17 = arc_clone(&temp_owl__x17);
+                            let temp_owl__x18 = { arc_clone(&owl__x17) };
+                            let owl__x18 = arc_clone(&temp_owl__x18);
+                            let temp_owl__x21 = { arc_clone(&owl__x18) };
+                            let owl__x21 = arc_clone(&temp_owl__x21);
+                            let temp_owl__x22 = { arc_clone(&owl_pkt3) };
+                            let owl__x22 = arc_clone(&temp_owl__x22);
                             let temp_owl__x23 = {
                                 {
                                     let x: Vec<u8> = mk_vec_u8![];
                                     x
                                 }
                             };
-                            let owl__x23 = rc_new(temp_owl__x23);
-                            let temp_owl__x24 = { rc_clone(&owl_ctr4) };
-                            let owl__x24 = rc_clone(&temp_owl__x24);
+                            let owl__x23 = arc_new(temp_owl__x23);
+                            let temp_owl__x24 = { arc_clone(&owl_ctr4) };
+                            let owl__x24 = arc_clone(&temp_owl__x24);
                             (
                                 owl_dec_st_aead(
-                                    vec_as_slice(&(*rc_clone(&owl__x21))),
-                                    vec_as_slice(&(*rc_clone(&owl__x22))),
-                                    vec_as_slice(&(*rc_clone(&owl__x24))),
-                                    vec_as_slice(&(*rc_clone(&owl__x23))),
+                                    vec_as_slice(&(*arc_clone(&owl__x21))),
+                                    vec_as_slice(&(*arc_clone(&owl__x22))),
+                                    vec_as_slice(&(*arc_clone(&owl__x24))),
+                                    vec_as_slice(&(*arc_clone(&owl__x23))),
                                 ),
                                 Tracked(itree),
                             )
@@ -1896,7 +1895,7 @@ impl cfg_Initiator {
         Tracked(itree): Tracked<ITreeToken<(Option<()>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_transp_keys_val28826: owl_transp_keys,
-        owl_plaintext28825: Rc<Vec<u8>>,
+        owl_plaintext28825: Arc<Vec<u8>>,
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Initiator), Endpoint>>),
         OwlError,
@@ -1918,69 +1917,69 @@ impl cfg_Initiator {
             let temp_owl__x114 = { owl_transp_keys_val28826 };
             let owl__x114 = temp_owl__x114;
             let parseval = owl__x114;
-            let owl__45 = rc_new(parseval.owl__transp_keys_initiator);
-            let owl_transp_receiver44 = rc_new(parseval.owl__transp_keys_responder);
-            let owl__43 = rc_new(parseval.owl__transp_keys_init_ephemeral);
-            let owl_eph_resp42 = rc_new(parseval.owl__transp_keys_resp_ephemeral);
-            let owl_i2r_41 = rc_new(parseval.owl__transp_keys_T_init_send);
-            let owl__40 = rc_new(parseval.owl__transp_keys_T_resp_send);
+            let owl__45 = arc_new(parseval.owl__transp_keys_initiator);
+            let owl_transp_receiver44 = arc_new(parseval.owl__transp_keys_responder);
+            let owl__43 = arc_new(parseval.owl__transp_keys_init_ephemeral);
+            let owl_eph_resp42 = arc_new(parseval.owl__transp_keys_resp_ephemeral);
+            let owl_i2r_41 = arc_new(parseval.owl__transp_keys_T_init_send);
+            let owl__40 = arc_new(parseval.owl__transp_keys_T_resp_send);
             {
-                let temp_owl__x50 = { rc_clone(&owl_i2r_41) };
-                let owl__x50 = rc_clone(&temp_owl__x50);
-                let temp_owl__x51 = { rc_clone(&owl__x50) };
-                let owl__x51 = rc_clone(&temp_owl__x51);
+                let temp_owl__x50 = { arc_clone(&owl_i2r_41) };
+                let owl__x50 = arc_clone(&temp_owl__x50);
+                let temp_owl__x51 = { arc_clone(&owl__x50) };
+                let owl__x51 = arc_clone(&temp_owl__x51);
                 let temp_owl__x53 = { owl_counter_as_bytes(&(mut_state.owl_N_init_send)) };
-                let owl__x53 = rc_new(temp_owl__x53);
+                let owl__x53 = arc_new(temp_owl__x53);
                 let temp_owl__x57 = { owl_transp_tag_value() };
-                let owl__x57 = rc_new(temp_owl__x57);
-                let temp_owl__x58 = { rc_clone(&owl__x57) };
-                let owl__x58 = rc_clone(&temp_owl__x58);
-                let temp_owl__x109 = { rc_clone(&owl_transp_receiver44) };
-                let owl__x109 = rc_clone(&temp_owl__x109);
-                let temp_owl__x110 = { vec_length(&(*rc_clone(&owl__x109))) };
+                let owl__x57 = arc_new(temp_owl__x57);
+                let temp_owl__x58 = { arc_clone(&owl__x57) };
+                let owl__x58 = arc_clone(&temp_owl__x58);
+                let temp_owl__x109 = { arc_clone(&owl_transp_receiver44) };
+                let owl__x109 = arc_clone(&temp_owl__x109);
+                let temp_owl__x110 = { vec_length(&(*arc_clone(&owl__x109))) };
                 let owl__x110 = temp_owl__x110;
                 let temp_owl__x112 = { 4 };
                 let owl__x112 = temp_owl__x112;
                 let temp_owl__x113 = { owl__x110 == owl__x112 };
                 let owl__x113 = temp_owl__x113;
                 if owl__x113 {
-                    let temp_owl__x64 = { rc_clone(&owl__x51) };
-                    let owl__x64 = rc_clone(&temp_owl__x64);
-                    let temp_owl__x66 = { rc_clone(&owl_plaintext28825) };
-                    let owl__x66 = rc_clone(&temp_owl__x66);
+                    let temp_owl__x64 = { arc_clone(&owl__x51) };
+                    let owl__x64 = arc_clone(&temp_owl__x64);
+                    let temp_owl__x66 = { arc_clone(&owl_plaintext28825) };
+                    let owl__x66 = arc_clone(&temp_owl__x66);
                     let temp_owl__x68 = {
                         {
                             let x: Vec<u8> = mk_vec_u8![];
                             x
                         }
                     };
-                    let owl__x68 = rc_new(temp_owl__x68);
+                    let owl__x68 = arc_new(temp_owl__x68);
                     let temp_owl__x69 = {
                         match owl_enc_st_aead(
-                            vec_as_slice(&(*rc_clone(&owl__x64))),
-                            vec_as_slice(&(*rc_clone(&owl__x66))),
+                            vec_as_slice(&(*arc_clone(&owl__x64))),
+                            vec_as_slice(&(*arc_clone(&owl__x66))),
                             &mut mut_state.owl_N_init_send,
-                            vec_as_slice(&(*rc_clone(&owl__x68))),
+                            vec_as_slice(&(*arc_clone(&owl__x68))),
                         ) {
                             Ok(ctxt) => ctxt,
                             Err(e) => { return Err(e) },
                         }
                     };
-                    let owl__x69 = rc_clone(&temp_owl__x69);
-                    let temp_owl__x85 = { rc_clone(&owl__x58) };
-                    let owl__x85 = rc_clone(&temp_owl__x85);
-                    let temp_owl__x87 = { rc_clone(&owl_transp_receiver44) };
-                    let owl__x87 = rc_clone(&temp_owl__x87);
-                    let temp_owl__x89 = { rc_clone(&owl__x53) };
-                    let owl__x89 = rc_clone(&temp_owl__x89);
-                    let temp_owl__x91 = { rc_clone(&owl__x69) };
-                    let owl__x91 = rc_clone(&temp_owl__x91);
+                    let owl__x69 = arc_clone(&temp_owl__x69);
+                    let temp_owl__x85 = { arc_clone(&owl__x58) };
+                    let owl__x85 = arc_clone(&temp_owl__x85);
+                    let temp_owl__x87 = { arc_clone(&owl_transp_receiver44) };
+                    let owl__x87 = arc_clone(&temp_owl__x87);
+                    let temp_owl__x89 = { arc_clone(&owl__x53) };
+                    let owl__x89 = arc_clone(&temp_owl__x89);
+                    let temp_owl__x91 = { arc_clone(&owl__x69) };
+                    let owl__x91 = arc_clone(&temp_owl__x91);
                     let temp_owl__x93 = {
                     owl_transp {
-                        owl__transp_tag: clone_vec_u8(&*rc_clone(&owl__x85)),
-                        owl__transp_receiver: clone_vec_u8(&*rc_clone(&owl__x87)),
-                        owl__transp_counter: clone_vec_u8(&*rc_clone(&owl__x89)),
-                        owl__transp_packet: clone_vec_u8(&*rc_clone(&owl__x91)),
+                        owl__transp_tag: clone_vec_u8(&*arc_clone(&owl__x85)),
+                        owl__transp_receiver: clone_vec_u8(&*arc_clone(&owl__x87)),
+                        owl__transp_counter: clone_vec_u8(&*arc_clone(&owl__x89)),
+                        owl__transp_packet: clone_vec_u8(&*arc_clone(&owl__x91)),
                     }
                     };
                     let owl__x93 = temp_owl__x93;
@@ -2016,7 +2015,7 @@ impl cfg_Initiator {
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_msg1_val25135: owl_initiator_msg1_val,
-        owl_dhpk_S_resp25134: Rc<Vec<u8>>,
+        owl_dhpk_S_resp25134: Arc<Vec<u8>>,
     ) -> (res: Result<
         (
             Option<owl_transp_keys>,
@@ -2042,34 +2041,34 @@ impl cfg_Initiator {
                 Tracked(&mut itree),
                 &self.listener,
             );
-            let owl_inp122 = rc_new(temp_owl_inp122);
-            let temp_owl__x406 = { rc_clone(&owl_inp122) };
-            let owl__x406 = rc_clone(&temp_owl__x406);
-            if let Some(parseval) = parse_owl_msg2(vec_as_slice(&(*rc_clone(&owl__x406)))) {
-                let owl_msg2_tag129 = rc_new(parseval.owl__msg2_tag);
-                let owl_msg2_sender128 = rc_new(parseval.owl__msg2_sender);
-                let owl_msg2_receiver127 = rc_new(parseval.owl__msg2_receiver);
-                let owl_msg2_ephemeral_126 = rc_new(parseval.owl__msg2_ephemeral);
-                let owl_msg2_empty125 = rc_new(parseval.owl__msg2_empty);
-                let owl_msg2_mac2124 = rc_new(parseval.owl__msg2_mac1);
+            let owl_inp122 = arc_new(temp_owl_inp122);
+            let temp_owl__x406 = { arc_clone(&owl_inp122) };
+            let owl__x406 = arc_clone(&temp_owl__x406);
+            if let Some(parseval) = parse_owl_msg2(vec_as_slice(&(*arc_clone(&owl__x406)))) {
+                let owl_msg2_tag129 = arc_new(parseval.owl__msg2_tag);
+                let owl_msg2_sender128 = arc_new(parseval.owl__msg2_sender);
+                let owl_msg2_receiver127 = arc_new(parseval.owl__msg2_receiver);
+                let owl_msg2_ephemeral_126 = arc_new(parseval.owl__msg2_ephemeral);
+                let owl_msg2_empty125 = arc_new(parseval.owl__msg2_empty);
+                let owl_msg2_mac2124 = arc_new(parseval.owl__msg2_mac1);
                 {
                     let temp_owl__x405 = { owl_msg1_val25135 };
                     let owl__x405 = temp_owl__x405;
                     let parseval = owl__x405;
-                    let owl_C3131 = rc_new(parseval.owl__initiator_msg1_C3);
-                    let owl_H4130 = rc_new(parseval.owl__initiator_msg1_H4);
+                    let owl_C3131 = arc_new(parseval.owl__initiator_msg1_C3);
+                    let owl_H4130 = arc_new(parseval.owl__initiator_msg1_H4);
                     {
-                        let temp_owl__x391 = { rc_clone(&owl_msg2_sender128) };
-                        let owl__x391 = rc_clone(&temp_owl__x391);
-                        let temp_owl__x392 = { vec_length(&(*rc_clone(&owl__x391))) };
+                        let temp_owl__x391 = { arc_clone(&owl_msg2_sender128) };
+                        let owl__x391 = arc_clone(&temp_owl__x391);
+                        let temp_owl__x392 = { vec_length(&(*arc_clone(&owl__x391))) };
                         let owl__x392 = temp_owl__x392;
                         let temp_owl__x394 = { 4 };
                         let owl__x394 = temp_owl__x394;
                         let temp_owl__x395 = { owl__x392 == owl__x394 };
                         let owl__x395 = temp_owl__x395;
-                        let temp_owl__x399 = { rc_clone(&owl_msg2_receiver127) };
-                        let owl__x399 = rc_clone(&temp_owl__x399);
-                        let temp_owl__x400 = { vec_length(&(*rc_clone(&owl__x399))) };
+                        let temp_owl__x399 = { arc_clone(&owl_msg2_receiver127) };
+                        let owl__x399 = arc_clone(&temp_owl__x399);
+                        let temp_owl__x400 = { vec_length(&(*arc_clone(&owl__x399))) };
                         let owl__x400 = temp_owl__x400;
                         let temp_owl__x402 = { 4 };
                         let owl__x402 = temp_owl__x402;
@@ -2078,10 +2077,10 @@ impl cfg_Initiator {
                         let temp_owl__x404 = { owl__x395 && owl__x403 };
                         let owl__x404 = temp_owl__x404;
                         if owl__x404 {
-                            let temp_owl__x378 = { rc_clone(&owl_msg2_ephemeral_126) };
-                            let owl__x378 = rc_clone(&temp_owl__x378);
+                            let temp_owl__x378 = { arc_clone(&owl_msg2_ephemeral_126) };
+                            let owl__x378 = arc_clone(&temp_owl__x378);
                             let temp_owl__x379 = {
-                            owl_is_group_elem(vec_as_slice(&(*rc_clone(&owl__x378))))
+                            owl_is_group_elem(vec_as_slice(&(*arc_clone(&owl__x378))))
                             };
                             let owl__x379 = temp_owl__x379;
                             if owl__x379 {
@@ -2092,36 +2091,36 @@ impl cfg_Initiator {
                                         x
                                     }
                                 };
-                                let owl__x135 = rc_new(temp_owl__x135);
-                                let temp_owl__x136 = { rc_clone(&owl__x135) };
-                                let owl__x136 = rc_clone(&temp_owl__x136);
-                                let temp_owl__x141 = { rc_clone(&owl_msg2_ephemeral_126) };
-                                let owl__x141 = rc_clone(&temp_owl__x141);
-                                let temp_owl__x142 = { rc_clone(&owl__x141) };
-                                let owl__x142 = rc_clone(&temp_owl__x142);
-                                let temp_owl__x146 = { rc_clone(&self.owl_E_init) };
-                                let owl__x146 = rc_clone(&temp_owl__x146);
-                                let temp_owl__x147 = { rc_clone(&owl__x146) };
-                                let owl__x147 = rc_clone(&temp_owl__x147);
-                                let temp_owl__x154 = { rc_clone(&owl__x147) };
-                                let owl__x154 = rc_clone(&temp_owl__x154);
+                                let owl__x135 = arc_new(temp_owl__x135);
+                                let temp_owl__x136 = { arc_clone(&owl__x135) };
+                                let owl__x136 = arc_clone(&temp_owl__x136);
+                                let temp_owl__x141 = { arc_clone(&owl_msg2_ephemeral_126) };
+                                let owl__x141 = arc_clone(&temp_owl__x141);
+                                let temp_owl__x142 = { arc_clone(&owl__x141) };
+                                let owl__x142 = arc_clone(&temp_owl__x142);
+                                let temp_owl__x146 = { arc_clone(&self.owl_E_init) };
+                                let owl__x146 = arc_clone(&temp_owl__x146);
+                                let temp_owl__x147 = { arc_clone(&owl__x146) };
+                                let owl__x147 = arc_clone(&temp_owl__x147);
+                                let temp_owl__x154 = { arc_clone(&owl__x147) };
+                                let owl__x154 = arc_clone(&temp_owl__x154);
                                 let temp_owl__x156 = {
-                                owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x154))))
+                                owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x154))))
                                 };
-                                let owl__x156 = rc_clone(&temp_owl__x156);
-                                let temp_owl__x157 = { rc_clone(&owl__x156) };
-                                let owl__x157 = rc_clone(&temp_owl__x157);
-                                let temp_owl__x162 = { rc_clone(&owl_C3131) };
-                                let owl__x162 = rc_clone(&temp_owl__x162);
-                                let temp_owl__x164 = { rc_clone(&owl__x142) };
-                                let owl__x164 = rc_clone(&temp_owl__x164);
+                                let owl__x156 = arc_clone(&temp_owl__x156);
+                                let temp_owl__x157 = { arc_clone(&owl__x156) };
+                                let owl__x157 = arc_clone(&temp_owl__x157);
+                                let temp_owl__x162 = { arc_clone(&owl_C3131) };
+                                let owl__x162 = arc_clone(&temp_owl__x162);
+                                let temp_owl__x164 = { arc_clone(&owl__x142) };
+                                let owl__x164 = arc_clone(&temp_owl__x164);
                                 let owl_msg2_C4409 = owl_extract_expand_to_len(
                                     0 + nonce_size(),
-                                    vec_as_slice(&(*rc_clone(&owl__x162))),
-                                    vec_as_slice(&(*rc_clone(&owl__x164))),
+                                    vec_as_slice(&(*arc_clone(&owl__x162))),
+                                    vec_as_slice(&(*arc_clone(&owl__x164))),
                                 );
                                 let temp_owl__x165 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C4409),
@@ -2131,48 +2130,48 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x165 = rc_clone(&temp_owl__x165);
-                                let temp_owl__x178 = { rc_clone(&owl_H4130) };
-                                let owl__x178 = rc_clone(&temp_owl__x178);
-                                let temp_owl__x180 = { rc_clone(&owl__x142) };
-                                let owl__x180 = rc_clone(&temp_owl__x180);
+                                let owl__x165 = arc_clone(&temp_owl__x165);
+                                let temp_owl__x178 = { arc_clone(&owl_H4130) };
+                                let owl__x178 = arc_clone(&temp_owl__x178);
+                                let temp_owl__x180 = { arc_clone(&owl__x142) };
+                                let owl__x180 = arc_clone(&temp_owl__x180);
                                 let temp_owl__x182 = {
                                 owl_concat(
-                                    vec_as_slice(&(*rc_clone(&owl__x178))),
-                                    vec_as_slice(&(*rc_clone(&owl__x180))),
+                                    vec_as_slice(&(*arc_clone(&owl__x178))),
+                                    vec_as_slice(&(*arc_clone(&owl__x180))),
                                 )
                                 };
-                                let owl__x182 = rc_new(temp_owl__x182);
+                                let owl__x182 = arc_new(temp_owl__x182);
                                 let temp_owl__x184 = {
-                                owl_crh(vec_as_slice(&(*rc_clone(&owl__x182))))
+                                owl_crh(vec_as_slice(&(*arc_clone(&owl__x182))))
                                 };
-                                let owl__x184 = rc_clone(&temp_owl__x184);
-                                let temp_owl__x185 = { rc_clone(&owl__x184) };
-                                let owl__x185 = rc_clone(&temp_owl__x185);
-                                let temp_owl__x195 = { rc_clone(&owl__x142) };
-                                let owl__x195 = rc_clone(&temp_owl__x195);
-                                let temp_owl__x197 = { rc_clone(&owl__x147) };
-                                let owl__x197 = rc_clone(&temp_owl__x197);
+                                let owl__x184 = arc_clone(&temp_owl__x184);
+                                let temp_owl__x185 = { arc_clone(&owl__x184) };
+                                let owl__x185 = arc_clone(&temp_owl__x185);
+                                let temp_owl__x195 = { arc_clone(&owl__x142) };
+                                let owl__x195 = arc_clone(&temp_owl__x195);
+                                let temp_owl__x197 = { arc_clone(&owl__x147) };
+                                let owl__x197 = arc_clone(&temp_owl__x197);
                                 let temp_owl__x199 = {
                                 owl_dh_combine(
-                                    vec_as_slice(&(*rc_clone(&owl__x195))),
-                                    vec_as_slice(&(*rc_clone(&owl__x197))),
+                                    vec_as_slice(&(*arc_clone(&owl__x195))),
+                                    vec_as_slice(&(*arc_clone(&owl__x197))),
                                 )
                                 };
-                                let owl__x199 = rc_clone(&temp_owl__x199);
-                                let temp_owl__x200 = { rc_clone(&owl__x199) };
-                                let owl__x200 = rc_clone(&temp_owl__x200);
-                                let temp_owl__x205 = { rc_clone(&owl__x165) };
-                                let owl__x205 = rc_clone(&temp_owl__x205);
-                                let temp_owl__x207 = { rc_clone(&owl__x200) };
-                                let owl__x207 = rc_clone(&temp_owl__x207);
+                                let owl__x199 = arc_clone(&temp_owl__x199);
+                                let temp_owl__x200 = { arc_clone(&owl__x199) };
+                                let owl__x200 = arc_clone(&temp_owl__x200);
+                                let temp_owl__x205 = { arc_clone(&owl__x165) };
+                                let owl__x205 = arc_clone(&temp_owl__x205);
+                                let temp_owl__x207 = { arc_clone(&owl__x200) };
+                                let owl__x207 = arc_clone(&temp_owl__x207);
                                 let owl_msg2_C5410 = owl_extract_expand_to_len(
                                     0 + nonce_size(),
-                                    vec_as_slice(&(*rc_clone(&owl__x205))),
-                                    vec_as_slice(&(*rc_clone(&owl__x207))),
+                                    vec_as_slice(&(*arc_clone(&owl__x205))),
+                                    vec_as_slice(&(*arc_clone(&owl__x207))),
                                 );
                                 let temp_owl__x208 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C5410),
@@ -2182,27 +2181,27 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x208 = rc_clone(&temp_owl__x208);
-                                let temp_owl__x215 = { rc_clone(&owl__x208) };
-                                let owl__x215 = rc_clone(&temp_owl__x215);
-                                let temp_owl__x218 = { rc_clone(&owl__x142) };
-                                let owl__x218 = rc_clone(&temp_owl__x218);
-                                let temp_owl__x220 = { rc_clone(&self.owl_S_init) };
-                                let owl__x220 = rc_clone(&temp_owl__x220);
+                                let owl__x208 = arc_clone(&temp_owl__x208);
+                                let temp_owl__x215 = { arc_clone(&owl__x208) };
+                                let owl__x215 = arc_clone(&temp_owl__x215);
+                                let temp_owl__x218 = { arc_clone(&owl__x142) };
+                                let owl__x218 = arc_clone(&temp_owl__x218);
+                                let temp_owl__x220 = { arc_clone(&self.owl_S_init) };
+                                let owl__x220 = arc_clone(&temp_owl__x220);
                                 let temp_owl__x221 = {
                                 owl_dh_combine(
-                                    vec_as_slice(&(*rc_clone(&owl__x218))),
-                                    vec_as_slice(&(*rc_clone(&owl__x220))),
+                                    vec_as_slice(&(*arc_clone(&owl__x218))),
+                                    vec_as_slice(&(*arc_clone(&owl__x220))),
                                 )
                                 };
-                                let owl__x221 = rc_clone(&temp_owl__x221);
+                                let owl__x221 = arc_clone(&temp_owl__x221);
                                 let owl_msg2_C6411 = owl_extract_expand_to_len(
                                     0 + nonce_size(),
-                                    vec_as_slice(&(*rc_clone(&owl__x215))),
-                                    vec_as_slice(&(*rc_clone(&owl__x221))),
+                                    vec_as_slice(&(*arc_clone(&owl__x215))),
+                                    vec_as_slice(&(*arc_clone(&owl__x221))),
                                 );
                                 let temp_owl__x222 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C6411),
@@ -2212,18 +2211,18 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x222 = rc_clone(&temp_owl__x222);
-                                let temp_owl__x227 = { rc_clone(&owl__x222) };
-                                let owl__x227 = rc_clone(&temp_owl__x227);
-                                let temp_owl__x229 = { rc_clone(&owl__x136) };
-                                let owl__x229 = rc_clone(&temp_owl__x229);
+                                let owl__x222 = arc_clone(&temp_owl__x222);
+                                let temp_owl__x227 = { arc_clone(&owl__x222) };
+                                let owl__x227 = arc_clone(&temp_owl__x227);
+                                let temp_owl__x229 = { arc_clone(&owl__x136) };
+                                let owl__x229 = arc_clone(&temp_owl__x229);
                                 let owl_msg2_C7412 = owl_extract_expand_to_len(
                                     0 + nonce_size() + nonce_size() + key_size(),
-                                    vec_as_slice(&(*rc_clone(&owl__x227))),
-                                    vec_as_slice(&(*rc_clone(&owl__x229))),
+                                    vec_as_slice(&(*arc_clone(&owl__x227))),
+                                    vec_as_slice(&(*arc_clone(&owl__x229))),
                                 );
                                 let temp_owl__x230 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C7412),
@@ -2233,13 +2232,13 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x230 = rc_clone(&temp_owl__x230);
-                                let temp_owl__x235 = { rc_clone(&owl__x222) };
-                                let owl__x235 = rc_clone(&temp_owl__x235);
-                                let temp_owl__x237 = { rc_clone(&owl__x136) };
-                                let owl__x237 = rc_clone(&temp_owl__x237);
+                                let owl__x230 = arc_clone(&temp_owl__x230);
+                                let temp_owl__x235 = { arc_clone(&owl__x222) };
+                                let owl__x235 = arc_clone(&temp_owl__x235);
+                                let temp_owl__x237 = { arc_clone(&owl__x136) };
+                                let owl__x237 = arc_clone(&temp_owl__x237);
                                 let temp_owl__x238 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C7412),
@@ -2249,13 +2248,13 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x238 = rc_clone(&temp_owl__x238);
-                                let temp_owl__x243 = { rc_clone(&owl__x222) };
-                                let owl__x243 = rc_clone(&temp_owl__x243);
-                                let temp_owl__x245 = { rc_clone(&owl__x136) };
-                                let owl__x245 = rc_clone(&temp_owl__x245);
+                                let owl__x238 = arc_clone(&temp_owl__x238);
+                                let temp_owl__x243 = { arc_clone(&owl__x222) };
+                                let owl__x243 = arc_clone(&temp_owl__x243);
+                                let temp_owl__x245 = { arc_clone(&owl__x136) };
+                                let owl__x245 = arc_clone(&temp_owl__x245);
                                 let temp_owl__x246 = {
-                                rc_new(
+                                arc_new(
                                     slice_to_vec(
                                         slice_subrange(
                                             vec_as_slice(&*owl_msg2_C7412),
@@ -2265,52 +2264,52 @@ impl cfg_Initiator {
                                     ),
                                 )
                                 };
-                                let owl__x246 = rc_clone(&temp_owl__x246);
-                                let temp_owl__x259 = { rc_clone(&owl__x185) };
-                                let owl__x259 = rc_clone(&temp_owl__x259);
-                                let temp_owl__x261 = { rc_clone(&owl__x238) };
-                                let owl__x261 = rc_clone(&temp_owl__x261);
+                                let owl__x246 = arc_clone(&temp_owl__x246);
+                                let temp_owl__x259 = { arc_clone(&owl__x185) };
+                                let owl__x259 = arc_clone(&temp_owl__x259);
+                                let temp_owl__x261 = { arc_clone(&owl__x238) };
+                                let owl__x261 = arc_clone(&temp_owl__x261);
                                 let temp_owl__x263 = {
                                 owl_concat(
-                                    vec_as_slice(&(*rc_clone(&owl__x259))),
-                                    vec_as_slice(&(*rc_clone(&owl__x261))),
+                                    vec_as_slice(&(*arc_clone(&owl__x259))),
+                                    vec_as_slice(&(*arc_clone(&owl__x261))),
                                 )
                                 };
-                                let owl__x263 = rc_new(temp_owl__x263);
+                                let owl__x263 = arc_new(temp_owl__x263);
                                 let temp_owl__x265 = {
-                                owl_crh(vec_as_slice(&(*rc_clone(&owl__x263))))
+                                owl_crh(vec_as_slice(&(*arc_clone(&owl__x263))))
                                 };
-                                let owl__x265 = rc_clone(&temp_owl__x265);
-                                let temp_owl__x266 = { rc_clone(&owl__x265) };
-                                let owl__x266 = rc_clone(&temp_owl__x266);
+                                let owl__x265 = arc_clone(&temp_owl__x265);
+                                let temp_owl__x266 = { arc_clone(&owl__x265) };
+                                let owl__x266 = arc_clone(&temp_owl__x266);
                                 let temp_owl__x270 = {
                                     {
                                         let x: Vec<u8> = mk_vec_u8![];
                                         x
                                     }
                                 };
-                                let owl__x270 = rc_new(temp_owl__x270);
-                                let temp_owl__x271 = { rc_clone(&owl__x270) };
-                                let owl__x271 = rc_clone(&temp_owl__x271);
-                                let temp_owl__x368 = { rc_clone(&owl__x246) };
-                                let owl__x368 = rc_clone(&temp_owl__x368);
-                                let temp_owl__x370 = { rc_clone(&owl_msg2_empty125) };
-                                let owl__x370 = rc_clone(&temp_owl__x370);
+                                let owl__x270 = arc_new(temp_owl__x270);
+                                let temp_owl__x271 = { arc_clone(&owl__x270) };
+                                let owl__x271 = arc_clone(&temp_owl__x271);
+                                let temp_owl__x368 = { arc_clone(&owl__x246) };
+                                let owl__x368 = arc_clone(&temp_owl__x368);
+                                let temp_owl__x370 = { arc_clone(&owl_msg2_empty125) };
+                                let owl__x370 = arc_clone(&temp_owl__x370);
                                 let temp_owl__x372 = {
                                     {
                                         let x: Vec<u8> = mk_vec_u8![];
                                         x
                                     }
                                 };
-                                let owl__x372 = rc_new(temp_owl__x372);
-                                let temp_owl__x374 = { rc_clone(&owl__x266) };
-                                let owl__x374 = rc_clone(&temp_owl__x374);
+                                let owl__x372 = arc_new(temp_owl__x372);
+                                let temp_owl__x374 = { arc_clone(&owl__x266) };
+                                let owl__x374 = arc_clone(&temp_owl__x374);
                                 let temp_owl__x375 = {
                                 owl_dec_st_aead(
-                                    vec_as_slice(&(*rc_clone(&owl__x368))),
-                                    vec_as_slice(&(*rc_clone(&owl__x370))),
-                                    vec_as_slice(&(*rc_clone(&owl__x374))),
-                                    vec_as_slice(&(*rc_clone(&owl__x372))),
+                                    vec_as_slice(&(*arc_clone(&owl__x368))),
+                                    vec_as_slice(&(*arc_clone(&owl__x370))),
+                                    vec_as_slice(&(*arc_clone(&owl__x374))),
+                                    vec_as_slice(&(*arc_clone(&owl__x372))),
                                 )
                                 };
                                 let owl__x375 = temp_owl__x375;
@@ -2323,51 +2322,51 @@ impl cfg_Initiator {
                                         (owl__x276, Tracked(itree))
                                     },
                                     Some(temp_owl_msg2_empty_dec277) => {
-                                        let owl_msg2_empty_dec277 = rc_clone(
+                                        let owl_msg2_empty_dec277 = arc_clone(
                                             &temp_owl_msg2_empty_dec277,
                                         );
-                                        let temp_owl__x363 = { rc_clone(&owl_msg2_empty_dec277) };
-                                        let owl__x363 = rc_clone(&temp_owl__x363);
-                                        let temp_owl__x365 = { rc_clone(&owl__x271) };
-                                        let owl__x365 = rc_clone(&temp_owl__x365);
+                                        let temp_owl__x363 = { arc_clone(&owl_msg2_empty_dec277) };
+                                        let owl__x363 = arc_clone(&temp_owl__x363);
+                                        let temp_owl__x365 = { arc_clone(&owl__x271) };
+                                        let owl__x365 = arc_clone(&temp_owl__x365);
                                         let temp_owl__x366 = {
-                                        rc_vec_eq(&rc_clone(&owl__x363), &rc_clone(&owl__x365))
+                                        rc_vec_eq(&arc_clone(&owl__x363), &arc_clone(&owl__x365))
                                         };
                                         let owl__x366 = temp_owl__x366;
                                         if owl__x366 {
-                                            let temp_owl__x290 = { rc_clone(&owl__x266) };
-                                            let owl__x290 = rc_clone(&temp_owl__x290);
-                                            let temp_owl__x292 = { rc_clone(&owl_msg2_empty125) };
-                                            let owl__x292 = rc_clone(&temp_owl__x292);
+                                            let temp_owl__x290 = { arc_clone(&owl__x266) };
+                                            let owl__x290 = arc_clone(&temp_owl__x290);
+                                            let temp_owl__x292 = { arc_clone(&owl_msg2_empty125) };
+                                            let owl__x292 = arc_clone(&temp_owl__x292);
                                             let temp_owl__x294 = {
                                             owl_concat(
-                                                vec_as_slice(&(*rc_clone(&owl__x290))),
-                                                vec_as_slice(&(*rc_clone(&owl__x292))),
+                                                vec_as_slice(&(*arc_clone(&owl__x290))),
+                                                vec_as_slice(&(*arc_clone(&owl__x292))),
                                             )
                                             };
-                                            let owl__x294 = rc_new(temp_owl__x294);
+                                            let owl__x294 = arc_new(temp_owl__x294);
                                             let temp_owl__x296 = {
-                                            owl_crh(vec_as_slice(&(*rc_clone(&owl__x294))))
+                                            owl_crh(vec_as_slice(&(*arc_clone(&owl__x294))))
                                             };
-                                            let owl__x296 = rc_clone(&temp_owl__x296);
-                                            let temp_owl__x297 = { rc_clone(&owl__x296) };
-                                            let owl__x297 = rc_clone(&temp_owl__x297);
-                                            let temp_owl__x302 = { rc_clone(&owl__x230) };
-                                            let owl__x302 = rc_clone(&temp_owl__x302);
+                                            let owl__x296 = arc_clone(&temp_owl__x296);
+                                            let temp_owl__x297 = { arc_clone(&owl__x296) };
+                                            let owl__x297 = arc_clone(&temp_owl__x297);
+                                            let temp_owl__x302 = { arc_clone(&owl__x230) };
+                                            let owl__x302 = arc_clone(&temp_owl__x302);
                                             let temp_owl__x304 = {
                                                 {
                                                     let x: Vec<u8> = mk_vec_u8![];
                                                     x
                                                 }
                                             };
-                                            let owl__x304 = rc_new(temp_owl__x304);
+                                            let owl__x304 = arc_new(temp_owl__x304);
                                             let owl_transp_T413 = owl_extract_expand_to_len(
                                                 0 + key_size() + key_size(),
-                                                vec_as_slice(&(*rc_clone(&owl__x302))),
-                                                vec_as_slice(&(*rc_clone(&owl__x304))),
+                                                vec_as_slice(&(*arc_clone(&owl__x302))),
+                                                vec_as_slice(&(*arc_clone(&owl__x304))),
                                             );
                                             let temp_owl__x305 = {
-                                            rc_new(
+                                            arc_new(
                                                 slice_to_vec(
                                                     slice_subrange(
                                                         vec_as_slice(&*owl_transp_T413),
@@ -2377,18 +2376,18 @@ impl cfg_Initiator {
                                                 ),
                                             )
                                             };
-                                            let owl__x305 = rc_clone(&temp_owl__x305);
-                                            let temp_owl__x310 = { rc_clone(&owl__x230) };
-                                            let owl__x310 = rc_clone(&temp_owl__x310);
+                                            let owl__x305 = arc_clone(&temp_owl__x305);
+                                            let temp_owl__x310 = { arc_clone(&owl__x230) };
+                                            let owl__x310 = arc_clone(&temp_owl__x310);
                                             let temp_owl__x312 = {
                                                 {
                                                     let x: Vec<u8> = mk_vec_u8![];
                                                     x
                                                 }
                                             };
-                                            let owl__x312 = rc_new(temp_owl__x312);
+                                            let owl__x312 = arc_new(temp_owl__x312);
                                             let temp_owl__x313 = {
-                                            rc_new(
+                                            arc_new(
                                                 slice_to_vec(
                                                     slice_subrange(
                                                         vec_as_slice(&*owl_transp_T413),
@@ -2398,43 +2397,43 @@ impl cfg_Initiator {
                                                 ),
                                             )
                                             };
-                                            let owl__x313 = rc_clone(&temp_owl__x313);
-                                            let temp_owl__x338 = { rc_clone(&owl_msg2_receiver127)
+                                            let owl__x313 = arc_clone(&temp_owl__x313);
+                                            let temp_owl__x338 = { arc_clone(&owl_msg2_receiver127)
                                             };
-                                            let owl__x338 = rc_clone(&temp_owl__x338);
-                                            let temp_owl__x340 = { rc_clone(&owl_msg2_sender128) };
-                                            let owl__x340 = rc_clone(&temp_owl__x340);
-                                            let temp_owl__x342 = { rc_clone(&owl__x147) };
-                                            let owl__x342 = rc_clone(&temp_owl__x342);
+                                            let owl__x338 = arc_clone(&temp_owl__x338);
+                                            let temp_owl__x340 = { arc_clone(&owl_msg2_sender128) };
+                                            let owl__x340 = arc_clone(&temp_owl__x340);
+                                            let temp_owl__x342 = { arc_clone(&owl__x147) };
+                                            let owl__x342 = arc_clone(&temp_owl__x342);
                                             let temp_owl__x344 = {
-                                            owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x342))))
+                                            owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x342))))
                                             };
-                                            let owl__x344 = rc_clone(&temp_owl__x344);
-                                            let temp_owl__x346 = { rc_clone(&owl__x142) };
-                                            let owl__x346 = rc_clone(&temp_owl__x346);
-                                            let temp_owl__x348 = { rc_clone(&owl__x305) };
-                                            let owl__x348 = rc_clone(&temp_owl__x348);
-                                            let temp_owl__x350 = { rc_clone(&owl__x313) };
-                                            let owl__x350 = rc_clone(&temp_owl__x350);
+                                            let owl__x344 = arc_clone(&temp_owl__x344);
+                                            let temp_owl__x346 = { arc_clone(&owl__x142) };
+                                            let owl__x346 = arc_clone(&temp_owl__x346);
+                                            let temp_owl__x348 = { arc_clone(&owl__x305) };
+                                            let owl__x348 = arc_clone(&temp_owl__x348);
+                                            let temp_owl__x350 = { arc_clone(&owl__x313) };
+                                            let owl__x350 = arc_clone(&temp_owl__x350);
                                             let temp_owl__x352 = {
                                             owl_transp_keys {
                                                 owl__transp_keys_initiator: clone_vec_u8(
-                                                    &*rc_clone(&owl__x338),
+                                                    &*arc_clone(&owl__x338),
                                                 ),
                                                 owl__transp_keys_responder: clone_vec_u8(
-                                                    &*rc_clone(&owl__x340),
+                                                    &*arc_clone(&owl__x340),
                                                 ),
                                                 owl__transp_keys_init_ephemeral: clone_vec_u8(
-                                                    &*rc_clone(&owl__x344),
+                                                    &*arc_clone(&owl__x344),
                                                 ),
                                                 owl__transp_keys_resp_ephemeral: clone_vec_u8(
-                                                    &*rc_clone(&owl__x346),
+                                                    &*arc_clone(&owl__x346),
                                                 ),
                                                 owl__transp_keys_T_init_send: clone_vec_u8(
-                                                    &*rc_clone(&owl__x348),
+                                                    &*arc_clone(&owl__x348),
                                                 ),
                                                 owl__transp_keys_T_resp_send: clone_vec_u8(
-                                                    &*rc_clone(&owl__x350),
+                                                    &*arc_clone(&owl__x350),
                                                 ),
                                             }
                                             };
@@ -2473,7 +2472,7 @@ impl cfg_Initiator {
         &self,
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
-        owl_dhpk_S_resp25125: Rc<Vec<u8>>,
+        owl_dhpk_S_resp25125: Arc<Vec<u8>>,
     ) -> (res: Result<
         (owl_initiator_msg1_val, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
         OwlError,
@@ -2492,111 +2491,111 @@ impl cfg_Initiator {
         let tracked mut itree = itree;
         let res_inner = {
             let temp_owl__x421 = { owl_construction() };
-            let owl__x421 = rc_new(temp_owl__x421);
-            let temp_owl__x423 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x421)))) };
-            let owl__x423 = rc_clone(&temp_owl__x423);
-            let temp_owl__x424 = { rc_clone(&owl__x423) };
-            let owl__x424 = rc_clone(&temp_owl__x424);
-            let temp_owl__x437 = { rc_clone(&owl__x424) };
-            let owl__x437 = rc_clone(&temp_owl__x437);
+            let owl__x421 = arc_new(temp_owl__x421);
+            let temp_owl__x423 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x421)))) };
+            let owl__x423 = arc_clone(&temp_owl__x423);
+            let temp_owl__x424 = { arc_clone(&owl__x423) };
+            let owl__x424 = arc_clone(&temp_owl__x424);
+            let temp_owl__x437 = { arc_clone(&owl__x424) };
+            let owl__x437 = arc_clone(&temp_owl__x437);
             let temp_owl__x439 = { owl_identifier() };
-            let owl__x439 = rc_new(temp_owl__x439);
+            let owl__x439 = arc_new(temp_owl__x439);
             let temp_owl__x441 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x437))),
-                vec_as_slice(&(*rc_clone(&owl__x439))),
+                vec_as_slice(&(*arc_clone(&owl__x437))),
+                vec_as_slice(&(*arc_clone(&owl__x439))),
             )
             };
-            let owl__x441 = rc_new(temp_owl__x441);
-            let temp_owl__x443 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x441)))) };
-            let owl__x443 = rc_clone(&temp_owl__x443);
-            let temp_owl__x444 = { rc_clone(&owl__x443) };
-            let owl__x444 = rc_clone(&temp_owl__x444);
-            let temp_owl__x457 = { rc_clone(&owl__x444) };
-            let owl__x457 = rc_clone(&temp_owl__x457);
-            let temp_owl__x459 = { rc_clone(&owl_dhpk_S_resp25125) };
-            let owl__x459 = rc_clone(&temp_owl__x459);
+            let owl__x441 = arc_new(temp_owl__x441);
+            let temp_owl__x443 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x441)))) };
+            let owl__x443 = arc_clone(&temp_owl__x443);
+            let temp_owl__x444 = { arc_clone(&owl__x443) };
+            let owl__x444 = arc_clone(&temp_owl__x444);
+            let temp_owl__x457 = { arc_clone(&owl__x444) };
+            let owl__x457 = arc_clone(&temp_owl__x457);
+            let temp_owl__x459 = { arc_clone(&owl_dhpk_S_resp25125) };
+            let owl__x459 = arc_clone(&temp_owl__x459);
             let temp_owl__x461 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x457))),
-                vec_as_slice(&(*rc_clone(&owl__x459))),
+                vec_as_slice(&(*arc_clone(&owl__x457))),
+                vec_as_slice(&(*arc_clone(&owl__x459))),
             )
             };
-            let owl__x461 = rc_new(temp_owl__x461);
-            let temp_owl__x463 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x461)))) };
-            let owl__x463 = rc_clone(&temp_owl__x463);
-            let temp_owl__x464 = { rc_clone(&owl__x463) };
-            let owl__x464 = rc_clone(&temp_owl__x464);
-            let temp_owl__x471 = { rc_clone(&self.owl_E_init) };
-            let owl__x471 = rc_clone(&temp_owl__x471);
-            let temp_owl__x473 = { owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x471)))) };
-            let owl__x473 = rc_clone(&temp_owl__x473);
-            let temp_owl__x474 = { rc_clone(&owl__x473) };
-            let owl__x474 = rc_clone(&temp_owl__x474);
-            let temp_owl__x479 = { rc_clone(&owl__x424) };
-            let owl__x479 = rc_clone(&temp_owl__x479);
-            let temp_owl__x481 = { rc_clone(&owl__x474) };
-            let owl__x481 = rc_clone(&temp_owl__x481);
+            let owl__x461 = arc_new(temp_owl__x461);
+            let temp_owl__x463 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x461)))) };
+            let owl__x463 = arc_clone(&temp_owl__x463);
+            let temp_owl__x464 = { arc_clone(&owl__x463) };
+            let owl__x464 = arc_clone(&temp_owl__x464);
+            let temp_owl__x471 = { arc_clone(&self.owl_E_init) };
+            let owl__x471 = arc_clone(&temp_owl__x471);
+            let temp_owl__x473 = { owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x471)))) };
+            let owl__x473 = arc_clone(&temp_owl__x473);
+            let temp_owl__x474 = { arc_clone(&owl__x473) };
+            let owl__x474 = arc_clone(&temp_owl__x474);
+            let temp_owl__x479 = { arc_clone(&owl__x424) };
+            let owl__x479 = arc_clone(&temp_owl__x479);
+            let temp_owl__x481 = { arc_clone(&owl__x474) };
+            let owl__x481 = arc_clone(&temp_owl__x481);
             let owl_msg1_C1738 = owl_extract_expand_to_len(
                 0 + nonce_size(),
-                vec_as_slice(&(*rc_clone(&owl__x479))),
-                vec_as_slice(&(*rc_clone(&owl__x481))),
+                vec_as_slice(&(*arc_clone(&owl__x479))),
+                vec_as_slice(&(*arc_clone(&owl__x481))),
             );
             let temp_owl__x482 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C1738), 0, 0 + nonce_size())),
             )
             };
-            let owl__x482 = rc_clone(&temp_owl__x482);
-            let temp_owl__x495 = { rc_clone(&owl__x464) };
-            let owl__x495 = rc_clone(&temp_owl__x495);
-            let temp_owl__x497 = { rc_clone(&owl__x474) };
-            let owl__x497 = rc_clone(&temp_owl__x497);
+            let owl__x482 = arc_clone(&temp_owl__x482);
+            let temp_owl__x495 = { arc_clone(&owl__x464) };
+            let owl__x495 = arc_clone(&temp_owl__x495);
+            let temp_owl__x497 = { arc_clone(&owl__x474) };
+            let owl__x497 = arc_clone(&temp_owl__x497);
             let temp_owl__x499 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x495))),
-                vec_as_slice(&(*rc_clone(&owl__x497))),
+                vec_as_slice(&(*arc_clone(&owl__x495))),
+                vec_as_slice(&(*arc_clone(&owl__x497))),
             )
             };
-            let owl__x499 = rc_new(temp_owl__x499);
-            let temp_owl__x501 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x499)))) };
-            let owl__x501 = rc_clone(&temp_owl__x501);
-            let temp_owl__x502 = { rc_clone(&owl__x501) };
-            let owl__x502 = rc_clone(&temp_owl__x502);
-            let temp_owl__x512 = { rc_clone(&owl_dhpk_S_resp25125) };
-            let owl__x512 = rc_clone(&temp_owl__x512);
-            let temp_owl__x514 = { rc_clone(&self.owl_E_init) };
-            let owl__x514 = rc_clone(&temp_owl__x514);
+            let owl__x499 = arc_new(temp_owl__x499);
+            let temp_owl__x501 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x499)))) };
+            let owl__x501 = arc_clone(&temp_owl__x501);
+            let temp_owl__x502 = { arc_clone(&owl__x501) };
+            let owl__x502 = arc_clone(&temp_owl__x502);
+            let temp_owl__x512 = { arc_clone(&owl_dhpk_S_resp25125) };
+            let owl__x512 = arc_clone(&temp_owl__x512);
+            let temp_owl__x514 = { arc_clone(&self.owl_E_init) };
+            let owl__x514 = arc_clone(&temp_owl__x514);
             let temp_owl__x516 = {
             owl_dh_combine(
-                vec_as_slice(&(*rc_clone(&owl__x512))),
-                vec_as_slice(&(*rc_clone(&owl__x514))),
+                vec_as_slice(&(*arc_clone(&owl__x512))),
+                vec_as_slice(&(*arc_clone(&owl__x514))),
             )
             };
-            let owl__x516 = rc_clone(&temp_owl__x516);
-            let temp_owl__x517 = { rc_clone(&owl__x516) };
-            let owl__x517 = rc_clone(&temp_owl__x517);
-            let temp_owl__x522 = { rc_clone(&owl__x482) };
-            let owl__x522 = rc_clone(&temp_owl__x522);
-            let temp_owl__x524 = { rc_clone(&owl__x517) };
-            let owl__x524 = rc_clone(&temp_owl__x524);
+            let owl__x516 = arc_clone(&temp_owl__x516);
+            let temp_owl__x517 = { arc_clone(&owl__x516) };
+            let owl__x517 = arc_clone(&temp_owl__x517);
+            let temp_owl__x522 = { arc_clone(&owl__x482) };
+            let owl__x522 = arc_clone(&temp_owl__x522);
+            let temp_owl__x524 = { arc_clone(&owl__x517) };
+            let owl__x524 = arc_clone(&temp_owl__x524);
             let owl_msg1_C2739 = owl_extract_expand_to_len(
                 0 + nonce_size() + key_size(),
-                vec_as_slice(&(*rc_clone(&owl__x522))),
-                vec_as_slice(&(*rc_clone(&owl__x524))),
+                vec_as_slice(&(*arc_clone(&owl__x522))),
+                vec_as_slice(&(*arc_clone(&owl__x524))),
             );
             let temp_owl__x525 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C2739), 0, 0 + nonce_size())),
             )
             };
-            let owl__x525 = rc_clone(&temp_owl__x525);
-            let temp_owl__x530 = { rc_clone(&owl__x482) };
-            let owl__x530 = rc_clone(&temp_owl__x530);
-            let temp_owl__x532 = { rc_clone(&owl__x517) };
-            let owl__x532 = rc_clone(&temp_owl__x532);
+            let owl__x525 = arc_clone(&temp_owl__x525);
+            let temp_owl__x530 = { arc_clone(&owl__x482) };
+            let owl__x530 = arc_clone(&temp_owl__x530);
+            let temp_owl__x532 = { arc_clone(&owl__x517) };
+            let owl__x532 = arc_clone(&temp_owl__x532);
             let temp_owl__x533 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(
                     slice_subrange(
                         vec_as_slice(&*owl_msg1_C2739),
@@ -2606,78 +2605,78 @@ impl cfg_Initiator {
                 ),
             )
             };
-            let owl__x533 = rc_clone(&temp_owl__x533);
-            let temp_owl__x541 = { rc_clone(&owl__x533) };
-            let owl__x541 = rc_clone(&temp_owl__x541);
-            let temp_owl__x545 = { rc_clone(&self.owl_S_init) };
-            let owl__x545 = rc_clone(&temp_owl__x545);
-            let temp_owl__x546 = { owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x545)))) };
-            let owl__x546 = rc_clone(&temp_owl__x546);
-            let temp_owl__x547 = { rc_clone(&owl__x546) };
-            let owl__x547 = rc_clone(&temp_owl__x547);
-            let temp_owl__x549 = { rc_clone(&owl__x502) };
-            let owl__x549 = rc_clone(&temp_owl__x549);
+            let owl__x533 = arc_clone(&temp_owl__x533);
+            let temp_owl__x541 = { arc_clone(&owl__x533) };
+            let owl__x541 = arc_clone(&temp_owl__x541);
+            let temp_owl__x545 = { arc_clone(&self.owl_S_init) };
+            let owl__x545 = arc_clone(&temp_owl__x545);
+            let temp_owl__x546 = { owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x545)))) };
+            let owl__x546 = arc_clone(&temp_owl__x546);
+            let temp_owl__x547 = { arc_clone(&owl__x546) };
+            let owl__x547 = arc_clone(&temp_owl__x547);
+            let temp_owl__x549 = { arc_clone(&owl__x502) };
+            let owl__x549 = arc_clone(&temp_owl__x549);
             let temp_owl__x550 = {
                 match owl_enc_st_aead(
-                    vec_as_slice(&(*rc_clone(&owl__x541))),
-                    vec_as_slice(&(*rc_clone(&owl__x547))),
+                    vec_as_slice(&(*arc_clone(&owl__x541))),
+                    vec_as_slice(&(*arc_clone(&owl__x547))),
                     &mut mut_state.owl_aead_counter_msg1_C2,
-                    vec_as_slice(&(*rc_clone(&owl__x549))),
+                    vec_as_slice(&(*arc_clone(&owl__x549))),
                 ) {
                     Ok(ctxt) => ctxt,
                     Err(e) => { return Err(e) },
                 }
             };
-            let owl__x550 = rc_clone(&temp_owl__x550);
-            let temp_owl__x563 = { rc_clone(&owl__x502) };
-            let owl__x563 = rc_clone(&temp_owl__x563);
-            let temp_owl__x565 = { rc_clone(&owl__x550) };
-            let owl__x565 = rc_clone(&temp_owl__x565);
+            let owl__x550 = arc_clone(&temp_owl__x550);
+            let temp_owl__x563 = { arc_clone(&owl__x502) };
+            let owl__x563 = arc_clone(&temp_owl__x563);
+            let temp_owl__x565 = { arc_clone(&owl__x550) };
+            let owl__x565 = arc_clone(&temp_owl__x565);
             let temp_owl__x567 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x563))),
-                vec_as_slice(&(*rc_clone(&owl__x565))),
+                vec_as_slice(&(*arc_clone(&owl__x563))),
+                vec_as_slice(&(*arc_clone(&owl__x565))),
             )
             };
-            let owl__x567 = rc_new(temp_owl__x567);
-            let temp_owl__x569 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x567)))) };
-            let owl__x569 = rc_clone(&temp_owl__x569);
-            let temp_owl__x570 = { rc_clone(&owl__x569) };
-            let owl__x570 = rc_clone(&temp_owl__x570);
-            let temp_owl__x580 = { rc_clone(&owl_dhpk_S_resp25125) };
-            let owl__x580 = rc_clone(&temp_owl__x580);
-            let temp_owl__x582 = { rc_clone(&self.owl_S_init) };
-            let owl__x582 = rc_clone(&temp_owl__x582);
+            let owl__x567 = arc_new(temp_owl__x567);
+            let temp_owl__x569 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x567)))) };
+            let owl__x569 = arc_clone(&temp_owl__x569);
+            let temp_owl__x570 = { arc_clone(&owl__x569) };
+            let owl__x570 = arc_clone(&temp_owl__x570);
+            let temp_owl__x580 = { arc_clone(&owl_dhpk_S_resp25125) };
+            let owl__x580 = arc_clone(&temp_owl__x580);
+            let temp_owl__x582 = { arc_clone(&self.owl_S_init) };
+            let owl__x582 = arc_clone(&temp_owl__x582);
             let temp_owl__x584 = {
             owl_dh_combine(
-                vec_as_slice(&(*rc_clone(&owl__x580))),
-                vec_as_slice(&(*rc_clone(&owl__x582))),
+                vec_as_slice(&(*arc_clone(&owl__x580))),
+                vec_as_slice(&(*arc_clone(&owl__x582))),
             )
             };
-            let owl__x584 = rc_clone(&temp_owl__x584);
-            let temp_owl__x585 = { rc_clone(&owl__x584) };
-            let owl__x585 = rc_clone(&temp_owl__x585);
-            let temp_owl__x590 = { rc_clone(&owl__x525) };
-            let owl__x590 = rc_clone(&temp_owl__x590);
-            let temp_owl__x592 = { rc_clone(&owl__x585) };
-            let owl__x592 = rc_clone(&temp_owl__x592);
+            let owl__x584 = arc_clone(&temp_owl__x584);
+            let temp_owl__x585 = { arc_clone(&owl__x584) };
+            let owl__x585 = arc_clone(&temp_owl__x585);
+            let temp_owl__x590 = { arc_clone(&owl__x525) };
+            let owl__x590 = arc_clone(&temp_owl__x590);
+            let temp_owl__x592 = { arc_clone(&owl__x585) };
+            let owl__x592 = arc_clone(&temp_owl__x592);
             let owl_msg1_C3740 = owl_extract_expand_to_len(
                 0 + nonce_size() + key_size(),
-                vec_as_slice(&(*rc_clone(&owl__x590))),
-                vec_as_slice(&(*rc_clone(&owl__x592))),
+                vec_as_slice(&(*arc_clone(&owl__x590))),
+                vec_as_slice(&(*arc_clone(&owl__x592))),
             );
             let temp_owl__x593 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C3740), 0, 0 + nonce_size())),
             )
             };
-            let owl__x593 = rc_clone(&temp_owl__x593);
-            let temp_owl__x598 = { rc_clone(&owl__x525) };
-            let owl__x598 = rc_clone(&temp_owl__x598);
-            let temp_owl__x600 = { rc_clone(&owl__x585) };
-            let owl__x600 = rc_clone(&temp_owl__x600);
+            let owl__x593 = arc_clone(&temp_owl__x593);
+            let temp_owl__x598 = { arc_clone(&owl__x525) };
+            let owl__x598 = arc_clone(&temp_owl__x598);
+            let temp_owl__x600 = { arc_clone(&owl__x585) };
+            let owl__x600 = arc_clone(&temp_owl__x600);
             let temp_owl__x601 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(
                     slice_subrange(
                         vec_as_slice(&*owl_msg1_C3740),
@@ -2687,7 +2686,7 @@ impl cfg_Initiator {
                 ),
             )
             };
-            let owl__x601 = rc_clone(&temp_owl__x601);
+            let owl__x601 = arc_clone(&temp_owl__x601);
             let (temp_owl__x603, Tracked(itree)): (
                 _,
                 Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
@@ -2697,40 +2696,40 @@ impl cfg_Initiator {
 , timestamp_i_spec(*self, *mut_state)
 , self.owl_timestamp_i(mut_state) )
             };
-            let owl__x603 = rc_clone(&temp_owl__x603);
-            let temp_owl__x609 = { rc_clone(&owl__x601) };
-            let owl__x609 = rc_clone(&temp_owl__x609);
-            let temp_owl__x611 = { rc_clone(&owl__x603) };
-            let owl__x611 = rc_clone(&temp_owl__x611);
-            let temp_owl__x613 = { rc_clone(&owl__x570) };
-            let owl__x613 = rc_clone(&temp_owl__x613);
+            let owl__x603 = arc_clone(&temp_owl__x603);
+            let temp_owl__x609 = { arc_clone(&owl__x601) };
+            let owl__x609 = arc_clone(&temp_owl__x609);
+            let temp_owl__x611 = { arc_clone(&owl__x603) };
+            let owl__x611 = arc_clone(&temp_owl__x611);
+            let temp_owl__x613 = { arc_clone(&owl__x570) };
+            let owl__x613 = arc_clone(&temp_owl__x613);
             let temp_owl__x614 = {
                 match owl_enc_st_aead(
-                    vec_as_slice(&(*rc_clone(&owl__x609))),
-                    vec_as_slice(&(*rc_clone(&owl__x611))),
+                    vec_as_slice(&(*arc_clone(&owl__x609))),
+                    vec_as_slice(&(*arc_clone(&owl__x611))),
                     &mut mut_state.owl_aead_counter_msg1_C3,
-                    vec_as_slice(&(*rc_clone(&owl__x613))),
+                    vec_as_slice(&(*arc_clone(&owl__x613))),
                 ) {
                     Ok(ctxt) => ctxt,
                     Err(e) => { return Err(e) },
                 }
             };
-            let owl__x614 = rc_clone(&temp_owl__x614);
-            let temp_owl__x627 = { rc_clone(&owl__x570) };
-            let owl__x627 = rc_clone(&temp_owl__x627);
-            let temp_owl__x629 = { rc_clone(&owl__x603) };
-            let owl__x629 = rc_clone(&temp_owl__x629);
+            let owl__x614 = arc_clone(&temp_owl__x614);
+            let temp_owl__x627 = { arc_clone(&owl__x570) };
+            let owl__x627 = arc_clone(&temp_owl__x627);
+            let temp_owl__x629 = { arc_clone(&owl__x603) };
+            let owl__x629 = arc_clone(&temp_owl__x629);
             let temp_owl__x631 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x627))),
-                vec_as_slice(&(*rc_clone(&owl__x629))),
+                vec_as_slice(&(*arc_clone(&owl__x627))),
+                vec_as_slice(&(*arc_clone(&owl__x629))),
             )
             };
-            let owl__x631 = rc_new(temp_owl__x631);
-            let temp_owl__x633 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x631)))) };
-            let owl__x633 = rc_clone(&temp_owl__x633);
-            let temp_owl__x634 = { rc_clone(&owl__x633) };
-            let owl__x634 = rc_clone(&temp_owl__x634);
+            let owl__x631 = arc_new(temp_owl__x631);
+            let temp_owl__x633 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x631)))) };
+            let owl__x633 = arc_clone(&temp_owl__x633);
+            let temp_owl__x634 = { arc_clone(&owl__x633) };
+            let owl__x634 = arc_clone(&temp_owl__x634);
             let (temp_owl__x636, Tracked(itree)): (
                 _,
                 Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
@@ -2740,92 +2739,95 @@ impl cfg_Initiator {
 , get_sender_i_spec(*self, *mut_state)
 , self.owl_get_sender_i(mut_state) )
             };
-            let owl__x636 = rc_clone(&temp_owl__x636);
+            let owl__x636 = arc_clone(&temp_owl__x636);
             let temp_owl__x640 = { owl_msg1_tag_value() };
-            let owl__x640 = rc_new(temp_owl__x640);
-            let temp_owl__x641 = { rc_clone(&owl__x640) };
-            let owl__x641 = rc_clone(&temp_owl__x641);
+            let owl__x640 = arc_new(temp_owl__x640);
+            let temp_owl__x641 = { arc_clone(&owl__x640) };
+            let owl__x641 = arc_clone(&temp_owl__x641);
             let temp_owl__x646 = { owl_mac1() };
-            let owl__x646 = rc_new(temp_owl__x646);
-            let temp_owl__x648 = { rc_clone(&owl_dhpk_S_resp25125) };
-            let owl__x648 = rc_clone(&temp_owl__x648);
+            let owl__x646 = arc_new(temp_owl__x646);
+            let temp_owl__x648 = { arc_clone(&owl_dhpk_S_resp25125) };
+            let owl__x648 = arc_clone(&temp_owl__x648);
             let owl_msg1_mac1_key741 = owl_extract_expand_to_len(
                 0 + mackey_size(),
-                vec_as_slice(&(*rc_clone(&owl__x646))),
-                vec_as_slice(&(*rc_clone(&owl__x648))),
+                vec_as_slice(&(*arc_clone(&owl__x646))),
+                vec_as_slice(&(*arc_clone(&owl__x648))),
             );
             let temp_owl__x649 = {
-            rc_new(
+            arc_new(
                 slice_to_vec(
                     slice_subrange(vec_as_slice(&*owl_msg1_mac1_key741), 0, 0 + mackey_size()),
                 ),
             )
             };
-            let owl__x649 = rc_clone(&temp_owl__x649);
-            let temp_owl__x662 = { rc_clone(&owl__x649) };
-            let owl__x662 = rc_clone(&temp_owl__x662);
-            let temp_owl__x668 = { rc_clone(&owl__x641) };
-            let owl__x668 = rc_clone(&temp_owl__x668);
-            let temp_owl__x670 = { rc_clone(&owl__x636) };
-            let owl__x670 = rc_clone(&temp_owl__x670);
+            let owl__x649 = arc_clone(&temp_owl__x649);
+            let temp_owl__x662 = { arc_clone(&owl__x649) };
+            let owl__x662 = arc_clone(&temp_owl__x662);
+            let temp_owl__x668 = { arc_clone(&owl__x641) };
+            let owl__x668 = arc_clone(&temp_owl__x668);
+            let temp_owl__x670 = { arc_clone(&owl__x636) };
+            let owl__x670 = arc_clone(&temp_owl__x670);
             let temp_owl__x671 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x668))),
-                vec_as_slice(&(*rc_clone(&owl__x670))),
+                vec_as_slice(&(*arc_clone(&owl__x668))),
+                vec_as_slice(&(*arc_clone(&owl__x670))),
             )
             };
-            let owl__x671 = rc_new(temp_owl__x671);
-            let temp_owl__x673 = { rc_clone(&owl__x474) };
-            let owl__x673 = rc_clone(&temp_owl__x673);
+            let owl__x671 = arc_new(temp_owl__x671);
+            let temp_owl__x673 = { arc_clone(&owl__x474) };
+            let owl__x673 = arc_clone(&temp_owl__x673);
             let temp_owl__x674 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x671))),
-                vec_as_slice(&(*rc_clone(&owl__x673))),
+                vec_as_slice(&(*arc_clone(&owl__x671))),
+                vec_as_slice(&(*arc_clone(&owl__x673))),
             )
             };
-            let owl__x674 = rc_new(temp_owl__x674);
-            let temp_owl__x676 = { rc_clone(&owl__x550) };
-            let owl__x676 = rc_clone(&temp_owl__x676);
+            let owl__x674 = arc_new(temp_owl__x674);
+            let temp_owl__x676 = { arc_clone(&owl__x550) };
+            let owl__x676 = arc_clone(&temp_owl__x676);
             let temp_owl__x677 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x674))),
-                vec_as_slice(&(*rc_clone(&owl__x676))),
+                vec_as_slice(&(*arc_clone(&owl__x674))),
+                vec_as_slice(&(*arc_clone(&owl__x676))),
             )
             };
-            let owl__x677 = rc_new(temp_owl__x677);
-            let temp_owl__x679 = { rc_clone(&owl__x614) };
-            let owl__x679 = rc_clone(&temp_owl__x679);
+            let owl__x677 = arc_new(temp_owl__x677);
+            let temp_owl__x679 = { arc_clone(&owl__x614) };
+            let owl__x679 = arc_clone(&temp_owl__x679);
             let temp_owl__x680 = {
             owl_concat(
-                vec_as_slice(&(*rc_clone(&owl__x677))),
-                vec_as_slice(&(*rc_clone(&owl__x679))),
+                vec_as_slice(&(*arc_clone(&owl__x677))),
+                vec_as_slice(&(*arc_clone(&owl__x679))),
             )
             };
-            let owl__x680 = rc_new(temp_owl__x680);
+            let owl__x680 = arc_new(temp_owl__x680);
             let temp_owl__x681 = {
-            owl_mac(vec_as_slice(&(*rc_clone(&owl__x662))), vec_as_slice(&(*rc_clone(&owl__x680))))
+            owl_mac(
+                vec_as_slice(&(*arc_clone(&owl__x662))),
+                vec_as_slice(&(*arc_clone(&owl__x680))),
+            )
             };
-            let owl__x681 = rc_clone(&temp_owl__x681);
-            let temp_owl__x703 = { rc_clone(&owl__x641) };
-            let owl__x703 = rc_clone(&temp_owl__x703);
-            let temp_owl__x705 = { rc_clone(&owl__x636) };
-            let owl__x705 = rc_clone(&temp_owl__x705);
-            let temp_owl__x707 = { rc_clone(&owl__x474) };
-            let owl__x707 = rc_clone(&temp_owl__x707);
-            let temp_owl__x709 = { rc_clone(&owl__x550) };
-            let owl__x709 = rc_clone(&temp_owl__x709);
-            let temp_owl__x711 = { rc_clone(&owl__x614) };
-            let owl__x711 = rc_clone(&temp_owl__x711);
-            let temp_owl__x713 = { rc_clone(&owl__x681) };
-            let owl__x713 = rc_clone(&temp_owl__x713);
+            let owl__x681 = arc_clone(&temp_owl__x681);
+            let temp_owl__x703 = { arc_clone(&owl__x641) };
+            let owl__x703 = arc_clone(&temp_owl__x703);
+            let temp_owl__x705 = { arc_clone(&owl__x636) };
+            let owl__x705 = arc_clone(&temp_owl__x705);
+            let temp_owl__x707 = { arc_clone(&owl__x474) };
+            let owl__x707 = arc_clone(&temp_owl__x707);
+            let temp_owl__x709 = { arc_clone(&owl__x550) };
+            let owl__x709 = arc_clone(&temp_owl__x709);
+            let temp_owl__x711 = { arc_clone(&owl__x614) };
+            let owl__x711 = arc_clone(&temp_owl__x711);
+            let temp_owl__x713 = { arc_clone(&owl__x681) };
+            let owl__x713 = arc_clone(&temp_owl__x713);
             let temp_owl__x715 = {
             owl_msg1 {
-                owl__msg1_tag: clone_vec_u8(&*rc_clone(&owl__x703)),
-                owl__msg1_sender: clone_vec_u8(&*rc_clone(&owl__x705)),
-                owl__msg1_ephemeral: clone_vec_u8(&*rc_clone(&owl__x707)),
-                owl__msg1_static: clone_vec_u8(&*rc_clone(&owl__x709)),
-                owl__msg1_timestamp: clone_vec_u8(&*rc_clone(&owl__x711)),
-                owl__msg1_mac1: clone_vec_u8(&*rc_clone(&owl__x713)),
+                owl__msg1_tag: clone_vec_u8(&*arc_clone(&owl__x703)),
+                owl__msg1_sender: clone_vec_u8(&*arc_clone(&owl__x705)),
+                owl__msg1_ephemeral: clone_vec_u8(&*arc_clone(&owl__x707)),
+                owl__msg1_static: clone_vec_u8(&*arc_clone(&owl__x709)),
+                owl__msg1_timestamp: clone_vec_u8(&*arc_clone(&owl__x711)),
+                owl__msg1_mac1: clone_vec_u8(&*arc_clone(&owl__x713)),
             }
             };
             let owl__x715 = temp_owl__x715;
@@ -2842,14 +2844,14 @@ impl cfg_Initiator {
             )
             };
             let owl__x721 = temp_owl__x721;
-            let temp_owl__x731 = { rc_clone(&owl__x593) };
-            let owl__x731 = rc_clone(&temp_owl__x731);
-            let temp_owl__x733 = { rc_clone(&owl__x634) };
-            let owl__x733 = rc_clone(&temp_owl__x733);
+            let temp_owl__x731 = { arc_clone(&owl__x593) };
+            let owl__x731 = arc_clone(&temp_owl__x731);
+            let temp_owl__x733 = { arc_clone(&owl__x634) };
+            let owl__x733 = arc_clone(&temp_owl__x733);
             let temp_owl__x735 = {
             owl_initiator_msg1_val {
-                owl__initiator_msg1_C3: clone_vec_u8(&*rc_clone(&owl__x731)),
-                owl__initiator_msg1_H4: clone_vec_u8(&*rc_clone(&owl__x733)),
+                owl__initiator_msg1_C3: clone_vec_u8(&*arc_clone(&owl__x731)),
+                owl__initiator_msg1_H4: clone_vec_u8(&*arc_clone(&owl__x733)),
             }
             };
             let owl__x735 = temp_owl__x735;
@@ -2869,7 +2871,7 @@ impl cfg_Initiator {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
     ) -> (res: Result<
-        (Rc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
+        (Arc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
@@ -2882,7 +2884,7 @@ impl cfg_Initiator {
         let tracked mut itree = itree;
         let res_inner = {
             let t = crate::wireguard::handshake::timestamp::now().to_vec();
-            (rc_new(t), Tracked(itree))
+            (arc_new(t), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -2894,7 +2896,7 @@ impl cfg_Initiator {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
     ) -> (res: Result<
-        (Rc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
+        (Arc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
@@ -2927,16 +2929,16 @@ impl state_Responder {
 
 pub struct cfg_Responder {
     pub listener: TcpListener,
-    pub owl_S_resp: Rc<Vec<u8>>,
-    pub owl_E_resp: Rc<Vec<u8>>,
-    pub pk_owl_S_resp: Rc<Vec<u8>>,
-    pub pk_owl_S_init: Rc<Vec<u8>>,
-    pub pk_owl_E_resp: Rc<Vec<u8>>,
-    pub pk_owl_E_init: Rc<Vec<u8>>,
-    pub salt: Rc<Vec<u8>>,    
+    pub owl_S_resp: Arc<Vec<u8>>,
+    pub owl_E_resp: Arc<Vec<u8>>,
+    pub pk_owl_S_resp: Arc<Vec<u8>>,
+    pub pk_owl_S_init: Arc<Vec<u8>>,
+    pub pk_owl_E_resp: Arc<Vec<u8>>,
+    pub pk_owl_E_init: Arc<Vec<u8>>,
+    pub salt: Arc<Vec<u8>>,
 }
 
-impl cfg_Responder {
+impl cfg_Responder { 
 
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_resp(
@@ -2944,9 +2946,9 @@ impl cfg_Responder {
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
         owl_transp_keys_val33858: owl_transp_keys,
-        owl_c33857: Rc<Vec<u8>>,
+        owl_c33857: Arc<Vec<u8>>,
     ) -> (res: Result<
-        (Option<Rc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>),
+        (Option<Arc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>),
         OwlError,
     >)
         requires
@@ -2963,56 +2965,56 @@ impl cfg_Responder {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let temp_owl__x775 = { rc_clone(&owl_c33857) };
-            let owl__x775 = rc_clone(&temp_owl__x775);
-            if let Some(parseval) = parse_owl_transp(vec_as_slice(&(*rc_clone(&owl__x775)))) {
-                let owl__748 = rc_new(parseval.owl__transp_tag);
-                let owl_from747 = rc_new(parseval.owl__transp_receiver);
-                let owl_ctr746 = rc_new(parseval.owl__transp_counter);
-                let owl_pkt745 = rc_new(parseval.owl__transp_packet);
+            let temp_owl__x775 = { arc_clone(&owl_c33857) };
+            let owl__x775 = arc_clone(&temp_owl__x775);
+            if let Some(parseval) = parse_owl_transp(vec_as_slice(&(*arc_clone(&owl__x775)))) {
+                let owl__748 = arc_new(parseval.owl__transp_tag);
+                let owl_from747 = arc_new(parseval.owl__transp_receiver);
+                let owl_ctr746 = arc_new(parseval.owl__transp_counter);
+                let owl_pkt745 = arc_new(parseval.owl__transp_packet);
                 {
                     let temp_owl__x774 = { owl_transp_keys_val33858 };
                     let owl__x774 = temp_owl__x774;
                     let parseval = owl__x774;
-                    let owl_initiator_name754 = rc_new(parseval.owl__transp_keys_initiator);
-                    let owl__753 = rc_new(parseval.owl__transp_keys_responder);
-                    let owl_eph_init752 = rc_new(parseval.owl__transp_keys_init_ephemeral);
-                    let owl__751 = rc_new(parseval.owl__transp_keys_resp_ephemeral);
-                    let owl_i2r_750 = rc_new(parseval.owl__transp_keys_T_init_send);
-                    let owl__749 = rc_new(parseval.owl__transp_keys_T_resp_send);
+                    let owl_initiator_name754 = arc_new(parseval.owl__transp_keys_initiator);
+                    let owl__753 = arc_new(parseval.owl__transp_keys_responder);
+                    let owl_eph_init752 = arc_new(parseval.owl__transp_keys_init_ephemeral);
+                    let owl__751 = arc_new(parseval.owl__transp_keys_resp_ephemeral);
+                    let owl_i2r_750 = arc_new(parseval.owl__transp_keys_T_init_send);
+                    let owl__749 = arc_new(parseval.owl__transp_keys_T_resp_send);
                     {
-                        let temp_owl__x770 = { rc_clone(&owl_c33857) };
-                        let owl__x770 = rc_clone(&temp_owl__x770);
-                        let temp_owl__x772 = { rc_clone(&owl_initiator_name754) };
-                        let owl__x772 = rc_clone(&temp_owl__x772);
+                        let temp_owl__x770 = { arc_clone(&owl_c33857) };
+                        let owl__x770 = arc_clone(&temp_owl__x770);
+                        let temp_owl__x772 = { arc_clone(&owl_initiator_name754) };
+                        let owl__x772 = arc_clone(&temp_owl__x772);
                         let temp_owl__x773 = {
-                        rc_vec_eq(&rc_clone(&owl__x770), &rc_clone(&owl__x772))
+                        rc_vec_eq(&arc_clone(&owl__x770), &arc_clone(&owl__x772))
                         };
                         let owl__x773 = temp_owl__x773;
                         if owl__x773 {
-                            let temp_owl__x759 = { rc_clone(&owl_i2r_750) };
-                            let owl__x759 = rc_clone(&temp_owl__x759);
-                            let temp_owl__x760 = { rc_clone(&owl__x759) };
-                            let owl__x760 = rc_clone(&temp_owl__x760);
-                            let temp_owl__x763 = { rc_clone(&owl__x760) };
-                            let owl__x763 = rc_clone(&temp_owl__x763);
-                            let temp_owl__x764 = { rc_clone(&owl_pkt745) };
-                            let owl__x764 = rc_clone(&temp_owl__x764);
+                            let temp_owl__x759 = { arc_clone(&owl_i2r_750) };
+                            let owl__x759 = arc_clone(&temp_owl__x759);
+                            let temp_owl__x760 = { arc_clone(&owl__x759) };
+                            let owl__x760 = arc_clone(&temp_owl__x760);
+                            let temp_owl__x763 = { arc_clone(&owl__x760) };
+                            let owl__x763 = arc_clone(&temp_owl__x763);
+                            let temp_owl__x764 = { arc_clone(&owl_pkt745) };
+                            let owl__x764 = arc_clone(&temp_owl__x764);
                             let temp_owl__x765 = {
                                 {
                                     let x: Vec<u8> = mk_vec_u8![];
                                     x
                                 }
                             };
-                            let owl__x765 = rc_new(temp_owl__x765);
-                            let temp_owl__x766 = { rc_clone(&owl_ctr746) };
-                            let owl__x766 = rc_clone(&temp_owl__x766);
+                            let owl__x765 = arc_new(temp_owl__x765);
+                            let temp_owl__x766 = { arc_clone(&owl_ctr746) };
+                            let owl__x766 = arc_clone(&temp_owl__x766);
                             (
                                 owl_dec_st_aead(
-                                    vec_as_slice(&(*rc_clone(&owl__x763))),
-                                    vec_as_slice(&(*rc_clone(&owl__x764))),
-                                    vec_as_slice(&(*rc_clone(&owl__x766))),
-                                    vec_as_slice(&(*rc_clone(&owl__x765))),
+                                    vec_as_slice(&(*arc_clone(&owl__x763))),
+                                    vec_as_slice(&(*arc_clone(&owl__x764))),
+                                    vec_as_slice(&(*arc_clone(&owl__x766))),
+                                    vec_as_slice(&(*arc_clone(&owl__x765))),
                                 ),
                                 Tracked(itree),
                             )
@@ -3036,7 +3038,7 @@ impl cfg_Responder {
         Tracked(itree): Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
         owl_transp_keys_val32093: owl_transp_keys,
-        owl_plaintext32092: Rc<Vec<u8>>,
+        owl_plaintext32092: Arc<Vec<u8>>,
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>),
         OwlError,
@@ -3058,69 +3060,69 @@ impl cfg_Responder {
             let temp_owl__x856 = { owl_transp_keys_val32093 };
             let owl__x856 = temp_owl__x856;
             let parseval = owl__x856;
-            let owl_transp_receiver787 = rc_new(parseval.owl__transp_keys_initiator);
-            let owl__786 = rc_new(parseval.owl__transp_keys_responder);
-            let owl_eph_init785 = rc_new(parseval.owl__transp_keys_init_ephemeral);
-            let owl__784 = rc_new(parseval.owl__transp_keys_resp_ephemeral);
-            let owl__783 = rc_new(parseval.owl__transp_keys_T_init_send);
-            let owl_r2i_782 = rc_new(parseval.owl__transp_keys_T_resp_send);
+            let owl_transp_receiver787 = arc_new(parseval.owl__transp_keys_initiator);
+            let owl__786 = arc_new(parseval.owl__transp_keys_responder);
+            let owl_eph_init785 = arc_new(parseval.owl__transp_keys_init_ephemeral);
+            let owl__784 = arc_new(parseval.owl__transp_keys_resp_ephemeral);
+            let owl__783 = arc_new(parseval.owl__transp_keys_T_init_send);
+            let owl_r2i_782 = arc_new(parseval.owl__transp_keys_T_resp_send);
             {
-                let temp_owl__x792 = { rc_clone(&owl_r2i_782) };
-                let owl__x792 = rc_clone(&temp_owl__x792);
-                let temp_owl__x793 = { rc_clone(&owl__x792) };
-                let owl__x793 = rc_clone(&temp_owl__x793);
+                let temp_owl__x792 = { arc_clone(&owl_r2i_782) };
+                let owl__x792 = arc_clone(&temp_owl__x792);
+                let temp_owl__x793 = { arc_clone(&owl__x792) };
+                let owl__x793 = arc_clone(&temp_owl__x793);
                 let temp_owl__x795 = { owl_counter_as_bytes(&(mut_state.owl_N_resp_send)) };
-                let owl__x795 = rc_new(temp_owl__x795);
+                let owl__x795 = arc_new(temp_owl__x795);
                 let temp_owl__x799 = { owl_transp_tag_value() };
-                let owl__x799 = rc_new(temp_owl__x799);
-                let temp_owl__x800 = { rc_clone(&owl__x799) };
-                let owl__x800 = rc_clone(&temp_owl__x800);
-                let temp_owl__x851 = { rc_clone(&owl_transp_receiver787) };
-                let owl__x851 = rc_clone(&temp_owl__x851);
-                let temp_owl__x852 = { vec_length(&(*rc_clone(&owl__x851))) };
+                let owl__x799 = arc_new(temp_owl__x799);
+                let temp_owl__x800 = { arc_clone(&owl__x799) };
+                let owl__x800 = arc_clone(&temp_owl__x800);
+                let temp_owl__x851 = { arc_clone(&owl_transp_receiver787) };
+                let owl__x851 = arc_clone(&temp_owl__x851);
+                let temp_owl__x852 = { vec_length(&(*arc_clone(&owl__x851))) };
                 let owl__x852 = temp_owl__x852;
                 let temp_owl__x854 = { 4 };
                 let owl__x854 = temp_owl__x854;
                 let temp_owl__x855 = { owl__x852 == owl__x854 };
                 let owl__x855 = temp_owl__x855;
                 if owl__x855 {
-                    let temp_owl__x806 = { rc_clone(&owl__x793) };
-                    let owl__x806 = rc_clone(&temp_owl__x806);
-                    let temp_owl__x808 = { rc_clone(&owl_plaintext32092) };
-                    let owl__x808 = rc_clone(&temp_owl__x808);
+                    let temp_owl__x806 = { arc_clone(&owl__x793) };
+                    let owl__x806 = arc_clone(&temp_owl__x806);
+                    let temp_owl__x808 = { arc_clone(&owl_plaintext32092) };
+                    let owl__x808 = arc_clone(&temp_owl__x808);
                     let temp_owl__x810 = {
                         {
                             let x: Vec<u8> = mk_vec_u8![];
                             x
                         }
                     };
-                    let owl__x810 = rc_new(temp_owl__x810);
+                    let owl__x810 = arc_new(temp_owl__x810);
                     let temp_owl__x811 = {
                         match owl_enc_st_aead(
-                            vec_as_slice(&(*rc_clone(&owl__x806))),
-                            vec_as_slice(&(*rc_clone(&owl__x808))),
+                            vec_as_slice(&(*arc_clone(&owl__x806))),
+                            vec_as_slice(&(*arc_clone(&owl__x808))),
                             &mut mut_state.owl_N_resp_send,
-                            vec_as_slice(&(*rc_clone(&owl__x810))),
+                            vec_as_slice(&(*arc_clone(&owl__x810))),
                         ) {
                             Ok(ctxt) => ctxt,
                             Err(e) => { return Err(e) },
                         }
                     };
-                    let owl__x811 = rc_clone(&temp_owl__x811);
-                    let temp_owl__x827 = { rc_clone(&owl__x800) };
-                    let owl__x827 = rc_clone(&temp_owl__x827);
-                    let temp_owl__x829 = { rc_clone(&owl_transp_receiver787) };
-                    let owl__x829 = rc_clone(&temp_owl__x829);
-                    let temp_owl__x831 = { rc_clone(&owl__x795) };
-                    let owl__x831 = rc_clone(&temp_owl__x831);
-                    let temp_owl__x833 = { rc_clone(&owl__x811) };
-                    let owl__x833 = rc_clone(&temp_owl__x833);
+                    let owl__x811 = arc_clone(&temp_owl__x811);
+                    let temp_owl__x827 = { arc_clone(&owl__x800) };
+                    let owl__x827 = arc_clone(&temp_owl__x827);
+                    let temp_owl__x829 = { arc_clone(&owl_transp_receiver787) };
+                    let owl__x829 = arc_clone(&temp_owl__x829);
+                    let temp_owl__x831 = { arc_clone(&owl__x795) };
+                    let owl__x831 = arc_clone(&temp_owl__x831);
+                    let temp_owl__x833 = { arc_clone(&owl__x811) };
+                    let owl__x833 = arc_clone(&temp_owl__x833);
                     let temp_owl__x835 = {
                     owl_transp {
-                        owl__transp_tag: clone_vec_u8(&*rc_clone(&owl__x827)),
-                        owl__transp_receiver: clone_vec_u8(&*rc_clone(&owl__x829)),
-                        owl__transp_counter: clone_vec_u8(&*rc_clone(&owl__x831)),
-                        owl__transp_packet: clone_vec_u8(&*rc_clone(&owl__x833)),
+                        owl__transp_tag: clone_vec_u8(&*arc_clone(&owl__x827)),
+                        owl__transp_receiver: clone_vec_u8(&*arc_clone(&owl__x829)),
+                        owl__transp_counter: clone_vec_u8(&*arc_clone(&owl__x831)),
+                        owl__transp_packet: clone_vec_u8(&*arc_clone(&owl__x833)),
                     }
                     };
                     let owl__x835 = temp_owl__x835;
@@ -3174,142 +3176,142 @@ impl cfg_Responder {
             let temp_owl__x1179 = { owl__x1180 };
             let owl__x1179 = temp_owl__x1179;
             let parseval = owl__x1179;
-            let owl_C3870 = rc_new(parseval.owl__responder_msg1_C3);
-            let owl_H4869 = rc_new(parseval.owl__responder_msg1_H4);
-            let owl_ephemeral_868 = rc_new(parseval.owl__responder_msg1_ephemeral);
-            let owl_dhpk_S_init867 = rc_new(parseval.owl__responder_msg1_sender_pk);
-            let owl_msg2_receiver866 = rc_new(parseval.owl__responder_msg1_sender);
+            let owl_C3870 = arc_new(parseval.owl__responder_msg1_C3);
+            let owl_H4869 = arc_new(parseval.owl__responder_msg1_H4);
+            let owl_ephemeral_868 = arc_new(parseval.owl__responder_msg1_ephemeral);
+            let owl_dhpk_S_init867 = arc_new(parseval.owl__responder_msg1_sender_pk);
+            let owl_msg2_receiver866 = arc_new(parseval.owl__responder_msg1_sender);
             {
-                let temp_owl__x875 = { rc_clone(&owl_ephemeral_868) };
-                let owl__x875 = rc_clone(&temp_owl__x875);
-                let temp_owl__x876 = { rc_clone(&owl__x875) };
-                let owl__x876 = rc_clone(&temp_owl__x876);
-                let temp_owl__x883 = { rc_clone(&self.owl_E_resp) };
-                let owl__x883 = rc_clone(&temp_owl__x883);
-                let temp_owl__x885 = { owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x883)))) };
-                let owl__x885 = rc_clone(&temp_owl__x885);
-                let temp_owl__x886 = { rc_clone(&owl__x885) };
-                let owl__x886 = rc_clone(&temp_owl__x886);
+                let temp_owl__x875 = { arc_clone(&owl_ephemeral_868) };
+                let owl__x875 = arc_clone(&temp_owl__x875);
+                let temp_owl__x876 = { arc_clone(&owl__x875) };
+                let owl__x876 = arc_clone(&temp_owl__x876);
+                let temp_owl__x883 = { arc_clone(&self.owl_E_resp) };
+                let owl__x883 = arc_clone(&temp_owl__x883);
+                let temp_owl__x885 = { owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x883)))) };
+                let owl__x885 = arc_clone(&temp_owl__x885);
+                let temp_owl__x886 = { arc_clone(&owl__x885) };
+                let owl__x886 = arc_clone(&temp_owl__x886);
                 let temp_owl__x890 = {
                     {
                         let x: Vec<u8> = mk_vec_u8![0x00u8, 0x00u8, 0x00u8, 0x00u8, ];
                         x
                     }
                 };
-                let owl__x890 = rc_new(temp_owl__x890);
-                let temp_owl__x891 = { rc_clone(&owl__x890) };
-                let owl__x891 = rc_clone(&temp_owl__x891);
-                let temp_owl__x896 = { rc_clone(&owl_C3870) };
-                let owl__x896 = rc_clone(&temp_owl__x896);
-                let temp_owl__x898 = { rc_clone(&owl__x886) };
-                let owl__x898 = rc_clone(&temp_owl__x898);
+                let owl__x890 = arc_new(temp_owl__x890);
+                let temp_owl__x891 = { arc_clone(&owl__x890) };
+                let owl__x891 = arc_clone(&temp_owl__x891);
+                let temp_owl__x896 = { arc_clone(&owl_C3870) };
+                let owl__x896 = arc_clone(&temp_owl__x896);
+                let temp_owl__x898 = { arc_clone(&owl__x886) };
+                let owl__x898 = arc_clone(&temp_owl__x898);
                 let owl_msg2_C41184 = owl_extract_expand_to_len(
                     0 + nonce_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x896))),
-                    vec_as_slice(&(*rc_clone(&owl__x898))),
+                    vec_as_slice(&(*arc_clone(&owl__x896))),
+                    vec_as_slice(&(*arc_clone(&owl__x898))),
                 );
                 let temp_owl__x899 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_msg2_C41184), 0, 0 + nonce_size()),
                     ),
                 )
                 };
-                let owl__x899 = rc_clone(&temp_owl__x899);
-                let temp_owl__x912 = { rc_clone(&owl_H4869) };
-                let owl__x912 = rc_clone(&temp_owl__x912);
-                let temp_owl__x914 = { rc_clone(&owl__x886) };
-                let owl__x914 = rc_clone(&temp_owl__x914);
+                let owl__x899 = arc_clone(&temp_owl__x899);
+                let temp_owl__x912 = { arc_clone(&owl_H4869) };
+                let owl__x912 = arc_clone(&temp_owl__x912);
+                let temp_owl__x914 = { arc_clone(&owl__x886) };
+                let owl__x914 = arc_clone(&temp_owl__x914);
                 let temp_owl__x916 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x912))),
-                    vec_as_slice(&(*rc_clone(&owl__x914))),
+                    vec_as_slice(&(*arc_clone(&owl__x912))),
+                    vec_as_slice(&(*arc_clone(&owl__x914))),
                 )
                 };
-                let owl__x916 = rc_new(temp_owl__x916);
-                let temp_owl__x918 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x916)))) };
-                let owl__x918 = rc_clone(&temp_owl__x918);
-                let temp_owl__x919 = { rc_clone(&owl__x918) };
-                let owl__x919 = rc_clone(&temp_owl__x919);
-                let temp_owl__x929 = { rc_clone(&owl__x876) };
-                let owl__x929 = rc_clone(&temp_owl__x929);
-                let temp_owl__x931 = { rc_clone(&self.owl_E_resp) };
-                let owl__x931 = rc_clone(&temp_owl__x931);
+                let owl__x916 = arc_new(temp_owl__x916);
+                let temp_owl__x918 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x916)))) };
+                let owl__x918 = arc_clone(&temp_owl__x918);
+                let temp_owl__x919 = { arc_clone(&owl__x918) };
+                let owl__x919 = arc_clone(&temp_owl__x919);
+                let temp_owl__x929 = { arc_clone(&owl__x876) };
+                let owl__x929 = arc_clone(&temp_owl__x929);
+                let temp_owl__x931 = { arc_clone(&self.owl_E_resp) };
+                let owl__x931 = arc_clone(&temp_owl__x931);
                 let temp_owl__x933 = {
                 owl_dh_combine(
-                    vec_as_slice(&(*rc_clone(&owl__x929))),
-                    vec_as_slice(&(*rc_clone(&owl__x931))),
+                    vec_as_slice(&(*arc_clone(&owl__x929))),
+                    vec_as_slice(&(*arc_clone(&owl__x931))),
                 )
                 };
-                let owl__x933 = rc_clone(&temp_owl__x933);
-                let temp_owl__x934 = { rc_clone(&owl__x933) };
-                let owl__x934 = rc_clone(&temp_owl__x934);
-                let temp_owl__x939 = { rc_clone(&owl__x899) };
-                let owl__x939 = rc_clone(&temp_owl__x939);
-                let temp_owl__x941 = { rc_clone(&owl__x934) };
-                let owl__x941 = rc_clone(&temp_owl__x941);
+                let owl__x933 = arc_clone(&temp_owl__x933);
+                let temp_owl__x934 = { arc_clone(&owl__x933) };
+                let owl__x934 = arc_clone(&temp_owl__x934);
+                let temp_owl__x939 = { arc_clone(&owl__x899) };
+                let owl__x939 = arc_clone(&temp_owl__x939);
+                let temp_owl__x941 = { arc_clone(&owl__x934) };
+                let owl__x941 = arc_clone(&temp_owl__x941);
                 let owl_msg2_C51185 = owl_extract_expand_to_len(
                     0 + nonce_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x939))),
-                    vec_as_slice(&(*rc_clone(&owl__x941))),
+                    vec_as_slice(&(*arc_clone(&owl__x939))),
+                    vec_as_slice(&(*arc_clone(&owl__x941))),
                 );
                 let temp_owl__x942 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_msg2_C51185), 0, 0 + nonce_size()),
                     ),
                 )
                 };
-                let owl__x942 = rc_clone(&temp_owl__x942);
-                let temp_owl__x949 = { rc_clone(&owl__x942) };
-                let owl__x949 = rc_clone(&temp_owl__x949);
-                let temp_owl__x952 = { rc_clone(&owl_dhpk_S_init867) };
-                let owl__x952 = rc_clone(&temp_owl__x952);
-                let temp_owl__x954 = { rc_clone(&self.owl_E_resp) };
-                let owl__x954 = rc_clone(&temp_owl__x954);
+                let owl__x942 = arc_clone(&temp_owl__x942);
+                let temp_owl__x949 = { arc_clone(&owl__x942) };
+                let owl__x949 = arc_clone(&temp_owl__x949);
+                let temp_owl__x952 = { arc_clone(&owl_dhpk_S_init867) };
+                let owl__x952 = arc_clone(&temp_owl__x952);
+                let temp_owl__x954 = { arc_clone(&self.owl_E_resp) };
+                let owl__x954 = arc_clone(&temp_owl__x954);
                 let temp_owl__x955 = {
                 owl_dh_combine(
-                    vec_as_slice(&(*rc_clone(&owl__x952))),
-                    vec_as_slice(&(*rc_clone(&owl__x954))),
+                    vec_as_slice(&(*arc_clone(&owl__x952))),
+                    vec_as_slice(&(*arc_clone(&owl__x954))),
                 )
                 };
-                let owl__x955 = rc_clone(&temp_owl__x955);
+                let owl__x955 = arc_clone(&temp_owl__x955);
                 let owl_msg2_C61186 = owl_extract_expand_to_len(
                     0 + nonce_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x949))),
-                    vec_as_slice(&(*rc_clone(&owl__x955))),
+                    vec_as_slice(&(*arc_clone(&owl__x949))),
+                    vec_as_slice(&(*arc_clone(&owl__x955))),
                 );
                 let temp_owl__x956 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_msg2_C61186), 0, 0 + nonce_size()),
                     ),
                 )
                 };
-                let owl__x956 = rc_clone(&temp_owl__x956);
-                let temp_owl__x961 = { rc_clone(&owl__x956) };
-                let owl__x961 = rc_clone(&temp_owl__x961);
-                let temp_owl__x963 = { rc_clone(&owl__x891) };
-                let owl__x963 = rc_clone(&temp_owl__x963);
+                let owl__x956 = arc_clone(&temp_owl__x956);
+                let temp_owl__x961 = { arc_clone(&owl__x956) };
+                let owl__x961 = arc_clone(&temp_owl__x961);
+                let temp_owl__x963 = { arc_clone(&owl__x891) };
+                let owl__x963 = arc_clone(&temp_owl__x963);
                 let owl_msg2_C71187 = owl_extract_expand_to_len(
                     0 + nonce_size() + nonce_size() + key_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x961))),
-                    vec_as_slice(&(*rc_clone(&owl__x963))),
+                    vec_as_slice(&(*arc_clone(&owl__x961))),
+                    vec_as_slice(&(*arc_clone(&owl__x963))),
                 );
                 let temp_owl__x964 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_msg2_C71187), 0, 0 + nonce_size()),
                     ),
                 )
                 };
-                let owl__x964 = rc_clone(&temp_owl__x964);
-                let temp_owl__x969 = { rc_clone(&owl__x956) };
-                let owl__x969 = rc_clone(&temp_owl__x969);
-                let temp_owl__x971 = { rc_clone(&owl__x891) };
-                let owl__x971 = rc_clone(&temp_owl__x971);
+                let owl__x964 = arc_clone(&temp_owl__x964);
+                let temp_owl__x969 = { arc_clone(&owl__x956) };
+                let owl__x969 = arc_clone(&temp_owl__x969);
+                let temp_owl__x971 = { arc_clone(&owl__x891) };
+                let owl__x971 = arc_clone(&temp_owl__x971);
                 let temp_owl__x972 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(
                             vec_as_slice(&*owl_msg2_C71187),
@@ -3319,13 +3321,13 @@ impl cfg_Responder {
                     ),
                 )
                 };
-                let owl__x972 = rc_clone(&temp_owl__x972);
-                let temp_owl__x977 = { rc_clone(&owl__x956) };
-                let owl__x977 = rc_clone(&temp_owl__x977);
-                let temp_owl__x979 = { rc_clone(&owl__x891) };
-                let owl__x979 = rc_clone(&temp_owl__x979);
+                let owl__x972 = arc_clone(&temp_owl__x972);
+                let temp_owl__x977 = { arc_clone(&owl__x956) };
+                let owl__x977 = arc_clone(&temp_owl__x977);
+                let temp_owl__x979 = { arc_clone(&owl__x891) };
+                let owl__x979 = arc_clone(&temp_owl__x979);
                 let temp_owl__x980 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(
                             vec_as_slice(&*owl_msg2_C71187),
@@ -3335,64 +3337,64 @@ impl cfg_Responder {
                     ),
                 )
                 };
-                let owl__x980 = rc_clone(&temp_owl__x980);
-                let temp_owl__x993 = { rc_clone(&owl__x919) };
-                let owl__x993 = rc_clone(&temp_owl__x993);
-                let temp_owl__x995 = { rc_clone(&owl__x972) };
-                let owl__x995 = rc_clone(&temp_owl__x995);
+                let owl__x980 = arc_clone(&temp_owl__x980);
+                let temp_owl__x993 = { arc_clone(&owl__x919) };
+                let owl__x993 = arc_clone(&temp_owl__x993);
+                let temp_owl__x995 = { arc_clone(&owl__x972) };
+                let owl__x995 = arc_clone(&temp_owl__x995);
                 let temp_owl__x997 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x993))),
-                    vec_as_slice(&(*rc_clone(&owl__x995))),
+                    vec_as_slice(&(*arc_clone(&owl__x993))),
+                    vec_as_slice(&(*arc_clone(&owl__x995))),
                 )
                 };
-                let owl__x997 = rc_new(temp_owl__x997);
-                let temp_owl__x999 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x997)))) };
-                let owl__x999 = rc_clone(&temp_owl__x999);
-                let temp_owl__x1000 = { rc_clone(&owl__x999) };
-                let owl__x1000 = rc_clone(&temp_owl__x1000);
+                let owl__x997 = arc_new(temp_owl__x997);
+                let temp_owl__x999 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x997)))) };
+                let owl__x999 = arc_clone(&temp_owl__x999);
+                let temp_owl__x1000 = { arc_clone(&owl__x999) };
+                let owl__x1000 = arc_clone(&temp_owl__x1000);
                 let temp_owl__x1004 = {
                     {
                         let x: Vec<u8> = mk_vec_u8![];
                         x
                     }
                 };
-                let owl__x1004 = rc_new(temp_owl__x1004);
-                let temp_owl__x1005 = { rc_clone(&owl__x1004) };
-                let owl__x1005 = rc_clone(&temp_owl__x1005);
-                let temp_owl__x1011 = { rc_clone(&owl__x980) };
-                let owl__x1011 = rc_clone(&temp_owl__x1011);
-                let temp_owl__x1013 = { rc_clone(&owl__x1005) };
-                let owl__x1013 = rc_clone(&temp_owl__x1013);
-                let temp_owl__x1015 = { rc_clone(&owl__x1000) };
-                let owl__x1015 = rc_clone(&temp_owl__x1015);
+                let owl__x1004 = arc_new(temp_owl__x1004);
+                let temp_owl__x1005 = { arc_clone(&owl__x1004) };
+                let owl__x1005 = arc_clone(&temp_owl__x1005);
+                let temp_owl__x1011 = { arc_clone(&owl__x980) };
+                let owl__x1011 = arc_clone(&temp_owl__x1011);
+                let temp_owl__x1013 = { arc_clone(&owl__x1005) };
+                let owl__x1013 = arc_clone(&temp_owl__x1013);
+                let temp_owl__x1015 = { arc_clone(&owl__x1000) };
+                let owl__x1015 = arc_clone(&temp_owl__x1015);
                 let temp_owl__x1016 = {
                     match owl_enc_st_aead(
-                        vec_as_slice(&(*rc_clone(&owl__x1011))),
-                        vec_as_slice(&(*rc_clone(&owl__x1013))),
+                        vec_as_slice(&(*arc_clone(&owl__x1011))),
+                        vec_as_slice(&(*arc_clone(&owl__x1013))),
                         &mut mut_state.owl_aead_counter_msg2_C7,
-                        vec_as_slice(&(*rc_clone(&owl__x1015))),
+                        vec_as_slice(&(*arc_clone(&owl__x1015))),
                     ) {
                         Ok(ctxt) => ctxt,
                         Err(e) => { return Err(e) },
                     }
                 };
-                let owl__x1016 = rc_clone(&temp_owl__x1016);
-                let temp_owl__x1029 = { rc_clone(&owl__x1000) };
-                let owl__x1029 = rc_clone(&temp_owl__x1029);
-                let temp_owl__x1031 = { rc_clone(&owl__x1016) };
-                let owl__x1031 = rc_clone(&temp_owl__x1031);
+                let owl__x1016 = arc_clone(&temp_owl__x1016);
+                let temp_owl__x1029 = { arc_clone(&owl__x1000) };
+                let owl__x1029 = arc_clone(&temp_owl__x1029);
+                let temp_owl__x1031 = { arc_clone(&owl__x1016) };
+                let owl__x1031 = arc_clone(&temp_owl__x1031);
                 let temp_owl__x1033 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x1029))),
-                    vec_as_slice(&(*rc_clone(&owl__x1031))),
+                    vec_as_slice(&(*arc_clone(&owl__x1029))),
+                    vec_as_slice(&(*arc_clone(&owl__x1031))),
                 )
                 };
-                let owl__x1033 = rc_new(temp_owl__x1033);
-                let temp_owl__x1035 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x1033)))) };
-                let owl__x1035 = rc_clone(&temp_owl__x1035);
-                let temp_owl__x1036 = { rc_clone(&owl__x1035) };
-                let owl__x1036 = rc_clone(&temp_owl__x1036);
+                let owl__x1033 = arc_new(temp_owl__x1033);
+                let temp_owl__x1035 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x1033)))) };
+                let owl__x1035 = arc_clone(&temp_owl__x1035);
+                let temp_owl__x1036 = { arc_clone(&owl__x1035) };
+                let owl__x1036 = arc_clone(&temp_owl__x1036);
                 let (temp_owl__x1038, Tracked(itree)): (
                     _,
                     Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>,
@@ -3402,95 +3404,95 @@ impl cfg_Responder {
 , get_sender_r_spec(*self, *mut_state)
 , self.owl_get_sender_r(mut_state) )
                 };
-                let owl__x1038 = rc_clone(&temp_owl__x1038);
+                let owl__x1038 = arc_clone(&temp_owl__x1038);
                 let temp_owl__x1042 = { owl_msg2_tag_value() };
-                let owl__x1042 = rc_new(temp_owl__x1042);
-                let temp_owl__x1043 = { rc_clone(&owl__x1042) };
-                let owl__x1043 = rc_clone(&temp_owl__x1043);
+                let owl__x1042 = arc_new(temp_owl__x1042);
+                let temp_owl__x1043 = { arc_clone(&owl__x1042) };
+                let owl__x1043 = arc_clone(&temp_owl__x1043);
                 let temp_owl__x1048 = { owl_mac1() };
-                let owl__x1048 = rc_new(temp_owl__x1048);
-                let temp_owl__x1050 = { rc_clone(&owl_dhpk_S_init867) };
-                let owl__x1050 = rc_clone(&temp_owl__x1050);
+                let owl__x1048 = arc_new(temp_owl__x1048);
+                let temp_owl__x1050 = { arc_clone(&owl_dhpk_S_init867) };
+                let owl__x1050 = arc_clone(&temp_owl__x1050);
                 let owl_msg2_mac1_key1188 = owl_extract_expand_to_len(
                     0 + mackey_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x1048))),
-                    vec_as_slice(&(*rc_clone(&owl__x1050))),
+                    vec_as_slice(&(*arc_clone(&owl__x1048))),
+                    vec_as_slice(&(*arc_clone(&owl__x1050))),
                 );
                 let temp_owl__x1051 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_msg2_mac1_key1188), 0, 0 + mackey_size()),
                     ),
                 )
                 };
-                let owl__x1051 = rc_clone(&temp_owl__x1051);
-                let temp_owl__x1064 = { rc_clone(&owl__x1051) };
-                let owl__x1064 = rc_clone(&temp_owl__x1064);
-                let temp_owl__x1070 = { rc_clone(&owl__x1043) };
-                let owl__x1070 = rc_clone(&temp_owl__x1070);
-                let temp_owl__x1072 = { rc_clone(&owl__x1038) };
-                let owl__x1072 = rc_clone(&temp_owl__x1072);
+                let owl__x1051 = arc_clone(&temp_owl__x1051);
+                let temp_owl__x1064 = { arc_clone(&owl__x1051) };
+                let owl__x1064 = arc_clone(&temp_owl__x1064);
+                let temp_owl__x1070 = { arc_clone(&owl__x1043) };
+                let owl__x1070 = arc_clone(&temp_owl__x1070);
+                let temp_owl__x1072 = { arc_clone(&owl__x1038) };
+                let owl__x1072 = arc_clone(&temp_owl__x1072);
                 let temp_owl__x1073 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x1070))),
-                    vec_as_slice(&(*rc_clone(&owl__x1072))),
+                    vec_as_slice(&(*arc_clone(&owl__x1070))),
+                    vec_as_slice(&(*arc_clone(&owl__x1072))),
                 )
                 };
-                let owl__x1073 = rc_new(temp_owl__x1073);
-                let temp_owl__x1075 = { rc_clone(&owl_msg2_receiver866) };
-                let owl__x1075 = rc_clone(&temp_owl__x1075);
+                let owl__x1073 = arc_new(temp_owl__x1073);
+                let temp_owl__x1075 = { arc_clone(&owl_msg2_receiver866) };
+                let owl__x1075 = arc_clone(&temp_owl__x1075);
                 let temp_owl__x1076 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x1073))),
-                    vec_as_slice(&(*rc_clone(&owl__x1075))),
+                    vec_as_slice(&(*arc_clone(&owl__x1073))),
+                    vec_as_slice(&(*arc_clone(&owl__x1075))),
                 )
                 };
-                let owl__x1076 = rc_new(temp_owl__x1076);
-                let temp_owl__x1078 = { rc_clone(&owl__x886) };
-                let owl__x1078 = rc_clone(&temp_owl__x1078);
+                let owl__x1076 = arc_new(temp_owl__x1076);
+                let temp_owl__x1078 = { arc_clone(&owl__x886) };
+                let owl__x1078 = arc_clone(&temp_owl__x1078);
                 let temp_owl__x1079 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x1076))),
-                    vec_as_slice(&(*rc_clone(&owl__x1078))),
+                    vec_as_slice(&(*arc_clone(&owl__x1076))),
+                    vec_as_slice(&(*arc_clone(&owl__x1078))),
                 )
                 };
-                let owl__x1079 = rc_new(temp_owl__x1079);
-                let temp_owl__x1081 = { rc_clone(&owl__x1016) };
-                let owl__x1081 = rc_clone(&temp_owl__x1081);
+                let owl__x1079 = arc_new(temp_owl__x1079);
+                let temp_owl__x1081 = { arc_clone(&owl__x1016) };
+                let owl__x1081 = arc_clone(&temp_owl__x1081);
                 let temp_owl__x1082 = {
                 owl_concat(
-                    vec_as_slice(&(*rc_clone(&owl__x1079))),
-                    vec_as_slice(&(*rc_clone(&owl__x1081))),
+                    vec_as_slice(&(*arc_clone(&owl__x1079))),
+                    vec_as_slice(&(*arc_clone(&owl__x1081))),
                 )
                 };
-                let owl__x1082 = rc_new(temp_owl__x1082);
+                let owl__x1082 = arc_new(temp_owl__x1082);
                 let temp_owl__x1083 = {
                 owl_mac(
-                    vec_as_slice(&(*rc_clone(&owl__x1064))),
-                    vec_as_slice(&(*rc_clone(&owl__x1082))),
+                    vec_as_slice(&(*arc_clone(&owl__x1064))),
+                    vec_as_slice(&(*arc_clone(&owl__x1082))),
                 )
                 };
-                let owl__x1083 = rc_clone(&temp_owl__x1083);
-                let temp_owl__x1105 = { rc_clone(&owl__x1043) };
-                let owl__x1105 = rc_clone(&temp_owl__x1105);
-                let temp_owl__x1107 = { rc_clone(&owl__x1038) };
-                let owl__x1107 = rc_clone(&temp_owl__x1107);
-                let temp_owl__x1109 = { rc_clone(&owl_msg2_receiver866) };
-                let owl__x1109 = rc_clone(&temp_owl__x1109);
-                let temp_owl__x1111 = { rc_clone(&owl__x886) };
-                let owl__x1111 = rc_clone(&temp_owl__x1111);
-                let temp_owl__x1113 = { rc_clone(&owl__x1016) };
-                let owl__x1113 = rc_clone(&temp_owl__x1113);
-                let temp_owl__x1115 = { rc_clone(&owl__x1083) };
-                let owl__x1115 = rc_clone(&temp_owl__x1115);
+                let owl__x1083 = arc_clone(&temp_owl__x1083);
+                let temp_owl__x1105 = { arc_clone(&owl__x1043) };
+                let owl__x1105 = arc_clone(&temp_owl__x1105);
+                let temp_owl__x1107 = { arc_clone(&owl__x1038) };
+                let owl__x1107 = arc_clone(&temp_owl__x1107);
+                let temp_owl__x1109 = { arc_clone(&owl_msg2_receiver866) };
+                let owl__x1109 = arc_clone(&temp_owl__x1109);
+                let temp_owl__x1111 = { arc_clone(&owl__x886) };
+                let owl__x1111 = arc_clone(&temp_owl__x1111);
+                let temp_owl__x1113 = { arc_clone(&owl__x1016) };
+                let owl__x1113 = arc_clone(&temp_owl__x1113);
+                let temp_owl__x1115 = { arc_clone(&owl__x1083) };
+                let owl__x1115 = arc_clone(&temp_owl__x1115);
                 let temp_owl__x1117 = {
                 owl_msg2 {
-                    owl__msg2_tag: clone_vec_u8(&*rc_clone(&owl__x1105)),
-                    owl__msg2_sender: clone_vec_u8(&*rc_clone(&owl__x1107)),
-                    owl__msg2_receiver: clone_vec_u8(&*rc_clone(&owl__x1109)),
-                    owl__msg2_ephemeral: clone_vec_u8(&*rc_clone(&owl__x1111)),
-                    owl__msg2_empty: clone_vec_u8(&*rc_clone(&owl__x1113)),
-                    owl__msg2_mac1: clone_vec_u8(&*rc_clone(&owl__x1115)),
+                    owl__msg2_tag: clone_vec_u8(&*arc_clone(&owl__x1105)),
+                    owl__msg2_sender: clone_vec_u8(&*arc_clone(&owl__x1107)),
+                    owl__msg2_receiver: clone_vec_u8(&*arc_clone(&owl__x1109)),
+                    owl__msg2_ephemeral: clone_vec_u8(&*arc_clone(&owl__x1111)),
+                    owl__msg2_empty: clone_vec_u8(&*arc_clone(&owl__x1113)),
+                    owl__msg2_mac1: clone_vec_u8(&*arc_clone(&owl__x1115)),
                 }
                 };
                 let owl__x1117 = temp_owl__x1117;
@@ -3507,39 +3509,39 @@ impl cfg_Responder {
                 )
                 };
                 let owl__x1123 = temp_owl__x1123;
-                let temp_owl__x1128 = { rc_clone(&owl__x964) };
-                let owl__x1128 = rc_clone(&temp_owl__x1128);
+                let temp_owl__x1128 = { arc_clone(&owl__x964) };
+                let owl__x1128 = arc_clone(&temp_owl__x1128);
                 let temp_owl__x1130 = {
                     {
                         let x: Vec<u8> = mk_vec_u8![];
                         x
                     }
                 };
-                let owl__x1130 = rc_new(temp_owl__x1130);
+                let owl__x1130 = arc_new(temp_owl__x1130);
                 let owl_transp_T1189 = owl_extract_expand_to_len(
                     0 + key_size() + key_size(),
-                    vec_as_slice(&(*rc_clone(&owl__x1128))),
-                    vec_as_slice(&(*rc_clone(&owl__x1130))),
+                    vec_as_slice(&(*arc_clone(&owl__x1128))),
+                    vec_as_slice(&(*arc_clone(&owl__x1130))),
                 );
                 let temp_owl__x1131 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(vec_as_slice(&*owl_transp_T1189), 0, 0 + key_size()),
                     ),
                 )
                 };
-                let owl__x1131 = rc_clone(&temp_owl__x1131);
-                let temp_owl__x1136 = { rc_clone(&owl__x964) };
-                let owl__x1136 = rc_clone(&temp_owl__x1136);
+                let owl__x1131 = arc_clone(&temp_owl__x1131);
+                let temp_owl__x1136 = { arc_clone(&owl__x964) };
+                let owl__x1136 = arc_clone(&temp_owl__x1136);
                 let temp_owl__x1138 = {
                     {
                         let x: Vec<u8> = mk_vec_u8![];
                         x
                     }
                 };
-                let owl__x1138 = rc_new(temp_owl__x1138);
+                let owl__x1138 = arc_new(temp_owl__x1138);
                 let temp_owl__x1139 = {
-                rc_new(
+                arc_new(
                     slice_to_vec(
                         slice_subrange(
                             vec_as_slice(&*owl_transp_T1189),
@@ -3549,27 +3551,27 @@ impl cfg_Responder {
                     ),
                 )
                 };
-                let owl__x1139 = rc_clone(&temp_owl__x1139);
-                let temp_owl__x1161 = { rc_clone(&owl_msg2_receiver866) };
-                let owl__x1161 = rc_clone(&temp_owl__x1161);
-                let temp_owl__x1163 = { rc_clone(&owl__x1038) };
-                let owl__x1163 = rc_clone(&temp_owl__x1163);
-                let temp_owl__x1165 = { rc_clone(&owl__x876) };
-                let owl__x1165 = rc_clone(&temp_owl__x1165);
-                let temp_owl__x1167 = { rc_clone(&owl__x886) };
-                let owl__x1167 = rc_clone(&temp_owl__x1167);
-                let temp_owl__x1169 = { rc_clone(&owl__x1131) };
-                let owl__x1169 = rc_clone(&temp_owl__x1169);
-                let temp_owl__x1171 = { rc_clone(&owl__x1139) };
-                let owl__x1171 = rc_clone(&temp_owl__x1171);
+                let owl__x1139 = arc_clone(&temp_owl__x1139);
+                let temp_owl__x1161 = { arc_clone(&owl_msg2_receiver866) };
+                let owl__x1161 = arc_clone(&temp_owl__x1161);
+                let temp_owl__x1163 = { arc_clone(&owl__x1038) };
+                let owl__x1163 = arc_clone(&temp_owl__x1163);
+                let temp_owl__x1165 = { arc_clone(&owl__x876) };
+                let owl__x1165 = arc_clone(&temp_owl__x1165);
+                let temp_owl__x1167 = { arc_clone(&owl__x886) };
+                let owl__x1167 = arc_clone(&temp_owl__x1167);
+                let temp_owl__x1169 = { arc_clone(&owl__x1131) };
+                let owl__x1169 = arc_clone(&temp_owl__x1169);
+                let temp_owl__x1171 = { arc_clone(&owl__x1139) };
+                let owl__x1171 = arc_clone(&temp_owl__x1171);
                 let temp_owl__x1173 = {
                 owl_transp_keys {
-                    owl__transp_keys_initiator: clone_vec_u8(&*rc_clone(&owl__x1161)),
-                    owl__transp_keys_responder: clone_vec_u8(&*rc_clone(&owl__x1163)),
-                    owl__transp_keys_init_ephemeral: clone_vec_u8(&*rc_clone(&owl__x1165)),
-                    owl__transp_keys_resp_ephemeral: clone_vec_u8(&*rc_clone(&owl__x1167)),
-                    owl__transp_keys_T_init_send: clone_vec_u8(&*rc_clone(&owl__x1169)),
-                    owl__transp_keys_T_resp_send: clone_vec_u8(&*rc_clone(&owl__x1171)),
+                    owl__transp_keys_initiator: clone_vec_u8(&*arc_clone(&owl__x1161)),
+                    owl__transp_keys_responder: clone_vec_u8(&*arc_clone(&owl__x1163)),
+                    owl__transp_keys_init_ephemeral: clone_vec_u8(&*arc_clone(&owl__x1165)),
+                    owl__transp_keys_resp_ephemeral: clone_vec_u8(&*arc_clone(&owl__x1167)),
+                    owl__transp_keys_T_init_send: clone_vec_u8(&*arc_clone(&owl__x1169)),
+                    owl__transp_keys_T_resp_send: clone_vec_u8(&*arc_clone(&owl__x1171)),
                 }
                 };
                 let owl__x1173 = temp_owl__x1173;
@@ -3610,91 +3612,94 @@ impl cfg_Responder {
                 Tracked(&mut itree),
                 &self.listener,
             );
-            let owl_inp1198 = rc_new(temp_owl_inp1198);
-            let temp_owl__x1507 = { rc_clone(&owl_inp1198) };
-            let owl__x1507 = rc_clone(&temp_owl__x1507);
-            if let Some(parseval) = parse_owl_msg1(vec_as_slice(&(*rc_clone(&owl__x1507)))) {
-                let owl_msg1_tag1205 = rc_new(parseval.owl__msg1_tag);
-                let owl_msg1_sender1204 = rc_new(parseval.owl__msg1_sender);
-                let owl_msg1_ephemeral_1203 = rc_new(parseval.owl__msg1_ephemeral);
-                let owl_msg1_static1202 = rc_new(parseval.owl__msg1_static);
-                let owl_msg1_timestamp1201 = rc_new(parseval.owl__msg1_timestamp);
-                let owl_msg1_mac11200 = rc_new(parseval.owl__msg1_mac1);
+            let owl_inp1198 = arc_new(temp_owl_inp1198);
+            let temp_owl__x1507 = { arc_clone(&owl_inp1198) };
+            let owl__x1507 = arc_clone(&temp_owl__x1507);
+            if let Some(parseval) = parse_owl_msg1(vec_as_slice(&(*arc_clone(&owl__x1507)))) {
+                let owl_msg1_tag1205 = arc_new(parseval.owl__msg1_tag);
+                let owl_msg1_sender1204 = arc_new(parseval.owl__msg1_sender);
+                let owl_msg1_ephemeral_1203 = arc_new(parseval.owl__msg1_ephemeral);
+                let owl_msg1_static1202 = arc_new(parseval.owl__msg1_static);
+                let owl_msg1_timestamp1201 = arc_new(parseval.owl__msg1_timestamp);
+                let owl_msg1_mac11200 = arc_new(parseval.owl__msg1_mac1);
                 {
-                    let temp_owl__x1502 = { rc_clone(&owl_msg1_sender1204) };
-                    let owl__x1502 = rc_clone(&temp_owl__x1502);
-                    let temp_owl__x1503 = { vec_length(&(*rc_clone(&owl__x1502))) };
+                    let temp_owl__x1502 = { arc_clone(&owl_msg1_sender1204) };
+                    let owl__x1502 = arc_clone(&temp_owl__x1502);
+                    let temp_owl__x1503 = { vec_length(&(*arc_clone(&owl__x1502))) };
                     let owl__x1503 = temp_owl__x1503;
                     let temp_owl__x1505 = { 4 };
                     let owl__x1505 = temp_owl__x1505;
                     let temp_owl__x1506 = { owl__x1503 == owl__x1505 };
                     let owl__x1506 = temp_owl__x1506;
                     if owl__x1506 {
-                        let temp_owl__x1495 = { rc_clone(&owl_msg1_ephemeral_1203) };
-                        let owl__x1495 = rc_clone(&temp_owl__x1495);
+                        let temp_owl__x1495 = { arc_clone(&owl_msg1_ephemeral_1203) };
+                        let owl__x1495 = arc_clone(&temp_owl__x1495);
                         let temp_owl__x1496 = {
-                        owl_is_group_elem(vec_as_slice(&(*rc_clone(&owl__x1495))))
+                        owl_is_group_elem(vec_as_slice(&(*arc_clone(&owl__x1495))))
                         };
                         let owl__x1496 = temp_owl__x1496;
                         if owl__x1496 {
                             let temp_owl__x1212 = { owl_construction() };
-                            let owl__x1212 = rc_new(temp_owl__x1212);
-                            let temp_owl__x1214 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x1212))))
+                            let owl__x1212 = arc_new(temp_owl__x1212);
+                            let temp_owl__x1214 = {
+                            owl_crh(vec_as_slice(&(*arc_clone(&owl__x1212))))
                             };
-                            let owl__x1214 = rc_clone(&temp_owl__x1214);
-                            let temp_owl__x1215 = { rc_clone(&owl__x1214) };
-                            let owl__x1215 = rc_clone(&temp_owl__x1215);
-                            let temp_owl__x1228 = { rc_clone(&owl__x1215) };
-                            let owl__x1228 = rc_clone(&temp_owl__x1228);
+                            let owl__x1214 = arc_clone(&temp_owl__x1214);
+                            let temp_owl__x1215 = { arc_clone(&owl__x1214) };
+                            let owl__x1215 = arc_clone(&temp_owl__x1215);
+                            let temp_owl__x1228 = { arc_clone(&owl__x1215) };
+                            let owl__x1228 = arc_clone(&temp_owl__x1228);
                             let temp_owl__x1230 = { owl_identifier() };
-                            let owl__x1230 = rc_new(temp_owl__x1230);
+                            let owl__x1230 = arc_new(temp_owl__x1230);
                             let temp_owl__x1232 = {
                             owl_concat(
-                                vec_as_slice(&(*rc_clone(&owl__x1228))),
-                                vec_as_slice(&(*rc_clone(&owl__x1230))),
+                                vec_as_slice(&(*arc_clone(&owl__x1228))),
+                                vec_as_slice(&(*arc_clone(&owl__x1230))),
                             )
                             };
-                            let owl__x1232 = rc_new(temp_owl__x1232);
-                            let temp_owl__x1234 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x1232))))
+                            let owl__x1232 = arc_new(temp_owl__x1232);
+                            let temp_owl__x1234 = {
+                            owl_crh(vec_as_slice(&(*arc_clone(&owl__x1232))))
                             };
-                            let owl__x1234 = rc_clone(&temp_owl__x1234);
-                            let temp_owl__x1235 = { rc_clone(&owl__x1234) };
-                            let owl__x1235 = rc_clone(&temp_owl__x1235);
-                            let temp_owl__x1251 = { rc_clone(&owl__x1235) };
-                            let owl__x1251 = rc_clone(&temp_owl__x1251);
-                            let temp_owl__x1253 = { rc_clone(&self.owl_S_resp) };
-                            let owl__x1253 = rc_clone(&temp_owl__x1253);
+                            let owl__x1234 = arc_clone(&temp_owl__x1234);
+                            let temp_owl__x1235 = { arc_clone(&owl__x1234) };
+                            let owl__x1235 = arc_clone(&temp_owl__x1235);
+                            let temp_owl__x1251 = { arc_clone(&owl__x1235) };
+                            let owl__x1251 = arc_clone(&temp_owl__x1251);
+                            let temp_owl__x1253 = { arc_clone(&self.owl_S_resp) };
+                            let owl__x1253 = arc_clone(&temp_owl__x1253);
                             let temp_owl__x1255 = {
-                            owl_dhpk(vec_as_slice(&(*rc_clone(&owl__x1253))))
+                            owl_dhpk(vec_as_slice(&(*arc_clone(&owl__x1253))))
                             };
-                            let owl__x1255 = rc_clone(&temp_owl__x1255);
+                            let owl__x1255 = arc_clone(&temp_owl__x1255);
                             let temp_owl__x1257 = {
                             owl_concat(
-                                vec_as_slice(&(*rc_clone(&owl__x1251))),
-                                vec_as_slice(&(*rc_clone(&owl__x1255))),
+                                vec_as_slice(&(*arc_clone(&owl__x1251))),
+                                vec_as_slice(&(*arc_clone(&owl__x1255))),
                             )
                             };
-                            let owl__x1257 = rc_new(temp_owl__x1257);
-                            let temp_owl__x1259 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x1257))))
+                            let owl__x1257 = arc_new(temp_owl__x1257);
+                            let temp_owl__x1259 = {
+                            owl_crh(vec_as_slice(&(*arc_clone(&owl__x1257))))
                             };
-                            let owl__x1259 = rc_clone(&temp_owl__x1259);
-                            let temp_owl__x1260 = { rc_clone(&owl__x1259) };
-                            let owl__x1260 = rc_clone(&temp_owl__x1260);
-                            let temp_owl__x1266 = { rc_clone(&owl_msg1_ephemeral_1203) };
-                            let owl__x1266 = rc_clone(&temp_owl__x1266);
-                            let temp_owl__x1267 = { rc_clone(&owl__x1266) };
-                            let owl__x1267 = rc_clone(&temp_owl__x1267);
-                            let temp_owl__x1272 = { rc_clone(&owl__x1215) };
-                            let owl__x1272 = rc_clone(&temp_owl__x1272);
-                            let temp_owl__x1274 = { rc_clone(&owl__x1267) };
-                            let owl__x1274 = rc_clone(&temp_owl__x1274);
+                            let owl__x1259 = arc_clone(&temp_owl__x1259);
+                            let temp_owl__x1260 = { arc_clone(&owl__x1259) };
+                            let owl__x1260 = arc_clone(&temp_owl__x1260);
+                            let temp_owl__x1266 = { arc_clone(&owl_msg1_ephemeral_1203) };
+                            let owl__x1266 = arc_clone(&temp_owl__x1266);
+                            let temp_owl__x1267 = { arc_clone(&owl__x1266) };
+                            let owl__x1267 = arc_clone(&temp_owl__x1267);
+                            let temp_owl__x1272 = { arc_clone(&owl__x1215) };
+                            let owl__x1272 = arc_clone(&temp_owl__x1272);
+                            let temp_owl__x1274 = { arc_clone(&owl__x1267) };
+                            let owl__x1274 = arc_clone(&temp_owl__x1274);
                             let owl_msg1_C11515 = owl_extract_expand_to_len(
                                 0 + nonce_size(),
-                                vec_as_slice(&(*rc_clone(&owl__x1272))),
-                                vec_as_slice(&(*rc_clone(&owl__x1274))),
+                                vec_as_slice(&(*arc_clone(&owl__x1272))),
+                                vec_as_slice(&(*arc_clone(&owl__x1274))),
                             );
                             let temp_owl__x1275 = {
-                            rc_new(
+                            arc_new(
                                 slice_to_vec(
                                     slice_subrange(
                                         vec_as_slice(&*owl_msg1_C11515),
@@ -3704,47 +3709,48 @@ impl cfg_Responder {
                                 ),
                             )
                             };
-                            let owl__x1275 = rc_clone(&temp_owl__x1275);
-                            let temp_owl__x1288 = { rc_clone(&owl__x1260) };
-                            let owl__x1288 = rc_clone(&temp_owl__x1288);
-                            let temp_owl__x1290 = { rc_clone(&owl__x1267) };
-                            let owl__x1290 = rc_clone(&temp_owl__x1290);
+                            let owl__x1275 = arc_clone(&temp_owl__x1275);
+                            let temp_owl__x1288 = { arc_clone(&owl__x1260) };
+                            let owl__x1288 = arc_clone(&temp_owl__x1288);
+                            let temp_owl__x1290 = { arc_clone(&owl__x1267) };
+                            let owl__x1290 = arc_clone(&temp_owl__x1290);
                             let temp_owl__x1292 = {
                             owl_concat(
-                                vec_as_slice(&(*rc_clone(&owl__x1288))),
-                                vec_as_slice(&(*rc_clone(&owl__x1290))),
+                                vec_as_slice(&(*arc_clone(&owl__x1288))),
+                                vec_as_slice(&(*arc_clone(&owl__x1290))),
                             )
                             };
-                            let owl__x1292 = rc_new(temp_owl__x1292);
-                            let temp_owl__x1294 = { owl_crh(vec_as_slice(&(*rc_clone(&owl__x1292))))
+                            let owl__x1292 = arc_new(temp_owl__x1292);
+                            let temp_owl__x1294 = {
+                            owl_crh(vec_as_slice(&(*arc_clone(&owl__x1292))))
                             };
-                            let owl__x1294 = rc_clone(&temp_owl__x1294);
-                            let temp_owl__x1295 = { rc_clone(&owl__x1294) };
-                            let owl__x1295 = rc_clone(&temp_owl__x1295);
-                            let temp_owl__x1305 = { rc_clone(&owl__x1267) };
-                            let owl__x1305 = rc_clone(&temp_owl__x1305);
-                            let temp_owl__x1307 = { rc_clone(&self.owl_S_resp) };
-                            let owl__x1307 = rc_clone(&temp_owl__x1307);
+                            let owl__x1294 = arc_clone(&temp_owl__x1294);
+                            let temp_owl__x1295 = { arc_clone(&owl__x1294) };
+                            let owl__x1295 = arc_clone(&temp_owl__x1295);
+                            let temp_owl__x1305 = { arc_clone(&owl__x1267) };
+                            let owl__x1305 = arc_clone(&temp_owl__x1305);
+                            let temp_owl__x1307 = { arc_clone(&self.owl_S_resp) };
+                            let owl__x1307 = arc_clone(&temp_owl__x1307);
                             let temp_owl__x1309 = {
                             owl_dh_combine(
-                                vec_as_slice(&(*rc_clone(&owl__x1305))),
-                                vec_as_slice(&(*rc_clone(&owl__x1307))),
+                                vec_as_slice(&(*arc_clone(&owl__x1305))),
+                                vec_as_slice(&(*arc_clone(&owl__x1307))),
                             )
                             };
-                            let owl__x1309 = rc_clone(&temp_owl__x1309);
-                            let temp_owl__x1310 = { rc_clone(&owl__x1309) };
-                            let owl__x1310 = rc_clone(&temp_owl__x1310);
-                            let temp_owl__x1315 = { rc_clone(&owl__x1275) };
-                            let owl__x1315 = rc_clone(&temp_owl__x1315);
-                            let temp_owl__x1317 = { rc_clone(&owl__x1310) };
-                            let owl__x1317 = rc_clone(&temp_owl__x1317);
+                            let owl__x1309 = arc_clone(&temp_owl__x1309);
+                            let temp_owl__x1310 = { arc_clone(&owl__x1309) };
+                            let owl__x1310 = arc_clone(&temp_owl__x1310);
+                            let temp_owl__x1315 = { arc_clone(&owl__x1275) };
+                            let owl__x1315 = arc_clone(&temp_owl__x1315);
+                            let temp_owl__x1317 = { arc_clone(&owl__x1310) };
+                            let owl__x1317 = arc_clone(&temp_owl__x1317);
                             let owl_msg1_C21516 = owl_extract_expand_to_len(
                                 0 + nonce_size() + key_size(),
-                                vec_as_slice(&(*rc_clone(&owl__x1315))),
-                                vec_as_slice(&(*rc_clone(&owl__x1317))),
+                                vec_as_slice(&(*arc_clone(&owl__x1315))),
+                                vec_as_slice(&(*arc_clone(&owl__x1317))),
                             );
                             let temp_owl__x1318 = {
-                            rc_new(
+                            arc_new(
                                 slice_to_vec(
                                     slice_subrange(
                                         vec_as_slice(&*owl_msg1_C21516),
@@ -3754,13 +3760,13 @@ impl cfg_Responder {
                                 ),
                             )
                             };
-                            let owl__x1318 = rc_clone(&temp_owl__x1318);
-                            let temp_owl__x1323 = { rc_clone(&owl__x1275) };
-                            let owl__x1323 = rc_clone(&temp_owl__x1323);
-                            let temp_owl__x1325 = { rc_clone(&owl__x1310) };
-                            let owl__x1325 = rc_clone(&temp_owl__x1325);
+                            let owl__x1318 = arc_clone(&temp_owl__x1318);
+                            let temp_owl__x1323 = { arc_clone(&owl__x1275) };
+                            let owl__x1323 = arc_clone(&temp_owl__x1323);
+                            let temp_owl__x1325 = { arc_clone(&owl__x1310) };
+                            let owl__x1325 = arc_clone(&temp_owl__x1325);
                             let temp_owl__x1326 = {
-                            rc_new(
+                            arc_new(
                                 slice_to_vec(
                                     slice_subrange(
                                         vec_as_slice(&*owl_msg1_C21516),
@@ -3770,26 +3776,26 @@ impl cfg_Responder {
                                 ),
                             )
                             };
-                            let owl__x1326 = rc_clone(&temp_owl__x1326);
-                            let temp_owl__x1485 = { rc_clone(&owl__x1326) };
-                            let owl__x1485 = rc_clone(&temp_owl__x1485);
-                            let temp_owl__x1487 = { rc_clone(&owl_msg1_static1202) };
-                            let owl__x1487 = rc_clone(&temp_owl__x1487);
-                            let temp_owl__x1489 = { rc_clone(&owl__x1295) };
-                            let owl__x1489 = rc_clone(&temp_owl__x1489);
+                            let owl__x1326 = arc_clone(&temp_owl__x1326);
+                            let temp_owl__x1485 = { arc_clone(&owl__x1326) };
+                            let owl__x1485 = arc_clone(&temp_owl__x1485);
+                            let temp_owl__x1487 = { arc_clone(&owl_msg1_static1202) };
+                            let owl__x1487 = arc_clone(&temp_owl__x1487);
+                            let temp_owl__x1489 = { arc_clone(&owl__x1295) };
+                            let owl__x1489 = arc_clone(&temp_owl__x1489);
                             let temp_owl__x1491 = {
                                 {
                                     let x: Vec<u8> = mk_vec_u8![];
                                     x
                                 }
                             };
-                            let owl__x1491 = rc_new(temp_owl__x1491);
+                            let owl__x1491 = arc_new(temp_owl__x1491);
                             let temp_owl__x1492 = {
                             owl_dec_st_aead(
-                                vec_as_slice(&(*rc_clone(&owl__x1485))),
-                                vec_as_slice(&(*rc_clone(&owl__x1487))),
-                                vec_as_slice(&(*rc_clone(&owl__x1491))),
-                                vec_as_slice(&(*rc_clone(&owl__x1489))),
+                                vec_as_slice(&(*arc_clone(&owl__x1485))),
+                                vec_as_slice(&(*arc_clone(&owl__x1487))),
+                                vec_as_slice(&(*arc_clone(&owl__x1491))),
+                                vec_as_slice(&(*arc_clone(&owl__x1489))),
                             )
                             };
                             let owl__x1492 = temp_owl__x1492;
@@ -3802,11 +3808,11 @@ impl cfg_Responder {
                                     (owl__x1331, Tracked(itree))
                                 },
                                 Some(temp_owl_msg1_static_dec1332) => {
-                                    let owl_msg1_static_dec1332 = rc_clone(
+                                    let owl_msg1_static_dec1332 = arc_clone(
                                         &temp_owl_msg1_static_dec1332,
                                     );
-                                    let temp_owl__x1336 = { rc_clone(&owl_msg1_static_dec1332) };
-                                    let owl__x1336 = rc_clone(&temp_owl__x1336);
+                                    let temp_owl__x1336 = { arc_clone(&owl_msg1_static_dec1332) };
+                                    let owl__x1336 = arc_clone(&temp_owl__x1336);
                                     let (temp_owl__x1337, Tracked(itree)): (
                                         _,
                                         Tracked<
@@ -3819,7 +3825,7 @@ impl cfg_Responder {
                                         owl_call_ret_option!( itree
 , *mut_state
 , checkpk_resp_spec(*self, *mut_state, (&owl__x1336).dview())
-, self.owl_checkpk_resp(mut_state, rc_clone(&owl__x1336)) )
+, self.owl_checkpk_resp(mut_state, arc_clone(&owl__x1336)) )
                                     };
                                     let owl__x1337 = temp_owl__x1337;
                                     let temp_owl__x1482 = { owl__x1337 };
@@ -3835,70 +3841,70 @@ impl cfg_Responder {
                                             (owl__x1339, Tracked(itree))
                                         },
                                         Some(temp_owl_dhpk_S_init_1340) => {
-                                            let owl_dhpk_S_init_1340 = rc_clone(
+                                            let owl_dhpk_S_init_1340 = arc_clone(
                                                 &temp_owl_dhpk_S_init_1340,
                                             );
-                                            let temp_owl__x1480 = { rc_clone(&owl_dhpk_S_init_1340)
+                                            let temp_owl__x1480 = { arc_clone(&owl_dhpk_S_init_1340)
                                             };
-                                            let owl__x1480 = rc_clone(&temp_owl__x1480);
+                                            let owl__x1480 = arc_clone(&temp_owl__x1480);
                                             let temp_owl__x1476 = {
-                                            rc_clone(&owl_msg1_static_dec1332)
+                                            arc_clone(&owl_msg1_static_dec1332)
                                             };
-                                            let owl__x1476 = rc_clone(&temp_owl__x1476);
-                                            let temp_owl__x1478 = { rc_clone(&owl__x1480) };
-                                            let owl__x1478 = rc_clone(&temp_owl__x1478);
+                                            let owl__x1476 = arc_clone(&temp_owl__x1476);
+                                            let temp_owl__x1478 = { arc_clone(&owl__x1480) };
+                                            let owl__x1478 = arc_clone(&temp_owl__x1478);
                                             let temp_owl__x1479 = {
                                             rc_vec_eq(
-                                                &rc_clone(&owl__x1476),
-                                                &rc_clone(&owl__x1478),
+                                                &arc_clone(&owl__x1476),
+                                                &arc_clone(&owl__x1478),
                                             )
                                             };
                                             let owl__x1479 = temp_owl__x1479;
                                             if owl__x1479 {
-                                                let temp_owl__x1355 = { rc_clone(&owl__x1295) };
-                                                let owl__x1355 = rc_clone(&temp_owl__x1355);
+                                                let temp_owl__x1355 = { arc_clone(&owl__x1295) };
+                                                let owl__x1355 = arc_clone(&temp_owl__x1355);
                                                 let temp_owl__x1357 = {
-                                                rc_clone(&owl_msg1_static1202)
+                                                arc_clone(&owl_msg1_static1202)
                                                 };
-                                                let owl__x1357 = rc_clone(&temp_owl__x1357);
+                                                let owl__x1357 = arc_clone(&temp_owl__x1357);
                                                 let temp_owl__x1359 = {
                                                 owl_concat(
-                                                    vec_as_slice(&(*rc_clone(&owl__x1355))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1357))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1355))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1357))),
                                                 )
                                                 };
-                                                let owl__x1359 = rc_new(temp_owl__x1359);
+                                                let owl__x1359 = arc_new(temp_owl__x1359);
                                                 let temp_owl__x1361 = {
-                                                owl_crh(vec_as_slice(&(*rc_clone(&owl__x1359))))
+                                                owl_crh(vec_as_slice(&(*arc_clone(&owl__x1359))))
                                                 };
-                                                let owl__x1361 = rc_clone(&temp_owl__x1361);
-                                                let temp_owl__x1362 = { rc_clone(&owl__x1361) };
-                                                let owl__x1362 = rc_clone(&temp_owl__x1362);
-                                                let temp_owl__x1372 = { rc_clone(&owl__x1480) };
-                                                let owl__x1372 = rc_clone(&temp_owl__x1372);
-                                                let temp_owl__x1374 = { rc_clone(&self.owl_S_resp)
+                                                let owl__x1361 = arc_clone(&temp_owl__x1361);
+                                                let temp_owl__x1362 = { arc_clone(&owl__x1361) };
+                                                let owl__x1362 = arc_clone(&temp_owl__x1362);
+                                                let temp_owl__x1372 = { arc_clone(&owl__x1480) };
+                                                let owl__x1372 = arc_clone(&temp_owl__x1372);
+                                                let temp_owl__x1374 = { arc_clone(&self.owl_S_resp)
                                                 };
-                                                let owl__x1374 = rc_clone(&temp_owl__x1374);
+                                                let owl__x1374 = arc_clone(&temp_owl__x1374);
                                                 let temp_owl__x1376 = {
                                                 owl_dh_combine(
-                                                    vec_as_slice(&(*rc_clone(&owl__x1372))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1374))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1372))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1374))),
                                                 )
                                                 };
-                                                let owl__x1376 = rc_clone(&temp_owl__x1376);
-                                                let temp_owl__x1377 = { rc_clone(&owl__x1376) };
-                                                let owl__x1377 = rc_clone(&temp_owl__x1377);
-                                                let temp_owl__x1382 = { rc_clone(&owl__x1318) };
-                                                let owl__x1382 = rc_clone(&temp_owl__x1382);
-                                                let temp_owl__x1384 = { rc_clone(&owl__x1377) };
-                                                let owl__x1384 = rc_clone(&temp_owl__x1384);
+                                                let owl__x1376 = arc_clone(&temp_owl__x1376);
+                                                let temp_owl__x1377 = { arc_clone(&owl__x1376) };
+                                                let owl__x1377 = arc_clone(&temp_owl__x1377);
+                                                let temp_owl__x1382 = { arc_clone(&owl__x1318) };
+                                                let owl__x1382 = arc_clone(&temp_owl__x1382);
+                                                let temp_owl__x1384 = { arc_clone(&owl__x1377) };
+                                                let owl__x1384 = arc_clone(&temp_owl__x1384);
                                                 let owl_msg1_C31517 = owl_extract_expand_to_len(
                                                     0 + nonce_size() + key_size(),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1382))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1384))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1382))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1384))),
                                                 );
                                                 let temp_owl__x1385 = {
-                                                rc_new(
+                                                arc_new(
                                                     slice_to_vec(
                                                         slice_subrange(
                                                             vec_as_slice(&*owl_msg1_C31517),
@@ -3908,13 +3914,13 @@ impl cfg_Responder {
                                                     ),
                                                 )
                                                 };
-                                                let owl__x1385 = rc_clone(&temp_owl__x1385);
-                                                let temp_owl__x1390 = { rc_clone(&owl__x1318) };
-                                                let owl__x1390 = rc_clone(&temp_owl__x1390);
-                                                let temp_owl__x1392 = { rc_clone(&owl__x1377) };
-                                                let owl__x1392 = rc_clone(&temp_owl__x1392);
+                                                let owl__x1385 = arc_clone(&temp_owl__x1385);
+                                                let temp_owl__x1390 = { arc_clone(&owl__x1318) };
+                                                let owl__x1390 = arc_clone(&temp_owl__x1390);
+                                                let temp_owl__x1392 = { arc_clone(&owl__x1377) };
+                                                let owl__x1392 = arc_clone(&temp_owl__x1392);
                                                 let temp_owl__x1393 = {
-                                                rc_new(
+                                                arc_new(
                                                     slice_to_vec(
                                                         slice_subrange(
                                                             vec_as_slice(&*owl_msg1_C31517),
@@ -3924,28 +3930,28 @@ impl cfg_Responder {
                                                     ),
                                                 )
                                                 };
-                                                let owl__x1393 = rc_clone(&temp_owl__x1393);
-                                                let temp_owl__x1465 = { rc_clone(&owl__x1393) };
-                                                let owl__x1465 = rc_clone(&temp_owl__x1465);
+                                                let owl__x1393 = arc_clone(&temp_owl__x1393);
+                                                let temp_owl__x1465 = { arc_clone(&owl__x1393) };
+                                                let owl__x1465 = arc_clone(&temp_owl__x1465);
                                                 let temp_owl__x1467 = {
-                                                rc_clone(&owl_msg1_timestamp1201)
+                                                arc_clone(&owl_msg1_timestamp1201)
                                                 };
-                                                let owl__x1467 = rc_clone(&temp_owl__x1467);
-                                                let temp_owl__x1469 = { rc_clone(&owl__x1362) };
-                                                let owl__x1469 = rc_clone(&temp_owl__x1469);
+                                                let owl__x1467 = arc_clone(&temp_owl__x1467);
+                                                let temp_owl__x1469 = { arc_clone(&owl__x1362) };
+                                                let owl__x1469 = arc_clone(&temp_owl__x1469);
                                                 let temp_owl__x1471 = {
                                                     {
                                                         let x: Vec<u8> = mk_vec_u8![];
                                                         x
                                                     }
                                                 };
-                                                let owl__x1471 = rc_new(temp_owl__x1471);
+                                                let owl__x1471 = arc_new(temp_owl__x1471);
                                                 let temp_owl__x1472 = {
                                                 owl_dec_st_aead(
-                                                    vec_as_slice(&(*rc_clone(&owl__x1465))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1467))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1471))),
-                                                    vec_as_slice(&(*rc_clone(&owl__x1469))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1465))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1467))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1471))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1469))),
                                                 )
                                                 };
                                                 let owl__x1472 = temp_owl__x1472;
@@ -3958,73 +3964,97 @@ impl cfg_Responder {
                                                         (owl__x1398, Tracked(itree))
                                                     },
                                                     Some(temp_owl_msg1_timestamp_dec1399) => {
-                                                        let owl_msg1_timestamp_dec1399 = rc_clone(
+                                                        let owl_msg1_timestamp_dec1399 = arc_clone(
                                                             &temp_owl_msg1_timestamp_dec1399,
                                                         );
                                                         let temp_owl__x1412 = {
-                                                        rc_clone(&owl__x1362)
+                                                        arc_clone(&owl__x1362)
                                                         };
-                                                        let owl__x1412 = rc_clone(&temp_owl__x1412);
+                                                        let owl__x1412 = arc_clone(
+                                                            &temp_owl__x1412,
+                                                        );
                                                         let temp_owl__x1414 = {
-                                                        rc_clone(&owl_msg1_timestamp_dec1399)
+                                                        arc_clone(&owl_msg1_timestamp_dec1399)
                                                         };
-                                                        let owl__x1414 = rc_clone(&temp_owl__x1414);
+                                                        let owl__x1414 = arc_clone(
+                                                            &temp_owl__x1414,
+                                                        );
                                                         let temp_owl__x1416 = {
                                                         owl_concat(
-                                                            vec_as_slice(&(*rc_clone(&owl__x1412))),
-                                                            vec_as_slice(&(*rc_clone(&owl__x1414))),
+                                                            vec_as_slice(
+                                                                &(*arc_clone(&owl__x1412)),
+                                                            ),
+                                                            vec_as_slice(
+                                                                &(*arc_clone(&owl__x1414)),
+                                                            ),
                                                         )
                                                         };
-                                                        let owl__x1416 = rc_new(temp_owl__x1416);
+                                                        let owl__x1416 = arc_new(temp_owl__x1416);
                                                         let temp_owl__x1418 = {
                                                         owl_crh(
-                                                            vec_as_slice(&(*rc_clone(&owl__x1416))),
+                                                            vec_as_slice(
+                                                                &(*arc_clone(&owl__x1416)),
+                                                            ),
                                                         )
                                                         };
-                                                        let owl__x1418 = rc_clone(&temp_owl__x1418);
+                                                        let owl__x1418 = arc_clone(
+                                                            &temp_owl__x1418,
+                                                        );
                                                         let temp_owl__x1419 = {
-                                                        rc_clone(&owl__x1418)
+                                                        arc_clone(&owl__x1418)
                                                         };
-                                                        let owl__x1419 = rc_clone(&temp_owl__x1419);
+                                                        let owl__x1419 = arc_clone(
+                                                            &temp_owl__x1419,
+                                                        );
                                                         let temp_owl__x1438 = {
-                                                        rc_clone(&owl__x1385)
+                                                        arc_clone(&owl__x1385)
                                                         };
-                                                        let owl__x1438 = rc_clone(&temp_owl__x1438);
+                                                        let owl__x1438 = arc_clone(
+                                                            &temp_owl__x1438,
+                                                        );
                                                         let temp_owl__x1440 = {
-                                                        rc_clone(&owl__x1419)
+                                                        arc_clone(&owl__x1419)
                                                         };
-                                                        let owl__x1440 = rc_clone(&temp_owl__x1440);
+                                                        let owl__x1440 = arc_clone(
+                                                            &temp_owl__x1440,
+                                                        );
                                                         let temp_owl__x1442 = {
-                                                        rc_clone(&owl__x1267)
+                                                        arc_clone(&owl__x1267)
                                                         };
-                                                        let owl__x1442 = rc_clone(&temp_owl__x1442);
+                                                        let owl__x1442 = arc_clone(
+                                                            &temp_owl__x1442,
+                                                        );
                                                         let temp_owl__x1444 = {
-                                                        rc_clone(&owl__x1480)
+                                                        arc_clone(&owl__x1480)
                                                         };
-                                                        let owl__x1444 = rc_clone(&temp_owl__x1444);
+                                                        let owl__x1444 = arc_clone(
+                                                            &temp_owl__x1444,
+                                                        );
                                                         let temp_owl__x1446 = {
-                                                        rc_clone(&owl_msg1_sender1204)
+                                                        arc_clone(&owl_msg1_sender1204)
                                                         };
-                                                        let owl__x1446 = rc_clone(&temp_owl__x1446);
+                                                        let owl__x1446 = arc_clone(
+                                                            &temp_owl__x1446,
+                                                        );
                                                         let temp_owl__x1448 = {
                                                         owl_responder_msg1_val {
                                                             owl__responder_msg1_C3: clone_vec_u8(
-                                                                &*rc_clone(&owl__x1438),
+                                                                &*arc_clone(&owl__x1438),
                                                             ),
                                                             owl__responder_msg1_H4: clone_vec_u8(
-                                                                &*rc_clone(&owl__x1440),
+                                                                &*arc_clone(&owl__x1440),
                                                             ),
                                                             owl__responder_msg1_ephemeral:
                                                                 clone_vec_u8(
-                                                                &*rc_clone(&owl__x1442),
+                                                                &*arc_clone(&owl__x1442),
                                                             ),
                                                             owl__responder_msg1_sender_pk:
                                                                 clone_vec_u8(
-                                                                &*rc_clone(&owl__x1444),
+                                                                &*arc_clone(&owl__x1444),
                                                             ),
                                                             owl__responder_msg1_sender:
                                                                 clone_vec_u8(
-                                                                &*rc_clone(&owl__x1446),
+                                                                &*arc_clone(&owl__x1446),
                                                             ),
                                                         }
                                                         };
@@ -4073,9 +4103,9 @@ impl cfg_Responder {
         &self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
-        owl_pk27443: Rc<Vec<u8>>,
+        owl_pk27443: Arc<Vec<u8>>,
     ) -> (res: Result<
-        (Option<Rc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>),
+        (Option<Arc<Vec<u8>>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>),
         OwlError,
     >)
         requires
@@ -4099,7 +4129,7 @@ impl cfg_Responder {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
     ) -> (res: Result<
-        (Rc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>),
+        (Arc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>),
         OwlError,
     >)
         requires
@@ -4112,7 +4142,7 @@ impl cfg_Responder {
         let tracked mut itree = itree;
         let res_inner = {
             let t = crate::wireguard::handshake::timestamp::now().to_vec();
-            (rc_new(t), Tracked(itree))
+            (arc_new(t), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -4124,7 +4154,7 @@ impl cfg_Responder {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
     ) -> (res: Result<
-        (Rc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>),
+        (Arc<Vec<u8>>, Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>),
         OwlError,
     >)
         requires
@@ -4141,7 +4171,6 @@ impl cfg_Responder {
         Ok(res_inner)
     }
 }
-
 
 // ------------------------------------
 // ------ USER-DEFINED FUNCTIONS ------
@@ -4237,5 +4266,6 @@ pub exec fn owl_transp_tag_value() -> (res: Vec<u8>)
 // no entry point
 
 } // verus!
+fn main() { /* entrypoint() */ }
 
 

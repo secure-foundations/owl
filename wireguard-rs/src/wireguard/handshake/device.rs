@@ -24,6 +24,8 @@ use super::peer::Peer;
 use super::ratelimiter::RateLimiter;
 use super::types::*;
 
+use crate::wireguard::owl_wg::owl_wireguard;
+
 const MAX_PEER_PER_DEVICE: usize = 1 << 20;
 
 pub struct KeyState {
@@ -40,6 +42,22 @@ pub struct Device<O> {
     id_map: DashMap<u32, [u8; 32]>, // concurrent map
     pk_map: HashMap<[u8; 32], Peer<O>>,
     limiter: Mutex<RateLimiter>,
+}
+
+struct OwlInitiator {
+    cfg : owl_wireguard::cfg_Initiator,
+    state : owl_wireguard::state_Initiator,
+}
+
+struct OwlResponder {
+    cfg : owl_wireguard::cfg_Responder,
+    state : owl_wireguard::state_Responder,
+}
+
+enum OwlDevice {
+    NoOwl,
+    Initiator (OwlInitiator),
+    Responder (OwlResponder),
 }
 
 pub struct Iter<'a, O> {
