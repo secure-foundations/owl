@@ -239,7 +239,7 @@ pub fn handshake_worker<T: Tun, B: UDP>(
 
                                 // free any unused ids
                                 for id in peer.add_keypair(kp) {
-                                    device.release(id);
+                                    device.inner().release(id);
                                 }
                             };
                         }
@@ -248,7 +248,7 @@ pub fn handshake_worker<T: Tun, B: UDP>(
                 }
             }
             HandshakeJob::New(pk) => {
-                if let Some(peer) = wg.peers.read().get(&pk) {
+                if let Some(peer) = wg.peers.read().inner().get(&pk) {
                     debug!(
                         "{} : handshake worker, new handshake requested for {}",
                         wg, peer

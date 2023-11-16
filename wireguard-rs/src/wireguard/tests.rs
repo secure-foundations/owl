@@ -124,8 +124,8 @@ fn test_pure_wireguard() {
         let peers1 = wg1.peers.read();
         let peers2 = wg2.peers.read();
 
-        let peer2 = peers1.get(&pk2).unwrap();
-        let peer1 = peers2.get(&pk1).unwrap();
+        let peer2 = peers1.inner().get(&pk2).unwrap();
+        let peer1 = peers2.inner().get(&pk1).unwrap();
 
         peer1.add_allowed_ip("192.168.1.0".parse().unwrap(), 24);
 

@@ -37,14 +37,14 @@ fn setup_devices<R: RngCore + CryptoRng, O: Default>(
     let mut dev1 = Device::new();
     let mut dev2 = Device::new();
 
-    dev1.set_sk(Some(sk1));
-    dev2.set_sk(Some(sk2));
+    dev1.inner_mut().set_sk(Some(sk1));
+    dev2.inner_mut().set_sk(Some(sk2));
 
-    dev1.add(pk2, O::default()).unwrap();
-    dev2.add(pk1, O::default()).unwrap();
+    dev1.inner_mut().add(pk2, O::default()).unwrap();
+    dev2.inner_mut().add(pk1, O::default()).unwrap();
 
-    dev1.set_psk(pk2, psk).unwrap();
-    dev2.set_psk(pk1, psk).unwrap();
+    dev1.inner_mut().set_psk(pk2, psk).unwrap();
+    dev2.inner_mut().set_psk(pk1, psk).unwrap();
 
     (pk1, dev1, pk2, dev2)
 }
@@ -191,13 +191,13 @@ fn handshake_no_load() {
         assert_eq!(ks_i.send, ks_r.recv, "KeyI.send != KeyR.recv");
         assert_eq!(ks_i.recv, ks_r.send, "KeyI.recv != KeyR.send");
 
-        dev1.release(ks_i.local_id());
-        dev2.release(ks_r.local_id());
+        dev1.inner_mut().release(ks_i.local_id());
+        dev2.inner_mut().release(ks_r.local_id());
 
         // avoid initiation flood detection
         wait();
     }
 
-    dev1.remove(&pk2).unwrap();
-    dev2.remove(&pk1).unwrap();
+    dev1.inner_mut().remove(&pk2).unwrap();
+    dev2.inner_mut().remove(&pk1).unwrap();
 }

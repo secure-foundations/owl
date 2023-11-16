@@ -365,7 +365,7 @@ pub(super) fn consume_initiation<'a, O>(
             &msg.f_static  // ct || tag
         )?;
 
-        let peer = device.lookup_pk(&PublicKey::from(pk))?;
+        let peer = device.inner().lookup_pk(&PublicKey::from(pk))?;
 
         // check for zero shared-secret (see "shared_secret" note).
 
@@ -510,7 +510,7 @@ pub(super) fn consume_response<'a, O>(
     log::debug!("consume response");
     clear_stack_on_return_fnonce(CLEAR_PAGES, || {
         // retrieve peer and copy initiation state
-        let (peer, _) = device.lookup_id(msg.f_receiver.get())?;
+        let (peer, _) = device.inner().lookup_id(msg.f_receiver.get())?;
 
         let (hs, ck, local, eph_sk) = match *peer.state.lock() {
             State::InitiationSent {

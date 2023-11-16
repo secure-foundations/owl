@@ -109,7 +109,7 @@ impl<O> Peer<O> {
 
         // reset state
         if let State::InitiationSent { local, .. } = *state {
-            device.release(local)
+            device.inner().release(local)
         }
 
         // update replay & flood protection

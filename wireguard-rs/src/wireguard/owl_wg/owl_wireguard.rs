@@ -1785,7 +1785,7 @@ impl state_Initiator {
     }
 }
 
-pub struct cfg_Initiator {
+pub struct cfg_Initiator<O> {
     pub listener: TcpListener,
     pub owl_S_init: Arc<Vec<u8>>,
     pub owl_E_init: Arc<Vec<u8>>,
@@ -1794,9 +1794,10 @@ pub struct cfg_Initiator {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
+    pub device: crate::wireguard::handshake::device::DeviceInner<O>
 }
 
-impl cfg_Initiator {
+impl<O> cfg_Initiator<O> {
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_init(
         &self,
@@ -2927,7 +2928,7 @@ impl state_Responder {
     }
 }
 
-pub struct cfg_Responder {
+pub struct cfg_Responder<O> {
     pub listener: TcpListener,
     pub owl_S_resp: Arc<Vec<u8>>,
     pub owl_E_resp: Arc<Vec<u8>>,
@@ -2936,9 +2937,10 @@ pub struct cfg_Responder {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
+    pub device: crate::wireguard::handshake::device::DeviceInner<O>,
 }
 
-impl cfg_Responder { 
+impl<O> cfg_Responder<O> { 
 
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_resp(

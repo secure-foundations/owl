@@ -140,7 +140,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
         self.router.down();
 
         // set all peers down (stops timers)
-        for (_, peer) in self.peers.write().iter() {
+        for (_, peer) in self.peers.write().inner().iter() {
             peer.stop_timers();
             peer.down();
         }
@@ -166,7 +166,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
         self.router.up();
 
         // set all peers up (restarts timers)
-        for (_, peer) in self.peers.write().iter() {
+        for (_, peer) in self.peers.write().inner().iter() {
             peer.up();
             peer.start_timers();
         }
@@ -175,36 +175,37 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
     }
 
     pub fn clear_peers(&self) {
-        self.peers.write().clear();
+        self.peers.write().inner_mut().clear();
     }
 
     pub fn remove_peer(&self, pk: &PublicKey) {
-        let _ = self.peers.write().remove(pk);
+        let _ = self.peers.write().inner_mut().remove(pk);
     }
 
     pub fn set_key(&self, sk: Option<StaticSecret>) {
         let mut peers = self.peers.write();
-        peers.set_sk(sk);
+        peers.inner_mut().set_sk(sk);
         self.router.clear_sending_keys();
     }
 
     pub fn get_sk(&self) -> Option<StaticSecret> {
         self.peers
             .read()
+            .inner()
             .get_sk()
             .map(|sk| StaticSecret::from(sk.to_bytes()))
     }
 
     pub fn set_psk(&self, pk: PublicKey, psk: [u8; 32]) -> bool {
-        self.peers.write().set_psk(pk, psk).is_ok()
+        self.peers.write().inner_mut().set_psk(pk, psk).is_ok()
     }
     pub fn get_psk(&self, pk: &PublicKey) -> Option<[u8; 32]> {
-        self.peers.read().get_psk(pk).ok()
+        self.peers.read().inner().get_psk(pk).ok()
     }
 
     pub fn add_peer(&self, pk: PublicKey) -> bool {
         let mut peers = self.peers.write();
-        if peers.contains_key(&pk) {
+        if peers.inner().contains_key(&pk) {
             return false;
         }
 
@@ -229,7 +230,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
             });
 
         // finally, add the peer to the handshake device
-        peers.add(pk, peer).is_ok()
+        peers.inner_mut().add(pk, peer).is_ok()
     }
 
     /// Begin consuming messages from the reader.
