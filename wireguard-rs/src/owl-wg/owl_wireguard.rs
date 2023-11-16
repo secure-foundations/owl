@@ -1911,24 +1911,6 @@ pub struct cfg_Initiator {
 }
 
 impl cfg_Initiator {
-    #[verifier(external_body)]
-    pub fn init_cfg_Initiator(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(Initiator_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect(
-            "Config file not found",
-        );
-        let config = deserialize_cfg_Initiator_config(&config_str);
-        return cfg_Initiator {
-            listener,
-            owl_S_init: rc_new(config.owl_S_init),
-            owl_E_init: rc_new(config.owl_E_init),
-            pk_owl_S_resp: rc_new(config.pk_owl_S_resp),
-            pk_owl_S_init: rc_new(config.pk_owl_S_init),
-            pk_owl_E_resp: rc_new(config.pk_owl_E_resp),
-            pk_owl_E_init: rc_new(config.pk_owl_E_init),
-            salt: rc_new(config.salt),
-        }
-    }
     
     #[verifier::spinoff_prover]
     pub fn owl_Initiator_main(
@@ -3103,25 +3085,6 @@ pub struct cfg_Responder {
 }
 
 impl cfg_Responder {
-    #[verifier(external_body)]
-    pub fn init_cfg_Responder(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(Responder_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect(
-            "Config file not found",
-        );
-        let config = deserialize_cfg_Responder_config(&config_str);
-        return cfg_Responder {
-            listener,
-            owl_S_resp: rc_new(config.owl_S_resp),
-            owl_E_resp: rc_new(config.owl_E_resp),
-            pk_owl_S_resp: rc_new(config.pk_owl_S_resp),
-            pk_owl_S_init: rc_new(config.pk_owl_S_init),
-            pk_owl_E_resp: rc_new(config.pk_owl_E_resp),
-            pk_owl_E_init: rc_new(config.pk_owl_E_init),
-            salt: rc_new(config.salt),
-        }
-    }
-    
     #[verifier::spinoff_prover]
     pub fn owl_Responder_main(
         &self,
@@ -4361,79 +4324,6 @@ impl cfg_Responder {
     }
 }
 
-pub struct state_dummy {}
-
-impl state_dummy {
-    #[verifier(external_body)]
-    pub fn init_state_dummy() -> Self {
-        state_dummy {  }
-    }
-}
-
-pub struct cfg_dummy {
-    pub listener: TcpListener,
-    pub owl_channel_secret: Rc<Vec<u8>>,
-    pub pk_owl_S_resp: Rc<Vec<u8>>,
-    pub pk_owl_S_init: Rc<Vec<u8>>,
-    pub pk_owl_E_resp: Rc<Vec<u8>>,
-    pub pk_owl_E_init: Rc<Vec<u8>>,
-    pub salt: Rc<Vec<u8>>,
-}
-
-impl cfg_dummy {
-    #[verifier(external_body)]
-    pub fn init_cfg_dummy(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(dummy_addr().into_rust_str()).unwrap();
-        let owl_channel_secret = owl_aead::gen_rand_nonce(cipher());
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect(
-            "Config file not found",
-        );
-        let config = deserialize_cfg_dummy_config(&config_str);
-        return cfg_dummy {
-            listener,
-            owl_channel_secret: rc_new(owl_channel_secret),
-            pk_owl_S_resp: rc_new(config.pk_owl_S_resp),
-            pk_owl_S_init: rc_new(config.pk_owl_S_init),
-            pk_owl_E_resp: rc_new(config.pk_owl_E_resp),
-            pk_owl_E_init: rc_new(config.pk_owl_E_init),
-            salt: rc_new(config.salt),
-        }
-    }
-    
-    #[verifier::spinoff_prover]
-    pub fn owl_dummy_main(
-        &self,
-        Tracked(itree): Tracked<ITreeToken<((), state_dummy), Endpoint>>,
-        mut_state: &mut state_dummy,
-    ) -> (res: Result<((), Tracked<ITreeToken<((), state_dummy), Endpoint>>), OwlError>)
-        requires
-            itree.view() == dummy_main_spec(*self, *old(mut_state)),
-        ensures
-            res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in(((), *mut_state)),
-    {
-        let tracked mut itree = itree;
-        let res_inner = {
-            let temp_owl__x1519 = { () };
-            let owl__x1519 = temp_owl__x1519;
-            (owl__x1519, Tracked(itree))
-        };
-        Ok(res_inner)
-    }
-    
-    #[verifier(external_body)]
-    pub exec fn owl_dummy_main_wrapper(&self, s: &mut state_dummy) -> (_: ()) {
-        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
-            (),
-            Endpoint,
-        >::dummy_itree_token();
-        let tracked (Tracked(call_token), _) = split_bind(dummy_tok, dummy_main_spec(*self, *s));
-        let (res, _): ((), Tracked<ITreeToken<((), state_dummy), Endpoint>>) = self.owl_dummy_main(
-            Tracked(call_token),
-            s,  /* todo args? */
-        ).unwrap();
-        res
-    }
-}
 
 // ------------------------------------
 // ------ USER-DEFINED FUNCTIONS ------
