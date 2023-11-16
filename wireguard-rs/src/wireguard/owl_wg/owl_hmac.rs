@@ -1,10 +1,14 @@
 use crate::wireguard::owl_wg::owl_util::gen_rand_bytes;
 use crypto::common::KeyInit;
 use hmac::Mac;
+use hmac::NewMac;
+use blake2::Blake2s;
 use hmac::Hmac;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use vstd::prelude::*;
+
+type HMACBlake2s = Hmac<Blake2s>;
 
 verus! {
 
@@ -13,6 +17,7 @@ pub enum Mode {
     Sha256,
     Sha384,
     Sha512,
+    Blake2s,
 }
 
 #[inline]
@@ -22,6 +27,7 @@ pub const fn tag_size(mode: &Mode) -> usize {
         Mode::Sha256 => 32,
         Mode::Sha384 => 48,
         Mode::Sha512 => 64,
+        Mode::Blake2s => 32,
     }
 }
 
@@ -50,18 +56,24 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
         None => tag_size(&mode),
     };
 
-    #[verifier(external_body)]
-    fn hmac_inner<H: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
-        let mut mac = <H as Mac>::new_from_slice(key).expect("HMAC got invalid length");
-        mac.update(data);
-        mac.finalize().into_bytes().to_vec()
-    }
+    // #[verifier(external_body)]
+    // fn hmac_inner<H: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
+    //     let mut mac = <H as Mac>::new_from_slice(key).expect("HMAC got invalid length");
+    //     mac.update(data);
+    //     mac.finalize().into_bytes().to_vec()
+    // }
 
     let mut result = match mode {
-        Mode::Sha1 => hmac_inner::<Hmac<Sha1>>(key, data),
-        Mode::Sha256 => hmac_inner::<Hmac<Sha256>>(key, data),
-        Mode::Sha384 => hmac_inner::<Hmac<Sha384>>(key, data),
-        Mode::Sha512 => hmac_inner::<Hmac<Sha512>>(key, data),
+        // Mode::Sha1 => hmac_inner::<Hmac<Sha1>>(key, data),
+        // Mode::Sha256 => hmac_inner::<Hmac<Sha256>>(key, data),
+        // Mode::Sha384 => hmac_inner::<Hmac<Sha384>>(key, data),
+        // Mode::Sha512 => hmac_inner::<Hmac<Sha512>>(key, data),
+        Mode::Blake2s => {
+            let mut mac = HMACBlake2s::new_varkey(key).unwrap();
+            mac.update(data);
+            mac.finalize().into_bytes().to_vec()
+        }
+        _ => { panic!("unsupported hmac mode") }
     };
 
     result.truncate(tag_length);

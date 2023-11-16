@@ -1,8 +1,9 @@
 use crate::wireguard::owl_wg::owl_util::gen_rand_bytes;
-use aead::{Aead, Nonce, Payload};
+use aead::{Aead, NewAead, Nonce, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};
 use chacha20poly1305::ChaCha20Poly1305;
 use vstd::prelude::*;
+use generic_array::*;
 
 verus! {
 
@@ -133,45 +134,54 @@ pub fn encrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    match alg {
+        Mode::Chacha20Poly1305 => {
+            ChaCha20Poly1305::new(GenericArray::from_slice(k))
+            .encrypt(iv.into(), Payload { msg: msg, aad: aad })
+            .map_err(|_| Error::Encrypting)
+        }
+        _ => panic!("unsupported aead mode"),
+    }
+
     // check lengths
-    if k.len() != key_size(alg) {
-        return Err(Error::InvalidKeySize);
-    }
-    if iv.len() != nonce_size(alg) {
-        return Err(Error::InvalidNonce);
-    }
+    // if k.len() != key_size(alg) {
+    //     return Err(Error::InvalidKeySize);
+    // }
+    // if iv.len() != nonce_size(alg) {
+    //     return Err(Error::InvalidNonce);
+    // }
 
-    #[verifier(external_body)]
-    fn encrypt_inner<C: Aead + KeyInit>(
-        k: &[u8],
-        msg: &[u8],
-        iv: &[u8],
-        aad: &Aad,
-    ) -> Result<Vec<u8>, Error> {
-        let cipher = match C::new_from_slice(k) {
-            Ok(c) => c,
-            Err(_) => {
-                return Err(Error::InvalidInit);
-            }
-        };
+    // #[verifier(external_body)]
+    // fn encrypt_inner<C: Aead + KeyInit>(
+    //     k: &[u8],
+    //     msg: &[u8],
+    //     iv: &[u8],
+    //     aad: &Aad,
+    // ) -> Result<Vec<u8>, Error> {
+    //     let cipher = match C::new_from_slice(k) {
+    //         Ok(c) => c,
+    //         Err(_) => {
+    //             return Err(Error::InvalidInit);
+    //         }
+    //     };
 
-        let nonce = <Nonce<C>>::from_slice(iv);
-        let plaintext = Payload { msg: msg, aad: aad };
+    //     let nonce = <Nonce<C>>::from_slice(iv);
+    //     let plaintext = Payload { msg: msg, aad: aad };
 
-        let ctxt = match cipher.encrypt(nonce, plaintext) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(Error::Encrypting);
-            }
-        };
-        return Ok(ctxt);
-    }
+    //     let ctxt = match cipher.encrypt(nonce, plaintext) {
+    //         Ok(v) => v,
+    //         Err(_) => {
+    //             return Err(Error::Encrypting);
+    //         }
+    //     };
+    //     return Ok(ctxt);
+    // }
 
-    return match alg {
-        Mode::Aes128Gcm => encrypt_inner::<Aes128Gcm>(k, msg, iv, aad),
-        Mode::Aes256Gcm => encrypt_inner::<Aes256Gcm>(k, msg, iv, aad),
-        Mode::Chacha20Poly1305 => encrypt_inner::<ChaCha20Poly1305>(k, msg, iv, aad),
-    };
+    // return match alg {
+    //     Mode::Aes128Gcm => encrypt_inner::<Aes128Gcm>(k, msg, iv, aad),
+    //     Mode::Aes256Gcm => encrypt_inner::<Aes256Gcm>(k, msg, iv, aad),
+    //     Mode::Chacha20Poly1305 => encrypt_inner::<ChaCha20Poly1305>(k, msg, iv, aad),
+    // };
 }
 
 #[verifier(external_body)]
@@ -201,53 +211,54 @@ pub fn decrypt(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
-    // check lengths
-    if k.len() != key_size(alg) {
-        return Err(Error::InvalidKeySize);
-    }
-    if iv.len() != nonce_size(alg) {
-        return Err(Error::InvalidNonce);
-    }
-    if tag.len() != tag_size(alg) {
-        return Err(Error::InvalidTagSize);
-    }
+    unimplemented!()
+    // // check lengths
+    // if k.len() != key_size(alg) {
+    //     return Err(Error::InvalidKeySize);
+    // }
+    // if iv.len() != nonce_size(alg) {
+    //     return Err(Error::InvalidNonce);
+    // }
+    // if tag.len() != tag_size(alg) {
+    //     return Err(Error::InvalidTagSize);
+    // }
 
-    #[verifier(external_body)]
-    fn decrypt_inner<C: Aead + KeyInit>(
-        k: &[u8],
-        ctxt: &[u8],
-        tag: &[u8],
-        iv: &[u8],
-        aad: &Aad,
-    ) -> Result<Vec<u8>, Error> {
-        let cipher = match C::new_from_slice(k) {
-            Ok(c) => c,
-            Err(_) => {
-                return Err(Error::InvalidInit);
-            }
-        };
+    // #[verifier(external_body)]
+    // fn decrypt_inner<C: Aead + KeyInit>(
+    //     k: &[u8],
+    //     ctxt: &[u8],
+    //     tag: &[u8],
+    //     iv: &[u8],
+    //     aad: &Aad,
+    // ) -> Result<Vec<u8>, Error> {
+    //     let cipher = match C::new_from_slice(k) {
+    //         Ok(c) => c,
+    //         Err(_) => {
+    //             return Err(Error::InvalidInit);
+    //         }
+    //     };
 
-        let nonce = <Nonce<C>>::from_slice(iv);
-        let ctxt_tag = &[ctxt, tag].concat();
-        let ciphertext = Payload {
-            msg: ctxt_tag,
-            aad: aad,
-        };
+    //     let nonce = <Nonce<C>>::from_slice(iv);
+    //     let ctxt_tag = &[ctxt, tag].concat();
+    //     let ciphertext = Payload {
+    //         msg: ctxt_tag,
+    //         aad: aad,
+    //     };
 
-        let ctxt = match cipher.decrypt(nonce, ciphertext) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(Error::Decrypting);
-            }
-        };
-        return Ok(ctxt);
-    }
+    //     let ctxt = match cipher.decrypt(nonce, ciphertext) {
+    //         Ok(v) => v,
+    //         Err(_) => {
+    //             return Err(Error::Decrypting);
+    //         }
+    //     };
+    //     return Ok(ctxt);
+    // }
 
-    return match alg {
-        Mode::Aes128Gcm => decrypt_inner::<Aes128Gcm>(k, ctxt, tag, iv, aad),
-        Mode::Aes256Gcm => decrypt_inner::<Aes256Gcm>(k, ctxt, tag, iv, aad),
-        Mode::Chacha20Poly1305 => decrypt_inner::<ChaCha20Poly1305>(k, ctxt, tag, iv, aad),
-    };
+    // return match alg {
+    //     Mode::Aes128Gcm => decrypt_inner::<Aes128Gcm>(k, ctxt, tag, iv, aad),
+    //     Mode::Aes256Gcm => decrypt_inner::<Aes256Gcm>(k, ctxt, tag, iv, aad),
+    //     Mode::Chacha20Poly1305 => decrypt_inner::<ChaCha20Poly1305>(k, ctxt, tag, iv, aad),
+    // };
 }
 
 #[verifier(external_body)]
@@ -258,13 +269,21 @@ pub fn decrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
-    if ctxt.len() < tag_size(alg) {
-        return Err(Error::InvalidTagSize);
+    match alg {
+        Mode::Chacha20Poly1305 => {
+            ChaCha20Poly1305::new(GenericArray::from_slice(k))
+            .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
+            .map_err(|_| Error::Decrypting)
+        },
+        _ => panic!("unsupported aead mode"),
     }
-    let msg_len = ctxt.len() - tag_size(alg);
-    let tag = &ctxt[msg_len..];
-    let ctxt = &ctxt[..msg_len];
-    return decrypt(alg, k, ctxt, tag, iv, aad);
+    // if ctxt.len() < tag_size(alg) {
+    //     return Err(Error::InvalidTagSize);
+    // }
+    // let msg_len = ctxt.len() - tag_size(alg);
+    // let tag = &ctxt[msg_len..];
+    // let ctxt = &ctxt[..msg_len];
+    // return decrypt(alg, k, ctxt, tag, iv, aad);
 }
 
 } // verus!

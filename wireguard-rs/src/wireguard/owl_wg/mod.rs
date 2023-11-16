@@ -64,14 +64,14 @@ pub const fn nonce_size() -> (r: usize)
 }
 
 pub open const spec fn HMAC_MODE() -> owl_hmac::Mode {
-    owl_hmac::Mode::Sha512
+    owl_hmac::Mode::Blake2s
 }
 
 pub const fn hmac_mode() -> (r: owl_hmac::Mode)
     ensures
         r == HMAC_MODE(),
 {
-    owl_hmac::Mode::Sha512
+    owl_hmac::Mode::Blake2s
 }
 
 pub open const spec fn MACKEY_SIZE() -> usize {
