@@ -341,10 +341,10 @@ initTypeLayouts = M.map LBytes initLenConsts
 
 -- Confirm: we call `serialize` when we need to treat an ADT as a sequence of bytes for a crypto op
 printOwlArg :: (RustTy, String) -> String
-printOwlArg (Rc VecU8, s) = "&(*" ++ s ++ ").as_slice()"
-printOwlArg (VecU8, s) = "&" ++ s ++ ".as_slice()"
-printOwlArg (ADT name, s) = "&(serialize_" ++ name ++ "(&" ++ s ++ ")).as_slice()"
-printOwlArg (Rc (ADT name), s) = "&(serialize_" ++ name ++ "(&(*" ++ s ++ "))).as_slice()"
+printOwlArg (Rc VecU8, s) = "vec_as_slice(&(*" ++ s ++ "))"
+printOwlArg (VecU8, s) = "vec_as_slice(&" ++ s ++ ")"
+printOwlArg (ADT name, s) = "vec_as_slice(&(serialize_" ++ name ++ "(&" ++ s ++ ")))"
+printOwlArg (Rc (ADT name), s) = "vec_as_slice(&(serialize_" ++ name ++ "(&(*" ++ s ++ "))))"
 printOwlArg (_, s) = s
 
 printOwlOp :: String -> [(RustTy, String)] -> String
@@ -383,8 +383,8 @@ initFuncs =
             )),
             ("None", (\_ -> return (Option Unit, "None"))), -- dummy
             ("length", (\args -> case args of
-                    [(Rc VecU8,x)] -> return $ (Number, "(*" ++ x ++ ").len()")
-                    [(_,x)] -> return $ (Number, x ++ ".len()")
+                    [(Rc VecU8,x)] -> return $ (Number, "vec_length(&(*" ++ x ++ "))")
+                    [(_,x)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
                     _ -> throwError $ TypeError $ "got wrong number of args for length"
             )),
             ("zero", (\_ -> return (Number, "0"))),
@@ -568,10 +568,10 @@ rustifySpecTy ct = do
     return $ specTyOf rt
 
 rcClone :: OwlDoc
-rcClone = owlpretty "Rc::clone"
+rcClone = owlpretty "rc_clone"
 
 rcNew :: OwlDoc
-rcNew = owlpretty "Rc::new"
+rcNew = owlpretty "rc_new"
 
 getCurRetTy :: ExtractionMonad String
 getCurRetTy = do
@@ -581,13 +581,13 @@ getCurRetTy = do
         Just s -> return s
 
 viewVar :: RustTy -> String -> String
-viewVar VecU8 s = s ++ ".view()"
+viewVar VecU8 s = s ++ ".dview()"
 viewVar Bool s = s
 viewVar Number s = s
 viewVar String s = s
 viewVar Unit s = s
-viewVar (ADT _) s = s ++ ".view()" -- TODO nesting?
-viewVar (Option rt) s = s ++ ".view()"
+viewVar (ADT _) s = s ++ ".dview()" -- TODO nesting?
+viewVar (Option rt) s = s ++ ".dview()"
 viewVar (Rc rt) s = viewVar rt s
 
 hexStringToByteList :: String -> ExtractionMonad OwlDoc
