@@ -41,6 +41,13 @@ pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
     v.extend(s);
 }
 
+#[verifier::external_body]
+pub exec fn vec_truncate(vec: &mut Vec<u8>, len: usize)
+    ensures
+        vec.dview() == seq_truncate(old(vec).dview(), len as nat)
+{
+    vec.truncate(len)
+}
 
 pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
     ensures res.dview() == concat(a.dview(), b.dview())
@@ -67,6 +74,12 @@ pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
         proof { assert_seqs_equal!(v.dview(), Seq::new(i as nat, |j| e)); }
     }
     v
+}
+
+pub exec fn vec_u8_of_len(n: usize) -> (res: Vec<u8>)
+    ensures res.dview() == seq_u8_of_len(n as nat)
+{
+    vec_u8_from_elem(0u8, n)
 }
 
 #[allow(unused_macros)]

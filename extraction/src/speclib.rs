@@ -69,6 +69,14 @@ pub open spec fn seq_u8_of_len(n: nat) -> Seq<u8> {
     Seq::new(n, |i| 0u8)
 }
 
+pub open spec fn seq_truncate(s: Seq<u8>, n: nat) -> Seq<u8> {
+    if n <= s.len() {
+        s.subrange(0, n as int)
+    } else {
+        s
+    }
+}
+
 pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
     a.add(b)
 }
