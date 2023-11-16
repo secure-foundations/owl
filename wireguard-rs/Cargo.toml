@@ -31,7 +31,7 @@ spin = "0.7"
 zerocopy = "0.3"
 aes-gcm = "0.10.1"
 crypto = "0.4.0"
-hkdf = "0.12.3"
+hkdf = "0.9.0"
 p256 = { version = "0.11.1", features = ["ecdh", "bits", "serde"] }
 rsa = "0.7.2"
 sha1 = "0.10.5"
