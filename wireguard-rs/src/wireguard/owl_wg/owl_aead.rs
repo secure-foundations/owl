@@ -1,4 +1,4 @@
-use crate::owl_util::gen_rand_bytes;
+use crate::wireguard::owl_wg::owl_util::gen_rand_bytes;
 use aead::{Aead, Nonce, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};
 use chacha20poly1305::ChaCha20Poly1305;

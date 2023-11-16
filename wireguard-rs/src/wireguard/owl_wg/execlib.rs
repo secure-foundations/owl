@@ -1,4 +1,5 @@
-use crate::{owl_aead, speclib, deep_view::*, *};
+use vstd::prelude::*;
+use crate::wireguard::owl_wg::{owl_aead, speclib, deep_view::*, *};
 use std::rc::Rc;
 
 verus! {
@@ -96,6 +97,7 @@ macro_rules! mk_vec_u8 {
         }}
     };
 }
+pub(crate) use mk_vec_u8;
 
 // By convention, we include the nonce at the start of the ciphertext. (TODO check wrt wire formats)
 

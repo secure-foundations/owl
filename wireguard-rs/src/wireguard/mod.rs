@@ -15,6 +15,8 @@ mod timers;
 mod types;
 mod workers;
 
+mod owl_wg;
+
 #[cfg(test)]
 mod tests;
 

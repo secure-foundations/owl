@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use vstd::seq_lib::*;
 extern crate alloc;
 use alloc::vec::Vec;
-use crate::deep_view::{VecAdditionalExecFns, *};
+use crate::wireguard::owl_wg::deep_view::{VecAdditionalExecFns, *};
 
 verus! {
     pub struct Stream {

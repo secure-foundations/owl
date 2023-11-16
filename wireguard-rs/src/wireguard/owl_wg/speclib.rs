@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
 pub use vstd::{modes::*, prelude::*, seq::*, *};
-pub use crate::DView;
+pub use crate::wireguard::owl_wg::deep_view::DView;
 
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////// CRYPTO ETC LIBRARY ///////////////////////////////////////
@@ -489,6 +489,7 @@ pub mod itree {
             }
         };
     }
+    pub(crate) use owl_call;
 
     #[allow(unused_macros)]
     #[macro_export]
@@ -499,9 +500,9 @@ pub mod itree {
             }
         };
     }
+    pub(crate) use owl_call_ret_option;
 
     #[allow(unused_macros)]
-    #[macro_export]
     macro_rules! owl_call_internal {
         // ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
         //     ::builtin_macros::verus_exec_expr! {{
@@ -526,6 +527,7 @@ pub mod itree {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }
     }
+    pub(crate) use owl_call_internal;
 
     struct UnforgeableAux;
 

@@ -6,21 +6,12 @@
 #![allow(unused_variables)]
 
 pub use vstd::{modes::*, prelude::*, seq::*, string::*};
-pub mod speclib;
-pub use crate::speclib::{*, itree::*};
-pub mod execlib;
-pub use crate::execlib::{*};
-pub mod owl_aead;
-pub mod owl_dhke;
-pub mod owl_hkdf;
-pub mod owl_hmac;
-pub mod owl_pke;
-pub mod owl_util;
-pub mod deep_view;
-pub use crate::deep_view::{*};
-pub mod parse_serialize;
+pub use crate::wireguard::owl_wg::speclib::{*, itree::*};
+pub use crate::wireguard::owl_wg::execlib::{*};
+pub use crate::wireguard::owl_wg::deep_view::{*};
+pub use crate::wireguard::owl_wg::*;
+use crate::wireguard::owl_wg::parse_serialize;
 
-pub use extraction_lib::*;
 pub use std::collections::HashMap;
 pub use std::env;
 pub use std::fs;
@@ -31,75 +22,8 @@ pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;
 pub use std::time::Instant;
-// pub use crate::parse_serialize::View as _;
 
 verus! {
-
-pub open const spec fn CIPHER() -> owl_aead::Mode {
-    crate::owl_aead::Mode::Chacha20Poly1305
-}
-
-pub const fn cipher() -> (r: owl_aead::Mode)
-    ensures
-        r == CIPHER(),
-{
-    crate::owl_aead::Mode::Chacha20Poly1305
-}
-
-pub open const spec fn KEY_SIZE() -> usize {
-    owl_aead::spec_key_size(CIPHER())
-}
-
-pub const fn key_size() -> (r: usize)
-    ensures
-        r == KEY_SIZE(),
-{
-    owl_aead::key_size(cipher())
-}
-
-pub open const spec fn TAG_SIZE() -> usize {
-    owl_aead::spec_tag_size(CIPHER())
-}
-
-pub const fn tag_size() -> (r: usize)
-    ensures
-        r == TAG_SIZE(),
-{
-    owl_aead::tag_size(cipher())
-}
-
-pub open const spec fn NONCE_SIZE() -> usize {
-    owl_aead::spec_nonce_size(CIPHER())
-}
-
-pub const fn nonce_size() -> (r: usize)
-    ensures
-        r == NONCE_SIZE(),
-{
-    owl_aead::nonce_size(cipher())
-}
-
-pub open const spec fn HMAC_MODE() -> owl_hmac::Mode {
-    crate::owl_hmac::Mode::Sha512
-}
-
-pub const fn hmac_mode() -> (r: owl_hmac::Mode)
-    ensures
-        r == HMAC_MODE(),
-{
-    crate::owl_hmac::Mode::Sha512
-}
-
-pub open const spec fn MACKEY_SIZE() -> usize {
-    owl_hmac::spec_key_size(HMAC_MODE())
-}
-
-pub const fn mackey_size() -> (r: usize)
-    ensures
-        r == MACKEY_SIZE(),
-{
-    owl_hmac::key_size(hmac_mode())
-}
 
 #[verifier(external_type_specification)]
 #[verifier(external_body)]
@@ -120,14 +44,7 @@ pub fn owl_output<A>(
     ensures
         t.view() == old(t).view().give_output(),
 {
-    let msg = msg {
-        ret_addr: std::string::String::from(ret_addr.into_rust_str()),
-        payload: std::vec::Vec::from(x),
-    };
-    let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
-    stream.write_all(&serialized).unwrap();
-    stream.flush().unwrap();
+    todo!()
 }
 
 #[verifier(external_body)]
@@ -140,12 +57,7 @@ pub fn owl_input<A>(
     ensures
         t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view())),
 {
-    let (mut stream, _addr) = listener.accept().unwrap();
-    let mut reader = io::BufReader::new(&mut stream);
-    let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
-    reader.consume(received.len());
-    let msg: msg = deserialize_msg(&received);
-    (msg.payload, String::from_rust_string(msg.ret_addr))
+    todo!()
 }
 
 #[verifier(external_body)]
