@@ -1126,7 +1126,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
         -- genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ owlpretty "" else do
         --     ni <- nameInit n nt
         --     return $
-        --         owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&mut self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --         owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&mut self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Arc<Vec<u8>>" <> lbrace <> line <>
         --             owlpretty "match self." <> owlpretty (rustifyName n) <> owlpretty ".get" <> parens (tupled ([owlpretty "&sid" <> owlpretty n | n <- [0..(nsids-1)]])) <> lbrace <> line <>
         --                 owlpretty "Some(v) =>" <+> rcClone <> owlpretty "(v)," <> line <>
         --                 owlpretty "None =>" <+> lbrace <> line <>
@@ -1138,7 +1138,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
         --             rbrace <>
         --         rbrace
         -- genSharedIndexedNameGetter (n, _, nsids, _) = if nsids == 0 then owlpretty "" else
-        --     owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Rc<Vec<u8>>" <> lbrace <> line <>
+        --     owlpretty "pub fn get_" <> owlpretty (rustifyName n) <> tupled (owlpretty "&self" : [owlpretty "sid" <> owlpretty n <> owlpretty ": usize" | n <- [0..(nsids-1)]]) <+> owlpretty "-> Arc<Vec<u8>>" <> lbrace <> line <>
         --         rcClone <> parens (owlpretty "&self." <> owlpretty (rustifyName n)) <>
         --     rbrace
 
@@ -1163,12 +1163,12 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
         cfgFields idxs localNames sharedNames pubKeys tbls =
             vsep . punctuate comma $
                 owlpretty "pub listener: TcpListener" :
-                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> owlpretty ": Rc<Vec<u8>>") localNames ++
-                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then owlpretty ": Rc<Vec<u8>>" else owlpretty ": Rc<HashMap<usize, Vec<u8>>>")) sharedNames ++
-                map (\(s,_,_) -> owlpretty "pub" <+> owlpretty "pk_" <> owlpretty (rustifyName s) <> owlpretty ": Rc<Vec<u8>>") pubKeys ++
+                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> owlpretty ": Arc<Vec<u8>>") localNames ++
+                map (\(s,_,npids) -> owlpretty "pub" <+> owlpretty (rustifyName s) <> (if npids == 0 || (idxs == 1 && npids == 1) then owlpretty ": Arc<Vec<u8>>" else owlpretty ": Arc<HashMap<usize, Vec<u8>>>")) sharedNames ++
+                map (\(s,_,_) -> owlpretty "pub" <+> owlpretty "pk_" <> owlpretty (rustifyName s) <> owlpretty ": Arc<Vec<u8>>") pubKeys ++
                 -- Tables are always treated as local:
                 map (\(n,t) -> owlpretty "pub" <+> owlpretty (rustifyName n) <> owlpretty ": HashMap<Vec<u8>, Vec<u8>>") tbls ++
-                [owlpretty "pub" <+> owlpretty "salt" <> owlpretty ": Rc<Vec<u8>>"]
+                [owlpretty "pub" <+> owlpretty "salt" <> owlpretty ": Arc<Vec<u8>>"]
         mutFields ctrs = 
             vsep . punctuate comma $ 
                 map (\n -> owlpretty "pub" <+> owlpretty (rustifyName n) <> owlpretty ": usize") ctrs

@@ -25,7 +25,7 @@ pub use std::env;
 pub use std::fs;
 pub use std::io::{self, BufRead, Write};
 pub use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-pub use std::rc::Rc;
+pub use std::sync::Arc;
 pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;

@@ -57,7 +57,7 @@ instance OwlPretty RustTy where
   owlpretty Unit = owlpretty "()"
   owlpretty (ADT s) = owlpretty s
   owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
-  owlpretty (Rc r) = owlpretty "Rc" <> angles (owlpretty r)
+  owlpretty (Rc r) = owlpretty "Arc" <> angles (owlpretty r)
  
 data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
     deriving (Show, Eq, Generic, Typeable)
@@ -307,7 +307,7 @@ vkSize :: Int
 vkSize = 1219
 
 dhSize :: Int
-dhSize = 91
+dhSize = 32 -- TODO This is specific to Wireguard
 
 hmacLen :: Int
 hmacLen = 64
@@ -568,10 +568,10 @@ rustifySpecTy ct = do
     return $ specTyOf rt
 
 rcClone :: OwlDoc
-rcClone = owlpretty "rc_clone"
+rcClone = owlpretty "arc_clone"
 
 rcNew :: OwlDoc
-rcNew = owlpretty "rc_new"
+rcNew = owlpretty "arc_new"
 
 getCurRetTy :: ExtractionMonad String
 getCurRetTy = do

@@ -5,6 +5,7 @@ use hmac::Hmac;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use vstd::prelude::*;
+use blake2::{Blake2s256};
 
 verus! {
 
@@ -78,6 +79,14 @@ pub fn verify(
 ) -> bool {
     let mac = hmac(mode, key, data, tag_length);
     mac == value
+}
+
+#[verifier(external_body)]
+pub fn blake2s(input: &[u8]) -> (res: Vec<u8>) {
+    use blake2::Digest;
+    let mut hsh = Blake2s256::new();
+    hsh.update(input);
+    hsh.finalize().to_vec()
 }
 
 } // verus!
