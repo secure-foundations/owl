@@ -260,14 +260,15 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
 pub exec fn owl_is_group_elem(x: &[u8]) -> (b: bool)
     ensures b == is_group_elem(x.dview())
 {
-    todo!("implement is_group_elem")
+    // todo!("implement is_group_elem")
+    x.len() == 32 // TODO what should go here?
 }
 
 #[verifier(external_body)]
 pub exec fn owl_crh(x: &[u8]) -> (res: Rc<Vec<u8>>)
     ensures res.dview() == crh(x.dview())
 {
-    todo!("implement crh")
+    rc_new(owl_hmac::blake2s(x))
 }
 
 #[verifier(external_body)]

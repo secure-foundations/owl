@@ -6,13 +6,13 @@
  * For documentation.
  */
 
-mod device;
+pub mod device;
 mod macs;
 mod messages;
 mod noise;
 mod peer;
 mod ratelimiter;
-mod timestamp;
+pub mod timestamp;
 mod types;
 
 #[cfg(test)]

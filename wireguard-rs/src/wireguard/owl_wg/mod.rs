@@ -12,7 +12,7 @@ mod owl_pke;
 mod owl_util;
 mod deep_view;
 mod parse_serialize;
-mod owl_wireguard;
+pub mod owl_wireguard;
 
 
 use vstd::prelude::*;

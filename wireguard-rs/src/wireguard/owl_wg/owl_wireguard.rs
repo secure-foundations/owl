@@ -11,6 +11,7 @@ pub use crate::wireguard::owl_wg::execlib::{*};
 pub use crate::wireguard::owl_wg::deep_view::{*};
 pub use crate::wireguard::owl_wg::*;
 use crate::wireguard::owl_wg::parse_serialize;
+use crate::wireguard::handshake::device::Device;
 
 pub use std::collections::HashMap;
 pub use std::env;
@@ -682,15 +683,6 @@ pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint {
     unimplemented!()  /* axiomatized */
 }
 
-pub open spec fn Initiator_main_spec(cfg: cfg_Initiator, mut_state: state_Initiator) -> (res: ITree<
-    ((), state_Initiator),
-    Endpoint,
->) {
-    owl_spec!(mut_state,state_Initiator,
-(ret (()))
-)
-}
-
 pub open spec fn transp_recv_init_spec(
     cfg: cfg_Initiator,
     mut_state: state_Initiator,
@@ -880,15 +872,6 @@ pub open spec fn get_sender_i_spec(cfg: cfg_Initiator, mut_state: state_Initiato
 #[verifier(external_body)]
 pub closed spec fn owlSpec_get_sender_i_pure() -> Seq<u8> {
     unimplemented!()
-}
-
-pub open spec fn Responder_main_spec(cfg: cfg_Responder, mut_state: state_Responder) -> (res: ITree<
-    ((), state_Responder),
-    Endpoint,
->) {
-    owl_spec!(mut_state,state_Responder,
-(ret (()))
-)
 }
 
 pub open spec fn transp_recv_resp_spec(
@@ -1109,14 +1092,6 @@ pub closed spec fn owlSpec_get_sender_r_pure() -> Seq<u8> {
     unimplemented!()
 }
 
-pub open spec fn dummy_main_spec(cfg: cfg_dummy, mut_state: state_dummy) -> (res: ITree<
-    ((), state_dummy),
-    Endpoint,
->) {
-    owl_spec!(mut_state,state_dummy,
-(ret (()))
-)
-}
 
 // ------------------------------------
 // ---------- IMPLEMENTATIONS ---------
@@ -1823,43 +1798,7 @@ pub struct cfg_Initiator {
 }
 
 impl cfg_Initiator {
-    
-    #[verifier::spinoff_prover]
-    pub fn owl_Initiator_main(
-        &self,
-        Tracked(itree): Tracked<ITreeToken<((), state_Initiator), Endpoint>>,
-        mut_state: &mut state_Initiator,
-    ) -> (res: Result<((), Tracked<ITreeToken<((), state_Initiator), Endpoint>>), OwlError>)
-        requires
-            itree.view() == Initiator_main_spec(*self, *old(mut_state)),
-        ensures
-            res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in(((), *mut_state)),
-    {
-        let tracked mut itree = itree;
-        let res_inner = {
-            let temp_owl__x = { () };
-            let owl__x = temp_owl__x;
-            (owl__x, Tracked(itree))
-        };
-        Ok(res_inner)
-    }
-    
-    #[verifier(external_body)]
-    pub exec fn owl_Initiator_main_wrapper(&self, s: &mut state_Initiator) -> (_: ()) {
-        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
-            (),
-            Endpoint,
-        >::dummy_itree_token();
-        let tracked (Tracked(call_token), _) = split_bind(
-            dummy_tok,
-            Initiator_main_spec(*self, *s),
-        );
-        let (res, _): ((), Tracked<ITreeToken<((), state_Initiator), Endpoint>>) =
-            self.owl_Initiator_main(Tracked(call_token), s  /* todo args? */
-        ).unwrap();
-        res
-    }
-    
+      
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_init(
         &self,
@@ -2942,7 +2881,8 @@ impl cfg_Initiator {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            todo!(/* implement owl_timestamp_i */)
+            let t = crate::wireguard::handshake::timestamp::now().to_vec();
+            (rc_new(t), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -2993,46 +2933,11 @@ pub struct cfg_Responder {
     pub pk_owl_S_init: Rc<Vec<u8>>,
     pub pk_owl_E_resp: Rc<Vec<u8>>,
     pub pk_owl_E_init: Rc<Vec<u8>>,
-    pub salt: Rc<Vec<u8>>,
+    pub salt: Rc<Vec<u8>>,    
 }
 
 impl cfg_Responder {
-    #[verifier::spinoff_prover]
-    pub fn owl_Responder_main(
-        &self,
-        Tracked(itree): Tracked<ITreeToken<((), state_Responder), Endpoint>>,
-        mut_state: &mut state_Responder,
-    ) -> (res: Result<((), Tracked<ITreeToken<((), state_Responder), Endpoint>>), OwlError>)
-        requires
-            itree.view() == Responder_main_spec(*self, *old(mut_state)),
-        ensures
-            res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in(((), *mut_state)),
-    {
-        let tracked mut itree = itree;
-        let res_inner = {
-            let temp_owl__x742 = { () };
-            let owl__x742 = temp_owl__x742;
-            (owl__x742, Tracked(itree))
-        };
-        Ok(res_inner)
-    }
-    
-    #[verifier(external_body)]
-    pub exec fn owl_Responder_main_wrapper(&self, s: &mut state_Responder) -> (_: ()) {
-        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
-            (),
-            Endpoint,
-        >::dummy_itree_token();
-        let tracked (Tracked(call_token), _) = split_bind(
-            dummy_tok,
-            Responder_main_spec(*self, *s),
-        );
-        let (res, _): ((), Tracked<ITreeToken<((), state_Responder), Endpoint>>) =
-            self.owl_Responder_main(Tracked(call_token), s  /* todo args? */
-        ).unwrap();
-        res
-    }
-    
+
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_resp(
         &self,
@@ -4206,7 +4111,8 @@ impl cfg_Responder {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            todo!(/* implement owl_timestamp_r */)
+            let t = crate::wireguard::handshake::timestamp::now().to_vec();
+            (rc_new(t), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -4331,6 +4237,5 @@ pub exec fn owl_transp_tag_value() -> (res: Vec<u8>)
 // no entry point
 
 } // verus!
-fn main() { /* entrypoint() */ }
 
 
