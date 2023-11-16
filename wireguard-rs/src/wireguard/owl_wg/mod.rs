@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals)]
 
 mod speclib;
-mod execlib;
+pub mod execlib; // pub for testing
 mod owl_aead;
 mod owl_dhke;
 mod owl_hkdf;
