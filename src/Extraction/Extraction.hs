@@ -229,11 +229,11 @@ extractStruct owlName owlFields = do
         genViewImpl owlName rustFields = do
             let name = rustifyName owlName
             let specname = specName owlName
-            return $ owlpretty "impl View for" <+> owlpretty name <> braces (line <>
+            return $ owlpretty "impl DView for" <+> owlpretty name <> braces (line <>
                     owlpretty "type V =" <+> owlpretty specname <> owlpretty ";" <> line <>
-                    owlpretty "open spec fn view(&self) ->" <+> owlpretty specname <> braces (line <>
+                    owlpretty "open spec fn dview(&self) ->" <+> owlpretty specname <> braces (line <>
                         owlpretty specname <> braces (line <>
-                            vsep (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".view().as_seq(),") rustFields)
+                            vsep (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".dview().as_seq(),") rustFields)
                         <> line)
                     <> line)
                 <> line)
@@ -250,15 +250,15 @@ extractStruct owlName owlFields = do
         genParsleyWrappers owlName rustFields' = 
             let name = rustifyName owlName in
             let specname = specName owlName in
-            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
-            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
-            let specSerializeInner = owlpretty "serialize_" <> owlpretty specname <> owlpretty "_inner" <> parens (owlpretty "arg.view()") in
+            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in 
+            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in
+            let specSerializeInner = owlpretty "serialize_" <> owlpretty specname <> owlpretty "_inner" <> parens (owlpretty "arg.dview()") in
             -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
             --             owlpretty (specName owlName) <> 
-            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
+            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".dview()") rustFields)
             --         ) 
             -- let parseEnsuresField (n,_) = 
-            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
+            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".dview() == " <> 
             --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
             -- exec parser
             let mkNestPattern l = 
@@ -269,19 +269,19 @@ extractStruct owlName owlFields = do
             in
             let parserBody = 
                     owlpretty "let vec_arg = slice_to_vec(arg);" <> line <>
-                    owlpretty "assume(vec_arg.view() == vec_arg.into_view());" <> line <>
+                    owlpretty "assume(vec_arg.dview() == vec_arg.dview());" <> line <>
                     owlpretty "let stream = parse_serialize::Stream { data : vec_arg, start : 0 };" <> line <>
                     owlpretty "if let Ok((_, _, parsed)) = parse_serialize::parse_" <> owlpretty (rustifyName owlName) <> owlpretty "(stream) {" <> line <>
                     owlpretty "let" <+> mkNestPattern (map fst rustFields') <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
-                    (vsep . map (\(f,_) -> owlpretty "assume(" <> owlpretty f <+> owlpretty ".view() ==" <+> owlpretty f <> owlpretty ".into_view());") $ rustFields') <> line <>
+                    (vsep . map (\(f,_) -> owlpretty "assume(" <> owlpretty f <+> owlpretty ".dview() ==" <+> owlpretty f <> owlpretty ".dview());") $ rustFields') <> line <>
                     owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . fst) $ rustFields')) <> line <>
                     owlpretty "} else { None }" in
             let structLen = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> owlpretty "arg." <> owlpretty f <> owlpretty ".len()") $ rustFields' in
             let serializerBody =
                     owlpretty "assume" <> parens (structLen <+> owlpretty "< usize::MAX") <> owlpretty "; // TODO do we care about this" <> line <>
-                    (vsep . map (\(f,_) -> owlpretty "assume(arg." <> owlpretty f <+> owlpretty ".view() == arg." <> owlpretty f <> owlpretty ".into_view());") $ rustFields') <> line <>
-                    owlpretty "assume(arg.view() == " <> owlpretty specname <+> braces (
-                            hsep . punctuate comma . map (\(f,_)-> owlpretty (specName (unrustifyName f)) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty f <> owlpretty ".into_view()") $ rustFields'
+                    (vsep . map (\(f,_) -> owlpretty "assume(arg." <> owlpretty f <+> owlpretty ".dview() == arg." <> owlpretty f <> owlpretty ".dview());") $ rustFields') <> line <>
+                    owlpretty "assume(arg.dview() == " <> owlpretty specname <+> braces (
+                            hsep . punctuate comma . map (\(f,_)-> owlpretty (specName (unrustifyName f)) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty f <> owlpretty ".dview()") $ rustFields'
                         ) <> owlpretty ");" <> line <>
                     owlpretty "let stream = parse_serialize::Stream { data : vec_u8_from_elem(0, " <> structLen <> owlpretty "), start : 0 };" <> line <>
                     owlpretty "let ser_result = parse_serialize::serialize_" <> owlpretty (rustifyName owlName) <> 
@@ -295,7 +295,7 @@ extractStruct owlName owlFields = do
                 owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
                 owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
                 owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
-                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().dview() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
                 -- vsep (map parseEnsuresField rustFields) <> line <>
             lbrace <> line <>
                 parserBody <> line <>
@@ -306,13 +306,13 @@ extractStruct owlName owlFields = do
                 owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
                 owlpretty "ensures res.is_Some() ==>" <+> specSerializeInner <> owlpretty ".is_Some()," <> line <>
                 owlpretty "        res.is_None() ==>" <+> specSerializeInner <> owlpretty ".is_None()," <> line <>
-                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specSerializeInner <> owlpretty ".get_Some_0()" <> 
+                owlpretty "        res.is_Some() ==> res.get_Some_0().dview() == " <> specSerializeInner <> owlpretty ".get_Some_0()" <> 
             lbrace <> line <>
                 serializerBody <> line <>
             rbrace <> line <> line <>
             owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+>
                 owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
-                owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
+                owlpretty "ensures res.dview() ==" <+> specSerialize <> line <>
             lbrace <> line <>
                 owlpretty "reveal" <> parens (owlpretty "serialize_" <> owlpretty specname) <> owlpretty ";" <> line <>
                 owlpretty "let res = serialize_" <> owlpretty name <> owlpretty "_inner(arg);" <> line <>
@@ -361,13 +361,13 @@ extractEnum owlName owlCases' = do
         genViewImpl owlName rustCases = do
             let name = rustifyName owlName
             let specname = specName owlName
-            return $ owlpretty "impl View for" <+> owlpretty name <> braces (line <>
+            return $ owlpretty "impl DView for" <+> owlpretty name <> braces (line <>
                     owlpretty "type V =" <+> owlpretty specname <> owlpretty ";" <> line <>
-                    owlpretty "open spec fn view(&self) ->" <+> owlpretty specname <> braces (line <>
+                    owlpretty "open spec fn dview(&self) ->" <+> owlpretty specname <> braces (line <>
                         owlpretty "match self" <+> braces (line <>
                             (vsep . punctuate comma . map (\(c, topt) ->
                                     let (binder, viewBinder) = case topt of 
-                                            Just _ -> (owlpretty "v", owlpretty "v.view().as_seq()")
+                                            Just _ -> (owlpretty "v", owlpretty "v.dview().as_seq()")
                                             Nothing -> (owlpretty "", owlpretty "")
                                     in
                                     owlpretty (rustifyName c) <> parens binder <+> owlpretty "=>" <+> owlpretty (specName c) <> parens viewBinder
@@ -384,14 +384,14 @@ extractEnum owlName owlCases' = do
         genParsleyWrappers owlName = 
             let name = rustifyName owlName in
             let specname = specName owlName in
-            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.view()") in 
-            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.view()") in
+            let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in 
+            let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in
             -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
             --             owlpretty (specName owlName) <> 
-            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".view()") rustFields)
+            --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".dview()") rustFields)
             --         ) 
             -- let parseEnsuresField (n,_) = 
-            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".view() == " <> 
+            --         owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty (rustifyName n) <> owlpretty ".dview() == " <> 
             --                                      specParse <> owlpretty ".get_Some_0()." <> owlpretty (specName n) <> owlpretty ","
             -- exec parser
             owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
@@ -399,7 +399,7 @@ extractEnum owlName owlCases' = do
                 owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
                 owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
                 owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
-                owlpretty "        res.is_Some() ==> res.get_Some_0().view() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().dview() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
                 -- vsep (map parseEnsuresField rustFields) <> line <>
             lbrace <> line <>
                 owlpretty "todo!(\"call parsley exec parser\")" <> line <>
@@ -408,7 +408,7 @@ extractEnum owlName owlCases' = do
             owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
             owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                 owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
-                owlpretty "ensures res.view() ==" <+> specSerialize <> line <>
+                owlpretty "ensures res.dview() ==" <+> specSerialize <> line <>
             lbrace <> line <>
                 owlpretty "todo!(\"call parsley exec serializer and unwrap\")" <> line <>
             rbrace <> line <> line
@@ -460,7 +460,7 @@ extractCryptOp binds op owlArgs = do
             let sliceOrcl = rcNew <> parens (
                                 owlpretty "slice_to_vec" <> parens (
                                     owlpretty "slice_subrange" <> parens (
-                                        parens (owlpretty "*" <> owlpretty orclName) <> owlpretty ".as_slice()" <> comma <+>
+                                        owlpretty "vec_as_slice" <> parens (owlpretty "&*" <> owlpretty orclName) <> comma <+>
                                         owlpretty start <> comma <+> owlpretty end
                                     )
                                 )
@@ -513,10 +513,10 @@ extractUserFunc owlName o = do
     (rt, pre, aePrettied) <- extractAExpr binds (ae ^. val)
     let body = pre <> line <> aePrettied
     let declArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ":" <+> owlpretty "&[u8]") args
-    let viewArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ".view()") args
+    let viewArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ".dview()") args
     let decl = owlpretty "pub exec fn" <+> owlpretty (rustifyName owlName) <> tupled declArgs <+> 
                     owlpretty "->" <+> parens (owlpretty "res:" <+> owlpretty rt) <> line
-    let reqEns = owlpretty "ensures res.view() ==" <+> owlpretty owlName <> tupled viewArgs <> line
+    let reqEns = owlpretty "ensures res.dview() ==" <+> owlpretty owlName <> tupled viewArgs <> line
     return (decl <> reqEns <> braces (line <> body <> line), rt)
 
 extractAExpr :: M.Map String (RustTy, Maybe AExpr) -> AExprX -> ExtractionMonad (RustTy, OwlDoc, OwlDoc)
@@ -759,7 +759,7 @@ extractExpr inK loc binds (CCase ae otk cases) = do
 extractExpr inK loc binds (CTLookup tbl ae) = do
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     aeWrapped <- case rt of
-            Rc VecU8 -> return $ owlpretty "&" <> aePrettied <> owlpretty ".as_slice()"
+            Rc VecU8 -> return $ owlpretty "vec_as_slice" <> parens (owlpretty "&" <> aePrettied)
             VecU8 -> return $ owlpretty "&" <> aePrettied
             _ -> throwError $ ErrSomethingFailed "got wrong arg type for lookup"
     ptbl <- flattenPath tbl
@@ -902,14 +902,14 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
             let viewRes = parens $ 
                     (case rt of
                         Unit -> owlpretty "()"
-                        ADT _ -> owlpretty "res.get_Ok_0().0.view().as_seq()"
-                        Option (ADT _) -> owlpretty "option_as_seq(view_option(res.get_Ok_0().0))"
-                        Option _ -> owlpretty "view_option(res.get_Ok_0().0)"
-                        _ -> owlpretty "res.get_Ok_0().0.view()")
+                        ADT _ -> owlpretty "res.get_Ok_0().0.dview().as_seq()"
+                        Option (ADT _) -> owlpretty "option_as_seq(dview_option(res.get_Ok_0().0))"
+                        Option _ -> owlpretty "dview_option(res.get_Ok_0().0)"
+                        _ -> owlpretty "res.get_Ok_0().0.dview()")
                     <> owlpretty ", *mut_state"
             let defReqEns =
-                    owlpretty "requires itree@ ==" <+> owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs) <> line <>
-                    owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1)@@.results_in" <> parens viewRes <> line 
+                    owlpretty "requires itree.view() ==" <+> owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs) <> line <>
+                    owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in" <> parens viewRes <> line 
             return $ 
                 owlpretty "#[verifier::spinoff_prover]" <> line <> 
                 owlpretty "pub fn" <+> owlpretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns

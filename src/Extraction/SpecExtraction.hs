@@ -241,13 +241,13 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEInt i) = return $ owlpretty i
     extractAExpr' (AEGet ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg." <> owlpretty ne') <> owlpretty ".view()"
+        return $ parens (owlpretty "*cfg." <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEGetEncPK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".view()"
+        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".view()"
+        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
     extractAExpr' (AEPreimage p _ _) = do
         p' <- flattenPath p
@@ -267,7 +267,7 @@ extractCryptOp op owlArgs = do
                 Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
                 Just p -> return p
             orclArgs <- case args of
-                [ikm] -> return [owlpretty "cfg.salt.view()", ikm]
+                [ikm] -> return [owlpretty "cfg.salt.dview()", ikm]
                 [salt, ikm] -> return [salt, ikm]
                 _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
             return $ 

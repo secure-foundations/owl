@@ -1,39 +1,49 @@
-use crate::{owl_aead, speclib, *};
+use crate::{owl_aead, speclib, deep_view::*, *};
 use std::rc::Rc;
 
 verus! {
 
 #[verifier(external_body)]
+pub exec fn rc_new<T:DView>(t: T) -> (r: Rc<T>)
+    ensures r.dview() == t.dview()
+{ Rc::new(t) }
+
+#[verifier(external_body)]
+pub exec fn rc_clone<T:DView>(t: &Rc<T>) -> (r: Rc<T>)
+    ensures r.dview() == t.dview()
+{ Rc::clone(t) }
+
+#[verifier(external_body)]
 pub exec fn vec_eq(v1: &Vec<u8>, v2: &Vec<u8>) -> (res: bool)
-    ensures res == (v1@ == v2@)
+    ensures res == (v1.dview() == v2.dview())
 {
     v1 == v2
 }
 
 #[verifier(external_body)]
 pub exec fn rc_vec_eq(v1: &Rc<Vec<u8>>, v2: &Rc<Vec<u8>>) -> (res: bool)
-    ensures res == (v1@ == v2@)
+    ensures res == (v1.dview() == v2.dview())
 {
     v1 == v2
 }
 
 #[verifier(external_body)]
 pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
-    ensures res@ == v@
+    ensures res.dview() == v.dview()
 {
     v.clone()
 }
 
 #[verifier(external_body)]
 pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
-    ensures v@ == old(v)@.add(s@)
+    ensures v.dview() == old(v).dview().add(s.dview())
 {
     v.extend(s);
 }
 
 
 pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
-    ensures res@ == concat(a@, b@)
+    ensures res.dview() == concat(a.dview(), b.dview())
 {
     let mut v = slice_to_vec(a);
     extend_vec_u8(&mut v, b);
@@ -42,19 +52,19 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
 
 
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
-    ensures res@ == Seq::new(n as nat, |i| e)
+    ensures res.dview() == Seq::new(n as nat, |i| e)
 {
-    let mut v = Vec::new();
+    let mut v = vec_new();
     let mut i = 0;
-    proof { assert_seqs_equal!(v@, Seq::new(0, |i| e)); }
+    proof { assert_seqs_equal!(v.dview(), Seq::new(0, |i| e)); }
     while i < n
         invariant
             i <= n,
-            v@ == Seq::new(i as nat, |j| e)
+            v.dview() == Seq::new(i as nat, |j| e)
     {
-        v.push(e);
+        vec_push(&mut v, e);
         i = i + 1;
-        proof { assert_seqs_equal!(v@, Seq::new(i as nat, |j| e)); }
+        proof { assert_seqs_equal!(v.dview(), Seq::new(i as nat, |j| e)); }
     }
     v
 }
@@ -65,9 +75,9 @@ macro_rules! mk_vec_u8 {
     ($($e:expr),* $(,)?) => {
         verus_exec_expr!{{
             #[allow(unused_mut)]
-            let mut v = Vec::new();
+            let mut v = vec_new();
             $(
-                v.push($e);
+                vec_push(&mut v, $e);
             )*
             v
         }}
@@ -79,19 +89,19 @@ macro_rules! mk_vec_u8 {
 #[verifier(external_body)]
 pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Rc<Vec<u8>>)
     ensures
-        ctxt@ == enc(k@, msg@, iv@)
-    //     ((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ == enc(k@, msg@, iv@)),
-    //    !((k@.len() == crate::KEY_SIZE && msg@.len() == crate::TAG_SIZE) ==> ctxt@ == seq![]),
+        ctxt.dview() == enc(k.dview(), msg.dview(), iv.dview())
+    //     ((k.dview().len() == crate::KEY_SIZE && msg.dview().len() == crate::TAG_SIZE) ==> ctxt.dview() == enc(k.dview(), msg.dview(), iv.dview())),
+    //    !((k.dview().len() == crate::KEY_SIZE && msg.dview().len() == crate::TAG_SIZE) ==> ctxt.dview() == seq![]),
 {
     match owl_aead::encrypt_combined(cipher(), k, msg, iv, &[]) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
-            Rc::new(v)
+            rc_new(v)
         },
         Err(_e) => {
             // dbg!(e);
-            Rc::new(vec![])
+            rc_new(vec![])
         }
     }
 }
@@ -99,14 +109,14 @@ pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Rc<Vec<u8>>)
 #[verifier(external_body)]
 pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        view_option(x) == dec(k@, c@)
-        // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
-        //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
-        // dec(k@, c@).is_None() ==> x.is_None(),
-        // k@.len() != crate::KEY_SIZE ==> x.is_None(),
+        dview_option(x) == dec(k.dview(), c.dview())
+        // (k.dview().len() == crate::KEY_SIZE && dec(k.dview(), c.dview()).is_Some()) ==>
+        //     x.is_Some() && x.get_Some_0().dview() == dec(k.dview(), c.dview()).get_Some_0(),
+        // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
+        // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
     match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &c[..nonce_size()], &[]) {
-        Ok(p) => Some(Rc::new(p)),
+        Ok(p) => Some(rc_new(p)),
         Err(_e) => {
             // dbg!(e);
             None
@@ -116,17 +126,17 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
 
 #[verifier(external_body)]
 pub exec fn owl_sign(privkey: &[u8], msg: &[u8]) -> (signature: Rc<Vec<u8>>)
-    ensures signature@ == sign(privkey@, msg@)
+    ensures signature.dview() == sign(privkey.dview(), msg.dview())
 {
-    Rc::new(owl_pke::sign(privkey, msg))
+    rc_new(owl_pke::sign(privkey, msg))
 }
 
 #[verifier(external_body)]
 pub exec fn owl_vrfy(pubkey: &[u8], msg: &[u8], signature: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
-    ensures view_option(x) == vrfy(pubkey@, msg@, signature@)
+    ensures dview_option(x) == vrfy(pubkey.dview(), msg.dview(), signature.dview())
 {
     if owl_pke::verify(pubkey, signature, msg) {
-        Some(Rc::new(msg.to_vec()))
+        Some(rc_new(msg.to_vec()))
     } else {
         None
     }
@@ -134,41 +144,41 @@ pub exec fn owl_vrfy(pubkey: &[u8], msg: &[u8], signature: &[u8]) -> (x: Option<
 
 #[verifier(external_body)]
 pub exec fn owl_dhpk(privkey: &[u8]) -> (pubkey: Rc<Vec<u8>>)
-    ensures pubkey@ == dhpk(privkey@)
+    ensures pubkey.dview() == dhpk(privkey.dview())
 {
-    Rc::new(owl_dhke::ecdh_dhpk(privkey))
+    rc_new(owl_dhke::ecdh_dhpk(privkey))
 }
 
 
 #[verifier(external_body)]
 pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Rc<Vec<u8>>)
     ensures
-        ss@ == dh_combine(pubkey@, privkey@)
+        ss.dview() == dh_combine(pubkey.dview(), privkey.dview())
 {
-    Rc::new(owl_dhke::ecdh_combine(privkey, pubkey))
+    rc_new(owl_dhke::ecdh_combine(privkey, pubkey))
 }
 
 #[verifier(external_body)]
 pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8]) -> (h: Rc<Vec<u8>>) 
-    ensures h@ == kdf(len@, salt@, ikm@),
-            h@.len() == len
+    ensures h.dview() == kdf(len.dview(), salt.dview(), ikm.dview()),
+            h.dview().len() == len
 {
-    Rc::new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
+    rc_new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
 }
 
 #[verifier(external_body)]
 pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Rc<Vec<u8>>)
-    ensures mac_val@ == mac(mackey@, msg@)
+    ensures mac_val.dview() == mac(mackey.dview(), msg.dview())
 {
-    Rc::new(owl_hmac::hmac(hmac_mode(), mackey, msg, None))
+    rc_new(owl_hmac::hmac(hmac_mode(), mackey, msg, None))
 }
 
 #[verifier(external_body)]
 pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
-    ensures view_option(x) == mac_vrfy(mackey@, msg@, mac@)
+    ensures dview_option(x) == mac_vrfy(mackey.dview(), msg.dview(), mac.dview())
 {
     if owl_hmac::verify(hmac_mode(), mackey, msg, mac, None) {
-        Some(Rc::new(msg.to_vec()))
+        Some(rc_new(msg.to_vec()))
     } else {
         None
     }
@@ -176,23 +186,23 @@ pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Rc
 
 #[verifier(external_body)]
 pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Rc<Vec<u8>>)
-    ensures ctxt@ == pkenc(pubkey@, msg@)
+    ensures ctxt.dview() == pkenc(pubkey.dview(), msg.dview())
 {
-    Rc::new(owl_pke::encrypt(pubkey, msg))
+    rc_new(owl_pke::encrypt(pubkey, msg))
 }
 
 #[verifier(external_body)]
 pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Rc<Vec<u8>>)
-    ensures msg@ == sign(privkey@, ctxt@)
+    ensures msg.dview() == sign(privkey.dview(), ctxt.dview())
 {
-    Rc::new(owl_pke::decrypt(privkey, ctxt))
+    rc_new(owl_pke::decrypt(privkey, ctxt))
 }
 
 
 #[verifier(external_body)]
 pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Rc<Vec<u8>>, OwlError>)
     ensures
-        res.is_Ok() ==> (res.get_Ok_0()@, *nonce) == enc_st_aead(k@, msg@, *old(nonce), aad@),
+        res.is_Ok() ==> (res.get_Ok_0().dview(), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
         // *nonce == *old(nonce) + 1,
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
@@ -202,11 +212,11 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
-            Rc::new(v)
+            rc_new(v)
         },
         Err(_e) => {
             // dbg!(e);
-            Rc::new(vec![])
+            rc_new(vec![])
         }
     };
     *nonce += 1;
@@ -216,14 +226,14 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 #[verifier(external_body)]
 pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x: Option<Rc<Vec<u8>>>)
     ensures
-        view_option(x) == dec_st_aead(k@, c@, nonce@, aad@)
-        // (k@.len() == crate::KEY_SIZE && dec(k@, c@).is_Some()) ==>
-        //     x.is_Some() && x.get_Some_0()@ == dec(k@, c@).get_Some_0(),
-        // dec(k@, c@).is_None() ==> x.is_None(),
-        // k@.len() != crate::KEY_SIZE ==> x.is_None(),
+        dview_option(x) == dec_st_aead(k.dview(), c.dview(), nonce.dview(), aad.dview())
+        // (k.dview().len() == crate::KEY_SIZE && dec(k.dview(), c.dview()).is_Some()) ==>
+        //     x.is_Some() && x.get_Some_0().dview() == dec(k.dview(), c.dview()).get_Some_0(),
+        // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
+        // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
     match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
-        Ok(p) => Some(Rc::new(p)),
+        Ok(p) => Some(rc_new(p)),
         Err(_e) => {
             // dbg!(e);
             None
@@ -233,28 +243,28 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
 
 #[verifier(external_body)]
 pub exec fn owl_is_group_elem(x: &[u8]) -> (b: bool)
-    ensures b == is_group_elem(x@)
+    ensures b == is_group_elem(x.dview())
 {
     todo!("implement is_group_elem")
 }
 
 #[verifier(external_body)]
 pub exec fn owl_crh(x: &[u8]) -> (res: Rc<Vec<u8>>)
-    ensures res@ == crh(x@)
+    ensures res.dview() == crh(x.dview())
 {
     todo!("implement crh")
 }
 
 #[verifier(external_body)]
 pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
-    ensures res == bytes_as_counter(x@)
+    ensures res == bytes_as_counter(x.dview())
 {
     todo!("implement bytes_as_counter")
 }
 
 #[verifier(external_body)]
 pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
-    ensures res@ == counter_as_bytes(x@)
+    ensures res.dview() == counter_as_bytes(x.dview())
 {
     let mut v = x.to_le_bytes().to_vec();
     v.resize(nonce_size(), 0u8);
