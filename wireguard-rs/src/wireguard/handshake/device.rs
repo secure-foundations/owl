@@ -231,9 +231,9 @@ impl<O> DeviceInner<O> {
             Peer::new(
                 pk,
                 self.keyst
-                    .as_ref()
-                    .map(|key| *key.sk.diffie_hellman(&pk).as_bytes())
-                    .unwrap_or([0u8; 32]),
+                .as_ref()
+                .map(|key| *key.sk.diffie_hellman(&pk).as_bytes())
+                .unwrap_or([0u8; 32]),
                 opaque,
             ),
         );
@@ -318,6 +318,10 @@ impl<O> DeviceInner<O> {
         self.pk_map
             .get(pk.as_bytes())
             .ok_or(HandshakeError::UnknownPublicKey)
+    }
+
+    pub fn has_pk(&self, pk: &[u8; 32]) -> bool {
+        self.pk_map.contains_key(pk)
     }
 
     // Internal function

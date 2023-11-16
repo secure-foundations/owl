@@ -4119,7 +4119,18 @@ impl<O> cfg_Responder<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            todo!(/* implement owl_checkpk_resp */)
+            use x25519_dalek::{PublicKey};
+            use std::convert::TryInto;
+
+            let pk: [u8; 32] = (&*owl_pk27443).as_slice().try_into().unwrap();
+            let peer_pk = if self.device.has_pk(&pk) {
+                    Some(arc_new(pk.to_vec()))
+            } else {
+                None
+            };
+            
+            (peer_pk, Tracked(itree))
+
         };
         Ok(res_inner)
     }
