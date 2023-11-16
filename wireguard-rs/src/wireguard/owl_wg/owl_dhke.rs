@@ -10,17 +10,12 @@ verus! {
 
 #[verifier(external_body)]
 pub fn gen_ecdh_key_pair() -> (_: (Vec<u8>, Vec<u8>)) {
-    unimplemented!()
-    // let mut rng = rand::thread_rng();
-    // let secret = SecretKey::random(&mut rng);
-    // let sk_bytes = secret.to_sec1_der().unwrap().to_vec();
-    // let pk_bytes = secret
-    //     .public_key()
-    //     .to_public_key_der()
-    //     .unwrap()
-    //     .as_bytes()
-    //     .to_vec();
-    // (sk_bytes, pk_bytes)
+    let mut rng = rand::thread_rng();
+    let secret = StaticSecret::new(&mut rng);
+    let public = PublicKey::from(&secret);
+    let sk_bytes = secret.to_bytes().to_vec();
+    let pk_bytes = public.to_bytes().to_vec();
+    (sk_bytes, pk_bytes)
 }
 
 #[verifier(external_body)]
