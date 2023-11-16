@@ -6,29 +6,39 @@ name = "wireguard-rs"
 version = "0.1.4"
 
 [dependencies]
-aead = "^0.3"
+aead = "0.5.1"
 arraydeque = "0.4.5"
 blake2 = "^0.9"
 byteorder = "1.3"
-chacha20poly1305 = "^0.7"
+chacha20poly1305 = "0.10.1"
 clear_on_drop = "0.2.3"
 cpuprofiler = {version = "*", optional = true}
 crossbeam-channel = "^0.5"
 dashmap = "^4.0"
-digest = "^0.9"
+digest = "0.10.5"
 env_logger = "^0.8"
 generic-array = "^0.14"
 hex = "0.4"
 hjul = "0.2.2"
-hmac = "^0.10"
+hmac = "0.12.1"
 log = {version = "0.4", features = ["max_level_trace", "release_max_level_info"]}
 num_cpus = "^1.10"
 parking_lot = "^0.11"
-rand = "^0.7"
+rand = "0.8.5"
 rand_core = "^0.5"
 ring = "0.16"
 spin = "0.7"
 zerocopy = "0.3"
+aes-gcm = "0.10.1"
+crypto = "0.4.0"
+hkdf = "0.12.3"
+p256 = { version = "0.11.1", features = ["ecdh", "bits", "serde"] }
+rsa = "0.7.2"
+sha1 = "0.10.5"
+sha2 = "0.10.6"
+builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
+builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
+vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
 
 [dependencies.treebitmap]
 package = "ip_network_table-deps-treebitmap"
