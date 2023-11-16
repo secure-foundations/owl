@@ -82,21 +82,18 @@ extractStruct owlName owlFields = do
                             parserBody <> line
                         )
             let fieldLen f = owlpretty "x." <> owlpretty (specName f) <> owlpretty ".len()"
+            let fieldLens = map (\(f,_) -> fieldLen f) fields
             let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> fieldLen f) 
             let structLen = sumFieldLens fields
-            checkLenOverflow <- case fields of
-                    [hd] -> return $ owlpretty ""
-                    (hd,_) : tl -> do
-                        let tlLen = sumFieldLens tl 
-                        return $ owlpretty "if" <+> tlLen <+> owlpretty "> usize::MAX -" <+> fieldLen hd <+> owlpretty "{ None } else"
-                    _ -> throwError $ ErrSomethingFailed "found a struct with no fields"
+            let checkLenOverflow = owlpretty "no_usize_overflows_spec![" <+> (hsep . punctuate comma $ fieldLens) <+> owlpretty "]"
             let serializerBody =
-                    checkLenOverflow <> lbrace <> line <>
-                    owlpretty "let stream = parse_serialize::SpecStream { data : seq_u8_of_len" <> parens structLen <> owlpretty ", start : 0 };" <> line <>
-                    owlpretty "if let Ok((serialized, n)) = parse_serialize::spec_serialize_" <> owlpretty (rustifyName owlName) <> 
-                            owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "x." ++ specName f) fields )) <> owlpretty ") {" <> line <>
-                    owlpretty "Some(seq_truncate(serialized.data, n))" <> line <>
-                    owlpretty "} else { None }" <> rbrace
+                    owlpretty "if" <+> checkLenOverflow <+> braces (line <>
+                        owlpretty "let stream = parse_serialize::SpecStream { data : seq_u8_of_len" <> parens structLen <> owlpretty ", start : 0 };" <> line <>
+                        owlpretty "if let Ok((serialized, n)) = parse_serialize::spec_serialize_" <> owlpretty (rustifyName owlName) <> 
+                                owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "x." ++ specName f) fields )) <> owlpretty ") {" <> line <>
+                        owlpretty "Some(seq_truncate(serialized.data, n))" <> line <>
+                        owlpretty "} else { None }" <> line
+                    ) <> owlpretty "else { None }"
             let serializer = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
                             serializerBody <> line

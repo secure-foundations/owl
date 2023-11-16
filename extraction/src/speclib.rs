@@ -60,6 +60,62 @@ impl OwlSpecAsCtr for Seq<u8> {
     }
 }
 
+/// A convenience macro to produce the triangle necessary to confirm that there are no overflows
+/// that occur when adding up a bunch of different expressions together.
+/// from Jay Bosamiya
+#[allow(unused_macros)]
+macro_rules! no_usize_overflows {
+  ($e:expr,) => {
+    true
+  };
+  ($($e:expr),*) => {
+    no_usize_overflows!(@@internal 0, $($e),*)
+  };
+  (@@internal $total:expr,) => {
+    true
+  };
+  (@@internal $total:expr, $a:expr) => {
+    usize::MAX - $total >= $a
+  };
+  (@@internal $total:expr, $a:expr, $($rest:expr),*) => {
+    usize::MAX - $total >= $a
+      &&
+    no_usize_overflows!(@@internal ($total + $a), $($rest),*)
+  };
+}
+pub(crate) use no_usize_overflows;
+
+#[verifier::inline]
+pub open const spec fn usize_max_as_nat() -> nat {
+    usize::MAX as nat    
+}
+
+/// A convenience macro to produce the triangle necessary to confirm that there are no overflows
+/// that occur when adding up a bunch of different expressions together.
+/// from Jay Bosamiya
+#[allow(unused_macros)]
+macro_rules! no_usize_overflows_spec {
+  ($e:expr,) => { verus_proof_expr! {
+    true
+  }};
+  ($($e:expr),*) => { verus_proof_expr! {
+    no_usize_overflows_spec!(@@internal (0 as nat), $($e),*)
+  }};
+  (@@internal $total:expr,) => { verus_proof_expr! {
+    true
+  }};
+  (@@internal $total:expr, $a:expr) => { verus_proof_expr! {
+    usize_max_as_nat() - $total >= $a
+  }};
+  (@@internal $total:expr, $a:expr, $($rest:expr),*) => { verus_proof_expr! {
+    usize_max_as_nat() - $total >= $a
+      &&
+    no_usize_overflows_spec!(@@internal ($total + $a), $($rest),*)
+  }};
+}
+pub(crate) use no_usize_overflows_spec;
+
+
 // Rust cannot infer that the type of seq![] is Seq<u8>, so we annotate explicitly
 pub open spec fn empty_seq_u8() -> Seq<u8> {
     seq![]
@@ -429,7 +485,7 @@ pub mod itree {
     macro_rules! owl_call {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.view(), $($tail)*)
+                owl_call_internal!(res, res.dview(), $($tail)*)
             }
         };
     }

@@ -277,14 +277,10 @@ extractStruct owlName owlFields = do
                     owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . fst) $ rustFields')) <> line <>
                     owlpretty "} else { None }" 
             let fieldLen f = owlpretty "vec_length" <> parens (owlpretty "&arg." <> owlpretty f) 
-            let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> fieldLen f) 
-            let structLen = sumFieldLens rustFields' 
-            checkLenOverflow <- case rustFields' of
-                    [hd] -> return $ owlpretty ""
-                    (hd,_) : tl -> do
-                        let tlLen = sumFieldLens tl 
-                        return $ owlpretty "if" <+> tlLen <+> owlpretty "> usize::MAX -" <+> fieldLen hd <+> owlpretty "{ return None };"
-                    _ -> throwError $ ErrSomethingFailed "found a struct with no fields"
+            let fieldLens = map (\(f,_) -> fieldLen f) rustFields'
+            let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f)
+            let structLen = sumFieldLens fieldLens
+            let checkLenOverflow = owlpretty "no_usize_overflows![" <+> (hsep . punctuate comma $ fieldLens) <+> owlpretty "]"
             let serializerBody =
                     -- owlpretty "assume" <> parens (structLen <+> owlpretty "< usize::MAX") <> owlpretty "; // TODO do we care about this" <> line <>
                     -- (vsep . map (\(f,_) -> owlpretty "assume(arg." <> owlpretty f <+> owlpretty ".dview() == arg." <> owlpretty f <> owlpretty ".dview());") $ rustFields') <> line <>
@@ -292,13 +288,14 @@ extractStruct owlName owlFields = do
                     --         hsep . punctuate comma . map (\(f,_)-> owlpretty (specName (unrustifyName f)) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty f <> owlpretty ".dview()") $ rustFields'
                     --     ) <> owlpretty ");" <> line <>
                     owlpretty "reveal" <> parens (owlpretty "serialize_" <> owlpretty specname <> owlpretty "_inner") <> owlpretty ";" <> line <>
-                    checkLenOverflow <> line <> 
-                    owlpretty "let stream = parse_serialize::Stream { data : vec_u8_of_len(" <> structLen <> owlpretty "), start : 0 };" <> line <>
-                    owlpretty "let ser_result = parse_serialize::serialize_" <> owlpretty (rustifyName owlName) <> 
-                            owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "clone_vec_u8(&arg." ++ f ++ ")") rustFields' )) <> owlpretty ");" <> line <>
-                    owlpretty "if let Ok((mut serialized, n)) = ser_result {" <> line <>
-                    owlpretty "vec_truncate(&mut serialized.data, n); Some(serialized.data)" <> line <>
-                    owlpretty "} else { None }"
+                    owlpretty "if" <+> checkLenOverflow <+> braces (line <> 
+                        owlpretty "let stream = parse_serialize::Stream { data : vec_u8_of_len(" <> structLen <> owlpretty "), start : 0 };" <> line <>
+                        owlpretty "let ser_result = parse_serialize::serialize_" <> owlpretty (rustifyName owlName) <> 
+                                owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "clone_vec_u8(&arg." ++ f ++ ")") rustFields' )) <> owlpretty ");" <> line <>
+                        owlpretty "if let Ok((mut serialized, n)) = ser_result {" <> line <>
+                        owlpretty "vec_truncate(&mut serialized.data, n); Some(serialized.data)" <> line <>
+                        owlpretty "} else { None }" <> line 
+                    ) <> owlpretty "else { None }"
             return $
                 -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
                 owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> parens (owlpretty "arg: &[u8]") <+> 
@@ -311,7 +308,7 @@ extractStruct owlName owlFields = do
                     parserBody <> line <>
                 rbrace <> line <> line <>
                 -- exec serializer
-                -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
+                -- owlpretty "/* TODO under/overflow is annoying */ #[verifier(external_body)]" <> line <>
                 owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                     owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
                     owlpretty "ensures res.is_Some() ==>" <+> specSerializeInner <> owlpretty ".is_Some()," <> line <>
