@@ -225,9 +225,9 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
     iv.resize(nonce_size(), 0u8);
     let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
         Ok(mut c) => {
-            let mut v = iv.to_owned();
-            v.append(&mut c);
-            arc_new(v)
+            // let mut v = iv.to_owned();
+            // v.append(&mut c);
+            arc_new(c)
         },
         Err(_e) => {
             // dbg!(e);
@@ -247,7 +247,8 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
+    // match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
+    match owl_aead::decrypt_combined(cipher(), k, c, nonce, aad) {
         Ok(p) => Some(arc_new(p)),
         Err(_e) => {
             // dbg!(e);

@@ -238,6 +238,101 @@ fn shared_secret(sk: &StaticSecret, pk: &PublicKey) -> Result<SharedSecret, Hand
     }
 }
 
+// A variant of the `create_initiation` that uses a precomputed ephemeral key, for testing purposes
+pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
+    rng: &mut R,
+    keyst: &KeyState,
+    peer: &Peer<O>,
+    pk: &PublicKey,
+    local: u32,
+    eph_sk: StaticSecret,
+    msg: &mut NoiseInitiation,
+) -> Result<(), HandshakeError> {
+    log::debug!("create initiation");
+
+    // check for zero shared-secret (see "shared_secret" note).
+    if peer.ss.ct_eq(&[0u8; 32]).into() {
+        return Err(HandshakeError::InvalidSharedSecret);
+    }
+
+    let eph_pk: PublicKey = PublicKey::from(&eph_sk);
+
+
+    clear_stack_on_return_fnonce(CLEAR_PAGES, || {
+        // initialize state
+
+        let ck = INITIAL_CK;
+        let hs = INITIAL_HS;
+        let hs = HASH!(&hs, pk.as_bytes());
+
+        msg.f_type.set(TYPE_INITIATION as u32);
+        msg.f_sender.set(local); // from us
+
+        // (E_priv, E_pub) := DH-Generate()
+
+        // let eph_sk = StaticSecret::new(rng);
+        // let eph_pk: PublicKey = PublicKey::from(&eph_sk);
+
+        // C := Kdf(C, E_pub)
+
+        let ck = KDF1!(&ck, eph_pk.as_bytes());
+
+        // msg.ephemeral := E_pub
+
+        msg.f_ephemeral = *eph_pk.as_bytes();
+
+        // H := HASH(H, msg.ephemeral)
+
+        let hs = HASH!(&hs, msg.f_ephemeral);
+
+        // (C, k) := Kdf2(C, DH(E_priv, S_pub))
+
+        let (ck, key) = KDF2!(&ck, shared_secret(&eph_sk, &pk)?.as_bytes());
+
+        // msg.static := Aead(k, 0, S_pub, H)
+
+        SEAL!(
+            &key,
+            &hs,                 // ad
+            keyst.pk.as_bytes(), // pt
+            &mut msg.f_static    // ct || tag
+        );
+
+        // H := Hash(H || msg.static)
+
+        let hs = HASH!(&hs, &msg.f_static[..]);
+
+        // (C, k) := Kdf2(C, DH(S_priv, S_pub))
+
+        let (ck, key) = KDF2!(&ck, &peer.ss);
+
+        // msg.timestamp := Aead(k, 0, Timestamp(), H)
+
+        SEAL!(
+            &key,
+            &hs,                  // ad
+            &timestamp::now(),    // pt
+            &mut msg.f_timestamp  // ct || tag
+        );
+
+        // H := Hash(H || msg.timestamp)
+
+        let hs = HASH!(&hs, &msg.f_timestamp);
+
+        // update state of peer
+
+        *peer.state.lock() = State::InitiationSent {
+            hs,
+            ck,
+            eph_sk,
+            local,
+        };
+
+        Ok(())
+    })
+}
+
+
 pub(super) fn create_initiation<R: RngCore + CryptoRng, O>(
     rng: &mut R,
     keyst: &KeyState,

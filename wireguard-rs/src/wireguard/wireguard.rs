@@ -179,28 +179,27 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
     }
 
     pub fn remove_peer(&self, pk: &PublicKey) {
-        let _ = self.peers.write().inner_mut().remove(pk);
+        let _ = self.peers.write().remove(pk);
     }
 
     pub fn set_key(&self, sk: Option<StaticSecret>) {
         let mut peers = self.peers.write();
-        peers.inner_mut().set_sk(sk);
+        peers.set_sk(sk);
         self.router.clear_sending_keys();
     }
 
     pub fn get_sk(&self) -> Option<StaticSecret> {
         self.peers
             .read()
-            .inner()
             .get_sk()
             .map(|sk| StaticSecret::from(sk.to_bytes()))
     }
 
     pub fn set_psk(&self, pk: PublicKey, psk: [u8; 32]) -> bool {
-        self.peers.write().inner_mut().set_psk(pk, psk).is_ok()
+        self.peers.write().set_psk(pk, psk).is_ok()
     }
     pub fn get_psk(&self, pk: &PublicKey) -> Option<[u8; 32]> {
-        self.peers.read().inner().get_psk(pk).ok()
+        self.peers.read().get_psk(pk).ok()
     }
 
     pub fn add_peer(&self, pk: PublicKey) -> bool {
@@ -230,7 +229,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
             });
 
         // finally, add the peer to the handshake device
-        peers.inner_mut().add(pk, peer).is_ok()
+        peers.add(pk, peer).is_ok()
     }
 
     /// Begin consuming messages from the reader.

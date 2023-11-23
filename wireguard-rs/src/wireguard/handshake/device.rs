@@ -2,6 +2,7 @@ use std::collections::hash_map;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Mutex;
+use std::sync::Arc;
 
 use byteorder::{ByteOrder, LittleEndian};
 use dashmap::mapref::entry::Entry;
@@ -9,6 +10,7 @@ use dashmap::DashMap;
 use zerocopy::AsBytes;
 
 use rand::Rng;
+use rand::rngs::OsRng;
 use rand_core::{CryptoRng, RngCore};
 
 use clear_on_drop::clear::Clear;
@@ -80,6 +82,214 @@ impl<O> Device<O> {
 
     pub fn new() -> Device<O> {
         Device::NoOwl(DeviceInner::new())
+    }
+
+    pub fn new_owl_initiator() -> Device<O> {
+        let inner = DeviceInner::new();
+
+        // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
+        // This is a hack---can be made more robust later
+        let eph_sk = StaticSecret::new(&mut OsRng);
+
+        let cfg = owl_wireguard::cfg_Initiator {
+            owl_S_init: Arc::new(vec![]),
+            owl_E_init: Arc::new(eph_sk.to_bytes().to_vec()),
+            pk_owl_S_resp: Arc::new(vec![]),
+            pk_owl_S_init: Arc::new(vec![]),
+            pk_owl_E_resp: Arc::new(vec![]),
+            pk_owl_E_init: Arc::new(vec![]),
+            salt: Arc::new(vec![]),
+            device: inner,
+        };
+        let state = owl_wireguard::state_Initiator::init_state_Initiator();
+        Device::Initiator(OwlInitiator {
+            cfg,
+            state
+        })
+    }
+
+    pub fn new_owl_responder() -> Device<O> {
+        let inner = DeviceInner::new();
+        let cfg = owl_wireguard::cfg_Responder {
+            owl_S_resp: Arc::new(vec![]),
+            owl_E_resp: Arc::new(vec![]),
+            pk_owl_S_resp: Arc::new(vec![]),
+            pk_owl_S_init: Arc::new(vec![]),
+            pk_owl_E_resp: Arc::new(vec![]),
+            pk_owl_E_init: Arc::new(vec![]),
+            salt: Arc::new(vec![]),
+            device: inner
+        };
+        let state = owl_wireguard::state_Responder::init_state_Responder();
+        Device::Responder(OwlResponder {
+            cfg,
+            state
+        })
+    }
+
+    /// Update the secret key of the device
+    ///
+    /// # Arguments
+    ///
+    /// * `sk` - x25519 scalar representing the local private key
+    pub fn set_sk(&mut self, sk: Option<StaticSecret>) -> Option<PublicKey> {
+        match self {
+            Device::NoOwl(_) => {},
+            Device::Initiator(i) => {
+                i.cfg.owl_S_init = Arc::new(sk.clone().unwrap().to_bytes().to_vec());
+            },
+            Device::Responder(r) => {
+                r.cfg.owl_S_resp = Arc::new(sk.clone().unwrap().to_bytes().to_vec());
+            },
+        }
+        
+        // update secret and public key
+        self.inner_mut().keyst = sk.map(|sk| {
+            let pk = PublicKey::from(&sk);
+            let macs = macs::Validator::new(pk);
+            KeyState { pk, sk, macs }
+        });
+
+        // recalculate / erase the shared secrets for every peer
+        let (ids, same) = self.inner_mut().update_ss();
+
+        // release ids from aborted handshakes
+        for id in ids {
+            self.release(id)
+        }
+
+        // if we found a peer matching the device public key
+        // remove it and return its value to the caller
+        same.map(|pk| {
+            self.inner_mut().pk_map.remove(pk.as_bytes());
+            pk
+        })
+    }
+
+    /// Return the secret key of the device
+    ///
+    /// # Returns
+    ///
+    /// A secret key (x25519 scalar)
+    pub fn get_sk(&self) -> Option<&StaticSecret> {
+        self.inner().keyst.as_ref().map(|key| &key.sk)
+    }
+
+    /// Add a new public key to the state machine
+    /// To remove public keys, you must create a new machine instance
+    ///
+    /// # Arguments
+    ///
+    /// * `pk` - The public key to add
+    /// * `identifier` - Associated identifier which can be used to distinguish the peers
+    pub fn add(&mut self, pk: PublicKey, opaque: O) -> Result<(), ConfigError> {
+        // ensure less than 2^20 peers
+        if self.inner().pk_map.len() > MAX_PEER_PER_DEVICE {
+            return Err(ConfigError::new("Too many peers for device"));
+        }
+
+        // error if public key matches device
+        if let Some(key) = self.inner().keyst.as_ref() {
+            if pk.as_bytes() == key.pk.as_bytes() {
+                return Err(ConfigError::new("Public key of peer matches the device"));
+            }
+        }
+
+        let mut inner = self.inner_mut();
+        // pre-compute shared secret and add to pk_map
+        inner.pk_map.insert(
+            *pk.as_bytes(),
+            Peer::new(
+                pk,
+                inner.keyst
+                .as_ref()
+                .map(|key| *key.sk.diffie_hellman(&pk).as_bytes())
+                .unwrap_or([0u8; 32]),
+                opaque,
+            ),
+        );
+
+        Ok(())
+    }
+
+    /// Remove a peer by public key
+    /// To remove public keys, you must create a new machine instance
+    ///
+    /// # Arguments
+    ///
+    /// * `pk` - The public key of the peer to remove
+    ///
+    /// # Returns
+    ///
+    /// The call might fail if the public key is not found
+    pub fn remove(&mut self, pk: &PublicKey) -> Result<(), ConfigError> {
+        // remove the peer
+        self.inner_mut().pk_map
+            .remove(pk.as_bytes())
+            .ok_or_else(|| ConfigError::new("Public key not in device"))?;
+
+        // remove every id entry for the peer in the public key map
+        // O(n) operations, however it is rare: only when removing peers.
+        self.inner_mut().id_map.retain(|_, v| v != pk.as_bytes());
+        Ok(())
+    }
+
+    /// Add a psk to the peer
+    ///
+    /// # Arguments
+    ///
+    /// * `pk` - The public key of the peer
+    /// * `psk` - The psk to set / unset
+    ///
+    /// # Returns
+    ///
+    /// The call might fail if the public key is not found
+    pub fn set_psk(&mut self, pk: PublicKey, psk: Psk) -> Result<(), ConfigError> {
+        match self {
+            Device::NoOwl(_) => {},
+            Device::Initiator(i) => {
+                assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard initiator");
+            },
+            Device::Responder(r) => {
+                assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard responder");
+            },
+        }
+
+        match self.inner_mut().pk_map.get_mut(pk.as_bytes()) {
+            Some(mut peer) => {
+                peer.psk = psk;
+                Ok(())
+            }
+            _ => Err(ConfigError::new("No such public key")),
+        }
+    }
+
+    /// Return the psk for the peer
+    ///
+    /// # Arguments
+    ///
+    /// * `pk` - The public key of the peer
+    ///
+    /// # Returns
+    ///
+    /// A 32 byte array holding the PSK
+    ///
+    /// The call might fail if the public key is not found
+    pub fn get_psk(&self, pk: &PublicKey) -> Result<Psk, ConfigError> {
+        match self.inner().pk_map.get(pk.as_bytes()) {
+            Some(peer) => Ok(peer.psk),
+            _ => Err(ConfigError::new("No such public key")),
+        }
+    }
+
+    /// Release an id back to the pool
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The (sender) id to release
+    pub fn release(&self, id: u32) {
+        let old = self.inner().id_map.remove(&id);
+        assert!(old.is_some(), "released id not allocated");
     }
 }
 
@@ -167,150 +377,6 @@ impl<O> DeviceInner<O> {
         (ids, same)
     }
 
-    /// Update the secret key of the device
-    ///
-    /// # Arguments
-    ///
-    /// * `sk` - x25519 scalar representing the local private key
-    pub fn set_sk(&mut self, sk: Option<StaticSecret>) -> Option<PublicKey> {
-        // update secret and public key
-        self.keyst = sk.map(|sk| {
-            let pk = PublicKey::from(&sk);
-            let macs = macs::Validator::new(pk);
-            KeyState { pk, sk, macs }
-        });
-
-        // recalculate / erase the shared secrets for every peer
-        let (ids, same) = self.update_ss();
-
-        // release ids from aborted handshakes
-        for id in ids {
-            self.release(id)
-        }
-
-        // if we found a peer matching the device public key
-        // remove it and return its value to the caller
-        same.map(|pk| {
-            self.pk_map.remove(pk.as_bytes());
-            pk
-        })
-    }
-
-    /// Return the secret key of the device
-    ///
-    /// # Returns
-    ///
-    /// A secret key (x25519 scalar)
-    pub fn get_sk(&self) -> Option<&StaticSecret> {
-        self.keyst.as_ref().map(|key| &key.sk)
-    }
-
-    /// Add a new public key to the state machine
-    /// To remove public keys, you must create a new machine instance
-    ///
-    /// # Arguments
-    ///
-    /// * `pk` - The public key to add
-    /// * `identifier` - Associated identifier which can be used to distinguish the peers
-    pub fn add(&mut self, pk: PublicKey, opaque: O) -> Result<(), ConfigError> {
-        // ensure less than 2^20 peers
-        if self.pk_map.len() > MAX_PEER_PER_DEVICE {
-            return Err(ConfigError::new("Too many peers for device"));
-        }
-
-        // error if public key matches device
-        if let Some(key) = self.keyst.as_ref() {
-            if pk.as_bytes() == key.pk.as_bytes() {
-                return Err(ConfigError::new("Public key of peer matches the device"));
-            }
-        }
-
-        // pre-compute shared secret and add to pk_map
-        self.pk_map.insert(
-            *pk.as_bytes(),
-            Peer::new(
-                pk,
-                self.keyst
-                .as_ref()
-                .map(|key| *key.sk.diffie_hellman(&pk).as_bytes())
-                .unwrap_or([0u8; 32]),
-                opaque,
-            ),
-        );
-
-        Ok(())
-    }
-
-    /// Remove a peer by public key
-    /// To remove public keys, you must create a new machine instance
-    ///
-    /// # Arguments
-    ///
-    /// * `pk` - The public key of the peer to remove
-    ///
-    /// # Returns
-    ///
-    /// The call might fail if the public key is not found
-    pub fn remove(&mut self, pk: &PublicKey) -> Result<(), ConfigError> {
-        // remove the peer
-        self.pk_map
-            .remove(pk.as_bytes())
-            .ok_or_else(|| ConfigError::new("Public key not in device"))?;
-
-        // remove every id entry for the peer in the public key map
-        // O(n) operations, however it is rare: only when removing peers.
-        self.id_map.retain(|_, v| v != pk.as_bytes());
-        Ok(())
-    }
-
-    /// Add a psk to the peer
-    ///
-    /// # Arguments
-    ///
-    /// * `pk` - The public key of the peer
-    /// * `psk` - The psk to set / unset
-    ///
-    /// # Returns
-    ///
-    /// The call might fail if the public key is not found
-    pub fn set_psk(&mut self, pk: PublicKey, psk: Psk) -> Result<(), ConfigError> {
-        match self.pk_map.get_mut(pk.as_bytes()) {
-            Some(mut peer) => {
-                peer.psk = psk;
-                Ok(())
-            }
-            _ => Err(ConfigError::new("No such public key")),
-        }
-    }
-
-    /// Return the psk for the peer
-    ///
-    /// # Arguments
-    ///
-    /// * `pk` - The public key of the peer
-    ///
-    /// # Returns
-    ///
-    /// A 32 byte array holding the PSK
-    ///
-    /// The call might fail if the public key is not found
-    pub fn get_psk(&self, pk: &PublicKey) -> Result<Psk, ConfigError> {
-        match self.pk_map.get(pk.as_bytes()) {
-            Some(peer) => Ok(peer.psk),
-            _ => Err(ConfigError::new("No such public key")),
-        }
-    }
-
-    /// Release an id back to the pool
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The (sender) id to release
-    pub fn release(&self, id: u32) {
-        let old = self.id_map.remove(&id);
-        assert!(old.is_some(), "released id not allocated");
-    }
-
     // Internal function
     //
     // Return the peer associated with the public key
@@ -338,6 +404,16 @@ impl<O> DeviceInner<O> {
         match self.pk_map.get(&*pk) {
             Some(peer) => Ok((peer, PublicKey::from(*pk))),
             _ => unreachable!(),
+        }
+    }
+
+    // If there is only one id in the id_map, return it
+    // Just for testing purposes
+    pub fn get_singleton_id(&self) -> u32 {
+        if self.id_map.len() == 1 {
+            self.id_map.iter().next().unwrap().key().clone()
+        } else {
+            panic!("get_singleton_id called on device with more than one id");
         }
     }
 
@@ -382,7 +458,23 @@ impl<O> Device<O> {
                 let mut msg = Initiation::default();
 
                 // create noise part of initation
-                noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
+                match self {
+                    Device::NoOwl(_) => {
+                        noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
+                    },
+                    Device::Initiator(i) => {
+                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                        println!("dhpk_S_init = {:?}", i.cfg.owl_S_init);
+                        println!("dhpk_E_init = {:?}", i.cfg.owl_E_init);
+                        i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()));
+                        noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
+                    },
+                    Device::Responder(r) => {
+                        panic!("Responder cannot initiate handshake");
+                    },
+                }
+
+                dbg!(hex::encode(&msg.noise.as_bytes()));
 
                 // add macs to initation
                 peer.macs
@@ -422,6 +514,8 @@ impl<O> Device<O> {
         // de-multiplex the message type field
         match LittleEndian::read_u32(msg) {
             TYPE_INITIATION => {
+                // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlResponder here
+
                 // parse message
                 let msg = Initiation::parse(msg)?;
 
@@ -461,7 +555,7 @@ impl<O> Device<O> {
                 // create response (release id on error)
                 let keys = noise::create_response(rng, peer, &pk, local, st, &mut resp.noise)
                     .map_err(|e| {
-                        self.inner().release(local);
+                        self.release(local);
                         e
                     })?;
 
@@ -478,6 +572,8 @@ impl<O> Device<O> {
                 ))
             }
             TYPE_RESPONSE => {
+                // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlInitiator here
+
                 let msg = Response::parse(msg)?;
 
                 // check mac1 field
@@ -542,10 +638,10 @@ mod tests {
             assert_eq!(pk2.as_bytes(), &pk2_bs);
 
             let mut dev : Device<u32> = Device::new();
-            dev.inner_mut().set_sk(Some(sk));
+            dev.set_sk(Some(sk));
 
-            dev.inner_mut().add(pk1, 1).unwrap();
-            if dev.inner_mut().add(pk2, 0).is_err() {
+            dev.add(pk1, 1).unwrap();
+            if dev.add(pk2, 0).is_err() {
                 assert_eq!(pk1_bs, pk2_bs);
                 assert_eq!(*dev.inner().get(&pk1).unwrap(), 1);
             }

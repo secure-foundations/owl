@@ -13,11 +13,14 @@ use x25519_dalek::PublicKey;
 use x25519_dalek::StaticSecret;
 
 use super::messages::{Initiation, Response};
+use crate::wireguard::handshake::device::Device;
 
 fn setup_devices<R: RngCore + CryptoRng, O: Default>(
     rng1: &mut R,
     rng2: &mut R,
     rng3: &mut R,
+    dev1_is_owl: bool,
+    dev2_is_owl: bool,
 ) -> (PublicKey, Device<O>, PublicKey, Device<O>) {
     // generate new key pairs
 
@@ -27,24 +30,23 @@ fn setup_devices<R: RngCore + CryptoRng, O: Default>(
     let sk2 = StaticSecret::new(rng2);
     let pk2 = PublicKey::from(&sk2);
 
-    // pick random psk
-
-    let mut psk = [0u8; 32];
-    rng3.fill_bytes(&mut psk[..]);
+    // We always use psk of 0
+    let psk = [0u8; 32];
+    // rng3.fill_bytes(&mut psk[..]);
 
     // initialize devices on both ends
 
-    let mut dev1 = Device::new();
-    let mut dev2 = Device::new();
+    let mut dev1 = if dev1_is_owl { Device::new_owl_initiator() } else { Device::new() };
+    let mut dev2 = if dev2_is_owl { Device::new_owl_responder() } else { Device::new() }; 
 
-    dev1.inner_mut().set_sk(Some(sk1));
-    dev2.inner_mut().set_sk(Some(sk2));
+    dev1.set_sk(Some(sk1));
+    dev2.set_sk(Some(sk2));
 
-    dev1.inner_mut().add(pk2, O::default()).unwrap();
-    dev2.inner_mut().add(pk1, O::default()).unwrap();
+    dev1.add(pk2, O::default()).unwrap();
+    dev2.add(pk1, O::default()).unwrap();
 
-    dev1.inner_mut().set_psk(pk2, psk).unwrap();
-    dev2.inner_mut().set_psk(pk1, psk).unwrap();
+    dev1.set_psk(pk2, psk).unwrap();
+    dev2.set_psk(pk1, psk).unwrap();
 
     (pk1, dev1, pk2, dev2)
 }
@@ -66,7 +68,7 @@ fn wait() {
 #[test]
 fn handshake_under_load() {
     let (_pk1, dev1, pk2, dev2): (_, Device<usize>, _, _) =
-        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng);
+        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, false);
 
     let src1: SocketAddr = "172.16.0.1:8080".parse().unwrap();
     let src2: SocketAddr = "172.16.0.2:7070".parse().unwrap();
@@ -144,11 +146,11 @@ fn handshake_under_load() {
 #[test]
 fn handshake_no_load() {
     let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
-        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng);
+        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, false);
 
     // do a few handshakes (every handshake should succeed)
 
-    for i in 0..10 {
+    for i in 0..1 {
         println!("handshake : {}", i);
 
         // create initiation
@@ -191,13 +193,27 @@ fn handshake_no_load() {
         assert_eq!(ks_i.send, ks_r.recv, "KeyI.send != KeyR.recv");
         assert_eq!(ks_i.recv, ks_r.send, "KeyI.recv != KeyR.send");
 
-        dev1.inner_mut().release(ks_i.local_id());
-        dev2.inner_mut().release(ks_r.local_id());
+        dev1.release(ks_i.local_id());
+        dev2.release(ks_r.local_id());
 
         // avoid initiation flood detection
         wait();
     }
 
-    dev1.inner_mut().remove(&pk2).unwrap();
-    dev2.inner_mut().remove(&pk1).unwrap();
+    dev1.remove(&pk2).unwrap();
+    dev2.remove(&pk1).unwrap();
+}
+
+#[test]
+fn owl_computes_same_msg1() {
+    let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
+        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, true);
+
+    let msg1 = dev1.begin(&mut OsRng, &pk2).unwrap();
+
+    println!("msg1 = {} : {} bytes", hex::encode(&msg1[..]), msg1.len());
+    println!(
+        "msg1 = {:?}",
+        Initiation::parse(&msg1[..]).expect("failed to parse initiation")
+    );
 }

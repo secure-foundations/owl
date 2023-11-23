@@ -239,7 +239,7 @@ pub fn handshake_worker<T: Tun, B: UDP>(
 
                                 // free any unused ids
                                 for id in peer.add_keypair(kp) {
-                                    device.inner().release(id);
+                                    device.release(id);
                                 }
                             };
                         }
