@@ -11,15 +11,15 @@ mac1 (16 bytes)
 mac2 (16 bytes)
 
 CONSTANTS:
-construction -> 0x636f6e737472756374696f6e
-identifier -> 0x6964656e746966696572
-mac1--- -> 0x6d6163312d2d2d
+construction -> Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s
+identifier -> WireGuard v1 zx2c4 Jason@zx2c4.com
+mac1---- -> 0x6d6163312d2d2d2d
 
 */
 
-func construction() = 0x636f6e737472756374696f6e
-func identifier() = 0x6964656e746966696572 
-func mac1() = 0x6d6163312d2d2d
+func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c795f424c414b453273
+func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
+func mac1() = 0x6d6163312d2d2d2d
 
 
 locality Initiator : 1
@@ -538,7 +538,7 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
         msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1
     ) in
     // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output in //  to endpoint(Initiator<n>) in (TODO: endpoint? )
+    let _ = output msg2_output to endpoint(Initiator<n>) in // (TODO: endpoint? )
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in

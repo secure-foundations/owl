@@ -1,5 +1,6 @@
 use std::collections::hash_map;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::sync::Arc;
@@ -464,10 +465,11 @@ impl<O> Device<O> {
                     },
                     Device::Initiator(i) => {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                        println!("dhpk_S_init = {:?}", i.cfg.owl_S_init);
-                        println!("dhpk_E_init = {:?}", i.cfg.owl_E_init);
+                        println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
+                        println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
                         i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()));
-                        noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
+                        let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                        noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
                     },
                     Device::Responder(r) => {
                         panic!("Responder cannot initiate handshake");

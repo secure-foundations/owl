@@ -45,7 +45,8 @@ pub fn owl_output<A>(
     ensures
         t.view() == old(t).view().give_output(),
 {
-    todo!()
+    // todo!()
+    println!("owl_output: {:?}", hex::encode(x));
 }
 
 #[verifier(external_body)]
@@ -1171,12 +1172,6 @@ pub exec fn serialize_owl_msg1_inner(arg: &owl_msg1) -> (res: Option<Vec<u8>>)
             ),
             start: 0,
         };
-        dbg!(arg.owl__msg1_tag.len());
-        dbg!(arg.owl__msg1_sender.len());
-        dbg!(arg.owl__msg1_ephemeral.len());
-        dbg!(arg.owl__msg1_static.len());
-        dbg!(arg.owl__msg1_timestamp.len());
-        dbg!(arg.owl__msg1_mac1.len());
         let ser_result = parse_serialize::serialize_owl_msg1(
             stream,
             ((
@@ -2516,6 +2511,7 @@ impl<O> cfg_Initiator<O> {
             let owl__x421 = arc_new(temp_owl__x421);
             let temp_owl__x423 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x421)))) };
             let owl__x423 = arc_clone(&temp_owl__x423);
+            dbg!(hex::encode(&*owl__x423));
             let temp_owl__x424 = { arc_clone(&owl__x423) };
             let owl__x424 = arc_clone(&temp_owl__x424);
             let temp_owl__x437 = { arc_clone(&owl__x424) };
@@ -2529,6 +2525,7 @@ impl<O> cfg_Initiator<O> {
             )
             };
             let owl__x441 = arc_new(temp_owl__x441);
+            dbg!(hex::encode(&*owl__x441));
             let temp_owl__x443 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x441)))) };
             let owl__x443 = arc_clone(&temp_owl__x443);
             let temp_owl__x444 = { arc_clone(&owl__x443) };
@@ -2563,6 +2560,7 @@ impl<O> cfg_Initiator<O> {
                 vec_as_slice(&(*arc_clone(&owl__x479))),
                 vec_as_slice(&(*arc_clone(&owl__x481))),
             );
+            dbg!(hex::encode(&*owl_msg1_C1738));
             let temp_owl__x482 = {
             arc_new(
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C1738), 0, 0 + nonce_size())),
@@ -2611,6 +2609,7 @@ impl<O> cfg_Initiator<O> {
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C2739), 0, 0 + nonce_size())),
             )
             };
+            dbg!(hex::encode(&*temp_owl__x525));
             let owl__x525 = arc_clone(&temp_owl__x525);
             let temp_owl__x530 = { arc_clone(&owl__x482) };
             let owl__x530 = arc_clone(&temp_owl__x530);
@@ -2692,6 +2691,7 @@ impl<O> cfg_Initiator<O> {
                 slice_to_vec(slice_subrange(vec_as_slice(&*owl_msg1_C3740), 0, 0 + nonce_size())),
             )
             };
+            dbg!(hex::encode(&*temp_owl__x593));
             let owl__x593 = arc_clone(&temp_owl__x593);
             let temp_owl__x598 = { arc_clone(&owl__x525) };
             let owl__x598 = arc_clone(&temp_owl__x598);
@@ -2849,10 +2849,17 @@ impl<O> cfg_Initiator<O> {
                 owl__msg1_ephemeral: clone_vec_u8(&*arc_clone(&owl__x707)),
                 owl__msg1_static: clone_vec_u8(&*arc_clone(&owl__x709)),
                 owl__msg1_timestamp: clone_vec_u8(&*arc_clone(&owl__x711)),
-                owl__msg1_mac1: clone_vec_u8(&*arc_clone(&owl__x713)),
+                // owl__msg1_mac1: clone_vec_u8(&*arc_clone(&owl__x713)),
+                owl__msg1_mac1: vec![0u8; 64]
             }
             };
             let owl__x715 = temp_owl__x715;
+            println!("owl__msg1_tag: {:?}", hex::encode(&owl__x715.owl__msg1_tag));
+            println!("owl__msg1_sender: {:?}", hex::encode(&owl__x715.owl__msg1_sender));
+            println!("owl__msg1_ephemeral: {:?}", hex::encode(&owl__x715.owl__msg1_ephemeral));
+            println!("owl__msg1_static: {:?}", hex::encode(&owl__x715.owl__msg1_static));
+            println!("owl__msg1_timestamp: {:?}", hex::encode(&owl__x715.owl__msg1_timestamp));
+            println!("owl__msg1_mac1: {:?}", hex::encode(&owl__x715.owl__msg1_mac1));
             let temp_owl__x716 = { owl__x715 };
             let owl__x716 = temp_owl__x716;
             let temp_owl__x720 = { owl__x716 };
@@ -2931,7 +2938,7 @@ impl<O> cfg_Initiator<O> {
         let tracked mut itree = itree;
         let res_inner = {
             let v = self.device.get_singleton_id();
-            (Arc::new(v.to_be_bytes().to_vec()), Tracked(itree))
+            (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -4209,7 +4216,7 @@ impl<O> cfg_Responder<O> {
 // ------ USER-DEFINED FUNCTIONS ------
 // ------------------------------------
 pub closed spec fn construction() -> Seq<u8> {
-    seq![0x63u8, 0x6fu8, 0x6eu8, 0x73u8, 0x74u8, 0x72u8, 0x75u8, 0x63u8, 0x74u8, 0x69u8, 0x6fu8, 0x6eu8, ]
+    seq![0x4eu8, 0x6fu8, 0x69u8, 0x73u8, 0x65u8, 0x5fu8, 0x49u8, 0x4bu8, 0x70u8, 0x73u8, 0x6bu8, 0x32u8, 0x5fu8, 0x32u8, 0x35u8, 0x35u8, 0x31u8, 0x39u8, 0x5fu8, 0x43u8, 0x68u8, 0x61u8, 0x43u8, 0x68u8, 0x61u8, 0x50u8, 0x6fu8, 0x6cu8, 0x79u8, 0x5fu8, 0x42u8, 0x4cu8, 0x41u8, 0x4bu8, 0x45u8, 0x32u8, 0x73u8, ]
 }
 
 pub exec fn owl_construction() -> (res: Vec<u8>)
@@ -4218,13 +4225,13 @@ pub exec fn owl_construction() -> (res: Vec<u8>)
 {
     {
         let x: Vec<u8> =
-            mk_vec_u8![0x63u8, 0x6fu8, 0x6eu8, 0x73u8, 0x74u8, 0x72u8, 0x75u8, 0x63u8, 0x74u8, 0x69u8, 0x6fu8, 0x6eu8, ];
+            mk_vec_u8![0x4eu8, 0x6fu8, 0x69u8, 0x73u8, 0x65u8, 0x5fu8, 0x49u8, 0x4bu8, 0x70u8, 0x73u8, 0x6bu8, 0x32u8, 0x5fu8, 0x32u8, 0x35u8, 0x35u8, 0x31u8, 0x39u8, 0x5fu8, 0x43u8, 0x68u8, 0x61u8, 0x43u8, 0x68u8, 0x61u8, 0x50u8, 0x6fu8, 0x6cu8, 0x79u8, 0x5fu8, 0x42u8, 0x4cu8, 0x41u8, 0x4bu8, 0x45u8, 0x32u8, 0x73u8, ];
         x
     }
 }
 
 pub closed spec fn identifier() -> Seq<u8> {
-    seq![0x69u8, 0x64u8, 0x65u8, 0x6eu8, 0x74u8, 0x69u8, 0x66u8, 0x69u8, 0x65u8, 0x72u8, ]
+    seq![0x57u8, 0x69u8, 0x72u8, 0x65u8, 0x47u8, 0x75u8, 0x61u8, 0x72u8, 0x64u8, 0x20u8, 0x76u8, 0x31u8, 0x20u8, 0x7au8, 0x78u8, 0x32u8, 0x63u8, 0x34u8, 0x20u8, 0x4au8, 0x61u8, 0x73u8, 0x6fu8, 0x6eu8, 0x40u8, 0x7au8, 0x78u8, 0x32u8, 0x63u8, 0x34u8, 0x2eu8, 0x63u8, 0x6fu8, 0x6du8, ]
 }
 
 pub exec fn owl_identifier() -> (res: Vec<u8>)
@@ -4233,13 +4240,13 @@ pub exec fn owl_identifier() -> (res: Vec<u8>)
 {
     {
         let x: Vec<u8> =
-            mk_vec_u8![0x69u8, 0x64u8, 0x65u8, 0x6eu8, 0x74u8, 0x69u8, 0x66u8, 0x69u8, 0x65u8, 0x72u8, ];
+            mk_vec_u8![0x57u8, 0x69u8, 0x72u8, 0x65u8, 0x47u8, 0x75u8, 0x61u8, 0x72u8, 0x64u8, 0x20u8, 0x76u8, 0x31u8, 0x20u8, 0x7au8, 0x78u8, 0x32u8, 0x63u8, 0x34u8, 0x20u8, 0x4au8, 0x61u8, 0x73u8, 0x6fu8, 0x6eu8, 0x40u8, 0x7au8, 0x78u8, 0x32u8, 0x63u8, 0x34u8, 0x2eu8, 0x63u8, 0x6fu8, 0x6du8, ];
         x
     }
 }
 
 pub closed spec fn mac1() -> Seq<u8> {
-    seq![0x6du8, 0x61u8, 0x63u8, 0x31u8, 0x2du8, 0x2du8, 0x2du8, ]
+    seq![0x6du8, 0x61u8, 0x63u8, 0x31u8, 0x2du8, 0x2du8, 0x2du8, 0x2du8, ]
 }
 
 pub exec fn owl_mac1() -> (res: Vec<u8>)
@@ -4247,7 +4254,8 @@ pub exec fn owl_mac1() -> (res: Vec<u8>)
         res.dview() == mac1(),
 {
     {
-        let x: Vec<u8> = mk_vec_u8![0x6du8, 0x61u8, 0x63u8, 0x31u8, 0x2du8, 0x2du8, 0x2du8, ];
+        let x: Vec<u8> =
+            mk_vec_u8![0x6du8, 0x61u8, 0x63u8, 0x31u8, 0x2du8, 0x2du8, 0x2du8, 0x2du8, ];
         x
     }
 }

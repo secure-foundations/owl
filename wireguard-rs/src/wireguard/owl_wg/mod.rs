@@ -53,14 +53,16 @@ pub const fn tag_size() -> (r: usize)
 }
 
 pub open const spec fn NONCE_SIZE() -> usize {
-    owl_aead::spec_nonce_size(CIPHER())
+    // owl_aead::spec_nonce_size(CIPHER())
+    32
 }
 
 pub const fn nonce_size() -> (r: usize)
     ensures
         r == NONCE_SIZE(),
 {
-    owl_aead::nonce_size(cipher())
+    // owl_aead::nonce_size(cipher())
+    32
 }
 
 pub open const spec fn HMAC_MODE() -> owl_hmac::Mode {

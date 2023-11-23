@@ -222,7 +222,7 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
     let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(nonce_size(), 0u8);
+    iv.resize(owl_aead::nonce_size(cipher()), 0u8);
     let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
         Ok(mut c) => {
             // let mut v = iv.to_owned();
@@ -284,7 +284,7 @@ pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
     ensures res.dview() == counter_as_bytes(x.dview())
 {
     let mut v = x.to_le_bytes().to_vec();
-    v.resize(nonce_size(), 0u8);
+    v.resize(owl_aead::nonce_size(cipher()), 0u8);
     v
 }
 
