@@ -462,6 +462,10 @@ impl<O> Device<O> {
                 match self {
                     Device::NoOwl(_) => {
                         noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
+                        // add macs to initation
+                        peer.macs
+                            .lock()
+                            .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
                     Device::Initiator(i) => {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
@@ -478,10 +482,6 @@ impl<O> Device<O> {
 
                 dbg!(hex::encode(&msg.noise.as_bytes()));
 
-                // add macs to initation
-                peer.macs
-                    .lock()
-                    .generate(msg.noise.as_bytes(), &mut msg.macs);
 
                 Ok(msg.as_bytes().to_owned())
             }
