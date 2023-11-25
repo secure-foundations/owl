@@ -478,7 +478,7 @@ impl<O> Device<O> {
                         //     .lock()
                         //     .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
-                    Device::Responder(r) => {
+                    Device::Responder(_) => {
                         panic!("Responder cannot initiate handshake");
                     },
                 }
@@ -578,35 +578,44 @@ impl<O> Device<O> {
             }
             TYPE_RESPONSE => {
                 // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlInitiator here
+                match self {
+                    Device::NoOwl(_) => {
+                        let msg = Response::parse(msg)?;
 
-                let msg = Response::parse(msg)?;
-
-                // check mac1 field
-                keyst.macs.check_mac1(msg.noise.as_bytes(), &msg.macs)?;
-
-                // address validation & DoS mitigation
-                if let Some(src) = src {
-                    // check mac2 field
-                    if !keyst.macs.check_mac2(msg.noise.as_bytes(), &src, &msg.macs) {
-                        let mut reply = Default::default();
-                        keyst.macs.create_cookie_reply(
-                            rng,
-                            msg.noise.f_sender.get(),
-                            &src,
-                            &msg.macs,
-                            &mut reply,
-                        );
-                        return Ok((None, Some(reply.as_bytes().to_owned()), None));
-                    }
-
-                    // check ratelimiter
-                    if !self.inner().limiter.lock().unwrap().allow(&src.ip()) {
-                        return Err(HandshakeError::RateLimited);
-                    }
+                        // check mac1 field
+                        keyst.macs.check_mac1(msg.noise.as_bytes(), &msg.macs)?;
+        
+                        // address validation & DoS mitigation
+                        if let Some(src) = src {
+                            // check mac2 field
+                            if !keyst.macs.check_mac2(msg.noise.as_bytes(), &src, &msg.macs) {
+                                let mut reply = Default::default();
+                                keyst.macs.create_cookie_reply(
+                                    rng,
+                                    msg.noise.f_sender.get(),
+                                    &src,
+                                    &msg.macs,
+                                    &mut reply,
+                                );
+                                return Ok((None, Some(reply.as_bytes().to_owned()), None));
+                            }
+        
+                            // check ratelimiter
+                            if !self.inner().limiter.lock().unwrap().allow(&src.ip()) {
+                                return Err(HandshakeError::RateLimited);
+                            }
+                        }
+        
+                        // consume inner playload
+                        noise::consume_response(self, keyst, &msg.noise)
+                    },
+                    Device::Initiator(i) => {
+                        todo!()
+                    },
+                    Device::Responder(_) => {
+                        panic!("Responder cannot receive response");
+                    },
                 }
-
-                // consume inner playload
-                noise::consume_response(self, keyst, &msg.noise)
             }
             TYPE_COOKIE_REPLY => {
                 let msg = CookieReply::parse(msg)?;

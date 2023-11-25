@@ -178,14 +178,13 @@ fn handshake_under_load() {
     assert_eq!(kp1.recv, kp2.send);
 }
 
-#[test]
-fn handshake_no_load() {
+fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
     let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
-        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, false);
+        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, dev1_is_owl, dev2_is_owl);
 
     // do a few handshakes (every handshake should succeed)
 
-    for i in 0..1 {
+    for i in 0..num_tests {
         println!("handshake : {}", i);
 
         // create initiation
@@ -240,33 +239,12 @@ fn handshake_no_load() {
 }
 
 #[test]
+fn handshake_no_load() {
+    test_handshake(false, false, 10);
+}
+
+
+#[test]
 fn handshake_owl_initiator_rs_responder() {
-    let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
-        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, false);
-
-
-    let msg1 = dev1.begin(&mut OsRng, &pk2).unwrap();
-
-    println!("msg1 = {} : {} bytes", hex::encode(&msg1[..]), msg1.len());
-    println!(
-        "msg1 = {:?}",
-        Initiation::parse(&msg1[..]).expect("failed to parse initiation")
-    );
-
-    let (_, msg2, ks_r) = dev2
-        .process(&mut OsRng, &msg1, None)
-        .expect("failed to process initiation");
-
-    let ks_r = ks_r.unwrap();
-    let msg2 = msg2.unwrap();
-
-    println!("msg2 = {} : {} bytes", hex::encode(&msg2[..]), msg2.len());
-    println!(
-        "msg2 = {:?}",
-        Response::parse(&msg2[..]).expect("failed to parse response")
-    );
-
-    assert!(!ks_r.initiator, "Responders key-pair is confirmed");
-
-
+    test_handshake(true, false, 1);
 }
