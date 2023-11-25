@@ -104,7 +104,8 @@ pub fn verify(
     value: &[u8],
     tag_length: Option<usize>,
 ) -> bool {
-    let mac = hmac(mode, key, data, tag_length);
+    // let mac = hmac(mode, key, data, tag_length);
+    let mac = mac(key, data);
     mac == value
 }
 
