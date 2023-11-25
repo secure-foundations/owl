@@ -80,10 +80,10 @@ name msg1_C3<@n,m> : RO[e_init] strict get(msg1_C2<@m>[e_init;0]) ++ dh_combine(
     requires is_group_elem(e_init)
     uniqueness_by { is_constant_lemma(crh(construction())) }
 
-// needs to use the crh hash function, rather than kdf
-name msg1_mac1_key<@m> : RO strict{0} mac1() ++ dhpk(get(S_resp<@m>)) -> mackey Data<adv> 
-    uniqueness_by { assume (mac1() != crh(construction())); 
-                    is_constant_lemma(crh(construction())) }
+// // needs to use the crh hash function, rather than kdf
+// name msg1_mac1_key<@m> : RO strict{0} mac1() ++ dhpk(get(S_resp<@m>)) -> mackey Data<adv> 
+//     uniqueness_by { assume (mac1() != crh(construction())); 
+//                     is_constant_lemma(crh(construction())) }
 
     
 name msg2_C4<@n,m> : RO[e_init,e_resp] strict{0} get(msg1_C3<@n,m>[e_init;0]) ++ e_resp -> nonce
@@ -137,24 +137,25 @@ get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000) -> nonce || nonce ||
                         get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++
                         (0x00000000))
         };
-        forall n2:idx { 
-            disjoint_not_eq_lemma(preimage(msg1_mac1_key<@n2>), get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000))
-        }
+        ()
+        // forall n2:idx { 
+        //     disjoint_not_eq_lemma(preimage(msg1_mac1_key<@n2>), get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000))
+        // }
         
     }
 
 corr<n,m>[e_init, e_resp, ss] adv ==> [msg2_C7<@n,m>[e_init,e_resp, ss;1]]
 
-// needs to use the crh hash function, rather than kdf
-name msg2_mac1_key<@n> : RO mac1() ++ dhpk(get(S_init<@n>)) -> mackey Data<adv>
-    uniqueness_by { 
-        is_constant_lemma(crh(construction()));
-        forall n2:idx, m:idx, a:bv, b:bv, c:bv {
-            disjoint_not_eq_lemma(mac1() ++ dhpk(get(S_init<@n>)),
-                    preimage(msg2_C7<@n2,m>[a,b,c]))
-        };
-        assume (mac1() != crh(construction()))
-    }
+// // needs to use the crh hash function, rather than kdf
+// name msg2_mac1_key<@n> : RO mac1() ++ dhpk(get(S_init<@n>)) -> mackey Data<adv>
+//     uniqueness_by { 
+//         is_constant_lemma(crh(construction()));
+//         forall n2:idx, m:idx, a:bv, b:bv, c:bv {
+//             disjoint_not_eq_lemma(mac1() ++ dhpk(get(S_init<@n>)),
+//                     preimage(msg2_C7<@n2,m>[a,b,c]))
+//         };
+//         assume (mac1() != crh(construction()))
+//     }
             
 
 
@@ -330,11 +331,13 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
 
     // TODO: This `hash` call needs to call `crh`, not `hkdf`, need to specify this in the RO decl somehow.
     // it should be `crh(mac1() ++ dhpk_S_resp)`
-    let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
-    let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
+    // let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
+    let msg1_mac1_k = crh(mac1() ++ dhpk_S_resp) in 
+    let msg1_mac1 = mac(msg1_mac1_k, 
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
+    assume(length(msg1_mac1) == |maclen|);
     let msg1_mac2 = zeros_16() in
-    let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
+    let msg1_output: msg1 = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
     let retval = initiator_msg1_val<session i, pid n, pid m>(C3, H4) in
@@ -533,17 +536,19 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
     let H7 = crh(H6 ++ msg2_empty) in
     let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
     let msg2_tag = msg2_tag_value() in 
-    let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
+    // let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
+    let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
     // // TODO this needs to incorporate the tag byte
-    let msg2_mac1 : Data<adv> | |maclen| | = mac(msg2_mac1_k,
+    let msg2_mac1 = mac(msg2_mac1_k,
         msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
         msg2_empty) in 
+    assume(length(msg2_mac1) == |maclen|);
     let msg2_mac2 = zeros_16() in
-    let msg2_output = msg2(
+    let msg2_output: msg2 = msg2(
         msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
     ) in
     // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
+    let _ = output msg2_output /*  to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
