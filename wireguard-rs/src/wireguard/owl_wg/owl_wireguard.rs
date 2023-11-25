@@ -39,6 +39,7 @@ pub fn owl_output<A>(
     x: &[u8],
     dest_addr: &StrSlice,
     ret_addr: &StrSlice,
+    obuf: &mut [u8]
 )
     requires
         old(t).view().is_output(x.dview(), endpoint_of_addr(dest_addr.view())),
@@ -47,6 +48,9 @@ pub fn owl_output<A>(
 {
     // todo!()
     println!("owl_output: {:?}", hex::encode(x));
+    let len = std::cmp::min(x.len(), obuf.len());
+    dbg!(len);
+    obuf[..len].copy_from_slice(&x[..len]);
 }
 
 #[verifier(external_body)]
@@ -1899,6 +1903,7 @@ impl<O> cfg_Initiator<O> {
         mut_state: &mut state_Initiator,
         owl_transp_keys_val28826: owl_transp_keys,
         owl_plaintext28825: Arc<Vec<u8>>,
+        obuf: &mut [u8]
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Initiator), Endpoint>>),
         OwlError,
@@ -1996,6 +2001,7 @@ impl<O> cfg_Initiator<O> {
                         vec_as_slice(&(serialize_owl_transp(&owl__x98))),
                         &Responder_addr(),
                         &Initiator_addr(),
+                        obuf,
                     )
                     };
                     let owl__x99 = temp_owl__x99;
@@ -2469,7 +2475,7 @@ impl<O> cfg_Initiator<O> {
         Ok(res_inner)
     }
     
-    pub exec fn owl_generate_msg1_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>) -> (_: owl_initiator_msg1_val) {
+    pub exec fn owl_generate_msg1_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>, obuf: &mut [u8]) -> (_: owl_initiator_msg1_val) {
         let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
             (),
             Endpoint,
@@ -2479,7 +2485,7 @@ impl<O> cfg_Initiator<O> {
             generate_msg1_spec_spec(*self, *s, dhpk_S_resp.dview()),
         );
         let (res, _): (owl_initiator_msg1_val, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>) =
-            self.owl_generate_msg1(Tracked(call_token), s, dhpk_S_resp).unwrap();
+            self.owl_generate_msg1(Tracked(call_token), s, dhpk_S_resp, obuf).unwrap();
         res
     }
     
@@ -2490,6 +2496,7 @@ impl<O> cfg_Initiator<O> {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_dhpk_S_resp25125: Arc<Vec<u8>>,
+        obuf: &mut [u8]
     ) -> (res: Result<
         (owl_initiator_msg1_val, Tracked<ITreeToken<(Seq<u8>, state_Initiator), Endpoint>>),
         OwlError,
@@ -2870,6 +2877,7 @@ impl<O> cfg_Initiator<O> {
                 vec_as_slice(&(serialize_owl_msg1(&owl__x720))),
                 &Responder_addr(),
                 &Initiator_addr(),
+                obuf,
             )
             };
             let owl__x721 = temp_owl__x721;
@@ -3069,6 +3077,7 @@ impl<O> cfg_Responder<O> {
         mut_state: &mut state_Responder,
         owl_transp_keys_val32093: owl_transp_keys,
         owl_plaintext32092: Arc<Vec<u8>>,
+        obuf: &mut [u8]
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>),
         OwlError,
@@ -3166,6 +3175,7 @@ impl<O> cfg_Responder<O> {
                         vec_as_slice(&(serialize_owl_transp(&owl__x840))),
                         &Initiator_addr(),
                         &Responder_addr(),
+                        obuf
                     )
                     };
                     let owl__x841 = temp_owl__x841;
@@ -3188,6 +3198,7 @@ impl<O> cfg_Responder<O> {
         Tracked(itree): Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
         owl_msg1_val_27620: owl_responder_msg1_val,
+        obuf: &mut [u8]
     ) -> (res: Result<
         (owl_transp_keys, Tracked<ITreeToken<(Seq<u8>, state_Responder), Endpoint>>),
         OwlError,
@@ -3536,6 +3547,7 @@ impl<O> cfg_Responder<O> {
                     vec_as_slice(&(serialize_owl_msg2(&owl__x1122))),
                     &Initiator_addr(),
                     &Responder_addr(),
+                    obuf
                 )
                 };
                 let owl__x1123 = temp_owl__x1123;

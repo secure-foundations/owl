@@ -6,7 +6,8 @@ owl_msg1 = {
   owl__msg1_ephemeral: [u8; 32],
   owl__msg1_static: [u8; 48],
   owl__msg1_timestamp: [u8; 28],
-  owl__msg1_mac1: [u8; 64],
+  owl__msg1_mac1: [u8; 16],
+  const owl__msg1_mac2: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 
 owl_msg2 = {
@@ -15,7 +16,8 @@ owl_msg2 = {
   owl__msg2_receiver: [u8; 4],
   owl__msg2_ephemeral: [u8; 32],
   owl__msg2_empty: [u8; 16],
-  owl__msg2_mac1: [u8; 64],
+  owl__msg2_mac1: [u8; 16],
+  const owl__msg2_mac2: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 
 owl_transp = {

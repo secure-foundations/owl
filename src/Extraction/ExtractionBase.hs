@@ -310,7 +310,7 @@ dhSize :: Int
 dhSize = 32 -- TODO This is specific to Wireguard
 
 hmacLen :: Int
-hmacLen = 64
+hmacLen = 16 -- TODO This is specific to Wireguard
 
 counterSize :: Int
 counterSize = 8 -- TODO This is specific to Wireguard---should be a param
