@@ -518,7 +518,8 @@ extractUserFunc owlName o = do
     ((_, args), ae) <- unbind o
     let binds = M.fromList $ map (\x -> (rustifyName . show $ x, (VecU8, Nothing))) args
     (rt, pre, aePrettied) <- extractAExpr binds (ae ^. val)
-    let body = pre <> line <> aePrettied
+    let reveal = owlpretty "reveal" <> parens (owlpretty owlName) <> owlpretty ";"
+    let body = reveal <> line <> pre <> line <> aePrettied
     let declArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ":" <+> owlpretty "&[u8]") args
     let viewArgs = map (\x -> owlpretty (rustifyName . show $ x) <> owlpretty ".dview()") args
     let decl = owlpretty "pub exec fn" <+> owlpretty (rustifyName owlName) <> tupled declArgs <+> 
@@ -883,7 +884,8 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     (attr, body) <- case anfBody of
         Just anfBody' -> do
             (_, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
-            return (owlpretty "", preBody <> line <> body)
+            let reveal = owlpretty "reveal" <> parens (owlpretty owlName <> owlpretty "_spec") <> owlpretty ";"
+            return (owlpretty "", reveal <> line <> preBody <> line <> body)
         Nothing -> return (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)")
     curRetTy .= Nothing
     decl <- genFuncDecl name lname rustArgs rtb

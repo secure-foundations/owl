@@ -213,7 +213,7 @@ extractUserFunc owlName rtExec o = do
     let binds = M.fromList $ map (\x -> (show x, (VecU8, Nothing))) args
     body <- extractAExpr ae
     let declArgs = map (\x -> owlpretty (show x) <> owlpretty ":" <+> owlpretty "Seq<u8>") args
-    let decl = owlpretty "pub closed spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
+    let decl = owlpretty "#[verifier::opaque] pub closed spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
                     owlpretty "->" <+> owlpretty rtSpec <> line
     return $ decl <> braces (line <> body <> line)
 
@@ -430,7 +430,7 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     let defBody = owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
                     body
                 <> line)
-    return $ owlpretty "pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
+    return $ owlpretty "#[verifier::opaque] pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
         defBody <> line <>
         rbrace <> line <> line <> pureDef
     where

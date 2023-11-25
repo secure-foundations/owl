@@ -513,6 +513,7 @@ pub mod itree {
         // };
         ($res: ident, $view_res:expr, $itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
             ::builtin_macros::verus_exec_expr! {{
+                reveal($spec);
                 let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
                 let ($res, Tracked(call_token)) = match $self.$exec(Tracked(call_token), $($execarg),*) {
                     Err(e) => return Err(e),
