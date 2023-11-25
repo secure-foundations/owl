@@ -33,7 +33,7 @@ pub const fn tag_size(mode: &Mode) -> usize {
 
 #[inline]
 pub open const spec fn spec_key_size(mode: Mode) -> usize {
-    64
+    32
 }
 
 /// Get the key size of the `Mode` in bytes.
@@ -41,12 +41,12 @@ pub open const spec fn spec_key_size(mode: Mode) -> usize {
 pub const fn key_size(mode: Mode) -> (u:usize)
     ensures u == spec_key_size(mode)
 {
-    64
+    32
 }
 
 #[inline]
 pub fn gen_rand_key(_mode: &Mode) -> Vec<u8> {
-    gen_rand_bytes(64)
+    gen_rand_bytes(32)
 }
 
 #[verifier(external_body)]
@@ -78,6 +78,19 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
 
     result.truncate(tag_length);
     return result;
+}
+
+const SIZE_MAC: usize = 16;
+
+#[verifier(external_body)]
+pub fn mac(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use blake2::VarBlake2s;
+    use blake2::digest::{Update, VariableOutput};
+    let mut tag = [0u8; SIZE_MAC];
+    let mut mac = VarBlake2s::new_keyed(key, SIZE_MAC);
+    mac.update(data);
+    mac.finalize_variable(|buf| tag.copy_from_slice(buf));
+    tag.into()
 }
 
 #[verifier(external_body)]

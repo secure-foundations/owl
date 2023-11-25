@@ -289,7 +289,7 @@ useAeadNonceSize = do
     return $ aeadNonceSize c
 
 hmacKeySize :: Int
-hmacKeySize = 64
+hmacKeySize = 32 -- TODO This is specific to Wireguard
 
 useHmacKeySize :: ExtractionMonad Int
 useHmacKeySize = return hmacKeySize

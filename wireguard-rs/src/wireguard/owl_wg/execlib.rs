@@ -185,7 +185,9 @@ pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8]) -> (h
 pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Arc<Vec<u8>>)
     ensures mac_val.dview() == mac(mackey.dview(), msg.dview())
 {
-    arc_new(owl_hmac::hmac(hmac_mode(), mackey, msg, None))
+    //arc_new(owl_hmac::hmac(hmac_mode(), mackey, msg, None))
+    // TODO: this probably ought to be a new primitive
+    arc_new(owl_hmac::mac(mackey, msg))
 }
 
 #[verifier(external_body)]
