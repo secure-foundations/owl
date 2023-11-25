@@ -469,18 +469,21 @@ impl<O> Device<O> {
                     },
                     Device::Initiator(i) => {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                        println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
-                        println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
+                        // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
+                        // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
                         i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), &mut msg.as_bytes_mut());
-                        let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
-                        noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
+                        // let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                        // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
+                        // peer.macs
+                        //     .lock()
+                        //     .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
                     Device::Responder(r) => {
                         panic!("Responder cannot initiate handshake");
                     },
                 }
 
-                dbg!(hex::encode(&msg.noise.as_bytes()));
+                // dbg!(hex::encode(&msg.noise.as_bytes()));
 
 
                 Ok(msg.as_bytes().to_owned())

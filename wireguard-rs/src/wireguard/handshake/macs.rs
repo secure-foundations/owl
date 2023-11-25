@@ -163,7 +163,10 @@ impl Generator {
     /// - inner: A byteslice representing the inner message to be covered
     /// - macs: The destination mac footer for the resulting macs
     pub fn generate(&mut self, inner: &[u8], macs: &mut MacsFooter) {
+        // dbg!(hex::encode(&self.mac1_key));
+        // dbg!(hex::encode(&inner));
         macs.f_mac1 = MAC!(&self.mac1_key, inner);
+        // dbg!(hex::encode(&macs.f_mac1));
         macs.f_mac2 = match &self.cookie {
             Some(cookie) => {
                 if cookie.birth.elapsed() > COOKIE_UPDATE_INTERVAL {

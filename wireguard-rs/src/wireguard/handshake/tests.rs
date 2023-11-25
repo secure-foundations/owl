@@ -51,6 +51,41 @@ fn setup_devices<R: RngCore + CryptoRng, O: Default>(
     (pk1, dev1, pk2, dev2)
 }
 
+
+// fn setup_initiators<R: RngCore + CryptoRng, O: Default>(
+//     rng1: &mut R,
+// ) -> (PublicKey, PublicKey, Device<O>, Device<O>) {
+//     // generate new key pairs
+
+//     let sk1 = StaticSecret::new(rng1);
+//     let sk1_cloned = sk1.clone();
+//     let pk1 = PublicKey::from(&sk1);
+
+//     let sk2 = StaticSecret::new(&mut OsRng);
+//     let pk2 = PublicKey::from(&sk2);
+
+//     // We always use psk of 0
+//     let psk = [0u8; 32];
+//     // rng3.fill_bytes(&mut psk[..]);
+
+//     // initialize devices on both ends
+
+//     let mut dev1 = Device::new_owl_initiator();
+//     let mut dev2 = Device::new(); 
+
+//     dev1.set_sk(Some(sk1));
+//     dev2.set_sk(Some(sk1_cloned));
+
+//     dev1.add(pk2, O::default()).unwrap();
+//     dev2.add(pk2, O::default()).unwrap();
+
+//     dev1.set_psk(pk2, psk).unwrap();
+//     dev2.set_psk(pk2, psk).unwrap();
+
+//     (pk1, pk2, dev1, dev2)
+// }
+
+
 fn wait() {
     thread::sleep(Duration::from_millis(20));
 }
@@ -205,9 +240,10 @@ fn handshake_no_load() {
 }
 
 #[test]
-fn owl_computes_same_msg1() {
+fn handshake_owl_initiator_rs_responder() {
     let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
-        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, true);
+        setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, false);
+
 
     let msg1 = dev1.begin(&mut OsRng, &pk2).unwrap();
 
@@ -216,4 +252,21 @@ fn owl_computes_same_msg1() {
         "msg1 = {:?}",
         Initiation::parse(&msg1[..]).expect("failed to parse initiation")
     );
+
+    let (_, msg2, ks_r) = dev2
+        .process(&mut OsRng, &msg1, None)
+        .expect("failed to process initiation");
+
+    let ks_r = ks_r.unwrap();
+    let msg2 = msg2.unwrap();
+
+    println!("msg2 = {} : {} bytes", hex::encode(&msg2[..]), msg2.len());
+    println!(
+        "msg2 = {:?}",
+        Response::parse(&msg2[..]).expect("failed to parse response")
+    );
+
+    assert!(!ks_r.initiator, "Responders key-pair is confirmed");
+
+
 }

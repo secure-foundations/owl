@@ -1213,13 +1213,13 @@ pub exec fn serialize_owl_msg1_inner(arg: &owl_msg1) -> (res: Option<Vec<u8>>)
             ),
             start: 0,
         };
-        dbg!(hex::encode(&arg.owl__msg1_tag.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_sender.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_ephemeral.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_static.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_timestamp.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_mac1.as_slice()));
-        dbg!(hex::encode(&arg.owl__msg1_mac2.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_tag.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_sender.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_ephemeral.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_static.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_timestamp.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_mac1.as_slice()));
+        // dbg!(hex::encode(&arg.owl__msg1_mac2.as_slice()));
         let ser_result = parse_serialize::serialize_owl_msg1(
             stream,
             ((
@@ -2833,11 +2833,14 @@ impl<O> cfg_Initiator<O> {
             let owl__x647 = arc_new(temp_owl__x647);
             let temp_owl__x649 = { arc_clone(&owl_dhpk_S_resp25125) };
             let owl__x649 = arc_clone(&temp_owl__x649);
-            let owl_msg1_mac1_key752 = owl_extract_expand_to_len(
-                0 + mackey_size(),
-                vec_as_slice(&(*arc_clone(&owl__x647))),
-                vec_as_slice(&(*arc_clone(&owl__x649))),
-            );
+            let owl_msg1_mac1_key752 = { 
+                // owl_extract_expand_to_len(
+                //     0 + mackey_size(),
+                //     vec_as_slice(&(*arc_clone(&owl__x647))),
+                //     vec_as_slice(&(*arc_clone(&owl__x649))),
+                // )
+                owl_crh(vec_as_slice(&owl_concat(vec_as_slice(&(*arc_clone(&owl__x647))), vec_as_slice(&(*arc_clone(&owl__x649))))))
+            };
             let temp_owl__x650 = {
             arc_new(
                 slice_to_vec(

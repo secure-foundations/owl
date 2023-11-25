@@ -328,6 +328,8 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
 
+    // TODO: This `hash` call needs to call `crh`, not `hkdf`, need to specify this in the RO decl somehow.
+    // it should be `crh(mac1() ++ dhpk_S_resp)`
     let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
     let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in

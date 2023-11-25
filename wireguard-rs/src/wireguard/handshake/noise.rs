@@ -262,7 +262,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // initialize state
 
         let ck = INITIAL_CK;
-        dbg!(hex::encode(ck.as_slice()));
+        // dbg!(hex::encode(ck.as_slice()));
         let hs = INITIAL_HS;
         let hs = HASH!(&hs, pk.as_bytes());
 
@@ -277,7 +277,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // C := Kdf(C, E_pub)
 
         let ck = KDF1!(&ck, eph_pk.as_bytes());
-        dbg!(hex::encode(ck.as_slice()));
+        // dbg!(hex::encode(ck.as_slice()));
 
         // msg.ephemeral := E_pub
 
@@ -290,7 +290,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // (C, k) := Kdf2(C, DH(E_priv, S_pub))
 
         let (ck, key) = KDF2!(&ck, shared_secret(&eph_sk, &pk)?.as_bytes());
-        dbg!(hex::encode(ck.as_slice()));
+        // dbg!(hex::encode(ck.as_slice()));
 
         // msg.static := Aead(k, 0, S_pub, H)
 
@@ -308,7 +308,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // (C, k) := Kdf2(C, DH(S_priv, S_pub))
 
         let (ck, key) = KDF2!(&ck, &peer.ss);
-        dbg!(hex::encode(ck.as_slice()));
+        // dbg!(hex::encode(ck.as_slice()));
 
         // msg.timestamp := Aead(k, 0, Timestamp(), H)
 

@@ -84,12 +84,15 @@ const SIZE_MAC: usize = 16;
 
 #[verifier(external_body)]
 pub fn mac(key: &[u8], data: &[u8]) -> Vec<u8> {
+    // dbg!(hex::encode(key));
+    // dbg!(hex::encode(data));
     use blake2::VarBlake2s;
     use blake2::digest::{Update, VariableOutput};
     let mut tag = [0u8; SIZE_MAC];
     let mut mac = VarBlake2s::new_keyed(key, SIZE_MAC);
     mac.update(data);
     mac.finalize_variable(|buf| tag.copy_from_slice(buf));
+    // dbg!(hex::encode(tag));
     tag.into()
 }
 
