@@ -201,7 +201,7 @@ struct msg1 {
     , _msg1_timestamp: Data<adv> | cipherlen(12) |
     // TODO cookie mechanism
     , _msg1_mac1: Data<adv> | |maclen| |
-    // , _msg1_mac2: Data<adv> | |maclen| |
+    , _msg1_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
 }
 
 struct msg2 {
@@ -212,7 +212,7 @@ struct msg2 {
     , _msg2_empty: Data<adv> | cipherlen(0) |
     // TODO cookie mechanism
     , _msg2_mac1: Data<adv> | |maclen| |
-    // , _msg2_mac2: Data<adv> | |maclen| |
+    , _msg2_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
 }
 
 
@@ -231,6 +231,7 @@ func padding() = 0x000000
 func msg1_tag_value() = 0x01000000
 func msg2_tag_value() = 0x02000000
 func transp_tag_value() = 0x04000000
+func zeros_16() = 0x00000000000000000000000000000000
 
 def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
@@ -330,7 +331,8 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
     let msg1_mac1 : Data<adv> | |maclen| | = mac(msg1_mac1_k, 
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
-    let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1) in
+    let msg1_mac2 = zeros_16() in
+    let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
     let retval = initiator_msg1_val<session i, pid n, pid m>(C3, H4) in
@@ -340,7 +342,7 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
     : Option ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =
     // set_option ":rlimit" "2000000" in 
     input inp in
-    parse inp as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral', msg2_empty, msg2_mac2) in {
+    parse inp as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral', msg2_empty, msg2_mac1, msg2_mac2) in {
     parse msg1_val as initiator_msg1_val<idx i, idx n, idx m>(C3, H4) in {
 
     guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
@@ -457,7 +459,7 @@ def receive_msg1<j@m> () @ Responder<m>
      =
      set_option ":rlimit" "2000000" in 
      input inp in
-     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1) in {
+     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
      guard eq(length(msg1_sender), 4) in 
      guard is_group_elem(msg1_ephemeral') in 
      let C0 = crh(construction()) in
@@ -534,11 +536,12 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
     let msg2_mac1 : Data<adv> | |maclen| | = mac(msg2_mac1_k,
         msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
         msg2_empty) in 
+    let msg2_mac2 = zeros_16() in
     let msg2_output = msg2(
-        msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1
+        msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
     ) in
     // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output to endpoint(Initiator<n>) in // (TODO: endpoint? )
+    let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
