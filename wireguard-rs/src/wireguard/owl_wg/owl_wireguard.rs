@@ -2077,6 +2077,21 @@ impl<O> cfg_Initiator<O> {
         };
         Ok(res_inner)
     }
+
+    pub exec fn owl_receive_msg2_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>, obuf: &mut [u8]) -> (_: Option<owl_transp_keys>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            receive_msg2_spec_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_receive_msg2(Tracked(call_token), s, todo!(), dhpk_S_resp).unwrap();
+        res
+    }
+
     
     #[verifier::spinoff_prover]
     pub fn owl_receive_msg2(
