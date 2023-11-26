@@ -112,12 +112,12 @@ instance Subst ResolvedPath ModDef
 data NameDef = 
     BaseDef (NameType, [Locality])
       | AbstractName
-      | RODef ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType]))
+      -- | RODef ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType]))
       deriving (Show, Generic, Typeable)
 
 instance Alpha NameDef
 instance Subst ResolvedPath NameDef
-instance Subst Idx ROStrictness
+instance Subst Idx PRFStrictness
 instance Subst Idx NameDef
 
 data ModBody = ModBody { 
@@ -534,52 +534,52 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-getROStrictness :: NameExp -> Check ROStrictness 
-getROStrictness ne = 
-    case ne^.val of
-      NameConst _ pth@(PRes (PDot p n)) _ -> do
-          md <- openModule p
-          case lookup n (md^.nameDefs) of
-            Nothing -> typeError $ "Unknown name: " ++ show (owlpretty pth)
-            Just b_nd -> do
-                ((is, ps), nd) <- unbind b_nd
-                case nd of
-                  RODef strictness _ -> return strictness
-                  _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
-      _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
+--getROStrictness :: NameExp -> Check ROStrictness 
+--getROStrictness ne = 
+--    case ne^.val of
+--      NameConst _ pth@(PRes (PDot p n)) _ -> do
+--          md <- openModule p
+--          case lookup n (md^.nameDefs) of
+--            Nothing -> typeError $ "Unknown name: " ++ show (owlpretty pth)
+--            Just b_nd -> do
+--                ((is, ps), nd) <- unbind b_nd
+--                case nd of
+--                  RODef strictness _ -> return strictness
+--                  _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
+--      _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
 
 
-getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check AExpr
-getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
-    md <- openModule p
-    case lookup n (md^.nameDefs) of
-      Nothing -> typeError $ "Unknown name: " ++ n
-      Just b_nd -> do
-          ((ixs, pxs), nd') <- unbind b_nd
-          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
-          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
-          case nd of
-            RODef _ b -> do
-                (xs, (a, _, _)) <- unbind b
-                assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
-                return $ substs (zip xs as) a
-            _ -> typeError $ "Not an RO name: " ++ n
-
-getROPrereq :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check Prop
-getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
-    md <- openModule p
-    case lookup n (md^.nameDefs) of
-      Nothing -> typeError $ "Unknown name: " ++ n
-      Just b_nd -> do
-          ((ixs, pxs), nd') <- unbind b_nd
-          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
-          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
-          case nd of
-            RODef _ b -> do
-                (xs, (_, p, _)) <- unbind b
-                assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
-                return $ substs (zip xs as) p
-            _ -> typeError $ "Not an RO name: " ++ n
+--getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check AExpr
+--getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
+--    md <- openModule p
+--    case lookup n (md^.nameDefs) of
+--      Nothing -> typeError $ "Unknown name: " ++ n
+--      Just b_nd -> do
+--          ((ixs, pxs), nd') <- unbind b_nd
+--          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
+--          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
+--          case nd of
+--            RODef _ b -> do
+--                (xs, (a, _, _)) <- unbind b
+--                assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
+--                return $ substs (zip xs as) a
+--            _ -> typeError $ "Not an RO name: " ++ n
+--
+--getROPrereq :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check Prop
+--getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
+--    md <- openModule p
+--    case lookup n (md^.nameDefs) of
+--      Nothing -> typeError $ "Unknown name: " ++ n
+--      Just b_nd -> do
+--          ((ixs, pxs), nd') <- unbind b_nd
+--          assert ("Wrong index arity for name: " ++ n) $ (length ixs, length pxs) == (length is, length ps)
+--          let nd = substs (zip ixs is) $ substs (zip pxs ps) nd' 
+--          case nd of
+--            RODef _ b -> do
+--                (xs, (_, p, _)) <- unbind b
+--                assert ("Wrong variable arity for name: " ++ n ++ ", got " ++ show (length as) ++ " but expected " ++ show (length xs)) $ length xs == length as
+--                return $ substs (zip xs as) p
+--            _ -> typeError $ "Not an RO name: " ++ n
 
 
     
@@ -587,7 +587,7 @@ getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = withSpan (ne^.spanOf) $ do
     case ne^.val of 
-     NameConst (vs1, vs2) pth@(PRes (PDot p n)) oi -> do
+     NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
          md <- openModule p
          tc <- view tcScope
          forM_ vs1 checkIdxSession
@@ -600,47 +600,45 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
                let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                case nd of
                  AbstractName -> do
-                     assert ("Cannot use hash select on abstract name") $ oi `aeq` Nothing 
                      return Nothing
                  BaseDef (nt, lcls) -> do
-                     assert ("Cannot use hash select on base name") $ oi `aeq` Nothing 
                      return $ Just (nt, Just lcls) 
-                 RODef _ b -> do
-                     (xs, (_, _, nts)) <- unbind b
-                     case oi of
-                       Nothing -> do
-                           assert ("Missing hash select parameter for RO name") $ length nts == 1
-                           assert ("Missing variable arguments for RO name") $ length xs == 0
-                           return $ Just (nts !! 0, Nothing)
-                       Just (as, i) -> do
-                           _ <- mapM inferAExpr as
-                           assert ("Hash select parameter for RO name out of bounds") $ i < length nts
-                           assert ("Variable arguments for RO name incorrect") $ length as == length xs
-                           return $ Just (substs (zip xs as) $ nts !! i, Nothing)
-     PRFName n s -> do
-         ntLclsOpt <- getNameInfo n
-         case ntLclsOpt of
-           Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty n
-           Just (nt, _) -> 
-            case nt^.val of
-            NT_PRF xs -> 
-                case L.find (\p -> fst p == s) xs of
-                    Just (_, (_, nt')) -> return $ Just (nt, Nothing)
-                    Nothing -> typeError $ show $ ErrUnknownPRF n s
-            _ -> typeError $ show $ ErrWrongNameType n "prf" nt
+                 --RODef _ b -> do
+                 --    (xs, (_, _, nts)) <- unbind b
+                 --    case oi of
+                 --      Nothing -> do
+                 --          assert ("Missing hash select parameter for RO name") $ length nts == 1
+                 --          assert ("Missing variable arguments for RO name") $ length xs == 0
+                 --          return $ Just (nts !! 0, Nothing)
+                 --      Just (as, i) -> do
+                 --          _ <- mapM inferAExpr as
+                 --          assert ("Hash select parameter for RO name out of bounds") $ i < length nts
+                 --          assert ("Variable arguments for RO name incorrect") $ length as == length xs
+                 --          return $ Just (substs (zip xs as) $ nts !! i, Nothing)
+     --PRFName n s -> do
+     --    ntLclsOpt <- getNameInfo n
+     --    case ntLclsOpt of
+     --      Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty n
+     --      Just (nt, _) -> 
+     --       case nt^.val of
+     --       NT_PRF xs -> 
+     --           case L.find (\p -> fst p == s) xs of
+     --               Just (_, (_, nt')) -> return $ Just (nt, Nothing)
+     --               Nothing -> typeError $ show $ ErrUnknownPRF n s
+     --       _ -> typeError $ show $ ErrWrongNameType n "prf" nt
      _ -> error $ "Unknown: " ++ show (owlpretty ne)
 
-getRO :: Path -> Check (Bind ([IdxVar], [IdxVar]) (Bind [DataVar] (AExpr, Prop, [NameType])))
-getRO p0@(PRes (PDot p s)) = do
-        md <- openModule p 
-        case lookup s (md^.nameDefs) of 
-          Just ind -> do
-              (ps, nd) <- unbind ind
-              case nd of
-                RODef _ res -> return $ bind ps res
-                _ -> typeError $ "Not an RO name: " ++ show (owlpretty p0)
-          Nothing -> typeError $ show $ ErrUnknownRO p
-getRO pth = typeError $ "Unknown path: " ++ show pth
+--getRO :: Path -> Check (Bind ([IdxVar], [IdxVar]) (Bind [DataVar] (AExpr, Prop, [NameType])))
+--getRO p0@(PRes (PDot p s)) = do
+--        md <- openModule p 
+--        case lookup s (md^.nameDefs) of 
+--          Just ind -> do
+--              (ps, nd) <- unbind ind
+--              case nd of
+--                RODef _ res -> return $ bind ps res
+--                _ -> typeError $ "Not an RO name: " ++ show (owlpretty p0)
+--          Nothing -> typeError $ show $ ErrUnknownRO p
+--getRO pth = typeError $ "Unknown path: " ++ show pth
 
 data NameKind = NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_PRF | NK_MAC | NK_Nonce
     deriving Eq
@@ -655,7 +653,7 @@ getNameKind nt =
       NT_StAEAD _ _ _ _ -> NK_Enc
       NT_PKE _ -> NK_PKE
       NT_MAC _ -> NK_MAC
-      NT_PRF _ -> NK_PRF
+      -- NT_PRF _ -> NK_PRF
 
 
 getNameTypeOpt :: NameExp -> Check (Maybe NameType)
@@ -781,11 +779,11 @@ normalizeAExpr ae = withSpan (ae^.spanOf) $
       AEGet ne -> do
           ne' <- normalizeNameExp ne
           return $ Spanned (ae^.spanOf) $ AEGet ne'
-      AEPreimage p ps@(p1, p2) args -> do  
-          ts <- view tcScope
-          forM_ p1 checkIdxSession
-          forM_ p2 checkIdxPId
-          getROPreimage p ps args 
+      --AEPreimage p ps@(p1, p2) args -> do  
+      --    ts <- view tcScope
+      --    forM_ p1 checkIdxSession
+      --    forM_ p2 checkIdxPId
+      --    getROPreimage p ps args 
       AEApp f fs aes -> do
           aes' <- mapM normalizeAExpr aes
           fs' <- forM fs $ \f ->
@@ -875,14 +873,14 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
-      AEPreimage p ps@(p1, p2) args -> do
-          ts <- view tcScope
-          assert (show $ owlpretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
-          forM_ p1 checkIdxSession
-          forM_ p2 checkIdxPId
-          _ <- mapM inferAExpr args
-          aes <- getROPreimage p ps args 
-          inferAExpr aes
+      --AEPreimage p ps@(p1, p2) args -> do
+      --    ts <- view tcScope
+      --    assert (show $ owlpretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
+      --    forM_ p1 checkIdxSession
+      --    forM_ p2 checkIdxPId
+      --    _ <- mapM inferAExpr args
+      --    aes <- getROPreimage p ps args 
+      --    inferAExpr aes
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
@@ -896,27 +894,27 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
                             case ts of
                               TcGhost -> return []
                               TcDef _ -> typeError $ show $ owlpretty "Calling get on name " <> owlpretty ne <> owlpretty " in non-ghost context"
-                ot <- case ts of
+                case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality curr_locality
                         assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
-                case ne^.val of
-                  NameConst ips pth (Just (args, i)) -> do
-                      aes <- getROPreimage pth ips args
-                      lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
-                      solvability <- solvabilityAxioms aes ne 
-                      return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                          pAnd (mkSpanned $ PRO aes (aeVar ".res") i)
-                            (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
-                  _ -> return ot
+                --case ne^.val of
+                --  NameConst ips pth (Just (args, i)) -> do
+                --      aes <- getROPreimage pth ips args
+                --      lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
+                --      solvability <- solvabilityAxioms aes ne 
+                --      return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                --          pAnd (mkSpanned $ PRO aes (aeVar ".res") i)
+                --            (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
+                --  _ -> return ot
       (AEGetEncPK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError $ "Cannot call get_encpk on indexed name"
-            _ -> typeError $ "Cannot call get_encpk on random oracle or PRF name"
+            NameConst ([], []) _ -> return ()
+            NameConst _ _ -> typeError $ "Cannot call get_encpk on indexed name"
+            -- _ -> typeError $ "Cannot call get_encpk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
             Nothing -> typeError $ show $ ErrNameStillAbstract$ show $ owlpretty ne
@@ -926,9 +924,9 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
                     _ -> typeError $ show $ owlpretty "Expected encryption sk: " <> owlpretty ne
       (AEGetVK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError $ "Cannot call get_vk on indexed name"
-            _ -> typeError $ "Cannot call get_vk on random oracle or PRF name"
+            NameConst ([], []) _ -> return ()
+            NameConst _ _ -> typeError $ "Cannot call get_vk on indexed name"
+            -- _ -> typeError $ "Cannot call get_vk on random oracle or PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
             Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
@@ -946,25 +944,25 @@ splitConcats a =
 -- If the random oracle preimage is corrupt, then the RO is as well.
 -- N.B.: this list does _not_ have to be exhaustive. It is only used to
 -- prune impossible paths. We still need to case on the RO label
-solvabilityAxioms :: AExpr -> NameExp -> Check Prop
-solvabilityAxioms ae roName = local (set tcScope TcGhost) $ do
-    ae' <- resolveANF ae
-    let args = splitConcats ae'
-    arg_t <- mapM inferAExpr args
-    -- If all labels are corrupt, the RO is corrupt
-    p <- derivabilitySufficient (zip args arg_t)
-    let ax1 = pImpl p (pFlow (nameLbl roName) advLbl)
-    strictness <- getROStrictness roName
-    let doStrictness = case (strictness, roName^.val) of
-                         (ROStrict (Just is), NameConst _ _ (Just (_, i))) -> i `elem` is
-                         (ROStrict Nothing, _) -> True
-                         _ -> False
-    ax2 <- case doStrictness of
-             True -> do 
-                p' <- derivabilityNecessary (zip args arg_t)
-                return $ pImpl (pFlow (nameLbl roName) advLbl) p'
-             _ -> return $ pTrue
-    return $ pAnd ax1 ax2
+--solvabilityAxioms :: AExpr -> NameExp -> Check Prop
+--solvabilityAxioms ae roName = local (set tcScope TcGhost) $ do
+--    ae' <- resolveANF ae
+--    let args = splitConcats ae'
+--    arg_t <- mapM inferAExpr args
+--    -- If all labels are corrupt, the RO is corrupt
+--    p <- derivabilitySufficient (zip args arg_t)
+--    let ax1 = pImpl p (pFlow (nameLbl roName) advLbl)
+--    strictness <- getROStrictness roName
+--    let doStrictness = case (strictness, roName^.val) of
+--                         (ROStrict (Just is), NameConst _ _ (Just (_, i))) -> i `elem` is
+--                         (ROStrict Nothing, _) -> True
+--                         _ -> False
+--    ax2 <- case doStrictness of
+--             True -> do 
+--                p' <- derivabilityNecessary (zip args arg_t)
+--                return $ pImpl (pFlow (nameLbl roName) advLbl) p'
+--             _ -> return $ pTrue
+--    return $ pAnd ax1 ax2
 
 resolveANF :: AExpr -> Check AExpr
 resolveANF a = do
@@ -981,9 +979,9 @@ resolveANF a = do
           args' <- mapM resolveANF args
           return $ mkSpanned $ AEApp f ps args'
       AEHex _ -> return a
-      AEPreimage f ps args -> do
-          args' <- mapM resolveANF args
-          return $ mkSpanned $ AEPreimage f ps args'
+      --AEPreimage f ps args -> do
+      --    args' <- mapM resolveANF args
+      --    return $ mkSpanned $ AEPreimage f ps args'
       AEGet _ -> return a
       AEGetEncPK _ -> return a
       AEGetVK _ -> return a
@@ -1211,29 +1209,29 @@ owlprettyContext :: Env -> OwlDoc
 owlprettyContext e =
     vsep [owlprettyIndices (e^.inScopeIndices), owlprettyTyContext (e^.tyContext)]
 
-isNameDefRO :: Path -> Check Bool
-isNameDefRO (PRes (PDot p n)) = do 
-    md <- openModule p
-    case lookup n (md^.nameDefs) of
-        Nothing -> typeError  $ "SMT error"
-        Just b_nd -> do 
-            case snd (unsafeUnbind b_nd) of
-              RODef _ _ -> return True
-              _ -> return False
+--isNameDefRO :: Path -> Check Bool
+--isNameDefRO (PRes (PDot p n)) = do 
+--    md <- openModule p
+--    case lookup n (md^.nameDefs) of
+--        Nothing -> typeError  $ "SMT error"
+--        Just b_nd -> do 
+--            case snd (unsafeUnbind b_nd) of
+--              RODef _ _ -> return True
+--              _ -> return False
 
 normalizeNameExp :: NameExp -> Check NameExp
 normalizeNameExp ne = 
     case ne^.val of
-      NameConst ips p oi -> do
-          case oi of
-            Just _ -> return ne
-            Nothing -> do
-              isRO <- isNameDefRO p
-              if isRO then return (Spanned (ne^.spanOf) $ NameConst ips p (Just ([], 0)))
-                      else return ne
-      PRFName ne1 s -> do
-          ne' <- normalizeNameExp ne1
-          return $ Spanned (ne^.spanOf) $ PRFName ne' s
+      NameConst ips p -> return ne 
+      --    case oi of
+      --      Just _ -> return ne
+      --      Nothing -> do
+      --        isRO <- isNameDefRO p
+      --        if isRO then return (Spanned (ne^.spanOf) $ NameConst ips p (Just ([], 0)))
+      --                else return ne
+      --PRFName ne1 s -> do
+      --    ne' <- normalizeNameExp ne1
+      --    return $ Spanned (ne^.spanOf) $ PRFName ne' s
 
 -- Traversing modules to collect global info
 
@@ -1316,34 +1314,34 @@ collectTyDefs :: Check (Map ResolvedPath TyDef)
 collectTyDefs = collectEnvInfo _tyDefs
 
 
-collectROPreimages :: Check [(ResolvedPath, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
-collectROPreimages = do
-    xs <- collectNameDefs
-    ps <- mapM go xs
-    return $ concat ps
-        where
-            go (p, b) = do
-                (is, nd) <- unbind b
-                case nd of
-                  RODef _ b -> do
-                      (xs, (a, b, _)) <- unbind b
-                      return [(p, bind (is, xs) (a, b))]
-                  _ -> return []
+--collectROPreimages :: Check [(ResolvedPath, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
+--collectROPreimages = do
+--    xs <- collectNameDefs
+--    ps <- mapM go xs
+--    return $ concat ps
+--        where
+--            go (p, b) = do
+--                (is, nd) <- unbind b
+--                case nd of
+--                  RODef _ b -> do
+--                      (xs, (a, b, _)) <- unbind b
+--                      return [(p, bind (is, xs) (a, b))]
+--                  _ -> return []
 
 
-collectLocalROPreimages :: Check [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
-collectLocalROPreimages =  do
-    xs <- view $ curMod . nameDefs
-    ps <- mapM go xs
-    return $ concat ps
-        where
-            go (n, b) = do
-                (is, nd) <- unbind b
-                case nd of
-                  RODef _ b -> do
-                      (xs, (a, b, _)) <- unbind b
-                      return [(n, bind (is, xs) (a, b))]
-                  _ -> return []
+--collectLocalROPreimages :: Check [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
+--collectLocalROPreimages =  do
+--    xs <- view $ curMod . nameDefs
+--    ps <- mapM go xs
+--    return $ concat ps
+--        where
+--            go (n, b) = do
+--                (is, nd) <- unbind b
+--                case nd of
+--                  RODef _ b -> do
+--                      (xs, (a, b, _)) <- unbind b
+--                      return [(n, bind (is, xs) (a, b))]
+--                  _ -> return []
 
 
 pathPrefix :: ResolvedPath -> ResolvedPath

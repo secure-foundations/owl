@@ -42,7 +42,7 @@ anfAExpr a =
       AEVar _ _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEHex _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEGet _ -> return $ Spanned (a^.spanOf) $ ERet a
-      AEPreimage _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
+      -- AEPreimage _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEGetEncPK _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEGetVK _ -> return $ Spanned (a^.spanOf) $ ERet a
       AELenConst _ -> return $ Spanned (a^.spanOf) $ ERet a

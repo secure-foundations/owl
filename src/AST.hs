@@ -113,7 +113,7 @@ data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
     | AEApp (Path) [FuncParam] [AExpr]
     | AEHex String
-    | AEPreimage Path ([Idx], [Idx]) [AExpr]
+    -- | AEPreimage Path ([Idx], [Idx]) [AExpr]
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
@@ -126,8 +126,8 @@ type AExpr = Spanned AExprX
 
 
 data NameExpX = 
-    NameConst ([Idx], [Idx]) Path (Maybe ([AExpr], Int))
-    | PRFName NameExp String
+    NameConst ([Idx], [Idx]) Path 
+    | KDFName AExpr AExpr AExpr
     deriving (Show, Generic, Typeable)
 
 type NameExp = Spanned NameExpX
@@ -135,10 +135,6 @@ type NameExp = Spanned NameExpX
 data Locality = Locality Path [Idx]
     deriving (Show, Generic, Typeable)
 
-
-
-prfName :: NameExp -> String -> NameExp
-prfName n ae = mkSpanned (PRFName n ae)
 
 data LabelX =
     LName NameExp 
@@ -228,6 +224,8 @@ pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
 
+data KDFPos = KDF_SaltPos | KDF_IKMPos
+    deriving (Show, Generic, Typeable)
 
 data NameTypeX =
     NT_DH
@@ -237,7 +235,8 @@ data NameTypeX =
     | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
-    | NT_PRF [(String, (AExpr, NameType))]
+    | NT_KDF KDFPos (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
+        (Bind ((String, DataVar), (String, DataVar)) [(Prop, [NameType])])
     deriving (Show, Generic, Typeable)
 
 
@@ -335,12 +334,13 @@ data DeclX =
 
 type Decl = Spanned DeclX
 
-data ROStrictness = ROStrict (Maybe [Int]) | ROUnstrict
+data PRFStrictness = PRFStrict | PRFUnstrict
     deriving (Show, Generic, Typeable, Eq)
+
 
 data NameDecl = 
     DeclBaseName NameType [Locality]
-      | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
+      -- | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
       | DeclAbstractName
       deriving (Show, Generic, Typeable)
 
@@ -414,12 +414,12 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
-type ROHint = (Path, ([Idx], [Idx]), [AExpr])
+-- type ROHint = (Path, ([Idx], [Idx]), [AExpr])
 
 data CryptOp = 
-    CHash [ROHint] Int
-      | CPRF String
-      | CLemma BuiltinLemma
+    -- CHash [ROHint] Int
+    -- | CPRF String
+      CLemma BuiltinLemma
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx])
@@ -490,9 +490,9 @@ instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
 
-instance Alpha ROStrictness
-instance Subst AExpr ROStrictness
-instance Subst ResolvedPath ROStrictness
+instance Alpha PRFStrictness
+instance Subst AExpr PRFStrictness
+instance Subst ResolvedPath PRFStrictness
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
@@ -511,6 +511,11 @@ instance Alpha NameExpX
 instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
+
+instance Alpha KDFPos
+instance Subst Idx KDFPos
+instance Subst AExpr KDFPos
+instance Subst ResolvedPath KDFPos
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX

@@ -454,15 +454,15 @@ lookupNameLayout n = do
         Just l -> return l
         Nothing -> do
             case n ^. val of
-                NameConst _ p (Just (_, i)) -> do
-                    owlName <- flattenPath p
-                    os <- use oracles
-                    case os M.!? owlName of
-                        Just (_, sliceMap) -> do
-                            case sliceMap M.!? i of
-                                Just (_, _, l) -> return l
-                                Nothing -> throwError $ UndefinedSymbol n'
-                        Nothing -> throwError $ UndefinedSymbol n'
+                --NameConst _ p (Just (_, i)) -> do
+                --    owlName <- flattenPath p
+                --    os <- use oracles
+                --    case os M.!? owlName of
+                --        Just (_, sliceMap) -> do
+                --            case sliceMap M.!? i of
+                --                Just (_, _, l) -> return l
+                --                Nothing -> throwError $ UndefinedSymbol n'
+                --        Nothing -> throwError $ UndefinedSymbol n'
                 _ -> do
                     ls <- use typeLayouts
                     debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
@@ -505,10 +505,10 @@ lookupUserFunc fn = do
 
 flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  NameConst _ s _ -> do
+  NameConst _ s -> do
       p <- flattenPath s
       return $ rustifyName p
-  _ -> throwError $ UnsupportedNameExp n
+  -- _ -> throwError $ UnsupportedNameExp n
 
 
 rustifyArgTy :: CTy -> ExtractionMonad RustTy
@@ -618,9 +618,9 @@ resolveANF binds a = do
             args' <- mapM (resolveANF binds) args
             return $ mkSpanned $ AEApp f ps args'
         AEHex _ -> return a
-        AEPreimage f ps args -> do
-            args' <- mapM (resolveANF binds) args
-            return $ mkSpanned $ AEPreimage f ps args'
+        --AEPreimage f ps args -> do
+        --    args' <- mapM (resolveANF binds) args
+        --    return $ mkSpanned $ AEPreimage f ps args'
         AEGet _ -> return a
         AEGetEncPK _ -> return a
         AEGetVK _ -> return a

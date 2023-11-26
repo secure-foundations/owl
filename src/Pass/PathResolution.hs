@@ -152,13 +152,13 @@ resolveDecls (d:ds) =
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
                           return $ DeclBaseName nt' ls'
-                      DeclRO strictness b -> do
-                          (xs, (a, req, nts, lem)) <- unbind b
-                          a' <- resolveAExpr a
-                          req' <- resolveProp req
-                          nts' <- mapM resolveNameType nts
-                          lem' <- resolveExpr lem
-                          return $ DeclRO strictness $ bind xs (a', req', nts', lem')
+                      --DeclRO strictness b -> do
+                      --    (xs, (a, req, nts, lem)) <- unbind b
+                      --    a' <- resolveAExpr a
+                      --    req' <- resolveProp req
+                      --    nts' <- mapM resolveNameType nts
+                      --    lem' <- resolveExpr lem
+                      --    return $ DeclRO strictness $ bind xs (a', req', nts', lem')
           p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
@@ -309,12 +309,23 @@ resolveNameType e = do
                       p' <- resolvePath (e^.spanOf) PTCounter p
                       np' <- resolveNoncePattern np
                       return $ NT_StAEAD t' (bind x pr') p' np' 
-                  NT_PRF xs -> do
-                      xs' <- forM xs $ \(x, (y, z)) -> do
-                          y' <- resolveAExpr y
-                          z' <- resolveNameType z
-                          return (x, (y', z'))
-                      return $ NT_PRF xs'
+                  NT_KDF pos oh1 oh2 b -> do
+                      oh1' <- case oh1 of
+                                Nothing -> return Nothing
+                                Just (n, i, j) -> do
+                                    n' <- resolveNameExp n
+                                    return $ Just (n', i, j)
+                      oh2' <- case oh2 of
+                                Nothing -> return Nothing
+                                Just (n, i, j) -> do
+                                    n' <- resolveNameExp n
+                                    return $ Just (n', i, j)
+                      (((s, x), (s2, y)), cases) <- unbind b
+                      cases' <- forM cases $ \(p, nts) -> do
+                          p' <- resolveProp p
+                          nts' <- mapM resolveNameType nts
+                          return (p', nts')
+                      return $ NT_KDF pos oh1' oh2' $ bind ((s, x), (s2, y)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -366,17 +377,14 @@ resolveTy e = do
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
-        NameConst s p oi -> do
+        NameConst s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
-            oi' <- case oi of
-                     Nothing -> return Nothing
-                     Just (as, i) -> do
-                         as' <- mapM resolveAExpr as
-                         return $ Just (as', i)
-            return $ Spanned (ne^.spanOf) $ NameConst s p' oi'
-        PRFName ne1 s -> do
-            ne1' <- resolveNameExp ne1
-            return $ Spanned (ne^.spanOf) $ PRFName ne1' s
+            return $ Spanned (ne^.spanOf) $ NameConst s p' 
+        KDFName a b c -> do
+            a' <- resolveAExpr a
+            b' <- resolveAExpr b
+            c' <- resolveAExpr c
+            return $ Spanned (ne^.spanOf) $ KDFName a' b' c'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -478,10 +486,10 @@ resolveAExpr a =
           as' <- mapM resolveAExpr as
           return $ Spanned (a^.spanOf) $ AEApp f' ps' as'
       AEHex _ -> return a
-      AEPreimage p ps as -> do
-          p' <- resolvePath (a^.spanOf) PTName p
-          as' <- mapM resolveAExpr as
-          return $ Spanned (a^.spanOf) $ AEPreimage p' ps as'
+      --AEPreimage p ps as -> do
+      --    p' <- resolvePath (a^.spanOf) PTName p
+      --    as' <- mapM resolveAExpr as
+      --    return $ Spanned (a^.spanOf) $ AEPreimage p' ps as'
       AEGet ne -> do
           ne' <- resolveNameExp ne
           return $ Spanned (a^.spanOf) $ AEGet ne'
@@ -516,12 +524,12 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CHash hints i -> do
-          hints' <- forM hints $ \(p, is, as) -> do
-              p' <- resolvePath pos PTName p
-              as' <- mapM resolveAExpr as
-              return (p', is, as')
-          return $ CHash hints' i
+      --CHash hints i -> do
+      --    hints' <- forM hints $ \(p, is, as) -> do
+      --        p' <- resolvePath pos PTName p
+      --        as' <- mapM resolveAExpr as
+      --        return (p', is, as')
+      --    return $ CHash hints' i
       CAEnc -> return CAEnc
       CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p
@@ -534,7 +542,7 @@ resolveCryptOp pos cop =
       CMacVrfy -> return CMacVrfy
       CSign -> return CSign
       CSigVrfy -> return CSigVrfy
-      CPRF x -> return $ CPRF x
+      -- CPRF x -> return $ CPRF x
 
 resolveExpr :: Expr -> Resolve Expr
 resolveExpr e = 

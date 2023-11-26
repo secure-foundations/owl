@@ -58,14 +58,11 @@ flowColor = Cyan
 corrColor = Red
 
 instance  OwlPretty NameExpX where
-    owlpretty (PRFName n e) = owlpretty "PRF<" <> owlpretty n <> owlpretty ", " <> owlpretty e <> owlpretty ">"
-    owlpretty (NameConst vs n oi) = 
-        let pi = case oi of
-                   Nothing -> mempty
-                   Just (xs, i) -> owlpretty "[" <> hsep (intersperse (pretty ",") (map owlpretty xs)) <> owlpretty ";" <+> owlpretty i <> owlpretty "]"
-        in
-        owlpretty n <> owlprettyIdxParams vs <> pi
-
+    owlpretty (KDFName a b c) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
+            owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ">"
+    owlpretty (NameConst vs n) = 
+        owlpretty n <> owlprettyIdxParams vs 
+                                                     
 owlprettyBind :: (Alpha a, Alpha b, OwlPretty a, OwlPretty b) => Bind b a -> (OwlDoc, OwlDoc)
 owlprettyBind b = 
     let (x, y) = unsafeUnbind b in
@@ -213,7 +210,7 @@ instance  OwlPretty NameTypeX where
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
     owlpretty (NT_PKE ty) = owlpretty "pke" <+> owlpretty ty
     owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
-    owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"
+    -- owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"
     owlpretty NT_DH = owlpretty "DH"
     owlpretty NT_Nonce = owlpretty "nonce"
 
@@ -230,12 +227,12 @@ instance  OwlPretty AExprX where
     owlpretty (AEHex s) = owlpretty "0x" <> owlpretty s
     owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
     owlpretty (AEInt i) = owlpretty i
-    owlpretty (AEPreimage p ps xs) = 
-        let pxs = case xs of
-                    [] -> mempty
-                    _ -> owlpretty xs
-        in
-        owlpretty "preimage" <> owlprettyIdxParams ps <> owlpretty "(" <> owlpretty p <> owlpretty ")" <> pxs
+    --owlpretty (AEPreimage p ps xs) = 
+    --    let pxs = case xs of
+    --                [] -> mempty
+    --                _ -> owlpretty xs
+    --    in
+    --    owlpretty "preimage" <> owlprettyIdxParams ps <> owlpretty "(" <> owlpretty p <> owlpretty ")" <> pxs
     owlpretty (AEGet ne) = owlpretty "get" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetEncPK ne) = owlpretty "get_encpk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetVK ne) = owlpretty "get_vk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
@@ -248,9 +245,9 @@ instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaCRH) = owlpretty "crh_lemma"
 
 instance  OwlPretty CryptOp where
-    owlpretty (CHash _ _) = owlpretty "hash"
-    owlpretty (CPRF x) = 
-        owlpretty "PRF" <+> owlpretty x 
+    -- owlpretty (CHash _ _) = owlpretty "hash"
+    --owlpretty (CPRF x) = 
+    --    owlpretty "PRF" <+> owlpretty x 
     owlpretty (CLemma l) = owlpretty l
     owlpretty (CAEnc) = owlpretty "aenc"
     owlpretty (CADec) = owlpretty "adec"

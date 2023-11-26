@@ -341,6 +341,18 @@
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
+(declare-fun KDFName (Bits Bits Bits) Name)
+(assert 
+    (forall ((x Bits) (y Bits) (z Bits) (x1 Bits) (y1 Bits) (z1 Bits)) (!
+        (=> (= (KDFName x y z) (KDFName x1 y1 z1))
+            (and 
+                 (= TRUE (eq x x1))
+                 (= TRUE (eq y y1))
+                 (= TRUE (eq z z1))))
+        :pattern ((KDFName x y z) (KDFName x1 y1 z1))
+        :qid kdfname_inj
+)))
+
 (assert (forall ((n1 Name) (n2 Name)) (!
     (=> (= TRUE (eq (ValueOf n1) (ValueOf n2)))
         (= n1 n2))

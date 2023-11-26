@@ -442,50 +442,50 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, preCryptOp, str) <- case (op, args) of
-        (CHash ((ropath,_,_):_) i, args) -> do 
-            -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
-            -- so we can just use the first one to calculate the length to extract to
-            roname <- flattenPath ropath
-            orcls <- use oracles
-            (outLen, sliceIdxs) <- case orcls M.!? roname of
-                Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
-                Just (outLen', sliceIdxs) -> do
-                    outLen'' <- mapM printLenConst outLen'
-                    return (intercalate "+" outLen'', sliceIdxs)
-            (start, end) <- case sliceIdxs M.!? i of
-                Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
-                Just (s', e', _) -> do
-                    s'' <- mapM printLenConst s'
-                    e'' <- mapM printLenConst e'
-                    return (intercalate "+" s'', intercalate "+" e'')
-            -- Check if we have already evaluated this RO; if not, evaluate it
-            resolvedArgs <- mapM (resolveANF binds) owlArgs
-            oopt <- lookupHashCall (roname, resolvedArgs)
-            (genOrcl, orclName) <- case oopt of
-                Just (Rc VecU8, name) -> return (pretty "", name)
-                Nothing -> do
-                    rovar' <- fresh . s2n $ roname
-                    let rovar = rustifyName . show $ rovar'
-                    hashCalls %= (:) ((roname, resolvedArgs), (Rc VecU8, rovar))
-                    orclArgs <- case args of
-                            [ikm] -> return [(Number, outLen), (Rc VecU8, "self.salt"), ikm]
-                            [salt, ikm] -> return [(Number, outLen), salt, ikm]
-                            _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
-                    let genOrcl = 
-                            owlpretty "let" <+> owlpretty rovar <+> owlpretty "=" <+>
-                            owlpretty (printOwlOp "owl_extract_expand_to_len" orclArgs) <> owlpretty ";"
-                    return (genOrcl, rovar)
-                _ -> throwError $ ErrSomethingFailed "precomputed hash value has wrong type"
-            let sliceOrcl = rcNew <> parens (
-                                owlpretty "slice_to_vec" <> parens (
-                                    owlpretty "slice_subrange" <> parens (
-                                        owlpretty "vec_as_slice" <> parens (owlpretty "&*" <> owlpretty orclName) <> comma <+>
-                                        owlpretty start <> comma <+> owlpretty end
-                                    )
-                                )
-                            )
-            return (Rc VecU8, genOrcl, sliceOrcl)
-        (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
+        -- (CHash ((ropath,_,_):_) i, args) -> do 
+        --    -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
+        --    -- so we can just use the first one to calculate the length to extract to
+        --    roname <- flattenPath ropath
+        --    orcls <- use oracles
+        --    (outLen, sliceIdxs) <- case orcls M.!? roname of
+        --        Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
+        --        Just (outLen', sliceIdxs) -> do
+        --            outLen'' <- mapM printLenConst outLen'
+        --            return (intercalate "+" outLen'', sliceIdxs)
+        --    (start, end) <- case sliceIdxs M.!? i of
+        --        Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
+        --        Just (s', e', _) -> do
+        --            s'' <- mapM printLenConst s'
+        --            e'' <- mapM printLenConst e'
+        --            return (intercalate "+" s'', intercalate "+" e'')
+        --    -- Check if we have already evaluated this RO; if not, evaluate it
+        --    resolvedArgs <- mapM (resolveANF binds) owlArgs
+        --    oopt <- lookupHashCall (roname, resolvedArgs)
+        --    (genOrcl, orclName) <- case oopt of
+        --        Just (Rc VecU8, name) -> return (pretty "", name)
+        --        Nothing -> do
+        --            rovar' <- fresh . s2n $ roname
+        --            let rovar = rustifyName . show $ rovar'
+        --            hashCalls %= (:) ((roname, resolvedArgs), (Rc VecU8, rovar))
+        --            orclArgs <- case args of
+        --                    [ikm] -> return [(Number, outLen), (Rc VecU8, "self.salt"), ikm]
+        --                    [salt, ikm] -> return [(Number, outLen), salt, ikm]
+        --                    _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
+        --            let genOrcl = 
+        --                    owlpretty "let" <+> owlpretty rovar <+> owlpretty "=" <+>
+        --                    owlpretty (printOwlOp "owl_extract_expand_to_len" orclArgs) <> owlpretty ";"
+        --            return (genOrcl, rovar)
+        --        _ -> throwError $ ErrSomethingFailed "precomputed hash value has wrong type"
+        --    let sliceOrcl = rcNew <> parens (
+        --                        owlpretty "slice_to_vec" <> parens (
+        --                            owlpretty "slice_subrange" <> parens (
+        --                                owlpretty "vec_as_slice" <> parens (owlpretty "&*" <> owlpretty orclName) <> comma <+>
+        --                                owlpretty start <> comma <+> owlpretty end
+        --                            )
+        --                        )
+        --                    )
+        --    return (Rc VecU8, genOrcl, sliceOrcl)
+        -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
             typeAnnot <- do
                 t <- getCurRetTy
@@ -625,9 +625,9 @@ extractAExpr binds (AELenConst s) = do
       Nothing -> do
         throwError $ UndefinedSymbol s
       Just n -> return (Number, owlpretty "", owlpretty n)
-extractAExpr binds (AEPreimage p _ _) = do
-        p' <- flattenPath p
-        throwError $ PreimageInExec p'
+-- extractAExpr binds (AEPreimage p _ _) = do
+--         p' <- flattenPath p
+--         throwError $ PreimageInExec p'
 
 -- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
 -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
@@ -1043,27 +1043,27 @@ preprocessModBody mb = do
             let ((sids, pids), nd) = unsafeUnbind binds
             case nd of
               TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
-              TB.RODef _ b -> do
-                let (_, (arg, _, rtys)) = unsafeUnbind b
-                (totLen, sliceMap) <- foldM (\(t, m) (i, rty) -> do
-                        (rtstr, len) <- case rty ^. val of
-                            NT_Nonce -> do
-                                l <- useAeadNonceSize
-                                return ("nonce", l)
-                            NT_Enc _ -> do
-                                l <- useAeadKeySize
-                                return ("enckey", l)
-                            NT_StAEAD {} -> do
-                                l <- useAeadKeySize
-                                return ("enckey", l)
-                            NT_MAC _ -> do
-                                l <- useHmacKeySize
-                                return ("mackey", l)
-                            _ -> throwError $ UnsupportedOracleReturnType name
-                        return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
-                    ) (["0"], M.empty) (zip [0..] rtys)
-                oracles %= M.insert name (totLen, sliceMap)
-                return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
+              -- TB.RODef _ b -> do
+              --   let (_, (arg, _, rtys)) = unsafeUnbind b
+              --   (totLen, sliceMap) <- foldM (\(t, m) (i, rty) -> do
+              --           (rtstr, len) <- case rty ^. val of
+              --               NT_Nonce -> do
+              --                   l <- useAeadNonceSize
+              --                   return ("nonce", l)
+              --               NT_Enc _ -> do
+              --                   l <- useAeadKeySize
+              --                   return ("enckey", l)
+              --               NT_StAEAD {} -> do
+              --                   l <- useAeadKeySize
+              --                   return ("enckey", l)
+              --               NT_MAC _ -> do
+              --                   l <- useHmacKeySize
+              --                   return ("mackey", l)
+              --               _ -> throwError $ UnsupportedOracleReturnType name
+              --           return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
+              --       ) (["0"], M.empty) (zip [0..] rtys)
+              --   oracles %= M.insert name (totLen, sliceMap)
+              --   return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
               TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize

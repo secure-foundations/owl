@@ -462,23 +462,19 @@ interpretAExp ae' = do
       AEHex s -> makeHex s
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
-      AEPreimage p ps as -> do
-          aes <- liftCheck $ getROPreimage p ps as
-          interpretAExp aes
+      --AEPreimage p ps as -> do
+      --    aes <- liftCheck $ getROPreimage p ps as
+      --    interpretAExp aes
       AEGet ne -> do
           symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
       AEPackIdx i a -> interpretAExp a
 
-sName :: Bool -> String -> [SExp] -> Maybe ([AExpr], Int) -> Sym SExp
-sName isRO n ivs oi = do
-    (vn, argvs) <- case oi of
-               Nothing -> return $ (if isRO then (SAtom $ "%name_" ++ n ++ "_0") else (SAtom $ "%name_" ++ n), [])
-               Just (as, i) -> do
-                   argvs <- mapM interpretAExp as
-                   return $ (SAtom $ "%name_" ++ n ++ "_" ++ (show i), argvs)
-    return $ sApp $ vn : ivs ++ argvs
+sName :: String -> [SExp] -> Sym SExp
+sName n ivs = do
+    let vn = SAtom $ "%name_" ++ n
+    return $ sApp $ vn : ivs 
 
 withIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
 withIndices xs k = do
@@ -527,17 +523,14 @@ symIndex idx@(IVar ispan v) = do
 
 data SMTNameDef = 
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))
-      | SMTROName (SExp, ResolvedPath) Int (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
 
-withSMTNameDef :: SMTNameDef -> ((SExp, ResolvedPath) -> Maybe Int -> (([IdxVar], [IdxVar]), [DataVar]) -> Maybe NameType -> Sym a) -> Sym a                      
+withSMTNameDef :: SMTNameDef -> ((SExp, ResolvedPath) -> (([IdxVar], [IdxVar])) 
+                -> Maybe NameType -> Sym a) -> Sym a                      
 withSMTNameDef df k = do
     case df of
       SMTBaseName p b -> do
           (idxs, ont) <- liftCheck $ unbind b
-          k p Nothing (idxs, []) ont
-      SMTROName p i b -> do
-          (idxs_xs, nt) <- liftCheck $ unbind b
-          k p (Just i) idxs_xs (Just nt)
+          k p (idxs) ont
 
 flattenNameDefs :: Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef) ->
                    Sym [SMTNameDef]
@@ -551,25 +544,24 @@ flattenNameDefs xs = do
           AbstractName -> do
               sn <- smtName n
               return [SMTBaseName ((SAtom $ "%name_" ++ sn), n) (bind (is, ps) Nothing)]
-          RODef _ b -> do
-              sn <- smtName n
-              (xs, (a, p, nts)) <- liftCheck $ unbind b
-              return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
+          --RODef _ b -> do
+          --    sn <- smtName n
+          --    (xs, (a, p, nts)) <- liftCheck $ unbind b
+          --    return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
     return $ concat ys
             
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
     ne' <- liftCheck $ normalizeNameExp ne
     case ne'^.val of
-      NameConst (is1, is2) s oi -> do
+      NameConst (is1, is2) s -> do
         sn <- smtName s
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
-        isRO <- liftCheck $ isNameDefRO s
-        sName isRO sn (vs1 ++ vs2) oi
-      PRFName ne1 s -> do
-          n <- getSymName ne1
-          return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
+        sName sn (vs1 ++ vs2) 
+      --PRFName ne1 s -> do
+      --    n <- getSymName ne1
+      --    return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do

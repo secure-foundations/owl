@@ -72,111 +72,98 @@ setupNameEnvRO = do
               let ((is, ps), _) = unsafeUnbind bnd
               let iar = length is + length ps
               emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort), nameSort]
-          SMTROName (sn, _) _ bnd -> do
-              let (((is, ps), xs), _) = unsafeUnbind bnd
-              let iar = length is + length ps
-              let var = length xs
-              emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort ++ replicate var bitstringSort), nameSort]
+          --SMTROName (sn, _) _ bnd -> do
+          --    let (((is, ps), xs), _) = unsafeUnbind bnd
+          --    let iar = length is + length ps
+          --    let var = length xs
+          --    emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort ++ replicate var bitstringSort), nameSort]
     mkCrossDisjointness fdfs
     mkSelfDisjointness fdfs
     -- Axioms relevant for each def 
     forM_ fdfs $ \fd -> do
-        withSMTNameDef fd $ \(sn, pth) oi ((is, ps), xs) ont -> do
+        withSMTNameDef fd $ \(sn, pth) ((is, ps)) ont -> do
             -- Name def flows
             case ont of
               Nothing -> return ()
               Just nt -> do
                 let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
-                let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
                 withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
-                    withSMTVars xs $ do 
+                    -- withSMTVars xs $ do 
                         nk <- nameKindOf nt
                         emitAssertion $ sForall
-                            (ivs ++ xvs)
-                            (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs) ++ (map fst xvs)), nk])
-                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            (ivs)
+                            (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs)), nk])
+                            [sApp (sn : (map fst ivs))] --  ++ (map fst xvs))]
                             ("nameKind_" ++ show sn)
 
-                        let roArgs = case oi of
-                                       Nothing -> Nothing
-                                       Just i -> Just $ (map aeVar' xs, i)
-
-                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) roArgs
+                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) 
 
                         lAxs <- nameDefFlows nameExp nt
                         sAxs <- forM lAxs $ \(l1, l2) -> do
                             vl1 <- symLabel l1
                             vl2 <- symLabel l2
                             return $ SApp [SAtom "Flows", vl1, vl2]
-                        emitAssertion $ sForall (ivs ++ xvs)
+                        emitAssertion $ sForall (ivs)
                             (sAnd sAxs)
-                            [sApp (sn : (map fst ivs) ++ (map fst xvs))]
+                            [sApp (sn : (map fst ivs))]
                             ("nameDefFlows_" ++ show sn)
             -- Solvability
-            case oi of
-              Nothing -> return () -- Not RO
-              Just i -> do 
-                when (length xs == 0) $ do
-                    withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
-                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) (Just ([], i)) 
-                        preimage <- liftCheck $ getROPreimage (PRes pth) (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) []
-                        solvability <- liftCheck $ solvabilityAxioms preimage nameExp
-                        vsolv <- interpretProp solvability
-                        let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
-                        emitAssertion $ sForall ivs vsolv [sApp (sn : map fst ivs)] ("solvability_" ++ show sn)  
-
-
-
-smtNameDefIsRO :: SMTNameDef -> Bool
-smtNameDefIsRO (SMTBaseName _ _) = False
-smtNameDefIsRO (SMTROName _ _ _) = True
-
-
+            --case oi of
+            --  Nothing -> return () -- Not RO
+            --  Just i -> do 
+            --    when (length xs == 0) $ do
+            --        withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+            --            let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) (Just ([], i)) 
+            --            preimage <- liftCheck $ getROPreimage (PRes pth) (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) []
+            --            solvability <- liftCheck $ solvabilityAxioms preimage nameExp
+            --            vsolv <- interpretProp solvability
+            --            let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
+            --            emitAssertion $ sForall ivs vsolv [sApp (sn : map fst ivs)] ("solvability_" ++ show sn)  
 
 mkCrossDisjointness :: [SMTNameDef] -> Sym ()
 mkCrossDisjointness fdfs = do
     -- Get all pairs of fdfs
     let pairs = [(x, y) | (x : ys) <- tails fdfs, y <- ys]
     forM_ pairs $ \(fd1, fd2) -> 
-        withSMTNameDef fd1 $ \(sn1, pth1) oi1 ((is1, ps1), xs1) _ ->  
-            withSMTNameDef fd2 $ \(sn2, pth2) oi2 ((is2, ps2), xs2) _ ->  do
-                let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
-                let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+        withSMTNameDef fd1 $ \(sn1, pth1) ((is1, ps1)) _ ->  
+            withSMTNameDef fd2 $ \(sn2, pth2) ((is2, ps2)) _ ->  do
+                let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) 
+                let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) 
                 let v1 = sApp (sn1 : (map fst q1))
                 let v2 = sApp (sn2 : (map fst q2))
                 let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
                                                                              SApp [SAtom "ValueOf", v2]]]
                 let pat = (if length q1 > 0 then [v1] else []) ++ (if length q2 > 0 then [v2] else [])
                 emitAssertion $ sForall (q1 ++ q2) (sNot $ v1_eq_v2) pat $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
-                when (oi1 == Just 0 && oi2 == Just 0 && (not $ pth1 `aeq` pth2)) $ do 
-                    (vpre1, vprereq1) <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) ps1) $ do
-                        withSMTVars xs1 $ do 
-                            pi <- liftCheck $ getROPreimage (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
-                            vpi <- interpretAExp pi
-                            pr <- liftCheck $ getROPrereq (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
-                            vpr <- interpretProp pr
-                            return (vpi, vpr)
-                    (vpre2, vprereq2) <- withIndices (map (\i -> (i, IdxSession)) is2 ++ map (\i -> (i, IdxPId)) ps2) $ do
-                        withSMTVars xs2 $ do 
-                            pi <- liftCheck $ getROPreimage (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
-                            vpi <- interpretAExp pi
-                            pr <- liftCheck $ getROPrereq (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
-                            vpr <- interpretProp pr
-                            return (vpi, vpr)
-                    let vpre1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", vpre1, vpre2]]
-                    emitComment $ "Preimage disjointness for " ++ show sn1 ++ " and " ++ show sn2
-                    emitAssertion $ sForall (q1 ++ q2) (sImpl (sAnd2 vprereq1 vprereq2) $ sNot $ vpre1_eq_v2) [vpre1_eq_v2] $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                --when (oi1 == Just 0 && oi2 == Just 0 && (not $ pth1 `aeq` pth2)) $ do 
+                --    (vpre1, vprereq1) <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) ps1) $ do
+                --        withSMTVars xs1 $ do 
+                --            pi <- liftCheck $ getROPreimage (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
+                --            vpi <- interpretAExp pi
+                --            pr <- liftCheck $ getROPrereq (PRes pth1) (map (IVar (ignore def)) is1, map (IVar (ignore def)) ps1) (map aeVar' xs1) 
+                --            vpr <- interpretProp pr
+                --            return (vpi, vpr)
+                --    (vpre2, vprereq2) <- withIndices (map (\i -> (i, IdxSession)) is2 ++ map (\i -> (i, IdxPId)) ps2) $ do
+                --        withSMTVars xs2 $ do 
+                --            pi <- liftCheck $ getROPreimage (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
+                --            vpi <- interpretAExp pi
+                --            pr <- liftCheck $ getROPrereq (PRes pth2) (map (IVar (ignore def)) is2, map (IVar (ignore def)) ps2) (map aeVar' xs2) 
+                --            vpr <- interpretProp pr
+                --            return (vpi, vpr)
+                --    let vpre1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", vpre1, vpre2]]
+                --    emitComment $ "Preimage disjointness for " ++ show sn1 ++ " and " ++ show sn2
+                --    emitAssertion $ sForall (q1 ++ q2) (sImpl (sAnd2 vprereq1 vprereq2) $ sNot $ vpre1_eq_v2) [vpre1_eq_v2] $ "disj_pre_" ++ show (sn1) ++ "_" ++ show (sn2) 
 
 
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()
 mkSelfDisjointness fdfs = do
     -- TODO: factor in preqreqs?
     forM_ fdfs $ \fd -> 
-        withSMTNameDef fd $ \(sn, pth) oi ((is1, ps1), xs1) _ ->  do
-            withSMTNameDef fd $ \_ _ ((is2, ps2), xs2) _ -> do
-                when ((length is1 + length ps1 + length xs1) > 0) $ do
-                    let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
-                    let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
+        withSMTNameDef fd $ \(sn, pth) ((is1, ps1)) _ ->  do
+            withSMTNameDef fd $ \_ ((is2, ps2)) _ -> do
+                when ((length is1 + length ps1) > 0) $ do
+                    let q1 = map (\i -> (SAtom $ show i, indexSort)) (is1 ++ ps1) -- ++ map (\x -> (SAtom $ show x, bitstringSort)) xs1
+                    let q2 = map (\i -> (SAtom $ show i, indexSort)) (is2 ++ ps2) -- ++ map (\x -> (SAtom $ show x, bitstringSort)) xs2
                     let v1 = sApp (sn : (map fst q1))
                     let v2 = sApp (sn : (map fst q2))
                     let q1_eq_q2 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q2 !! i)) [0 .. (length q1 - 1)]
@@ -195,7 +182,7 @@ nameKindOf nt =
       NT_StAEAD _ _ _ _ -> SAtom "Enckey"
       NT_PKE _ -> SAtom "PKEkey"
       NT_Sig _ -> SAtom "Sigkey"
-      NT_PRF _ -> SAtom "PRFkey"
+      -- NT_PRF _ -> SAtom "PRFkey"
       NT_MAC _ -> SAtom "MACkey"
       NT_Nonce -> SAtom "Nonce"
 

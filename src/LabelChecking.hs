@@ -48,10 +48,10 @@ nameDefFlows n nt = do
       NT_MAC t -> do
           l <- liftCheck $ coveringLabel' t
           return $ [(l, mkSpanned $ LName n)]
-      NT_PRF xs -> do
-          ys <- mapM (\(s, (a, nt)) -> nameDefFlows (prfName n s) nt) xs
-          let zs  = map (\p -> nameLbl $ prfName n $ fst p) xs
-          return $ (concat ys) ++ [(foldr joinLbl zeroLbl zs, mkSpanned (LName n))]
+      --NT_PRF xs -> do
+      --    ys <- mapM (\(s, (a, nt)) -> nameDefFlows (prfName n s) nt) xs
+      --    let zs  = map (\p -> nameLbl $ prfName n $ fst p) xs
+      --    return $ (concat ys) ++ [(foldr joinLbl zeroLbl zs, mkSpanned (LName n))]
 
 
 smtLabelSetup :: Sym ()
