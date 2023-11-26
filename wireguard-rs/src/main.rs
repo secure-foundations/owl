@@ -1,4 +1,7 @@
-#![cfg_attr(feature = "unstable", feature(test))]
+#![feature(test)]
+extern crate test;
+
+// #![cfg_attr(feature = "unstable", feature(test))]
 
 extern crate alloc;
 

@@ -232,7 +232,7 @@ fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
         dev2.release(ks_r.local_id());
 
         // avoid initiation flood detection
-        wait();
+        // wait();
     }
 
     dev1.remove(&pk2).unwrap();
@@ -260,4 +260,32 @@ fn handshake_owl_initiator_owl_responder() {
     test_handshake(true, true, 10);
 }
 
+use test::Bencher;
 
+#[bench]
+fn bench_rs_handshake(b: &mut Bencher) {
+    b.iter(|| {
+        test_handshake(false, false, 1);
+    });
+}
+
+#[bench]
+fn bench_owl_handshake(b: &mut Bencher) {
+    b.iter(|| {
+        test_handshake(true, true, 1);
+    });
+}
+
+#[bench]
+fn bench_owl_init_rs_resp_handshake(b: &mut Bencher) {
+    b.iter(|| {
+        test_handshake(true, false, 1);
+    });
+}
+
+#[bench]
+fn bench_rs_init_owl_resp_handshake(b: &mut Bencher) {
+    b.iter(|| {
+        test_handshake(false, true, 1);
+    });
+}
