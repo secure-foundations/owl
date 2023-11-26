@@ -491,7 +491,7 @@ extractCryptOp binds op owlArgs = do
                         owlpretty "Err(e) => { return Err(e) },"
                     )
             return (Rc VecU8, owlpretty "", unwrapped)
-        (CDecStAEAD, [k, c, aad, (nty, narg)]) -> do 
+        (CDecStAEAD, [k, c, (nty, narg), aad]) -> do 
             let n = case nty of
                     Number -> (VecU8, printOwlOp "owl_counter_as_bytes" [(nty, narg)])
                     _ -> (nty, narg)

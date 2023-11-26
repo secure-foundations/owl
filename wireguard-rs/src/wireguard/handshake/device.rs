@@ -471,8 +471,20 @@ impl<O> Device<O> {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
                         // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
                         // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
-                        i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), &mut msg.as_bytes_mut());
-                        // let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                        let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), &mut msg.as_bytes_mut());
+                        
+                        let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
+                        let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
+                        let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+
+                        // save state
+                        *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
+                            hs: hs.into(),
+                            ck: ck.into(),
+                            eph_sk: e_init_as_array.into(),
+                            local,
+                        };
+
                         // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
                         // peer.macs
                         //     .lock()
@@ -610,6 +622,25 @@ impl<O> Device<O> {
                         noise::consume_response(self, keyst, &msg.noise)
                     },
                     Device::Initiator(i) => {
+                        let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
+                        let (hs, ck) = match *peer.state.lock() {
+                            crate::wireguard::handshake::peer::State::InitiationSent {
+                                hs,
+                                ck,
+                                local,
+                                ref eph_sk,
+                            } => Ok((hs, ck)),
+                            _ => Err(HandshakeError::InvalidState),
+                        }?;
+                        let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
+                            owl__initiator_msg1_H4: hs.to_vec(),
+                            owl__initiator_msg1_C3: ck.to_vec(),
+                        };
+                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                        let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
+
+                        dbg!(transp_keys.is_some());
+
                         todo!()
                     },
                     Device::Responder(_) => {

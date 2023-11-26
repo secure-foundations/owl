@@ -56,13 +56,14 @@ pub fn owl_output<A>(
 #[verifier(external_body)]
 pub fn owl_input<A>(
     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    ibuf: &[u8]
 ) -> (ie: (Vec<u8>, String))
     requires
         old(t).view().is_input(),
     ensures
         t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view())),
 {
-    todo!()
+    (ibuf.to_vec(), String::from_rust_string("".to_string())) // Specific to Wireguard---we never use the endpoints
 }
 
 #[verifier(external_body)]
@@ -2091,7 +2092,7 @@ impl<O> cfg_Initiator<O> {
         Ok(res_inner)
     }
     
-    pub exec fn owl_receive_msg2_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>, obuf: &mut [u8]) -> (_: Option<owl_transp_keys>) {
+    pub exec fn owl_receive_msg2_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>, msg1_val: owl_initiator_msg1_val, ibuf: &[u8]) -> (_: Option<owl_transp_keys>) {
         let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
             (),
             Endpoint,
@@ -2101,7 +2102,7 @@ impl<O> cfg_Initiator<O> {
             receive_msg2_spec_spec(*self, *s, dhpk_S_resp.dview()),
         );
         let (res, _) =
-            self.owl_receive_msg2(Tracked(call_token), s, todo!(), dhpk_S_resp).unwrap();
+            self.owl_receive_msg2(Tracked(call_token), s, msg1_val, dhpk_S_resp, ibuf).unwrap();
         res
     }
 
@@ -2113,6 +2114,7 @@ impl<O> cfg_Initiator<O> {
         mut_state: &mut state_Initiator,
         owl_msg1_val5826: owl_initiator_msg1_val,
         owl_dhpk_S_resp5825: Arc<Vec<u8>>,
+        ibuf: &[u8]
     ) -> (res: Result<
         (
             Option<owl_transp_keys>,
@@ -2137,6 +2139,7 @@ impl<O> cfg_Initiator<O> {
             reveal(receive_msg2_spec);
             let (temp_owl_inp122, owl__121) = owl_input::<(Option<Seq<u8>>, state_Initiator)>(
                 Tracked(&mut itree),
+                ibuf
             );
             let owl_inp122 = arc_new(temp_owl_inp122);
             let temp_owl__x407 = { arc_clone(&owl_inp122) };
@@ -2403,6 +2406,10 @@ impl<O> cfg_Initiator<O> {
                                 let temp_owl__x375 = { arc_clone(&owl__x267) };
                                 let owl__x375 = arc_clone(&temp_owl__x375);
                                 let temp_owl__x376 = {
+                                    dbg!(owl__x369.len());
+                                    dbg!(owl__x371.len());
+                                    dbg!(owl__x375.len());
+                                    dbg!(owl__x373.len());
                                 owl_dec_st_aead(
                                     vec_as_slice(&(*arc_clone(&owl__x369))),
                                     vec_as_slice(&(*arc_clone(&owl__x371))),
@@ -3722,6 +3729,7 @@ impl<O> cfg_Responder<O> {
         &self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
+        ibuf: &[u8]
     ) -> (res: Result<
         (
             Option<owl_responder_msg1_val>,
@@ -3741,6 +3749,7 @@ impl<O> cfg_Responder<O> {
             reveal(receive_msg1_spec);
             let (temp_owl_inp1241, owl__1240) = owl_input::<(Option<Seq<u8>>, state_Responder)>(
                 Tracked(&mut itree),
+                ibuf
             );
             let owl_inp1241 = arc_new(temp_owl_inp1241);
             let temp_owl__x1551 = { arc_clone(&owl_inp1241) };
