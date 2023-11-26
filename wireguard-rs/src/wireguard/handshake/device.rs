@@ -476,6 +476,9 @@ impl<O> Device<O> {
                         let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
                         let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
                         let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                        dbg!(hex::encode(hs));
+                        dbg!(hex::encode(ck));
+                        dbg!(hex::encode(e_init_as_array));
 
                         // save state
                         *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
@@ -484,6 +487,9 @@ impl<O> Device<O> {
                             eph_sk: e_init_as_array.into(),
                             local,
                         };
+
+
+                        // println!("msg1 = {} : {} bytes", hex::encode(&msg.as_bytes()[..]), msg.as_bytes().len());
 
                         // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
                         // peer.macs
@@ -592,7 +598,7 @@ impl<O> Device<O> {
                 // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlInitiator here
                 match self {
                     Device::NoOwl(_) => {
-                        let msg = Response::parse(msg)?;
+                        let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
 
                         // check mac1 field
                         keyst.macs.check_mac1(msg.noise.as_bytes(), &msg.macs)?;
@@ -617,7 +623,7 @@ impl<O> Device<O> {
                                 return Err(HandshakeError::RateLimited);
                             }
                         }
-        
+
                         // consume inner playload
                         noise::consume_response(self, keyst, &msg.noise)
                     },
@@ -632,6 +638,9 @@ impl<O> Device<O> {
                             } => Ok((hs, ck)),
                             _ => Err(HandshakeError::InvalidState),
                         }?;
+                        dbg!(hex::encode(hs));
+                        dbg!(hex::encode(ck));
+                        // dbg!(hex::encode(e_init_as_array));
                         let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
                             owl__initiator_msg1_H4: hs.to_vec(),
                             owl__initiator_msg1_C3: ck.to_vec(),
@@ -639,9 +648,13 @@ impl<O> Device<O> {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
                         let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
 
-                        dbg!(transp_keys.is_some());
 
-                        todo!()
+                        let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
+                        noise::consume_response(self, keyst, &msg.noise)
+
+                        
+                        // assert!(transp_keys.is_some());
+                        // todo!();
                     },
                     Device::Responder(_) => {
                         panic!("Responder cannot receive response");

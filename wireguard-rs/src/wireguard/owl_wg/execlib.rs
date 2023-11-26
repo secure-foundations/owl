@@ -250,10 +250,12 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
     // match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
-    match owl_aead::decrypt_combined(cipher(), k, c, nonce, aad) {
+    let mut nonce_resized = nonce.to_vec();
+    nonce_resized.resize(owl_aead::nonce_size(cipher()), 0u8);
+    match owl_aead::decrypt_combined(cipher(), k, c, &nonce_resized[..], aad) {
         Ok(p) => Some(arc_new(p)),
-        Err(_e) => {
-            // dbg!(e);
+        Err(e) => {
+            dbg!(e);
             None
         }
     }

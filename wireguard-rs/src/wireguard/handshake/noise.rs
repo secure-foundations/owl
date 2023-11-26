@@ -265,6 +265,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // dbg!(hex::encode(ck.as_slice()));
         let hs = INITIAL_HS;
         let hs = HASH!(&hs, pk.as_bytes());
+        dbg!(hex::encode(hs.as_slice()));
 
         msg.f_type.set(TYPE_INITIATION as u32);
         msg.f_sender.set(local); // from us
@@ -286,6 +287,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // H := HASH(H, msg.ephemeral)
 
         let hs = HASH!(&hs, msg.f_ephemeral);
+        dbg!(hex::encode(hs.as_slice()));
 
         // (C, k) := Kdf2(C, DH(E_priv, S_pub))
 
@@ -304,6 +306,7 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         // H := Hash(H || msg.static)
 
         let hs = HASH!(&hs, &msg.f_static[..]);
+        dbg!(hex::encode(hs.as_slice()));
 
         // (C, k) := Kdf2(C, DH(S_priv, S_pub))
 
@@ -324,6 +327,11 @@ pub(super) fn create_initiation_precomputed_eph_key<R: RngCore + CryptoRng, O>(
         let hs = HASH!(&hs, &msg.f_timestamp);
 
         // update state of peer
+
+        dbg!(hex::encode(hs.as_slice()));
+        dbg!(hex::encode(ck.as_slice()));
+        dbg!(hex::encode(eph_sk.to_bytes().as_slice()));
+
 
         *peer.state.lock() = State::InitiationSent {
             hs,
@@ -622,6 +630,7 @@ pub(super) fn consume_response<'a, O>(
         // C := Kdf1(C, E_pub)
 
         let ck = KDF1!(&ck, &msg.f_ephemeral);
+        dbg!(hex::encode(ck.as_slice()));
 
         // H := Hash(H || msg.ephemeral)
 
@@ -631,20 +640,25 @@ pub(super) fn consume_response<'a, O>(
 
         let eph_r_pk = PublicKey::from(msg.f_ephemeral);
         let ck = KDF1!(&ck, shared_secret(&eph_sk, &eph_r_pk)?.as_bytes());
-
+        dbg!(hex::encode(ck.as_slice()));
         // C := Kdf1(C, DH(E_priv, S_pub))
 
         let ck = KDF1!(&ck, shared_secret(&keyst.sk, &eph_r_pk)?.as_bytes());
-
+        dbg!(hex::encode(ck.as_slice()));
         // (C, tau, k) := Kdf3(C, Q)
+        dbg!(hex::encode(peer.psk.as_slice()));
 
         let (ck, tau, key) = KDF3!(&ck, &peer.psk);
-
+        dbg!(hex::encode(ck.as_slice()));
         // H := Hash(H || tau)
 
         let hs = HASH!(&hs, tau);
 
         // msg.empty := Aead(k, 0, [], H)
+
+        dbg!(hex::encode(key));
+        dbg!(hex::encode(hs));
+        dbg!(hex::encode(msg.f_empty));
 
         OPEN!(
             &key,

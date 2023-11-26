@@ -2220,6 +2220,7 @@ impl<O> cfg_Initiator<O> {
                                     vec_as_slice(&(*arc_clone(&owl__x163))),
                                     vec_as_slice(&(*arc_clone(&owl__x165))),
                                 );
+                                dbg!(hex::encode(&*owl_msg2_C4410));
                                 let temp_owl__x166 = {
                                 arc_new(
                                     slice_to_vec(
@@ -2271,6 +2272,7 @@ impl<O> cfg_Initiator<O> {
                                     vec_as_slice(&(*arc_clone(&owl__x206))),
                                     vec_as_slice(&(*arc_clone(&owl__x208))),
                                 );
+                                dbg!(hex::encode(&*owl_msg2_C5411));
                                 let temp_owl__x209 = {
                                 arc_new(
                                     slice_to_vec(
@@ -2301,6 +2303,7 @@ impl<O> cfg_Initiator<O> {
                                     vec_as_slice(&(*arc_clone(&owl__x216))),
                                     vec_as_slice(&(*arc_clone(&owl__x222))),
                                 );
+                                dbg!(hex::encode(&*owl_msg2_C6412));
                                 let temp_owl__x223 = {
                                 arc_new(
                                     slice_to_vec(
@@ -2317,11 +2320,13 @@ impl<O> cfg_Initiator<O> {
                                 let owl__x228 = arc_clone(&temp_owl__x228);
                                 let temp_owl__x230 = { arc_clone(&owl__x137) };
                                 let owl__x230 = arc_clone(&temp_owl__x230);
+                                dbg!(hex::encode(&*owl__x230));
                                 let owl_msg2_C7413 = owl_extract_expand_to_len(
                                     0 + nonce_size() + nonce_size() + key_size(),
                                     vec_as_slice(&(*arc_clone(&owl__x228))),
                                     vec_as_slice(&(*arc_clone(&owl__x230))),
                                 );
+                                dbg!(hex::encode(&*owl_msg2_C7413));
                                 let temp_owl__x231 = {
                                 arc_new(
                                     slice_to_vec(
@@ -2406,15 +2411,11 @@ impl<O> cfg_Initiator<O> {
                                 let temp_owl__x375 = { arc_clone(&owl__x267) };
                                 let owl__x375 = arc_clone(&temp_owl__x375);
                                 let temp_owl__x376 = {
-                                    dbg!(owl__x369.len());
-                                    dbg!(owl__x371.len());
-                                    dbg!(owl__x375.len());
-                                    dbg!(owl__x373.len());
                                 owl_dec_st_aead(
                                     vec_as_slice(&(*arc_clone(&owl__x369))),
                                     vec_as_slice(&(*arc_clone(&owl__x371))),
-                                    vec_as_slice(&(*arc_clone(&owl__x375))),
                                     vec_as_slice(&(*arc_clone(&owl__x373))),
+                                    vec_as_slice(&(*arc_clone(&owl__x375))),
                                 )
                                 };
                                 let owl__x376 = temp_owl__x376;
@@ -2424,6 +2425,7 @@ impl<O> cfg_Initiator<O> {
                                     None => {
                                         let temp_owl__x277 = { None };
                                         let owl__x277 = temp_owl__x277;
+                                        dbg!("a");
                                         (owl__x277, Tracked(itree))
                                     },
                                     Some(temp_owl_msg2_empty_dec278) => {
@@ -2551,19 +2553,23 @@ impl<O> cfg_Initiator<O> {
                                             let owl__x360 = temp_owl__x360;
                                             (owl__x360, Tracked(itree))
                                         } else {
+                                            dbg!("b");
                                             (None, Tracked(itree))
                                         }
                                     },
                                 }
                             } else {
+                                dbg!("c");
                                 (None, Tracked(itree))
                             }
                         } else {
+                            dbg!("d");
                             (None, Tracked(itree))
                         }
                     }
                 }
             } else {
+                dbg!("e");
                 let temp_owl__x123 = { None };
                 let owl__x123 = temp_owl__x123;
                 (owl__x123, Tracked(itree))
@@ -2627,6 +2633,7 @@ impl<O> cfg_Initiator<O> {
             let owl__x442 = arc_new(temp_owl__x442);
             let temp_owl__x444 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x442)))) };
             let owl__x444 = arc_clone(&temp_owl__x444);
+            dbg!(hex::encode(&*owl__x444));
             let temp_owl__x445 = { arc_clone(&owl__x444) };
             let owl__x445 = arc_clone(&temp_owl__x445);
             let temp_owl__x458 = { arc_clone(&owl__x445) };
@@ -2642,6 +2649,7 @@ impl<O> cfg_Initiator<O> {
             let owl__x462 = arc_new(temp_owl__x462);
             let temp_owl__x464 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x462)))) };
             let owl__x464 = arc_clone(&temp_owl__x464);
+            dbg!(hex::encode(&*owl__x464));
             let temp_owl__x465 = { arc_clone(&owl__x464) };
             let owl__x465 = arc_clone(&temp_owl__x465);
             let temp_owl__x472 = { arc_clone(&self.owl_E_init) };
@@ -2678,6 +2686,7 @@ impl<O> cfg_Initiator<O> {
             let owl__x500 = arc_new(temp_owl__x500);
             let temp_owl__x502 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x500)))) };
             let owl__x502 = arc_clone(&temp_owl__x502);
+            dbg!(hex::encode(&*owl__x502));
             let temp_owl__x503 = { arc_clone(&owl__x502) };
             let owl__x503 = arc_clone(&temp_owl__x503);
             let temp_owl__x513 = { arc_clone(&owl_dhpk_S_resp5816) };
@@ -2759,6 +2768,7 @@ impl<O> cfg_Initiator<O> {
             let owl__x568 = arc_new(temp_owl__x568);
             let temp_owl__x570 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x568)))) };
             let owl__x570 = arc_clone(&temp_owl__x570);
+            dbg!(hex::encode(&*owl__x570));
             let temp_owl__x571 = { arc_clone(&owl__x570) };
             let owl__x571 = arc_clone(&temp_owl__x571);
             let temp_owl__x581 = { arc_clone(&owl_dhpk_S_resp5816) };
@@ -2840,12 +2850,13 @@ impl<O> cfg_Initiator<O> {
             let temp_owl__x632 = {
             owl_concat(
                 vec_as_slice(&(*arc_clone(&owl__x628))),
-                vec_as_slice(&(*arc_clone(&owl__x630))),
+                vec_as_slice(&(*arc_clone(&owl__x615))),
             )
             };
             let owl__x632 = arc_new(temp_owl__x632);
             let temp_owl__x634 = { owl_crh(vec_as_slice(&(*arc_clone(&owl__x632)))) };
             let owl__x634 = arc_clone(&temp_owl__x634);
+            dbg!(hex::encode(&*owl__x634));
             let temp_owl__x635 = { arc_clone(&owl__x634) };
             let owl__x635 = arc_clone(&temp_owl__x635);
             let (temp_owl__x637, Tracked(itree)): (

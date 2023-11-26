@@ -109,7 +109,7 @@ pub fn gen_rand_key_iv(mode: Mode) -> Vec<u8> {
     gen_rand_bytes(key_size(mode) + nonce_size(mode))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Error {
     InvalidInit,
     InvalidAlgorithm,
@@ -271,9 +271,12 @@ pub fn decrypt_combined(
 ) -> Result<Vec<u8>, Error> {
     match alg {
         Mode::Chacha20Poly1305 => {
+            dbg!(hex::encode(k));
+            dbg!(hex::encode(ctxt));
+            dbg!(hex::encode(aad));
             ChaCha20Poly1305::new(GenericArray::from_slice(k))
             .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
-            .map_err(|_| Error::Decrypting)
+            .map_err(|e| { dbg!(e); Error::Decrypting })
         },
         _ => panic!("unsupported aead mode"),
     }
