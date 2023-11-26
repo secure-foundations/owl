@@ -306,7 +306,7 @@ predicate valid_transp_keys_init<i,n,m>(s) =
 ///////// Initiator code //////////
     
 
-def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
+def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
   initiator_msg1_val<session i, pid n, pid m> =
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
@@ -320,7 +320,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let msg1_static : Data<adv> |cipherlen(|group|)|
         = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, pack<n>(dhpk(get(S_init<@n>))), H2) in 
     let H3 = crh(H2 ++ msg1_static) in
-    let ss_S_resp_S_init = dh_combine(dhpk_S_resp, get(S_init<@n>)) in
+    // let ss_S_resp_S_init = dh_combine(dhpk_S_resp, get(S_init<@n>)) in
     let C3 = hash<msg1_C3<@n,m>[e_init];0>(C2, ss_S_resp_S_init) in
     let k1 = hash<msg1_C3<@n,m>[e_init];1>(C2, ss_S_resp_S_init) in
     let timestamp = call timestamp_i<@n>() in
@@ -455,9 +455,8 @@ predicate valid_transp_keys_resp<j,n,m>(s) =
         (corr(S_init<@n>) \/ corr(S_resp<@m>))
     )
 
-def checkpk_resp<@m>(pk : Data<adv>)  @ Responder<m>
-    : Option (exists n. x:dhpk(S_init<@n>){x == pk})
-
+def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
+    : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
 
 def receive_msg1<j@m> () @ Responder<m>
      : Option (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
@@ -488,11 +487,11 @@ def receive_msg1<j@m> () @ Responder<m>
                 let opk = call checkpk_resp<@m>(msg1_static_dec) in
                 case opk {
                     | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
-                    | Some dhpk_S_init_ =>
-                        unpack n, dhpk_S_init = dhpk_S_init_ in 
-                        guard eq(msg1_static_dec, dhpk_S_init) in 
+                    | Some ss_S_init_S_resp_ =>
+                        unpack n, ss_S_init_S_resp = ss_S_init_S_resp_ in 
+                        let dhpk_S_init : dhpk(S_init<@n>) = msg1_static_dec in
+                        // guard eq(msg1_static_dec, dhpk_S_init) in // Not needed since we have the refinement on ss_S_init_S_resp
                         let H3 = crh(H2 ++ msg1_static) in
-                        let ss_S_init_S_resp = dh_combine(dhpk_S_init, get(S_resp<@m>)) in
                         let C3 = hash<msg1_C3<@n,m>[msg1_ephemeral];0>(C2, ss_S_init_S_resp) in
                         let k1 = hash<msg1_C3<@n,m>[msg1_ephemeral];1>(C2, ss_S_init_S_resp) in
                         corr_case msg1_C3<@n,m>[msg1_ephemeral;1] in

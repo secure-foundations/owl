@@ -485,7 +485,7 @@ pub mod itree {
     macro_rules! owl_call {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.dview(), $($tail)*)
+                owl_call_internal!(res, res.dview().as_seq(), $($tail)*)
             }
         };
     }
@@ -495,7 +495,7 @@ pub mod itree {
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, dview_option(res), $($tail)*)
+                owl_call_internal!(res, option_as_seq(dview_option(res)), $($tail)*)
             }
         };
     }
