@@ -4,6 +4,7 @@ use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::sync::Arc;
+use std::time::Instant;
 
 use byteorder::{ByteOrder, LittleEndian};
 use dashmap::mapref::entry::Entry;
@@ -28,6 +29,8 @@ use super::ratelimiter::RateLimiter;
 use super::types::*;
 
 use crate::wireguard::owl_wg::owl_wireguard;
+use crate::wireguard::KeyPair;
+use crate::wireguard::types::Key;
 
 const MAX_PEER_PER_DEVICE: usize = 1 << 20;
 
@@ -626,13 +629,13 @@ impl<O> Device<O> {
                     },
                     Device::Initiator(i) => {
                         let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
-                        let (hs, ck) = match *peer.state.lock() {
+                        let (hs, ck, local) = match *peer.state.lock() {
                             crate::wireguard::handshake::peer::State::InitiationSent {
                                 hs,
                                 ck,
                                 local,
-                                ref eph_sk,
-                            } => Ok((hs, ck)),
+                                eph_sk: _,
+                            } => Ok((hs, ck, local)),
                             _ => Err(HandshakeError::InvalidState),
                         }?;
 
@@ -648,7 +651,27 @@ impl<O> Device<O> {
                         // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
                         // noise::consume_response(self, keyst, &msg.noise)
                         assert!(transp_keys.is_some());
-                        todo!()
+
+                        let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
+                        
+                        // return confirmed key-pair
+                        let birth = Instant::now();
+                        Ok((
+                            Some(&peer.opaque),
+                            None,
+                            Some(KeyPair {
+                                birth,
+                                initiator: true,
+                                send: Key {
+                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
+                                    key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
+                                },
+                                recv: Key {
+                                    id: local,
+                                    key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
+                                },
+                            }),
+                        ))
 
                     },
                     Device::Responder(_) => {
