@@ -21,6 +21,9 @@ func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c
 func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
 func mac1() = 0x6d6163312d2d2d2d
 
+func zeros_16() = 0x00000000000000000000000000000000
+func zeros_32() = 0x0000000000000000000000000000000000000000000000000000000000000000
+
 
 locality Initiator : 1
 locality Responder : 1
@@ -120,7 +123,7 @@ counter aead_counter_msg2_C7<j@m> @ Responder<m>
 predicate valid_resp_ephemeral<m>(x) = exists j:idx. x == dhpk(get(E_resp<j@m>))
         
 name msg2_C7<@n,m> : RO[e_init, e_resp, ss] strict{0, 2}
-get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000) -> nonce || nonce || 
+get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (zeros_32()) -> nonce || nonce || 
     st_aead (if (valid_resp_ephemeral<m>[e_resp]) then Data<adv> |0| else Empty)
 
             aad x. true // sec(S_init<@n>) /\ sec(S_resp<@m>) ==> exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre<session i, pid n, session j, pid m>(c, ts, tau))
@@ -135,11 +138,11 @@ get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000) -> nonce || nonce ||
             assume (
                  crh(construction()) ++ e2 != 
                         get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++
-                        (0x00000000))
+                        (zeros_32()))
         };
         ()
         // forall n2:idx { 
-        //     disjoint_not_eq_lemma(preimage(msg1_mac1_key<@n2>), get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (0x00000000))
+        //     disjoint_not_eq_lemma(preimage(msg1_mac1_key<@n2>), get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (zeros_32()))
         // }
         
     }
@@ -232,7 +235,6 @@ func padding() = 0x000000
 func msg1_tag_value() = 0x01000000
 func msg2_tag_value() = 0x02000000
 func transp_tag_value() = 0x04000000
-func zeros_16() = 0x00000000000000000000000000000000
 
 def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
@@ -353,7 +355,7 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
     guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
     guard is_group_elem(msg2_ephemeral') in 
 
-    let psk = 0x00000000 in // should be zeros(32)
+    let psk = zeros_32() in 
 
     pcase (exists j:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m>))) in
     choose_idx j | msg2_ephemeral' == dhpk(get(E_resp<j@m>)) in
@@ -521,7 +523,7 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
     choose_idx i | ephemeral' == dhpk(get(E_init<i@n>)) in
     let ephemeral : if (ephemeral' == dhpk(get(E_init<i@n>))) then dhpk(E_init<i@n>) else (x:Data<adv>{x == ephemeral'}) = ephemeral' in 
     let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
-    let psk = 0x00000000 in // should be zeros(32)
+    let psk = zeros_32() in 
     let C4 = hash<msg2_C4<@n,m>[ephemeral, e_resp_pk]>(C3, e_resp_pk) in
     let H5 = crh(H4 ++ e_resp_pk) in
     let ss = dh_combine(ephemeral, get(E_resp<j@m>)) in 
