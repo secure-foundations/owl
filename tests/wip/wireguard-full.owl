@@ -324,7 +324,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp : Data<adv> |cipherlen(12)| =
         st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
-    let H4 = crh(H3 ++ timestamp) in
+    let H4 = crh(H3 ++ msg1_timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
