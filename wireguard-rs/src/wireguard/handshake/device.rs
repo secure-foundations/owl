@@ -476,9 +476,6 @@ impl<O> Device<O> {
                         let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
                         let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
                         let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
-                        dbg!(hex::encode(hs));
-                        dbg!(hex::encode(ck));
-                        dbg!(hex::encode(e_init_as_array));
 
                         // save state
                         *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
@@ -638,8 +635,7 @@ impl<O> Device<O> {
                             } => Ok((hs, ck)),
                             _ => Err(HandshakeError::InvalidState),
                         }?;
-                        dbg!(hex::encode(hs));
-                        dbg!(hex::encode(ck));
+
                         // dbg!(hex::encode(e_init_as_array));
                         let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
                             owl__initiator_msg1_H4: hs.to_vec(),
@@ -649,12 +645,11 @@ impl<O> Device<O> {
                         let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
 
 
-                        let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
-                        noise::consume_response(self, keyst, &msg.noise)
+                        // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
+                        // noise::consume_response(self, keyst, &msg.noise)
+                        assert!(transp_keys.is_some());
+                        todo!()
 
-                        
-                        // assert!(transp_keys.is_some());
-                        // todo!();
                     },
                     Device::Responder(_) => {
                         panic!("Responder cannot receive response");

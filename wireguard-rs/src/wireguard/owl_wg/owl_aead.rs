@@ -271,9 +271,6 @@ pub fn decrypt_combined(
 ) -> Result<Vec<u8>, Error> {
     match alg {
         Mode::Chacha20Poly1305 => {
-            dbg!(hex::encode(k));
-            dbg!(hex::encode(ctxt));
-            dbg!(hex::encode(aad));
             ChaCha20Poly1305::new(GenericArray::from_slice(k))
             .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
             .map_err(|e| { dbg!(e); Error::Decrypting })

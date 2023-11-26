@@ -47,7 +47,6 @@ pub fn owl_output<A>(
         t.view() == old(t).view().give_output(),
 {
     // todo!()
-    println!("owl_output: {:?}", hex::encode(x));
     // let len = std::cmp::min(x.len(), obuf.len());
     // dbg!(len);
     obuf[..x.len()].copy_from_slice(x);
