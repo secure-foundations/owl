@@ -166,9 +166,9 @@ rustFieldTy _ = return VecU8
 
 prettyFieldName f = owlpretty (map toLower f) <> owlpretty ":" 
 
-veilLayoutOf :: String -> Layout -> OwlDoc
-veilLayoutOf f (LBytes n) = prettyFieldName f <+> owlpretty "[u8; " <> owlpretty n <> owlpretty "]"
-veilLayoutOf f (LHexConst s) =
+vestLayoutOf :: String -> Layout -> OwlDoc
+vestLayoutOf f (LBytes n) = prettyFieldName f <+> owlpretty "[u8; " <> owlpretty n <> owlpretty "]"
+vestLayoutOf f (LHexConst s) =
     owlpretty "const" <+> prettyFieldName f <+> owlpretty "[u8; " <> owlpretty (show $ length s `div` 2) <> owlpretty "]" <+>
     owlpretty "=" <+> owlpretty "[" <> (hsep . punctuate comma $ hexStringToByteList' s) <> owlpretty "]"
     where     
@@ -176,9 +176,9 @@ veilLayoutOf f (LHexConst s) =
         hexStringToByteList' [] = []
         hexStringToByteList' (h1 : h2 : t) = 
             (if h1 == '0' then owlpretty "" else owlpretty h1) <> owlpretty h2 : hexStringToByteList' t
-veilLayoutOf f LUnboundedBytes = prettyFieldName f <+> owlpretty "Tail"
-veilLayoutOf f (LStruct n _) = prettyFieldName f <+> owlpretty n
-veilLayoutOf f (LEnum n _) = prettyFieldName f <+> owlpretty n
+vestLayoutOf f LUnboundedBytes = prettyFieldName f <+> owlpretty "Tail"
+vestLayoutOf f (LStruct n _) = prettyFieldName f <+> owlpretty n
+vestLayoutOf f (LEnum n _) = prettyFieldName f <+> owlpretty n
         
 
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
@@ -197,7 +197,7 @@ extractStruct owlName owlFields = do
     layoutFields <- case layout of
         LStruct _ fs -> return fs
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
-    veilFmt <- genVeilFormat name layoutFields
+    vestFmt <- genVestFormat name layoutFields
     viewImpl <- genViewImpl owlName rustFields
     parsleyWrappers <- genParsleyWrappers owlName rustFields'
     structFuncs <- mkStructFuncs owlName rustFields
@@ -205,7 +205,7 @@ extractStruct owlName owlFields = do
     typeLayouts %= M.insert name layout
     structs %= M.insert name rustFields
     structSpec <- Spec.extractStruct owlName owlFields
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec, veilFmt)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec, vestFmt)
     where
         mkStructFuncs owlName owlFields = return $
             M.fromList $
@@ -240,8 +240,8 @@ extractStruct owlName owlFields = do
                     <> line)
                 <> line)
 
-        genVeilFormat name layoutFields = do
-            let genField (f, l) = owlpretty "  " <> veilLayoutOf f l <> comma
+        genVestFormat name layoutFields = do
+            let genField (f, l) = owlpretty "  " <> vestLayoutOf f l <> comma
             let fields = map genField layoutFields
             return $ 
                 owlpretty name <+> owlpretty "=" <+> braces (line <>
@@ -346,7 +346,7 @@ extractEnum owlName owlCases' = do
     layoutCases <- case layout of
         LEnum _ cs -> return cs
         _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
-    veilFmt <- genVeilFormat name layoutCases
+    vestFmt <- genVestFormat name layoutCases
     viewImpl <- genViewImpl owlName rustCases
     let parsleyWrappers = genParsleyWrappers owlName
     enumFuncs <- mkEnumFuncs owlName owlCases
@@ -354,7 +354,7 @@ extractEnum owlName owlCases' = do
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) (owlName, rustCases)
     enumSpec <- Spec.extractEnum owlName owlCases'
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec, veilFmt)
+    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec, vestFmt)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
@@ -385,8 +385,8 @@ extractEnum owlName owlCases' = do
                     <> line)
                 <> line)
 
-        genVeilFormat name layoutCases = do
-            debugPrint $ "unimplemented: genVeilFormat for enum " ++ name
+        genVestFormat name layoutCases = do
+            debugPrint $ "unimplemented: genVestFormat for enum " ++ name
             return $ owlpretty ""
 
         genParsleyWrappers :: String -> OwlDoc
@@ -1312,12 +1312,12 @@ entryPoint locMap sharedNames pubKeys mainNames = do
 extractTyDefs :: [(TyVar, TB.TyDef)] -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
 extractTyDefs [] = return $ (owlpretty "", owlpretty "", owlpretty "")
 extractTyDefs ((tv, td):ds) = do
-    (dExtracted, sExtracted, veilDef) <- extractTyDef tv td
-    (dsExtracted, ssExtracted, veilRest) <- extractTyDefs ds
+    (dExtracted, sExtracted, vestDef) <- extractTyDef tv td
+    (dsExtracted, ssExtracted, vestRest) <- extractTyDefs ds
     return $ 
         ( dExtracted <> line <> line <> dsExtracted
         , sExtracted <> line <> line <> ssExtracted
-        , veilDef <> line <> line <> veilRest)
+        , vestDef <> line <> line <> vestRest)
     where
         extractTyDef name (TB.EnumDef cases) = do
             let (_, cases') = unsafeUnbind cases
@@ -1349,7 +1349,7 @@ extractModBody :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
 extractModBody mb = do
     (lookupLoc, locMap, sharedNames, pubKeys) <- preprocessModBody mb
     -- We get the list of tyDefs in reverse order of declaration, so reverse again
-    (tyDefsExtracted, specTyDefsExtracted, veilFile) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
+    (tyDefsExtracted, specTyDefsExtracted, vestFile) <- extractTyDefs $ reverse (mb ^. TB.tyDefs)
     locMap <- preprocessDefs lookupLoc mb locMap
     (mainNames, locsExtracted, locSpecsExtracted, libCode) <- extractLocs pubKeys locMap
     (ep, callMain) <- do 
@@ -1386,7 +1386,7 @@ extractModBody mb = do
         callMain                <> line <> line
       , lp                      <> line <> line <> line <> line <> 
         libCode
-      , veilFile
+      , vestFile
       )
 
 extract :: Flags -> TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))

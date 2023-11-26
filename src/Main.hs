@@ -55,18 +55,18 @@ main = do
                           when (args^.fExtract) $ do
                               let extfn = "extraction/src/main.rs"
                               let libfn = "extraction/src/lib.rs"
-                              let veilfn = "extraction/src/parse_serialize.veil"
+                              let vestfn = "extraction/src/parse_serialize.vest"
                               modBody <- doFlattening tcEnv
                               res <- E.extract args tcEnv (takeDirectory fn) modBody
                               case res of
                                 Left err -> EB.printErr err >> exitFailure
-                                Right (rust_code, lib_code, veil_file) -> do
+                                Right (rust_code, lib_code, vest_file) -> do
                                   -- putStrLn $ show rust_code
                                   writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
                                   writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
                                   appendFile libfn $ show lib_code
-                                  writeFile veilfn $ show veil_file
+                                  writeFile vestfn $ show vest_file
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           
