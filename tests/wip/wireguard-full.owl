@@ -375,7 +375,7 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
     let emptystring = 0x in 
     
     corr_case msg2_C7<@n,m>[e_init_pk, msg2_ephemeral, ss;2] in
-    case st_aead_dec(k0, msg2_empty, 0x, H6) {
+    case st_aead_dec(k0, msg2_empty, H6, 0x) {
     | None => None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
     | Some msg2_empty_dec => 
         false_elim in
