@@ -715,6 +715,7 @@ pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint {
     unimplemented!()  /* axiomatized */
 }
 
+#[verifier::opaque]
 pub open spec fn transp_recv_init_spec(
     cfg: cfg_Initiator,
     mut_state: state_Initiator,
@@ -725,7 +726,7 @@ pub open spec fn transp_recv_init_spec(
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused35 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : _unused36 , owlSpec__transp_keys_responder : responder_name , owlSpec__transp_keys_init_ephemeral : _unused37 , owlSpec__transp_keys_resp_ephemeral : eph_resp , owlSpec__transp_keys_T_init_send : _unused38 , owlSpec__transp_keys_T_resp_send : r2i_ }) in {
 (if (c == responder_name) then (let r2i = ((ret (r2i_))) in
-(ret(dec_st_aead(r2i, pkt, empty_seq_u8(), ctr)))) else ((ret (Option::None))))
+(ret(dec_st_aead(r2i, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
 )
@@ -912,16 +913,6 @@ pub closed spec fn owlSpec_get_sender_i_pure() -> Seq<u8> {
 }
 
 #[verifier::opaque]
-pub open spec fn Responder_main_spec(cfg: cfg_Responder, mut_state: state_Responder) -> (res: ITree<
-    ((), state_Responder),
-    Endpoint,
->) {
-    owl_spec!(mut_state,state_Responder,
-(ret (()))
-)
-}
-
-#[verifier::opaque]
 pub open spec fn transp_recv_resp_spec(
     cfg: cfg_Responder,
     mut_state: state_Responder,
@@ -932,7 +923,7 @@ pub open spec fn transp_recv_resp_spec(
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused799 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : initiator_name , owlSpec__transp_keys_responder : _unused800 , owlSpec__transp_keys_init_ephemeral : eph_init , owlSpec__transp_keys_resp_ephemeral : _unused801 , owlSpec__transp_keys_T_init_send : i2r_ , owlSpec__transp_keys_T_resp_send : _unused802 }) in {
 (if (c == initiator_name) then (let i2r = ((ret (i2r_))) in
-(ret(dec_st_aead(i2r, pkt, empty_seq_u8(), ctr)))) else ((ret (Option::None))))
+(ret(dec_st_aead(i2r, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
 )
@@ -1059,7 +1050,7 @@ let k0 = ((ret(kdf( (0+NONCE_SIZE()+KEY_SIZE()) as usize
 , C1
 , ss_msg1_ephemeral_S_resp ).subrange( 0+NONCE_SIZE()
 , 0+NONCE_SIZE()+KEY_SIZE() )))) in
-let caseval = ((ret(dec_st_aead(k0, msg1_static, H2, empty_seq_u8())))) in
+let caseval = ((ret(dec_st_aead(k0, msg1_static, empty_seq_u8(), H2)))) in
 (case (caseval){
 | None => {(ret (Option::None))},
 | Some (msg1_static_dec) => {let opk = (call(checkpk_resp_spec( cfg
@@ -1078,7 +1069,7 @@ let C3 = ((ret(kdf( (0+NONCE_SIZE()+KEY_SIZE()) as usize
 let k1 = ((ret(kdf( (0+NONCE_SIZE()+KEY_SIZE()) as usize
 , C2
 , ss_S_init_S_resp ).subrange(0+NONCE_SIZE(), 0+NONCE_SIZE()+KEY_SIZE())))) in
-let caseval = ((ret(dec_st_aead(k1, msg1_timestamp, H3, empty_seq_u8())))) in
+let caseval = ((ret(dec_st_aead(k1, msg1_timestamp, empty_seq_u8(), H3)))) in
 (case (caseval){
 | None => {(ret (Option::None))},
 | Some (msg1_timestamp_dec) => {let H4 = ((ret (crh( concat( H3
@@ -1949,8 +1940,8 @@ impl<O> cfg_Initiator<O> {
                                 owl_dec_st_aead(
                                     vec_as_slice(&(*arc_clone(&owl__x21))),
                                     vec_as_slice(&(*arc_clone(&owl__x22))),
-                                    vec_as_slice(&(*arc_clone(&owl__x23))),
                                     vec_as_slice(&(*arc_clone(&owl__x24))),
+                                    vec_as_slice(&(*arc_clone(&owl__x23))),
                                 ),
                                 Tracked(itree),
                             )
@@ -2389,21 +2380,21 @@ impl<O> cfg_Initiator<O> {
                                 let owl__x369 = arc_clone(&temp_owl__x369);
                                 let temp_owl__x371 = { arc_clone(&owl_msg2_empty126) };
                                 let owl__x371 = arc_clone(&temp_owl__x371);
-                                let temp_owl__x373 = {
+                                let temp_owl__x373 = { arc_clone(&owl__x267) };
+                                let owl__x373 = arc_clone(&temp_owl__x373);
+                                let temp_owl__x375 = {
                                     {
                                         let x: Vec<u8> = mk_vec_u8![];
                                         x
                                     }
                                 };
-                                let owl__x373 = arc_new(temp_owl__x373);
-                                let temp_owl__x375 = { arc_clone(&owl__x267) };
-                                let owl__x375 = arc_clone(&temp_owl__x375);
+                                let owl__x375 = arc_new(temp_owl__x375);
                                 let temp_owl__x376 = {
                                 owl_dec_st_aead(
                                     vec_as_slice(&(*arc_clone(&owl__x369))),
                                     vec_as_slice(&(*arc_clone(&owl__x371))),
-                                    vec_as_slice(&(*arc_clone(&owl__x373))),
                                     vec_as_slice(&(*arc_clone(&owl__x375))),
+                                    vec_as_slice(&(*arc_clone(&owl__x373))),
                                 )
                                 };
                                 let owl__x376 = temp_owl__x376;
@@ -3128,8 +3119,8 @@ impl<O> cfg_Responder<O> {
                                 owl_dec_st_aead(
                                     vec_as_slice(&(*arc_clone(&owl__x785))),
                                     vec_as_slice(&(*arc_clone(&owl__x786))),
-                                    vec_as_slice(&(*arc_clone(&owl__x787))),
                                     vec_as_slice(&(*arc_clone(&owl__x788))),
+                                    vec_as_slice(&(*arc_clone(&owl__x787))),
                                 ),
                                 Tracked(itree),
                             )
@@ -3270,6 +3261,20 @@ impl<O> cfg_Responder<O> {
         Ok(res_inner)
     }
     
+    pub exec fn owl_generate_msg2_wrapper(&self, s: &mut state_Responder, msg1_val: owl_responder_msg1_val, obuf: &mut [u8]) -> (_: owl_transp_keys) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            generate_msg1_spec_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_generate_msg2(Tracked(call_token), s, msg1_val, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_generate_msg2(
         &self,
@@ -3707,6 +3712,20 @@ impl<O> cfg_Responder<O> {
         };
         Ok(res_inner)
     }
+
+    pub exec fn owl_receive_msg1_wrapper(&self, s: &mut state_Responder, ibuf: &[u8]) -> (_: Option<owl_responder_msg1_val>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            receive_msg2_spec_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_receive_msg1(Tracked(call_token), s, ibuf).unwrap();
+        res
+    }
     
     #[verifier::spinoff_prover]
     pub fn owl_receive_msg1(
@@ -3918,8 +3937,8 @@ impl<O> cfg_Responder<O> {
                             owl_dec_st_aead(
                                 vec_as_slice(&(*arc_clone(&owl__x1529))),
                                 vec_as_slice(&(*arc_clone(&owl__x1531))),
-                                vec_as_slice(&(*arc_clone(&owl__x1533))),
                                 vec_as_slice(&(*arc_clone(&owl__x1535))),
+                                vec_as_slice(&(*arc_clone(&owl__x1533))),
                             )
                             };
                             let owl__x1536 = temp_owl__x1536;
@@ -4074,8 +4093,8 @@ impl<O> cfg_Responder<O> {
                                                 owl_dec_st_aead(
                                                     vec_as_slice(&(*arc_clone(&owl__x1509))),
                                                     vec_as_slice(&(*arc_clone(&owl__x1511))),
-                                                    vec_as_slice(&(*arc_clone(&owl__x1513))),
                                                     vec_as_slice(&(*arc_clone(&owl__x1515))),
+                                                    vec_as_slice(&(*arc_clone(&owl__x1513))),
                                                 )
                                                 };
                                                 let owl__x1516 = temp_owl__x1516;
@@ -4301,7 +4320,8 @@ impl<O> cfg_Responder<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            todo!(/* implement owl_get_sender_r */)
+            let v = self.device.get_singleton_id();
+            (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)
     }

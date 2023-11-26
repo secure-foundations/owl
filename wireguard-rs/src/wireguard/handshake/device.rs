@@ -537,65 +537,107 @@ impl<O> Device<O> {
         // de-multiplex the message type field
         match LittleEndian::read_u32(msg) {
             TYPE_INITIATION => {
-                // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlResponder here
+                match self {
+                    Device::NoOwl(_) => {
+                        // parse message
+                        let msg = Initiation::parse(msg)?;
 
-                // parse message
-                let msg = Initiation::parse(msg)?;
+                        // check mac1 field
+                        keyst.macs.check_mac1(msg.noise.as_bytes(), &msg.macs)?;
 
-                // check mac1 field
-                keyst.macs.check_mac1(msg.noise.as_bytes(), &msg.macs)?;
+                        // address validation & DoS mitigation
+                        if let Some(src) = src {
+                            // check mac2 field
+                            if !keyst.macs.check_mac2(msg.noise.as_bytes(), &src, &msg.macs) {
+                                let mut reply = Default::default();
+                                keyst.macs.create_cookie_reply(
+                                    rng,
+                                    msg.noise.f_sender.get(),
+                                    &src,
+                                    &msg.macs,
+                                    &mut reply,
+                                );
+                                return Ok((None, Some(reply.as_bytes().to_owned()), None));
+                            }
 
-                // address validation & DoS mitigation
-                if let Some(src) = src {
-                    // check mac2 field
-                    if !keyst.macs.check_mac2(msg.noise.as_bytes(), &src, &msg.macs) {
-                        let mut reply = Default::default();
-                        keyst.macs.create_cookie_reply(
-                            rng,
-                            msg.noise.f_sender.get(),
-                            &src,
-                            &msg.macs,
-                            &mut reply,
-                        );
-                        return Ok((None, Some(reply.as_bytes().to_owned()), None));
-                    }
+                            // check ratelimiter
+                            if !self.inner().limiter.lock().unwrap().allow(&src.ip()) {
+                                return Err(HandshakeError::RateLimited);
+                            }
+                        }
 
-                    // check ratelimiter
-                    if !self.inner().limiter.lock().unwrap().allow(&src.ip()) {
-                        return Err(HandshakeError::RateLimited);
-                    }
+                        // consume the initiation
+                        let (peer, pk, st) = noise::consume_initiation(self, keyst, &msg.noise)?;
+
+                        // allocate new index for response
+                        let local = self.inner().allocate(rng, &pk);
+
+                        // prepare memory for response, TODO: take slice for zero allocation
+                        let mut resp = Response::default();
+
+                        // create response (release id on error)
+                        let keys = noise::create_response(rng, peer, &pk, local, st, &mut resp.noise)
+                            .map_err(|e| {
+                                self.release(local);
+                                e
+                            })?;
+
+                        // add macs to response
+                        peer.macs
+                            .lock()
+                            .generate(resp.noise.as_bytes(), &mut resp.macs);
+
+                        // return unconfirmed keypair and the response as vector
+                        Ok((
+                            Some(&peer.opaque),
+                            Some(resp.as_bytes().to_owned()),
+                            Some(keys),
+                        ))
+                    },
+                    Device::Initiator(_) => {
+                        panic!("Initiator cannot receive initiation")
+                    },
+                    Device::Responder(r) => {
+                        let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
+                        let msg1_val = r.cfg.owl_receive_msg1_wrapper(&mut dummy_state, msg);
+
+                        let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
+
+
+                        let pk: [u8; 32] = (&msg1_val.owl__responder_msg1_sender_pk[..]).try_into().unwrap();
+                        let pk = PublicKey::from(pk);
+                        let peer = self.inner().lookup_pk(&pk)?;
+
+                        // allocate new index for response
+                        let local = self.inner().allocate(rng, &pk);
+
+                        // allocate buffer for response
+                        let mut resp = Response::default();
+
+                        let transp_keys = r.cfg.owl_generate_msg2_wrapper(&mut dummy_state, msg1_val, &mut resp.as_bytes_mut());
+
+                        Ok((
+                            Some(&peer.opaque),
+                            Some(resp.as_bytes().to_owned()),
+                            Some(KeyPair {
+                                birth: Instant::now(),
+                                initiator: false,
+                                send: Key {
+                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
+                                    key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
+                                },
+                                recv: Key {
+                                    id: local,
+                                    key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
+                                },
+                            }),
+                        ))
+
+
+                    },
                 }
-
-                // consume the initiation
-                let (peer, pk, st) = noise::consume_initiation(self, keyst, &msg.noise)?;
-
-                // allocate new index for response
-                let local = self.inner().allocate(rng, &pk);
-
-                // prepare memory for response, TODO: take slice for zero allocation
-                let mut resp = Response::default();
-
-                // create response (release id on error)
-                let keys = noise::create_response(rng, peer, &pk, local, st, &mut resp.noise)
-                    .map_err(|e| {
-                        self.release(local);
-                        e
-                    })?;
-
-                // add macs to response
-                peer.macs
-                    .lock()
-                    .generate(resp.noise.as_bytes(), &mut resp.macs);
-
-                // return unconfirmed keypair and the response as vector
-                Ok((
-                    Some(&peer.opaque),
-                    Some(resp.as_bytes().to_owned()),
-                    Some(keys),
-                ))
             }
             TYPE_RESPONSE => {
-                // TODO: based on type of Self, use the Owl or non-Owl version --- only OwlInitiator here
                 match self {
                     Device::NoOwl(_) => {
                         let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;

@@ -134,11 +134,17 @@ pub fn encrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    dbg!(hex::encode(&k));
+    dbg!(hex::encode(&iv));
+    dbg!(hex::encode(&msg));
+    dbg!(hex::encode(&aad));
     match alg {
         Mode::Chacha20Poly1305 => {
-            ChaCha20Poly1305::new(GenericArray::from_slice(k))
+            let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
             .encrypt(iv.into(), Payload { msg: msg, aad: aad })
-            .map_err(|_| Error::Encrypting)
+            .map_err(|_| Error::Encrypting);
+            dbg!(r.clone().map(|v| hex::encode(&v)));
+            r
         }
         _ => panic!("unsupported aead mode"),
     }
@@ -269,11 +275,17 @@ pub fn decrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    dbg!(hex::encode(&k));
+    dbg!(hex::encode(&iv));
+    dbg!(hex::encode(&ctxt));
+    dbg!(hex::encode(&aad));
     match alg {
         Mode::Chacha20Poly1305 => {
-            ChaCha20Poly1305::new(GenericArray::from_slice(k))
+            let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
             .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
-            .map_err(|e| { dbg!(e); Error::Decrypting })
+            .map_err(|e| { dbg!(e); Error::Decrypting });
+            dbg!(r.clone().map(|v| hex::encode(&v)));
+            r
         },
         _ => panic!("unsupported aead mode"),
     }

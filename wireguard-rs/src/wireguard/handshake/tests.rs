@@ -178,6 +178,7 @@ fn handshake_under_load() {
     assert_eq!(kp1.recv, kp2.send);
 }
 
+#[cfg(test)]
 fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
     let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
         setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, dev1_is_owl, dev2_is_owl);
@@ -246,5 +247,17 @@ fn handshake_no_load() {
 
 #[test]
 fn handshake_owl_initiator_rs_responder() {
-    test_handshake(true, false, 1);
+    test_handshake(true, false, 10);
 }
+
+#[test]
+fn handshake_rs_initiator_owl_responder() {
+    test_handshake(false, true, 10);
+}
+
+#[test]
+fn handshake_owl_initiator_owl_responder() {
+    test_handshake(true, true, 10);
+}
+
+
