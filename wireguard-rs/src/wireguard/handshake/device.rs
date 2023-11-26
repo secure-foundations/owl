@@ -395,8 +395,10 @@ impl<O> DeviceInner<O> {
             .ok_or(HandshakeError::UnknownPublicKey)
     }
 
-    pub fn has_pk(&self, pk: &[u8; 32]) -> bool {
-        self.pk_map.contains_key(pk)
+    pub fn get_ss(&self, pk: &[u8; 32]) -> Option<[u8; 32]> {
+        self.pk_map
+            .get(pk.as_bytes())
+            .map(|peer| peer.ss)
     }
 
     // Internal function
@@ -479,7 +481,14 @@ impl<O> Device<O> {
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
                         // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
                         // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
-                        let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), &mut msg.as_bytes_mut());
+                        let static_static = peer.ss;
+
+                        let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(
+                            &mut dummy_state, 
+                            Arc::new(pk.as_bytes().to_vec()), 
+                            Arc::new(static_static.as_bytes().to_vec()), 
+                            &mut msg.as_bytes_mut()
+                        );
                         
                         let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
                         let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
