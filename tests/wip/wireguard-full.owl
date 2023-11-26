@@ -331,8 +331,6 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n> :
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
 
-    // TODO: This `hash` call needs to call `crh`, not `hkdf`, need to specify this in the RO decl somehow.
-    // it should be `crh(mac1() ++ dhpk_S_resp)`
     // let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
     let msg1_mac1_k = crh(mac1() ++ dhpk_S_resp) in 
     let msg1_mac1 = mac(msg1_mac1_k, 
@@ -540,7 +538,6 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
     let msg2_tag = msg2_tag_value() in 
     // let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
     let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
-    // // TODO this needs to incorporate the tag byte
     let msg2_mac1 = mac(msg2_mac1_k,
         msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
         msg2_empty) in 
