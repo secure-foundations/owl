@@ -231,8 +231,10 @@ fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
         dev1.release(ks_i.local_id());
         dev2.release(ks_r.local_id());
 
-        // avoid initiation flood detection
-        // wait();
+        // avoid initiation flood detection if we are doing multiple handshakes
+        if num_tests > 1 {
+            wait();
+        }
     }
 
     dev1.remove(&pk2).unwrap();

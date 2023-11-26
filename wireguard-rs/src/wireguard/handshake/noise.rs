@@ -395,8 +395,9 @@ pub(super) fn create_initiation<R: RngCore + CryptoRng, O>(
         let hs = HASH!(&hs, &msg.f_static[..]);
 
         // (C, k) := Kdf2(C, DH(S_priv, S_pub))
+        let v = shared_secret(&keyst.sk, &pk)?;
 
-        let (ck, key) = KDF2!(&ck, &peer.ss);
+        let (ck, key) = KDF2!(&ck, v.as_bytes());
 
         // msg.timestamp := Aead(k, 0, Timestamp(), H)
 
@@ -479,8 +480,9 @@ pub(super) fn consume_initiation<'a, O>(
         let hs = HASH!(&hs, &msg.f_static[..]);
 
         // (C, k) := Kdf2(C, DH(S_priv, S_pub))
+        let v = shared_secret(&keyst.sk, &PublicKey::from(pk))?;
 
-        let (ck, key) = KDF2!(&ck, &peer.ss);
+        let (ck, key) = KDF2!(&ck, v.as_bytes());
 
         // msg.timestamp := Aead(k, 0, Timestamp(), H)
 
