@@ -265,27 +265,59 @@ use test::Bencher;
 #[bench]
 fn bench_rs_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(false, false, 1);
+        test_handshake(false, false, 1)
     });
 }
 
 #[bench]
 fn bench_owl_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(true, true, 1);
+        test_handshake(true, true, 1)
     });
 }
 
 #[bench]
 fn bench_owl_init_rs_resp_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(true, false, 1);
+        test_handshake(true, false, 1)
     });
 }
 
 #[bench]
 fn bench_rs_init_owl_resp_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(false, true, 1);
+        test_handshake(false, true, 1)
+    });
+}
+
+#[bench]
+fn bench_rs_handshake_init(b: &mut Bencher) {
+    b.iter(|| {
+        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
+            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, false);
+    });
+}
+
+#[bench]
+fn bench_owl_handshake_init(b: &mut Bencher) {
+    b.iter(|| {
+        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
+            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, true);
+    });
+}
+
+#[bench]
+fn bench_owl_init_rs_resp_handshake_init(b: &mut Bencher) {
+    b.iter(|| {
+        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
+            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, false);
+    });
+}
+
+#[bench]
+fn bench_rs_init_owl_resp_handshake_init(b: &mut Bencher) {
+    b.iter(|| {
+        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
+            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, true);
     });
 }
