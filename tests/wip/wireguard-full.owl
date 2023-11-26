@@ -502,7 +502,7 @@ def receive_msg1<j@m> () @ Responder<m>
                         | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
                         | Some msg1_timestamp_dec =>
                             false_elim in 
-                            let H4 = crh(H3 ++ msg1_timestamp_dec) in
+                            let H4 = crh(H3 ++ msg1_timestamp) in
                             let retval : x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = 
                                 responder_msg1_val(C3, H4, msg1_ephemeral, dhpk_S_init, msg1_sender) in
                             let v : exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = pack<n>(retval) in 
