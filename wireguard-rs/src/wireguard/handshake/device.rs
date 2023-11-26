@@ -114,9 +114,14 @@ impl<O> Device<O> {
 
     pub fn new_owl_responder() -> Device<O> {
         let inner = DeviceInner::new();
+
+        // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
+        // This is a hack---can be made more robust later
+        let eph_sk = StaticSecret::new(&mut OsRng);
+
         let cfg = owl_wireguard::cfg_Responder {
             owl_S_resp: Arc::new(vec![]),
-            owl_E_resp: Arc::new(vec![]),
+            owl_E_resp: Arc::new(eph_sk.to_bytes().to_vec()),
             pk_owl_S_resp: Arc::new(vec![]),
             pk_owl_S_init: Arc::new(vec![]),
             pk_owl_E_resp: Arc::new(vec![]),
@@ -603,7 +608,6 @@ impl<O> Device<O> {
 
                         let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
 
-
                         let pk: [u8; 32] = (&msg1_val.owl__responder_msg1_sender_pk[..]).try_into().unwrap();
                         let pk = PublicKey::from(pk);
                         let peer = self.inner().lookup_pk(&pk)?;
@@ -623,7 +627,7 @@ impl<O> Device<O> {
                                 birth: Instant::now(),
                                 initiator: false,
                                 send: Key {
-                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
+                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_initiator.try_into().unwrap()),
                                     key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
                                 },
                                 recv: Key {
