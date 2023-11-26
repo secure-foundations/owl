@@ -25,6 +25,62 @@ verus! {
         }
     }
 
+    /// opaque type abstraction over raw bytes
+    pub struct SecBytes(Vec<u8>);
+
+    impl DView for SecBytes {
+        type V = Seq<u8>;
+        closed spec fn dview(&self) -> Self::V
+        {
+            self.0.dview()
+        }
+    }
+
+    impl SecBytes {
+
+        pub fn length(&self) -> (res: usize)
+            ensures
+                res == self.dview().len()
+        {
+            self.0.length()
+        }
+
+        /// memcpy the secret bytes from `self.0[i..j]` to a new secret bytes
+        pub fn subrange(&self, i: usize, j: usize) -> (res: Self)
+            requires
+                0 <= i <= j <= self.dview().len()
+            ensures
+                res.dview() == self.dview().subrange(i as int, j as int)
+        {
+            Self(slice_to_vec(slice_subrange(vec_as_slice(&self.0), i, j))) // (&self.0[i..j]).to_vec()
+        }
+
+        pub fn append(&mut self, other: &mut Self)
+            ensures
+                self.dview() == old(self).dview() + old(other).dview()
+        {
+            vec_append(&mut self.0, &mut other.0);
+        }
+    }
+
+    pub struct SecStream {
+        pub data : SecBytes,
+        pub start : usize
+    }
+
+    impl DView for SecStream {
+        type V = SpecStream;
+        open spec fn dview(&self) -> SpecStream {
+            SpecStream {
+                data: self.data.dview(),
+                start: self.start as int,
+            }
+        }
+    }
+
+    pub type SecParseResult<Sec> = Result<(SecStream, usize, Sec), ParseError>;
+    pub type SecSerializeResult = Result<(SecStream, usize), SerializeError>;
+
     #[derive(PartialEq, Eq)]
     pub enum ParseError {
         Eof,
@@ -42,6 +98,7 @@ verus! {
         RepeatNMismatch, // for spec_serialize_repeat_n
         TailLengthMismatch, // for spec_serialize_tail
         ConstMismatch, // for const serializers
+        BytesLengthMismatch, // for spec_serialize_bytes
     }
 
     pub type ParseResult<Output> = Result<(Stream, usize, Output), ParseError>;
@@ -71,6 +128,20 @@ verus! {
         }
     }
 
+    impl std::fmt::Debug for SecStream {
+        #[verifier(external)]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "SecStream {{ data: {:?}, start: {} }}", self.data, self.start)
+        }
+    }
+
+    impl std::fmt::Debug for SecBytes {
+        #[verifier(external)]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "SecBytes {{ {:?} }}", self.0)
+        }
+    }
+
     impl std::fmt::Debug for ParseError {
         #[verifier(external)]
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,6 +165,7 @@ verus! {
                 Self::IntegerOverflow => write!(f, "IntegerOverflow"),
                 Self::TailLengthMismatch => write!(f, "TailLengthMismatch"),
                 Self::ConstMismatch => write!(f, "ConstMismatch"),
+                Self::BytesLengthMismatch => write!(f, "BytesLengthMismatch"),
             }
         }
     }
@@ -187,8 +259,8 @@ verus! {
         s2: SpecStream) -> bool
     {
         if let Ok((sout1, n, x1)) = parser(s1) {
-            if 0 <= s1.start <= s1.start + n <= s1.data.len()
-            && 0 <= s2.start <= s2.start + n <= s2.data.len()
+            if 0 <= s1.start <= s1.start + n <= s1.data.len() <= usize::MAX
+            && 0 <= s2.start <= s2.start + n <= s2.data.len() <= usize::MAX
             && s1.data.subrange(s1.start, s1.start + n) == s2.data.subrange(s2.start, s2.start + n) {
                 if let Ok((sout2, m, x2)) = parser(s2) {
                     n == m && x1 == x2
@@ -327,7 +399,7 @@ verus! {
     #[verifier(opaque)]
     pub open spec fn prop_parse_correct<T>(parser: FnSpec(SpecStream) -> SpecParseResult<T>, serializer: FnSpec(SpecStream, T) -> SpecSerializeResult) -> bool
     {
-        forall |s: SpecStream, v: T| prop_parse_correct_on(parser, serializer, s, v)
+        forall |s: SpecStream, v: T| s.data.len() <= usize::MAX ==> prop_parse_correct_on(parser, serializer, s, v)
     }
 
     #[verifier(opaque)]
@@ -436,7 +508,7 @@ verus! {
         requires
             prop_parse_correct(parser, serializer)
         ensures
-            prop_parse_correct_on(parser, serializer, s, v)
+            s.data.len() <= usize::MAX ==> prop_parse_correct_on(parser, serializer, s, v)
     {
         reveal(prop_parse_correct);
     }
@@ -489,6 +561,108 @@ verus! {
             prop_serialize_exec_spec_equiv_on(s, v, res, spec_serializer)
     {
         reveal(prop_serialize_exec_spec_equiv);
+    }
+
+    #[verifier(opaque)]
+    pub open spec fn prop_sec_parse_exec_spec_equiv<T, P>(
+        exec_parser: P,
+        spec_parser: FnSpec(SpecStream) -> SpecParseResult<T::V>) -> bool
+        where
+            P: FnOnce(SecStream) -> SecParseResult<T>,
+            T: DView,
+    {
+        &&& forall |s| #[trigger] exec_parser.requires((s,))
+        &&& forall |s, res| #[trigger] exec_parser.ensures((s,), res) ==> prop_sec_parse_exec_spec_equiv_on(s, res, spec_parser)
+    }
+
+    #[verifier(opaque)]
+    pub open spec fn prop_sec_serialize_exec_spec_equiv<T, P>(
+        exec_serializer: P,
+        spec_serializer: FnSpec(SpecStream, T::V) -> SpecSerializeResult) -> bool
+        where
+            P: FnOnce(SecStream, T) -> SecSerializeResult,
+            T: std::fmt::Debug + DView,
+    {
+        &&& forall |s, v| #[trigger] exec_serializer.requires((s, v))
+        &&& forall |s, v, res| #[trigger] exec_serializer.ensures((s, v), res) ==> prop_sec_serialize_exec_spec_equiv_on(s, v, res, spec_serializer)
+    }
+
+
+    pub proof fn lemma_sec_parse_exec_spec_equiv_on<T, P>(
+        exec_parser: P,
+        spec_parser: FnSpec(SpecStream) -> SpecParseResult<T::V>,
+        s: SecStream, res: SecParseResult<T>)
+        where
+            P: FnOnce(SecStream) -> SecParseResult<T>,
+            T: DView,
+        requires
+            prop_sec_parse_exec_spec_equiv(exec_parser, spec_parser),
+            exec_parser.ensures((s,), res)
+        ensures
+            prop_sec_parse_exec_spec_equiv_on(s, res, spec_parser)
+    {
+        reveal(prop_sec_parse_exec_spec_equiv);
+    }
+
+    pub proof fn lemma_sec_serialize_exec_spec_equiv_on<T, P>(
+        exec_serializer: P,
+        spec_serializer: FnSpec(SpecStream, T::V) -> SpecSerializeResult,
+        s: SecStream, v: T, res: SecSerializeResult)
+        where
+            P: FnOnce(SecStream, T) -> SecSerializeResult,
+            T: std::fmt::Debug + DView,
+        requires
+            prop_sec_serialize_exec_spec_equiv(exec_serializer, spec_serializer),
+            exec_serializer.ensures((s, v), res)
+        ensures
+            prop_sec_serialize_exec_spec_equiv_on(s, v, res, spec_serializer)
+    {
+        reveal(prop_sec_serialize_exec_spec_equiv);
+    }
+
+
+    // would be great if Verus supports impl DView<V = SpecStream>
+
+    pub open spec fn prop_sec_parse_exec_spec_equiv_on<T: DView>(
+        s: SecStream,
+        res: SecParseResult<T>,
+        spec_parser: FnSpec(SpecStream) -> SpecParseResult<T::V>) -> bool
+    {
+        match spec_parser(s.dview()) {
+            Ok((sout, sn, sx)) => {
+                if let Ok((s, n, x)) = res {
+                    &&& s.dview() == sout
+                    &&& n == sn
+                    &&& x.dview() == sx
+                } else {
+                    false
+                }
+            }
+            Err(e) => {
+                if let Err(e2) = res {
+                    e == e2
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    pub open spec fn prop_sec_serialize_exec_spec_equiv_on<T: DView>(
+        s: SecStream,
+        v: T,
+        res: SecSerializeResult,
+        spec_serializer: FnSpec(SpecStream, T::V) -> SpecSerializeResult) -> bool
+        where T: std::fmt::Debug + DView
+    {
+        match spec_serializer(s.dview(), v.dview()) {
+            Ok((sout, sn)) => {
+                &&& res.is_ok()
+                &&& res.unwrap().0.dview() == sout
+                &&& res.unwrap().1 == sn
+            }
+            Err(e) => res.is_err() && res.unwrap_err() == e
+        }
     }
 
 // Conversion between u16 and little-endian byte sequences
@@ -2716,6 +2890,85 @@ verus! {
         }
     }
 
+    pub exec fn sec_parse_pair<P1, P2, R1, R2>(
+        exec_parser1: P1,
+        exec_parser2: P2,
+        Ghost(spec_parser1): Ghost<FnSpec(SpecStream) -> SpecParseResult<R1::V>>,
+        Ghost(spec_parser2): Ghost<FnSpec(SpecStream) -> SpecParseResult<R2::V>>,
+        s: SecStream) -> (res: SecParseResult<(R1,R2)>)
+        where
+            R1: DView,
+            R2: DView,
+            P1: FnOnce(SecStream) -> SecParseResult<R1>,
+            P2: FnOnce(SecStream) -> SecParseResult<R2>,
+        requires
+            prop_sec_parse_exec_spec_equiv(exec_parser1, spec_parser1),
+            prop_sec_parse_exec_spec_equiv(exec_parser2, spec_parser2),
+        ensures
+            prop_sec_parse_exec_spec_equiv_on(s, res, spec_parse_pair(spec_parser1, spec_parser2))
+        // prop_parse_exec_spec_equiv(parse_pair(exec_parser1, exec_parser2, spec_parser1, spec_parser2), spec_parse_pair(spec_parser1, spec_parser2))
+    {
+        proof { reveal(prop_sec_parse_exec_spec_equiv); }
+        let res1 = exec_parser1(s);
+        proof { lemma_sec_parse_exec_spec_equiv_on(exec_parser1, spec_parser1, s, res1); }
+        match res1 {
+            Ok((s1, n1, r1)) => {
+                let res2 = exec_parser2(s1);
+                proof { lemma_sec_parse_exec_spec_equiv_on(exec_parser2, spec_parser2, s1, res2); }
+                match res2 {
+                    Ok((s2, n2, r2)) => {
+                        if n1 > usize::MAX - n2 {
+                            Err(ParseError::IntegerOverflow)
+                        } else {
+                            Ok((s2, n1 + n2, (r1, r2)))
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub exec fn sec_serialize_pair<S1, S2, T1, T2>(
+        exec_serializer1: S1,
+        exec_serializer2: S2,
+        Ghost(spec_serializer1): Ghost<FnSpec(SpecStream, T1::V) -> SpecSerializeResult>,
+        Ghost(spec_serializer2): Ghost<FnSpec(SpecStream, T2::V) -> SpecSerializeResult>,
+        s: SecStream, v: (T1, T2)) -> (res: SecSerializeResult)
+        where
+            S1: FnOnce(SecStream, T1) -> SecSerializeResult,
+            S2: FnOnce(SecStream, T2) -> SecSerializeResult,
+            T1: std::fmt::Debug + DView,
+            T2: std::fmt::Debug + DView,
+        requires
+            prop_sec_serialize_exec_spec_equiv(exec_serializer1, spec_serializer1),
+            prop_sec_serialize_exec_spec_equiv(exec_serializer2, spec_serializer2),
+        ensures
+            prop_sec_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_pair(spec_serializer1, spec_serializer2))
+    {
+        proof { reveal(prop_sec_serialize_exec_spec_equiv); }
+        let res1 = exec_serializer1(s, v.0);
+        proof { lemma_sec_serialize_exec_spec_equiv_on(exec_serializer1, spec_serializer1, s, v.0, res1); }
+        match res1 {
+            Ok((s, n)) => {
+                let res2 = exec_serializer2(s, v.1);
+                proof { lemma_sec_serialize_exec_spec_equiv_on(exec_serializer2, spec_serializer2, s, v.1, res2); }
+                match res2 {
+                    Ok((s, m)) => {
+                        if n > usize::MAX - m {
+                            Err(SerializeError::IntegerOverflow)
+                        } else {
+                            Ok((s, n + m))
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     pub proof fn lemma_parse_pair_correct<T1, T2>(
         parser1: FnSpec(SpecStream) -> SpecParseResult<T1>,
         parser2: FnSpec(SpecStream) -> SpecParseResult<T2>,
@@ -2733,9 +2986,10 @@ verus! {
                                 spec_serialize_pair(serializer1, serializer2))
     {
         reveal(prop_parse_correct);
-        assert forall |s, v| prop_parse_correct_on(spec_parse_pair(parser1, parser2),
-        spec_serialize_pair(serializer1, serializer2), s, v) by {
-            lemma_parse_pair_correct_on(parser1, parser2, serializer1, serializer2, s, v);
+        assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> prop_parse_correct_on(spec_parse_pair(parser1, parser2), spec_serialize_pair(serializer1, serializer2), s, v) by {
+            if s.data.len() <= usize::MAX {
+                lemma_parse_pair_correct_on(parser1, parser2, serializer1, serializer2, s, v);
+            }
         }
     }
 
@@ -2951,8 +3205,8 @@ verus! {
             prop_parse_strong_prefix_on(spec_parse_pair(parser1, parser2), s1, s2)
     {
         if let Ok((sout1, n, x1)) = spec_parse_pair(parser1, parser2)(s1) {
-            if 0 <= s1.start <= s1.start + n <= s1.data.len()
-            && 0 <= s2.start <= s2.start + n <= s2.data.len()
+            if 0 <= s1.start <= s1.start + n <= s1.data.len() <= usize::MAX
+            && 0 <= s2.start <= s2.start + n <= s2.data.len() <= usize::MAX
             && s1.data.subrange(s1.start, s1.start + n) == s2.data.subrange(s2.start, s2.start + n) {
                 // assert(parser1(s1).is_ok());
                 if let Ok((p1s1, n1, p1x1)) = parser1(s1) {
@@ -2998,6 +3252,7 @@ verus! {
         serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
         s: SpecStream, v: (T1, T2))
         requires
+            s.data.len() <= usize::MAX,
             prop_serialize_well_behaved(serializer1),
             prop_serialize_well_behaved(serializer2),
             prop_parse_well_behaved(parser1),
@@ -3400,8 +3655,10 @@ verus! {
             prop_parse_correct(spec_parse_repeat_n(parser, n), spec_serialize_repeat_n(serializer, n))
     {
         reveal(prop_parse_correct);
-        assert forall |s: SpecStream, vs: Seq<T>| prop_parse_correct_on(spec_parse_repeat_n(parser, n), spec_serialize_repeat_n(serializer, n), s, vs) by {
-            lemma_parse_repeat_n_correct_on(parser, serializer, n, s, vs);
+        assert forall |s: SpecStream, vs: Seq<T>| s.data.len() <= usize::MAX ==> prop_parse_correct_on(spec_parse_repeat_n(parser, n), spec_serialize_repeat_n(serializer, n), s, vs) by {
+            if s.data.len() <= usize::MAX {
+                lemma_parse_repeat_n_correct_on(parser, serializer, n, s, vs);
+            }
         }
     }
 
@@ -3519,6 +3776,7 @@ verus! {
         s: SpecStream,
         vs: Seq<T>)
         requires
+            s.data.len() <= usize::MAX,
             prop_parse_well_behaved(parser),
             prop_serialize_well_behaved(serializer),
             prop_parse_strong_prefix(parser),
@@ -3771,8 +4029,8 @@ verus! {
         decreases n
     {
         if let Ok((sout1, n1, x1)) = spec_parse_repeat_n(parser, n)(s1) {
-            if 0 <= s1.start <= s1.start + n1 <= s1.data.len()
-            && 0 <= s2.start <= s2.start + n1 <= s2.data.len()
+            if 0 <= s1.start <= s1.start + n1 <= s1.data.len() <= usize::MAX
+            && 0 <= s2.start <= s2.start + n1 <= s2.data.len() <= usize::MAX
             && s1.data.subrange(s1.start, s1.start + n1) == s2.data.subrange(s2.start, s2.start + n1) {
                 if n == 0 {
                 } else {
@@ -3903,6 +4161,57 @@ verus! {
         }
     }
 
+    pub exec fn sec_parse_tail(s: SecStream) -> (res: SecParseResult<SecBytes>)
+        ensures
+            prop_sec_parse_exec_spec_equiv_on(s, res, |s| spec_parse_tail(s))
+    {
+        if s.start < 0 {
+            Err(ParseError::NegativeIndex)
+        } else if s.start > s.data.length() {
+            Err(ParseError::Eof)
+        } else {
+            let n = s.data.length();
+            // data is the rest of the input starting from s.start
+            let data = s.data.subrange(s.start, n);
+            Ok((
+                SecStream {
+                    start: n,
+                    ..s
+                },
+                (n - s.start),
+                data,
+            ))
+        }
+    }
+
+    pub exec fn sec_serialize_tail(s: SecStream, v: SecBytes) -> (res: SecSerializeResult)
+        ensures
+            prop_sec_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_tail(s, v))
+    {
+        if s.start < 0 {
+            Err(SerializeError::NegativeIndex)
+        } else if s.start > usize::MAX - v.length() {
+            Err(SerializeError::IntegerOverflow)
+        } else if s.start + v.length() > s.data.length() {
+            Err(SerializeError::NotEnoughSpace)
+        } else if v.length() != s.data.length() - s.start {
+            Err(SerializeError::TailLengthMismatch)
+        } else {
+            let n = v.length();
+
+            let mut data = s.data.subrange(0, s.start);
+            let mut v = v;
+            data.append(&mut v);
+            Ok((
+                SecStream {
+                    start: s.start + n,
+                    data
+                },
+                n,
+            ))
+        }
+    }
+
     pub proof fn lemma_parse_tail_well_behaved()
         ensures
             prop_parse_well_behaved(|s| spec_parse_tail(s))
@@ -3945,8 +4254,10 @@ verus! {
         reveal(prop_parse_correct::<Seq<u8>>);
         let spec_parse_tail = |s| spec_parse_tail(s);
         let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-        assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_tail, spec_serialize_tail, s, v) by {
-            lemma_parse_tail_correct_on(s, v)
+        assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_tail, spec_serialize_tail, s, v) by {
+            if s.data.len() <= usize::MAX {
+                lemma_parse_tail_correct_on(s, v)
+            }
         }
     }
 
@@ -4002,6 +4313,7 @@ verus! {
     /// tail does not has strong prefix property! which is fine!
 
     proof fn lemma_parse_tail_correct_on(s: SpecStream, v: Seq<u8>)
+        requires s.data.len() <= usize::MAX,
         ensures
             prop_parse_correct_on(|s| spec_parse_tail(s), |s, v| spec_serialize_tail(s, v), s, v)
     {
@@ -4087,8 +4399,10 @@ pub proof fn lemma_parse_4_u8s_correct()
     reveal(prop_parse_correct);
     let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
     let spec_serialize_4_u8s = |s, vs| spec_serialize_4_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_4_u8s, spec_serialize_4_u8s, s, vs) by {
-        lemma_parse_4_u8s_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_4_u8s, spec_serialize_4_u8s, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_4_u8s_correct_on(s, vs);
+        }
     }
 }
 
@@ -4146,6 +4460,7 @@ proof fn lemma_parse_4_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
 }
 
 proof fn lemma_parse_4_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_4_u8s(s), |s, vs| spec_serialize_4_u8s(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -4274,8 +4589,10 @@ pub proof fn lemma_parse_4_u8s_6523411079649600299_correct()
     reveal(prop_parse_correct);
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
     let spec_serialize_4_u8s_6523411079649600299 = |s, vs| spec_serialize_4_u8s_6523411079649600299(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_4_u8s_6523411079649600299, spec_serialize_4_u8s_6523411079649600299, s, vs) by {
-        lemma_parse_4_u8s_6523411079649600299_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_4_u8s_6523411079649600299, spec_serialize_4_u8s_6523411079649600299, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_4_u8s_6523411079649600299_correct_on(s, vs);
+        }
     }
 }
 
@@ -4325,6 +4642,7 @@ proof fn lemma_parse_4_u8s_6523411079649600299_serialize_inverse_on(s: SpecStrea
 }
 
 proof fn lemma_parse_4_u8s_6523411079649600299_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_4_u8s_6523411079649600299(s), |s, vs| spec_serialize_4_u8s_6523411079649600299(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -4410,493 +4728,1234 @@ pub exec fn serialize_4_u8s_6523411079649600299(s: Stream, vs: Vec<u8>) -> (res:
     }
 }
 
-pub open spec fn spec_parse_32_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
+pub open spec fn spec_parse_4_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
 {
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    spec_parse_repeat_n(spec_parse_u8_le, 32)(s)
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 4 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 4 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 4 as int,
+                ..s
+            },
+            4,
+            s.data.subrange(s.start, s.start + 4 as int),
+        ))
+    }
 }
 
-pub open spec fn spec_serialize_32_u8s(s: SpecStream, vs: Seq<u8>) -> SpecSerializeResult
+pub open spec fn spec_serialize_4_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
 {
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    spec_serialize_repeat_n(spec_serialize_u8_le, 32)(s, vs)
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 4 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 4 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 4 as int, s.data.len() as int),
+            },
+            4,
+        ))
+    }
 }
 
-pub proof fn lemma_parse_32_u8s_well_behaved()
-    ensures prop_parse_well_behaved(|s| spec_parse_32_u8s(s))
+pub proof fn lemma_parse_4_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_4_bytes(s))
 {
     reveal(prop_parse_well_behaved);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_32_u8s, s) by {
-        lemma_parse_32_u8s_well_behaved_on(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_4_bytes, s) by {
+        lemma_parse_4_bytes_well_behaved_on(s)
     }
 }
 
-pub proof fn lemma_serialize_32_u8s_well_behaved()
-    ensures prop_serialize_well_behaved(|s, vs| spec_serialize_32_u8s(s, vs))
+pub proof fn lemma_serialize_4_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_4_bytes(s, v))
 {
     reveal(prop_serialize_well_behaved);
-    let spec_serialize_32_u8s = |s, vs| spec_serialize_32_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_serialize_well_behaved_on(spec_serialize_32_u8s, s, vs) by {
-        lemma_serialize_32_u8s_well_behaved_on(s, vs);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_4_bytes, s, v) by {
+        lemma_serialize_4_bytes_well_behaved_on(s, v)
     }
 }
 
-pub proof fn lemma_serialize_32_u8s_deterministic()
-    ensures prop_serialize_deterministic(|s, v| spec_serialize_32_u8s(s, v))
+pub proof fn lemma_serialize_4_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_4_bytes(s, v))
 {
     reveal(prop_serialize_deterministic);
-    let spec_serialize_32_u8s = |s, vs| spec_serialize_32_u8s(s, vs);
-    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_32_u8s, s1, s2, v) by {
-        lemma_serialize_32_u8s_deterministic_on(s1, s2, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_4_bytes, s1, s2, v) by {
+        lemma_serialize_4_bytes_deterministic_on(s1, s2, v)
     }
 }
 
-pub proof fn lemma_parse_32_u8s_strong_prefix()
-    ensures prop_parse_strong_prefix(|s| spec_parse_32_u8s(s))
+pub proof fn lemma_parse_4_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_4_bytes(s))
 {
     reveal(prop_parse_strong_prefix);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    assert forall |s1: SpecStream, s2: SpecStream| prop_parse_strong_prefix_on(spec_parse_32_u8s, s1, s2) by {
-        lemma_parse_32_u8s_strong_prefix_on(s1, s2);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_4_bytes, s1, s2) by {
+        lemma_parse_4_bytes_strong_prefix_on(s1, s2)
     }
 }
 
-pub proof fn lemma_parse_32_u8s_correct()
-    ensures prop_parse_correct(|s| spec_parse_32_u8s(s), |s, vs| spec_serialize_32_u8s(s, vs))
-{
-    reveal(prop_parse_correct);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_serialize_32_u8s = |s, vs| spec_serialize_32_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_32_u8s, spec_serialize_32_u8s, s, vs) by {
-        lemma_parse_32_u8s_correct_on(s, vs);
-    }
-}
-
-pub proof fn lemma_parse_32_u8s_serialize_inverse()
-    ensures prop_parse_serialize_inverse(|s| spec_parse_32_u8s(s), |s, v| spec_serialize_32_u8s(s, v))
-{
-    reveal(prop_parse_serialize_inverse);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_serialize_32_u8s = |s, vs| spec_serialize_32_u8s(s, vs);
-    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_32_u8s, spec_serialize_32_u8s, s) by {
-        lemma_parse_32_u8s_serialize_inverse_on(s);
-    }
-}
-
-pub proof fn lemma_parse_32_u8s_nonmalleable()
-    ensures prop_parse_nonmalleable(|s| spec_parse_32_u8s(s))
-{
-    lemma_parse_32_u8s_serialize_inverse();
-    lemma_serialize_32_u8s_deterministic();
-    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_32_u8s(s), |s, v| spec_serialize_32_u8s(s, v));
-}
-
-proof fn lemma_parse_32_u8s_well_behaved_on(s: SpecStream)
-    ensures prop_parse_well_behaved_on(|s| spec_parse_32_u8s(s), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_repeat_n_well_behaved_on(spec_parse_u8_le, 32, s);
-}
-
-proof fn lemma_serialize_32_u8s_well_behaved_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_serialize_well_behaved_on(|s, vs| spec_serialize_32_u8s(s, vs), s, vs)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_repeat_n_well_behaved_on(spec_serialize_u8_le, 32, s, vs);
-}
-
-proof fn lemma_serialize_32_u8s_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
-    ensures prop_serialize_deterministic_on(|s, v| spec_serialize_32_u8s(s, v), s1, s2, v)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_u8_le_deterministic();
-    lemma_serialize_repeat_n_deterministic_on(spec_serialize_u8_le, 32, s1, s2, v);
-}
-
-proof fn lemma_parse_32_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
-    ensures prop_parse_strong_prefix_on(|s| spec_parse_32_u8s(s), s1, s2)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_repeat_n_strong_prefix_on(s1, s2, spec_parse_u8_le, 32);
-}
-
-proof fn lemma_parse_32_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_parse_correct_on(|s| spec_parse_32_u8s(s), |s, vs| spec_serialize_32_u8s(s, vs), s, vs)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_u8_le_correct();
-    lemma_parse_repeat_n_correct_on(spec_parse_u8_le, spec_serialize_u8_le, 32, s, vs);
-}
-
-proof fn lemma_parse_32_u8s_serialize_inverse_on(s: SpecStream)
-    ensures prop_parse_serialize_inverse_on(|s| spec_parse_32_u8s(s), |s, v| spec_serialize_32_u8s(s, v), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_serialize_inverse();
-    lemma_parse_repeat_n_serialize_inverse_on(spec_parse_u8_le, spec_serialize_u8_le, 32, s);
-}
-
-pub exec fn parse_32_u8s(s: Stream) -> (res: ParseResult<Vec<u8>>)
+pub proof fn lemma_parse_4_bytes_correct()
     ensures
-        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_u8s(s))
+        prop_parse_correct(|s| spec_parse_4_bytes(s), |s, v| spec_serialize_4_bytes(s, v))
 {
-    proof { reveal(prop_parse_exec_spec_equiv); }
-
-        let parse_u8_le = |s| -> (res: ParseResult<u8>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_u8_le(s)) { parse_u8_le(s) };
-    let ghost spec_parse_u8_le = |s| spec_parse_u8_le(s);
-
-    parse_repeat_n(parse_u8_le, Ghost(spec_parse_u8_le), 32, s)
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_4_bytes, spec_serialize_4_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_4_bytes_correct_on(s, v)
+        }
+    }
 }
 
-pub exec fn serialize_32_u8s(s: Stream, vs: Vec<u8>) -> (res: SerializeResult)
+pub proof fn lemma_parse_4_bytes_serialize_inverse()
     ensures
-        prop_serialize_exec_spec_equiv_on(s, vs, res, |s, vs| spec_serialize_32_u8s(s, vs))
+        prop_parse_serialize_inverse(|s| spec_parse_4_bytes(s), |s, v| spec_serialize_4_bytes(s, v))
 {
-    proof { reveal(prop_serialize_exec_spec_equiv); }
-
-    let serialize_u8_le = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_u8_le(s, v)) { serialize_u8_le(s, v) };
-    let ghost spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-
-    serialize_repeat_n(serialize_u8_le, Ghost(spec_serialize_u8_le), 32, s, vs)
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_4_bytes, spec_serialize_4_bytes, s) by {
+        lemma_parse_4_bytes_serialize_inverse_on(s)
+    }
 }
 
-pub open spec fn spec_parse_48_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
+pub proof fn lemma_parse_4_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_4_bytes(s))
 {
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    spec_parse_repeat_n(spec_parse_u8_le, 48)(s)
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_4_bytes(s), |s, v| spec_serialize_4_bytes(s, v));
 }
 
-pub open spec fn spec_serialize_48_u8s(s: SpecStream, vs: Seq<u8>) -> SpecSerializeResult
+
+proof fn lemma_parse_4_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_4_bytes(s), s)
+{}
+
+proof fn lemma_serialize_4_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_4_bytes(s, v), s, v)
 {
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    spec_serialize_repeat_n(spec_serialize_u8_le, 48)(s, vs)
+    if let Ok((sout, m)) = spec_serialize_4_bytes(s, v) {
+        assert(m == 4);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
 }
 
-pub proof fn lemma_parse_48_u8s_well_behaved()
-    ensures prop_parse_well_behaved(|s| spec_parse_48_u8s(s))
+proof fn lemma_serialize_4_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_4_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_4_bytes(s1, v), spec_serialize_4_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_4_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_4_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_4_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_4_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_4_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_4_bytes(s), |s, v| spec_serialize_4_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_4_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_4_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_4_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_4_bytes(s), |s, v| spec_serialize_4_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_4_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_4_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_4_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 4 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 4 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 4));
+        Ok((
+            Stream {
+                start: s.start + 4,
+                ..s
+            },
+            4,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_4_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 4 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 4, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 4,
+                data,
+            },
+            4,
+        ))
+    }
+}
+
+pub open spec fn spec_parse_32_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 32 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 32 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 32 as int,
+                ..s
+            },
+            32,
+            s.data.subrange(s.start, s.start + 32 as int),
+        ))
+    }
+}
+
+pub open spec fn spec_serialize_32_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 32 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 32 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 32 as int, s.data.len() as int),
+            },
+            32,
+        ))
+    }
+}
+
+pub proof fn lemma_parse_32_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_32_bytes(s))
 {
     reveal(prop_parse_well_behaved);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_48_u8s, s) by {
-        lemma_parse_48_u8s_well_behaved_on(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_32_bytes, s) by {
+        lemma_parse_32_bytes_well_behaved_on(s)
     }
 }
 
-pub proof fn lemma_serialize_48_u8s_well_behaved()
-    ensures prop_serialize_well_behaved(|s, vs| spec_serialize_48_u8s(s, vs))
+pub proof fn lemma_serialize_32_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_32_bytes(s, v))
 {
     reveal(prop_serialize_well_behaved);
-    let spec_serialize_48_u8s = |s, vs| spec_serialize_48_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_serialize_well_behaved_on(spec_serialize_48_u8s, s, vs) by {
-        lemma_serialize_48_u8s_well_behaved_on(s, vs);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_32_bytes, s, v) by {
+        lemma_serialize_32_bytes_well_behaved_on(s, v)
     }
 }
 
-pub proof fn lemma_serialize_48_u8s_deterministic()
-    ensures prop_serialize_deterministic(|s, v| spec_serialize_48_u8s(s, v))
+pub proof fn lemma_serialize_32_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_32_bytes(s, v))
 {
     reveal(prop_serialize_deterministic);
-    let spec_serialize_48_u8s = |s, vs| spec_serialize_48_u8s(s, vs);
-    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_48_u8s, s1, s2, v) by {
-        lemma_serialize_48_u8s_deterministic_on(s1, s2, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_32_bytes, s1, s2, v) by {
+        lemma_serialize_32_bytes_deterministic_on(s1, s2, v)
     }
 }
 
-pub proof fn lemma_parse_48_u8s_strong_prefix()
-    ensures prop_parse_strong_prefix(|s| spec_parse_48_u8s(s))
+pub proof fn lemma_parse_32_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_32_bytes(s))
 {
     reveal(prop_parse_strong_prefix);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    assert forall |s1: SpecStream, s2: SpecStream| prop_parse_strong_prefix_on(spec_parse_48_u8s, s1, s2) by {
-        lemma_parse_48_u8s_strong_prefix_on(s1, s2);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_32_bytes, s1, s2) by {
+        lemma_parse_32_bytes_strong_prefix_on(s1, s2)
     }
 }
 
-pub proof fn lemma_parse_48_u8s_correct()
-    ensures prop_parse_correct(|s| spec_parse_48_u8s(s), |s, vs| spec_serialize_48_u8s(s, vs))
-{
-    reveal(prop_parse_correct);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_serialize_48_u8s = |s, vs| spec_serialize_48_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_48_u8s, spec_serialize_48_u8s, s, vs) by {
-        lemma_parse_48_u8s_correct_on(s, vs);
-    }
-}
-
-pub proof fn lemma_parse_48_u8s_serialize_inverse()
-    ensures prop_parse_serialize_inverse(|s| spec_parse_48_u8s(s), |s, v| spec_serialize_48_u8s(s, v))
-{
-    reveal(prop_parse_serialize_inverse);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_serialize_48_u8s = |s, vs| spec_serialize_48_u8s(s, vs);
-    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_48_u8s, spec_serialize_48_u8s, s) by {
-        lemma_parse_48_u8s_serialize_inverse_on(s);
-    }
-}
-
-pub proof fn lemma_parse_48_u8s_nonmalleable()
-    ensures prop_parse_nonmalleable(|s| spec_parse_48_u8s(s))
-{
-    lemma_parse_48_u8s_serialize_inverse();
-    lemma_serialize_48_u8s_deterministic();
-    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_48_u8s(s), |s, v| spec_serialize_48_u8s(s, v));
-}
-
-proof fn lemma_parse_48_u8s_well_behaved_on(s: SpecStream)
-    ensures prop_parse_well_behaved_on(|s| spec_parse_48_u8s(s), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_repeat_n_well_behaved_on(spec_parse_u8_le, 48, s);
-}
-
-proof fn lemma_serialize_48_u8s_well_behaved_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_serialize_well_behaved_on(|s, vs| spec_serialize_48_u8s(s, vs), s, vs)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_repeat_n_well_behaved_on(spec_serialize_u8_le, 48, s, vs);
-}
-
-proof fn lemma_serialize_48_u8s_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
-    ensures prop_serialize_deterministic_on(|s, v| spec_serialize_48_u8s(s, v), s1, s2, v)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_u8_le_deterministic();
-    lemma_serialize_repeat_n_deterministic_on(spec_serialize_u8_le, 48, s1, s2, v);
-}
-
-proof fn lemma_parse_48_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
-    ensures prop_parse_strong_prefix_on(|s| spec_parse_48_u8s(s), s1, s2)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_repeat_n_strong_prefix_on(s1, s2, spec_parse_u8_le, 48);
-}
-
-proof fn lemma_parse_48_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_parse_correct_on(|s| spec_parse_48_u8s(s), |s, vs| spec_serialize_48_u8s(s, vs), s, vs)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_u8_le_correct();
-    lemma_parse_repeat_n_correct_on(spec_parse_u8_le, spec_serialize_u8_le, 48, s, vs);
-}
-
-proof fn lemma_parse_48_u8s_serialize_inverse_on(s: SpecStream)
-    ensures prop_parse_serialize_inverse_on(|s| spec_parse_48_u8s(s), |s, v| spec_serialize_48_u8s(s, v), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_serialize_inverse();
-    lemma_parse_repeat_n_serialize_inverse_on(spec_parse_u8_le, spec_serialize_u8_le, 48, s);
-}
-
-pub exec fn parse_48_u8s(s: Stream) -> (res: ParseResult<Vec<u8>>)
+pub proof fn lemma_parse_32_bytes_correct()
     ensures
-        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_48_u8s(s))
+        prop_parse_correct(|s| spec_parse_32_bytes(s), |s, v| spec_serialize_32_bytes(s, v))
 {
-    proof { reveal(prop_parse_exec_spec_equiv); }
-
-        let parse_u8_le = |s| -> (res: ParseResult<u8>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_u8_le(s)) { parse_u8_le(s) };
-    let ghost spec_parse_u8_le = |s| spec_parse_u8_le(s);
-
-    parse_repeat_n(parse_u8_le, Ghost(spec_parse_u8_le), 48, s)
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_32_bytes, spec_serialize_32_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_32_bytes_correct_on(s, v)
+        }
+    }
 }
 
-pub exec fn serialize_48_u8s(s: Stream, vs: Vec<u8>) -> (res: SerializeResult)
+pub proof fn lemma_parse_32_bytes_serialize_inverse()
     ensures
-        prop_serialize_exec_spec_equiv_on(s, vs, res, |s, vs| spec_serialize_48_u8s(s, vs))
+        prop_parse_serialize_inverse(|s| spec_parse_32_bytes(s), |s, v| spec_serialize_32_bytes(s, v))
 {
-    proof { reveal(prop_serialize_exec_spec_equiv); }
-
-    let serialize_u8_le = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_u8_le(s, v)) { serialize_u8_le(s, v) };
-    let ghost spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-
-    serialize_repeat_n(serialize_u8_le, Ghost(spec_serialize_u8_le), 48, s, vs)
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_32_bytes, spec_serialize_32_bytes, s) by {
+        lemma_parse_32_bytes_serialize_inverse_on(s)
+    }
 }
 
-pub open spec fn spec_parse_28_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
+pub proof fn lemma_parse_32_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_32_bytes(s))
 {
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    spec_parse_repeat_n(spec_parse_u8_le, 28)(s)
+    lemma_parse_32_bytes_serialize_inverse();
+    lemma_serialize_32_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_32_bytes(s), |s, v| spec_serialize_32_bytes(s, v));
 }
 
-pub open spec fn spec_serialize_28_u8s(s: SpecStream, vs: Seq<u8>) -> SpecSerializeResult
+
+proof fn lemma_parse_32_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_32_bytes(s), s)
+{}
+
+proof fn lemma_serialize_32_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_32_bytes(s, v), s, v)
 {
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    spec_serialize_repeat_n(spec_serialize_u8_le, 28)(s, vs)
+    if let Ok((sout, m)) = spec_serialize_32_bytes(s, v) {
+        assert(m == 32);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
 }
 
-pub proof fn lemma_parse_28_u8s_well_behaved()
-    ensures prop_parse_well_behaved(|s| spec_parse_28_u8s(s))
+proof fn lemma_serialize_32_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_32_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_32_bytes(s1, v), spec_serialize_32_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_32_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_32_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_32_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_32_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_32_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_32_bytes(s), |s, v| spec_serialize_32_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_32_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_32_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_32_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_32_bytes(s), |s, v| spec_serialize_32_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_32_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_32_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_32_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 32 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 32 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 32));
+        Ok((
+            Stream {
+                start: s.start + 32,
+                ..s
+            },
+            32,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_32_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 32 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 32, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 32,
+                data,
+            },
+            32,
+        ))
+    }
+}
+
+pub open spec fn spec_parse_48_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 48 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 48 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 48 as int,
+                ..s
+            },
+            48,
+            s.data.subrange(s.start, s.start + 48 as int),
+        ))
+    }
+}
+
+pub open spec fn spec_serialize_48_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 48 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 48 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 48 as int, s.data.len() as int),
+            },
+            48,
+        ))
+    }
+}
+
+pub proof fn lemma_parse_48_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_48_bytes(s))
 {
     reveal(prop_parse_well_behaved);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_28_u8s, s) by {
-        lemma_parse_28_u8s_well_behaved_on(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_48_bytes, s) by {
+        lemma_parse_48_bytes_well_behaved_on(s)
     }
 }
 
-pub proof fn lemma_serialize_28_u8s_well_behaved()
-    ensures prop_serialize_well_behaved(|s, vs| spec_serialize_28_u8s(s, vs))
+pub proof fn lemma_serialize_48_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_48_bytes(s, v))
 {
     reveal(prop_serialize_well_behaved);
-    let spec_serialize_28_u8s = |s, vs| spec_serialize_28_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_serialize_well_behaved_on(spec_serialize_28_u8s, s, vs) by {
-        lemma_serialize_28_u8s_well_behaved_on(s, vs);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_48_bytes, s, v) by {
+        lemma_serialize_48_bytes_well_behaved_on(s, v)
     }
 }
 
-pub proof fn lemma_serialize_28_u8s_deterministic()
-    ensures prop_serialize_deterministic(|s, v| spec_serialize_28_u8s(s, v))
+pub proof fn lemma_serialize_48_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_48_bytes(s, v))
 {
     reveal(prop_serialize_deterministic);
-    let spec_serialize_28_u8s = |s, vs| spec_serialize_28_u8s(s, vs);
-    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_28_u8s, s1, s2, v) by {
-        lemma_serialize_28_u8s_deterministic_on(s1, s2, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_48_bytes, s1, s2, v) by {
+        lemma_serialize_48_bytes_deterministic_on(s1, s2, v)
     }
 }
 
-pub proof fn lemma_parse_28_u8s_strong_prefix()
-    ensures prop_parse_strong_prefix(|s| spec_parse_28_u8s(s))
+pub proof fn lemma_parse_48_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_48_bytes(s))
 {
     reveal(prop_parse_strong_prefix);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    assert forall |s1: SpecStream, s2: SpecStream| prop_parse_strong_prefix_on(spec_parse_28_u8s, s1, s2) by {
-        lemma_parse_28_u8s_strong_prefix_on(s1, s2);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_48_bytes, s1, s2) by {
+        lemma_parse_48_bytes_strong_prefix_on(s1, s2)
     }
 }
 
-pub proof fn lemma_parse_28_u8s_correct()
-    ensures prop_parse_correct(|s| spec_parse_28_u8s(s), |s, vs| spec_serialize_28_u8s(s, vs))
-{
-    reveal(prop_parse_correct);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_serialize_28_u8s = |s, vs| spec_serialize_28_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_28_u8s, spec_serialize_28_u8s, s, vs) by {
-        lemma_parse_28_u8s_correct_on(s, vs);
-    }
-}
-
-pub proof fn lemma_parse_28_u8s_serialize_inverse()
-    ensures prop_parse_serialize_inverse(|s| spec_parse_28_u8s(s), |s, v| spec_serialize_28_u8s(s, v))
-{
-    reveal(prop_parse_serialize_inverse);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_serialize_28_u8s = |s, vs| spec_serialize_28_u8s(s, vs);
-    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_28_u8s, spec_serialize_28_u8s, s) by {
-        lemma_parse_28_u8s_serialize_inverse_on(s);
-    }
-}
-
-pub proof fn lemma_parse_28_u8s_nonmalleable()
-    ensures prop_parse_nonmalleable(|s| spec_parse_28_u8s(s))
-{
-    lemma_parse_28_u8s_serialize_inverse();
-    lemma_serialize_28_u8s_deterministic();
-    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_28_u8s(s), |s, v| spec_serialize_28_u8s(s, v));
-}
-
-proof fn lemma_parse_28_u8s_well_behaved_on(s: SpecStream)
-    ensures prop_parse_well_behaved_on(|s| spec_parse_28_u8s(s), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_repeat_n_well_behaved_on(spec_parse_u8_le, 28, s);
-}
-
-proof fn lemma_serialize_28_u8s_well_behaved_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_serialize_well_behaved_on(|s, vs| spec_serialize_28_u8s(s, vs), s, vs)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_repeat_n_well_behaved_on(spec_serialize_u8_le, 28, s, vs);
-}
-
-proof fn lemma_serialize_28_u8s_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
-    ensures prop_serialize_deterministic_on(|s, v| spec_serialize_28_u8s(s, v), s1, s2, v)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_u8_le_deterministic();
-    lemma_serialize_repeat_n_deterministic_on(spec_serialize_u8_le, 28, s1, s2, v);
-}
-
-proof fn lemma_parse_28_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
-    ensures prop_parse_strong_prefix_on(|s| spec_parse_28_u8s(s), s1, s2)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_repeat_n_strong_prefix_on(s1, s2, spec_parse_u8_le, 28);
-}
-
-proof fn lemma_parse_28_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_parse_correct_on(|s| spec_parse_28_u8s(s), |s, vs| spec_serialize_28_u8s(s, vs), s, vs)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_u8_le_correct();
-    lemma_parse_repeat_n_correct_on(spec_parse_u8_le, spec_serialize_u8_le, 28, s, vs);
-}
-
-proof fn lemma_parse_28_u8s_serialize_inverse_on(s: SpecStream)
-    ensures prop_parse_serialize_inverse_on(|s| spec_parse_28_u8s(s), |s, v| spec_serialize_28_u8s(s, v), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_serialize_inverse();
-    lemma_parse_repeat_n_serialize_inverse_on(spec_parse_u8_le, spec_serialize_u8_le, 28, s);
-}
-
-pub exec fn parse_28_u8s(s: Stream) -> (res: ParseResult<Vec<u8>>)
+pub proof fn lemma_parse_48_bytes_correct()
     ensures
-        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_28_u8s(s))
+        prop_parse_correct(|s| spec_parse_48_bytes(s), |s, v| spec_serialize_48_bytes(s, v))
 {
-    proof { reveal(prop_parse_exec_spec_equiv); }
-
-        let parse_u8_le = |s| -> (res: ParseResult<u8>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_u8_le(s)) { parse_u8_le(s) };
-    let ghost spec_parse_u8_le = |s| spec_parse_u8_le(s);
-
-    parse_repeat_n(parse_u8_le, Ghost(spec_parse_u8_le), 28, s)
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_48_bytes, spec_serialize_48_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_48_bytes_correct_on(s, v)
+        }
+    }
 }
 
-pub exec fn serialize_28_u8s(s: Stream, vs: Vec<u8>) -> (res: SerializeResult)
+pub proof fn lemma_parse_48_bytes_serialize_inverse()
     ensures
-        prop_serialize_exec_spec_equiv_on(s, vs, res, |s, vs| spec_serialize_28_u8s(s, vs))
+        prop_parse_serialize_inverse(|s| spec_parse_48_bytes(s), |s, v| spec_serialize_48_bytes(s, v))
 {
-    proof { reveal(prop_serialize_exec_spec_equiv); }
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_48_bytes, spec_serialize_48_bytes, s) by {
+        lemma_parse_48_bytes_serialize_inverse_on(s)
+    }
+}
 
-    let serialize_u8_le = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_u8_le(s, v)) { serialize_u8_le(s, v) };
-    let ghost spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
+pub proof fn lemma_parse_48_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_48_bytes(s))
+{
+    lemma_parse_48_bytes_serialize_inverse();
+    lemma_serialize_48_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_48_bytes(s), |s, v| spec_serialize_48_bytes(s, v));
+}
 
-    serialize_repeat_n(serialize_u8_le, Ghost(spec_serialize_u8_le), 28, s, vs)
+
+proof fn lemma_parse_48_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_48_bytes(s), s)
+{}
+
+proof fn lemma_serialize_48_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_48_bytes(s, v), s, v)
+{
+    if let Ok((sout, m)) = spec_serialize_48_bytes(s, v) {
+        assert(m == 48);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
+}
+
+proof fn lemma_serialize_48_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_48_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_48_bytes(s1, v), spec_serialize_48_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_48_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_48_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_48_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_48_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_48_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_48_bytes(s), |s, v| spec_serialize_48_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_48_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_48_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_48_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_48_bytes(s), |s, v| spec_serialize_48_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_48_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_48_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_48_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_48_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 48 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 48 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 48));
+        Ok((
+            Stream {
+                start: s.start + 48,
+                ..s
+            },
+            48,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_48_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_48_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 48 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 48, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 48,
+                data,
+            },
+            48,
+        ))
+    }
+}
+
+pub open spec fn spec_parse_28_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 28 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 28 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 28 as int,
+                ..s
+            },
+            28,
+            s.data.subrange(s.start, s.start + 28 as int),
+        ))
+    }
+}
+
+pub open spec fn spec_serialize_28_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 28 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 28 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 28 as int, s.data.len() as int),
+            },
+            28,
+        ))
+    }
+}
+
+pub proof fn lemma_parse_28_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_28_bytes(s))
+{
+    reveal(prop_parse_well_behaved);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_28_bytes, s) by {
+        lemma_parse_28_bytes_well_behaved_on(s)
+    }
+}
+
+pub proof fn lemma_serialize_28_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_28_bytes(s, v))
+{
+    reveal(prop_serialize_well_behaved);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_28_bytes, s, v) by {
+        lemma_serialize_28_bytes_well_behaved_on(s, v)
+    }
+}
+
+pub proof fn lemma_serialize_28_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_28_bytes(s, v))
+{
+    reveal(prop_serialize_deterministic);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_28_bytes, s1, s2, v) by {
+        lemma_serialize_28_bytes_deterministic_on(s1, s2, v)
+    }
+}
+
+pub proof fn lemma_parse_28_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_28_bytes(s))
+{
+    reveal(prop_parse_strong_prefix);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_28_bytes, s1, s2) by {
+        lemma_parse_28_bytes_strong_prefix_on(s1, s2)
+    }
+}
+
+pub proof fn lemma_parse_28_bytes_correct()
+    ensures
+        prop_parse_correct(|s| spec_parse_28_bytes(s), |s, v| spec_serialize_28_bytes(s, v))
+{
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_28_bytes, spec_serialize_28_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_28_bytes_correct_on(s, v)
+        }
+    }
+}
+
+pub proof fn lemma_parse_28_bytes_serialize_inverse()
+    ensures
+        prop_parse_serialize_inverse(|s| spec_parse_28_bytes(s), |s, v| spec_serialize_28_bytes(s, v))
+{
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_28_bytes, spec_serialize_28_bytes, s) by {
+        lemma_parse_28_bytes_serialize_inverse_on(s)
+    }
+}
+
+pub proof fn lemma_parse_28_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_28_bytes(s))
+{
+    lemma_parse_28_bytes_serialize_inverse();
+    lemma_serialize_28_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_28_bytes(s), |s, v| spec_serialize_28_bytes(s, v));
+}
+
+
+proof fn lemma_parse_28_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_28_bytes(s), s)
+{}
+
+proof fn lemma_serialize_28_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_28_bytes(s, v), s, v)
+{
+    if let Ok((sout, m)) = spec_serialize_28_bytes(s, v) {
+        assert(m == 28);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
+}
+
+proof fn lemma_serialize_28_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_28_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_28_bytes(s1, v), spec_serialize_28_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_28_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_28_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_28_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_28_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_28_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_28_bytes(s), |s, v| spec_serialize_28_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_28_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_28_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_28_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_28_bytes(s), |s, v| spec_serialize_28_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_28_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_28_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_28_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_28_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 28 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 28 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 28));
+        Ok((
+            Stream {
+                start: s.start + 28,
+                ..s
+            },
+            28,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_28_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_28_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 28 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 28, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 28,
+                data,
+            },
+            28,
+        ))
+    }
+}
+
+pub open spec fn spec_parse_16_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 16 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 16 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 16 as int,
+                ..s
+            },
+            16,
+            s.data.subrange(s.start, s.start + 16 as int),
+        ))
+    }
+}
+
+pub open spec fn spec_serialize_16_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 16 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 16 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 16 as int, s.data.len() as int),
+            },
+            16,
+        ))
+    }
+}
+
+pub proof fn lemma_parse_16_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_16_bytes(s))
+{
+    reveal(prop_parse_well_behaved);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_16_bytes, s) by {
+        lemma_parse_16_bytes_well_behaved_on(s)
+    }
+}
+
+pub proof fn lemma_serialize_16_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_16_bytes(s, v))
+{
+    reveal(prop_serialize_well_behaved);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_16_bytes, s, v) by {
+        lemma_serialize_16_bytes_well_behaved_on(s, v)
+    }
+}
+
+pub proof fn lemma_serialize_16_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_16_bytes(s, v))
+{
+    reveal(prop_serialize_deterministic);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_16_bytes, s1, s2, v) by {
+        lemma_serialize_16_bytes_deterministic_on(s1, s2, v)
+    }
+}
+
+pub proof fn lemma_parse_16_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_16_bytes(s))
+{
+    reveal(prop_parse_strong_prefix);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_16_bytes, s1, s2) by {
+        lemma_parse_16_bytes_strong_prefix_on(s1, s2)
+    }
+}
+
+pub proof fn lemma_parse_16_bytes_correct()
+    ensures
+        prop_parse_correct(|s| spec_parse_16_bytes(s), |s, v| spec_serialize_16_bytes(s, v))
+{
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_16_bytes, spec_serialize_16_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_16_bytes_correct_on(s, v)
+        }
+    }
+}
+
+pub proof fn lemma_parse_16_bytes_serialize_inverse()
+    ensures
+        prop_parse_serialize_inverse(|s| spec_parse_16_bytes(s), |s, v| spec_serialize_16_bytes(s, v))
+{
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_16_bytes, spec_serialize_16_bytes, s) by {
+        lemma_parse_16_bytes_serialize_inverse_on(s)
+    }
+}
+
+pub proof fn lemma_parse_16_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_16_bytes(s))
+{
+    lemma_parse_16_bytes_serialize_inverse();
+    lemma_serialize_16_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_16_bytes(s), |s, v| spec_serialize_16_bytes(s, v));
+}
+
+
+proof fn lemma_parse_16_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_16_bytes(s), s)
+{}
+
+proof fn lemma_serialize_16_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_16_bytes(s, v), s, v)
+{
+    if let Ok((sout, m)) = spec_serialize_16_bytes(s, v) {
+        assert(m == 16);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
+}
+
+proof fn lemma_serialize_16_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_16_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_16_bytes(s1, v), spec_serialize_16_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_16_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_16_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_16_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_16_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_16_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_16_bytes(s), |s, v| spec_serialize_16_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_16_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_16_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_16_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_16_bytes(s), |s, v| spec_serialize_16_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_16_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_16_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_16_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 16 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 16 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 16));
+        Ok((
+            Stream {
+                start: s.start + 16,
+                ..s
+            },
+            16,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_16_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 16 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 16, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 16,
+                data,
+            },
+            16,
+        ))
+    }
 }
 
 pub open spec fn spec_parse_16_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
@@ -4957,8 +6016,10 @@ pub proof fn lemma_parse_16_u8s_correct()
     reveal(prop_parse_correct);
     let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
     let spec_serialize_16_u8s = |s, vs| spec_serialize_16_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_16_u8s, spec_serialize_16_u8s, s, vs) by {
-        lemma_parse_16_u8s_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_16_u8s, spec_serialize_16_u8s, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_16_u8s_correct_on(s, vs);
+        }
     }
 }
 
@@ -5016,6 +6077,7 @@ proof fn lemma_parse_16_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
 }
 
 proof fn lemma_parse_16_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_16_u8s(s), |s, vs| spec_serialize_16_u8s(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -5144,8 +6206,10 @@ pub proof fn lemma_parse_16_u8s_15452017556891490445_correct()
     reveal(prop_parse_correct);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     let spec_serialize_16_u8s_15452017556891490445 = |s, vs| spec_serialize_16_u8s_15452017556891490445(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_16_u8s_15452017556891490445, spec_serialize_16_u8s_15452017556891490445, s, vs) by {
-        lemma_parse_16_u8s_15452017556891490445_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_16_u8s_15452017556891490445, spec_serialize_16_u8s_15452017556891490445, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_16_u8s_15452017556891490445_correct_on(s, vs);
+        }
     }
 }
 
@@ -5195,6 +6259,7 @@ proof fn lemma_parse_16_u8s_15452017556891490445_serialize_inverse_on(s: SpecStr
 }
 
 proof fn lemma_parse_16_u8s_15452017556891490445_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_16_u8s_15452017556891490445(s), |s, vs| spec_serialize_16_u8s_15452017556891490445(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -5324,6 +6389,21 @@ pub open spec fn spec_parse_7_fold<R1, R2, R3, R4, R5, R6, R7>(
     spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(parser1, parser2), parser3), parser4), parser5), parser6), parser7)
 }
 
+
+
+pub open spec fn spec_serialize_7_fold<T1, T2, T3, T4, T5, T6, T7>(
+    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
+    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
+    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
+    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
+    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult,
+    serializer6: FnSpec(SpecStream, T6) -> SpecSerializeResult,
+    serializer7: FnSpec(SpecStream, T7) -> SpecSerializeResult) -> FnSpec(SpecStream, ((((((T1, T2), T3), T4), T5), T6), T7)) -> SpecSerializeResult
+{
+    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5), serializer6), serializer7)
+}
+
+
 pub exec fn parse_7_fold<P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6, R7>(
     exec_parser1: P1,
     exec_parser2: P2,
@@ -5377,17 +6457,6 @@ pub exec fn parse_7_fold<P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6, R7>
 
 
 
-pub open spec fn spec_serialize_7_fold<T1, T2, T3, T4, T5, T6, T7>(
-    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
-    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
-    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
-    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
-    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult,
-    serializer6: FnSpec(SpecStream, T6) -> SpecSerializeResult,
-    serializer7: FnSpec(SpecStream, T7) -> SpecSerializeResult) -> FnSpec(SpecStream, ((((((T1, T2), T3), T4), T5), T6), T7)) -> SpecSerializeResult
-{
-    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5), serializer6), serializer7)
-}
 pub exec fn serialize_7_fold<S1, S2, S3, S4, S5, S6, S7, T1, T2, T3, T4, T5, T6, T7>(
     exec_serializer1: S1,
     exec_serializer2: S2,
@@ -5443,27 +6512,27 @@ pub exec fn serialize_7_fold<S1, S2, S3, S4, S5, S6, S7, T1, T2, T3, T4, T5, T6,
 pub open spec fn spec_parse_owl_msg1(s: SpecStream) -> SpecParseResult<((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)>
 {
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
 
-    spec_parse_7_fold(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_48_u8s, spec_parse_28_u8s, spec_parse_16_u8s, spec_parse_16_u8s_15452017556891490445)(s)
+    spec_parse_7_fold(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_48_bytes, spec_parse_28_bytes, spec_parse_16_bytes, spec_parse_16_u8s_15452017556891490445)(s)
 }
 
 pub open spec fn spec_serialize_owl_msg1(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)) -> SpecSerializeResult
 {
     let spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
 
-    spec_serialize_7_fold(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_48_u8s, spec_serialize_28_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s_15452017556891490445)(s, v)
+    spec_serialize_7_fold(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_48_bytes, spec_serialize_28_bytes, spec_serialize_16_bytes, spec_serialize_16_u8s_15452017556891490445)(s, v)
 }
 
 pub proof fn lemma_parse_owl_msg1_well_behaved()
@@ -5502,8 +6571,10 @@ pub proof fn lemma_parse_owl_msg1_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_msg1 = |s| spec_parse_owl_msg1(s);
     let spec_serialize_owl_msg1 = |s, v| spec_serialize_owl_msg1(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_msg1, spec_serialize_owl_msg1, s, v) by {
-        lemma_parse_owl_msg1_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_msg1, spec_serialize_owl_msg1, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_msg1_correct_on(s, v);
+        }
     }
 }
 
@@ -5530,211 +6601,212 @@ pub proof fn lemma_parse_owl_msg1_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_msg1(s), s)
 {
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     lemma_parse_4_u8s_6523411079649600299_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_48_u8s_well_behaved();
-    lemma_parse_28_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_48_bytes_well_behaved();
+    lemma_parse_28_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, s);
 }
 
 pub proof fn lemma_serialize_owl_msg1_well_behaved_on(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_msg1(s, v), s, v)
 {
     let spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_6523411079649600299_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_48_u8s_well_behaved();
-    lemma_serialize_28_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_48_bytes_well_behaved();
+    lemma_serialize_28_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s, v);
 }
 
 pub proof fn lemma_serialize_owl_msg1_deterministic_on(s1: SpecStream, s2: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_msg1(s, v), s1, s2, v)
 {
     let spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_6523411079649600299_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_48_u8s_well_behaved();
-    lemma_serialize_28_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_48_bytes_well_behaved();
+    lemma_serialize_28_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_serialize_4_u8s_6523411079649600299_deterministic();
-    lemma_serialize_4_u8s_deterministic();
-    lemma_serialize_32_u8s_deterministic();
-    lemma_serialize_48_u8s_deterministic();
-    lemma_serialize_28_u8s_deterministic();
-    lemma_serialize_16_u8s_deterministic();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_serialize_32_bytes_deterministic();
+    lemma_serialize_48_bytes_deterministic();
+    lemma_serialize_28_bytes_deterministic();
+    lemma_serialize_16_bytes_deterministic();
     lemma_serialize_16_u8s_15452017556891490445_deterministic();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s1, s2, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_msg1_correct_on(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_msg1(s), |s, v| spec_serialize_owl_msg1(s, v), s, v)
 {
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     let spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_6523411079649600299_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_48_u8s_well_behaved();
-    lemma_serialize_28_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_48_bytes_well_behaved();
+    lemma_serialize_28_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_6523411079649600299_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_48_u8s_well_behaved();
-    lemma_parse_28_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_48_bytes_well_behaved();
+    lemma_parse_28_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_6523411079649600299_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_48_u8s_strong_prefix();
-    lemma_parse_28_u8s_strong_prefix();
-    lemma_parse_16_u8s_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_48_bytes_strong_prefix();
+    lemma_parse_28_bytes_strong_prefix();
+    lemma_parse_16_bytes_strong_prefix();
     lemma_parse_16_u8s_15452017556891490445_strong_prefix();
     lemma_parse_4_u8s_6523411079649600299_correct();
-    lemma_parse_4_u8s_correct();
-    lemma_parse_32_u8s_correct();
-    lemma_parse_48_u8s_correct();
-    lemma_parse_28_u8s_correct();
-    lemma_parse_16_u8s_correct();
+    lemma_parse_4_bytes_correct();
+    lemma_parse_32_bytes_correct();
+    lemma_parse_48_bytes_correct();
+    lemma_parse_28_bytes_correct();
+    lemma_parse_16_bytes_correct();
     lemma_parse_16_u8s_15452017556891490445_correct();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_parse_pair_correct(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s, spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s, v);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_parse_pair_correct(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes, spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s, v);
 }
 
 pub proof fn lemma_parse_owl_msg1_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_msg1(s), |s, v| spec_serialize_owl_msg1(s, v), s)
 {
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     let spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_parse_4_u8s_6523411079649600299_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_48_u8s_well_behaved();
-    lemma_parse_28_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_48_bytes_well_behaved();
+    lemma_parse_28_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_serialize_4_u8s_6523411079649600299_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_48_u8s_well_behaved();
-    lemma_serialize_28_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_48_bytes_well_behaved();
+    lemma_serialize_28_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_6523411079649600299_serialize_inverse();
-    lemma_parse_4_u8s_serialize_inverse();
-    lemma_parse_32_u8s_serialize_inverse();
-    lemma_parse_48_u8s_serialize_inverse();
-    lemma_parse_28_u8s_serialize_inverse();
-    lemma_parse_16_u8s_serialize_inverse();
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_parse_32_bytes_serialize_inverse();
+    lemma_parse_48_bytes_serialize_inverse();
+    lemma_parse_28_bytes_serialize_inverse();
+    lemma_parse_16_bytes_serialize_inverse();
     lemma_parse_16_u8s_15452017556891490445_serialize_inverse();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s, spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_48_u8s), spec_serialize_28_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes, spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_48_bytes), spec_serialize_28_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s);
 }
 
 pub proof fn lemma_parse_owl_msg1_strong_prefix()
@@ -5751,37 +6823,37 @@ pub proof fn lemma_parse_owl_msg1_strong_prefix_on(s1: SpecStream, s2: SpecStrea
     ensures prop_parse_strong_prefix_on(|s| spec_parse_owl_msg1(s), s1, s2)
 {
     let spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     lemma_parse_4_u8s_6523411079649600299_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_48_u8s_well_behaved();
-    lemma_parse_28_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_48_bytes_well_behaved();
+    lemma_parse_28_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_6523411079649600299_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_48_u8s_strong_prefix();
-    lemma_parse_28_u8s_strong_prefix();
-    lemma_parse_16_u8s_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_48_bytes_strong_prefix();
+    lemma_parse_28_bytes_strong_prefix();
+    lemma_parse_16_bytes_strong_prefix();
     lemma_parse_16_u8s_15452017556891490445_strong_prefix();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_48_u8s), spec_parse_28_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, s1, s2);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_48_bytes), spec_parse_28_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, s1, s2);
 }
 
 pub exec fn parse_owl_msg1(s: Stream) -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>)
@@ -5789,22 +6861,22 @@ pub exec fn parse_owl_msg1(s: Stream) -> (res: ParseResult<((((((Vec<u8>, Vec<u8
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
     let parse_4_u8s_6523411079649600299 = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s_6523411079649600299(s)) { parse_4_u8s_6523411079649600299(s) };
-    let parse_4_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s(s)) { parse_4_u8s(s) };
-    let parse_32_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_u8s(s)) { parse_32_u8s(s) };
-    let parse_48_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_48_u8s(s)) { parse_48_u8s(s) };
-    let parse_28_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_28_u8s(s)) { parse_28_u8s(s) };
-    let parse_16_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_u8s(s)) { parse_16_u8s(s) };
+    let parse_4_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s)) { parse_4_bytes(s) };
+    let parse_32_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_bytes(s)) { parse_32_bytes(s) };
+    let parse_48_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_48_bytes(s)) { parse_48_bytes(s) };
+    let parse_28_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_28_bytes(s)) { parse_28_bytes(s) };
+    let parse_16_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_bytes(s)) { parse_16_bytes(s) };
     let parse_16_u8s_15452017556891490445 = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_u8s_15452017556891490445(s)) { parse_16_u8s_15452017556891490445(s) };
     let ghost spec_parse_4_u8s_6523411079649600299 = |s| spec_parse_4_u8s_6523411079649600299(s);
-    let ghost spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let ghost spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let ghost spec_parse_48_u8s = |s| spec_parse_48_u8s(s);
-    let ghost spec_parse_28_u8s = |s| spec_parse_28_u8s(s);
-    let ghost spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let ghost spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let ghost spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let ghost spec_parse_48_bytes = |s| spec_parse_48_bytes(s);
+    let ghost spec_parse_28_bytes = |s| spec_parse_28_bytes(s);
+    let ghost spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let ghost spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
-    let ghost spec_parse_owl_msg1 = spec_parse_7_fold(spec_parse_4_u8s_6523411079649600299, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_48_u8s, spec_parse_28_u8s, spec_parse_16_u8s, spec_parse_16_u8s_15452017556891490445);
+    let ghost spec_parse_owl_msg1 = spec_parse_7_fold(spec_parse_4_u8s_6523411079649600299, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_48_bytes, spec_parse_28_bytes, spec_parse_16_bytes, spec_parse_16_u8s_15452017556891490445);
 
-    let parse_owl_msg1 = |s| -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_msg1) { parse_7_fold(parse_4_u8s_6523411079649600299, parse_4_u8s, parse_32_u8s, parse_48_u8s, parse_28_u8s, parse_16_u8s, parse_16_u8s_15452017556891490445, Ghost(spec_parse_4_u8s_6523411079649600299), Ghost(spec_parse_4_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_48_u8s), Ghost(spec_parse_28_u8s), Ghost(spec_parse_16_u8s), Ghost(spec_parse_16_u8s_15452017556891490445), s) };
+    let parse_owl_msg1 = |s| -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_msg1) { parse_7_fold(parse_4_u8s_6523411079649600299, parse_4_bytes, parse_32_bytes, parse_48_bytes, parse_28_bytes, parse_16_bytes, parse_16_u8s_15452017556891490445, Ghost(spec_parse_4_u8s_6523411079649600299), Ghost(spec_parse_4_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_48_bytes), Ghost(spec_parse_28_bytes), Ghost(spec_parse_16_bytes), Ghost(spec_parse_16_u8s_15452017556891490445), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_msg1, spec_parse_owl_msg1));
 
     parse_owl_msg1(s)
@@ -5814,22 +6886,22 @@ pub exec fn serialize_owl_msg1(s: Stream, v: ((((((Vec<u8>, Vec<u8>), Vec<u8>), 
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
     let serialize_4_u8s_6523411079649600299 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s_6523411079649600299(s, v)) { serialize_4_u8s_6523411079649600299(s, v) };
-    let serialize_4_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s(s, v)) { serialize_4_u8s(s, v) };
-    let serialize_32_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_u8s(s, v)) { serialize_32_u8s(s, v) };
-    let serialize_48_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_48_u8s(s, v)) { serialize_48_u8s(s, v) };
-    let serialize_28_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_28_u8s(s, v)) { serialize_28_u8s(s, v) };
-    let serialize_16_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_u8s(s, v)) { serialize_16_u8s(s, v) };
+    let serialize_4_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v)) { serialize_4_bytes(s, v) };
+    let serialize_32_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_bytes(s, v)) { serialize_32_bytes(s, v) };
+    let serialize_48_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_48_bytes(s, v)) { serialize_48_bytes(s, v) };
+    let serialize_28_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_28_bytes(s, v)) { serialize_28_bytes(s, v) };
+    let serialize_16_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_bytes(s, v)) { serialize_16_bytes(s, v) };
     let serialize_16_u8s_15452017556891490445 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_u8s_15452017556891490445(s, v)) { serialize_16_u8s_15452017556891490445(s, v) };
     let ghost spec_serialize_4_u8s_6523411079649600299 = |s, v| spec_serialize_4_u8s_6523411079649600299(s, v);
-    let ghost spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let ghost spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let ghost spec_serialize_48_u8s = |s, v| spec_serialize_48_u8s(s, v);
-    let ghost spec_serialize_28_u8s = |s, v| spec_serialize_28_u8s(s, v);
-    let ghost spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let ghost spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let ghost spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let ghost spec_serialize_48_bytes = |s, v| spec_serialize_48_bytes(s, v);
+    let ghost spec_serialize_28_bytes = |s, v| spec_serialize_28_bytes(s, v);
+    let ghost spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let ghost spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
-    let ghost spec_serialize_owl_msg1 = spec_serialize_7_fold(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_48_u8s, spec_serialize_28_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s_15452017556891490445);
+    let ghost spec_serialize_owl_msg1 = spec_serialize_7_fold(spec_serialize_4_u8s_6523411079649600299, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_48_bytes, spec_serialize_28_bytes, spec_serialize_16_bytes, spec_serialize_16_u8s_15452017556891490445);
 
-    let serialize_owl_msg1 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_msg1) { serialize_7_fold(serialize_4_u8s_6523411079649600299, serialize_4_u8s, serialize_32_u8s, serialize_48_u8s, serialize_28_u8s, serialize_16_u8s, serialize_16_u8s_15452017556891490445, Ghost(spec_serialize_4_u8s_6523411079649600299), Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_48_u8s), Ghost(spec_serialize_28_u8s), Ghost(spec_serialize_16_u8s), Ghost(spec_serialize_16_u8s_15452017556891490445), s, v) };
+    let serialize_owl_msg1 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_msg1) { serialize_7_fold(serialize_4_u8s_6523411079649600299, serialize_4_bytes, serialize_32_bytes, serialize_48_bytes, serialize_28_bytes, serialize_16_bytes, serialize_16_u8s_15452017556891490445, Ghost(spec_serialize_4_u8s_6523411079649600299), Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_48_bytes), Ghost(spec_serialize_28_bytes), Ghost(spec_serialize_16_bytes), Ghost(spec_serialize_16_u8s_15452017556891490445), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_msg1, spec_serialize_owl_msg1));
 
     serialize_owl_msg1(s, v)
@@ -5917,8 +6989,10 @@ pub proof fn lemma_parse_4_u8s_15022962709655904708_correct()
     reveal(prop_parse_correct);
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
     let spec_serialize_4_u8s_15022962709655904708 = |s, vs| spec_serialize_4_u8s_15022962709655904708(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_4_u8s_15022962709655904708, spec_serialize_4_u8s_15022962709655904708, s, vs) by {
-        lemma_parse_4_u8s_15022962709655904708_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_4_u8s_15022962709655904708, spec_serialize_4_u8s_15022962709655904708, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_4_u8s_15022962709655904708_correct_on(s, vs);
+        }
     }
 }
 
@@ -5968,6 +7042,7 @@ proof fn lemma_parse_4_u8s_15022962709655904708_serialize_inverse_on(s: SpecStre
 }
 
 proof fn lemma_parse_4_u8s_15022962709655904708_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_4_u8s_15022962709655904708(s), |s, vs| spec_serialize_4_u8s_15022962709655904708(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -6076,23 +7151,23 @@ pub struct OwlMsg2 {
 pub open spec fn spec_parse_owl_msg2(s: SpecStream) -> SpecParseResult<((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)>
 {
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
 
-    spec_parse_7_fold(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_16_u8s, spec_parse_16_u8s, spec_parse_16_u8s_15452017556891490445)(s)
+    spec_parse_7_fold(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_16_bytes, spec_parse_16_bytes, spec_parse_16_u8s_15452017556891490445)(s)
 }
 
 pub open spec fn spec_serialize_owl_msg2(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)) -> SpecSerializeResult
 {
     let spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
 
-    spec_serialize_7_fold(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s_15452017556891490445)(s, v)
+    spec_serialize_7_fold(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_16_bytes, spec_serialize_16_bytes, spec_serialize_16_u8s_15452017556891490445)(s, v)
 }
 
 pub proof fn lemma_parse_owl_msg2_well_behaved()
@@ -6131,8 +7206,10 @@ pub proof fn lemma_parse_owl_msg2_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_msg2 = |s| spec_parse_owl_msg2(s);
     let spec_serialize_owl_msg2 = |s, v| spec_serialize_owl_msg2(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_msg2, spec_serialize_owl_msg2, s, v) by {
-        lemma_parse_owl_msg2_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_msg2, spec_serialize_owl_msg2, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_msg2_correct_on(s, v);
+        }
     }
 }
 
@@ -6159,175 +7236,176 @@ pub proof fn lemma_parse_owl_msg2_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_msg2(s), s)
 {
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     lemma_parse_4_u8s_15022962709655904708_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, s);
 }
 
 pub proof fn lemma_serialize_owl_msg2_well_behaved_on(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_msg2(s, v), s, v)
 {
     let spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_15022962709655904708_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s, v);
 }
 
 pub proof fn lemma_serialize_owl_msg2_deterministic_on(s1: SpecStream, s2: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_msg2(s, v), s1, s2, v)
 {
     let spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_15022962709655904708_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_serialize_4_u8s_15022962709655904708_deterministic();
-    lemma_serialize_4_u8s_deterministic();
-    lemma_serialize_32_u8s_deterministic();
-    lemma_serialize_16_u8s_deterministic();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_serialize_32_bytes_deterministic();
+    lemma_serialize_16_bytes_deterministic();
     lemma_serialize_16_u8s_15452017556891490445_deterministic();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s1, s2, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_msg2_correct_on(s: SpecStream, v: ((((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_msg2(s), |s, v| spec_serialize_owl_msg2(s, v), s, v)
 {
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     let spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_serialize_4_u8s_15022962709655904708_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_15022962709655904708_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_15022962709655904708_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_16_u8s_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_16_bytes_strong_prefix();
     lemma_parse_16_u8s_15452017556891490445_strong_prefix();
     lemma_parse_4_u8s_15022962709655904708_correct();
-    lemma_parse_4_u8s_correct();
-    lemma_parse_32_u8s_correct();
-    lemma_parse_16_u8s_correct();
+    lemma_parse_4_bytes_correct();
+    lemma_parse_32_bytes_correct();
+    lemma_parse_16_bytes_correct();
     lemma_parse_16_u8s_15452017556891490445_correct();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_parse_pair_correct(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s, spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s, spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s, v);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_parse_pair_correct(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes, spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes, spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s, v);
 }
 
 pub proof fn lemma_parse_owl_msg2_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_msg2(s), |s, v| spec_serialize_owl_msg2(s, v), s)
 {
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     let spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
     lemma_parse_4_u8s_15022962709655904708_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_serialize_4_u8s_15022962709655904708_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_16_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_16_bytes_well_behaved();
     lemma_serialize_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_15022962709655904708_serialize_inverse();
-    lemma_parse_4_u8s_serialize_inverse();
-    lemma_parse_32_u8s_serialize_inverse();
-    lemma_parse_16_u8s_serialize_inverse();
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_parse_32_bytes_serialize_inverse();
+    lemma_parse_16_bytes_serialize_inverse();
     lemma_parse_16_u8s_15452017556891490445_serialize_inverse();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s, spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s, spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s);
-    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s), spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s), spec_serialize_16_u8s_15452017556891490445, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes, spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes, spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes), spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_16_bytes), spec_serialize_16_bytes), spec_serialize_16_u8s_15452017556891490445, s);
 }
 
 pub proof fn lemma_parse_owl_msg2_strong_prefix()
@@ -6344,31 +7422,31 @@ pub proof fn lemma_parse_owl_msg2_strong_prefix_on(s1: SpecStream, s2: SpecStrea
     ensures prop_parse_strong_prefix_on(|s| spec_parse_owl_msg2(s), s1, s2)
 {
     let spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
     lemma_parse_4_u8s_15022962709655904708_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_16_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_16_bytes_well_behaved();
     lemma_parse_16_u8s_15452017556891490445_well_behaved();
     lemma_parse_4_u8s_15022962709655904708_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_16_u8s_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_16_bytes_strong_prefix();
     lemma_parse_16_u8s_15452017556891490445_strong_prefix();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s);
-    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s), spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_16_u8s), spec_parse_16_u8s), spec_parse_16_u8s_15452017556891490445, s1, s2);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes);
+    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes), spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_16_bytes), spec_parse_16_bytes), spec_parse_16_u8s_15452017556891490445, s1, s2);
 }
 
 pub exec fn parse_owl_msg2(s: Stream) -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>)
@@ -6376,18 +7454,18 @@ pub exec fn parse_owl_msg2(s: Stream) -> (res: ParseResult<((((((Vec<u8>, Vec<u8
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
     let parse_4_u8s_15022962709655904708 = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s_15022962709655904708(s)) { parse_4_u8s_15022962709655904708(s) };
-    let parse_4_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s(s)) { parse_4_u8s(s) };
-    let parse_32_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_u8s(s)) { parse_32_u8s(s) };
-    let parse_16_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_u8s(s)) { parse_16_u8s(s) };
+    let parse_4_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s)) { parse_4_bytes(s) };
+    let parse_32_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_bytes(s)) { parse_32_bytes(s) };
+    let parse_16_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_bytes(s)) { parse_16_bytes(s) };
     let parse_16_u8s_15452017556891490445 = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_16_u8s_15452017556891490445(s)) { parse_16_u8s_15452017556891490445(s) };
     let ghost spec_parse_4_u8s_15022962709655904708 = |s| spec_parse_4_u8s_15022962709655904708(s);
-    let ghost spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let ghost spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let ghost spec_parse_16_u8s = |s| spec_parse_16_u8s(s);
+    let ghost spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let ghost spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let ghost spec_parse_16_bytes = |s| spec_parse_16_bytes(s);
     let ghost spec_parse_16_u8s_15452017556891490445 = |s| spec_parse_16_u8s_15452017556891490445(s);
-    let ghost spec_parse_owl_msg2 = spec_parse_7_fold(spec_parse_4_u8s_15022962709655904708, spec_parse_4_u8s, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_16_u8s, spec_parse_16_u8s, spec_parse_16_u8s_15452017556891490445);
+    let ghost spec_parse_owl_msg2 = spec_parse_7_fold(spec_parse_4_u8s_15022962709655904708, spec_parse_4_bytes, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_16_bytes, spec_parse_16_bytes, spec_parse_16_u8s_15452017556891490445);
 
-    let parse_owl_msg2 = |s| -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_msg2) { parse_7_fold(parse_4_u8s_15022962709655904708, parse_4_u8s, parse_4_u8s, parse_32_u8s, parse_16_u8s, parse_16_u8s, parse_16_u8s_15452017556891490445, Ghost(spec_parse_4_u8s_15022962709655904708), Ghost(spec_parse_4_u8s), Ghost(spec_parse_4_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_16_u8s), Ghost(spec_parse_16_u8s), Ghost(spec_parse_16_u8s_15452017556891490445), s) };
+    let parse_owl_msg2 = |s| -> (res: ParseResult<((((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_msg2) { parse_7_fold(parse_4_u8s_15022962709655904708, parse_4_bytes, parse_4_bytes, parse_32_bytes, parse_16_bytes, parse_16_bytes, parse_16_u8s_15452017556891490445, Ghost(spec_parse_4_u8s_15022962709655904708), Ghost(spec_parse_4_bytes), Ghost(spec_parse_4_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_16_bytes), Ghost(spec_parse_16_bytes), Ghost(spec_parse_16_u8s_15452017556891490445), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_msg2, spec_parse_owl_msg2));
 
     parse_owl_msg2(s)
@@ -6397,18 +7475,18 @@ pub exec fn serialize_owl_msg2(s: Stream, v: ((((((Vec<u8>, Vec<u8>), Vec<u8>), 
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
     let serialize_4_u8s_15022962709655904708 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s_15022962709655904708(s, v)) { serialize_4_u8s_15022962709655904708(s, v) };
-    let serialize_4_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s(s, v)) { serialize_4_u8s(s, v) };
-    let serialize_32_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_u8s(s, v)) { serialize_32_u8s(s, v) };
-    let serialize_16_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_u8s(s, v)) { serialize_16_u8s(s, v) };
+    let serialize_4_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v)) { serialize_4_bytes(s, v) };
+    let serialize_32_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_bytes(s, v)) { serialize_32_bytes(s, v) };
+    let serialize_16_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_bytes(s, v)) { serialize_16_bytes(s, v) };
     let serialize_16_u8s_15452017556891490445 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_16_u8s_15452017556891490445(s, v)) { serialize_16_u8s_15452017556891490445(s, v) };
     let ghost spec_serialize_4_u8s_15022962709655904708 = |s, v| spec_serialize_4_u8s_15022962709655904708(s, v);
-    let ghost spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let ghost spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let ghost spec_serialize_16_u8s = |s, v| spec_serialize_16_u8s(s, v);
+    let ghost spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let ghost spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let ghost spec_serialize_16_bytes = |s, v| spec_serialize_16_bytes(s, v);
     let ghost spec_serialize_16_u8s_15452017556891490445 = |s, v| spec_serialize_16_u8s_15452017556891490445(s, v);
-    let ghost spec_serialize_owl_msg2 = spec_serialize_7_fold(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_u8s, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s, spec_serialize_16_u8s_15452017556891490445);
+    let ghost spec_serialize_owl_msg2 = spec_serialize_7_fold(spec_serialize_4_u8s_15022962709655904708, spec_serialize_4_bytes, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_16_bytes, spec_serialize_16_bytes, spec_serialize_16_u8s_15452017556891490445);
 
-    let serialize_owl_msg2 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_msg2) { serialize_7_fold(serialize_4_u8s_15022962709655904708, serialize_4_u8s, serialize_4_u8s, serialize_32_u8s, serialize_16_u8s, serialize_16_u8s, serialize_16_u8s_15452017556891490445, Ghost(spec_serialize_4_u8s_15022962709655904708), Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_16_u8s), Ghost(spec_serialize_16_u8s), Ghost(spec_serialize_16_u8s_15452017556891490445), s, v) };
+    let serialize_owl_msg2 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_msg2) { serialize_7_fold(serialize_4_u8s_15022962709655904708, serialize_4_bytes, serialize_4_bytes, serialize_32_bytes, serialize_16_bytes, serialize_16_bytes, serialize_16_u8s_15452017556891490445, Ghost(spec_serialize_4_u8s_15022962709655904708), Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_16_bytes), Ghost(spec_serialize_16_bytes), Ghost(spec_serialize_16_u8s_15452017556891490445), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_msg2, spec_serialize_owl_msg2));
 
     serialize_owl_msg2(s, v)
@@ -6496,8 +7574,10 @@ pub proof fn lemma_parse_4_u8s_11861915643473238517_correct()
     reveal(prop_parse_correct);
     let spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
     let spec_serialize_4_u8s_11861915643473238517 = |s, vs| spec_serialize_4_u8s_11861915643473238517(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_4_u8s_11861915643473238517, spec_serialize_4_u8s_11861915643473238517, s, vs) by {
-        lemma_parse_4_u8s_11861915643473238517_correct_on(s, vs);
+    assert forall |s: SpecStream, vs| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_4_u8s_11861915643473238517, spec_serialize_4_u8s_11861915643473238517, s, vs) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_4_u8s_11861915643473238517_correct_on(s, vs);
+        }
     }
 }
 
@@ -6547,6 +7627,7 @@ proof fn lemma_parse_4_u8s_11861915643473238517_serialize_inverse_on(s: SpecStre
 }
 
 proof fn lemma_parse_4_u8s_11861915643473238517_correct_on(s: SpecStream, vs: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_4_u8s_11861915643473238517(s), |s, vs| spec_serialize_4_u8s_11861915643473238517(s, vs), s, vs)
 {
     let spec_parse_u8_le = |s| spec_parse_u8_le(s);
@@ -6632,173 +7713,256 @@ pub exec fn serialize_4_u8s_11861915643473238517(s: Stream, vs: Vec<u8>) -> (res
     }
 }
 
-pub open spec fn spec_parse_8_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
+pub open spec fn spec_parse_8_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
 {
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    spec_parse_repeat_n(spec_parse_u8_le, 8)(s)
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 8 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 8 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 8 as int,
+                ..s
+            },
+            8,
+            s.data.subrange(s.start, s.start + 8 as int),
+        ))
+    }
 }
 
-pub open spec fn spec_serialize_8_u8s(s: SpecStream, vs: Seq<u8>) -> SpecSerializeResult
+pub open spec fn spec_serialize_8_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
 {
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    spec_serialize_repeat_n(spec_serialize_u8_le, 8)(s, vs)
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 8 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 8 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 8 as int, s.data.len() as int),
+            },
+            8,
+        ))
+    }
 }
 
-pub proof fn lemma_parse_8_u8s_well_behaved()
-    ensures prop_parse_well_behaved(|s| spec_parse_8_u8s(s))
+pub proof fn lemma_parse_8_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_8_bytes(s))
 {
     reveal(prop_parse_well_behaved);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
-    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_8_u8s, s) by {
-        lemma_parse_8_u8s_well_behaved_on(s);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_8_bytes, s) by {
+        lemma_parse_8_bytes_well_behaved_on(s)
     }
 }
 
-pub proof fn lemma_serialize_8_u8s_well_behaved()
-    ensures prop_serialize_well_behaved(|s, vs| spec_serialize_8_u8s(s, vs))
+pub proof fn lemma_serialize_8_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_8_bytes(s, v))
 {
     reveal(prop_serialize_well_behaved);
-    let spec_serialize_8_u8s = |s, vs| spec_serialize_8_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_serialize_well_behaved_on(spec_serialize_8_u8s, s, vs) by {
-        lemma_serialize_8_u8s_well_behaved_on(s, vs);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_8_bytes, s, v) by {
+        lemma_serialize_8_bytes_well_behaved_on(s, v)
     }
 }
 
-pub proof fn lemma_serialize_8_u8s_deterministic()
-    ensures prop_serialize_deterministic(|s, v| spec_serialize_8_u8s(s, v))
+pub proof fn lemma_serialize_8_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_8_bytes(s, v))
 {
     reveal(prop_serialize_deterministic);
-    let spec_serialize_8_u8s = |s, vs| spec_serialize_8_u8s(s, vs);
-    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_8_u8s, s1, s2, v) by {
-        lemma_serialize_8_u8s_deterministic_on(s1, s2, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_8_bytes, s1, s2, v) by {
+        lemma_serialize_8_bytes_deterministic_on(s1, s2, v)
     }
 }
 
-pub proof fn lemma_parse_8_u8s_strong_prefix()
-    ensures prop_parse_strong_prefix(|s| spec_parse_8_u8s(s))
+pub proof fn lemma_parse_8_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_8_bytes(s))
 {
     reveal(prop_parse_strong_prefix);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
-    assert forall |s1: SpecStream, s2: SpecStream| prop_parse_strong_prefix_on(spec_parse_8_u8s, s1, s2) by {
-        lemma_parse_8_u8s_strong_prefix_on(s1, s2);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_8_bytes, s1, s2) by {
+        lemma_parse_8_bytes_strong_prefix_on(s1, s2)
     }
 }
 
-pub proof fn lemma_parse_8_u8s_correct()
-    ensures prop_parse_correct(|s| spec_parse_8_u8s(s), |s, vs| spec_serialize_8_u8s(s, vs))
-{
-    reveal(prop_parse_correct);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
-    let spec_serialize_8_u8s = |s, vs| spec_serialize_8_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_8_u8s, spec_serialize_8_u8s, s, vs) by {
-        lemma_parse_8_u8s_correct_on(s, vs);
-    }
-}
-
-pub proof fn lemma_parse_8_u8s_serialize_inverse()
-    ensures prop_parse_serialize_inverse(|s| spec_parse_8_u8s(s), |s, v| spec_serialize_8_u8s(s, v))
-{
-    reveal(prop_parse_serialize_inverse);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
-    let spec_serialize_8_u8s = |s, vs| spec_serialize_8_u8s(s, vs);
-    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_8_u8s, spec_serialize_8_u8s, s) by {
-        lemma_parse_8_u8s_serialize_inverse_on(s);
-    }
-}
-
-pub proof fn lemma_parse_8_u8s_nonmalleable()
-    ensures prop_parse_nonmalleable(|s| spec_parse_8_u8s(s))
-{
-    lemma_parse_8_u8s_serialize_inverse();
-    lemma_serialize_8_u8s_deterministic();
-    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_8_u8s(s), |s, v| spec_serialize_8_u8s(s, v));
-}
-
-proof fn lemma_parse_8_u8s_well_behaved_on(s: SpecStream)
-    ensures prop_parse_well_behaved_on(|s| spec_parse_8_u8s(s), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_repeat_n_well_behaved_on(spec_parse_u8_le, 8, s);
-}
-
-proof fn lemma_serialize_8_u8s_well_behaved_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_serialize_well_behaved_on(|s, vs| spec_serialize_8_u8s(s, vs), s, vs)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_repeat_n_well_behaved_on(spec_serialize_u8_le, 8, s, vs);
-}
-
-proof fn lemma_serialize_8_u8s_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
-    ensures prop_serialize_deterministic_on(|s, v| spec_serialize_8_u8s(s, v), s1, s2, v)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_u8_le_deterministic();
-    lemma_serialize_repeat_n_deterministic_on(spec_serialize_u8_le, 8, s1, s2, v);
-}
-
-proof fn lemma_parse_8_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
-    ensures prop_parse_strong_prefix_on(|s| spec_parse_8_u8s(s), s1, s2)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_repeat_n_strong_prefix_on(s1, s2, spec_parse_u8_le, 8);
-}
-
-proof fn lemma_parse_8_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_parse_correct_on(|s| spec_parse_8_u8s(s), |s, vs| spec_serialize_8_u8s(s, vs), s, vs)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_u8_le_correct();
-    lemma_parse_repeat_n_correct_on(spec_parse_u8_le, spec_serialize_u8_le, 8, s, vs);
-}
-
-proof fn lemma_parse_8_u8s_serialize_inverse_on(s: SpecStream)
-    ensures prop_parse_serialize_inverse_on(|s| spec_parse_8_u8s(s), |s, v| spec_serialize_8_u8s(s, v), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_serialize_inverse();
-    lemma_parse_repeat_n_serialize_inverse_on(spec_parse_u8_le, spec_serialize_u8_le, 8, s);
-}
-
-pub exec fn parse_8_u8s(s: Stream) -> (res: ParseResult<Vec<u8>>)
+pub proof fn lemma_parse_8_bytes_correct()
     ensures
-        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_8_u8s(s))
+        prop_parse_correct(|s| spec_parse_8_bytes(s), |s, v| spec_serialize_8_bytes(s, v))
 {
-    proof { reveal(prop_parse_exec_spec_equiv); }
-
-        let parse_u8_le = |s| -> (res: ParseResult<u8>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_u8_le(s)) { parse_u8_le(s) };
-    let ghost spec_parse_u8_le = |s| spec_parse_u8_le(s);
-
-    parse_repeat_n(parse_u8_le, Ghost(spec_parse_u8_le), 8, s)
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_8_bytes, spec_serialize_8_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_8_bytes_correct_on(s, v)
+        }
+    }
 }
 
-pub exec fn serialize_8_u8s(s: Stream, vs: Vec<u8>) -> (res: SerializeResult)
+pub proof fn lemma_parse_8_bytes_serialize_inverse()
     ensures
-        prop_serialize_exec_spec_equiv_on(s, vs, res, |s, vs| spec_serialize_8_u8s(s, vs))
+        prop_parse_serialize_inverse(|s| spec_parse_8_bytes(s), |s, v| spec_serialize_8_bytes(s, v))
 {
-    proof { reveal(prop_serialize_exec_spec_equiv); }
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_8_bytes, spec_serialize_8_bytes, s) by {
+        lemma_parse_8_bytes_serialize_inverse_on(s)
+    }
+}
 
-    let serialize_u8_le = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_u8_le(s, v)) { serialize_u8_le(s, v) };
-    let ghost spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
+pub proof fn lemma_parse_8_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_8_bytes(s))
+{
+    lemma_parse_8_bytes_serialize_inverse();
+    lemma_serialize_8_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_8_bytes(s), |s, v| spec_serialize_8_bytes(s, v));
+}
 
-    serialize_repeat_n(serialize_u8_le, Ghost(spec_serialize_u8_le), 8, s, vs)
+
+proof fn lemma_parse_8_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_8_bytes(s), s)
+{}
+
+proof fn lemma_serialize_8_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_8_bytes(s, v), s, v)
+{
+    if let Ok((sout, m)) = spec_serialize_8_bytes(s, v) {
+        assert(m == 8);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
+}
+
+proof fn lemma_serialize_8_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_8_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_8_bytes(s1, v), spec_serialize_8_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_8_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_8_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_8_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_8_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_8_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_8_bytes(s), |s, v| spec_serialize_8_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_8_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_8_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_8_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_8_bytes(s), |s, v| spec_serialize_8_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_8_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_8_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_8_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_8_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 8 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 8 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 8));
+        Ok((
+            Stream {
+                start: s.start + 8,
+                ..s
+            },
+            8,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_8_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_8_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 8 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 8, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 8,
+                data,
+            },
+            8,
+        ))
+    }
 }
 pub struct SpecOwlTransp {
     owl__transp_tag: Seq<u8>,
     owl__transp_receiver: Seq<u8>,
     owl__transp_counter: Seq<u8>,
-    owl__transp_packet: Vec<u8>,
+    owl__transp_packet: Seq<u8>,
 
 }
 pub struct OwlTransp {
@@ -6817,6 +7981,18 @@ pub open spec fn spec_parse_4_fold<R1, R2, R3, R4>(
 {
     spec_parse_pair(spec_parse_pair(spec_parse_pair(parser1, parser2), parser3), parser4)
 }
+
+
+
+pub open spec fn spec_serialize_4_fold<T1, T2, T3, T4>(
+    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
+    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
+    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
+    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult) -> FnSpec(SpecStream, (((T1, T2), T3), T4)) -> SpecSerializeResult
+{
+    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4)
+}
+
 
 pub exec fn parse_4_fold<P1, P2, P3, P4, R1, R2, R3, R4>(
     exec_parser1: P1,
@@ -6853,14 +8029,6 @@ pub exec fn parse_4_fold<P1, P2, P3, P4, R1, R2, R3, R4>(
 
 
 
-pub open spec fn spec_serialize_4_fold<T1, T2, T3, T4>(
-    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
-    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
-    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
-    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult) -> FnSpec(SpecStream, (((T1, T2), T3), T4)) -> SpecSerializeResult
-{
-    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4)
-}
 pub exec fn serialize_4_fold<S1, S2, S3, S4, T1, T2, T3, T4>(
     exec_serializer1: S1,
     exec_serializer2: S2,
@@ -6898,21 +8066,21 @@ pub exec fn serialize_4_fold<S1, S2, S3, S4, T1, T2, T3, T4>(
 pub open spec fn spec_parse_owl_transp(s: SpecStream) -> SpecParseResult<(((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>)>
 {
     let spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
 
-    spec_parse_4_fold(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s, spec_parse_8_u8s, spec_parse_tail)(s)
+    spec_parse_4_fold(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes, spec_parse_8_bytes, spec_parse_tail)(s)
 }
 
 pub open spec fn spec_serialize_owl_transp(s: SpecStream, v: (((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>)) -> SpecSerializeResult
 {
     let spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
 
-    spec_serialize_4_fold(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s, spec_serialize_8_u8s, spec_serialize_tail)(s, v)
+    spec_serialize_4_fold(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes, spec_serialize_8_bytes, spec_serialize_tail)(s, v)
 }
 
 pub proof fn lemma_parse_owl_transp_well_behaved()
@@ -6951,8 +8119,10 @@ pub proof fn lemma_parse_owl_transp_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_transp = |s| spec_parse_owl_transp(s);
     let spec_serialize_owl_transp = |s, v| spec_serialize_owl_transp(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_transp, spec_serialize_owl_transp, s, v) by {
-        lemma_parse_owl_transp_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_transp, spec_serialize_owl_transp, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_transp_correct_on(s, v);
+        }
     }
 }
 
@@ -6979,140 +8149,141 @@ pub proof fn lemma_parse_owl_transp_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_transp(s), s)
 {
     let spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
     lemma_parse_4_u8s_11861915643473238517_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_8_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_8_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s);
-    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s), spec_parse_tail, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes);
+    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes), spec_parse_tail, s);
 }
 
 pub proof fn lemma_serialize_owl_transp_well_behaved_on(s: SpecStream, v: (((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_transp(s, v), s, v)
 {
     let spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
     lemma_serialize_4_u8s_11861915643473238517_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_8_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_8_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s), spec_serialize_tail, s, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes), spec_serialize_tail, s, v);
 }
 
 pub proof fn lemma_serialize_owl_transp_deterministic_on(s1: SpecStream, s2: SpecStream, v: (((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_transp(s, v), s1, s2, v)
 {
     let spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
     lemma_serialize_4_u8s_11861915643473238517_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_8_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_8_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
     lemma_serialize_4_u8s_11861915643473238517_deterministic();
-    lemma_serialize_4_u8s_deterministic();
-    lemma_serialize_8_u8s_deterministic();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_serialize_8_bytes_deterministic();
     lemma_serialize_tail_deterministic();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s), spec_serialize_tail, s1, s2, v);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes), spec_serialize_tail, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_transp_correct_on(s: SpecStream, v: (((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_transp(s), |s, v| spec_serialize_owl_transp(s, v), s, v)
 {
     let spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
     let spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
     lemma_serialize_4_u8s_11861915643473238517_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_8_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_8_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
     lemma_parse_4_u8s_11861915643473238517_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_8_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_8_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
     lemma_parse_4_u8s_11861915643473238517_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_8_u8s_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_8_bytes_strong_prefix();
     
     lemma_parse_4_u8s_11861915643473238517_correct();
-    lemma_parse_4_u8s_correct();
-    lemma_parse_8_u8s_correct();
+    lemma_parse_4_bytes_correct();
+    lemma_parse_8_bytes_correct();
     lemma_parse_tail_correct();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s);
-    lemma_parse_pair_correct(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s, spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s, spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s), spec_parse_tail, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s), spec_serialize_tail, s, v);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes);
+    lemma_parse_pair_correct(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes, spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes, spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes), spec_parse_tail, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes), spec_serialize_tail, s, v);
 }
 
 pub proof fn lemma_parse_owl_transp_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_transp(s), |s, v| spec_serialize_owl_transp(s, v), s)
 {
     let spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
     let spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
     lemma_parse_4_u8s_11861915643473238517_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_8_u8s_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_8_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
     lemma_serialize_4_u8s_11861915643473238517_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_8_u8s_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_8_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
     lemma_parse_4_u8s_11861915643473238517_serialize_inverse();
-    lemma_parse_4_u8s_serialize_inverse();
-    lemma_parse_8_u8s_serialize_inverse();
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_parse_8_bytes_serialize_inverse();
     lemma_parse_tail_serialize_inverse();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s, spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s, spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s);
-    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s), spec_parse_8_u8s), spec_parse_tail, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s), spec_serialize_8_u8s), spec_serialize_tail, s);
+    lemma_parse_pair_well_behaved(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes, spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes, spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes), spec_parse_8_bytes), spec_parse_tail, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes), spec_serialize_8_bytes), spec_serialize_tail, s);
 }
 pub exec fn parse_owl_transp(s: Stream) -> (res: ParseResult<(((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>)>)
     ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_owl_transp(s))
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
     let parse_4_u8s_11861915643473238517 = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s_11861915643473238517(s)) { parse_4_u8s_11861915643473238517(s) };
-    let parse_4_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s(s)) { parse_4_u8s(s) };
-    let parse_8_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_8_u8s(s)) { parse_8_u8s(s) };
+    let parse_4_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s)) { parse_4_bytes(s) };
+    let parse_8_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_8_bytes(s)) { parse_8_bytes(s) };
     let parse_tail = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_tail(s)) { parse_tail(s) };
     let ghost spec_parse_4_u8s_11861915643473238517 = |s| spec_parse_4_u8s_11861915643473238517(s);
-    let ghost spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let ghost spec_parse_8_u8s = |s| spec_parse_8_u8s(s);
+    let ghost spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let ghost spec_parse_8_bytes = |s| spec_parse_8_bytes(s);
     let ghost spec_parse_tail = |s| spec_parse_tail(s);
-    let ghost spec_parse_owl_transp = spec_parse_4_fold(spec_parse_4_u8s_11861915643473238517, spec_parse_4_u8s, spec_parse_8_u8s, spec_parse_tail);
+    let ghost spec_parse_owl_transp = spec_parse_4_fold(spec_parse_4_u8s_11861915643473238517, spec_parse_4_bytes, spec_parse_8_bytes, spec_parse_tail);
 
-    let parse_owl_transp = |s| -> (res: ParseResult<(((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_transp) { parse_4_fold(parse_4_u8s_11861915643473238517, parse_4_u8s, parse_8_u8s, parse_tail, Ghost(spec_parse_4_u8s_11861915643473238517), Ghost(spec_parse_4_u8s), Ghost(spec_parse_8_u8s), Ghost(spec_parse_tail), s) };
+    let parse_owl_transp = |s| -> (res: ParseResult<(((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_transp) { parse_4_fold(parse_4_u8s_11861915643473238517, parse_4_bytes, parse_8_bytes, parse_tail, Ghost(spec_parse_4_u8s_11861915643473238517), Ghost(spec_parse_4_bytes), Ghost(spec_parse_8_bytes), Ghost(spec_parse_tail), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_transp, spec_parse_owl_transp));
 
     parse_owl_transp(s)
@@ -7122,186 +8293,269 @@ pub exec fn serialize_owl_transp(s: Stream, v: (((Vec<u8>, Vec<u8>), Vec<u8>), V
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
     let serialize_4_u8s_11861915643473238517 = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s_11861915643473238517(s, v)) { serialize_4_u8s_11861915643473238517(s, v) };
-    let serialize_4_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s(s, v)) { serialize_4_u8s(s, v) };
-    let serialize_8_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_8_u8s(s, v)) { serialize_8_u8s(s, v) };
+    let serialize_4_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v)) { serialize_4_bytes(s, v) };
+    let serialize_8_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_8_bytes(s, v)) { serialize_8_bytes(s, v) };
     let serialize_tail = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_tail(s, v)) { serialize_tail(s, v) };
     let ghost spec_serialize_4_u8s_11861915643473238517 = |s, v| spec_serialize_4_u8s_11861915643473238517(s, v);
-    let ghost spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let ghost spec_serialize_8_u8s = |s, v| spec_serialize_8_u8s(s, v);
+    let ghost spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let ghost spec_serialize_8_bytes = |s, v| spec_serialize_8_bytes(s, v);
     let ghost spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    let ghost spec_serialize_owl_transp = spec_serialize_4_fold(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_u8s, spec_serialize_8_u8s, spec_serialize_tail);
+    let ghost spec_serialize_owl_transp = spec_serialize_4_fold(spec_serialize_4_u8s_11861915643473238517, spec_serialize_4_bytes, spec_serialize_8_bytes, spec_serialize_tail);
 
-    let serialize_owl_transp = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_transp) { serialize_4_fold(serialize_4_u8s_11861915643473238517, serialize_4_u8s, serialize_8_u8s, serialize_tail, Ghost(spec_serialize_4_u8s_11861915643473238517), Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_8_u8s), Ghost(spec_serialize_tail), s, v) };
+    let serialize_owl_transp = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_transp) { serialize_4_fold(serialize_4_u8s_11861915643473238517, serialize_4_bytes, serialize_8_bytes, serialize_tail, Ghost(spec_serialize_4_u8s_11861915643473238517), Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_8_bytes), Ghost(spec_serialize_tail), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_transp, spec_serialize_owl_transp));
 
     serialize_owl_transp(s, v)
 }
 
-pub open spec fn spec_parse_12_u8s(s: SpecStream) -> SpecParseResult<Seq<u8>>
+pub open spec fn spec_parse_12_bytes(s: SpecStream) -> SpecParseResult<Seq<u8>>
 {
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    spec_parse_repeat_n(spec_parse_u8_le, 12)(s)
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.len() {
+        Err(ParseError::Eof)
+    } else if s.start + 12 > usize::MAX {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 12 > s.data.len() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 12 as int,
+                ..s
+            },
+            12,
+            s.data.subrange(s.start, s.start + 12 as int),
+        ))
+    }
 }
 
-pub open spec fn spec_serialize_12_u8s(s: SpecStream, vs: Seq<u8>) -> SpecSerializeResult
+pub open spec fn spec_serialize_12_bytes(s: SpecStream, v: Seq<u8>) -> SpecSerializeResult
 {
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    spec_serialize_repeat_n(spec_serialize_u8_le, 12)(s, vs)
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start + v.len() > usize::MAX {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.len() > s.data.len() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.len() != 12 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        Ok((
+            SpecStream {
+                start: s.start + 12 as int,
+                data: s.data.subrange(0, s.start) + v + s.data.subrange(s.start + 12 as int, s.data.len() as int),
+            },
+            12,
+        ))
+    }
 }
 
-pub proof fn lemma_parse_12_u8s_well_behaved()
-    ensures prop_parse_well_behaved(|s| spec_parse_12_u8s(s))
+pub proof fn lemma_parse_12_bytes_well_behaved()
+    ensures
+        prop_parse_well_behaved(|s| spec_parse_12_bytes(s))
 {
     reveal(prop_parse_well_behaved);
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_12_u8s, s) by {
-        lemma_parse_12_u8s_well_behaved_on(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    assert forall |s| #[trigger] prop_parse_well_behaved_on(spec_parse_12_bytes, s) by {
+        lemma_parse_12_bytes_well_behaved_on(s)
     }
 }
 
-pub proof fn lemma_serialize_12_u8s_well_behaved()
-    ensures prop_serialize_well_behaved(|s, vs| spec_serialize_12_u8s(s, vs))
+pub proof fn lemma_serialize_12_bytes_well_behaved()
+    ensures
+        prop_serialize_well_behaved(|s, v| spec_serialize_12_bytes(s, v))
 {
     reveal(prop_serialize_well_behaved);
-    let spec_serialize_12_u8s = |s, vs| spec_serialize_12_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_serialize_well_behaved_on(spec_serialize_12_u8s, s, vs) by {
-        lemma_serialize_12_u8s_well_behaved_on(s, vs);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    assert forall |s, v| #[trigger] prop_serialize_well_behaved_on(spec_serialize_12_bytes, s, v) by {
+        lemma_serialize_12_bytes_well_behaved_on(s, v)
     }
 }
 
-pub proof fn lemma_serialize_12_u8s_deterministic()
-    ensures prop_serialize_deterministic(|s, v| spec_serialize_12_u8s(s, v))
+pub proof fn lemma_serialize_12_bytes_deterministic()
+    ensures
+        prop_serialize_deterministic(|s, v| spec_serialize_12_bytes(s, v))
 {
     reveal(prop_serialize_deterministic);
-    let spec_serialize_12_u8s = |s, vs| spec_serialize_12_u8s(s, vs);
-    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_12_u8s, s1, s2, v) by {
-        lemma_serialize_12_u8s_deterministic_on(s1, s2, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    assert forall |s1, s2, v| #[trigger] prop_serialize_deterministic_on(spec_serialize_12_bytes, s1, s2, v) by {
+        lemma_serialize_12_bytes_deterministic_on(s1, s2, v)
     }
 }
 
-pub proof fn lemma_parse_12_u8s_strong_prefix()
-    ensures prop_parse_strong_prefix(|s| spec_parse_12_u8s(s))
+pub proof fn lemma_parse_12_bytes_strong_prefix()
+    ensures
+        prop_parse_strong_prefix(|s| spec_parse_12_bytes(s))
 {
     reveal(prop_parse_strong_prefix);
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    assert forall |s1: SpecStream, s2: SpecStream| prop_parse_strong_prefix_on(spec_parse_12_u8s, s1, s2) by {
-        lemma_parse_12_u8s_strong_prefix_on(s1, s2);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    assert forall |s1, s2| #[trigger] prop_parse_strong_prefix_on(spec_parse_12_bytes, s1, s2) by {
+        lemma_parse_12_bytes_strong_prefix_on(s1, s2)
     }
 }
 
-pub proof fn lemma_parse_12_u8s_correct()
-    ensures prop_parse_correct(|s| spec_parse_12_u8s(s), |s, vs| spec_serialize_12_u8s(s, vs))
-{
-    reveal(prop_parse_correct);
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_serialize_12_u8s = |s, vs| spec_serialize_12_u8s(s, vs);
-    assert forall |s, vs| #[trigger] prop_parse_correct_on(spec_parse_12_u8s, spec_serialize_12_u8s, s, vs) by {
-        lemma_parse_12_u8s_correct_on(s, vs);
-    }
-}
-
-pub proof fn lemma_parse_12_u8s_serialize_inverse()
-    ensures prop_parse_serialize_inverse(|s| spec_parse_12_u8s(s), |s, v| spec_serialize_12_u8s(s, v))
-{
-    reveal(prop_parse_serialize_inverse);
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_serialize_12_u8s = |s, vs| spec_serialize_12_u8s(s, vs);
-    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_12_u8s, spec_serialize_12_u8s, s) by {
-        lemma_parse_12_u8s_serialize_inverse_on(s);
-    }
-}
-
-pub proof fn lemma_parse_12_u8s_nonmalleable()
-    ensures prop_parse_nonmalleable(|s| spec_parse_12_u8s(s))
-{
-    lemma_parse_12_u8s_serialize_inverse();
-    lemma_serialize_12_u8s_deterministic();
-    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_12_u8s(s), |s, v| spec_serialize_12_u8s(s, v));
-}
-
-proof fn lemma_parse_12_u8s_well_behaved_on(s: SpecStream)
-    ensures prop_parse_well_behaved_on(|s| spec_parse_12_u8s(s), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_repeat_n_well_behaved_on(spec_parse_u8_le, 12, s);
-}
-
-proof fn lemma_serialize_12_u8s_well_behaved_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_serialize_well_behaved_on(|s, vs| spec_serialize_12_u8s(s, vs), s, vs)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_repeat_n_well_behaved_on(spec_serialize_u8_le, 12, s, vs);
-}
-
-proof fn lemma_serialize_12_u8s_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
-    ensures prop_serialize_deterministic_on(|s, v| spec_serialize_12_u8s(s, v), s1, s2, v)
-{
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_serialize_u8_le_deterministic();
-    lemma_serialize_repeat_n_deterministic_on(spec_serialize_u8_le, 12, s1, s2, v);
-}
-
-proof fn lemma_parse_12_u8s_strong_prefix_on(s1: SpecStream, s2: SpecStream)
-    ensures prop_parse_strong_prefix_on(|s| spec_parse_12_u8s(s), s1, s2)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_repeat_n_strong_prefix_on(s1, s2, spec_parse_u8_le, 12);
-}
-
-proof fn lemma_parse_12_u8s_correct_on(s: SpecStream, vs: Seq<u8>)
-    ensures prop_parse_correct_on(|s| spec_parse_12_u8s(s), |s, vs| spec_serialize_12_u8s(s, vs), s, vs)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_strong_prefix();
-    lemma_parse_u8_le_correct();
-    lemma_parse_repeat_n_correct_on(spec_parse_u8_le, spec_serialize_u8_le, 12, s, vs);
-}
-
-proof fn lemma_parse_12_u8s_serialize_inverse_on(s: SpecStream)
-    ensures prop_parse_serialize_inverse_on(|s| spec_parse_12_u8s(s), |s, v| spec_serialize_12_u8s(s, v), s)
-{
-    let spec_parse_u8_le = |s| spec_parse_u8_le(s);
-    let spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
-    lemma_serialize_u8_le_well_behaved();
-    lemma_parse_u8_le_well_behaved();
-    lemma_parse_u8_le_serialize_inverse();
-    lemma_parse_repeat_n_serialize_inverse_on(spec_parse_u8_le, spec_serialize_u8_le, 12, s);
-}
-
-pub exec fn parse_12_u8s(s: Stream) -> (res: ParseResult<Vec<u8>>)
+pub proof fn lemma_parse_12_bytes_correct()
     ensures
-        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_u8s(s))
+        prop_parse_correct(|s| spec_parse_12_bytes(s), |s, v| spec_serialize_12_bytes(s, v))
 {
-    proof { reveal(prop_parse_exec_spec_equiv); }
-
-        let parse_u8_le = |s| -> (res: ParseResult<u8>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_u8_le(s)) { parse_u8_le(s) };
-    let ghost spec_parse_u8_le = |s| spec_parse_u8_le(s);
-
-    parse_repeat_n(parse_u8_le, Ghost(spec_parse_u8_le), 12, s)
+    reveal(prop_parse_correct::<Seq<u8>>);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_12_bytes, spec_serialize_12_bytes, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_12_bytes_correct_on(s, v)
+        }
+    }
 }
 
-pub exec fn serialize_12_u8s(s: Stream, vs: Vec<u8>) -> (res: SerializeResult)
+pub proof fn lemma_parse_12_bytes_serialize_inverse()
     ensures
-        prop_serialize_exec_spec_equiv_on(s, vs, res, |s, vs| spec_serialize_12_u8s(s, vs))
+        prop_parse_serialize_inverse(|s| spec_parse_12_bytes(s), |s, v| spec_serialize_12_bytes(s, v))
 {
-    proof { reveal(prop_serialize_exec_spec_equiv); }
+    reveal(prop_parse_serialize_inverse::<Seq<u8>>);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    assert forall |s| #[trigger] prop_parse_serialize_inverse_on(spec_parse_12_bytes, spec_serialize_12_bytes, s) by {
+        lemma_parse_12_bytes_serialize_inverse_on(s)
+    }
+}
 
-    let serialize_u8_le = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_u8_le(s, v)) { serialize_u8_le(s, v) };
-    let ghost spec_serialize_u8_le = |s, v| spec_serialize_u8_le(s, v);
+pub proof fn lemma_parse_12_bytes_nonmalleable()
+    ensures
+        prop_parse_nonmalleable(|s| spec_parse_12_bytes(s))
+{
+    lemma_parse_12_bytes_serialize_inverse();
+    lemma_serialize_12_bytes_deterministic();
+    lemma_parse_serialize_inverse_implies_nonmalleable(|s| spec_parse_12_bytes(s), |s, v| spec_serialize_12_bytes(s, v));
+}
 
-    serialize_repeat_n(serialize_u8_le, Ghost(spec_serialize_u8_le), 12, s, vs)
+
+proof fn lemma_parse_12_bytes_well_behaved_on(s: SpecStream)
+    ensures
+        prop_parse_well_behaved_on(|s| spec_parse_12_bytes(s), s)
+{}
+
+proof fn lemma_serialize_12_bytes_well_behaved_on(s: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_well_behaved_on(|s, v| spec_serialize_12_bytes(s, v), s, v)
+{
+    if let Ok((sout, m)) = spec_serialize_12_bytes(s, v) {
+        assert(m == 12);
+        assert(sout.data.len() =~= s.data.len());
+        assert(sout.data.subrange(0, s.start) =~= s.data.subrange(0, s.start));
+        assert(sout.data.subrange(s.start + m, s.data.len() as int) =~= s.data.subrange(s.start + m, s.data.len() as int));
+    }
+}
+
+proof fn lemma_serialize_12_bytes_deterministic_on(s1: SpecStream, s2: SpecStream, v: Seq<u8>)
+    ensures
+        prop_serialize_deterministic_on(|s, v| spec_serialize_12_bytes(s, v), s1, s2, v)
+{
+    let n = v.len();
+    if let (Ok((sout1, n1)), Ok((sout2, n2))) = (spec_serialize_12_bytes(s1, v), spec_serialize_12_bytes(s2, v)) {
+        assert(n1 == n && n2 == n);
+        assert(sout1.data.subrange(s1.start, s1.start + n) =~= sout2.data.subrange(s2.start, s2.start + n));
+    }
+}
+
+proof fn lemma_parse_12_bytes_strong_prefix_on(s1: SpecStream, s2: SpecStream)
+    ensures
+        prop_parse_strong_prefix_on(|s| spec_parse_12_bytes(s), s1, s2)
+{
+    if let Ok((sout1, m1, x1)) = spec_parse_12_bytes(s1) {
+        if 0 <= s1.start <= s1.start + m1 <= s1.data.len() <= usize::MAX
+        && 0 <= s2.start <= s2.start + m1 <= s2.data.len() <= usize::MAX
+        && s1.data.subrange(s1.start, s1.start + m1) == s2.data.subrange(s2.start, s2.start + m1) {
+            if let Ok((sout2, m2, x2)) = spec_parse_12_bytes(s2) {
+                assert(m1 == m2);
+                assert(x1 == x2);
+            }
+        }
+    }
+}
+
+proof fn lemma_parse_12_bytes_correct_on(s: SpecStream, v: Seq<u8>)
+    requires s.data.len() <= usize::MAX,
+    ensures
+        prop_parse_correct_on(|s| spec_parse_12_bytes(s), |s, v| spec_serialize_12_bytes(s, v), s, v)
+{
+    if let Ok((sout, m1)) = spec_serialize_12_bytes(s, v) {
+        if let Ok((_, m2, res)) = spec_parse_12_bytes(SpecStream {start: s.start, ..sout}) {
+            assert(m1 == m2);
+            assert(res =~= v);
+        }
+    }
+}
+
+proof fn lemma_parse_12_bytes_serialize_inverse_on(s: SpecStream)
+    ensures
+        prop_parse_serialize_inverse_on(|s| spec_parse_12_bytes(s), |s, v| spec_serialize_12_bytes(s, v), s)
+{
+    if let Ok((sout, m1, x)) = spec_parse_12_bytes(s) {
+        if let Ok((sout2, m2)) = spec_serialize_12_bytes(s, x) {
+            assert(m1 == m2);
+            assert(sout.data =~= sout2.data);
+        }
+    }
+}
+
+pub exec fn parse_12_bytes(s: Stream) -> (res: ParseResult<Vec<u8>>)
+    ensures
+        prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_bytes(s))
+{
+    if s.start < 0 {
+        Err(ParseError::NegativeIndex)
+    } else if s.start > s.data.length() {
+        Err(ParseError::Eof)
+    } else if s.start > usize::MAX - 12 {
+        Err(ParseError::IntegerOverflow)
+    } else if s.start + 12 > s.data.length() {
+        Err(ParseError::NotEnoughData)
+    } else {
+        let data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start, s.start + 12));
+        Ok((
+            Stream {
+                start: s.start + 12,
+                ..s
+            },
+            12,
+            data,
+        ))
+    }
+}
+
+pub exec fn serialize_12_bytes(s: Stream, v: Vec<u8>) -> (res: SerializeResult)
+    ensures
+        prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_12_bytes(s, v))
+{
+    if s.start < 0 {
+        Err(SerializeError::NegativeIndex)
+    } else if s.start > usize::MAX - v.length() {
+        Err(SerializeError::IntegerOverflow)
+    } else if s.start + v.length() > s.data.length() {
+        Err(SerializeError::NotEnoughSpace)
+    } else if v.length() != 12 {
+        Err(SerializeError::BytesLengthMismatch)
+    } else {
+        let mut data = slice_to_vec(slice_subrange(vec_as_slice(&s.data), 0, s.start));
+        let mut rem = slice_to_vec(slice_subrange(vec_as_slice(&s.data), s.start + 12, s.data.length()));
+        let mut v = v;
+        vec_append(&mut data, &mut v);
+        vec_append(&mut data, &mut rem);
+
+        Ok((
+            Stream {
+                start: s.start + 12,
+                data,
+            },
+            12,
+        ))
+    }
 }
 pub struct SpecOwlInitiatorMsg1Val {
     owl__initiator_msg1_c3: Seq<u8>,
-    owl__initiator_msg1_h4: Vec<u8>,
+    owl__initiator_msg1_h4: Seq<u8>,
 
 }
 pub struct OwlInitiatorMsg1Val {
@@ -7312,18 +8566,18 @@ pub struct OwlInitiatorMsg1Val {
 
 pub open spec fn spec_parse_owl_initiator_msg1_val(s: SpecStream) -> SpecParseResult<(Seq<u8>, Seq<u8>)>
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
 
-    spec_parse_pair(spec_parse_12_u8s, spec_parse_tail)(s)
+    spec_parse_pair(spec_parse_12_bytes, spec_parse_tail)(s)
 }
 
 pub open spec fn spec_serialize_owl_initiator_msg1_val(s: SpecStream, v: (Seq<u8>, Seq<u8>)) -> SpecSerializeResult
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
 
-    spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_tail)(s, v)
+    spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_tail)(s, v)
 }
 
 pub proof fn lemma_parse_owl_initiator_msg1_val_well_behaved()
@@ -7362,8 +8616,10 @@ pub proof fn lemma_parse_owl_initiator_msg1_val_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_initiator_msg1_val = |s| spec_parse_owl_initiator_msg1_val(s);
     let spec_serialize_owl_initiator_msg1_val = |s, v| spec_serialize_owl_initiator_msg1_val(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_initiator_msg1_val, spec_serialize_owl_initiator_msg1_val, s, v) by {
-        lemma_parse_owl_initiator_msg1_val_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_initiator_msg1_val, spec_serialize_owl_initiator_msg1_val, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_initiator_msg1_val_correct_on(s, v);
+        }
     }
 }
 
@@ -7389,79 +8645,80 @@ pub proof fn lemma_parse_owl_initiator_msg1_val_nonmalleable()
 pub proof fn lemma_parse_owl_initiator_msg1_val_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_initiator_msg1_val(s), s)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
-    lemma_parse_12_u8s_well_behaved();
+    lemma_parse_12_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
-    lemma_parse_pair_well_behaved_on(spec_parse_12_u8s, spec_parse_tail, s);
+    lemma_parse_pair_well_behaved_on(spec_parse_12_bytes, spec_parse_tail, s);
 }
 
 pub proof fn lemma_serialize_owl_initiator_msg1_val_well_behaved_on(s: SpecStream, v: (Seq<u8>, Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_initiator_msg1_val(s, v), s, v)
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    lemma_serialize_12_u8s_well_behaved();
+    lemma_serialize_12_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
-    lemma_serialize_pair_well_behaved_on(spec_serialize_12_u8s, spec_serialize_tail, s, v);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_12_bytes, spec_serialize_tail, s, v);
 }
 
 pub proof fn lemma_serialize_owl_initiator_msg1_val_deterministic_on(s1: SpecStream, s2: SpecStream, v: (Seq<u8>, Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_initiator_msg1_val(s, v), s1, s2, v)
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    lemma_serialize_12_u8s_well_behaved();
+    lemma_serialize_12_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
-    lemma_serialize_12_u8s_deterministic();
+    lemma_serialize_12_bytes_deterministic();
     lemma_serialize_tail_deterministic();
-    lemma_serialize_pair_deterministic_on(spec_serialize_12_u8s, spec_serialize_tail, s1, s2, v);
+    lemma_serialize_pair_deterministic_on(spec_serialize_12_bytes, spec_serialize_tail, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_initiator_msg1_val_correct_on(s: SpecStream, v: (Seq<u8>, Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_initiator_msg1_val(s), |s, v| spec_serialize_owl_initiator_msg1_val(s, v), s, v)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    lemma_serialize_12_u8s_well_behaved();
+    lemma_serialize_12_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
-    lemma_parse_12_u8s_well_behaved();
+    lemma_parse_12_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
-    lemma_parse_12_u8s_strong_prefix();
+    lemma_parse_12_bytes_strong_prefix();
     
-    lemma_parse_12_u8s_correct();
+    lemma_parse_12_bytes_correct();
     lemma_parse_tail_correct();
-    lemma_parse_pair_correct_on(spec_parse_12_u8s, spec_parse_tail, spec_serialize_12_u8s, spec_serialize_tail, s, v);
+    lemma_parse_pair_correct_on(spec_parse_12_bytes, spec_parse_tail, spec_serialize_12_bytes, spec_serialize_tail, s, v);
 }
 
 pub proof fn lemma_parse_owl_initiator_msg1_val_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_initiator_msg1_val(s), |s, v| spec_serialize_owl_initiator_msg1_val(s, v), s)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
     let spec_parse_tail = |s| spec_parse_tail(s);
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    lemma_parse_12_u8s_well_behaved();
+    lemma_parse_12_bytes_well_behaved();
     lemma_parse_tail_well_behaved();
-    lemma_serialize_12_u8s_well_behaved();
+    lemma_serialize_12_bytes_well_behaved();
     lemma_serialize_tail_well_behaved();
-    lemma_parse_12_u8s_serialize_inverse();
+    lemma_parse_12_bytes_serialize_inverse();
     lemma_parse_tail_serialize_inverse();
-    lemma_parse_pair_serialize_inverse_on(spec_parse_12_u8s, spec_parse_tail, spec_serialize_12_u8s, spec_serialize_tail, s);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_12_bytes, spec_parse_tail, spec_serialize_12_bytes, spec_serialize_tail, s);
 }
 pub exec fn parse_owl_initiator_msg1_val(s: Stream) -> (res: ParseResult<(Vec<u8>, Vec<u8>)>)
     ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_owl_initiator_msg1_val(s))
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
-    let parse_12_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_u8s(s)) { parse_12_u8s(s) };
+    let parse_12_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_bytes(s)) { parse_12_bytes(s) };
     let parse_tail = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_tail(s)) { parse_tail(s) };
-    let ghost spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
+    let ghost spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
     let ghost spec_parse_tail = |s| spec_parse_tail(s);
-    let ghost spec_parse_owl_initiator_msg1_val = spec_parse_pair(spec_parse_12_u8s, spec_parse_tail);
+    let ghost spec_parse_owl_initiator_msg1_val = spec_parse_pair(spec_parse_12_bytes, spec_parse_tail);
 
-    let parse_owl_initiator_msg1_val = |s| -> (res: ParseResult<(Vec<u8>, Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_initiator_msg1_val) { parse_pair(parse_12_u8s, parse_tail, Ghost(spec_parse_12_u8s), Ghost(spec_parse_tail), s) };
+    let parse_owl_initiator_msg1_val = |s| -> (res: ParseResult<(Vec<u8>, Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_initiator_msg1_val) { parse_pair(parse_12_bytes, parse_tail, Ghost(spec_parse_12_bytes), Ghost(spec_parse_tail), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_initiator_msg1_val, spec_parse_owl_initiator_msg1_val));
 
     parse_owl_initiator_msg1_val(s)
@@ -7470,13 +8727,13 @@ pub exec fn serialize_owl_initiator_msg1_val(s: Stream, v: (Vec<u8>, Vec<u8>)) -
     ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_owl_initiator_msg1_val(s, v))
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
-    let serialize_12_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_12_u8s(s, v)) { serialize_12_u8s(s, v) };
+    let serialize_12_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_12_bytes(s, v)) { serialize_12_bytes(s, v) };
     let serialize_tail = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_tail(s, v)) { serialize_tail(s, v) };
-    let ghost spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
+    let ghost spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
     let ghost spec_serialize_tail = |s, v| spec_serialize_tail(s, v);
-    let ghost spec_serialize_owl_initiator_msg1_val = spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_tail);
+    let ghost spec_serialize_owl_initiator_msg1_val = spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_tail);
 
-    let serialize_owl_initiator_msg1_val = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_initiator_msg1_val) { serialize_pair(serialize_12_u8s, serialize_tail, Ghost(spec_serialize_12_u8s), Ghost(spec_serialize_tail), s, v) };
+    let serialize_owl_initiator_msg1_val = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_initiator_msg1_val) { serialize_pair(serialize_12_bytes, serialize_tail, Ghost(spec_serialize_12_bytes), Ghost(spec_serialize_tail), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_initiator_msg1_val, spec_serialize_owl_initiator_msg1_val));
 
     serialize_owl_initiator_msg1_val(s, v)
@@ -7510,6 +8767,20 @@ pub open spec fn spec_parse_6_fold<R1, R2, R3, R4, R5, R6>(
 {
     spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(parser1, parser2), parser3), parser4), parser5), parser6)
 }
+
+
+
+pub open spec fn spec_serialize_6_fold<T1, T2, T3, T4, T5, T6>(
+    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
+    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
+    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
+    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
+    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult,
+    serializer6: FnSpec(SpecStream, T6) -> SpecSerializeResult) -> FnSpec(SpecStream, (((((T1, T2), T3), T4), T5), T6)) -> SpecSerializeResult
+{
+    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5), serializer6)
+}
+
 
 pub exec fn parse_6_fold<P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5, R6>(
     exec_parser1: P1,
@@ -7558,16 +8829,6 @@ pub exec fn parse_6_fold<P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5, R6>(
 
 
 
-pub open spec fn spec_serialize_6_fold<T1, T2, T3, T4, T5, T6>(
-    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
-    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
-    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
-    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
-    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult,
-    serializer6: FnSpec(SpecStream, T6) -> SpecSerializeResult) -> FnSpec(SpecStream, (((((T1, T2), T3), T4), T5), T6)) -> SpecSerializeResult
-{
-    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5), serializer6)
-}
 pub exec fn serialize_6_fold<S1, S2, S3, S4, S5, S6, T1, T2, T3, T4, T5, T6>(
     exec_serializer1: S1,
     exec_serializer2: S2,
@@ -7616,18 +8877,18 @@ pub exec fn serialize_6_fold<S1, S2, S3, S4, S5, S6, T1, T2, T3, T4, T5, T6>(
 
 pub open spec fn spec_parse_owl_transp_keys(s: SpecStream) -> SpecParseResult<(((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)>
 {
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
 
-    spec_parse_6_fold(spec_parse_4_u8s, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s)(s)
+    spec_parse_6_fold(spec_parse_4_bytes, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes)(s)
 }
 
 pub open spec fn spec_serialize_owl_transp_keys(s: SpecStream, v: (((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)) -> SpecSerializeResult
 {
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
 
-    spec_serialize_6_fold(spec_serialize_4_u8s, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s)(s, v)
+    spec_serialize_6_fold(spec_serialize_4_bytes, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes)(s, v)
 }
 
 pub proof fn lemma_parse_owl_transp_keys_well_behaved()
@@ -7666,8 +8927,10 @@ pub proof fn lemma_parse_owl_transp_keys_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_transp_keys = |s| spec_parse_owl_transp_keys(s);
     let spec_serialize_owl_transp_keys = |s, v| spec_serialize_owl_transp_keys(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_transp_keys, spec_serialize_owl_transp_keys, s, v) by {
-        lemma_parse_owl_transp_keys_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_transp_keys, spec_serialize_owl_transp_keys, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_transp_keys_correct_on(s, v);
+        }
     }
 }
 
@@ -7693,111 +8956,112 @@ pub proof fn lemma_parse_owl_transp_keys_nonmalleable()
 pub proof fn lemma_parse_owl_transp_keys_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_transp_keys(s), s)
 {
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_pair_well_behaved(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, s);
 }
 
 pub proof fn lemma_serialize_owl_transp_keys_well_behaved_on(s: SpecStream, v: (((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_transp_keys(s, v), s, v)
 {
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s, s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_pair_well_behaved(spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes, s, v);
 }
 
 pub proof fn lemma_serialize_owl_transp_keys_deterministic_on(s1: SpecStream, s2: SpecStream, v: (((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_transp_keys(s, v), s1, s2, v)
 {
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_deterministic();
-    lemma_serialize_32_u8s_deterministic();
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s, s1, s2, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_serialize_32_bytes_deterministic();
+    lemma_serialize_pair_well_behaved(spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_transp_keys_correct_on(s: SpecStream, v: (((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_transp_keys(s), |s, v| spec_serialize_owl_transp_keys(s, v), s, v)
 {
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_4_u8s_correct();
-    lemma_parse_32_u8s_correct();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_parse_pair_correct(spec_parse_4_u8s, spec_parse_4_u8s, spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s, s, v);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_4_bytes_correct();
+    lemma_parse_32_bytes_correct();
+    lemma_parse_pair_well_behaved(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_parse_pair_correct(spec_parse_4_bytes, spec_parse_4_bytes, spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes, s, v);
 }
 
 pub proof fn lemma_parse_owl_transp_keys_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_transp_keys(s), |s, v| spec_serialize_owl_transp_keys(s, v), s)
 {
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_parse_4_u8s_serialize_inverse();
-    lemma_parse_32_u8s_serialize_inverse();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_4_u8s, spec_parse_4_u8s, spec_serialize_4_u8s, spec_serialize_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_u8s, spec_serialize_4_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s, s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_parse_32_bytes_serialize_inverse();
+    lemma_parse_pair_well_behaved(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_4_bytes, spec_parse_4_bytes, spec_serialize_4_bytes, spec_serialize_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_4_bytes, spec_serialize_4_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes, s);
 }
 
 pub proof fn lemma_parse_owl_transp_keys_strong_prefix()
@@ -7813,34 +9077,34 @@ pub proof fn lemma_parse_owl_transp_keys_strong_prefix()
 pub proof fn lemma_parse_owl_transp_keys_strong_prefix_on(s1: SpecStream, s2: SpecStream)
     ensures prop_parse_strong_prefix_on(|s| spec_parse_owl_transp_keys(s), s1, s2)
 {
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_pair_well_behaved(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_4_u8s, spec_parse_4_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_u8s, spec_parse_4_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, s1, s2);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_pair_well_behaved(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_4_bytes, spec_parse_4_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_4_bytes, spec_parse_4_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, s1, s2);
 }
 
 pub exec fn parse_owl_transp_keys(s: Stream) -> (res: ParseResult<(((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>)
     ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_owl_transp_keys(s))
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
-    let parse_4_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s(s)) { parse_4_u8s(s) };
-    let parse_32_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_u8s(s)) { parse_32_u8s(s) };
-    let ghost spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let ghost spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let ghost spec_parse_owl_transp_keys = spec_parse_6_fold(spec_parse_4_u8s, spec_parse_4_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s);
+    let parse_4_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s)) { parse_4_bytes(s) };
+    let parse_32_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_bytes(s)) { parse_32_bytes(s) };
+    let ghost spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let ghost spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let ghost spec_parse_owl_transp_keys = spec_parse_6_fold(spec_parse_4_bytes, spec_parse_4_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes);
 
-    let parse_owl_transp_keys = |s| -> (res: ParseResult<(((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_transp_keys) { parse_6_fold(parse_4_u8s, parse_4_u8s, parse_32_u8s, parse_32_u8s, parse_32_u8s, parse_32_u8s, Ghost(spec_parse_4_u8s), Ghost(spec_parse_4_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_32_u8s), s) };
+    let parse_owl_transp_keys = |s| -> (res: ParseResult<(((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_transp_keys) { parse_6_fold(parse_4_bytes, parse_4_bytes, parse_32_bytes, parse_32_bytes, parse_32_bytes, parse_32_bytes, Ghost(spec_parse_4_bytes), Ghost(spec_parse_4_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_32_bytes), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_transp_keys, spec_parse_owl_transp_keys));
 
     parse_owl_transp_keys(s)
@@ -7849,13 +9113,13 @@ pub exec fn serialize_owl_transp_keys(s: Stream, v: (((((Vec<u8>, Vec<u8>), Vec<
     ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_owl_transp_keys(s, v))
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
-    let serialize_4_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s(s, v)) { serialize_4_u8s(s, v) };
-    let serialize_32_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_u8s(s, v)) { serialize_32_u8s(s, v) };
-    let ghost spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let ghost spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let ghost spec_serialize_owl_transp_keys = spec_serialize_6_fold(spec_serialize_4_u8s, spec_serialize_4_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s);
+    let serialize_4_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v)) { serialize_4_bytes(s, v) };
+    let serialize_32_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_bytes(s, v)) { serialize_32_bytes(s, v) };
+    let ghost spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let ghost spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let ghost spec_serialize_owl_transp_keys = spec_serialize_6_fold(spec_serialize_4_bytes, spec_serialize_4_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes);
 
-    let serialize_owl_transp_keys = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_transp_keys) { serialize_6_fold(serialize_4_u8s, serialize_4_u8s, serialize_32_u8s, serialize_32_u8s, serialize_32_u8s, serialize_32_u8s, Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_4_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_32_u8s), s, v) };
+    let serialize_owl_transp_keys = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_transp_keys) { serialize_6_fold(serialize_4_bytes, serialize_4_bytes, serialize_32_bytes, serialize_32_bytes, serialize_32_bytes, serialize_32_bytes, Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_4_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_32_bytes), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_transp_keys, spec_serialize_owl_transp_keys));
 
     serialize_owl_transp_keys(s, v)
@@ -7886,6 +9150,19 @@ pub open spec fn spec_parse_5_fold<R1, R2, R3, R4, R5>(
 {
     spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_pair(parser1, parser2), parser3), parser4), parser5)
 }
+
+
+
+pub open spec fn spec_serialize_5_fold<T1, T2, T3, T4, T5>(
+    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
+    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
+    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
+    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
+    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult) -> FnSpec(SpecStream, ((((T1, T2), T3), T4), T5)) -> SpecSerializeResult
+{
+    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5)
+}
+
 
 pub exec fn parse_5_fold<P1, P2, P3, P4, P5, R1, R2, R3, R4, R5>(
     exec_parser1: P1,
@@ -7928,15 +9205,6 @@ pub exec fn parse_5_fold<P1, P2, P3, P4, P5, R1, R2, R3, R4, R5>(
 
 
 
-pub open spec fn spec_serialize_5_fold<T1, T2, T3, T4, T5>(
-    serializer1: FnSpec(SpecStream, T1) -> SpecSerializeResult,
-    serializer2: FnSpec(SpecStream, T2) -> SpecSerializeResult,
-    serializer3: FnSpec(SpecStream, T3) -> SpecSerializeResult,
-    serializer4: FnSpec(SpecStream, T4) -> SpecSerializeResult,
-    serializer5: FnSpec(SpecStream, T5) -> SpecSerializeResult) -> FnSpec(SpecStream, ((((T1, T2), T3), T4), T5)) -> SpecSerializeResult
-{
-    spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(serializer1, serializer2), serializer3), serializer4), serializer5)
-}
 pub exec fn serialize_5_fold<S1, S2, S3, S4, S5, T1, T2, T3, T4, T5>(
     exec_serializer1: S1,
     exec_serializer2: S2,
@@ -7979,20 +9247,20 @@ pub exec fn serialize_5_fold<S1, S2, S3, S4, S5, T1, T2, T3, T4, T5>(
 
 pub open spec fn spec_parse_owl_responder_msg1_val(s: SpecStream) -> SpecParseResult<((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)>
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
 
-    spec_parse_5_fold(spec_parse_12_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_4_u8s)(s)
+    spec_parse_5_fold(spec_parse_12_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_4_bytes)(s)
 }
 
 pub open spec fn spec_serialize_owl_responder_msg1_val(s: SpecStream, v: ((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>)) -> SpecSerializeResult
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
 
-    spec_serialize_5_fold(spec_serialize_12_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_4_u8s)(s, v)
+    spec_serialize_5_fold(spec_serialize_12_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_4_bytes)(s, v)
 }
 
 pub proof fn lemma_parse_owl_responder_msg1_val_well_behaved()
@@ -8031,8 +9299,10 @@ pub proof fn lemma_parse_owl_responder_msg1_val_correct()
     reveal(prop_parse_correct);
     let spec_parse_owl_responder_msg1_val = |s| spec_parse_owl_responder_msg1_val(s);
     let spec_serialize_owl_responder_msg1_val = |s, v| spec_serialize_owl_responder_msg1_val(s, v);
-    assert forall |s, v| #[trigger] prop_parse_correct_on(spec_parse_owl_responder_msg1_val, spec_serialize_owl_responder_msg1_val, s, v) by {
-        lemma_parse_owl_responder_msg1_val_correct_on(s, v);
+    assert forall |s: SpecStream, v| s.data.len() <= usize::MAX ==> #[trigger] prop_parse_correct_on(spec_parse_owl_responder_msg1_val, spec_serialize_owl_responder_msg1_val, s, v) by {
+        if s.data.len() <= usize::MAX {
+            lemma_parse_owl_responder_msg1_val_correct_on(s, v);
+        }
     }
 }
 
@@ -8058,118 +9328,119 @@ pub proof fn lemma_parse_owl_responder_msg1_val_nonmalleable()
 pub proof fn lemma_parse_owl_responder_msg1_val_well_behaved_on(s: SpecStream)
     ensures prop_parse_well_behaved_on(|s| spec_parse_owl_responder_msg1_val(s), s)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    lemma_parse_12_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_pair_well_behaved(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_4_u8s, s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    lemma_parse_12_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_pair_well_behaved(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_4_bytes, s);
 }
 
 pub proof fn lemma_serialize_owl_responder_msg1_val_well_behaved_on(s: SpecStream, v: ((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_well_behaved_on(|s, v| spec_serialize_owl_responder_msg1_val(s, v), s, v)
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    lemma_serialize_12_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_pair_well_behaved(spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_4_u8s, s, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    lemma_serialize_12_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_pair_well_behaved(spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_4_bytes, s, v);
 }
 
 pub proof fn lemma_serialize_owl_responder_msg1_val_deterministic_on(s1: SpecStream, s2: SpecStream, v: ((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
     ensures prop_serialize_deterministic_on(|s, v| spec_serialize_owl_responder_msg1_val(s, v), s1, s2, v)
 {
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    lemma_serialize_12_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_serialize_12_u8s_deterministic();
-    lemma_serialize_32_u8s_deterministic();
-    lemma_serialize_4_u8s_deterministic();
-    lemma_serialize_pair_well_behaved(spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_4_u8s, s1, s2, v);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    lemma_serialize_12_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_serialize_12_bytes_deterministic();
+    lemma_serialize_32_bytes_deterministic();
+    lemma_serialize_4_bytes_deterministic();
+    lemma_serialize_pair_well_behaved(spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_serialize_pair_deterministic_on(spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_4_bytes, s1, s2, v);
 }
 
 pub proof fn lemma_parse_owl_responder_msg1_val_correct_on(s: SpecStream, v: ((((Seq<u8>, Seq<u8>), Seq<u8>), Seq<u8>), Seq<u8>))
+    requires s.data.len() <= usize::MAX,
     ensures prop_parse_correct_on(|s| spec_parse_owl_responder_msg1_val(s), |s, v| spec_serialize_owl_responder_msg1_val(s, v), s, v)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    lemma_serialize_12_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_parse_12_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_12_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_12_u8s_correct();
-    lemma_parse_32_u8s_correct();
-    lemma_parse_4_u8s_correct();
-    lemma_parse_pair_well_behaved(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_12_u8s, spec_parse_32_u8s, spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_4_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_4_u8s, s, v);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    lemma_serialize_12_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_parse_12_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_12_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_12_bytes_correct();
+    lemma_parse_32_bytes_correct();
+    lemma_parse_4_bytes_correct();
+    lemma_parse_pair_well_behaved(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_12_bytes, spec_parse_32_bytes, spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_correct(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_correct_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_4_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_4_bytes, s, v);
 }
 
 pub proof fn lemma_parse_owl_responder_msg1_val_serialize_inverse_on(s: SpecStream)
     ensures prop_parse_serialize_inverse_on(|s| spec_parse_owl_responder_msg1_val(s), |s, v| spec_serialize_owl_responder_msg1_val(s, v), s)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    lemma_parse_12_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_serialize_12_u8s_well_behaved();
-    lemma_serialize_32_u8s_well_behaved();
-    lemma_serialize_4_u8s_well_behaved();
-    lemma_parse_12_u8s_serialize_inverse();
-    lemma_parse_32_u8s_serialize_inverse();
-    lemma_parse_4_u8s_serialize_inverse();
-    lemma_parse_pair_well_behaved(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_12_u8s, spec_parse_32_u8s, spec_serialize_12_u8s, spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s);
-    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_4_u8s, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_u8s, spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_32_u8s), spec_serialize_4_u8s, s);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    lemma_parse_12_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_serialize_12_bytes_well_behaved();
+    lemma_serialize_32_bytes_well_behaved();
+    lemma_serialize_4_bytes_well_behaved();
+    lemma_parse_12_bytes_serialize_inverse();
+    lemma_parse_32_bytes_serialize_inverse();
+    lemma_parse_4_bytes_serialize_inverse();
+    lemma_parse_pair_well_behaved(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_12_bytes, spec_parse_32_bytes, spec_serialize_12_bytes, spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_serialize_pair_well_behaved(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes);
+    lemma_parse_pair_serialize_inverse_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_4_bytes, spec_serialize_pair(spec_serialize_pair(spec_serialize_pair(spec_serialize_12_bytes, spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_32_bytes), spec_serialize_4_bytes, s);
 }
 
 pub proof fn lemma_parse_owl_responder_msg1_val_strong_prefix()
@@ -8185,37 +9456,37 @@ pub proof fn lemma_parse_owl_responder_msg1_val_strong_prefix()
 pub proof fn lemma_parse_owl_responder_msg1_val_strong_prefix_on(s1: SpecStream, s2: SpecStream)
     ensures prop_parse_strong_prefix_on(|s| spec_parse_owl_responder_msg1_val(s), s1, s2)
 {
-    let spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    lemma_parse_12_u8s_well_behaved();
-    lemma_parse_32_u8s_well_behaved();
-    lemma_parse_4_u8s_well_behaved();
-    lemma_parse_12_u8s_strong_prefix();
-    lemma_parse_32_u8s_strong_prefix();
-    lemma_parse_4_u8s_strong_prefix();
-    lemma_parse_pair_well_behaved(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_12_u8s, spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s);
-    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_u8s, spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_32_u8s), spec_parse_4_u8s, s1, s2);
+    let spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    lemma_parse_12_bytes_well_behaved();
+    lemma_parse_32_bytes_well_behaved();
+    lemma_parse_4_bytes_well_behaved();
+    lemma_parse_12_bytes_strong_prefix();
+    lemma_parse_32_bytes_strong_prefix();
+    lemma_parse_4_bytes_strong_prefix();
+    lemma_parse_pair_well_behaved(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_12_bytes, spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_well_behaved(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes);
+    lemma_parse_pair_strong_prefix_on(spec_parse_pair(spec_parse_pair(spec_parse_pair(spec_parse_12_bytes, spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_32_bytes), spec_parse_4_bytes, s1, s2);
 }
 
 pub exec fn parse_owl_responder_msg1_val(s: Stream) -> (res: ParseResult<((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>)
     ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_owl_responder_msg1_val(s))
 {
     proof { reveal(prop_parse_exec_spec_equiv); }
-    let parse_12_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_u8s(s)) { parse_12_u8s(s) };
-    let parse_32_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_u8s(s)) { parse_32_u8s(s) };
-    let parse_4_u8s = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_u8s(s)) { parse_4_u8s(s) };
-    let ghost spec_parse_12_u8s = |s| spec_parse_12_u8s(s);
-    let ghost spec_parse_32_u8s = |s| spec_parse_32_u8s(s);
-    let ghost spec_parse_4_u8s = |s| spec_parse_4_u8s(s);
-    let ghost spec_parse_owl_responder_msg1_val = spec_parse_5_fold(spec_parse_12_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_32_u8s, spec_parse_4_u8s);
+    let parse_12_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_12_bytes(s)) { parse_12_bytes(s) };
+    let parse_32_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_32_bytes(s)) { parse_32_bytes(s) };
+    let parse_4_bytes = |s| -> (res: ParseResult<Vec<u8>>) ensures prop_parse_exec_spec_equiv_on(s, res, |s| spec_parse_4_bytes(s)) { parse_4_bytes(s) };
+    let ghost spec_parse_12_bytes = |s| spec_parse_12_bytes(s);
+    let ghost spec_parse_32_bytes = |s| spec_parse_32_bytes(s);
+    let ghost spec_parse_4_bytes = |s| spec_parse_4_bytes(s);
+    let ghost spec_parse_owl_responder_msg1_val = spec_parse_5_fold(spec_parse_12_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_32_bytes, spec_parse_4_bytes);
 
-    let parse_owl_responder_msg1_val = |s| -> (res: ParseResult<((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_responder_msg1_val) { parse_5_fold(parse_12_u8s, parse_32_u8s, parse_32_u8s, parse_32_u8s, parse_4_u8s, Ghost(spec_parse_12_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_32_u8s), Ghost(spec_parse_4_u8s), s) };
+    let parse_owl_responder_msg1_val = |s| -> (res: ParseResult<((((Vec<u8>, Vec<u8>), Vec<u8>), Vec<u8>), Vec<u8>)>) ensures prop_parse_exec_spec_equiv_on(s, res, spec_parse_owl_responder_msg1_val) { parse_5_fold(parse_12_bytes, parse_32_bytes, parse_32_bytes, parse_32_bytes, parse_4_bytes, Ghost(spec_parse_12_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_32_bytes), Ghost(spec_parse_4_bytes), s) };
     assert(prop_parse_exec_spec_equiv(parse_owl_responder_msg1_val, spec_parse_owl_responder_msg1_val));
 
     parse_owl_responder_msg1_val(s)
@@ -8224,15 +9495,15 @@ pub exec fn serialize_owl_responder_msg1_val(s: Stream, v: ((((Vec<u8>, Vec<u8>)
     ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_owl_responder_msg1_val(s, v))
 {
     proof { reveal(prop_serialize_exec_spec_equiv); }
-    let serialize_12_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_12_u8s(s, v)) { serialize_12_u8s(s, v) };
-    let serialize_32_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_u8s(s, v)) { serialize_32_u8s(s, v) };
-    let serialize_4_u8s = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_u8s(s, v)) { serialize_4_u8s(s, v) };
-    let ghost spec_serialize_12_u8s = |s, v| spec_serialize_12_u8s(s, v);
-    let ghost spec_serialize_32_u8s = |s, v| spec_serialize_32_u8s(s, v);
-    let ghost spec_serialize_4_u8s = |s, v| spec_serialize_4_u8s(s, v);
-    let ghost spec_serialize_owl_responder_msg1_val = spec_serialize_5_fold(spec_serialize_12_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_32_u8s, spec_serialize_4_u8s);
+    let serialize_12_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_12_bytes(s, v)) { serialize_12_bytes(s, v) };
+    let serialize_32_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_32_bytes(s, v)) { serialize_32_bytes(s, v) };
+    let serialize_4_bytes = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, |s, v| spec_serialize_4_bytes(s, v)) { serialize_4_bytes(s, v) };
+    let ghost spec_serialize_12_bytes = |s, v| spec_serialize_12_bytes(s, v);
+    let ghost spec_serialize_32_bytes = |s, v| spec_serialize_32_bytes(s, v);
+    let ghost spec_serialize_4_bytes = |s, v| spec_serialize_4_bytes(s, v);
+    let ghost spec_serialize_owl_responder_msg1_val = spec_serialize_5_fold(spec_serialize_12_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_32_bytes, spec_serialize_4_bytes);
 
-    let serialize_owl_responder_msg1_val = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_responder_msg1_val) { serialize_5_fold(serialize_12_u8s, serialize_32_u8s, serialize_32_u8s, serialize_32_u8s, serialize_4_u8s, Ghost(spec_serialize_12_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_32_u8s), Ghost(spec_serialize_4_u8s), s, v) };
+    let serialize_owl_responder_msg1_val = |s, v| -> (res: SerializeResult) ensures prop_serialize_exec_spec_equiv_on(s, v, res, spec_serialize_owl_responder_msg1_val) { serialize_5_fold(serialize_12_bytes, serialize_32_bytes, serialize_32_bytes, serialize_32_bytes, serialize_4_bytes, Ghost(spec_serialize_12_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_32_bytes), Ghost(spec_serialize_4_bytes), s, v) };
     assert(prop_serialize_exec_spec_equiv(serialize_owl_responder_msg1_val, spec_serialize_owl_responder_msg1_val));
 
     serialize_owl_responder_msg1_val(s, v)
