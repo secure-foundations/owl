@@ -28,7 +28,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -135,6 +135,10 @@ parseLabelTerm =
           return LAdv)
       <|>
       (parseSpanned $ do
+          reserved "ghost";
+          return LAdv)
+      <|>
+      (parseSpanned $ do
           reserved "top";
           return LTop)
       <|> (parseSpanned $ do
@@ -202,6 +206,10 @@ parseTyTerm =
         p <- parseProp
         symbol "}"
         return $ TRefined tUnit "._" $ bind (s2n "._") p)
+    <|>
+    (parseSpanned $ do
+        reserved "Ghost"
+        return $ TGhost)
     <|>
     (parseSpanned $ do
         reserved "Data"
@@ -1128,6 +1136,21 @@ parseExprTerm =
         reserved "in"
         e <- parseExpr
         return $ EUnionCase a x $ bind (s2n x) e
+    )
+    <|>
+    (try $ do
+        p <- getPosition
+        reserved "let"
+        reserved "ghost"
+        x <- identifier 
+        reservedOp "="
+        a <- parseAExpr 
+        reserved "in"
+        p' <- getPosition
+        e' <- parseExpr
+        let t = tRefined (mkSpanned TGhost) ".res" $ pEq (aeVar ".res") a 
+        return $ Spanned (ignore $ mkPos p p') $ 
+            ELet (Spanned (ignore $ mkPos p p') $ ERet a) (Just t) Nothing x $ bind (s2n x) e'
     )
     <|>
     (do

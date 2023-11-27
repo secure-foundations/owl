@@ -81,10 +81,10 @@ data Env = Env {
     _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
     _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
-    _specAdtFuncs :: S.Set String,
+    _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _typeLayouts :: M.Map String Layout,
     _lenConsts :: M.Map String Int,
-    _structs :: M.Map String [(String, RustTy)], -- rust type for each field
+    _structs :: M.Map String [Maybe (String, RustTy)], -- rust type for each field
     _enums :: M.Map (S.Set String) (String, M.Map String (Maybe RustTy)),
     _oracles :: M.Map String ([String], M.Map Int ([String], [String], Layout)), -- how to print the output length, where to slice to get the subparts
     _includes :: S.Set String, -- files we have included so far
@@ -135,6 +135,7 @@ data ExtractionError =
     | CouldntParseInclude String
     | OddLengthHexConst
     | PreimageInExec String
+    | GhostInExec String
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -168,6 +169,8 @@ instance OwlPretty ExtractionError where
         owlpretty "Found a hex constant with an odd length, which should not be allowed."
     owlpretty (PreimageInExec s) =
         owlpretty "Found a call to `preimage`, which is not allowed in exec code:" <+> owlpretty s
+    owlpretty (GhostInExec s) =
+        owlpretty "Found a ghost value in exec code:" <+> owlpretty s
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -426,7 +429,7 @@ initFuncs =
         ] 
 
 initEnv :: Flags -> String -> TB.Map String TB.UserFunc -> Env
-initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty S.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
+initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
 
 lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
 lookupTyLayout' n = do
@@ -473,7 +476,7 @@ lookupFunc fpath = do
     -- debugPrint $ owlpretty "lookup" <+> pretty f <+> pretty "in" <+> pretty (M.keys fs)
     return $ fs M.!? f
     
-lookupStruct :: String -> ExtractionMonad [(String, RustTy)]
+lookupStruct :: String -> ExtractionMonad [Maybe (String, RustTy)]
 lookupStruct s = do
     ss <- use structs
     case ss M.!? s of
@@ -522,6 +525,7 @@ rustifyArgTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
+rustifyArgTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
 rustifyArgTy _ = return $ Rc VecU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
@@ -538,6 +542,7 @@ rustifyRetTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool
 rustifyRetTy CTUnit = return Unit
+rustifyRetTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
 rustifyRetTy _ = return $ Rc VecU8
 
 -- For computing data structure members

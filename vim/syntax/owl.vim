@@ -8,9 +8,9 @@ endif
 syn keyword owlConditional case if guard then else pack unpack
 syn keyword owlCommand input output requires ensures
 syn keyword owlDecl name func def locality enum struct table module type corr counter
-syn keyword owlKeyword let in return get_counter inc_counter aenc adec aenc_with_nonce adec_with_nonce sign vrfy mac mac_vrfy
+syn keyword owlKeyword let in return get_counter inc_counter aenc adec aenc_with_nonce adec_with_nonce sign vrfy mac mac_vrfy adv ghost 
 
-syn keyword owlTypeName Data Name Option
+syn keyword owlTypeName Data Name Option Ghost
 syn region owlCommentLine                                                  start="//"                      end="$" 
 syn region owlCommentBlock             matchgroup=owlCommentBlock         start="/\*\%(!\|\*[*/]\@!\)\@!" end="\*/" 
 
