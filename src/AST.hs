@@ -145,6 +145,7 @@ data LabelX =
     | LZero
     | LAdv 
     | LTop
+    | LGhost
     | LJoin Label Label 
     | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
@@ -165,6 +166,9 @@ advLbl = mkSpanned LAdv
 
 topLbl :: Label
 topLbl = mkSpanned LTop
+
+ghostLbl :: Label
+ghostLbl = mkSpanned LGhost
 
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)
@@ -246,6 +250,7 @@ data NoncePattern = NPHere
 data TyX = 
     TData Label Label (Ignore (Maybe String))
     | TDataWithLength Label AExpr
+    | TGhost
     | TRefined Ty String (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty

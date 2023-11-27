@@ -359,6 +359,7 @@ smtTy :: Ty -> Sym SExp
 smtTy t = 
     case t^.val of
       TData _ _ _ -> return $ SAtom "Data"
+      TGhost -> return $ SAtom "Data"
       TDataWithLength _ a -> do
           v <- interpretAExp a
           return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v

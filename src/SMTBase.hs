@@ -88,6 +88,7 @@ data CanonAtom =
     CanonLName NameExp
       | CanonZero
       | CanonAdv
+      | CanonGhost
       | CanonTop
       | CanonConst LblConst
     deriving (Show, Generic, Typeable)
@@ -626,4 +627,5 @@ instance OwlPretty CanonAtom where
     owlpretty (CanonLName a) = owlpretty (nameLbl a)
     owlpretty (CanonAdv) = owlpretty advLbl
     owlpretty (CanonTop) = owlpretty topLbl
+    owlpretty (CanonGhost) = owlpretty ghostLbl
     owlpretty (CanonZero) = owlpretty zeroLbl

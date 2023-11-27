@@ -429,17 +429,20 @@
     :qid flows_zero_r
 )))
 
+(declare-const %ghost Label)
 (declare-const %top Label)
 (assert (forall ((x Label)) (! 
-    (Flows x %top)
-    :pattern ((Flows x %top))
-    :qid flows_top_l
+    (Flows x %ghost)
+    :pattern ((Flows x %ghost))
+    :qid flows_ghost_l
 )))
 
+(assert (not (Flows %ghost %top)))
+
 (assert (forall ((x Label)) (!
-    (=> (Flows %top x) (= x %top))
-    :pattern ((Flows %top x))
-    :qid flows_top_r
+    (=> (Flows %ghost x) (= x %ghost))
+    :pattern ((Flows %ghost x))
+    :qid flows_ghost_r
 )))
 
 (declare-fun LabelOf (Name) Label)
@@ -448,6 +451,15 @@
     :pattern ((LabelOf n))
     :qid not_flows_name_zero
 )))
+
+(assert (forall ((n Name)) (!
+    (Flows (LabelOf n) %top)
+    :pattern ((LabelOf n))
+    :qid flows_name_top
+)))
+
+(assert (Flows %adv %top))
+(assert (Flows %zeroLbl %top))
 
 (declare-sort Index)
 (declare-fun Happened (String (List Index) (List Bits)) Bool)

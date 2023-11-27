@@ -23,6 +23,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
+import ANFPass (isGhostTyAnn)
 
 import AST
 
@@ -30,6 +31,7 @@ data CTy =
     CTData
     | CTDataWithLength AExpr
     | CTOption CTy
+    | CTGhost
     | CTConst (Path)
     | CTBool
     -- | CTUnion CTy CTy
@@ -50,6 +52,7 @@ concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
   case t^.val of
     TData _ _ _ -> return CTData
+    TGhost -> return CTGhost
     TDataWithLength _ l -> return $ CTDataWithLength l
     TRefined t _ _ -> concretifyTy t
     TOption t -> do
@@ -116,7 +119,10 @@ concretify e =
             c <- concretify e
             return $ CInput $ bind xe c
         EOutput a eo -> return $ COutput a eo
-        ELet e1 _ oanf _ xk -> do
+        ELet e1 tyann oanf _ xk | isGhostTyAnn tyann -> do
+            let (x, k) = unsafeUnbind xk   
+            concretify k
+        ELet e1 tyann oanf _ xk -> do
             e1' <- concretify e1
             let (x, k) = unsafeUnbind xk
             k' <- concretify k

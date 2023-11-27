@@ -44,17 +44,20 @@ import ExtractionBase
 extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
 extractStruct owlName owlFields = do
     let name = specName owlName
-    fields <- mapM (\(n, t) -> (rustifySpecTy . doConcretifyTy) t >>= \t' -> return (n, t')) owlFields
+    let owlFieldsConcrete = map (\(n,t) -> case doConcretifyTy t of CTGhost -> Nothing; t' -> Just (n,t')) owlFields
+    let owlFieldsNoGhost = catMaybes owlFieldsConcrete
+    fields <- mapM (\(n, t) -> rustifySpecTy t >>= \t' -> return (n, t')) owlFieldsNoGhost
     let structDef = owlpretty "pub struct" <+> owlpretty name <> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty "pub" <+> owlpretty (specName n) <+> owlpretty ":" <+> owlpretty t) $ fields
                     ) <> line)
     parseSerializeDefs <- genParserSerializer owlName fields
-    constructor <- genConstructor owlName fields
+    constructor <- genConstructor owlName fields owlFieldsConcrete
     -- selectors <- mapM (genFieldSelector owlName) fields
     return $ vsep $ [structDef, parseSerializeDefs, constructor]
     where
-        genConstructor owlName fields = do
-            specAdtFuncs %= S.insert owlName
+        genConstructor owlName fields owlFieldsConcrete = do
+            let printConstructor args = owlpretty owlName <> tupled (mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just _ -> Just a) $ zip args owlFieldsConcrete)
+            specAdtFuncs %= M.insert owlName printConstructor
             let args = parens . hsep . punctuate comma . map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty ": Seq<u8>") $ fields
             let body = owlpretty "serialize_" <> owlpretty (specName owlName) <>
                     parens (owlpretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> owlpretty (specName n) <> owlpretty ": arg_" <> owlpretty n) $ fields))
@@ -128,7 +131,7 @@ extractEnum owlName owlCases = do
     return $ vsep $ [enumDef, parseSerializeDefs] ++ caseConstructors
     where
         genCaseConstructor name (caseName, Just caseTy) = do
-            specAdtFuncs %= S.insert caseName
+            specAdtFuncs %= M.insert caseName (\args -> owlpretty caseName <> tupled args)
             return $
                 owlpretty "pub open spec fn" <+> owlpretty caseName <> parens (owlpretty "x: Seq<u8>") <+> owlpretty "-> Seq<u8>" <+> braces (line <>
                     owlpretty "serialize_" <> owlpretty name <> parens (
@@ -137,7 +140,7 @@ extractEnum owlName owlCases = do
                 <> line)
 
         genCaseConstructor name (caseName, Nothing) = do
-            specAdtFuncs %= S.insert caseName
+            specAdtFuncs %= M.insert caseName (\args -> owlpretty caseName <> tupled args)
             return $
                 owlpretty "pub open spec fn" <+> owlpretty caseName <> owlpretty "()" <+> owlpretty "-> Seq<u8>" <+> braces (line <>
                     owlpretty "serialize_" <> owlpretty name <> parens (
@@ -229,11 +232,12 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
             Nothing  -> do
                 -- Check if the func is a spec ADT func
                 specAdtFs <- use specAdtFuncs
-                if S.member ftail specAdtFs then do
-                    return $ owlpretty ftail <> tupled as'
-                else do
-                    f' <- flattenPath f
-                    return $ owlpretty f' <> tupled as'
+                case specAdtFs M.!? ftail of
+                    Just printer -> 
+                        return $ printer as'
+                    Nothing -> do
+                        f' <- flattenPath f
+                        return $ owlpretty f' <> tupled as'
         -- return $ owlpretty f' <> tupled as'
     extractAExpr' (AEHex s) = do
         bytelist <- hexStringToByteList s
@@ -382,7 +386,7 @@ extractExpr (CParse a (CTConst p) otk bindpat) = do
     t <- tailPath p
     let (pats, k) = unsafeUnbind bindpat
     fs <- lookupStruct . rustifyName $ t
-    let patfields = zip (map (unignore . snd) pats) fs
+    let patfields = mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just b -> Just (a,b)) $ zip (map (unignore . snd) pats) fs
     let printPat (v, (f, _)) = do
             v' <- extractVarString v
             return $ owlpretty (specName f) <+> owlpretty ":" <+> owlpretty v'

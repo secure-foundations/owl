@@ -264,8 +264,8 @@ struct initiator_msg1_val<i,n,m> {
 struct transp_keys {
       _transp_keys_initiator : Data<adv> |4|  // value of get_sender_i
     , _transp_keys_responder : Data<adv> |4|  // value of get_sender_r
-    , _transp_keys_init_ephemeral : Data<adv> | |group| | // TODO should be ghost
-    , _transp_keys_resp_ephemeral : Data<adv> | |group| | // TODO should be ghost
+    , _transp_keys_init_ephemeral : Ghost  
+    , _transp_keys_resp_ephemeral : Ghost  
     , _transp_keys_T_init_send : Data<top> | |enckey| |
     , _transp_keys_T_resp_send : Data<top> | |enckey| |
 }
@@ -546,7 +546,7 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
         msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
     ) in
     // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output /*  to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
+    let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
