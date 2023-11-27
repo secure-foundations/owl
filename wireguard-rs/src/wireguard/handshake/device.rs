@@ -486,6 +486,7 @@ impl<O> Device<O> {
                         let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(
                             &mut dummy_state, 
                             Arc::new(pk.as_bytes().to_vec()), 
+                            Arc::new(keyst.pk.as_bytes().to_vec()),
                             Arc::new(static_static.as_bytes().to_vec()), 
                             &mut msg.as_bytes_mut()
                         );
@@ -613,7 +614,11 @@ impl<O> Device<O> {
                     },
                     Device::Responder(r) => {
                         let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
-                        let msg1_val = r.cfg.owl_receive_msg1_wrapper(&mut dummy_state, msg);
+                        let msg1_val = r.cfg.owl_receive_msg1_wrapper(
+                            &mut dummy_state,
+                            Arc::new(keyst.pk.as_bytes().to_vec()),
+                            msg
+                        );
 
                         let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
 

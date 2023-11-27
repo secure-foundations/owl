@@ -306,7 +306,7 @@ predicate valid_transp_keys_init<i,n,m>(s) =
 ///////// Initiator code //////////
     
 
-def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
+def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
   initiator_msg1_val<session i, pid n, pid m> =
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
@@ -318,7 +318,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), ss_S_resp_S_init: shar
     let C2 = hash<msg1_C2<@m>[e_init];0>(C1, ss_S_resp_E_init) in
     let k0 = hash<msg1_C2<@m>[e_init];1>(C1, ss_S_resp_E_init) in
     let msg1_static : Data<adv> |cipherlen(|group|)|
-        = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, pack<n>(dhpk(get(S_init<@n>))), H2) in 
+        = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, pack<n>(dhpk_S_init), H2) in 
     let H3 = crh(H2 ++ msg1_static) in
     // let ss_S_resp_S_init = dh_combine(dhpk_S_resp, get(S_init<@n>)) in
     let C3 = hash<msg1_C3<@n,m>[e_init];0>(C2, ss_S_resp_S_init) in
@@ -382,7 +382,7 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
         // Calculate transport keys
         let T_init_send = hash<transp_T<@n,m>[e_init_pk, msg2_ephemeral, ss]; 0>(C7, 0x) in
         let T_init_recv = hash<transp_T<@n,m>[e_init_pk, msg2_ephemeral, ss]; 1>(C7, 0x) in
-        let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(e_init), msg2_ephemeral, T_init_send, T_init_recv) in
+        let retval = transp_keys(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
         assert(valid_transp_keys_init<i,n,m>[retval]);
         Some(retval)
     }
@@ -458,7 +458,7 @@ predicate valid_transp_keys_resp<j,n,m>(s) =
 def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
     : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
 
-def receive_msg1<j@m> () @ Responder<m>
+def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      : Option (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
      =
      set_option ":rlimit" "2000000" in 
@@ -468,7 +468,7 @@ def receive_msg1<j@m> () @ Responder<m>
      guard is_group_elem(msg1_ephemeral') in 
      let C0 = crh(construction()) in
      let H0 = crh(C0 ++ identifier()) in 
-     let H1 = crh(H0 ++ dhpk(get(S_resp<@m>))) in
+     let H1 = crh(H0 ++ dhpk_S_resp) in
      pcase (exists n2:idx, i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>))) in
      choose_idx n2 | exists i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in 
      choose_idx i | msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in
