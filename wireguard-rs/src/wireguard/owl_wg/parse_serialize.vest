@@ -35,8 +35,6 @@ owl_initiator_msg1_val = {
 owl_transp_keys = {
   owl__transp_keys_initiator: [u8; 4],
   owl__transp_keys_responder: [u8; 4],
-  owl__transp_keys_init_ephemeral: [u8; 32],
-  owl__transp_keys_resp_ephemeral: [u8; 32],
   owl__transp_keys_t_init_send: [u8; 32],
   owl__transp_keys_t_resp_send: [u8; 32],
 }
