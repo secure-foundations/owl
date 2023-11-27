@@ -382,7 +382,8 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
         // Calculate transport keys
         let T_init_send = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 0>(C7, 0x) in
         let T_init_recv = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C7, 0x) in
-        let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init<i@n>)), msg2_ephemeral, T_init_send, T_init_recv) in
+        let ghost e_init_pk = dhpk(get(E_init<i@n>)) in
+        let retval = transp_keys(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
         assert(valid_transp_keys_init<i,n,m>[retval]);
         Some(retval)
     }

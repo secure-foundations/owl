@@ -544,7 +544,7 @@ extractAExpr binds (AEVar _ owlV) = do
     let v = rustifyName . show $ owlV
     case binds M.!? v of
       Nothing -> do
-        debugPrint $ "failed to find " ++ show v ++ " in binds: " ++ show binds
+        -- debugPrint $ "failed to find " ++ show v ++ " in binds: " ++ show binds
         return (VecU8, owlpretty "", owlpretty v)
       Just (Rc VecU8, _) -> return (Rc VecU8, owlpretty "", rcClone <> parens (owlpretty "&" <> owlpretty v))
       -- Just (ADT t) -> 
@@ -884,9 +884,9 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     (concreteBody, anfBody) <- case owlBody of
         Just owlBody' -> do               
             concreteBody <- concretify owlBody'
-            -- debugPrint $ owlpretty concreteBody
+            -- debugLog $ show $ owlpretty concreteBody
             anfBody <- concretify =<< ANF.anf owlBody'
-            -- debugPrint $ owlpretty anfBody
+            -- debugLog $ show $ owlpretty anfBody
             return (Just concreteBody, Just anfBody)
         Nothing -> return (Nothing, Nothing)
     rustArgs <- mapM rustifyArg owlArgs
