@@ -360,19 +360,19 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
     let msg2_ephemeral : if (msg2_ephemeral' == dhpk(get(E_resp<j@m>))) then dhpk(E_resp<j@m>) else 
         (x:Data<adv> {x == msg2_ephemeral'}) = msg2_ephemeral' in 
     let e_init = get(E_init<i@n>) in 
-    let e_init_pk = dhpk(e_init) in
-    let C4 = hash<msg2_C4<@n,m>[e_init_pk, msg2_ephemeral]>(C3, msg2_ephemeral) in
+    // let e_init_pk = dhpk(e_init) in
+    let C4 = hash<msg2_C4<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral]>(C3, msg2_ephemeral) in
     let H5 = crh(H4 ++ msg2_ephemeral) in
     let ss = dh_combine(msg2_ephemeral, e_init) in 
-    let C5 = hash<msg2_C5<@n,m>[e_init_pk, msg2_ephemeral, ss]>(C4, ss) in
-    let C6 = hash<msg2_C6<@n,m>[e_init_pk, msg2_ephemeral, ss]>(C5, dh_combine(msg2_ephemeral, get(S_init<@n>))) in
-    let C7 = hash<msg2_C7<@n,m>[e_init_pk, msg2_ephemeral, ss]>(C6, psk) in
-    let tau = hash<msg2_C7<@n,m>[e_init_pk, msg2_ephemeral, ss]; 1>(C6, psk) in
-    let k0 = hash<msg2_C7<@n,m>[e_init_pk, msg2_ephemeral, ss]; 2>(C6, psk) in
+    let C5 = hash<msg2_C5<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C4, ss) in
+    let C6 = hash<msg2_C6<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C5, dh_combine(msg2_ephemeral, get(S_init<@n>))) in
+    let C7 = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C6, psk) in
+    let tau = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C6, psk) in
+    let k0 = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 2>(C6, psk) in
     let H6 : Data<adv> = crh(H5 ++ tau) in
     let emptystring = 0x in 
     
-    corr_case msg2_C7<@n,m>[e_init_pk, msg2_ephemeral, ss;2] in
+    corr_case msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss;2] in
     case st_aead_dec(k0, msg2_empty, H6, 0x) {
     | None => None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
     | Some msg2_empty_dec => 
@@ -380,9 +380,9 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
         guard eq(msg2_empty_dec, emptystring) in 
         let H7 = crh(H6 ++ msg2_empty) in
         // Calculate transport keys
-        let T_init_send = hash<transp_T<@n,m>[e_init_pk, msg2_ephemeral, ss]; 0>(C7, 0x) in
-        let T_init_recv = hash<transp_T<@n,m>[e_init_pk, msg2_ephemeral, ss]; 1>(C7, 0x) in
-        let retval = transp_keys(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
+        let T_init_send = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 0>(C7, 0x) in
+        let T_init_recv = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C7, 0x) in
+        let retval = transp_keys(msg2_receiver, msg2_sender, dhpk(get(E_init<i@n>)), msg2_ephemeral, T_init_send, T_init_recv) in
         assert(valid_transp_keys_init<i,n,m>[retval]);
         Some(retval)
     }
