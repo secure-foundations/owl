@@ -42,7 +42,7 @@
 			},
 			{
 				"name": "keyword.other.owl",
-				"match": "\\b(let|in|return)\\b"
+				"match": "\\b(let|in|return|ghost)\\b"
 			},
 			{
 				"name": "support.class.owl",
@@ -60,7 +60,7 @@
 		"storage": {
 			"patterns": [{
 				"name": "storage.type.owl",
-				"match": "\\b(Data|Name|Option)\\b"
+				"match": "\\b(Data|Name|Option|Ghost)\\b"
 			},
 			{
 				"name": "storage.modifier.owl",

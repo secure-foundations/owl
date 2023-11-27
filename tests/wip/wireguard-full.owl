@@ -264,8 +264,8 @@ struct initiator_msg1_val<i,n,m> {
 struct transp_keys {
       _transp_keys_initiator : Data<adv> |4|  // value of get_sender_i
     , _transp_keys_responder : Data<adv> |4|  // value of get_sender_r
-    , _transp_keys_init_ephemeral : Data<adv> | |group| | // TODO should be ghost
-    , _transp_keys_resp_ephemeral : Data<adv> | |group| | // TODO should be ghost
+    , _transp_keys_init_ephemeral : Ghost  
+    , _transp_keys_resp_ephemeral : Ghost  
     , _transp_keys_T_init_send : Data<top> | |enckey| |
     , _transp_keys_T_resp_send : Data<top> | |enckey| |
 }

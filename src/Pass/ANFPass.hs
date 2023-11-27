@@ -87,10 +87,11 @@ anf e =
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
       ELet e1 tyann Nothing s xk -> do
-          (x, k) <- unbind xk
-          e' <- anf e1
-          elet e' tyann (Nothing) (Just s) $ \y -> 
-              anf $ subst x (mkSpanned $ AEVar (ignore s) y) k
+          if isGhostTyAnn tyann then return e else do
+              (x, k) <- unbind xk
+              e' <- anf e1
+              elet e' tyann (Nothing) (Just s) $ \y -> 
+                  anf $ subst x (mkSpanned $ AEVar (ignore s) y) k
       ELet _ _ (Just _) _ _ -> error "Got anfVar in anf routine"
       EBlock k -> do
           k' <- anf k
@@ -186,4 +187,12 @@ anf e =
 isGhostOp :: CryptOp -> Bool
 isGhostOp (CLemma _) = True
 isGhostOp _ = False
+
+isGhostTyAnn :: Maybe Ty -> Bool
+isGhostTyAnn Nothing = False
+isGhostTyAnn (Just t) =
+    case t^.val of
+      TGhost -> True
+      TRefined (Spanned _ TGhost) _ _ -> True
+      _ -> False
 

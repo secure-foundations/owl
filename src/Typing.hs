@@ -391,6 +391,7 @@ normalizeTy t0 = local (set tcScope TcGhost) $ do
         (TBool l) -> do
             l' <- normalizeLabel l
             return $ Spanned (t0^.spanOf) $ TBool l'
+        TGhost -> return t0
         (TName n) -> do
             n' <- normalizeNameExp n
             return $ Spanned (t0^.spanOf) $ TName n'
@@ -436,6 +437,7 @@ normalizeLabel l = do
 
 isSubtype' t1 t2 = do
     case (t1^.val, t2^.val) of
+      (_, TGhost) -> return True
       _ | isSingleton t2 -> do 
           (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
           return b 
@@ -551,44 +553,6 @@ assertSubtype t1 t2 = laxAssertion $ do
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
     assert (show $ ErrCannotProveSubtype t1' t2') b
-
-typeProtectsLabel' :: Label -> Ty -> Check ()
-typeProtectsLabel' l t0 =
-    laxAssertion $ case t0^.val of
-      (TData l' _ _) -> flowCheck l l'
-      (TDataWithLength l' _) -> flowCheck l l'
-      (TOption t) -> flowCheck l advLbl
-      (TRefined t _ _) -> typeProtectsLabel l t
-      TBool l' -> flowCheck l l'
-      (TUnion t1 t2) -> do
-        typeProtectsLabel' l t1
-        typeProtectsLabel' l t2
-      (TUnit) -> return () -- Only sound since TUnit is unit 
-      TConst s ps -> do
-          td <- getTyDef s
-          case td of
-            TyAbstract -> flowCheck l (mkSpanned $ LConst $ TyLabelVar s)
-            TyAbbrev t -> typeProtectsLabel' l t
-            StructDef xs -> typeError $ "TODO: typeProtectsLabel for struct"
-            EnumDef b -> do
-                bdy <- extractEnum ps (show s) b
-                flowCheck l advLbl
-      (TName n) ->
-          flowCheck l (nameLbl n)
-      TAdmit -> return ()
-      TCase p t1 t2 -> do
-       typeProtectsLabel' l t1
-       typeProtectsLabel' l t2
-      TExistsIdx _ -> do
-          b <- flowsTo l advLbl
-          if b then return () else typeError $ show $ owlpretty "typeProtectsLabel on exists: label " <> owlpretty l <> owlpretty " does not flow to adv"
-      t ->
-          error ("Unimp: typeProtectsLabel'" ++ show (owlpretty l <> owlpretty ", " <> owlpretty t))
-
-typeProtectsLabel :: Label -> Ty -> Check ()
-typeProtectsLabel l t = laxAssertion $ do
-    t' <- normalizeTy t
-    typeProtectsLabel' l t'
 
 
 coveringLabel :: Ty -> Check Label
@@ -873,8 +837,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
               forM_ xs $ \(x, t) -> do
                   checkTy t
                   assert (show $ owlpretty x <+> owlpretty "already defined") $ not $ member x dfs
-                  llbl <- tyLenLbl t
-                  flowCheck llbl advLbl
+                  case t^.val of
+                    TGhost -> return ()
+                    _ -> do
+                      llbl <- tyLenLbl t
+                      flowCheck llbl advLbl
           let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
           local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
@@ -1019,6 +986,7 @@ checkNoTopLbl l =
       LRangeIdx il -> do
           (i, l) <- unbind il
           local (over (inScopeIndices) $ insert i IdxGhost) $ checkNoTopLbl l
+      LGhost -> typeError $ "Ghost label not allowed here"
       _ -> return ()
 
 
@@ -1035,6 +1003,7 @@ checkNoTopTy t =
           checkNoTopTy t1
           checkNoTopTy t2
       TBool l -> checkNoTopLbl l
+      TGhost -> typeError $ "Ghost type not allowed here"
       TUnion t1 t2 -> do
           checkNoTopTy t1
           checkNoTopTy t2
@@ -1135,6 +1104,7 @@ checkTy t = withSpan (t^.spanOf) $
         case t^.val of
           TUnit -> return ()
           TBool l -> checkLabel l
+          TGhost -> return ()
           (TData l1 l2 _) -> do
               checkLabel l1
               checkLabel l2
@@ -1214,6 +1184,7 @@ tyLenLbl t =
       TSS _ _ -> return zeroLbl
       TUnit -> return zeroLbl
       TBool _ -> return zeroLbl
+      TGhost -> return ghostLbl
       TData _ l _ -> return l
       TDataWithLength _ a -> do
           t <- inferAExpr a
@@ -1274,6 +1245,7 @@ checkLabel l =
               return ()
           LZero -> return ()
           LAdv -> return ()
+          LGhost -> return ()
           LTop -> return ()
           (LJoin l1 l2) -> do
               checkLabel l1
@@ -1503,6 +1475,7 @@ stripTy x t =
       TBool l -> do
           l' <- stripLabel x l
           return $ mkSpanned $ TBool l'
+      TGhost -> return t 
       TUnion t1 t2 -> do
           t1' <- stripTy x t1
           t2' <- stripTy x t2
@@ -2019,6 +1992,7 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
               TyAbbrev t' -> getValidatedTy albl t'
               TyAbstract -> typeError $ "Abstract type " ++ show (owlpretty t) ++ " is unparsable"
         TBool _ -> return $ Just $ mkSpanned $ TBool albl
+        TGhost -> return $ Just t
         TUnion _ _ -> return Nothing
         TUnit -> return $ Just tUnit
         TName ne -> do

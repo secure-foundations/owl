@@ -78,6 +78,7 @@ instance  OwlPretty LabelX where
     owlpretty (LName n) = owlpretty "[" <> owlpretty n <> owlpretty "]"
     owlpretty LZero = owlpretty "static"
     owlpretty (LAdv) = owlpretty "adv"
+    owlpretty (LGhost) = owlpretty "ghost"
     owlpretty (LTop) = owlpretty "top"
     owlpretty (LJoin v1 v2) = owlpretty v1 <+> owlpretty "/\\" <+> owlpretty v2
     owlpretty (LConst s) = owlpretty s
@@ -100,6 +101,7 @@ instance  OwlPretty TyX where
         owlpretty "unit"
     owlpretty (TBool l) = 
             owlpretty "Bool<" <> owlpretty l <> owlpretty ">"
+    owlpretty (TGhost) = owlpretty "Ghost"
     owlpretty (TData l1 l2 _) = 
             if l1 `aeq` l2 then
                 owlpretty "Data" <> angles (owlpretty l1)

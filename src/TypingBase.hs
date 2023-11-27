@@ -1152,6 +1152,7 @@ coveringLabel' t =
           t <- inferAExpr a
           l' <- coveringLabel' t
           return $ joinLbl l l'
+      TGhost -> return ghostLbl
       TBool l -> return l
       TUnit -> return $ zeroLbl
       (TRefined t1 _ _) -> coveringLabel' t1

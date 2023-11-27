@@ -331,6 +331,7 @@ resolveTy e = do
                       l' <- resolveLabel l
                       a' <- resolveAExpr a
                       return $ TDataWithLength l' a'
+                  TGhost -> return TGhost
                   TRefined t s xp -> do
                       t' <- resolveTy t
                       (x, p) <- unbind xp
@@ -453,6 +454,7 @@ resolveLabel l =
           return $ Spanned (l^.spanOf) $ LName ne'
       LZero -> return l
       LAdv -> return l
+      LGhost -> return l
       LTop -> return l
       LJoin l1 l2 -> do
           l1' <- resolveLabel l1

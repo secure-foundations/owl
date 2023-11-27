@@ -23,6 +23,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
+import ANFPass (isGhostTyAnn)
 
 import AST
 
@@ -116,11 +117,13 @@ concretify e =
             c <- concretify e
             return $ CInput $ bind xe c
         EOutput a eo -> return $ COutput a eo
-        ELet e1 _ oanf _ xk -> do
-            e1' <- concretify e1
-            let (x, k) = unsafeUnbind xk
-            k' <- concretify k
-            return $ CLet e1' oanf (bind x k')
+        ELet e1 tyann oanf _ xk -> do
+            -- TODO: correct?
+            if isGhostTyAnn tyann then return CSkip else do
+                e1' <- concretify e1
+                let (x, k) = unsafeUnbind xk
+                k' <- concretify k
+                return $ CLet e1' oanf (bind x k')
         EBlock e -> do
             c <- concretify e
             return $ CBlock c
