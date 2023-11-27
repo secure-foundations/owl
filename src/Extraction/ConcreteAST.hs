@@ -31,6 +31,7 @@ data CTy =
     CTData
     | CTDataWithLength AExpr
     | CTOption CTy
+    | CTGhost
     | CTConst (Path)
     | CTBool
     -- | CTUnion CTy CTy
@@ -51,6 +52,7 @@ concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
   case t^.val of
     TData _ _ _ -> return CTData
+    TGhost -> return CTGhost
     TDataWithLength _ l -> return $ CTDataWithLength l
     TRefined t _ _ -> concretifyTy t
     TOption t -> do
