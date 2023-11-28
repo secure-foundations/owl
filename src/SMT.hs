@@ -2,6 +2,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-} 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-} 
 {-# LANGUAGE ScopedTypeVariables #-} 
+{-# LANGUAGE TypeSynonymInstances #-} 
+{-# LANGUAGE FlexibleInstances #-} 
 module SMT where
 import AST
 import Data.List
@@ -89,7 +91,7 @@ setupNameEnvRO = do
                 let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
                 withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
                     -- withSMTVars xs $ do 
-                        nk <- nameKindOf nt
+                        let nk = smtNameKindOf nt
                         emitAssertion $ sForall
                             (ivs)
                             (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs)), nk])
@@ -174,17 +176,35 @@ mkSelfDisjointness fdfs = do
                         [v1_eq_v2]
                         ("self_disj_" ++ show (sn))
 
-nameKindOf :: NameType -> Sym SExp
-nameKindOf nt = 
-    return $ case nt^.val of
-      NT_DH -> SAtom "DHkey"
-      NT_Enc _ -> SAtom "Enckey"
-      NT_StAEAD _ _ _ _ -> SAtom "Enckey"
-      NT_PKE _ -> SAtom "PKEkey"
-      NT_Sig _ -> SAtom "Sigkey"
-      -- NT_PRF _ -> SAtom "PRFkey"
-      NT_MAC _ -> SAtom "MACkey"
-      NT_Nonce -> SAtom "Nonce"
+class SMTNameKindOf a where
+    smtNameKindOf :: a -> SExp
+
+instance SMTNameKindOf NameType where
+    smtNameKindOf nt = 
+        case nt^.val of
+          NT_DH -> SAtom "DHkey"
+          NT_Enc _ -> SAtom "Enckey"
+          NT_StAEAD _ _ _ _ -> SAtom "Enckey"
+          NT_PKE _ -> SAtom "PKEkey"
+          NT_Sig _ -> SAtom "Sigkey"
+          NT_KDF _ _ -> SAtom "KDFkey"
+          NT_MAC _ -> SAtom "MACkey"
+          NT_Nonce -> SAtom "Nonce"
+
+instance SMTNameKindOf NameKind where
+    smtNameKindOf nk = 
+        case nk of
+          NK_DH -> SAtom "DHkey"
+          NK_Enc -> SAtom "Enckey"
+          NK_KDF -> SAtom "KDFkey"
+          NK_PKE -> SAtom "PKEkey" 
+          NK_Sig -> SAtom "Sigkey"
+          NK_MAC -> SAtom "MACkey"
+          NK_Nonce -> SAtom "Nonce"
+
+
+
+
 
 
 
@@ -465,10 +485,11 @@ interpretProp p = do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
           return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
-      (PRO p1 p2 i) -> do
-          v1 <- interpretAExp p1
-          v2 <- interpretAExp p2
-          return $ SApp [SAtom "RO", v1, v2, SAtom $ show i]
+      (PValidKDF x y z i nk) -> do
+          vx <- interpretAExp x
+          vy <- interpretAExp y
+          vz <- interpretAExp z
+          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), smtNameKindOf nk]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do

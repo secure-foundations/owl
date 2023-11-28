@@ -1309,10 +1309,9 @@ checkProp p =
               _ <- inferAExpr x
               _ <- inferAExpr y
               return ()
-          (PRO x y i) -> do
-              _ <- inferAExpr x
-              _ <- inferAExpr y
-              assert ("weird case for PRO i") $ i >= 0
+          (PValidKDF x y z i nk) -> do
+              _ <- mapM inferAExpr [x, y, z]
+              assert ("weird case for PValidKDF i") $ i >= 0
               return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
@@ -1432,8 +1431,8 @@ stripProp x p =
       PAADOf ne y -> do
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
-      PRO a1 a2 i -> do
-          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2) then return pTrue else return p 
+      PValidKDF a1 a2 a3 i nk -> do
+          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =

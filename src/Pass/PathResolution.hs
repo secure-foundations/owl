@@ -309,23 +309,15 @@ resolveNameType e = do
                       p' <- resolvePath (e^.spanOf) PTCounter p
                       np' <- resolveNoncePattern np
                       return $ NT_StAEAD t' (bind x pr') p' np' 
-                  NT_KDF pos oh1 oh2 b -> do
-                      oh1' <- case oh1 of
-                                Nothing -> return Nothing
-                                Just (n, i, j) -> do
-                                    n' <- resolveNameExp n
-                                    return $ Just (n', i, j)
-                      oh2' <- case oh2 of
-                                Nothing -> return Nothing
-                                Just (n, i, j) -> do
-                                    n' <- resolveNameExp n
-                                    return $ Just (n', i, j)
+                  NT_KDF pos b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
                       cases' <- forM cases $ \(p, nts) -> do
                           p' <- resolveProp p
-                          nts' <- mapM resolveNameType nts
+                          nts' <- forM nts $ \(str, nt) -> do
+                              nt' <- resolveNameType nt
+                              return (str, nt')
                           return (p', nts')
-                      return $ NT_KDF pos oh1' oh2' $ bind ((s, x), (s2, y)) cases'
+                      return $ NT_KDF pos $ bind ((s, x), (s2, y)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -380,11 +372,11 @@ resolveNameExp ne =
         NameConst s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ NameConst s p' 
-        KDFName a b c -> do
+        KDFName a b c i -> do
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c'
+            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' i
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -724,10 +716,11 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
-      PRO a b i -> do
+      PValidKDF a b c i nk -> do
           a' <- resolveAExpr a
           b' <- resolveAExpr b
-          return $ Spanned (p^.spanOf) $ PRO a' b' i
+          c' <- resolveAExpr c
+          return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' i nk
       PQuantIdx q ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

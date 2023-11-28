@@ -76,6 +76,7 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
+parseNameExp :: Parser NameExp
 parseNameExp = 
     (parseSpanned $ do
         reserved "KDFName"
@@ -85,8 +86,10 @@ parseNameExp =
         b <- parseAExpr
         symbol ","
         c <- parseAExpr
+        symbol ";"
+        i <- many1 digit
         symbol ">"
-        return $ KDFName a b c)
+        return $ KDFName a b c (read i))
      <|>
     (parseSpanned $ do
         i <- parsePath
@@ -393,21 +396,21 @@ parsePropTerm =
             p' <- getPosition
             return $ PNot $ Spanned (ignore $ mkPos p p') $ PFlow (Spanned (_spanOf ne) $ LName ne) advLbl
         )
-        <|>
-        (parseSpanned $ do
-            reserved "ro"
-            symbol "("
-            a <- parseAExpr
-            symbol ","
-            b <- parseAExpr
-            symbol ";"
-            oi <- optionMaybe $ many1 digit
-            symbol ")"
-            let i = case oi of
-                      Nothing -> 0
-                      Just i -> read i
-            return $ PRO a b i
-        )
+        -- <|>
+        -- (parseSpanned $ do
+        --     reserved "ro"
+        --     symbol "("
+        --     a <- parseAExpr
+        --     symbol ","
+        --     b <- parseAExpr
+        --     symbol ";"
+        --     oi <- optionMaybe $ many1 digit
+        --     symbol ")"
+        --     let i = case oi of
+        --               Nothing -> 0
+        --               Just i -> read i
+        --     return $ PRO a b i
+        -- )
         <|>         
         (parseSpanned $ do
             reserved "let"
@@ -609,26 +612,32 @@ parseNameType =
     (parseSpanned $ do
         kpos <- alt (reserved "kdf" >> return KDF_SaltPos) (reserved "dualkdf" >> return KDF_IKMPos)
         reserved "kdf"
-        symbol "<"
-        oh1 <- optionMaybe parseKDFHint
-        symbol ";"
-        oh2 <- optionMaybe parseKDFHint
-        symbol ">"
         symbol "{"
         x <- identifier
         y <- identifier
         kdfCases <- many1 kdfCase
         symbol "}"
-        return $ NT_KDF kpos oh1 oh2 (bind ((x, s2n x), (y, s2n y)) kdfCases)
+        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
     )
 
-kdfCase :: Parser (Prop, [NameType])
+kdfCase :: Parser (Prop, [(KDFStrictness, NameType)])
 kdfCase = do 
     p <- parseProp
+    ostrict <- optionMaybe $ reserved "strict"
+    let strictness = case ostrict of 
+            Nothing -> KDFStrict
+            Just _ -> KDFUnstrict
     symbol "->"
-    nts <- parseNameType `sepBy` (symbol "||")
+    nts <- (do
+        ostrict <- optionMaybe $ reserved "strict"
+        nt <- parseNameType
+        let strictness = case ostrict of 
+                            Nothing -> KDFStrict
+                            Just _ -> KDFUnstrict
+        return (strictness, nt)) `sepBy` (symbol "||")
     return (p, nts)
 
+parseKDFHint :: Parser (NameExp, Int, Int)
 parseKDFHint = do 
     n <- parseNameExp
     symbol "["

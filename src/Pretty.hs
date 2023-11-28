@@ -58,8 +58,8 @@ flowColor = Cyan
 corrColor = Red
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName a b c) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
-            owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ">"
+    owlpretty (KDFName a b c i) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
+            owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ", " <> owlpretty i <> owlpretty ">"
     owlpretty (NameConst vs n) = 
         owlpretty n <> owlprettyIdxParams vs 
                                                      
@@ -157,6 +157,9 @@ pIsOr :: Prop -> Bool
 pIsOr (Spanned _ (POr _ _)) = True
 pIsOr _ = False
 
+instance OwlPretty NameKind where
+    owlpretty n = owlpretty (show n)
+
 instance  OwlPretty PropX where 
     owlpretty PTrue = owlpretty "true"
     owlpretty PFalse = owlpretty "false"
@@ -187,7 +190,8 @@ instance  OwlPretty PropX where
     owlpretty (PQuantBV q b) = 
         let (x, p) = owlprettyBind b in
         owlpretty q <+> x <+> owlpretty ": bv" <> owlpretty "." <+> p
-    owlpretty (PRO a b i) = owlpretty "ro(" <> owlpretty a <> owlpretty "," <+> owlpretty b <> owlpretty "," <+> owlpretty i <> owlpretty ")"
+    owlpretty (PValidKDF a b c i nk) = owlpretty "valid_kdf" <> 
+        tupled (map owlpretty [a, b, c] ++ [owlpretty i, owlpretty nk])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PHappened s ixs xs) = 

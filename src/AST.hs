@@ -124,10 +124,12 @@ data AExprX =
 
 type AExpr = Spanned AExprX
 
+data KDFStrictness = KDFStrict | KDFUnstrict
+    deriving (Show, Generic, Typeable, Eq)
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path 
-    | KDFName AExpr AExpr AExpr
+    | KDFName AExpr AExpr AExpr Int
     deriving (Show, Generic, Typeable)
 
 type NameExp = Spanned NameExpX
@@ -185,10 +187,13 @@ data PropX =
     | PQuantIdx Quant  (Bind IdxVar Prop)
     | PQuantBV Quant  (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
-    | PRO AExpr AExpr Int
+    | PValidKDF AExpr AExpr AExpr Int NameKind 
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr
     deriving (Show, Generic, Typeable)
+
+data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
+    deriving (Show, Generic, Typeable, Eq)
 
 
 type Prop = Spanned PropX
@@ -235,8 +240,9 @@ data NameTypeX =
     | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
-    | NT_KDF KDFPos (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
-        (Bind ((String, DataVar), (String, DataVar)) [(Prop, [NameType])])
+    | NT_KDF KDFPos 
+        -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
+        (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
     deriving (Show, Generic, Typeable)
 
 
@@ -334,13 +340,10 @@ data DeclX =
 
 type Decl = Spanned DeclX
 
-data PRFStrictness = PRFStrict | PRFUnstrict
-    deriving (Show, Generic, Typeable, Eq)
 
 
 data NameDecl = 
     DeclBaseName NameType [Locality]
-      -- | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
       | DeclAbstractName
       deriving (Show, Generic, Typeable)
 
@@ -490,9 +493,10 @@ instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
 
-instance Alpha PRFStrictness
-instance Subst AExpr PRFStrictness
-instance Subst ResolvedPath PRFStrictness
+instance Alpha KDFStrictness
+instance Subst AExpr KDFStrictness
+instance Subst Idx KDFStrictness
+instance Subst ResolvedPath KDFStrictness
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
@@ -567,6 +571,11 @@ instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
 instance Subst ResolvedPath TyX
+
+instance Alpha NameKind
+instance Subst Idx NameKind
+instance Subst AExpr NameKind
+instance Subst ResolvedPath NameKind
 
 instance Alpha PropX
 instance Subst Idx PropX

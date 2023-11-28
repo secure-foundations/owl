@@ -223,7 +223,6 @@
     :qid hastype_name
 )))
 
-(declare-fun PRFName (Name String) Name)
 
 (declare-sort NameKind)
 (declare-fun NameKindLength (NameKind) Int)
@@ -233,7 +232,7 @@
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
-(declare-const PRFkey NameKind)
+(declare-const KDFkey NameKind)
 (declare-const MACkey NameKind)
 (declare-fun HasNameKind (Name NameKind) Bool)
 (assert (forall ((n Name) (k NameKind)) (!
@@ -341,16 +340,27 @@
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
-(declare-fun KDFName (Bits Bits Bits) Name)
+(declare-fun KDFName (Bits Bits Bits Int) Name)
+(declare-fun ValidKDF (Bits Bits Bits Int NameKind) Bool)
 (assert 
-    (forall ((x Bits) (y Bits) (z Bits) (x1 Bits) (y1 Bits) (z1 Bits)) (!
-        (=> (= (KDFName x y z) (KDFName x1 y1 z1))
-            (and 
+    (forall ((x Bits) (y Bits) (z Bits) (i Int) (nk1 NameKind) 
+             (x1 Bits) (y1 Bits) (z1 Bits) (j Int) (nk2 NameKind)) (!
+        (=> (and (ValidKDF x y z i nk1) (ValidKDF x1 y1 z1 j nk2)
+                 (= (KDFName x y z i) (KDFName x1 y1 z1 j)))
+            (and
                  (= TRUE (eq x x1))
                  (= TRUE (eq y y1))
-                 (= TRUE (eq z z1))))
-        :pattern ((KDFName x y z) (KDFName x1 y1 z1))
+                 (= TRUE (eq z z1))
+                 (= i j)
+                 (= nk1 nk2)))
+        :pattern ((ValidKDF x y z i nk1) (ValidKDF x1 y1 z1 j nk2))
         :qid kdfname_inj
+)))
+(assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (nk NameKind)) (!
+    (=> (ValidKDF x y z i nk)
+        (HasNameKind (KDFName x y z i) nk))
+    :pattern (ValidKDF x y z i nk)
+    :qid kdfname_hasnamekind
 )))
 
 (assert (forall ((n1 Name) (n2 Name)) (!

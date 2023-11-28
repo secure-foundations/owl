@@ -112,12 +112,10 @@ instance Subst ResolvedPath ModDef
 data NameDef = 
     BaseDef (NameType, [Locality])
       | AbstractName
-      -- | RODef ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType]))
       deriving (Show, Generic, Typeable)
 
 instance Alpha NameDef
 instance Subst ResolvedPath NameDef
-instance Subst Idx PRFStrictness
 instance Subst Idx NameDef
 
 data ModBody = ModBody { 
@@ -639,9 +637,6 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
 --                _ -> typeError $ "Not an RO name: " ++ show (owlpretty p0)
 --          Nothing -> typeError $ show $ ErrUnknownRO p
 --getRO pth = typeError $ "Unknown path: " ++ show pth
-
-data NameKind = NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_PRF | NK_MAC | NK_Nonce
-    deriving Eq
 
 getNameKind :: NameType -> NameKind
 getNameKind nt = 
