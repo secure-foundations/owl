@@ -48,7 +48,7 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -839,6 +839,14 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ mappend (constrs ++ tests)) $ 
             addTyDef n (EnumDef b) $
                 cont
+      DeclNameType s bnt -> do
+          tds <- view $ curMod . nameTypeDefs
+          assert ("Duplicate name type name: " ++ s) $ not $ member s tds
+          ((is, ps), nt) <- unbind bnt
+          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
+            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is) $ 
+                checkNameType nt
+          local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -895,6 +903,7 @@ nameTypeUniform nt =
       NT_Nonce -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
+      NT_App p ps -> resolveNameTypeApp p ps >>= nameTypeUniform
       NT_MAC _ -> return ()
       NT_KDF _ _ -> return ()
       _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
@@ -1001,6 +1010,8 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTy t
         checkNoTopTy t
         checkTyPubLen t
+      NT_App p ps -> do
+          resolveNameTypeApp p ps >>= checkNameType
       NT_StAEAD t xaad p np -> do
           checkTy t
           checkNoTopTy t
@@ -1974,16 +1985,19 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
         ntLclsOpt <- getNameInfo ne
         case ntLclsOpt of
             Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
-            Just (nt, _) -> 
-                case nt^.val of
-                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
-                    NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
-                    NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-                    NT_DH -> return $ mkSpanned $ AELenConst "group"
-                    NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
-                    NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
-                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+            Just (nt, _) ->  go nt
+                where
+                    go nt = 
+                        case nt^.val of
+                            NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                            NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+                            NT_App p ps -> resolveNameTypeApp p ps >>= go
+                            NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                            NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+                            NT_DH -> return $ mkSpanned $ AELenConst "group"
+                            NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
+                            NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
+                            NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     -- NT_PRF _ -> typeError $ "Unparsable name type: " ++ show (owlpretty nt)
 
 doAEnc t1 x t args =

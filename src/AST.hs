@@ -245,6 +245,7 @@ data NameTypeX =
     | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
     | NT_PKE Ty
     | NT_MAC Ty
+    | NT_App Path ([Idx], [Idx])
     | NT_KDF KDFPos 
         -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
         (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
@@ -339,6 +340,7 @@ data DeclX =
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
     | DeclTy String (Maybe Ty)
+    | DeclNameType String (Bind ([IdxVar], [IdxVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))

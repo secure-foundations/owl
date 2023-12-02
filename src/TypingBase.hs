@@ -127,6 +127,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
+    _nameTypeDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
     _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
@@ -579,33 +580,54 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
 --                return $ substs (zip xs as) p
 --            _ -> typeError $ "Not an RO name: " ++ n
 
+-- Resolves all App nodes
+normalizeNameType :: NameType -> Check NameType
+normalizeNameType nt = 
+    case nt^.val of
+      NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
+      NT_KDF pos bcases -> do
+          (p, cases) <- unbind bcases
+          cases' <- forM cases $ \(p, nts) -> do
+              nts' <- forM nts $ \(str, nt) -> do
+                  nt' <- normalizeNameType nt
+                  return (str, nt')
+              return (p, nts')
+          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind p cases')
+      _ -> return nt
+
 
     
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = withSpan (ne^.spanOf) $ do
-    case ne^.val of 
-     NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
-         md <- openModule p
-         tc <- view tcScope
-         forM_ vs1 checkIdxSession
-         forM_ vs2 checkIdxPId
-         case lookup n (md^.nameDefs)  of
-           Nothing -> typeError $ show $ ErrUnknownName pth
-           Just b_nd -> do
-               ((is, ps), nd') <- unbind b_nd
-               assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
-               let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
-               case nd of
-                 AbstractName -> do
-                     return Nothing
-                 BaseDef (nt, lcls) -> do
-                     return $ Just (nt, Just lcls) 
-     KDFName ann x y z j -> do 
-         _ <- mapM inferAExpr [x, y, z]
-         (_, nts) <- getKDFAnnInfo (unignore ann) x y z
-         assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
-         return $ Just (snd (nts !! j), Nothing)
+    res <- case ne^.val of 
+             NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
+                 md <- openModule p
+                 tc <- view tcScope
+                 forM_ vs1 checkIdxSession
+                 forM_ vs2 checkIdxPId
+                 case lookup n (md^.nameDefs)  of
+                   Nothing -> typeError $ show $ ErrUnknownName pth
+                   Just b_nd -> do
+                       ((is, ps), nd') <- unbind b_nd
+                       assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
+                       case nd of
+                         AbstractName -> do
+                             return Nothing
+                         BaseDef (nt, lcls) -> do
+                             return $ Just (nt, Just lcls) 
+             KDFName ann x y z j -> do 
+                 _ <- mapM inferAExpr [x, y, z]
+                 (_, nts) <- getKDFAnnInfo (unignore ann) x y z
+                 assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
+                 return $ Just (snd (nts !! j), Nothing)
+    case res of
+      Nothing -> return Nothing
+      Just (nt, lcls) -> do
+          nt' <- normalizeNameType nt
+          return $ Just (nt', lcls)
+
 
 -- Also ensures that the name is well-formed: the annotation lines up with the
 -- AExprs.
@@ -651,17 +673,31 @@ extractKDF kpos bnd a b c i = do
                    KDF_SaltPos -> subst x b $ subst y c $ cases !! i
                    KDF_IKMPos -> subst x a $ subst y b $ cases !! i
 
-getNameKind :: NameType -> NameKind
+getNameKind :: NameType -> Check NameKind
 getNameKind nt = 
     case nt^.val of
-      NT_DH -> NK_DH
-      NT_Sig _ -> NK_Sig
-      NT_Nonce -> NK_Nonce
-      NT_Enc _ -> NK_Enc
-      NT_StAEAD _ _ _ _ -> NK_Enc
-      NT_PKE _ -> NK_PKE
-      NT_MAC _ -> NK_MAC
-      -- NT_PRF _ -> NK_PRF
+      NT_DH ->    return $ NK_DH
+      NT_Sig _ -> return $ NK_Sig
+      NT_Nonce -> return $ NK_Nonce
+      NT_Enc _ -> return $ NK_Enc
+      NT_StAEAD _ _ _ _ -> return $ NK_Enc
+      NT_PKE _ -> return $ NK_PKE
+      NT_MAC _ -> return $ NK_MAC
+      NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
+      NT_KDF _ _ -> return $ NK_KDF
+    
+resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> Check NameType
+resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) = do
+    forM_ is checkIdxSession
+    forM_ ps checkIdxPId
+    md <- openModule p
+    case lookup s (md ^. nameTypeDefs) of 
+      Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
+      Just bnd -> do
+          ((xs, ys), nt) <- unbind bnd
+          assert ("Wrong index arity on name type") $ (length is, length ps) == (length xs, length ys)
+          return $ substs (zip xs is) $ substs (zip ys ps) $ nt
+resolveNameTypeApp pth _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
 
 
 getNameTypeOpt :: NameExp -> Check (Maybe NameType)
@@ -754,20 +790,23 @@ mkConcats (x:xs) =
     let go x y = aeApp (topLevelPath "concat") [] [x, y] in
     foldl go x xs
 
+
 -- Find the corresponding len const associated to a name expression's name type
 lenConstOfUniformName :: NameExp -> Check AExpr 
 lenConstOfUniformName ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
       Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
-      Just (nt, _) -> 
-          case nt^.val of
-            NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
-            NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-            NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
-            NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-            NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
-            _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
+      Just (nt, _) -> go nt
+    where
+        go nt = case nt^.val of
+                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                    NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    NT_App p ps -> resolveNameTypeApp p ps >>= go
+                    _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check AExpr
 normalizeAExpr ae = withSpan (ae^.spanOf) $ 
@@ -953,7 +992,8 @@ kdfNameAxioms ot ann a b c i j = do
                     KDF_IKMDH ne1 ne2 i -> pAnd (pNot $ pFlow (nameLbl ne1) advLbl)
                                                (pNot $ pFlow (nameLbl ne2) advLbl)
     assert ("KDF name index out of bounds") $ j < length nts                                         
-    let validKDF = mkSpanned $ PValidKDF a b c i j (getNameKind (snd $ nts !! j))
+    nk <- getNameKind (snd $ nts !! j)
+    let validKDF = mkSpanned $ PValidKDF a b c i j nk
     -- TODO: emit a length axiom as well
     return $ tRefined ot ".res" $ 
         pImpl (pAnd secrecy p) validKDF

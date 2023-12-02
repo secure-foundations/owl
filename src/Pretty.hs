@@ -213,6 +213,8 @@ instance  OwlPretty NameTypeX where
         let (x, aad) = owlprettyBind xaad in
         owlpretty "StAEAD" <+> owlpretty ty <+> owlpretty "(" <> x <> owlpretty "." <> aad <> owlpretty ")" <+> owlpretty p
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
+    owlpretty (NT_App p is) = 
+        owlpretty p <> owlprettyIdxParams is 
     owlpretty (NT_PKE ty) = owlpretty "pke" <+> owlpretty ty
     owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
     -- owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"

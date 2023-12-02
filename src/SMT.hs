@@ -91,7 +91,7 @@ setupNameEnvRO = do
                 let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
                 withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
                     -- withSMTVars xs $ do 
-                        let nk = smtNameKindOf nt
+                        nk <- liftCheck $ smtNameKindOf nt
                         emitAssertion $ sForall
                             (ivs)
                             (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs)), nk])
@@ -173,30 +173,31 @@ mkSelfDisjointness fdfs = do
                         ("self_disj_" ++ show (sn))
 
 class SMTNameKindOf a where
-    smtNameKindOf :: a -> SExp
+    smtNameKindOf :: a -> Check SExp
 
 instance SMTNameKindOf NameType where
     smtNameKindOf nt = 
         case nt^.val of
-          NT_DH -> SAtom "DHkey"
-          NT_Enc _ -> SAtom "Enckey"
-          NT_StAEAD _ _ _ _ -> SAtom "Enckey"
-          NT_PKE _ -> SAtom "PKEkey"
-          NT_Sig _ -> SAtom "Sigkey"
-          NT_KDF _ _ -> SAtom "KDFkey"
-          NT_MAC _ -> SAtom "MACkey"
-          NT_Nonce -> SAtom "Nonce"
+          NT_DH -> return $ SAtom "DHkey"
+          NT_Enc _ -> return $ SAtom "Enckey"
+          NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
+          NT_PKE _ -> return $ SAtom "PKEkey"
+          NT_Sig _ -> return $ SAtom "Sigkey"
+          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_MAC _ -> return $ SAtom "MACkey"
+          NT_Nonce -> return $ SAtom "Nonce"
+          NT_App p ps -> resolveNameTypeApp p ps >>= smtNameKindOf
 
 instance SMTNameKindOf NameKind where
     smtNameKindOf nk = 
         case nk of
-          NK_DH -> SAtom "DHkey"
-          NK_Enc -> SAtom "Enckey"
-          NK_KDF -> SAtom "KDFkey"
-          NK_PKE -> SAtom "PKEkey" 
-          NK_Sig -> SAtom "Sigkey"
-          NK_MAC -> SAtom "MACkey"
-          NK_Nonce -> SAtom "Nonce"
+          NK_DH ->    return $ SAtom "DHkey"
+          NK_Enc ->   return $ SAtom "Enckey"
+          NK_KDF ->   return $ SAtom "KDFkey"
+          NK_PKE ->   return $ SAtom "PKEkey" 
+          NK_Sig ->   return $ SAtom "Sigkey"
+          NK_MAC ->   return $ SAtom "MACkey"
+          NK_Nonce -> return $ SAtom "Nonce"
 
 
 
@@ -485,7 +486,8 @@ interpretProp p = do
           vx <- interpretAExp x
           vy <- interpretAExp y
           vz <- interpretAExp z
-          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), SAtom (show j), smtNameKindOf nk]
+          snk <- liftCheck $ smtNameKindOf nk
+          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), SAtom (show j), snk]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do

@@ -37,6 +37,7 @@ builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length",
 data PathType = 
     PTName
       | PTTy
+      | PTNameType
       | PTFunc
       | PTLoc
       | PTDef
@@ -49,6 +50,7 @@ data PathType =
 instance Show PathType where
     show PTName = "name"
     show PTTy = "type"
+    show PTNameType = "nametype"
     show PTFunc = "function"
     show PTLoc = "locality"
     show PTDef = "def"
@@ -66,6 +68,7 @@ data ResolveEnv = ResolveEnv {
     _curPath :: ResolvedPath,
     _namePaths :: T.Map String ResolvedPath,
     _tyPaths :: T.Map String ResolvedPath,
+    _nameTypePaths :: T.Map String ResolvedPath,
     _funcPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
@@ -99,7 +102,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -152,13 +155,6 @@ resolveDecls (d:ds) =
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
                           return $ DeclBaseName nt' ls'
-                      --DeclRO strictness b -> do
-                      --    (xs, (a, req, nts, lem)) <- unbind b
-                      --    a' <- resolveAExpr a
-                      --    req' <- resolveProp req
-                      --    nts' <- mapM resolveNameType nts
-                      --    lem' <- resolveExpr lem
-                      --    return $ DeclRO strictness $ bind xs (a', req', nts', lem')
           p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
@@ -210,6 +206,14 @@ resolveDecls (d:ds) =
                     Left err -> resolveError (d^.spanOf) $ "parseError: " ++ show err
                     Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
             _ -> resolveError (d^.spanOf) $ "include statements only allowed at top level"
+      DeclNameType s b -> do
+          (is, nt) <- unbind b
+          nt' <- resolveNameType nt
+          let d' = Spanned (d^.spanOf) $ DeclNameType s $ bind is nt'
+          p <- view curPath
+          ds' <- local (over nameTypePaths $ T.insert s p) $ 
+              resolveDecls ds
+          return (d' : ds')
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
           vs' <- forM vs $ \(s, ot) -> do
@@ -296,6 +300,9 @@ resolveNameType e = do
         where
             go t =
                 case t of
+                  NT_App pth is -> do
+                      pth' <- resolvePath (e^.spanOf) PTNameType pth
+                      return $ NT_App pth' is
                   NT_DH -> return t
                   NT_Nonce -> return t
                   NT_Sig t -> NT_Sig <$> resolveTy t
@@ -434,6 +441,7 @@ resolvePath' pos pt p =
               mp <- case pt of
                       PTName -> view namePaths
                       PTTy -> view tyPaths
+                      PTNameType -> view nameTypePaths
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
                       PTPredicate -> view predPaths

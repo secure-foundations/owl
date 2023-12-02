@@ -630,6 +630,12 @@ parseNameType =
         symbol "}"
         return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
     )
+    <|>
+    (parseSpanned $ do
+        p <- parsePath
+        ps <- parseIdxParams
+        return $ NT_App p ps
+    )
 
 kdfCase :: Parser (Prop, [(KDFStrictness, NameType)])
 kdfCase = do 
@@ -784,6 +790,15 @@ parseDecls =
             symbol "="
             parseTy
         return $ DeclTy n t
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "nametype"
+        n <- identifier
+        ps <- parseIdxParamBinds
+        symbol "="
+        nt <- parseNameType
+        return $ DeclNameType n (bind ps nt)
     )
     <|>
     (parseSpanned $ do

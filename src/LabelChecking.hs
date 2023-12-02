@@ -29,6 +29,7 @@ sJoin x y = SApp [SAtom "Join", x, y]
 nameDefFlows :: NameExp -> NameType -> Sym SExp
 nameDefFlows n nt = do
     case nt^.val of 
+      NT_App p is -> (liftCheck $ resolveNameTypeApp p is) >>= nameDefFlows n
       NT_Nonce -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do

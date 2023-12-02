@@ -2,20 +2,21 @@ locality alice
 
 name d : nonce @ alice
 
-name psk3 : dualkdf {salt info. 
-    True -> strict enckey Name(d)
+nametype enckey_for_d = enckey Name(d)
+nametype ck1_t = kdf {ikm info.
+    True -> strict enckey_for_d
+}
+
+name psk3 : dualkdf {salt info.
+    True -> strict enckey_for_d
 } @ alice
 
-name psk2 : dualkdf {ikm info. 
-    True -> strict kdf {salt info. 
-        True -> strict enckey Name(d)
-    }
+name psk2 : dualkdf {salt info.
+    True -> strict ck1_t
 } @ alice
 
 name psk1 : kdf {ikm info.
-    True -> strict kdf {salt info. 
-        True -> strict enckey Name(d)
-    }
+    True -> strict ck1_t
 } @ alice
 
 corr [psk1] /\ [psk2] /\ [psk3] ==> [d]
