@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Typing where
 import AST
 import Data.Time.Clock
@@ -43,6 +44,8 @@ import qualified Text.Parsec as P
 import qualified System.IO as S
 import qualified System.FilePath as S
 import Parse
+import GHC.Generics (Generic)
+import Data.Typeable (Typeable)
 
 emptyModBody :: IsModuleType -> ModBody
 emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
@@ -716,7 +719,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
           (((is, ps), xs), a) <- unbind bnd
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
               local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     _ <- inferAExpr a
                     return ()
           local (over (curMod . userFuncs) $ insert s (FunDef bnd)) $ cont
@@ -725,7 +728,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
         ((is, xs), p) <- unbind bnd
         local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
                     checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
@@ -734,28 +737,6 @@ checkDecl d cont = withSpan (d^.spanOf) $
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
           DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
-          -- DeclRO strictness b -> do
-          --     (xs, (a, p, nts, lem)) <- unbind b
-          --     local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
-          --       local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
-          --           withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-          --               logTypecheck $ "Checking RO decl: " ++ n
-          --               _ <- inferAExpr a
-          --               checkProp p
-          --               forM_ nts $ \nt -> do
-          --                   checkNameType nt
-          --                   checkROName nt
-          --               case strictness of
-          --                 ROStrict (Just is) -> do
-          --                     forM_ is $ \i -> do
-          --                         assert ("Hash index " ++ show i ++ " not in scope") $ i < length nts
-          --                 _ -> return ()
-          --     skipROUnique <- view $ envFlags . fSkipRODisj
-          --     when (not skipROUnique) $ do
-          --         logTypecheck $ "Checking RO uniqueness of " ++ n
-          --         checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
-          --         checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
-          --     local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef strictness $ bind xs (a, p, nts)) cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
           md <- case me^.val of
@@ -821,7 +802,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
           ensureNoConcreteDefs
           ((is, xs), (l1, l2)) <- unbind ils
           local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
               checkLabel l1
               checkLabel l2
           local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
@@ -908,14 +889,15 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
       AELenConst _ -> return ()
       AEInt _ -> return ()
 
-checkROName :: NameType -> Check ()
-checkROName nt =  
+nameTypeUniform :: NameType -> Check ()
+nameTypeUniform nt =  
     case nt^.val of
       NT_Nonce -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
       NT_MAC _ -> return ()
-      _ -> typeError $ "Bad RO Name: " ++ show (owlpretty nt)
+      NT_KDF _ _ -> return ()
+      _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
 
 -- We then fold the list of decls, checking later ones after processing the
 -- earlier ones.
@@ -931,49 +913,9 @@ mkForallIdx :: [IdxVar] -> Prop -> Prop
 mkForallIdx [] p = p
 mkForallIdx (i:is) p = mkSpanned $ PQuantIdx Forall (bind i (mkForallIdx is p))
 
-openROData :: Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> (AExpr -> Prop -> Check a) -> Check a
-openROData b k = do 
-    (((is1, is2), xs), (a, preq)) <- unbind b
-    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-                k a preq 
-
 withTypeErrorHook :: (forall a. String -> Check a) -> Check b -> Check b
 withTypeErrorHook f k = do
     local (\e -> e { _typeErrorHook = f }) k 
-
--- checkROUnique :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop, Expr) -> Check ()
--- checkROUnique roname b = do
---     pres <- collectROPreimages
---     (((is1, is2), xs), (a, preq, elem)) <- unbind b
---     local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
---         local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
---             withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
---                 forM_ pres $ \(pth, p) -> 
---                     openROData p $ \a' preq' -> do 
---                         elem' <- ANF.anf elem
---                         withTypeErrorHook (\x -> typeError' $ "Cannot prove RO disjointness between " ++ roname ++ " and " ++ show (owlpretty pth) ++ ": \n             " ++ x) $ do
---                                 let pdisj = pImpl (pAnd preq preq') (pNot $ pEq a a')
---                                 _ <- checkExpr (Just $ tLemma pdisj) elem'
---                                 return ()
-
-checkROSelfDisjoint :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> Check ()
-checkROSelfDisjoint roname b = do
-    (((is1, ps1), xs1), (a1, preq1)) <- unbind b
-    (((is2, ps2), xs2), (a2, preq2)) <- unbind b
-    when ((length is1 + length ps1 + length xs1) > 0) $ do
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps1) $ do                
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs1) $ do
-                    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is2) $
-                        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do                
-                            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs2) $ do
-                                let idxs_eq = foldr pAnd pTrue $ zipWith (\i1 i2 -> mkSpanned $ PEqIdx (IVar (ignore def) i1) (IVar (ignore def) i2)) (is1 ++ ps1) (is2 ++ ps2)
-                                let xs_eq = foldr pAnd pTrue $ zipWith (\x y -> pEq (aeVar' x) (aeVar' y)) xs1 xs2
-                                let pdisj = pImpl (pAnd preq1 preq2) $ pImpl (pEq a1 a2) $ (pAnd idxs_eq xs_eq)
-                                (_, b) <- SMT.smtTypingQuery "disj" $ SMT.symAssert pdisj
-                                assert ("RO self disjointness check failed: " ++ roname) b
                                         
 
 checkNoTopLbl :: Label -> Check ()
@@ -1041,14 +983,20 @@ checkNameType nt = withSpan (nt^.spanOf) $
           checkTy t
           checkNoTopTy t
       NT_Nonce -> return ()
-      -- NT_PRF xs -> do
-      --     assert ("PRF value labels not unique") $ uniq $ map fst xs
-      --     forM_ xs (\(_, (a, t)) -> do
-      --         _ <- inferAExpr a
-      --         checkNameType t
-      --         )
-      --     (_, b) <- SMT.smtTypingQuery "prf" $ SMT.symListUniq (map (fst . snd) xs)
-      --     assert "PRF uniqueness check failed" b
+      NT_KDF kdfPos b -> do 
+          (((sx, x), (sy, y)), cases) <- unbind b 
+          withVars [(x, (ignore sx, Nothing, tGhost)), 
+                    (y, (ignore sy, Nothing, tGhost))] $ do
+              assert ("KDF cases must be non-empty") $ not $ null cases
+              ps <- forM cases $ \(p, nts) -> do
+                  checkProp p
+                  forM_ nts $ \(str, nt) -> do
+                      checkNameType nt
+                      nameTypeUniform nt
+                  return p 
+              (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
+              assert ("KDF disjointness check failed") b
+          return ()
       NT_Enc t -> do
         checkTy t
         checkNoTopTy t
@@ -1058,7 +1006,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
           checkNoTopTy t
           checkTyPubLen t
           (x, aad) <- unbind xaad
-          withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp aad
+          withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp aad
           checkNoncePattern np
           checkCounter p
       NT_PKE t -> do
@@ -1282,7 +1230,7 @@ checkProp p =
               local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
           (PQuantBV _ xp) -> do
               (x, p) <- unbind xp
-              withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp p 
+              withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
           PApp s is xs -> do
               p <- extractPredicate s is xs
               checkProp p
@@ -1309,9 +1257,10 @@ checkProp p =
               _ <- inferAExpr x
               _ <- inferAExpr y
               return ()
-          (PValidKDF x y z i nk) -> do
+          (PValidKDF x y z i j nk) -> do
               _ <- mapM inferAExpr [x, y, z]
               assert ("weird case for PValidKDF i") $ i >= 0
+              assert ("weird case for PValidKDF j") $ j >= 0
               return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
@@ -1354,11 +1303,11 @@ flowCheck l1 l2 = laxAssertion $ do
 
 
 stripNameExp :: DataVar -> NameExp -> Check NameExp
-stripNameExp x e = return e 
-    -- case e^.val of NameConst _ _ (Just (as, _)) ->
-    --       if x `elem` (concat $ map getAExprDataVars as) then typeError ("stripNameExp: " ++ show (owlpretty x) ++ " is in " ++ show (owlpretty as)) else return e
-    --   _ -> return e
-
+stripNameExp x e = 
+    case e^.val of
+      NameConst _ _ -> return e 
+      -- TODO: kdf
+      
 stripLabel :: DataVar -> Label -> Check Label
 stripLabel x l = return l
 
@@ -1431,7 +1380,7 @@ stripProp x p =
       PAADOf ne y -> do
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
-      PValidKDF a1 a2 a3 i nk -> do
+      PValidKDF a1 a2 a3 i j nk -> do
           if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
@@ -1635,9 +1584,16 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           case tyAnn of
             Just t -> checkTy t
             Nothing -> return ()
-          t1 <- checkExpr tyAnn e
+          t1 <- checkExpr tyAnn e 
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
+          stripTy x t2
+      ELetGhost a sx xk -> do
+          t <- local (set tcScope TcGhost) $ inferAExpr a
+          t' <- normalizeTy t
+          t'' <- ghostifyTy a t'
+          (x, k) <- unbind xk
+          t2 <- withVars [(x, (ignore sx, Nothing, t''))] (checkExpr ot k)
           stripTy x t2
       (EChooseIdx ip ik) -> do
           (ix, p) <- unbind ip
@@ -1791,7 +1747,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
       (EForallBV xk) -> do
           (x, k) <- unbind xk
-          t <- local (set tcScope TcGhost) $ withVars [(x, (ignore $ show x, Nothing, tData topLbl topLbl))] $ do
+          t <- local (set tcScope TcGhost) $ withVars [(x, (ignore $ show x, Nothing, tGhost))] $ do
               checkExpr Nothing k
           t' <- normalizeTy t
           case t'^.val of
@@ -1926,6 +1882,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
                 return t
 
+ghostifyTy :: AExpr -> Ty -> Check Ty
+ghostifyTy a t = do
+    let tghost = case t^.val of 
+                  TRefined _ s xk -> Spanned (t^.spanOf) $ TRefined tGhost s xk
+                  _ -> tGhost
+    return $ tRefined tghost ".res" (pEq a (aeVar ".res"))
+
 -- Generate types for the parsed struct fields that incorporate the length information generated from parsing.
 -- Note: we allow the last field in the struct to have a statically unknowable length, since it can be parsed with 
 -- a `tail` combinator.
@@ -2020,6 +1983,7 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
                     NT_DH -> return $ mkSpanned $ AELenConst "group"
                     NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
                     NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
+                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     -- NT_PRF _ -> typeError $ "Unparsable name type: " ++ show (owlpretty nt)
 
 doAEnc t1 x t args =
@@ -2103,26 +2067,42 @@ proveDisjointContents x y = do
                         _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (owlpretty f)
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
--- checkROHint :: ROHint -> Check (AExpr, Prop, [NameType])
--- checkROHint (p, (is, ps), args) = local (set tcScope TcGhost) $ do
---     b <- getRO p
---     ((ixs, pxs), b') <- unbind b
---     (xs, (pre_, req_, nts_)) <- unbind b'
---     assert ("Wrong index arity to RO " ++ show (owlpretty p)) $ (length is, length ps) == (length ixs, length pxs)
---     assert ("Wrong var arity to RO " ++ show (owlpretty p)) $ length args == length xs
---     forM_ is checkIdx
---     forM_ ps checkIdx
---     _ <- forM args inferAExpr
---     return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs args) $ (pre_, req_, nts_) 
 
--- findGoodROHint :: AExpr -> Int -> [((AExpr, Prop, [NameType]), ROHint)] -> Check NameExp
--- findGoodROHint a _ [] = do
---     a' <- resolveANF a
---     typeError $ "Cannot prove " ++ show (owlpretty a') ++ " matches given hints"
--- findGoodROHint a i (((a', p', _), (pth, inds, args)) : xs) = do
---     (_, b) <- SMT.smtTypingQuery "findGoodROHint" $ SMT.symAssert $ pAnd p' (pEq a a')
---     if b then return (mkSpanned $ NameConst inds pth (Just (args, i))) else findGoodROHint a i xs
+data KDFInferResult = KDFTriv | KDFAdv | KDFGood KDFStrictness NameExp
+    deriving (Show, Generic, Typeable)
 
+instance Alpha KDFInferResult
+
+inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
+            Int -> Int -> Check KDFInferResult
+inferKDF kpos a b c i j = do
+    let (principal, other) = case kpos of
+                              KDF_SaltPos -> (a, b)
+                              KDF_IKMPos -> (b, a)
+    case extractNameFromType (snd principal) of 
+      Nothing -> 
+          case kpos of
+            KDF_SaltPos -> return KDFTriv   
+            KDF_IKMPos -> return KDFTriv -- TODO: this is where we try DH
+      Just na -> do 
+          nt <- getNameType na
+          case nt^.val of
+            NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
+                (((sx, x), (sy, y)), cases_) <- unbind bcases
+                let cases = subst x (fst other) $ subst y (fst c) $ cases_
+                assert "KDF case out of bounds" $ i < length cases                    
+                let (p, nts) = cases !! i
+                assert "KDF row index out of bounds" $ j < length nts                    
+                let (str, _) = nts !! j
+                bp <- decideProp p
+                b2 <- not <$> flowsTo (nameLbl na) advLbl
+                let ann = case kpos of
+                            KDF_SaltPos -> KDF_SaltKey na i
+                            KDF_IKMPos -> KDF_IKMKey na i
+                if b2 && (bp == Just True) then 
+                            return $ KDFGood str $ 
+                                mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
+                            else return KDFTriv
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2171,43 +2151,42 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
-      -- CHash hints i -> do
-      --     assert ("RO hints must be nonempty") $ length hints > 0
-      --     hints_data <- forM hints checkROHint
-      --     let nks = map (map getNameKind) $ map (\(_, _, x)  -> x) hints_data
-      --     let hints_consistent = all (\x -> x == head nks) nks
-      --     assert ("RO hints must have consistent name kinds") $ hints_consistent
-      --     assert ("RO name index out of bounds") $ i < length (head nks)
-      --     ne <- findGoodROHint (mkConcats $ map fst args) i (zip hints_data hints)
-      --     lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
-      --     solvability <- solvabilityAxioms (mkConcats $ map fst args) ne 
-      --     return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-      --         pAnd (mkSpanned $ PRO (mkConcats $ map fst args) (aeVar ".res") i)
-      --           (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
-
-      -- 1. Ensure that the hints are nonempty and consistent (name kinds are the same)
-      -- 1.5. Check that i is in bounds
-      -- 2. One by one, try to find a hint that matches the concats of the args 
-      -- 3. If no hint matches, throw an error
-      -- 4. If a hint matches, return the corresponding name type, refined with:
-      --    - RO solvability axioms
-      --    - RO predicate
-      -- CPRF s -> do
-      --     assert ("Wrong number of arguments to prf") $ length args == 2
-      --     let [(_, t1), (a, t)] = args
-      --     case extractNameFromType t1 of
-      --       Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
-      --       Just k -> do
-      --           nt <-  local (set tcScope TcGhost) $ getNameType k
-      --           case nt^.val of
-      --             NT_PRF aes -> do
-      --                 case L.find (\p -> fst p == s) aes of
-      --                   Nothing -> typeError $ "Unknown PRF label: " ++ s
-      --                   Just (_, (ae, nt')) -> do
-      --                       (_, b) <- SMT.smtTypingQuery "prf" $ SMT.symCheckEqTopLevel [ae] [a]
-      --                       corr <- flowsTo (nameLbl k) advLbl
-      --                       if (not corr) && b then return (mkSpanned $ TName $ prfName k s) else mkSpanned <$> trivialTypeOf [t1, t]
-      --             _ -> typeError $ "Wrong name type for PRF"
+      CKDF oann1 oann2 j -> do
+          assert ("KDF must take three arguments") $ length args == 3
+          let [a, b, c] = args
+          cpub <- tyFlowsTo (snd c) advLbl
+          assert ("Third argument to KDF must flow to adv") cpub
+          res1 <- case oann1 of
+                    Nothing -> do
+                        pub <- tyFlowsTo (snd a) advLbl
+                        assert ("First argument to KDF must flow to adv without annotation") pub
+                        return KDFTriv
+                    Just i -> 
+                        local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c i j
+          res2 <- case oann2 of
+                    Nothing -> do
+                        pub <- tyFlowsTo (snd b) advLbl
+                        assert ("Second argument to KDF must flow to adv without annotation") pub
+                        return KDFTriv
+                    Just i -> 
+                        local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c i j
+          res <- case (res1, res2) of
+                        (KDFTriv, _) -> return res2
+                        (_, KDFTriv) -> return res1
+                        _ -> do
+                            assert ("KDF arguments are inconsistent") $ res1 `aeq` res2
+                            return res1
+          case res of 
+            KDFAdv -> return $ tData advLbl advLbl
+            KDFTriv -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
+            KDFGood strictness ne -> do
+              let flowAx = case strictness of
+                             KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                             KDFUnstrict -> pTrue
+              lenConst <- local (set tcScope TcGhost) $ lenConstOfUniformName ne
+              return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                  pAnd flowAx $ 
+                      pEq (aeLength (aeVar ".res")) lenConst
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
@@ -2440,8 +2419,6 @@ nameDefMatches s xn1 xn2 = do
       (BaseDef (nt1, ls1), BaseDef (nt2, ls2)) -> do
           assert ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
-      _ -> typeError $ "Unhandled name def matches case"
-
 
 moduleMatches :: ModDef -> ModDef -> Check ()
 moduleMatches md1 md2 = 

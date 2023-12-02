@@ -87,12 +87,15 @@ anf e =
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
       ELet e1 tyann Nothing s xk -> do
-          if isGhostTyAnn tyann then return e else do
               (x, k) <- unbind xk
               e' <- anf e1
               elet e' tyann (Nothing) (Just s) $ \y -> 
                   anf $ subst x (mkSpanned $ AEVar (ignore s) y) k
       ELet _ _ (Just _) _ _ -> error "Got anfVar in anf routine"
+      ELetGhost a s xk -> do
+          (x, k) <- unbind xk
+          k' <- anf k
+          return $ Spanned (e^.spanOf) $ ELetGhost a s (bind x k')
       EBlock k -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ EBlock k'

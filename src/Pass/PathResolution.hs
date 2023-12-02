@@ -372,11 +372,26 @@ resolveNameExp ne =
         NameConst s p -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             return $ Spanned (ne^.spanOf) $ NameConst s p' 
-        KDFName a b c i -> do
+        KDFName ann a b c i -> do
+            ann' <- resolveKDFAnn (unignore ann)
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' i
+            return $ Spanned (ne^.spanOf) $ KDFName (ignore ann') a' b' c' i
+
+resolveKDFAnn :: KDFAnn -> Resolve KDFAnn
+resolveKDFAnn ann = 
+    case ann of
+      KDF_SaltKey ne i -> do
+          ne' <- resolveNameExp ne
+          return $ KDF_SaltKey ne' i
+      KDF_IKMKey ne i -> do
+          ne' <- resolveNameExp ne
+          return $ KDF_IKMKey ne' i
+      KDF_IKMDH ne ne2 i -> do
+          ne' <- resolveNameExp ne
+          ne2' <- resolveNameExp ne2
+          return $ KDF_IKMDH ne' ne2' i
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -516,12 +531,8 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      --CHash hints i -> do
-      --    hints' <- forM hints $ \(p, is, as) -> do
-      --        p' <- resolvePath pos PTName p
-      --        as' <- mapM resolveAExpr as
-      --        return (p', is, as')
-      --    return $ CHash hints' i
+      CKDF x y i -> do
+          return $ CKDF x y i
       CAEnc -> return CAEnc
       CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p
@@ -554,6 +565,11 @@ resolveExpr e =
       EBlock k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EBlock k'
+      ELetGhost a s xk -> do
+          a' <- resolveAExpr a
+          (x, k) <- unbind xk
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ ELetGhost a' s (bind x k')
       ELet e1 ot anf s xk -> do
           e1' <- resolveExpr e1
           ot' <- traverse resolveTy ot
@@ -716,11 +732,11 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
-      PValidKDF a b c i nk -> do
+      PValidKDF a b c i j nk -> do
           a' <- resolveAExpr a
           b' <- resolveAExpr b
           c' <- resolveAExpr c
-          return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' i nk
+          return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' i j nk
       PQuantIdx q ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

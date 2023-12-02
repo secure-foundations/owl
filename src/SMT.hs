@@ -101,12 +101,8 @@ setupNameEnvRO = do
                         let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) 
 
                         lAxs <- nameDefFlows nameExp nt
-                        sAxs <- forM lAxs $ \(l1, l2) -> do
-                            vl1 <- symLabel l1
-                            vl2 <- symLabel l2
-                            return $ SApp [SAtom "Flows", vl1, vl2]
                         emitAssertion $ sForall (ivs)
-                            (sAnd sAxs)
+                            lAxs
                             [sApp (sn : (map fst ivs))]
                             ("nameDefFlows_" ++ show sn)
             -- Solvability
@@ -485,11 +481,11 @@ interpretProp p = do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
           return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
-      (PValidKDF x y z i nk) -> do
+      (PValidKDF x y z i j nk) -> do
           vx <- interpretAExp x
           vy <- interpretAExp y
           vz <- interpretAExp z
-          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), smtNameKindOf nk]
+          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), SAtom (show j), smtNameKindOf nk]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do
@@ -566,6 +562,12 @@ symAssert p = traceFn ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
     b <- interpretProp p
     emitComment $ "Proving prop " ++ show (owlpretty p)
     emitToProve b
+
+disjointProps :: [Prop] -> Sym ()
+disjointProps ps = do
+    vps <- mapM interpretProp ps
+    emitToProve $ sAtMostOne vps
+
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do

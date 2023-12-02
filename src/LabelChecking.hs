@@ -26,32 +26,61 @@ sFlows x y = SApp [SAtom "Flows", x, y]
 sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
-
-
-nameDefFlows :: NameExp -> NameType -> Sym [(Label, Label)]
+nameDefFlows :: NameExp -> NameType -> Sym SExp
 nameDefFlows n nt = do
     case nt^.val of 
-      NT_Nonce -> return []
-      NT_DH -> return []
+      NT_Nonce -> return sTrue
+      NT_DH -> return sTrue
       NT_Enc t -> do
           l <- liftCheck $ coveringLabel' t
-          return $ [(l, mkSpanned $ LName n)]
+          lv <- symLabel l
+          ln <- symLabel $ mkSpanned $ LName n
+          return $ sFlows lv ln
       NT_StAEAD t _ _ _ -> do
           l <- liftCheck $ coveringLabel' t
-          return $ [(l, mkSpanned $ LName n)]
+          lv <- symLabel l
+          ln <- symLabel $ mkSpanned $ LName n
+          return $ sFlows lv ln
       NT_PKE t -> do
           l <- liftCheck $ coveringLabel' t
-          return $ [(l, mkSpanned $ LName n)]
+          lv <- symLabel l
+          ln <- symLabel $ mkSpanned $ LName n
+          return $ sFlows lv ln
       NT_Sig t -> do
           l <- liftCheck $ coveringLabel' t
-          return $ [(l, mkSpanned $ LName n)]
+          lv <- symLabel l
+          ln <- symLabel $ mkSpanned $ LName n
+          return $ sFlows lv ln
       NT_MAC t -> do
           l <- liftCheck $ coveringLabel' t
-          return $ [(l, mkSpanned $ LName n)]
-      --NT_PRF xs -> do
-      --    ys <- mapM (\(s, (a, nt)) -> nameDefFlows (prfName n s) nt) xs
-      --    let zs  = map (\p -> nameLbl $ prfName n $ fst p) xs
-      --    return $ (concat ys) ++ [(foldr joinLbl zeroLbl zs, mkSpanned (LName n))]
+          lv <- symLabel l
+          ln <- symLabel $ mkSpanned $ LName n
+          return $ sFlows lv ln
+      NT_KDF pos bnd -> do 
+          ctr <- getFreshCtr
+          (((sx, x), (sy, y)), cases) <- liftCheck $ unbind bnd
+          axs <- withSMTVars [x, y] $ do
+              axis <- forM [0 .. (length cases - 1)] $ \i -> do
+                  let (p, nts) = cases !! i
+                  axijs <- forM [0 .. (length nts - 1)] $ \j -> do
+                      let (strictness, nt) = nts !! j
+                      let ann = case pos of
+                                  KDF_SaltPos -> KDF_SaltKey n i 
+                                  KDF_IKMPos -> KDF_IKMKey n i
+                      let ne = case pos of
+                                  KDF_SaltPos -> 
+                                      mkSpanned $ KDFName (ignore ann) (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
+                                  KDF_IKMPos -> 
+                                      mkSpanned $ KDFName (ignore ann) (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
+                      ne_axioms <- nameDefFlows ne nt
+                      return $ ne_axioms
+                  return $ sAnd axijs
+              return $ sAnd axis
+          let vx = SAtom (show x)
+          let vy = SAtom (show y)
+          return $ sForall [(vx, bitstringSort), (vy, bitstringSort)] axs [] ("kdfFlows_" ++ show ctr)
+                   
+
 
 
 smtLabelSetup :: Sym ()

@@ -164,6 +164,11 @@ cleanSMTIdent s = map go s
     where
         go '\'' = '^' 
         go c = c
+
+getFreshCtr :: Sym Int
+getFreshCtr = do
+    freshSMTCtr += 1
+    use freshSMTCtr
         
 freshSMTName :: Sym String
 freshSMTName = do
@@ -375,6 +380,12 @@ sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
+sAtMostOne :: [SExp] -> SExp
+sAtMostOne xs = 
+    let sum = SApp $ SAtom "+" : (map (\x -> SApp [SAtom "ite", x, SAtom "1", SAtom "0"]) xs) 
+    in
+    SApp [SAtom "<=", sum, SAtom "1"]
+
 makeHex :: String -> Sym SExp
 makeHex s = do
     liftCheck $ assert  "makeHex: string length must be even" (length s `mod` 2 == 0)
@@ -412,7 +423,7 @@ lengthConstant s =
       "enckey" -> return $ SApp [SAtom "NameKindLength", SAtom "Enckey"]
       "pke_sk" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
       "sigkey" -> return $ SApp [SAtom "NameKindLength", SAtom "Sigkey"]
-      "prfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "PRFkey"]
+      "kdfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "KDFkey"]
       "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
       "signature" -> return $ SAtom "SignatureLen"
       "group" -> return $ SAtom "GroupLen"
@@ -488,7 +499,7 @@ withSMTVars :: [DataVar] -> Sym a -> Sym a
 withSMTVars xs k = do
     vVs <- use varVals
     varVals %= (M.union $ M.fromList $ map (\v -> (v, SAtom $ show v)) xs)
-    let tyc = map (\v -> (v, (ignore $ show v, Nothing, tData advLbl advLbl))) xs -- The label on the type here is arbitrary
+    let tyc = map (\v -> (v, (ignore $ show v, Nothing, tGhost))) xs 
     res <- local (over tyContext $ (++) tyc) k
     varVals .= vVs
     return res
@@ -559,9 +570,15 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
-      --PRFName ne1 s -> do
-      --    n <- getSymName ne1
-      --    return $ SApp [SAtom "PRFName", n, SAtom $ "\"" ++ s ++ "\""]
+      KDFName ann a b c j -> do 
+          let i = case (unignore ann) of
+                    KDF_SaltKey _ i -> i
+                    KDF_IKMKey _ i -> i
+                    KDF_IKMDH _ _ i -> i
+          a' <- interpretAExp a
+          b' <- interpretAExp b
+          c' <- interpretAExp c
+          return $ SApp [SAtom "KDFName", a', b', c', SAtom (show i), SAtom (show j)]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do

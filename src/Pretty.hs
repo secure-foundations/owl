@@ -58,7 +58,7 @@ flowColor = Cyan
 corrColor = Red
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName a b c i) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
+    owlpretty (KDFName _ a b c i) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
             owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ", " <> owlpretty i <> owlpretty ">"
     owlpretty (NameConst vs n) = 
         owlpretty n <> owlprettyIdxParams vs 
@@ -190,8 +190,8 @@ instance  OwlPretty PropX where
     owlpretty (PQuantBV q b) = 
         let (x, p) = owlprettyBind b in
         owlpretty q <+> x <+> owlpretty ": bv" <> owlpretty "." <+> p
-    owlpretty (PValidKDF a b c i nk) = owlpretty "valid_kdf" <> 
-        tupled (map owlpretty [a, b, c] ++ [owlpretty i, owlpretty nk])
+    owlpretty (PValidKDF a b c i j nk) = owlpretty "valid_kdf" <> 
+        tupled (map owlpretty [a, b, c] ++ [owlpretty i, owlpretty j, owlpretty nk])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PHappened s ixs xs) = 
@@ -207,6 +207,7 @@ instance  OwlPretty PropX where
     owlpretty (PNot p) = owlpretty "!" <+> owlpretty p
 
 instance  OwlPretty NameTypeX where
+    owlpretty (NT_KDF kpos cases) = owlpretty "KDF"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
     owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in

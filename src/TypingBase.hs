@@ -601,42 +601,55 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
                      return Nothing
                  BaseDef (nt, lcls) -> do
                      return $ Just (nt, Just lcls) 
-                 --RODef _ b -> do
-                 --    (xs, (_, _, nts)) <- unbind b
-                 --    case oi of
-                 --      Nothing -> do
-                 --          assert ("Missing hash select parameter for RO name") $ length nts == 1
-                 --          assert ("Missing variable arguments for RO name") $ length xs == 0
-                 --          return $ Just (nts !! 0, Nothing)
-                 --      Just (as, i) -> do
-                 --          _ <- mapM inferAExpr as
-                 --          assert ("Hash select parameter for RO name out of bounds") $ i < length nts
-                 --          assert ("Variable arguments for RO name incorrect") $ length as == length xs
-                 --          return $ Just (substs (zip xs as) $ nts !! i, Nothing)
-     --PRFName n s -> do
-     --    ntLclsOpt <- getNameInfo n
-     --    case ntLclsOpt of
-     --      Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty n
-     --      Just (nt, _) -> 
-     --       case nt^.val of
-     --       NT_PRF xs -> 
-     --           case L.find (\p -> fst p == s) xs of
-     --               Just (_, (_, nt')) -> return $ Just (nt, Nothing)
-     --               Nothing -> typeError $ show $ ErrUnknownPRF n s
-     --       _ -> typeError $ show $ ErrWrongNameType n "prf" nt
-     _ -> error $ "Unknown: " ++ show (owlpretty ne)
+     KDFName ann x y z j -> do 
+         _ <- mapM inferAExpr [x, y, z]
+         (_, nts) <- getKDFAnnInfo (unignore ann) x y z
+         assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
+         return $ Just (snd (nts !! j), Nothing)
 
---getRO :: Path -> Check (Bind ([IdxVar], [IdxVar]) (Bind [DataVar] (AExpr, Prop, [NameType])))
---getRO p0@(PRes (PDot p s)) = do
---        md <- openModule p 
---        case lookup s (md^.nameDefs) of 
---          Just ind -> do
---              (ps, nd) <- unbind ind
---              case nd of
---                RODef _ res -> return $ bind ps res
---                _ -> typeError $ "Not an RO name: " ++ show (owlpretty p0)
---          Nothing -> typeError $ show $ ErrUnknownRO p
---getRO pth = typeError $ "Unknown path: " ++ show pth
+-- Also ensures that the name is well-formed: the annotation lines up with the
+-- AExprs.
+getKDFAnnInfo :: KDFAnn -> AExpr -> AExpr -> AExpr -> Check (Prop, [(KDFStrictness, NameType)])
+getKDFAnnInfo ann a b c = 
+    case ann of
+      KDF_SaltKey ne i -> do 
+          nt <- getNameType ne
+          case nt^.val of
+            NT_KDF kpos bnd -> do
+                assert ("KDF position wrong somehow") $ kpos == KDF_SaltPos
+                ta <- inferAExpr a 
+                case (stripRefinements ta)^.val of
+                  TName ne2 -> assert ("KDF name not well-formed; first argument (" ++ show (owlpretty ne2) ++ ") must equal the name " ++ show (owlpretty ne)) $ 
+                      ne2 `aeq` ne
+                extractKDF kpos bnd a b c i
+            _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
+      KDF_IKMKey ne i ->  do 
+            nt <- getNameType ne
+            case nt^.val of
+              NT_KDF kpos bnd -> do
+                  assert ("KDF position wrong somehow") $ kpos == KDF_IKMPos
+                  tb <- inferAExpr b 
+                  case (stripRefinements tb)^.val of
+                      TName ne2 -> assert ("KDF name not well-formed; second argument must be the name") $ 
+                          ne2 `aeq` ne
+                      _ -> typeError $ "Expected KDF name, got " ++ show (owlpretty tb)
+                  extractKDF kpos bnd a b c i 
+              _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
+      KDF_IKMDH ne1 ne2 i -> do
+          nt1 <- getNameType ne1
+          nt2 <- getNameType ne2
+          typeError ("TODO: KDF well formedness")
+          extractODH nt1 nt2 a b c i 
+
+extractODH :: NameType -> NameType -> AExpr -> AExpr -> AExpr -> Int -> Check (Prop, [(KDFStrictness, NameType)])
+extractODH nt1 nt2 a b c i = typeError "unimp"
+
+extractKDF kpos bnd a b c i = do
+    (((sx, x), (sy, y)), cases) <- unbind bnd 
+    assert ("Number of case mismatch") $ i < length cases
+    return $ case kpos of
+                   KDF_SaltPos -> subst x b $ subst y c $ cases !! i
+                   KDF_IKMPos -> subst x a $ subst y b $ cases !! i
 
 getNameKind :: NameType -> NameKind
 getNameKind nt = 
@@ -742,8 +755,8 @@ mkConcats (x:xs) =
     foldl go x xs
 
 -- Find the corresponding len const associated to a name expression's name type
-lenConstOfROName :: NameExp -> Check AExpr 
-lenConstOfROName ne = do
+lenConstOfUniformName :: NameExp -> Check AExpr 
+lenConstOfUniformName ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
       Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
@@ -753,7 +766,8 @@ lenConstOfROName ne = do
             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-            _ -> typeError $ "Name not an RO name: " ++ show (owlpretty ne)
+            NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+            _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check AExpr
 normalizeAExpr ae = withSpan (ae^.spanOf) $ 
@@ -774,11 +788,6 @@ normalizeAExpr ae = withSpan (ae^.spanOf) $
       AEGet ne -> do
           ne' <- normalizeNameExp ne
           return $ Spanned (ae^.spanOf) $ AEGet ne'
-      --AEPreimage p ps@(p1, p2) args -> do  
-      --    ts <- view tcScope
-      --    forM_ p1 checkIdxSession
-      --    forM_ p2 checkIdxPId
-      --    getROPreimage p ps args 
       AEApp f fs aes -> do
           aes' <- mapM normalizeAExpr aes
           fs' <- forM fs $ \f ->
@@ -862,25 +871,17 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "prfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
-      --AEPreimage p ps@(p1, p2) args -> do
-      --    ts <- view tcScope
-      --    assert (show $ owlpretty "Preimage in non-ghost context") $ ts `aeq` TcGhost
-      --    forM_ p1 checkIdxSession
-      --    forM_ p2 checkIdxPId
-      --    _ <- mapM inferAExpr args
-      --    aes <- getROPreimage p ps args 
-      --    inferAExpr aes
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
           ntLclsOpt <- getNameInfo ne
-          case ntLclsOpt of
+          ot <- case ntLclsOpt of
             Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
@@ -896,20 +897,19 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
-                --case ne^.val of
-                --  NameConst ips pth (Just (args, i)) -> do
-                --      aes <- getROPreimage pth ips args
-                --      lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
-                --      solvability <- solvabilityAxioms aes ne 
-                --      return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                --          pAnd (mkSpanned $ PRO aes (aeVar ".res") i)
-                --            (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
-                --  _ -> return ot
+          case ne^.val of
+            NameConst _ _ -> return ot
+            KDFName ann a b c j -> do
+                let i = case (unignore ann) of
+                          KDF_SaltKey _ i -> i
+                          KDF_IKMKey _ i -> i
+                          KDF_IKMDH _ _ i -> i
+                kdfNameAxioms ot (unignore ann) a b c i j
       (AEGetEncPK ne) -> do
           case ne^.val of
             NameConst ([], []) _ -> return ()
             NameConst _ _ -> typeError $ "Cannot call get_encpk on indexed name"
-            -- _ -> typeError $ "Cannot call get_encpk on random oracle or PRF name"
+            _ -> typeError $ "Cannot call get_encpk on PRF name" 
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
             Nothing -> typeError $ show $ ErrNameStillAbstract$ show $ owlpretty ne
@@ -921,7 +921,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
           case ne^.val of
             NameConst ([], []) _ -> return ()
             NameConst _ _ -> typeError $ "Cannot call get_vk on indexed name"
-            -- _ -> typeError $ "Cannot call get_vk on random oracle or PRF name"
+            _ -> typeError $ "Cannot call get_vk on PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
             Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
@@ -935,6 +935,29 @@ splitConcats a =
     case a^.val of
       AEApp f _ xs | f `aeq` topLevelPath "concat" -> concatMap splitConcats xs
       _ -> [a]
+
+-- 1. Based on the annotation and the j, emit that the length is as expected
+-- (We already know it is well-formed, so the annotation lines up with the
+-- aexpr's)
+-- 3. If the annotation is a KDF key (say, the left one): 
+--   a. If the key is secret,
+--   b. and the prop holds,
+--   c. then PValidKDF holds
+
+kdfNameAxioms :: Ty -> KDFAnn -> AExpr -> AExpr -> AExpr -> Int -> Int -> Check Ty
+kdfNameAxioms ot ann a b c i j = do
+    (p, nts) <- getKDFAnnInfo ann a b c
+    let secrecy = case ann of
+                    KDF_SaltKey ne i -> pNot $ pFlow (nameLbl ne) advLbl
+                    KDF_IKMKey ne i -> pNot $ pFlow (nameLbl ne) advLbl
+                    KDF_IKMDH ne1 ne2 i -> pAnd (pNot $ pFlow (nameLbl ne1) advLbl)
+                                               (pNot $ pFlow (nameLbl ne2) advLbl)
+    assert ("KDF name index out of bounds") $ j < length nts                                         
+    let validKDF = mkSpanned $ PValidKDF a b c i j (getNameKind (snd $ nts !! j))
+    -- TODO: emit a length axiom as well
+    return $ tRefined ot ".res" $ 
+        pImpl (pAnd secrecy p) validKDF
+
 
 -- If the random oracle preimage is corrupt, then the RO is as well.
 -- N.B.: this list does _not_ have to be exhaustive. It is only used to
@@ -1218,15 +1241,11 @@ normalizeNameExp :: NameExp -> Check NameExp
 normalizeNameExp ne = 
     case ne^.val of
       NameConst ips p -> return ne 
-      --    case oi of
-      --      Just _ -> return ne
-      --      Nothing -> do
-      --        isRO <- isNameDefRO p
-      --        if isRO then return (Spanned (ne^.spanOf) $ NameConst ips p (Just ([], 0)))
-      --                else return ne
-      --PRFName ne1 s -> do
-      --    ne' <- normalizeNameExp ne1
-      --    return $ Spanned (ne^.spanOf) $ PRFName ne' s
+      KDFName ann x y z i -> do
+          x' <- normalizeAExpr x
+          y' <- normalizeAExpr y
+          z' <- normalizeAExpr z
+          return $ Spanned (ne^.spanOf) $ KDFName ann x' y' z' i
 
 -- Traversing modules to collect global info
 

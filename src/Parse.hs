@@ -79,33 +79,44 @@ parseSpanned k = do
 parseNameExp :: Parser NameExp
 parseNameExp = 
     (parseSpanned $ do
-        reserved "KDFName"
+        reserved "KDF"
         symbol "<"
-        a <- parseAExpr
-        symbol ","
-        b <- parseAExpr
-        symbol ","
-        c <- parseAExpr
+        n <- parseNameExp
         symbol ";"
         i <- many1 digit
         symbol ">"
-        return $ KDFName a b c (read i))
-     <|>
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ")"
+        symbol "["
+        j <- many1 digit
+        symbol "]"
+        let ann = KDF_SaltKey n (read i)
+        return $ KDFName (ignore ann) (Spanned (n^.spanOf) $ AEGet n) a b (read j))
+    <|>
+    (parseSpanned $ do
+        reserved "DualKDF"
+        symbol "<"
+        n <- parseNameExp
+        symbol ";"
+        i <- many1 digit
+        symbol ">"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ")"
+        symbol "["
+        j <- many1 digit
+        symbol "]"
+        let ann = KDF_IKMKey n (read i) 
+        return $ KDFName (ignore ann) a (Spanned (n^.spanOf) $ AEGet n) b (read j))
+    <|>
     (parseSpanned $ do
         i <- parsePath
         ps <- parseIdxParams 
-        --oi <- optionMaybe $ do
-        --    symbol "["
-        --    oas_ <- optionMaybe $ do 
-        --        as <- parseAExpr `sepBy` (symbol ",")
-        --        symbol ";"
-        --        return as
-        --    let as = case oas_ of
-        --                Nothing -> []
-        --                Just v -> v
-        --    i <- many1 digit
-        --    symbol "]"
-        --    return $ (as, read i)
         return $ NameConst ps i) 
 
 parsePath :: Parser Path
@@ -611,10 +622,10 @@ parseNameType =
     <|>
     (parseSpanned $ do
         kpos <- alt (reserved "kdf" >> return KDF_SaltPos) (reserved "dualkdf" >> return KDF_IKMPos)
-        reserved "kdf"
         symbol "{"
         x <- identifier
         y <- identifier
+        symbol "."
         kdfCases <- many1 kdfCase
         symbol "}"
         return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
@@ -623,17 +634,13 @@ parseNameType =
 kdfCase :: Parser (Prop, [(KDFStrictness, NameType)])
 kdfCase = do 
     p <- parseProp
-    ostrict <- optionMaybe $ reserved "strict"
-    let strictness = case ostrict of 
-            Nothing -> KDFStrict
-            Just _ -> KDFUnstrict
     symbol "->"
     nts <- (do
         ostrict <- optionMaybe $ reserved "strict"
         nt <- parseNameType
         let strictness = case ostrict of 
-                            Nothing -> KDFStrict
-                            Just _ -> KDFUnstrict
+                            Nothing -> KDFUnstrict
+                            Just _ -> KDFStrict
         return (strictness, nt)) `sepBy` (symbol "||")
     return (p, nts)
 
@@ -1177,9 +1184,7 @@ parseExprTerm =
         reserved "in"
         p' <- getPosition
         e' <- parseExpr
-        let t = tRefined (mkSpanned TGhost) ".res" $ pEq (aeVar ".res") a 
-        return $ Spanned (ignore $ mkPos p p') $ 
-            ELet (Spanned (ignore $ mkPos p p') $ ERet a) (Just t) Nothing x $ bind (s2n x) e'
+        return $ Spanned (ignore $ mkPos p p') $ ELetGhost a x $ bind (s2n x) e' 
     )
     <|>
     (do
@@ -1390,35 +1395,56 @@ parseROHint = do
                Just v -> v
     return (p, inds, xs)
 
+-- Only used for kdf call
+parseKDFAnn :: Parser KDFAnn
+parseKDFAnn = 
+    (do
+        reserved "salt"
+        n <- parseNameExp
+        symbol "["
+        i <- many1 digit
+        symbol "]"
+        return $ KDF_SaltKey n (read i)
+    )
+    <|>
+    (do
+        reserved "ikm"
+        n <- parseNameExp
+        symbol "["
+        i <- many1 digit
+        symbol "]"
+        return $ KDF_IKMKey n (read i)
+    )
+    <|>
+    (do
+        reserved "ikmdh"
+        n <- parseNameExp
+        symbol ","
+        n2 <- parseNameExp
+        symbol "["
+        i <- many1 digit
+        symbol "]"
+        return $ KDF_IKMDH n n2 (read i)
+    )
+
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
-    --(do
-    --    reserved "hash"
-    --    ohints_idx <- optionMaybe $ do
-    --        symbol "<"
-    --        hs <- parseROHint `sepBy1` (symbol ",")
-    --        idx_ <- optionMaybe $ do
-    --            symbol ";"
-    --            many1 digit
-    --        let idx = case idx_ of
-    --                    Nothing -> 0
-    --                    Just v -> read v
-    --        symbol ">"
-    --        return (hs, idx)
-    --    let (hints, idx) = case ohints_idx of
-    --                         Nothing -> ([], 0)
-    --                         Just v -> v
-    --    return $ CHash hints idx
-    --)
-    -- <|>
-    --(do
-    --    reserved "prf"
-    --    symbol "<"
-    --    x <- identifier
-    --    symbol ">"
-    --    return $ CPRF x
-    --)
-    -- <|>
+    (do
+        reserved "kdf"
+        symbol "<"
+        oann1 <- optionMaybe $ do
+            i <- many1 digit
+            return $ read i
+        symbol ";"
+        oann2 <- optionMaybe $ do
+            i <- many1 digit
+            return $ read i
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        return $ CKDF oann1 oann2 (read j)
+    )
+    <|>
     (do
         reserved "crh_lemma"
         return $ CLemma $ LemmaCRH 
