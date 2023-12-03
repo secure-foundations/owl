@@ -118,6 +118,8 @@ instance Alpha NameDef
 instance Subst ResolvedPath NameDef
 instance Subst Idx NameDef
 
+type KDFBody = (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
+
 data ModBody = ModBody { 
     _isModuleType :: IsModuleType,
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
@@ -127,6 +129,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) (Label, Label)],
     _tyDefs :: Map TyVar TyDef,
+    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
     _nameTypeDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 

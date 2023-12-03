@@ -232,6 +232,20 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
+      DeclODH s b -> do
+          (is, (ne1, ne2, kdfBody)) <- unbind b
+          ne1' <- resolveNameExp ne1
+          ne2' <- resolveNameExp ne2
+          (args, cases) <- unbind kdfBody
+          cases' <- forM cases $ \(p, nts) -> do
+              p' <- resolveProp p
+              nts' <- forM nts $ \(str, nt) -> do
+                  nt' <- resolveNameType nt
+                  return (str, nt')
+              return (p', nts')
+          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+          ds' <- resolveDecls ds
+          return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath

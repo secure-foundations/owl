@@ -339,6 +339,7 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
+    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]))
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind ([IdxVar], [IdxVar]) NameType)
     | DeclDetFunc String DetFuncOps Int

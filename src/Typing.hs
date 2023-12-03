@@ -48,7 +48,7 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
 -- extend with new parts of Env -- ok
 emptyEnv :: Flags -> IO Env
@@ -847,6 +847,22 @@ checkDecl d cont = withSpan (d^.spanOf) $
             local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is) $ 
                 checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
+      DeclODH s b -> do
+          ensureNoConcreteDefs
+          ((is, ps), (ne1, ne2, kdf)) <- unbind b
+          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
+            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is) $ do
+                nt <- getNameType ne1
+                nt2 <- getNameType ne2
+                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
+                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
+                b1 <- nameExpIsLocal ne1
+                b2 <- nameExpIsLocal ne2
+                assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
+                assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
+                checkNameType $ mkSpanned $ NT_KDF KDF_IKMPos kdf
+          ensureODHDisjoint (bind (is, ps) (ne1, ne2))
+          local (over (curMod . odh) $ insert s b) $ cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -869,6 +885,21 @@ checkDecl d cont = withSpan (d^.spanOf) $
         assert (show $ owlpretty f <+> owlpretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
+
+ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
+ensureODHDisjoint b = do
+    cur_odh <- view $ curMod . odh
+    ((is, ps), (ne1, ne2)) <- unbind b
+    local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
+        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
+            forM_ cur_odh $ \(_, bnd2) -> do
+                    ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
+                    local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is2) $ do 
+                        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do 
+                            let pdisj = pOr (pNot $ pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
+                                            (pNot $ pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+                            (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+                            assert ("ODH Disjointness") b
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
