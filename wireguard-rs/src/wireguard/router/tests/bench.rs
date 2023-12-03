@@ -90,11 +90,21 @@ fn profiler_start(name: &str) {
     }
 }
 
-#[cfg(feature = "unstable")]
-#[bench]
-fn bench_router_outbound(b: &mut Bencher) {
+#[cfg(test)]
+use super::super::super::types::RouterDeviceType;
+
+#[cfg(test)]
+use test::Bencher;
+
+#[cfg(test)]
+use std::net::IpAddr;
+
+// #[cfg(feature = "unstable")]
+#[cfg(test)]
+fn bench_router_outbound(b: &mut Bencher, dev_type: RouterDeviceType) {
     // 10 GB transmission per iteration
-    const BYTES_PER_ITER: usize = 100 * 1024 * 1024 * 1024;
+    // const BYTES_PER_ITER: usize = 100000 * 1440;
+    const NUM_PACKETS: usize = 1000;
 
     // inner payload of IPv4 packet is 1440 bytes
     const BYTES_PER_PACKET: usize = 1440;
@@ -102,7 +112,7 @@ fn bench_router_outbound(b: &mut Bencher) {
     // create device
     let (_fake, _reader, tun_writer, _mtu) = dummy::TunTest::create(false);
     let router: Device<_, BencherCallbacks, dummy::TunWriter, dummy::VoidBind> =
-        Device::new(num_cpus::get_physical(), tun_writer);
+        Device::new(num_cpus::get_physical(), tun_writer, dev_type);
 
     // add peer to router
     let opaque = Arc::new(TransmissionCounter::new());
@@ -127,23 +137,34 @@ fn bench_router_outbound(b: &mut Bencher) {
     let mut msg = pad(&packet);
     msg.reserve(16);
 
-    // setup profiler
-    #[cfg(feature = "profiler")]
-    profiler_start("outbound");
-
     // repeatedly transmit 10 GB
     b.iter(|| {
         opaque.reset();
-        while opaque.sent() < BYTES_PER_ITER / packet.len() {
+        
+        // while opaque.sent() < BYTES_PER_ITER / packet.len() {
+        for i in 0..NUM_PACKETS {
+            let packet = make_packet(BYTES_PER_PACKET, src, dst, 0);
+
+            // suffix with zero and reserve capacity for tag
+            // (normally done to enable in-place transport message construction)
+            let mut msg = pad(&packet);
+            msg.reserve(16);
+
             router
-                .send(msg.to_vec())
+                .send(msg)
                 .expect("failed to crypto-route packet");
         }
     });
+}
 
-    // stop profiler
-    #[cfg(feature = "profiler")]
-    profiler_stop();
+#[bench]
+fn bench_router_outbound_noowl(b: &mut Bencher) {
+    bench_router_outbound(b, RouterDeviceType::NoOwl);
+}
+
+#[bench]
+fn bench_router_outbound_owlinitiator(b: &mut Bencher) {
+    bench_router_outbound(b, RouterDeviceType::OwlInitiator);
 }
 
 /*

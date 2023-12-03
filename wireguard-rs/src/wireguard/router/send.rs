@@ -132,11 +132,11 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                     owl__transp_keys_T_resp_send: job.keypair.recv.key[..].to_vec(),
                 };
 
-                // let plaintext = Arc::new(msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec());
+                let plaintext = Arc::new(msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec());
 
-                // let succeeded = cfg.owl_transp_send_init_wrapper(&mut state, transp_keys, plaintext, &mut msg);
+                let succeeded = cfg.owl_transp_send_init_wrapper(&mut state, transp_keys, plaintext, &mut msg);
 
-                let succeeded = cfg.owl_transp_send_init_inplace(&mut state, transp_keys, &mut msg);
+                // let succeeded = cfg.owl_transp_send_init_inplace(&mut state, transp_keys, &mut msg);
 
                 // assert!(succeeded.is_some());
             },
