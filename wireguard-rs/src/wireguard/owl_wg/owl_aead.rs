@@ -310,7 +310,7 @@ pub fn decrypt_combined(
         let mut ptxt = ctxt.to_vec();
 
         let ptxt = key.open_in_place(nonce, aad_ring, &mut ptxt).unwrap();
-        dbg!(hex::encode(&ptxt));
+        // dbg!(hex::encode(&ptxt));
         Ok(ptxt.to_vec())
     } else {
         match alg {
