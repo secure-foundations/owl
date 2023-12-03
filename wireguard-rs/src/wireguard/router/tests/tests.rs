@@ -542,3 +542,244 @@ fn test_bidirectional_owl_responder_owl_initiator() {
 fn test_bidirectional_owl_responder_owl_responder() {
     test_bidirectional(RouterDeviceType::OwlResponder, RouterDeviceType::OwlResponder);
 }
+
+
+
+#[cfg(test)]
+fn bench_bidirectional(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType, num_packets: usize) {
+    init();
+
+    const MAX_SIZE_BODY: usize = 1 << 15;
+
+    let tests = [
+        (
+            ("192.168.1.0", 24, "192.168.1.20", true),
+            ("172.133.133.133", 32, "172.133.133.133", true),
+        ),
+    ];
+
+    let mut rng = rand::thread_rng();
+
+    for (p1, p2) in tests.iter() {
+        for confirm_with_staged_packet in vec![true, false] {
+            // println!(
+            //     "peer1 = {:?}, peer2 = {:?}, confirm_with_staged_packet = {}",
+            //     p1, p2, confirm_with_staged_packet
+            // );
+
+            let ((bind_reader1, bind_writer1), (bind_reader2, bind_writer2)) =
+                dummy::PairBind::pair();
+
+            let mut confirm_packet_size = SIZE_KEEPALIVE;
+
+            // create matching device
+            let (_fake, _, tun_writer1, _) = dummy::TunTest::create(false);
+            let (_fake, _, tun_writer2, _) = dummy::TunTest::create(false);
+
+            let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, dev1_type);
+            router1.set_outbound_writer(bind_writer1);
+
+            let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, dev2_type);
+            router2.set_outbound_writer(bind_writer2);
+
+            // prepare opaque values for tracing callbacks
+
+            let opaque1 = Opaque::new();
+            let opaque2 = Opaque::new();
+
+            // create peers with matching keypairs and assign subnets
+
+            let peer1 = router1.new_peer(opaque1.clone());
+            let peer2 = router2.new_peer(opaque2.clone());
+
+            {
+                let (mask, len, _ip, _okay) = p1;
+                let mask: IpAddr = mask.parse().unwrap();
+                peer1.add_allowed_ip(mask, *len);
+                peer1.add_keypair(dummy_keypair(false));
+            }
+
+            {
+                let (mask, len, _ip, _okay) = p2;
+                let mask: IpAddr = mask.parse().unwrap();
+                peer2.add_allowed_ip(mask, *len);
+                peer2.set_endpoint(dummy::UnitEndpoint::new());
+            }
+
+            if confirm_with_staged_packet {
+                // create IP packet
+                let (_mask, _len, ip1, _okay) = p1;
+                let (_mask, _len, ip2, _okay) = p2;
+
+                let msg = make_packet(
+                    SIZE_MSG,
+                    ip1.parse().unwrap(), // src
+                    ip2.parse().unwrap(), // dst
+                    0,
+                );
+
+                // calculate size of encapsulated IP packet
+                confirm_packet_size = msg.len() + SIZE_KEEPALIVE;
+
+                // stage packet for sending
+                router2
+                    .send(pad(&msg))
+                    .expect("failed to sent staged packet");
+
+                // a new key should have been requested from the handshake machine
+                assert_eq!(
+                    opaque2.need_key.wait(TIMEOUT),
+                    Some(()),
+                    "a new key should be requested since a packet was attempted transmitted"
+                );
+
+                // no other events should fire
+                no_events!(opaque1);
+                no_events!(opaque2);
+            }
+
+            // add a keypair
+            assert_eq!(peer1.get_endpoint(), None, "no endpoint has yet been set");
+            peer2.add_keypair(dummy_keypair(true));
+
+            // this should cause a key-confirmation packet (keepalive or staged packet)
+            assert_eq!(
+                opaque2.send.wait(TIMEOUT),
+                Some((confirm_packet_size, true)),
+                "expected successful transmission of a confirmation packet"
+            );
+
+            // no other events should fire
+            no_events!(opaque1);
+            no_events!(opaque2);
+
+            // read confirming message received by the other end ("across the internet")
+            let mut buf = vec![0u8; SIZE_MSG * 2];
+            let (len, from) = bind_reader1.read(&mut buf).unwrap();
+            buf.truncate(len);
+
+            assert_eq!(
+                len, confirm_packet_size,
+                "unexpected size of confirmation message"
+            );
+
+            // pass to the router for processing
+            router1
+                .recv(from, buf)
+                .expect("failed to receive confirmation message");
+
+            // check that a receive event is fired
+            assert_eq!(
+                opaque1.recv.wait(TIMEOUT),
+                Some((confirm_packet_size, true)),
+                "we expect processing to be successful"
+            );
+
+            // the key is confirmed
+            assert_eq!(
+                opaque1.key_confirmed.wait(TIMEOUT),
+                Some(()),
+                "confirmation message should confirm the key"
+            );
+
+            // peer1 learns the endpoint
+            assert!(
+                peer1.get_endpoint().is_some(),
+                "peer1 should learn the endpoint of peer2 from the confirmation message (roaming)"
+            );
+
+            // no other events should fire
+            no_events!(opaque1);
+            no_events!(opaque2);
+
+            // now that peer1 has an endpoint
+            // route packets in the other direction: peer1 -> peer2
+            let mut sizes = vec![10; num_packets];
+            for (id, body_size) in sizes.iter().enumerate() {
+                println!("packet: id = {}, body_size = {}", id, body_size);
+
+                // pass IP packet to router
+                let (_mask, _len, ip1, _okay) = p1;
+                let (_mask, _len, ip2, _okay) = p2;
+                let msg = make_packet(
+                    *body_size,
+                    ip2.parse().unwrap(), // src
+                    ip1.parse().unwrap(), // dst
+                    id as u64,
+                );
+
+                // calculate encrypted size
+                let encrypted_size = msg.len() + SIZE_KEEPALIVE;
+
+                router1
+                    .send(pad(&msg))
+                    .expect("we expect routing to be successful");
+
+                // encryption succeeds and the correct size is logged
+                assert_eq!(
+                    opaque1.send.wait(TIMEOUT),
+                    Some((encrypted_size, true)),
+                    "expected send event for peer1 -> peer2 payload"
+                );
+
+                // otherwise no events
+                no_events!(opaque1);
+                no_events!(opaque2);
+
+                // receive ("across the internet") on the other end
+                let mut buf = vec![0u8; MAX_SIZE_BODY + 512];
+                let (len, from) = bind_reader2.read(&mut buf).unwrap();
+                buf.truncate(len);
+                router2.recv(from, buf).unwrap();
+
+                // check that decryption succeeds
+                assert_eq!(
+                    opaque2.recv.wait(TIMEOUT),
+                    Some((msg.len() + SIZE_KEEPALIVE, true)),
+                    "decryption and routing should succeed"
+                );
+
+                // otherwise no events
+                no_events!(opaque1);
+                no_events!(opaque2);
+            }
+        }
+    }
+}
+
+use test::Bencher;
+
+#[bench]
+fn bench_bidirectional_1_rs_rs(b: &mut Bencher) {
+    b.iter(|| {
+        bench_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, 1)
+    });
+}
+
+#[bench]
+fn bench_bidirectional_3_rs_owl_responder(b: &mut Bencher) {
+    b.iter(|| {
+        bench_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::OwlResponder, 1)
+    });
+}
+
+#[bench]
+fn bench_bidirectional_2_owl_initiator_rs(b: &mut Bencher) {
+    b.iter(|| {
+        bench_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::NoOwl, 1)
+    });
+}
+
+#[bench]
+fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
+    b.iter(|| {
+        bench_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder, 1)
+    });
+}
+
+#[bench]
+fn bench_bidirectional_0_baseline(b: &mut Bencher) {
+    b.iter(|| {
+        bench_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, 0)
+    });
+}
