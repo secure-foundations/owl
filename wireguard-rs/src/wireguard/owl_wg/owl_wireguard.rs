@@ -1471,9 +1471,11 @@ pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>
             vec_truncate(&mut serialized.data, n);
             Some(serialized.data)
         } else {
+            dbg!(ser_result);
             None
         }
     } else {
+        dbg!("oops");
         None
     }
 }
@@ -1842,7 +1844,7 @@ pub struct cfg_Initiator<O> {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
-    pub device: crate::wireguard::handshake::device::DeviceInner<O>,
+    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
 impl<O> cfg_Initiator<O> {    
@@ -1937,6 +1939,26 @@ impl<O> cfg_Initiator<O> {
         Ok(res_inner)
     }
     
+    pub exec fn owl_transp_send_init_wrapper(
+        &self,         
+        mut_state: &mut state_Initiator,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_plaintext: Arc<Vec<u8>>,
+        obuf: &mut [u8]
+    ) -> (_: Option<()>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_send_init(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_transp_send_init(
         &self,
@@ -2943,7 +2965,7 @@ impl<O> cfg_Initiator<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let v = self.device.get_singleton_id();
+            let v = self.device.as_ref().unwrap().get_singleton_id();
             (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)
@@ -2971,7 +2993,7 @@ pub struct cfg_Responder<O> {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
-    pub device: crate::wireguard::handshake::device::DeviceInner<O>,
+    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
 impl<O> cfg_Responder<O> { 
@@ -3067,6 +3089,26 @@ impl<O> cfg_Responder<O> {
         Ok(res_inner)
     }
     
+    pub exec fn owl_transp_send_resp_wrapper(
+        &self,         
+        mut_state: &mut state_Responder,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_plaintext: Arc<Vec<u8>>,
+        obuf: &mut [u8]
+    ) -> (_: Option<()>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_send_resp(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_transp_send_resp(
         &self,
@@ -4128,7 +4170,7 @@ impl<O> cfg_Responder<O> {
             use std::convert::TryInto;
 
             let pk: [u8; 32] = (&*owl_pk8139).as_slice().try_into().unwrap();
-            (self.device.get_ss(&pk)
+            (self.device.as_ref().unwrap().get_ss(&pk)
                 .map(|ss| Arc::new(ss.to_vec())),
             Tracked(itree))
         };
@@ -4179,7 +4221,7 @@ impl<O> cfg_Responder<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let v = self.device.get_singleton_id();
+            let v = self.device.as_ref().unwrap().get_singleton_id();
             (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)

@@ -1,11 +1,11 @@
 use super::messages::{TransportHeader, TYPE_TRANSPORT};
 use super::peer::Peer;
 use super::queue::{ParallelJob, Queue, SequentialJob};
-use super::types::Callbacks;
+use super::types::{Callbacks};
 use super::KeyPair;
 use super::{REJECT_AFTER_MESSAGES, SIZE_TAG};
 
-use super::super::{tun, udp, Endpoint};
+use super::super::{tun, udp, Endpoint, types::RouterDeviceType};
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -14,12 +14,15 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
 use spin::Mutex;
 use zerocopy::{AsBytes, LayoutVerified};
 
+use crate::wireguard::owl_wg::owl_wireguard;
+
 struct Inner<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
     ready: AtomicBool,
     buffer: Mutex<Vec<u8>>,
     counter: u64,
     keypair: Arc<KeyPair>,
     peer: Peer<E, C, T, B>,
+    job_type: RouterDeviceType,
 }
 
 pub struct SendJob<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>>(
@@ -38,6 +41,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> SendJob<E, C,
         counter: u64,
         keypair: Arc<KeyPair>,
         peer: Peer<E, C, T, B>,
+        job_type: RouterDeviceType
     ) -> SendJob<E, C, T, B> {
         SendJob(Arc::new(Inner {
             buffer: Mutex::new(buffer),
@@ -45,6 +49,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> SendJob<E, C,
             keypair,
             peer,
             ready: AtomicBool::new(false),
+            job_type
         }))
     }
 }
@@ -64,45 +69,107 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
         );
         log::trace!("processing parallel send job");
 
+        let job = &*self.0;
+        let mut msg = job.buffer.lock();
+
+        // make space for the tag
+        msg.extend([0u8; SIZE_TAG].iter());
+
         // encrypt body
-        {
-            // make space for the tag
-            let job = &*self.0;
-            let mut msg = job.buffer.lock();
-            msg.extend([0u8; SIZE_TAG].iter());
+        match self.0.job_type {
+            RouterDeviceType::NoOwl => {  
+                // cast to header (should never fail)
+                let (mut header, packet): (LayoutVerified<&mut [u8], TransportHeader>, &mut [u8]) =
+                    LayoutVerified::new_from_prefix(&mut msg[..])
+                        .expect("earlier code should ensure that there is ample space");
+    
+                // set header fields
+                debug_assert!(
+                    job.counter < REJECT_AFTER_MESSAGES,
+                    "should be checked when assigning counters"
+                );
+                header.f_type.set(TYPE_TRANSPORT);
+                header.f_receiver.set(job.keypair.send.id);
+                header.f_counter.set(job.counter);
+    
+                // create a nonce object
+                let mut nonce = [0u8; 12];
+                debug_assert_eq!(nonce.len(), CHACHA20_POLY1305.nonce_len());
+                nonce[4..].copy_from_slice(header.f_counter.as_bytes());
+                let nonce = Nonce::assume_unique_for_key(nonce);
+    
+                // encrypt contents of transport message in-place
+                let tag_offset = packet.len() - SIZE_TAG;
+                let key = LessSafeKey::new(
+                    UnboundKey::new(&CHACHA20_POLY1305, &job.keypair.send.key[..]).unwrap(),
+                );
+                let tag = key
+                    .seal_in_place_separate_tag(nonce, Aad::empty(), &mut packet[..tag_offset])
+                    .unwrap();
+    
 
-            // cast to header (should never fail)
-            let (mut header, packet): (LayoutVerified<&mut [u8], TransportHeader>, &mut [u8]) =
-                LayoutVerified::new_from_prefix(&mut msg[..])
-                    .expect("earlier code should ensure that there is ample space");
+                // append tag
+                packet[tag_offset..].copy_from_slice(tag.as_ref());
+            },
+            RouterDeviceType::OwlInitiator => {
+                let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
+                    owl_S_init: Arc::new(vec![]),
+                    owl_E_init: Arc::new(vec![]),
+                    pk_owl_S_resp: Arc::new(vec![]),
+                    pk_owl_S_init: Arc::new(vec![]),
+                    pk_owl_E_resp: Arc::new(vec![]),
+                    pk_owl_E_init: Arc::new(vec![]),
+                    salt: Arc::new(vec![]),
+                    device: None
+                };
+                let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+                state.owl_N_init_send = job.counter as usize;
 
-            // set header fields
-            debug_assert!(
-                job.counter < REJECT_AFTER_MESSAGES,
-                "should be checked when assigning counters"
-            );
-            header.f_type.set(TYPE_TRANSPORT);
-            header.f_receiver.set(job.keypair.send.id);
-            header.f_counter.set(job.counter);
+                let mut transp_keys = owl_wireguard::owl_transp_keys {
+                    owl__transp_keys_initiator: vec![],
+                    owl__transp_keys_responder: job.keypair.send.id.to_le_bytes().to_vec(),
+                    owl__transp_keys_T_init_send: job.keypair.send.key[..].to_vec(),
+                    owl__transp_keys_T_resp_send: job.keypair.recv.key[..].to_vec(),
+                };
 
-            // create a nonce object
-            let mut nonce = [0u8; 12];
-            debug_assert_eq!(nonce.len(), CHACHA20_POLY1305.nonce_len());
-            nonce[4..].copy_from_slice(header.f_counter.as_bytes());
-            let nonce = Nonce::assume_unique_for_key(nonce);
+                let plaintext = Arc::new(msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec());
 
-            // encrypt contents of transport message in-place
-            let tag_offset = packet.len() - SIZE_TAG;
-            let key = LessSafeKey::new(
-                UnboundKey::new(&CHACHA20_POLY1305, &job.keypair.send.key[..]).unwrap(),
-            );
-            let tag = key
-                .seal_in_place_separate_tag(nonce, Aad::empty(), &mut packet[..tag_offset])
-                .unwrap();
+                let succeeded = cfg.owl_transp_send_init_wrapper(&mut state, transp_keys, plaintext, &mut msg);
 
-            // append tag
-            packet[tag_offset..].copy_from_slice(tag.as_ref());
+                assert!(succeeded.is_some());
+            },
+            RouterDeviceType::OwlResponder => {
+                dbg!(hex::encode(msg.as_bytes()));
+                dbg!(msg.len());
+                let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
+                    owl_S_resp: Arc::new(vec![]),
+                    owl_E_resp: Arc::new(vec![]),
+                    pk_owl_S_resp: Arc::new(vec![]),
+                    pk_owl_S_init: Arc::new(vec![]),
+                    pk_owl_E_resp: Arc::new(vec![]),
+                    pk_owl_E_init: Arc::new(vec![]),
+                    salt: Arc::new(vec![]),
+                    device: None
+                };
+                let mut state = owl_wireguard::state_Responder::init_state_Responder();
+                state.owl_N_resp_send = job.counter as usize;
+
+                let mut transp_keys = owl_wireguard::owl_transp_keys {
+                    owl__transp_keys_initiator: job.keypair.send.id.to_le_bytes().to_vec(),
+                    owl__transp_keys_responder: vec![],
+                    owl__transp_keys_T_init_send: job.keypair.recv.key[..].to_vec(),
+                    owl__transp_keys_T_resp_send: job.keypair.send.key[..].to_vec(),
+                };
+
+                let plaintext = Arc::new(msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec());
+
+                let succeeded = cfg.owl_transp_send_resp_wrapper(&mut state, transp_keys, plaintext, &mut msg);
+
+                assert!(succeeded.is_some());
+            },
         }
+
+
 
         // mark ready
         self.0.ready.store(true, Ordering::Release);

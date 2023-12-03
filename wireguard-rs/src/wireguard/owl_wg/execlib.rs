@@ -288,7 +288,7 @@ pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
     ensures res.dview() == counter_as_bytes(x.dview())
 {
     let mut v = x.to_le_bytes().to_vec();
-    v.resize(owl_aead::nonce_size(cipher()), 0u8);
+    // v.resize(owl_aead::nonce_size(cipher()), 0u8);
     v
 }
 

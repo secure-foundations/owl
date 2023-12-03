@@ -71,16 +71,22 @@ impl<O> Device<O> {
     pub fn inner(&self) -> &DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Initiator(i) => &i.cfg.device,
-            Device::Responder(r) => &r.cfg.device,
+            Device::Initiator(i) => &i.cfg.device.as_ref().unwrap(),
+            Device::Responder(r) => &r.cfg.device.as_ref().unwrap(),
         }
     }
 
     pub fn inner_mut(&mut self) -> &mut DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Initiator(i) => &mut i.cfg.device,
-            Device::Responder(r) => &mut r.cfg.device,
+            Device::Initiator(i) => {
+                let d = i.cfg.device.as_mut().unwrap();
+                d
+            },
+            Device::Responder(r) => {
+                let d = r.cfg.device.as_mut().unwrap();
+                d
+            },
         }
     }
 
@@ -103,7 +109,7 @@ impl<O> Device<O> {
             pk_owl_E_resp: Arc::new(vec![]),
             pk_owl_E_init: Arc::new(vec![]),
             salt: Arc::new(vec![]),
-            device: inner,
+            device: Some(inner),
         };
         let state = owl_wireguard::state_Initiator::init_state_Initiator();
         Device::Initiator(OwlInitiator {
@@ -127,7 +133,7 @@ impl<O> Device<O> {
             pk_owl_E_resp: Arc::new(vec![]),
             pk_owl_E_init: Arc::new(vec![]),
             salt: Arc::new(vec![]),
-            device: inner
+            device: Some(inner)
         };
         let state = owl_wireguard::state_Responder::init_state_Responder();
         Device::Responder(OwlResponder {

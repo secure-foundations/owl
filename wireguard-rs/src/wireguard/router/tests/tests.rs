@@ -10,6 +10,7 @@ use std::time::Duration;
 use rand::Rng;
 
 use super::*;
+use super::super::super::types::RouterDeviceType;
 
 #[cfg(feature = "unstable")]
 extern crate test;
@@ -118,13 +119,13 @@ impl Callbacks for TestCallbacks {
     }
 }
 
-#[test]
-fn test_outbound() {
+#[cfg(test)]
+fn test_outbound(device_type: RouterDeviceType) {
     init();
 
     // create device
     let (_fake, _reader, tun_writer, _mtu) = dummy::TunTest::create(false);
-    let router: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer);
+    let router: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer, device_type);
     router.set_outbound_writer(dummy::VoidBind::new());
 
     let tests = vec![
@@ -243,6 +244,22 @@ fn test_outbound() {
 }
 
 #[test]
+fn test_outbound_no_owl() {
+    test_outbound(RouterDeviceType::NoOwl);
+}
+
+#[test]
+fn test_outbound_owl_initiator() {
+    test_outbound(RouterDeviceType::OwlInitiator);
+}
+
+#[test]
+fn test_outbound_owl_responder() {
+    test_outbound(RouterDeviceType::OwlResponder);
+}
+
+
+#[test]
 fn test_bidirectional() {
     init();
 
@@ -305,10 +322,10 @@ fn test_bidirectional() {
             let (_fake, _, tun_writer1, _) = dummy::TunTest::create(false);
             let (_fake, _, tun_writer2, _) = dummy::TunTest::create(false);
 
-            let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1);
+            let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, RouterDeviceType::NoOwl);
             router1.set_outbound_writer(bind_writer1);
 
-            let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2);
+            let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, RouterDeviceType::NoOwl);
             router2.set_outbound_writer(bind_writer2);
 
             // prepare opaque values for tracing callbacks

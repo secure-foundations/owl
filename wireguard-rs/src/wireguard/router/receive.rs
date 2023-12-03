@@ -5,7 +5,7 @@ use super::queue::{ParallelJob, Queue, SequentialJob};
 use super::types::Callbacks;
 use super::{REJECT_AFTER_MESSAGES, SIZE_TAG};
 
-use super::super::{tun, udp, Endpoint};
+use super::super::{tun, udp, Endpoint, types::RouterDeviceType};
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +17,7 @@ struct Inner<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
     ready: AtomicBool,                       // job status
     buffer: Mutex<(Option<E>, Vec<u8>)>,     // endpoint & ciphertext buffer
     state: Arc<DecryptionState<E, C, T, B>>, // decryption state (keys and replay protector)
+    job_type: RouterDeviceType
 }
 
 pub struct ReceiveJob<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>>(
@@ -41,6 +42,33 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ReceiveJob<E,
             ready: AtomicBool::new(false),
             buffer: Mutex::new((Some(endpoint), buffer)),
             state,
+            job_type: RouterDeviceType::NoOwl
+        }))
+    }
+
+    pub fn new_owl_initiator(
+        buffer: Vec<u8>,
+        state: Arc<DecryptionState<E, C, T, B>>,
+        endpoint: E,
+    ) -> ReceiveJob<E, C, T, B> {
+        ReceiveJob(Arc::new(Inner {
+            ready: AtomicBool::new(false),
+            buffer: Mutex::new((Some(endpoint), buffer)),
+            state,
+            job_type: RouterDeviceType::OwlInitiator
+        }))
+    }
+
+    pub fn new_owl_responder(
+        buffer: Vec<u8>,
+        state: Arc<DecryptionState<E, C, T, B>>,
+        endpoint: E,
+    ) -> ReceiveJob<E, C, T, B> {
+        ReceiveJob(Arc::new(Inner {
+            ready: AtomicBool::new(false),
+            buffer: Mutex::new((Some(endpoint), buffer)),
+            state,
+            job_type: RouterDeviceType::OwlResponder
         }))
     }
 }
