@@ -6,7 +6,7 @@ use vstd::prelude::*;
 use generic_array::*;
 
 
-const USE_BORINGSSL: bool = false;
+const USE_BORINGSSL: bool = true;
 
 
 verus! {
@@ -129,6 +129,50 @@ pub enum Error {
 pub type Aad = [u8];
 pub type Ciphertext = Vec<u8>;
 pub type Tag = Vec<u8>;
+
+
+#[verifier(external_body)]
+pub fn encrypt_inplace(
+    alg: Mode,
+    k: &[u8],
+    msg: &mut [u8],
+    iv: &[u8],
+    aad: &Aad,
+) -> Result<(), Error> {
+    // dbg!(hex::encode(&k));
+    // dbg!(hex::encode(&iv));
+    // dbg!(hex::encode(&msg));
+    // dbg!(hex::encode(&aad));
+    if USE_BORINGSSL {
+        use ring::aead::{Aad, LessSafeKey, Nonce as RingAeadNonce, UnboundKey, CHACHA20_POLY1305};
+        use std::convert::TryInto;
+
+        let key = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
+        );
+        let nonce = RingAeadNonce::assume_unique_for_key(iv.try_into().unwrap());
+        let aad_ring = Aad::from(aad);
+
+        let tag_offset = msg.len() - 16;
+        let tag = key.seal_in_place_separate_tag(nonce, aad_ring, &mut msg[..tag_offset]).unwrap();
+        msg[tag_offset..].copy_from_slice(tag.as_ref());
+        // dbg!(hex::encode(&msg));
+        Ok(())
+    } else {
+        unimplemented!()
+        // match alg {
+        //     Mode::Chacha20Poly1305 => {
+        //         let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
+        //         .encrypt(iv.into(), Payload { msg: msg, aad: aad })
+        //         .map_err(|_| Error::Encrypting);
+        //         // dbg!(r.clone().map(|v| hex::encode(&v)));
+        //         r
+        //     }
+        //     _ => panic!("unsupported aead mode"),
+        // }    
+    }
+}
+
 
 #[verifier(external_body)]
 pub fn encrypt_combined(
@@ -294,10 +338,10 @@ pub fn decrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
-    dbg!(hex::encode(&k));
-    dbg!(hex::encode(&iv));
-    dbg!(hex::encode(&ctxt));
-    dbg!(hex::encode(&aad));
+    // dbg!(hex::encode(&k));
+    // dbg!(hex::encode(&iv));
+    // dbg!(hex::encode(&ctxt));
+    // dbg!(hex::encode(&aad));
     if USE_BORINGSSL {
         use ring::aead::{Aad, LessSafeKey, Nonce as RingAeadNonce, UnboundKey, CHACHA20_POLY1305};
         use std::convert::TryInto;

@@ -656,7 +656,7 @@ fn bench_bidirectional(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType,
 
         // now that peer1 has an endpoint
         // route packets in the other direction: peer1 -> peer2
-        let mut sizes = vec![0; num_packets];
+        let mut sizes = vec![10; num_packets];
         for (id, body_size) in sizes.iter().enumerate() {
             println!("packet: id = {}, body_size = {}", id, body_size);
 

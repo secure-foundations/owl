@@ -242,6 +242,33 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
     Ok(res)
 }
 
+
+#[verifier(external_body)]
+pub exec fn owl_enc_st_aead_inplace(k: &[u8], msg: &mut [u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<(), OwlError>)
+    // ensures
+    //     res.is_Ok() ==> (res.get_Ok_0().dview(), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
+        // *nonce == *old(nonce) + 1,
+{
+    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
+    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    let nonce_as_bytes = nonce.to_le_bytes().to_vec();
+    let iv_len = iv.len();
+    iv[(iv_len - nonce_as_bytes.len())..].copy_from_slice(&nonce_as_bytes[..]);
+    let res = match owl_aead::encrypt_inplace(cipher(), k, msg, &iv[..], aad) {
+        Ok(_) => {
+            // let mut v = iv.to_owned();
+            // v.append(&mut c);
+            ()
+        },
+        Err(_e) => {
+            // dbg!(e);
+            panic!()
+        }
+    };
+    *nonce += 1;
+    Ok(())
+}
+
 #[verifier(external_body)]
 pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x: Option<Arc<Vec<u8>>>)
     ensures
