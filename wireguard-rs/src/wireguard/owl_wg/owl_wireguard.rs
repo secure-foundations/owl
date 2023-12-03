@@ -713,7 +713,7 @@ pub open spec fn transp_recv_init_spec(
     owl_spec!(mut_state,state_Initiator,
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused35 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : _unused36 , owlSpec__transp_keys_responder : responder_name , owlSpec__transp_keys_T_init_send : _unused37 , owlSpec__transp_keys_T_resp_send : r2i_ }) in {
-(if (c == responder_name) then (let r2i = ((ret (r2i_))) in
+(if (from == responder_name) then (let r2i = ((ret (r2i_))) in
 (ret(dec_st_aead(r2i, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
@@ -917,7 +917,7 @@ pub open spec fn transp_recv_resp_spec(
     owl_spec!(mut_state,state_Responder,
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused723 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : initiator_name , owlSpec__transp_keys_responder : _unused724 , owlSpec__transp_keys_T_init_send : i2r_ , owlSpec__transp_keys_T_resp_send : _unused725 }) in {
-(if (c == initiator_name) then (let i2r = ((ret (i2r_))) in
+(if (from == initiator_name) then (let i2r = ((ret (i2r_))) in
 (ret(dec_st_aead(i2r, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
@@ -1471,11 +1471,9 @@ pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>
             vec_truncate(&mut serialized.data, n);
             Some(serialized.data)
         } else {
-            dbg!(ser_result);
             None
         }
     } else {
-        dbg!("oops");
         None
     }
 }
@@ -1867,7 +1865,7 @@ impl<O> cfg_Initiator<O> {
             self.owl_transp_recv_init(Tracked(call_token), mut_state, owl_transp_keys_val, owl_c).unwrap();
         res
     }
-
+    
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_init(
         &self,
@@ -1946,7 +1944,6 @@ impl<O> cfg_Initiator<O> {
                                 Tracked(itree),
                             )
                         } else {
-                            dbg!("yep");
                             (None, Tracked(itree))
                         }
                     }
@@ -3037,7 +3034,7 @@ impl<O> cfg_Responder<O> {
             self.owl_transp_recv_resp(Tracked(call_token), mut_state, owl_transp_keys_val, owl_c).unwrap();
         res
     }
-
+    
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_resp(
         &self,
