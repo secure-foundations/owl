@@ -13,6 +13,9 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
 use spin::Mutex;
 use zerocopy::{AsBytes, LayoutVerified};
 
+use crate::wireguard::owl_wg::owl_wireguard;
+use std::convert::TryInto;
+
 struct Inner<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
     ready: AtomicBool,                       // job status
     buffer: Mutex<(Option<E>, Vec<u8>)>,     // endpoint & ciphertext buffer
@@ -37,38 +40,13 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ReceiveJob<E,
         buffer: Vec<u8>,
         state: Arc<DecryptionState<E, C, T, B>>,
         endpoint: E,
+        job_type: RouterDeviceType
     ) -> ReceiveJob<E, C, T, B> {
         ReceiveJob(Arc::new(Inner {
             ready: AtomicBool::new(false),
             buffer: Mutex::new((Some(endpoint), buffer)),
             state,
-            job_type: RouterDeviceType::NoOwl
-        }))
-    }
-
-    pub fn new_owl_initiator(
-        buffer: Vec<u8>,
-        state: Arc<DecryptionState<E, C, T, B>>,
-        endpoint: E,
-    ) -> ReceiveJob<E, C, T, B> {
-        ReceiveJob(Arc::new(Inner {
-            ready: AtomicBool::new(false),
-            buffer: Mutex::new((Some(endpoint), buffer)),
-            state,
-            job_type: RouterDeviceType::OwlInitiator
-        }))
-    }
-
-    pub fn new_owl_responder(
-        buffer: Vec<u8>,
-        state: Arc<DecryptionState<E, C, T, B>>,
-        endpoint: E,
-    ) -> ReceiveJob<E, C, T, B> {
-        ReceiveJob(Arc::new(Inner {
-            ready: AtomicBool::new(false),
-            buffer: Mutex::new((Some(endpoint), buffer)),
-            state,
-            job_type: RouterDeviceType::OwlResponder
+            job_type
         }))
     }
 }
@@ -108,36 +86,114 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
 
             // process buffer
             let ok = (|| {
-                // cast to header followed by payload
-                let (header, packet): (LayoutVerified<&mut [u8], TransportHeader>, &mut [u8]) =
-                    match LayoutVerified::new_from_prefix(&mut msg.1[..]) {
-                        Some(v) => v,
-                        None => return false,
-                    };
+                match self.0.job_type {
+                    RouterDeviceType::NoOwl => {              
+                        // cast to header followed by payload
+                        let (header, packet): (LayoutVerified<&mut [u8], TransportHeader>, &mut [u8]) =
+                        match LayoutVerified::new_from_prefix(&mut msg.1[..]) {
+                            Some(v) => v,
+                            None => return false,
+                        };
 
-                // create nonce object
-                let mut nonce = [0u8; 12];
-                debug_assert_eq!(nonce.len(), CHACHA20_POLY1305.nonce_len());
-                nonce[4..].copy_from_slice(header.f_counter.as_bytes());
-                let nonce = Nonce::assume_unique_for_key(nonce);
-                // do the weird ring AEAD dance
-                let key = LessSafeKey::new(
-                    UnboundKey::new(&CHACHA20_POLY1305, &job.state.keypair.recv.key[..]).unwrap(),
-                );
+                        // create nonce object
+                        let mut nonce = [0u8; 12];
+                        debug_assert_eq!(nonce.len(), CHACHA20_POLY1305.nonce_len());
+                        nonce[4..].copy_from_slice(header.f_counter.as_bytes());
+                        let nonce = Nonce::assume_unique_for_key(nonce);
+                        // do the weird ring AEAD dance
+                        let key = LessSafeKey::new(
+                            UnboundKey::new(&CHACHA20_POLY1305, &job.state.keypair.recv.key[..]).unwrap(),
+                        );
 
-                // attempt to open (and authenticate) the body
-                match key.open_in_place(nonce, Aad::empty(), packet) {
-                    Ok(_) => (),
-                    Err(_) => return false,
+                        // attempt to open (and authenticate) the body
+                        match key.open_in_place(nonce, Aad::empty(), packet) {
+                            Ok(_) => (),
+                            Err(_) => return false,
+                        }
+
+                        // check that counter not after reject
+                        if header.f_counter.get() >= REJECT_AFTER_MESSAGES {
+                            return false;
+                        }
+
+                        // check crypto-key router
+                        packet.len() == SIZE_TAG || peer.device.table.check_route(&peer, &packet)
+                    }
+                    RouterDeviceType::OwlInitiator => {
+                        let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
+                            owl_S_init: Arc::new(vec![]),
+                            owl_E_init: Arc::new(vec![]),
+                            pk_owl_S_resp: Arc::new(vec![]),
+                            pk_owl_S_init: Arc::new(vec![]),
+                            pk_owl_E_resp: Arc::new(vec![]),
+                            pk_owl_E_init: Arc::new(vec![]),
+                            salt: Arc::new(vec![]),
+                            device: None
+                        };
+                        let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+                        if (msg.1.len() < 16) {
+                            return false;
+                        } 
+                        state.owl_N_init_recv = u64::from_be_bytes(msg.1[8..16].try_into().unwrap()) as usize;
+        
+                        let mut transp_keys = owl_wireguard::owl_transp_keys {
+                            owl__transp_keys_initiator: vec![],
+                            owl__transp_keys_responder: msg.1[4..8].to_vec(),
+                            owl__transp_keys_T_init_send: job.state.keypair.send.key[..].to_vec(),
+                            owl__transp_keys_T_resp_send: job.state.keypair.recv.key[..].to_vec(),
+                        };
+        
+                        let res = cfg.owl_transp_recv_init_wrapper(&mut state, transp_keys, Arc::new(msg.1.clone()));
+                        
+                        match res {
+                            Some(ptxt) => {
+                                let msg_len = msg.1.len();
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt[..]);
+                                
+                                // check crypto-key router
+                                msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])
+                            },
+                            None => false 
+                        }
+                    },
+                    RouterDeviceType::OwlResponder => {
+                        let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
+                            owl_S_resp: Arc::new(vec![]),
+                            owl_E_resp: Arc::new(vec![]),
+                            pk_owl_S_resp: Arc::new(vec![]),
+                            pk_owl_S_init: Arc::new(vec![]),
+                            pk_owl_E_resp: Arc::new(vec![]),
+                            pk_owl_E_init: Arc::new(vec![]),
+                            salt: Arc::new(vec![]),
+                            device: None
+                        };
+                        let mut state = owl_wireguard::state_Responder::init_state_Responder();
+                        if (msg.1.len() < 16) {
+                            return false;
+                        } 
+                        state.owl_N_resp_recv = u64::from_be_bytes(msg.1[8..16].try_into().unwrap()) as usize;
+        
+                        let mut transp_keys = owl_wireguard::owl_transp_keys {
+                            owl__transp_keys_initiator: msg.1[4..8].to_vec(),
+                            owl__transp_keys_responder: vec![],
+                            owl__transp_keys_T_init_send: job.state.keypair.recv.key[..].to_vec(),
+                            owl__transp_keys_T_resp_send: job.state.keypair.send.key[..].to_vec(),
+                        };
+        
+                        let res = cfg.owl_transp_recv_resp_wrapper(&mut state, transp_keys, Arc::new(msg.1.clone()));
+                        
+                        match res {
+                            Some(ptxt) => {
+                                let msg_len = msg.1.len();
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt[..]);
+                                
+                                // check crypto-key router
+                                msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])
+                            },
+                            None => false 
+                        }
+                    },
                 }
-
-                // check that counter not after reject
-                if header.f_counter.get() >= REJECT_AFTER_MESSAGES {
-                    return false;
-                }
-
-                // check crypto-key router
-                packet.len() == SIZE_TAG || peer.device.table.check_route(&peer, &packet)
             })();
 
             // remove message in case of failure:

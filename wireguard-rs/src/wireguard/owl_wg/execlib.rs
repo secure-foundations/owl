@@ -223,8 +223,10 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
         // *nonce == *old(nonce) + 1,
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(owl_aead::nonce_size(cipher()), 0u8);
+    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    let nonce_as_bytes = nonce.to_le_bytes().to_vec();
+    let iv_len = iv.len();
+    iv[(iv_len - nonce_as_bytes.len())..].copy_from_slice(&nonce_as_bytes[..]);
     let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
         Ok(mut c) => {
             // let mut v = iv.to_owned();
@@ -250,9 +252,10 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
     // match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
-    let mut nonce_resized = nonce.to_vec();
-    nonce_resized.resize(owl_aead::nonce_size(cipher()), 0u8);
-    match owl_aead::decrypt_combined(cipher(), k, c, &nonce_resized[..], aad) {
+    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    let iv_len = iv.len();
+    iv[(iv_len - nonce.len())..].copy_from_slice(&nonce[..]);
+    match owl_aead::decrypt_combined(cipher(), k, c, &iv[..], aad) {
         Ok(p) => Some(arc_new(p)),
         Err(e) => {
             dbg!(e);

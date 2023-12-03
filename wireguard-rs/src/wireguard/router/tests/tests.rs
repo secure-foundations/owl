@@ -259,8 +259,8 @@ fn test_outbound_owl_responder() {
 }
 
 
-#[test]
-fn test_bidirectional() {
+#[cfg(test)]
+fn test_bidirectional(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType) {
     init();
 
     const MAX_SIZE_BODY: usize = 1 << 15;
@@ -322,10 +322,10 @@ fn test_bidirectional() {
             let (_fake, _, tun_writer1, _) = dummy::TunTest::create(false);
             let (_fake, _, tun_writer2, _) = dummy::TunTest::create(false);
 
-            let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, RouterDeviceType::NoOwl);
+            let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, dev1_type);
             router1.set_outbound_writer(bind_writer1);
 
-            let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, RouterDeviceType::NoOwl);
+            let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, dev2_type);
             router2.set_outbound_writer(bind_writer2);
 
             // prepare opaque values for tracing callbacks
@@ -496,4 +496,49 @@ fn test_bidirectional() {
             }
         }
     }
+}
+
+#[test]
+fn test_bidirectional_rs_rs() {
+    test_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::NoOwl);
+}
+
+#[test]
+fn test_bidirectional_rs_owl_initiator() {
+    test_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::OwlInitiator);
+}
+
+#[test]
+fn test_bidirectional_rs_owl_responder() {
+    test_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::OwlResponder);
+}
+
+#[test]
+fn test_bidirectional_owl_initiator_rs() {
+    test_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::NoOwl);
+}
+
+#[test]
+fn test_bidirectional_owl_initiator_owl_initiator() {
+    test_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::OwlInitiator);
+}
+
+#[test]
+fn test_bidirectional_owl_initiator_owl_responder() {
+    test_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder);
+}
+
+#[test]
+fn test_bidirectional_owl_responder_rs() {
+    test_bidirectional(RouterDeviceType::OwlResponder, RouterDeviceType::NoOwl);
+}
+
+#[test]
+fn test_bidirectional_owl_responder_owl_initiator() {
+    test_bidirectional(RouterDeviceType::OwlResponder, RouterDeviceType::OwlInitiator);
+}
+
+#[test]
+fn test_bidirectional_owl_responder_owl_responder() {
+    test_bidirectional(RouterDeviceType::OwlResponder, RouterDeviceType::OwlResponder);
 }

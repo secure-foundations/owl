@@ -242,7 +242,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> DeviceHandle<
             .ok_or(RouterError::UnknownReceiverId)?;
 
         // create inbound job
-        let job = ReceiveJob::new(msg, dec.clone(), src);
+        let job = ReceiveJob::new(msg, dec.clone(), src, self.state.inner.device_type);
 
         // 1. add to sequential queue (drop if full)
         // 2. then add to parallel work queue (wait if full)
