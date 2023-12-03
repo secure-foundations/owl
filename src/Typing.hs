@@ -2082,13 +2082,13 @@ proveDisjointContents x y = do
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
 
-data KDFInferResult = KDFTriv | KDFAdv | KDFGood KDFStrictness NameExp
+data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp
     deriving (Show, Generic, Typeable)
 
 instance Alpha KDFInferResult
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
-            Int -> Int -> Check KDFInferResult
+            Int -> Int -> Check (Maybe KDFInferResult)
 inferKDF kpos a b c i j = do
     let (principal, other) = case kpos of
                               KDF_SaltPos -> (a, b)
@@ -2096,8 +2096,8 @@ inferKDF kpos a b c i j = do
     case extractNameFromType (snd principal) of 
       Nothing -> 
           case kpos of
-            KDF_SaltPos -> return KDFTriv   
-            KDF_IKMPos -> return KDFTriv -- TODO: this is where we try DH
+            KDF_SaltPos -> return Nothing   
+            KDF_IKMPos -> return Nothing -- TODO: this is where we try DH
       Just na -> do 
           nt <- getNameType na
           case nt^.val of
@@ -2114,9 +2114,9 @@ inferKDF kpos a b c i j = do
                             KDF_SaltPos -> KDF_SaltKey na i
                             KDF_IKMPos -> KDF_IKMKey na i
                 if b2 && (bp == Just True) then 
-                            return $ KDFGood str $ 
+                            return $ Just $ KDFGood str $ 
                                 mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
-                            else return KDFTriv
+                            else return Nothing
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2174,26 +2174,27 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                     Nothing -> do
                         pub <- tyFlowsTo (snd a) advLbl
                         assert ("First argument to KDF must flow to adv without annotation") pub
-                        return KDFTriv
+                        return Nothing
                     Just i -> 
                         local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c i j
           res2 <- case oann2 of
                     Nothing -> do
                         pub <- tyFlowsTo (snd b) advLbl
                         assert ("Second argument to KDF must flow to adv without annotation") pub
-                        return KDFTriv
+                        return Nothing
                     Just i -> 
                         local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c i j
           res <- case (res1, res2) of
-                        (KDFTriv, _) -> return res2
-                        (_, KDFTriv) -> return res1
-                        _ -> do
-                            assert ("KDF arguments are inconsistent") $ res1 `aeq` res2
-                            return res1
+                   (Nothing, Just v) -> return $ Just v
+                   (Just v, Nothing) -> return $ Just v
+                   (Nothing, Nothing) -> return Nothing
+                   (Just v1, Just v2) -> do
+                       assert ("KDF resulsts inconsistent") $ v1 `aeq` v2
+                       return $ Just v1
           case res of 
-            KDFAdv -> return $ tData advLbl advLbl
-            KDFTriv -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
-            KDFGood strictness ne -> do
+            Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
+            Just KDFAdv -> return $ tData advLbl advLbl
+            Just (KDFGood strictness ne) -> do 
               let flowAx = case strictness of
                              KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                              KDFUnstrict -> pTrue
