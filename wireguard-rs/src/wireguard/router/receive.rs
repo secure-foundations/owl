@@ -134,7 +134,6 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         if (msg.1.len() < 16) {
                             return false;
                         } 
-                        state.owl_N_init_recv = u64::from_be_bytes(msg.1[8..16].try_into().unwrap()) as usize;
         
                         let mut transp_keys = owl_wireguard::owl_transp_keys {
                             owl__transp_keys_initiator: vec![],
@@ -171,7 +170,6 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         if (msg.1.len() < 16) {
                             return false;
                         } 
-                        state.owl_N_resp_recv = u64::from_be_bytes(msg.1[8..16].try_into().unwrap()) as usize;
         
                         let mut transp_keys = owl_wireguard::owl_transp_keys {
                             owl__transp_keys_initiator: msg.1[4..8].to_vec(),

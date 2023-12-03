@@ -5,6 +5,10 @@ use chacha20poly1305::ChaCha20Poly1305;
 use vstd::prelude::*;
 use generic_array::*;
 
+
+const USE_BORINGSSL: bool = true;
+
+
 verus! {
 
 #[derive(Clone, Copy)]
@@ -138,15 +142,30 @@ pub fn encrypt_combined(
     // dbg!(hex::encode(&iv));
     // dbg!(hex::encode(&msg));
     // dbg!(hex::encode(&aad));
-    match alg {
-        Mode::Chacha20Poly1305 => {
-            let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
-            .encrypt(iv.into(), Payload { msg: msg, aad: aad })
-            .map_err(|_| Error::Encrypting);
-            // dbg!(r.clone().map(|v| hex::encode(&v)));
-            r
-        }
-        _ => panic!("unsupported aead mode"),
+    if USE_BORINGSSL {
+        use ring::aead::{Aad, LessSafeKey, Nonce as RingAeadNonce, UnboundKey, CHACHA20_POLY1305};
+        use std::convert::TryInto;
+
+        let key = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
+        );
+        let nonce = RingAeadNonce::assume_unique_for_key(iv.try_into().unwrap());
+        let aad_ring = Aad::from(aad);
+        let mut ctxt = msg.to_vec();
+
+        key.seal_in_place_append_tag(nonce, aad_ring, &mut ctxt).unwrap();
+        Ok(ctxt)
+    } else {
+        match alg {
+            Mode::Chacha20Poly1305 => {
+                let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
+                .encrypt(iv.into(), Payload { msg: msg, aad: aad })
+                .map_err(|_| Error::Encrypting);
+                // dbg!(r.clone().map(|v| hex::encode(&v)));
+                r
+            }
+            _ => panic!("unsupported aead mode"),
+        }    
     }
 
     // check lengths
@@ -275,19 +294,35 @@ pub fn decrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
-    // dbg!(hex::encode(&k));
-    // dbg!(hex::encode(&iv));
-    // dbg!(hex::encode(&ctxt));
-    // dbg!(hex::encode(&aad));
-    match alg {
-        Mode::Chacha20Poly1305 => {
-            let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
-            .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
-            .map_err(|e| { dbg!(e); Error::Decrypting });
-            // dbg!(r.clone().map(|v| hex::encode(&v)));
-            r
-        },
-        _ => panic!("unsupported aead mode"),
+    dbg!(hex::encode(&k));
+    dbg!(hex::encode(&iv));
+    dbg!(hex::encode(&ctxt));
+    dbg!(hex::encode(&aad));
+    if USE_BORINGSSL {
+        use ring::aead::{Aad, LessSafeKey, Nonce as RingAeadNonce, UnboundKey, CHACHA20_POLY1305};
+        use std::convert::TryInto;
+
+        let key = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
+        );
+        let nonce = RingAeadNonce::assume_unique_for_key(iv.try_into().unwrap());
+        let aad_ring = Aad::from(aad);
+        let mut ptxt = ctxt.to_vec();
+
+        let ptxt = key.open_in_place(nonce, aad_ring, &mut ptxt).unwrap();
+        dbg!(hex::encode(&ptxt));
+        Ok(ptxt.to_vec())
+    } else {
+        match alg {
+            Mode::Chacha20Poly1305 => {
+                let r = ChaCha20Poly1305::new(GenericArray::from_slice(k))
+                .decrypt(iv.into(), Payload { msg: ctxt, aad: aad })
+                .map_err(|e| { dbg!(e); Error::Decrypting });
+                // dbg!(r.clone().map(|v| hex::encode(&v)));
+                r
+            },
+            _ => panic!("unsupported aead mode"),
+        }
     }
     // if ctxt.len() < tag_size(alg) {
     //     return Err(Error::InvalidTagSize);
