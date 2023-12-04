@@ -6,7 +6,7 @@ use vstd::prelude::*;
 use generic_array::*;
 
 
-const USE_BORINGSSL: bool = true;
+const USE_BORINGSSL: bool = false;
 
 
 verus! {

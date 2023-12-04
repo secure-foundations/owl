@@ -35,6 +35,15 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Clone for Sen
     }
 }
 
+#[cfg(test)]
+impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>>  SendJob<E, C, T, B> {
+    pub fn get_buffer(&self) -> Vec<u8> {
+        let job = &self.0;
+        let msg = job.buffer.lock();
+        msg.clone()
+    }
+}
+
 impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> SendJob<E, C, T, B> {
     pub fn new(
         buffer: Vec<u8>,
@@ -141,8 +150,6 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 // assert!(succeeded.is_some());
             },
             RouterDeviceType::OwlResponder => {
-                dbg!(hex::encode(msg.as_bytes()));
-                dbg!(msg.len());
                 let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
                     owl_S_resp: Arc::new(vec![]),
                     owl_E_resp: Arc::new(vec![]),
@@ -170,9 +177,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 // assert!(succeeded.is_some());
             },
         }
-
-
-
+        // dbg!(hex::encode(msg.as_bytes()));
         // mark ready
         self.0.ready.store(true, Ordering::Release);
     }

@@ -71,7 +71,7 @@ pub struct Peer<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
 /// A PeerHandle cannot be cloned (unlike the wrapped type).
 /// A PeerHandle dereferences to a Peer (meaning you can use it like a Peer struct)
 pub struct PeerHandle<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
-    peer: Peer<E, C, T, B>,
+    pub peer: Peer<E, C, T, B>,
 }
 
 impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Clone for Peer<E, C, T, B> {

@@ -35,6 +35,16 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Clone
     }
 }
 
+#[cfg(test)]
+impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ReceiveJob<E, C, T, B> {
+    pub fn get_buffer(&self) -> Vec<u8> {
+        let job = &self.0;
+        let msg = &job.buffer.lock().1;
+        msg.clone()
+    }
+}
+
+
 impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ReceiveJob<E, C, T, B> {
     pub fn new(
         buffer: Vec<u8>,
