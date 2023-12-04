@@ -625,6 +625,9 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
                  (_, nts) <- getKDFAnnInfo (unignore ann) x y z
                  assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
                  return $ Just (snd (nts !! j), Nothing)
+             ODHName p is x y i j -> do
+                 (_, _, _, (_, nt)) <- getODHNameInfo p is x y i j
+                 return $ Just (nt, Nothing)
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
@@ -660,14 +663,23 @@ getKDFAnnInfo ann a b c =
                       _ -> typeError $ "Expected KDF name, got " ++ show (owlpretty tb)
                   extractKDF kpos bnd a b c i 
               _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
-      KDF_IKMDH ne1 ne2 i -> do
-          nt1 <- getNameType ne1
-          nt2 <- getNameType ne2
-          typeError ("TODO: KDF well formedness")
-          extractODH nt1 nt2 a b c i 
 
-extractODH :: NameType -> NameType -> AExpr -> AExpr -> AExpr -> Int -> Check (Prop, [(KDFStrictness, NameType)])
-extractODH nt1 nt2 a b c i = typeError "unimp"
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check (NameExp, NameExp, Prop, (KDFStrictness, NameType))
+getODHNameInfo (PRes (PDot p s)) (is, ps) a c i j = do
+    mapM_ checkIdxSession is
+    mapM_ checkIdxPId ps
+    md <- openModule p
+    case lookup s (md^.odh) of
+      Nothing -> typeError $ "Unknown ODH handle: " ++ show s
+      Just bd -> do
+          ((ixs, pxs), bdy) <- unbind bd
+          assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
+          let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
+          (((sx, x), (sy, y)), cases) <- unbind kdfBody
+          assert ("Number of KDF case mismatch") $ i < length cases
+          let (p, cases') = subst x a $ subst y c $ cases !! i
+          assert ("KDF name row mismatch") $ j < length cases'
+          return (ne1, ne2, p, cases' !! j)
 
 extractKDF kpos bnd a b c i = do
     (((sx, x), (sy, y)), cases) <- unbind bnd 
@@ -945,8 +957,9 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
                 let i = case (unignore ann) of
                           KDF_SaltKey _ i -> i
                           KDF_IKMKey _ i -> i
-                          KDF_IKMDH _ _ i -> i
                 kdfNameAxioms ot (unignore ann) a b c i j
+            ODHName p ips a c i j -> do 
+                odhNameAxioms ot p ips a c i j
       (AEGetEncPK ne) -> do
           case ne^.val of
             NameConst ([], []) _ -> return ()
@@ -989,18 +1002,25 @@ splitConcats a =
 kdfNameAxioms :: Ty -> KDFAnn -> AExpr -> AExpr -> AExpr -> Int -> Int -> Check Ty
 kdfNameAxioms ot ann a b c i j = do
     (p, nts) <- getKDFAnnInfo ann a b c
-    let secrecy = case ann of
-                    KDF_SaltKey ne i -> pNot $ pFlow (nameLbl ne) advLbl
-                    KDF_IKMKey ne i -> pNot $ pFlow (nameLbl ne) advLbl
-                    KDF_IKMDH ne1 ne2 i -> pAnd (pNot $ pFlow (nameLbl ne1) advLbl)
-                                               (pNot $ pFlow (nameLbl ne2) advLbl)
+    secrecy <- case ann of
+                    KDF_SaltKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
+                    KDF_IKMKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
     assert ("KDF name index out of bounds") $ j < length nts                                         
     nk <- getNameKind (snd $ nts !! j)
     let validKDF = mkSpanned $ PValidKDF a b c i j nk
-    -- TODO: emit a length axiom as well
     return $ tRefined ot ".res" $ 
         pImpl (pAnd secrecy p) validKDF
 
+odhNameAxioms :: Ty -> Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check Ty
+odhNameAxioms ot p (is, ps) a c i j = do
+    (ne1, ne2, p, (str, nt)) <- getODHNameInfo p (is, ps) a c i j
+    let secrecy = pAnd (pNot $ pFlow (nameLbl ne1) advLbl) (pNot $ pFlow (nameLbl ne2) advLbl)
+    nk <- getNameKind nt
+    let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
+    let validKDF = mkSpanned $ PValidKDF a b c i j nk
+    return $ tRefined ot ".res" $ 
+        pImpl (pAnd secrecy p) validKDF
+    
 
 -- If the random oracle preimage is corrupt, then the RO is as well.
 -- N.B.: this list does _not_ have to be exhaustive. It is only used to
@@ -1289,6 +1309,10 @@ normalizeNameExp ne =
           y' <- normalizeAExpr y
           z' <- normalizeAExpr z
           return $ Spanned (ne^.spanOf) $ KDFName ann x' y' z' i
+      ODHName p ips a c i j -> do 
+          a' <- normalizeAExpr a
+          c' <- normalizeAExpr c
+          return $ Spanned (ne^.spanOf) $ ODHName p ips a' c' i j
 
 -- Traversing modules to collect global info
 

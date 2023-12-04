@@ -574,7 +574,13 @@ getSymName ne = do
           let i = case (unignore ann) of
                     KDF_SaltKey _ i -> i
                     KDF_IKMKey _ i -> i
-                    KDF_IKMDH _ _ i -> i
+          a' <- interpretAExp a
+          b' <- interpretAExp b
+          c' <- interpretAExp c
+          return $ SApp [SAtom "KDFName", a', b', c', SAtom (show i), SAtom (show j)]
+      ODHName p ixs a c i j -> do 
+          (ne1, ne2, _, _) <- liftCheck $ getODHNameInfo p ixs a c i j
+          let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
           a' <- interpretAExp a
           b' <- interpretAExp b
           c' <- interpretAExp c

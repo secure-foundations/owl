@@ -130,11 +130,11 @@ data KDFStrictness = KDFStrict | KDFUnstrict
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path 
     | KDFName (Ignore KDFAnn) AExpr AExpr AExpr Int
+    | ODHName Path ([Idx], [Idx]) AExpr AExpr Int Int
     deriving (Show, Generic, Typeable)
 
 data KDFAnn = KDF_SaltKey NameExp Int
               | KDF_IKMKey NameExp Int
-              | KDF_IKMDH NameExp NameExp Int
     deriving (Show, Generic, Typeable)
 
 type NameExp = Spanned NameExpX
@@ -430,7 +430,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-      CKDF (Maybe Int) (Maybe Int)
+      CKDF (Maybe (NameExp, Int)) (Maybe (Either (NameExp, Int) (String, ([Idx], [Idx]), Int)))
            Int 
         -- TODO: annotation for the name row
       | CLemma BuiltinLemma

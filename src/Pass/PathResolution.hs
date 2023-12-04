@@ -39,6 +39,7 @@ data PathType =
       | PTTy
       | PTNameType
       | PTFunc
+      | PTODH
       | PTLoc
       | PTDef
       | PTTbl
@@ -52,6 +53,7 @@ instance Show PathType where
     show PTTy = "type"
     show PTNameType = "nametype"
     show PTFunc = "function"
+    show PTODH = "odh"
     show PTLoc = "locality"
     show PTDef = "def"
     show PTTbl = "table"
@@ -69,6 +71,7 @@ data ResolveEnv = ResolveEnv {
     _namePaths :: T.Map String ResolvedPath,
     _tyPaths :: T.Map String ResolvedPath,
     _nameTypePaths :: T.Map String ResolvedPath,
+    _odhPaths :: T.Map String ResolvedPath,
     _funcPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
@@ -102,7 +105,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -244,7 +247,8 @@ resolveDecls (d:ds) =
                   return (str, nt')
               return (p', nts')
           let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
-          ds' <- resolveDecls ds
+          p <- view curPath
+          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
@@ -399,6 +403,12 @@ resolveNameExp ne =
             b' <- resolveAExpr b
             c' <- resolveAExpr c
             return $ Spanned (ne^.spanOf) $ KDFName (ignore ann') a' b' c' i
+        ODHName p ixs a c i j -> do
+            p' <- resolvePath (ignore def) PTODH p
+            a' <- resolveAExpr a
+            c' <- resolveAExpr c
+            return $ Spanned (ne^.spanOf) $ ODHName p' ixs a' c' i j
+         
 
 resolveKDFAnn :: KDFAnn -> Resolve KDFAnn
 resolveKDFAnn ann = 
@@ -409,10 +419,6 @@ resolveKDFAnn ann =
       KDF_IKMKey ne i -> do
           ne' <- resolveNameExp ne
           return $ KDF_IKMKey ne' i
-      KDF_IKMDH ne ne2 i -> do
-          ne' <- resolveNameExp ne
-          ne2' <- resolveNameExp ne2
-          return $ KDF_IKMDH ne' ne2' i
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -456,6 +462,7 @@ resolvePath' pos pt p =
                       PTName -> view namePaths
                       PTTy -> view tyPaths
                       PTNameType -> view nameTypePaths
+                      PTODH -> view odhPaths
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
                       PTPredicate -> view predPaths
@@ -554,7 +561,16 @@ resolveCryptOp pos cop =
           l' <- resolveLemma pos l
           return $ CLemma l'
       CKDF x y i -> do
-          return $ CKDF x y i
+          x' <- traverse (\(ne, i) -> do
+              ne' <- resolveNameExp ne
+              return (ne', i)) x
+          y' <- traverse (\e ->
+              case e of
+                Left (ne, i) -> do
+                  ne' <- resolveNameExp ne
+                  return $ Left (ne', i)
+                Right j -> return $ Right j) y
+          return $ CKDF x' y' i
       CAEnc -> return CAEnc
       CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p

@@ -115,6 +115,24 @@ parseNameExp =
         return $ KDFName (ignore ann) a (Spanned (n^.spanOf) $ AEGet n) b (read j))
     <|>
     (parseSpanned $ do
+        reserved "ODHName"
+        symbol "<"
+        p <- parsePath
+        ps <- parseIdxParams
+        symbol ";"
+        i <- many1 digit
+        symbol ">"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        c <- parseAExpr
+        symbol ")"
+        symbol "["
+        j <- many1 digit
+        symbol "]"
+        return $ ODHName p ps a c (read i) (read j))
+    <|>
+    (parseSpanned $ do
         i <- parsePath
         ps <- parseIdxParams 
         return $ NameConst ps i) 
@@ -793,6 +811,24 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
+        reserved "odh"
+        n <- identifier
+        ps <- parseIdxParamBinds
+        symbol ":"
+        ne1 <- parseNameExp
+        symbol ","
+        ne2 <- parseNameExp
+        symbol "->"
+        symbol "{"
+        x <- identifier
+        y <- identifier
+        symbol "."
+        kdfCases <- many1 kdfCase
+        symbol "}"
+        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y)) kdfCases))
+    )
+    <|>
+    (parseSpanned $ do
         reserved "nametype"
         n <- identifier
         ps <- parseIdxParamBinds
@@ -1410,50 +1446,34 @@ parseROHint = do
                Just v -> v
     return (p, inds, xs)
 
--- Only used for kdf call
-parseKDFAnn :: Parser KDFAnn
-parseKDFAnn = 
-    (do
-        reserved "salt"
-        n <- parseNameExp
-        symbol "["
-        i <- many1 digit
-        symbol "]"
-        return $ KDF_SaltKey n (read i)
-    )
-    <|>
-    (do
-        reserved "ikm"
-        n <- parseNameExp
-        symbol "["
-        i <- many1 digit
-        symbol "]"
-        return $ KDF_IKMKey n (read i)
-    )
-    <|>
-    (do
-        reserved "ikmdh"
-        n <- parseNameExp
-        symbol ","
-        n2 <- parseNameExp
-        symbol "["
-        i <- many1 digit
-        symbol "]"
-        return $ KDF_IKMDH n n2 (read i)
-    )
-
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
     (do
         reserved "kdf"
         symbol "<"
         oann1 <- optionMaybe $ do
+            ne <- parseNameExp
+            symbol "["
             i <- many1 digit
-            return $ read i
+            symbol "]"
+            return $ (ne, read i)
         symbol ";"
         oann2 <- optionMaybe $ do
-            i <- many1 digit
-            return $ read i
+            (do
+                reserved "odh"
+                s <- identifier
+                p <- parseIdxParams
+                symbol "["
+                i <- many1 digit
+                symbol "]"
+                return $ Right (s, p, read i))
+            <|>
+            (do
+                ne <- parseNameExp
+                symbol "["
+                i <- many1 digit
+                symbol "]"
+                return $ Left (ne, read i))
         symbol ";"
         j <- many1 digit
         symbol ">"

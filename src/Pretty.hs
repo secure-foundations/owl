@@ -62,6 +62,9 @@ instance  OwlPretty NameExpX where
             owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ", " <> owlpretty i <> owlpretty ">"
     owlpretty (NameConst vs n) = 
         owlpretty n <> owlprettyIdxParams vs 
+    owlpretty (ODHName p ips a c i j) = 
+        owlpretty "ODHName<" <> owlpretty p <> owlprettyIdxParams ips <> owlpretty ";" <> owlpretty i <> owlpretty ">"
+            <> tupled [owlpretty a, owlpretty c] <> owlpretty "[" <> owlpretty j <> owlpretty "]"
                                                      
 owlprettyBind :: (Alpha a, Alpha b, OwlPretty a, OwlPretty b) => Bind b a -> (OwlDoc, OwlDoc)
 owlprettyBind b = 

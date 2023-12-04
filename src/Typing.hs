@@ -886,6 +886,21 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
+notInODH :: AExpr -> AExpr -> Check Bool
+notInODH pk sk = do
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    cur_odh <- view $ curMod . odh
+    bs <- forM cur_odh $ \(_, bnd2) -> do
+            ((is, ps), ((ne1, ne2, _))) <- unbind bnd2
+            local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
+                local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
+                    let pdisj = pNot $ pEq (dhCombine pk sk) (dhCombine (dhpk $ mkSpanned $ AEGet ne1)  
+                                                                        (mkSpanned $ AEGet ne2))
+                    (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+                    return b
+    return $ and bs
+
 ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
 ensureODHDisjoint b = do
     cur_odh <- view $ curMod . odh
@@ -896,8 +911,11 @@ ensureODHDisjoint b = do
                     ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
                     local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is2) $ do 
                         local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do 
-                            let pdisj = pOr (pNot $ pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
-                                            (pNot $ pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+                            let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+                            let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
+                            let pdisj = pNot $ pOr peq1 peq2
                             (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
                             assert ("ODH Disjointness") b
 
@@ -1348,7 +1366,27 @@ stripNameExp :: DataVar -> NameExp -> Check NameExp
 stripNameExp x e = 
     case e^.val of
       NameConst _ _ -> return e 
-      -- TODO: kdf
+      KDFName ann a b c i -> do 
+          a' <- resolveANF a
+          b' <- resolveANF b
+          c' <- resolveANF c
+          ann' <- case (unignore ann) of 
+                      KDF_SaltKey ne i -> do
+                          ne' <- stripNameExp x ne
+                          return $ KDF_SaltKey ne' i
+                      KDF_IKMKey ne i -> do
+                          ne' <- stripNameExp x ne
+                          return $ KDF_IKMKey ne' i
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c') then do 
+             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else return (Spanned (e^.spanOf) $ KDFName (ignore ann') a' b' c' i)
+      ODHName p ps a c i j -> do 
+          a' <- resolveANF a
+          c' <- resolveANF c
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars c') then do 
+             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else return (Spanned (e^.spanOf) $ ODHName p ps a' c' i j)
+
       
 stripLabel :: DataVar -> Label -> Check Label
 stripLabel x l = return l
@@ -2119,18 +2157,16 @@ data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp
 instance Alpha KDFInferResult
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
-            Int -> Int -> Check (Maybe KDFInferResult)
-inferKDF kpos a b c i j = do
+            NameExp -> Int -> Int -> Check (Maybe KDFInferResult)
+inferKDF kpos a b c ne i j = do
     let (principal, other) = case kpos of
                               KDF_SaltPos -> (a, b)
                               KDF_IKMPos -> (b, a)
-    case extractNameFromType (snd principal) of 
-      Nothing -> 
-          case kpos of
-            KDF_SaltPos -> return Nothing   
-            KDF_IKMPos -> return Nothing -- TODO: this is where we try DH
-      Just na -> do 
-          nt <- getNameType na
+    wf <- isSubtype (snd principal) (tName ne)
+    case wf of
+      False -> return Nothing
+      True -> do 
+          nt <- getNameType ne
           case nt^.val of
             NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
                 (((sx, x), (sy, y)), cases_) <- unbind bcases
@@ -2140,14 +2176,61 @@ inferKDF kpos a b c i j = do
                 assert "KDF row index out of bounds" $ j < length nts                    
                 let (str, _) = nts !! j
                 bp <- decideProp p
-                b2 <- not <$> flowsTo (nameLbl na) advLbl
+                b2 <- not <$> flowsTo (nameLbl ne) advLbl
                 let ann = case kpos of
-                            KDF_SaltPos -> KDF_SaltKey na i
-                            KDF_IKMPos -> KDF_IKMKey na i
+                            KDF_SaltPos -> KDF_SaltKey ne i
+                            KDF_IKMPos -> KDF_IKMKey ne i
                 if b2 && (bp == Just True) then 
                             return $ Just $ KDFGood str $ 
                                 mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
                             else return Nothing
+
+inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> Int -> Int -> Check (Maybe KDFInferResult) 
+inferKDFODH a (b, tb) c s ips i j = do
+    pth <- curModName
+    (ne1, ne2, p, (str, nt)) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    res <- do
+        let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
+        beq <- decideProp $ pEq b real_ss
+        case beq of 
+          Just True -> do
+              b2 <- decideProp p
+              b3 <- flowsTo (nameLbl ne1) advLbl
+              b4 <- flowsTo (nameLbl ne2) advLbl
+              case (b2, b3 && b4)  of
+                (Just True, False) -> do
+                    let ne = mkSpanned $ ODHName (PRes (PDot pth s)) ips (fst a) (fst c) i j
+                    return $ Just $ KDFGood str ne
+                _ -> return Nothing
+          _ -> return Nothing
+    case res of
+        Just v -> return $ Just v
+        Nothing -> do
+            b' <- resolveANF b
+            case b'^.val of
+              AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
+                  tx <- inferAExpr x
+                  xpub <- tyFlowsTo tx advLbl
+                  xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
+                  ty <- inferAExpr y
+                  case extractNameFromType ty of
+                    Just ny -> do
+                        ny_local <- nameExpIsLocal ny
+                        nty <- getNameType ny
+                        case nty^.val of
+                          NT_DH -> 
+                              if (xwf == Just True) then do
+                                     b <- notInODH x y
+                                     b2 <- not <$> flowsTo (nameLbl ny) advLbl
+                                     b3 <- tyFlowsTo (snd a) advLbl
+                                     if b && b2 && b3 then return (Just KDFAdv) else return Nothing
+                              else return Nothing
+                          _ -> return Nothing
+                    _ -> return Nothing
+              _ -> return Nothing
+
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2206,15 +2289,17 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                         pub <- tyFlowsTo (snd a) advLbl
                         assert ("First argument to KDF must flow to adv without annotation") pub
                         return Nothing
-                    Just i -> 
-                        local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c i j
+                    Just (ne, i) -> 
+                        local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c ne i j
           res2 <- case oann2 of
                     Nothing -> do
                         pub <- tyFlowsTo (snd b) advLbl
                         assert ("Second argument to KDF must flow to adv without annotation") pub
                         return Nothing
-                    Just i -> 
-                        local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c i j
+                    Just (Left (ne, i)) -> -- Regular PSK
+                        local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c ne i j
+                    Just (Right (s, ps, i)) -> -- ODH
+                        local (set tcScope TcGhost) $ inferKDFODH a b c s ps i j
           res <- case (res1, res2) of
                    (Nothing, Just v) -> return $ Just v
                    (Just v, Nothing) -> return $ Just v
