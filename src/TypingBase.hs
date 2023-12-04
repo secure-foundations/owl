@@ -647,8 +647,10 @@ getKDFAnnInfo ann a b c =
                 assert ("KDF position wrong somehow") $ kpos == KDF_SaltPos
                 ta <- inferAExpr a 
                 case (stripRefinements ta)^.val of
-                  TName ne2 -> assert ("KDF name not well-formed; first argument (" ++ show (owlpretty ne2) ++ ") must equal the name " ++ show (owlpretty ne)) $ 
-                      ne2 `aeq` ne
+                  TName ne2 -> do
+                      ne2' <- normalizeNameExp ne2
+                      assert ("KDF name not well-formed; first argument (" ++ show (owlpretty ne2) ++ ") must equal the name " ++ show (owlpretty ne)) $ 
+                          ne2' `aeq` ne
                 extractKDF kpos bnd a b c i
             _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
       KDF_IKMKey ne i ->  do 
@@ -658,8 +660,10 @@ getKDFAnnInfo ann a b c =
                   assert ("KDF position wrong somehow") $ kpos == KDF_IKMPos
                   tb <- inferAExpr b 
                   case (stripRefinements tb)^.val of
-                      TName ne2 -> assert ("KDF name not well-formed; second argument must be the name") $ 
-                          ne2 `aeq` ne
+                      TName ne2 -> do
+                          ne2' <- normalizeNameExp ne2
+                          assert ("KDF name not well-formed; second argument must be the name") $ 
+                              ne2' `aeq` ne
                       _ -> typeError $ "Expected KDF name, got " ++ show (owlpretty tb)
                   extractKDF kpos bnd a b c i 
               _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
@@ -1305,13 +1309,13 @@ normalizeNameExp ne =
     case ne^.val of
       NameConst ips p -> return ne 
       KDFName ann x y z i -> do
-          x' <- normalizeAExpr x
-          y' <- normalizeAExpr y
-          z' <- normalizeAExpr z
+          x' <- resolveANF x >>= normalizeAExpr 
+          y' <- resolveANF y >>= normalizeAExpr
+          z' <- resolveANF z >>= normalizeAExpr 
           return $ Spanned (ne^.spanOf) $ KDFName ann x' y' z' i
       ODHName p ips a c i j -> do 
-          a' <- normalizeAExpr a
-          c' <- normalizeAExpr c
+          a' <- resolveANF a >>= normalizeAExpr 
+          c' <- resolveANF c >>= normalizeAExpr 
           return $ Spanned (ne^.spanOf) $ ODHName p ips a' c' i j
 
 -- Traversing modules to collect global info

@@ -25,8 +25,8 @@ def main() @ alice : Unit =
     corr_case psk1 in 
     corr_case psk2 in 
     corr_case psk3 in 
-    let ck1 = kdf<0;0;0>(get(psk1), get(psk2), 0x) in
-    let k = kdf<0;0;0>(ck1, get(psk3), 0x) in
+    let ck1 = kdf<psk1[0];psk2[0];0>(get(psk1), get(psk2), 0x) in
+    let k = kdf<KDF<psk1;0>(get(psk2), 0x)[0][0];psk3[0];0>(ck1, get(psk3), 0x) in
     let c = aenc(k, get(d)) in 
     output c
     
