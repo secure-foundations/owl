@@ -2164,32 +2164,32 @@ impl<O> cfg_Initiator<O> {
                 let owl__x88 = arc_clone(&temp_owl__x88);
                 // let temp_owl__x90 = { arc_clone(&owl__x68) };
                 // let owl__x90 = arc_clone(&temp_owl__x90);
-                let temp_owl__x92 = {
-                owl_transp {
-                    owl__transp_tag: clone_vec_u8(&*arc_clone(&owl__x84)),
-                    owl__transp_receiver: clone_vec_u8(&*arc_clone(&owl__x86)),
-                    owl__transp_counter: clone_vec_u8(&*arc_clone(&owl__x88)),
-                    owl__transp_packet: buf[16..].to_vec(),
-                }
-                };
-                let owl__x92 = temp_owl__x92;
-                let temp_owl__x93 = { owl__x92 };
-                let owl__x93 = temp_owl__x93;
-                let temp_owl__x97 = { owl__x93 };
-                let owl__x97 = temp_owl__x97;
-                // buf[0..4].copy_from_slice(&*arc_clone(&owl__x84));
-                // buf[4..8].copy_from_slice(&*arc_clone(&owl__x86));
-                // buf[8..16].copy_from_slice(&*arc_clone(&owl__x88));                
-                let temp_owl__x98 = {
-                owl_output::<(Option<()>, state_Initiator)>(
-                    Tracked(&mut itree),
-                    vec_as_slice(&(serialize_owl_transp(&owl__x97))),
-                    &Responder_addr(),
-                    &Initiator_addr(),
-                    buf
-                )
-                };
-                let owl__x98 = temp_owl__x98;
+                // let temp_owl__x92 = {
+                // owl_transp {
+                //     owl__transp_tag: clone_vec_u8(&*arc_clone(&owl__x84)),
+                //     owl__transp_receiver: clone_vec_u8(&*arc_clone(&owl__x86)),
+                //     owl__transp_counter: clone_vec_u8(&*arc_clone(&owl__x88)),
+                //     owl__transp_packet: buf[16..].to_vec(),
+                // }
+                // };
+                // let owl__x92 = temp_owl__x92;
+                // let temp_owl__x93 = { owl__x92 };
+                // let owl__x93 = temp_owl__x93;
+                // let temp_owl__x97 = { owl__x93 };
+                // let owl__x97 = temp_owl__x97;
+                buf[0..4].copy_from_slice(&*arc_clone(&owl__x84));
+                buf[4..8].copy_from_slice(&*arc_clone(&owl__x86));
+                buf[8..16].copy_from_slice(&*arc_clone(&owl__x88));                
+                // let temp_owl__x98 = {
+                // owl_output::<(Option<()>, state_Initiator)>(
+                //     Tracked(&mut itree),
+                //     vec_as_slice(&(serialize_owl_transp(&owl__x97))),
+                //     &Responder_addr(),
+                //     &Initiator_addr(),
+                //     buf
+                // )
+                // };
+                // let owl__x98 = temp_owl__x98;
                 let temp_owl__x101 = { () };
                 let owl__x101 = temp_owl__x101;
                 let temp_owl__x102 = { Some(owl__x101) };

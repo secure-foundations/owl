@@ -695,10 +695,10 @@ fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
 
 
 #[cfg(test)]
-fn bench_send_recv(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType) {
+fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: RouterDeviceType, do_routines: bool) {
     use std::sync::atomic::AtomicBool;
 
-    use crate::wireguard::router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay};
+    use crate::wireguard::{router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay}, owl_wg::owl_wireguard};
 
     const NUM_PACKETS: usize = 1000;
 
@@ -710,21 +710,79 @@ fn bench_send_recv(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType) {
     let mut confirm_packet_size = SIZE_KEEPALIVE;
 
     // create device
-    let (_fake, _reader, tun_writer, _mtu) = dummy::TunTest::create(false);
-    let router: Device<_, TestCallbacks, dummy::TunWriter, dummy::VoidBind> =
-        Device::new(num_cpus::get_physical(), tun_writer, dev1_type);
+    let ((bind_reader1, bind_writer1), (bind_reader2, bind_writer2)) =
+    dummy::PairBind::pair();
 
-    // add peer to router
-    let opaque = Opaque::new();
-    let peer = router.new_peer(opaque.clone());
-    peer.add_keypair(dummy_keypair(true));
+    // create matching device
+    let (_fake, _, tun_writer1, _) = dummy::TunTest::create(false);
+    let (_fake, _, tun_writer2, _) = dummy::TunTest::create(false);
 
-    // add subnet to peer
-    let (mask, len, dst) = ("192.168.1.0", 24, "192.168.1.20");
-    let mask: IpAddr = mask.parse().unwrap();
-    peer.add_allowed_ip(mask, len);
+    let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, dev1_type);
+    router1.set_outbound_writer(bind_writer1);
+
+    let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, dev2_type);
+    router2.set_outbound_writer(bind_writer2);
+
+    let p1 = ("192.168.1.0", 24, "192.168.1.20");
+    let p2 = ("172.133.133.133", 32, "172.133.133.133");
+
+    // prepare opaque values for tracing callbacks
+
+    let opaque1 = Opaque::new();
+    let opaque2 = Opaque::new();
+
+    // create peers with matching keypairs and assign subnets
+
+    let peer1 = router1.new_peer(opaque1.clone());
+    let peer2 = router2.new_peer(opaque2.clone());
+
+    {
+        let (mask, len, _ip) = p1;
+        let mask: IpAddr = mask.parse().unwrap();
+        peer1.add_allowed_ip(mask, len);
+        peer1.add_keypair(dummy_keypair(false));
+    }
+
+    {
+        let (mask, len, _ip) = p2;
+        let mask: IpAddr = mask.parse().unwrap();
+        peer2.add_allowed_ip(mask, len);
+        peer2.set_endpoint(dummy::UnitEndpoint::new());
+    }
+
+    // add a keypair
+    assert_eq!(peer1.get_endpoint(), None, "no endpoint has yet been set");
+    peer2.add_keypair(dummy_keypair(true));
+
+    // this should cause a key-confirmation packet (keepalive or staged packet)
+    assert_eq!(
+        opaque2.send.wait(TIMEOUT),
+        Some((confirm_packet_size, true)),
+        "expected successful transmission of a confirmation packet"
+    );
+
+    // no other events should fire
+    no_events!(opaque1);
+    no_events!(opaque2);
+
+    // read confirming message received by the other end ("across the internet")
+    let mut buf = vec![0u8; SIZE_MSG * 2];
+    let (len, from) = bind_reader1.read(&mut buf).unwrap();
+    buf.truncate(len);
+
+    assert_eq!(
+        len, confirm_packet_size,
+        "unexpected size of confirmation message"
+    );
+
+    // pass to the router for processing
+    router1
+        .recv(from, buf)
+        .expect("failed to receive confirmation message");
 
     // create "IP packet"
+    let (dst,_,_) = p1;
+    let (src,_,_) = p2;
     let dst = dst.parse().unwrap();
     let src = match dst {
         IpAddr::V4(_) => "127.0.0.1".parse().unwrap(),
@@ -739,49 +797,84 @@ fn bench_send_recv(dev1_type: RouterDeviceType, dev2_type: RouterDeviceType) {
 
     let keypair = Arc::new(dummy_keypair(false));
 
-    let mut counter: u64 = 0;
 
-    let packet: Vec<u8> = make_packet(BYTES_PER_PACKET, src, dst, 0);
-    let mut msg = pad(&packet);
-    msg.reserve(16);
+    b.iter(|| {
+        for i in 0..1000 {
+            let mut counter: u64 = 0;
 
-    dbg!(hex::encode(&msg));
+            let packet: Vec<u8> = make_packet(BYTES_PER_PACKET, src, dst, 0);
+            let mut msg = pad(&packet);
+            msg.reserve(16);
+    
+            // dbg!(hex::encode(&msg));
+    
+            let send_job = super::super::send::SendJob::new(
+                msg,
+                counter,
+                Arc::clone(&keypair),
+                peer1.peer.clone(),
+                dev1_type
+            );
+            
+            if do_routines { 
+                send_job.parallel_work();
+            } else {
+                let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
+                    owl_S_init: Arc::new(vec![]),
+                    owl_E_init: Arc::new(vec![]),
+                    pk_owl_S_resp: Arc::new(vec![]),
+                    pk_owl_S_init: Arc::new(vec![]),
+                    pk_owl_E_resp: Arc::new(vec![]),
+                    pk_owl_E_init: Arc::new(vec![]),
+                    salt: Arc::new(vec![]),
+                    device: None
+                };
+                let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+                // state.owl_N_init_send = job.counter as usize;
 
-    let send_job = super::super::send::SendJob::new(
-        msg,
-        counter,
-        Arc::clone(&keypair),
-        peer.peer.clone(),
-        dev1_type
-    );
+                let mut transp_keys = owl_wireguard::owl_transp_keys {
+                    owl__transp_keys_initiator: vec![],
+                    owl__transp_keys_responder: vec![],
+                    owl__transp_keys_T_init_send: vec![],
+                    owl__transp_keys_T_resp_send: vec![],
+                };
+            }
 
-
-    send_job.parallel_work();
-
-    let new_msg = send_job.get_buffer();
-    dbg!(hex::encode(&new_msg));
-
-    let decryption_state = DecryptionState {
-        keypair: Arc::clone(&keypair),
-        confirmed: AtomicBool::new(true),
-        protector: spin::Mutex::new(AntiReplay::new()),
-        peer: peer.peer.clone(),
-    };
-
-    let recv_job = super::super::receive::ReceiveJob::new(
-        new_msg,
-        Arc::new(decryption_state),
-        dummy::UnitEndpoint {},
-        dev1_type
-    );
-
-    recv_job.parallel_work();
-
-    let new_new_msg = recv_job.get_buffer();
-    dbg!(hex::encode(&new_new_msg));
+            let new_msg = send_job.get_buffer();
+    
+            let decryption_state = DecryptionState {
+                keypair: Arc::new(dummy_keypair(true)),
+                confirmed: AtomicBool::new(true),
+                protector: spin::Mutex::new(AntiReplay::new()),
+                peer: peer2.peer.clone(),
+            };
+    
+            let recv_job = super::super::receive::ReceiveJob::new(
+                new_msg,
+                Arc::new(decryption_state),
+                dummy::UnitEndpoint {},
+                dev2_type
+            );
+        
+            if do_routines { 
+                recv_job.parallel_work();
+            }
+        }
+    });
 }
 
-#[test]
-fn test_bench_send_recv() {
-    bench_send_recv(RouterDeviceType::NoOwl, RouterDeviceType::NoOwl)
+#[bench]
+fn bench_send_recv_no_owl(b: &mut Bencher) {
+    bench_send_recv(b, RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, true)
+}
+
+#[bench]
+fn bench_send_recv_owl(b: &mut Bencher) {
+    bench_send_recv(b, RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder, true)
+}
+
+
+#[bench]
+fn bench_send_recv_baseline(b: &mut Bencher) {
+    bench_send_recv(b, RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, false)
 }
