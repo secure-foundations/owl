@@ -705,7 +705,7 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
     const MAX_SIZE_BODY: usize = 1 << 15;
 
     // inner payload of IPv4 packet is 1440 bytes
-    const BYTES_PER_PACKET: usize = 1440;
+    const BYTES_PER_PACKET: usize = 100;
 
     let mut confirm_packet_size = SIZE_KEEPALIVE;
 
