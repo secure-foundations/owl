@@ -267,6 +267,7 @@ instance  OwlPretty CryptOp where
     owlpretty CMacVrfy = owlpretty "mac_vrfy"
     owlpretty CSign = owlpretty "sign"
     owlpretty CSigVrfy = owlpretty "vrfy"
+    owlpretty (CKDF _ _ _ _) = owlpretty "kdf"
     owlpretty (CEncStAEAD p (idx1, idx2)) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
     owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
 

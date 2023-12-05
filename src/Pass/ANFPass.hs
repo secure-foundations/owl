@@ -86,6 +86,11 @@ anf e =
       EOutput a oe -> do
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
+      ELet (Spanned sp (ERet a)) tyann Nothing s xk -> do 
+          (x, k) <- unbind xk
+          a' <- anfAExpr a
+          elet a' tyann (Just a) (Just s) $ \y -> 
+              anf $ subst x (aevar (a^.spanOf) y) k
       ELet e1 tyann Nothing s xk -> do
               (x, k) <- unbind xk
               e' <- anf e1

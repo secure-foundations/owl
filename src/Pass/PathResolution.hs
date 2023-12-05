@@ -269,6 +269,12 @@ resolveDecls (d:ds) =
           let d' = Spanned (d^.spanOf) $ DeclCorr $ bind is (l1', l2')
           ds' <- resolveDecls ds
           return (d' : ds')
+      DeclCorrGroup ils -> do
+          (is, ls) <- unbind ils
+          ls' <- mapM resolveLabel ls
+          let d' = Spanned (d^.spanOf) $ DeclCorrGroup $ bind is ls'
+          ds' <- resolveDecls ds
+          return (d' : ds')
       DeclLocality s dc -> do
           dc' <- case dc of
                   Left i -> return $ Left i
@@ -560,17 +566,7 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF x y i -> do
-          x' <- traverse (\(ne, i) -> do
-              ne' <- resolveNameExp ne
-              return (ne', i)) x
-          y' <- traverse (\e ->
-              case e of
-                Left (ne, i) -> do
-                  ne' <- resolveNameExp ne
-                  return $ Left (ne', i)
-                Right j -> return $ Right j) y
-          return $ CKDF x' y' i
+      CKDF x y nks i -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is -> do
           p' <- resolvePath pos PTCounter p

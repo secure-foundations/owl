@@ -46,23 +46,23 @@ enum signed_by_PFA {
 }
 
 name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
-corr [skPFA] ==> [a]
+corr_group [a], [skPFA]
 // name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
 name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
-corr [skPDIS] ==> [b]
-corr [skPDIS] ==> [b1]
+corr_group [skPDIS], [b], [b1]
+
 name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
-corr [skSDIS] ==> [c]
+corr_group [skSDIS], [c]
 
-name l1 : RO 0x01 ++ dh_combine(dhpk(get(b)), get(a)) -> enckey sign_request_response
-name l1_corr : RO[x] 0x01 ++ x -> enckey (x:Data<adv>{false})
-    requires (x != dh_combine(dhpk(get(b)), get(a)))
-name l2 : RO 0x02 ++ dh_combine(dhpk(get(b1)), get(c)) -> enckey Data<adv> 
-name l2_corr : RO[x] 0x02 ++ x -> enckey (x:Data<adv>{false})
-    requires (x != dh_combine(dhpk(get(b1)), get(c)))
+odh l1:
+    b, a -> {salt info.
+        (info == 0x01) -> enckey sign_request_response
+    }
 
-corr [x] (adv) ==> [l2_corr[x;0]]
-corr [x] (adv) ==> [l1_corr[x;0]]
+odh l2:
+    b1, c -> {salt info.
+        (info == 0x02) -> enckey Data<adv>
+    }
 
 struct PFA_msg {
     _pfa1: dhpk(a),
@@ -84,10 +84,10 @@ struct SDIS_msg {
     _sdis2: Data<adv> ||signature||
 }
 
-def PFA_FW (k11: if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PFA
+def PFA_FW (k11: if sec(skPDIS) then Name(ODHName<l1;0>(0x, 0x01)[0]) else Data<adv>) @ PFA
 : Unit =
     pcase (sec(a) /\ sec(b)) in 
-    corr_case l1 in 
+    corr_case ODHName<l1;0>(0x, 0x01)[0] in 
     input inp in // from PDIS (actual non-KE)
     case adec(k11, inp) {
         | None => ()
@@ -103,7 +103,9 @@ def PFA_FW (k11: if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PFA
     }
     
 
-def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
+    
+
+def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(ODHName<l1;0>(0x, 0x01)[0]) else Data<adv>) @ PDIS
 : Unit =
     pcase (sec(a) /\ sec(b)) in 
     let g_pow_b1 = dhpk(get(b1)) in
@@ -117,33 +119,39 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(l1) else Data<adv>) @ PDIS
     case vrfy(vkSDIS, sdis1, sdis2) {
         | None => ()
         | Some g_pow_c =>
-            let ss  = dh_combine(g_pow_c, get(b1)) in
-            pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
-            let k = hash<l2, l2_corr[ss]>(0x02 ++ ss) in 
-            
-            // request PFA to sign
-            let request = _req(1) in // TODO: 1 is the hash
-            let enc_request = aenc(k11, request) in
-            let _ = output enc_request to endpoint(PFA) in
+            if !is_group_elem(g_pow_c) then () else {
+                let ss  = dh_combine(g_pow_c, get(b1)) in
+                pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
+                corr_case b1 in 
+                corr_case c in
+                let k = kdf<; odh l2[0]; enckey; 0>(0x, ss, 0x02) in
+                
+                // request PFA to sign
+                let request = _req(1) in // TODO: 1 is the hash
+                let enc_request = aenc(k11, request) in
+                let _ = output enc_request to endpoint(PFA) in
 
-            // get its input
-            input inp2 in
-            corr_case l1 in
-            case adec(k11, inp2) {
-                | None => ()
-                | Some m' =>
-                    case m' as sign_request_response {
-                        | _req _ => ()
-                        | _res h2 =>
-                            // enc that with k and send to SDIS
-                            let msg_to_send_SDIS = aenc(k, h2) in // _m2(r) == "sign answer"
-                            let _ = output msg_to_send_SDIS to endpoint(SDIS) in
-                            ()
-                        otherwise => ()
-                    }
+                // get its input
+                input inp2 in
+                corr_case ODHName<l1;0>(0x, 0x01)[0] in
+                case adec(k11, inp2) {
+                    | None => ()
+                    | Some m' =>
+                        case m' as sign_request_response {
+                            | _req _ => ()
+                            | _res h2 =>
+                                // enc that with k and send to SDIS
+                                let msg_to_send_SDIS = aenc(k, h2) in // _m2(r) == "sign answer"
+                                let _ = output msg_to_send_SDIS to endpoint(SDIS) in
+                                ()
+                            otherwise => ()
+                        }
+                }                
             }                
+                
     }                
     otherwise ()
+
 
 def SDIS_actual () @ SDIS
 : Unit =
@@ -161,17 +169,23 @@ def SDIS_actual () @ SDIS
             case m as dhpk_b {
                 | _comm_with_pfa _ => ()
                 | _comm_with_sdis g_pow_b1 =>
-                    let ss   = dh_combine(g_pow_b1, get(c)) in
-                    pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
-                    let k    = hash<l2, l2_corr[ss]>(0x02 ++ ss) in
-                    
-                    input inp2 in
-                    corr_case l2 in
-                    case adec(k, inp2) {
-                        | None => ()
-                        | Some m'' =>
-                            // m'' is the signature which was forwarded using the agent from the client
-                            ()
+                    if !is_group_elem(g_pow_b1) then ()
+                    else {
+                        let ss   = dh_combine(g_pow_b1, get(c)) in
+                        pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
+                        corr_case c in 
+                        corr_case b1 in 
+                        let k    = kdf<;odh l2[0];enckey;0>(0x, ss, 0x02) in 
+                        
+                        input inp2 in
+                        corr_case ODHName<l2;0>(0x, 0x02)[0] in
+                        case adec(k, inp2) as Option (Data<adv>)  {
+                            | None => ()
+                            | Some m'' =>
+                                // m'' is the signature which was forwarded using the agent from the client
+                                ()
+                            otherwise => ()
+                        }
                     }
                 otherwise => ()
             }
@@ -197,14 +211,46 @@ def PFA_KE () @ PFA
             | _comm_with_pfa g_pow_b =>
                 corr_case a in 
                 corr_case b in 
-                let ss     = dh_combine(g_pow_b, get(a)) in
-                pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
-                let k11    = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
-                call PFA_FW (k11)
+                if !is_group_elem(g_pow_b) then () else {
+                    let ss     = dh_combine(g_pow_b, get(a)) in
+                    pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                    let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
+                    debug "=====";
+                    debug "=====";
+                    debug "=====";
+                    debug printTyContext;
+                    /*
+                    corr(skPDIS, a, b)
+                    k11 : adv
+
+                    corr(skPDIS, b) sec(a)
+                    good dh
+                    k11 : odh
+
+                    corr(skPDIS, b) sec(a)
+                    bad dh
+                    k11 : adv
+
+                    corr(a), sec(skPDIS, b)
+                    good dh
+                    k11 : odh
+
+                    sec(all)
+                    k11 : odh
+                    */
+
+                    // sec(skPDIS) ==> k11 : odh 
+                    // corr(skPDIS) ==> sec(a) \/ sec(b) ==> good
+                    //  dh => k11 : odh               
+
+                    ()
+                    // call PFA_FW (k11)
+                }
             otherwise => ()
             }
     }
     otherwise ()
+
 
 
 def PDIS_KE () @ PDIS
@@ -225,11 +271,13 @@ def PDIS_KE () @ PDIS
                 | _signed_by_PFA_g_pow_a g_pow_a =>
                     corr_case a in
                     corr_case b in
-                    let ss   = dh_combine(g_pow_a, get(b)) in
-                    pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
-                    let k11  = hash<l1, l1_corr[ss]>(0x01 ++ ss) in
-                    let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
-                    call PDIS_actual(k11)
+                    if !is_group_elem(g_pow_a) then () else {
+                        let ss   = dh_combine(g_pow_a, get(b)) in
+                        pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                        let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
+                        let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
+                        call PDIS_actual(k11)
+                    }
                 otherwise => ()
             }
     }

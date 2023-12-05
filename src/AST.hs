@@ -319,6 +319,10 @@ data ModuleExpX =
 
 type ModuleExp = Spanned ModuleExpX
 
+//data DepBind a = DPDone a | DPVar Ty (Bind DataVar (DepBind a))
+//    deriving (Show, Generic, Typeable)
+
+
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) NameDecl) 
@@ -345,6 +349,7 @@ data DeclX =
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))
+    | DeclCorrGroup (Bind ([IdxVar], [DataVar]) [Label])  
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)
@@ -430,7 +435,8 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-      CKDF (Maybe (NameExp, Int)) (Maybe (Either (NameExp, Int) (String, ([Idx], [Idx]), Int)))
+      CKDF (Maybe Int) (Maybe (Either Int (String, ([Idx], [Idx]), Int)))
+           [NameKind]
            Int 
         -- TODO: annotation for the name row
       | CLemma BuiltinLemma

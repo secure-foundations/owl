@@ -169,6 +169,15 @@ initDetFuncs = withNormalizedTys $ [
             assertSubtype t2 (mkSpanned $ TBool l)
             return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pAnd (pEq x tr) (pEq y tr)))
           _ -> typeError "Bad args for andb")),
+    ("notb", (1, \ps args -> do
+        assert ("Bad params") $ length ps == 0
+        case args of
+          [(x, t)] -> do
+              l <- coveringLabel t
+              assertSubtype t (mkSpanned $ TBool l)
+              let tr = aeApp (topLevelPath $ "true") [] []
+              return $ TRefined (mkSpanned $ TBool l) ".res" $
+                    bind (s2n ".res") $ mkSpanned $ pIff (pEq (aeVar ".res") tr) (pNot $ pEq x tr))),                      
     mkSimpleFunc "length" 1 $ \args -> do
         case args of
           [t] -> do
@@ -179,7 +188,9 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "crh" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "mult" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "zero" 0 $ \args -> trivialTypeOf args,
-    mkSimpleFunc "is_group_elem" 1 $ \args -> trivialTypeOf args,
+    mkSimpleFunc "is_group_elem" 1 $ \args -> do
+        l <- coveringLabel $ head args
+        return $ TBool l,
     mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, -- Used for RO
     mkSimpleFunc "cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "pk_cipherlen" 1 $ \args -> trivialTypeOf args,
@@ -805,7 +816,16 @@ checkDecl d cont = withSpan (d^.spanOf) $
             withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
               checkLabel l1
               checkLabel l2
-          local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
+          let cc = bind (is, xs) $ CorrImpl l1 l2
+          local (over (curMod . advCorrConstraints) $ \xs -> cc : xs ) $ cont
+      (DeclCorrGroup ils) -> do
+          ensureNoConcreteDefs
+          ((is, xs), ls) <- unbind ils
+          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+              mapM_ checkLabel ls
+          let cc = bind (is, xs) $ CorrGroup ls
+          local (over (curMod . advCorrConstraints) $ \xs -> cc : xs ) $ cont
       (DeclStruct n ixs) -> do
           logTypecheck $ "Checking struct: " ++ n
           (is, xs) <- unbind ixs
@@ -851,7 +871,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
           ensureNoConcreteDefs
           ((is, ps), (ne1, ne2, kdf)) <- unbind b
           local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is) $ do
+            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps) $ do
                 nt <- getNameType ne1
                 nt2 <- getNameType ne2
                 assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
@@ -886,18 +906,26 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
-notInODH :: AExpr -> AExpr -> Check Bool
-notInODH pk sk = do
+notInKDFBody :: KDFBody -> AExpr -> AExpr -> Check Prop
+notInKDFBody kdfBody salt info = do
+    (((sx, x), (sy, y)), cases') <- unbind kdfBody
+    let cases = subst x salt $ subst y info $ cases'
+    return $ pNot $ foldr pOr pFalse $ map (\(c, _) -> c) cases
+
+
+notInODH :: AExpr -> AExpr -> AExpr -> AExpr -> Check Bool
+notInODH salt info pk sk = do
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     cur_odh <- view $ curMod . odh
     bs <- forM cur_odh $ \(_, bnd2) -> do
-            ((is, ps), ((ne1, ne2, _))) <- unbind bnd2
+            ((is, ps), ((ne1, ne2, kdfBody))) <- unbind bnd2
             local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
                 local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
                     let pdisj = pNot $ pEq (dhCombine pk sk) (dhCombine (dhpk $ mkSpanned $ AEGet ne1)  
                                                                         (mkSpanned $ AEGet ne2))
-                    (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+                    pdisj2 <- notInKDFBody kdfBody salt info
+                    (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pdisj `pOr` pdisj2
                     return b
     return $ and bs
 
@@ -2157,33 +2185,38 @@ data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp
 instance Alpha KDFInferResult
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
-            NameExp -> Int -> Int -> Check (Maybe KDFInferResult)
-inferKDF kpos a b c ne i j = do
+            Int -> Int -> [NameKind] -> Check (Maybe KDFInferResult)
+inferKDF kpos a b c i j nks = do
     let (principal, other) = case kpos of
                               KDF_SaltPos -> (a, b)
                               KDF_IKMPos -> (b, a)
-    wf <- isSubtype (snd principal) (tName ne)
-    case wf of
-      False -> return Nothing
-      True -> do 
-          nt <- getNameType ne
-          case nt^.val of
-            NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
-                (((sx, x), (sy, y)), cases_) <- unbind bcases
-                let cases = subst x (fst other) $ subst y (fst c) $ cases_
-                assert "KDF case out of bounds" $ i < length cases                    
-                let (p, nts) = cases !! i
-                assert "KDF row index out of bounds" $ j < length nts                    
-                let (str, _) = nts !! j
-                bp <- decideProp p
-                b2 <- not <$> flowsTo (nameLbl ne) advLbl
-                let ann = case kpos of
-                            KDF_SaltPos -> KDF_SaltKey ne i
-                            KDF_IKMPos -> KDF_IKMKey ne i
-                if b2 && (bp == Just True) then 
-                            return $ Just $ KDFGood str $ 
-                                mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
-                            else return Nothing
+    case extractNameFromType (snd principal) of 
+      Nothing -> return Nothing
+      Just ne -> do
+        wf <- isSubtype (snd principal) (tName ne)
+        case wf of
+          False -> return Nothing
+          True -> do 
+              nt <- getNameType ne
+              case nt^.val of
+                NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
+                    (((sx, x), (sy, y)), cases_) <- unbind bcases
+                    let cases = subst x (fst other) $ subst y (fst c) $ cases_
+                    assert "KDF case out of bounds" $ i < length cases                    
+                    let (p, nts) = cases !! i
+                    nks2 <- forM nts $ \(_, nt) -> getNameKind nt
+                    assert "Mismatch on name kinds for kdf" $ nks == nks2
+                    assert "KDF row index out of bounds" $ j < length nts                    
+                    let (str, _) = nts !! j
+                    bp <- decideProp p
+                    b2 <- not <$> flowsTo (nameLbl ne) advLbl
+                    let ann = case kpos of
+                                KDF_SaltPos -> KDF_SaltKey ne i
+                                KDF_IKMPos -> KDF_IKMKey ne i
+                    if b2 && (bp == Just True) then 
+                                return $ Just $ KDFGood str $ 
+                                    mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
+                                else return Nothing
 
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> Int -> Int -> Check (Maybe KDFInferResult) 
 inferKDFODH a (b, tb) c s ips i j = do
@@ -2222,7 +2255,7 @@ inferKDFODH a (b, tb) c s ips i j = do
                         case nty^.val of
                           NT_DH -> 
                               if (xwf == Just True) then do
-                                     b <- notInODH x y
+                                     b <- notInODH (fst a) (fst c) x y
                                      b2 <- not <$> flowsTo (nameLbl ny) advLbl
                                      b3 <- tyFlowsTo (snd a) advLbl
                                      if b && b2 && b3 then return (Just KDFAdv) else return Nothing
@@ -2279,7 +2312,7 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
-      CKDF oann1 oann2 j -> do
+      CKDF oann1 oann2 nks j -> do
           assert ("KDF must take three arguments") $ length args == 3
           let [a, b, c] = args
           cpub <- tyFlowsTo (snd c) advLbl
@@ -2289,15 +2322,15 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                         pub <- tyFlowsTo (snd a) advLbl
                         assert ("First argument to KDF must flow to adv without annotation") pub
                         return Nothing
-                    Just (ne, i) -> 
-                        local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c ne i j
+                    Just (i) -> 
+                        local (set tcScope TcGhost) $ inferKDF KDF_SaltPos a b c i j nks
           res2 <- case oann2 of
                     Nothing -> do
                         pub <- tyFlowsTo (snd b) advLbl
                         assert ("Second argument to KDF must flow to adv without annotation") pub
                         return Nothing
-                    Just (Left (ne, i)) -> -- Regular PSK
-                        local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c ne i j
+                    Just (Left (i)) -> -- Regular PSK
+                        local (set tcScope TcGhost) $ inferKDF KDF_IKMPos a b c i j nks
                     Just (Right (s, ps, i)) -> -- ODH
                         local (set tcScope TcGhost) $ inferKDFODH a b c s ps i j
           res <- case (res1, res2) of

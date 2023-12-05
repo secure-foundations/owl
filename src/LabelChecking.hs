@@ -96,19 +96,29 @@ smtLabelSetup = do
     
     -- Constraints on the adv
     afcs <- liftCheck $ collectAdvCorrConstraints 
-    ladv <- symLabel advLbl
     forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
-        ((is, xs), (l1, l2)) <- liftCheck $ unbind ils
+        ((is, xs), cc) <- liftCheck $ unbind ils
         withIndices (map (\i -> (i, IdxGhost)) is) $ do
             withSMTVars xs $ do 
-                v1 <- symLabel l1
-                v2 <- symLabel l2
+                scc <- mkCorrConstraint cc
                 emitAssertion $ sForall 
                     (map (\i -> (SAtom $ show i, indexSort)) is ++ map (\x -> (SAtom $ show x, bitstringSort)) xs)
-                    (sImpl (sFlows v1 ladv) (sFlows v2 ladv))
+                    scc
                     []
                     ("advConstraint_" ++ show j)
 
+mkCorrConstraint :: CorrConstraint -> Sym SExp
+mkCorrConstraint (CorrImpl l1 l2) = do
+    ladv <- symLabel advLbl
+    v1 <- symLabel l1
+    v2 <- symLabel l2
+    return $ sImpl (sFlows v1 ladv) (sFlows v2 ladv)
+mkCorrConstraint (CorrGroup ls) = do
+    ladv <- symLabel advLbl
+    vls <- mapM symLabel ls
+    let vgroup = foldr sJoin (SAtom "%zeroLbl") vls
+    let ccs = map (\v -> sImpl (sFlows v ladv) (sFlows vgroup ladv)) vls
+    return $ sAnd ccs
 
 getIdxVars :: Label -> [IdxVar]
 getIdxVars l = toListOf fv l
@@ -190,11 +200,8 @@ symCanonBig c = do
                   emitComment $ "label for " ++ show (owlpretty c)
                   emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
                   ivs <- mapM (\_ -> freshSMTIndexName) is
-                  iEnv <- use symIndexEnv
-                  forM_ ivs $ \iv -> 
-                      symIndexEnv %= (M.insert (s2n iv) (SAtom iv))
-                  lv <- symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
-                  symIndexEnv .= iEnv
+                  lv <- withIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $
+                      symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
                   emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) [] ("big_" ++ x)
                   return $ SAtom x
         labelVals %= M.insert (AlphaOrd c) v

@@ -46,7 +46,7 @@ def alice_main () @ alice
        corr_case Y in
        corr_case d in
        let ss = dh_combine(bobs_pk, get(X)) in
-       let k = kdf<;odh L[0];0>(0x, ss, 0x) in 
+       let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
        let c = aenc(k, get(d)) in
        let _ = output c to endpoint(bob) in 
        ()
@@ -72,7 +72,7 @@ def bob_main () @ bob
        corr_case Y in
        corr_case d in
        let ss = dh_combine(pkX, get(Y)) in
-       let k = kdf<;odh L[0];0>(0x, ss, 0x) in 
+       let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
        corr_case ODHName<L;0>(0x, 0x)[0] in
        input ii, _ in 
        case adec(k, ii) as Option (Name(d)) {

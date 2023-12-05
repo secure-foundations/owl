@@ -888,6 +888,21 @@ parseDecls =
                 return $ DeclCorr $ bind (pb, []) (l1, l2))
     )
     <|>
+    (parseSpanned $ do
+        reserved "corr_group"
+        pb <- parseIdxParamBinds1
+        alt
+            (try $ do
+                symbol "["
+                xs <- identifier `sepBy1` (symbol ",")
+                symbol "]"
+                ls <- parseLabel `sepBy1` (symbol ",")
+                return $ DeclCorrGroup $ bind (pb, map s2n xs) ls)
+            (do
+                ls <- parseLabel `sepBy1` (symbol ",")
+                return $ DeclCorrGroup $ bind (pb, []) ls)
+    )
+    <|>
     (try $ parseSpanned $ do
         reserved "locality"
         nl <- identifier
@@ -1452,11 +1467,8 @@ parseCryptOp =
         reserved "kdf"
         symbol "<"
         oann1 <- optionMaybe $ do
-            ne <- parseNameExp
-            symbol "["
             i <- many1 digit
-            symbol "]"
-            return $ (ne, read i)
+            return $ (read i)
         symbol ";"
         oann2 <- optionMaybe $ do
             (do
@@ -1469,15 +1481,14 @@ parseCryptOp =
                 return $ Right (s, p, read i))
             <|>
             (do
-                ne <- parseNameExp
-                symbol "["
                 i <- many1 digit
-                symbol "]"
-                return $ Left (ne, read i))
+                return $ Left (read i))
+        symbol ";"
+        nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
         symbol ">"
-        return $ CKDF oann1 oann2 (read j)
+        return $ CKDF oann1 oann2 nks (read j)
     )
     <|>
     (do
@@ -1533,6 +1544,15 @@ parseCryptOp =
     (reserved "sign" >> return CSign)
     <|>
     (reserved "vrfy" >> return CSigVrfy)
+
+parseNameKind =
+    (reserved "kdf" >> return NK_KDF)
+    <|>
+    (reserved "enckey" >> return NK_KDF)
+    <|>
+    (reserved "mackey" >> return NK_KDF)
+    <|>
+    (reserved "nonce" >> return NK_KDF)
 
 parseParam :: Parser FuncParam
 parseParam = 
@@ -1668,6 +1688,12 @@ infixAExpr name fname assoc =
         return $ \e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath fname) [] [e1, e2]
           ) assoc
 
+prefixAExpr name fname = 
+    Prefix (do
+        try $ symbol name
+        return $ \e -> mkSpannedWith (unignore $ e^.spanOf) $ AEApp (topLevelPath fname) [] [e]
+          )
+
 
 parseAExpr :: Parser AExpr
 parseAExpr = buildExpressionParser parseAExprTable parseAExprTerm
@@ -1676,7 +1702,8 @@ parseAExprTable =
         [ infixAExpr "*" "mult" AssocLeft ],
         [ infixAExpr "++" "concat" AssocLeft ],
         [ infixAExpr "&&" "andb" AssocLeft ],
-        [ infixAExpr "+" "plus" AssocLeft ]
+        [ infixAExpr "+" "plus" AssocLeft ],
+        [ prefixAExpr "!" "notb" ]
     ]
 
 parseAExprTerm =           

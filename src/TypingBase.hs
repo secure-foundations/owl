@@ -120,6 +120,17 @@ instance Subst Idx NameDef
 
 type KDFBody = (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
 
+data CorrConstraint = CorrImpl Label Label | CorrGroup [Label]
+    deriving (Show, Generic, Typeable)
+
+instance OwlPretty CorrConstraint where
+    owlpretty (CorrImpl l1 l2) = owlpretty "corr" <+> owlpretty l1 <+> owlpretty "==>" <+> owlpretty l2
+    owlpretty (CorrGroup ls) = owlpretty "corr_group" <+> owlpretty ls
+
+instance Alpha CorrConstraint
+instance Subst Idx CorrConstraint
+instance Subst ResolvedPath CorrConstraint
+
 data ModBody = ModBody { 
     _isModuleType :: IsModuleType,
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
@@ -127,7 +138,7 @@ data ModBody = ModBody {
     _tableEnv :: Map String (Ty, Locality),
     _flowAxioms :: [(Label, Label)],
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
-    _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) (Label, Label)],
+    _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
     _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
     _nameTypeDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameType),
@@ -429,16 +440,19 @@ traceFn ann k = do
       Nothing -> k
 
 inferIdx :: Idx -> Check IdxType
-inferIdx (IVar pos i) = withSpan pos $ do
-    m <- view $ inScopeIndices
-    tc <- view tcScope
-    case lookup i m of
-      Just t -> 
-          case (tc, t) of
-            (TcDef _, IdxGhost) ->  
-                typeError $ "Index should be nonghost: " ++ show (owlpretty i) 
-            _ -> return t
-      Nothing -> typeError $ "Unknown index: " ++ show (owlpretty i)
+inferIdx (IVar pos i) = do
+    let go k = 
+            if unignore pos == def then k else withSpan pos k
+    go $ do
+        m <- view $ inScopeIndices
+        tc <- view tcScope
+        case lookup i m of
+          Just t -> 
+              case (tc, t) of
+                (TcDef _, IdxGhost) ->  
+                    typeError $ "Index should be nonghost: " ++ show (owlpretty i) 
+                _ -> return t
+          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty i)
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
@@ -1143,7 +1157,7 @@ getFunDefParams (p:ps) =
               case t of
                 IdxSession -> return (i:xs, ys)
                 IdxPId -> return (xs, i:ys)
-                _ -> typeError $ "Unknown index type for function param"
+                _ -> typeError $ "nknown index type for function param"
             Just IdxSession -> do
                 checkIdxSession i
                 return (i:xs, ys)
@@ -1389,7 +1403,7 @@ collectNameDefs = collectEnvInfo (_nameDefs)
 collectFlowAxioms :: Check ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 
-collectAdvCorrConstraints :: Check ([Bind ([IdxVar], [DataVar]) (Label, Label)])
+collectAdvCorrConstraints :: Check ([Bind ([IdxVar], [DataVar]) CorrConstraint])
 collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
 
 collectUserFuncs :: Check (Map ResolvedPath UserFunc)
