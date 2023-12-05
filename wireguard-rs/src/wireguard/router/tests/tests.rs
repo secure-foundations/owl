@@ -799,7 +799,7 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
 
 
     b.iter(|| {
-        for i in 0..1000 {
+        for i in 0..NUM_PACKETS {
             let mut counter: u64 = 0;
 
             let packet: Vec<u8> = make_packet(BYTES_PER_PACKET, src, dst, 0);
@@ -819,46 +819,46 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
             if do_routines { 
                 send_job.parallel_work();
             } else {
-                let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
-                    owl_S_init: Arc::new(vec![]),
-                    owl_E_init: Arc::new(vec![]),
-                    pk_owl_S_resp: Arc::new(vec![]),
-                    pk_owl_S_init: Arc::new(vec![]),
-                    pk_owl_E_resp: Arc::new(vec![]),
-                    pk_owl_E_init: Arc::new(vec![]),
-                    salt: Arc::new(vec![]),
-                    device: None
-                };
-                let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
-                // state.owl_N_init_send = job.counter as usize;
+                // let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
+                //     owl_S_init: Arc::new(vec![]),
+                //     owl_E_init: Arc::new(vec![]),
+                //     pk_owl_S_resp: Arc::new(vec![]),
+                //     pk_owl_S_init: Arc::new(vec![]),
+                //     pk_owl_E_resp: Arc::new(vec![]),
+                //     pk_owl_E_init: Arc::new(vec![]),
+                //     salt: Arc::new(vec![]),
+                //     device: None
+                // };
+                // let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+                // // state.owl_N_init_send = job.counter as usize;
 
-                let mut transp_keys = owl_wireguard::owl_transp_keys {
-                    owl__transp_keys_initiator: vec![],
-                    owl__transp_keys_responder: vec![],
-                    owl__transp_keys_T_init_send: vec![],
-                    owl__transp_keys_T_resp_send: vec![],
-                };
+                // let mut transp_keys = owl_wireguard::owl_transp_keys {
+                //     owl__transp_keys_initiator: vec![],
+                //     owl__transp_keys_responder: vec![],
+                //     owl__transp_keys_T_init_send: vec![],
+                //     owl__transp_keys_T_resp_send: vec![],
+                // };
             }
 
-            let new_msg = send_job.get_buffer();
+            // let new_msg = send_job.get_buffer();
     
-            let decryption_state = DecryptionState {
-                keypair: Arc::new(dummy_keypair(true)),
-                confirmed: AtomicBool::new(true),
-                protector: spin::Mutex::new(AntiReplay::new()),
-                peer: peer2.peer.clone(),
-            };
+            // let decryption_state = DecryptionState {
+            //     keypair: Arc::new(dummy_keypair(true)),
+            //     confirmed: AtomicBool::new(true),
+            //     protector: spin::Mutex::new(AntiReplay::new()),
+            //     peer: peer2.peer.clone(),
+            // };
     
-            let recv_job = super::super::receive::ReceiveJob::new(
-                new_msg,
-                Arc::new(decryption_state),
-                dummy::UnitEndpoint {},
-                dev2_type
-            );
+            // let recv_job = super::super::receive::ReceiveJob::new(
+            //     new_msg,
+            //     Arc::new(decryption_state),
+            //     dummy::UnitEndpoint {},
+            //     dev2_type
+            // );
         
-            if do_routines { 
-                recv_job.parallel_work();
-            }
+            // if do_routines { 
+            //     recv_job.parallel_work();
+            // }
         }
     });
 }
