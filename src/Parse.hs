@@ -1556,13 +1556,13 @@ parseCryptOp =
     (reserved "vrfy" >> return CSigVrfy)
 
 parseNameKind =
-    (reserved "kdf" >> return NK_KDF)
+    (reserved "kdfkey" >> return NK_KDF)
     <|>
-    (reserved "enckey" >> return NK_KDF)
+    (reserved "enckey" >> return NK_Enc)
     <|>
-    (reserved "mackey" >> return NK_KDF)
+    (reserved "mackey" >> return NK_MAC)
     <|>
-    (reserved "nonce" >> return NK_KDF)
+    (reserved "nonce" >> return NK_Nonce)
 
 parseParam :: Parser FuncParam
 parseParam = 
