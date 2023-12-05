@@ -6,6 +6,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Typing where
 import AST
 import Data.Time.Clock
@@ -701,6 +702,20 @@ ensureNoConcreteDefs = do
               let (_, d) = unsafeUnbind ds 
               assert ("Decl cannot appear after concrete def") $ unignore $ _isAbstract d
 
+
+withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(DataVar, Ty)] -> a -> Check b) -> Check (DepBind b)
+withDepBind (DPDone x) k = DPDone <$> k [] x
+withDepBind (DPVar t xd) k = do
+    checkTy t
+    (x, d) <- unbind xd
+    res <- withVars [(x, (ignore $ show x, Nothing, t))] $ withDepBind d $ \args v -> k ((x, t):args) v
+    return $ DPVar t (bind x res)
+                                          
+unsafeMapDepBind :: Alpha a => DepBind a -> (a -> b) -> b
+unsafeMapDepBind (DPDone x) k = k x
+unsafeMapDepBind (DPVar t xd) k = 
+    let (x, d) = unsafeUnbind xd in
+    unsafeMapDepBind d k
                   
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
@@ -773,22 +788,20 @@ checkDecl d cont = withSpan (d^.spanOf) $
           let df = DefHeader isl 
           addDef n df $ cont
       DeclDef n o1 -> do
-          ((is1, is2), (l, o2)) <- unbind o1
-          (xs, (opreReq, tyAnn, bdy)) <- unbind o2
-          let preReq = case opreReq of
-                         Nothing -> pTrue
-                         Just p -> p
-          abs_or_body <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
+          ((is1, is2), (l, db)) <- unbind o1
+          dspec <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
               local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality l
-                  forM_ xs $ \(x, t) -> checkTy $ unembed t
-                  withVars (map (\(x, t) -> (x, (ignore $ show x, Nothing, unembed t))) xs) $ do
+                  withDepBind db $ \args (opreReq, tyAnn, bdy) -> do   
+                      let preReq = case opreReq of
+                             Nothing -> pTrue
+                             Just p -> p
                       checkProp preReq
                       checkTy tyAnn
-                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
+                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst args)
                       x <- freshVar
                       case bdy of
-                        Nothing -> return $ Nothing
+                        Nothing -> return $ (preReq, tyAnn, Nothing)
                         Just bdy' -> do
                           onlyCheck <- view $ envFlags . fOnlyCheck
                           let doCheck = (onlyCheck == Nothing) || (onlyCheck == Just n)
@@ -803,11 +816,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                                   popLogTypecheckScope
                                   t1 <- liftIO $ getCurrentTime
                                   logTypecheck $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
-                          return $ Just bdy'
-          let is_abs = ignore $ case abs_or_body of
-                         Nothing -> True
-                         Just _ -> False
-          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, abs_or_body))
+                          return $ (preReq, tyAnn, Just bdy')
+          let is_abs = ignore $ unsafeMapDepBind dspec $ \(_, _, o) -> not $ isJust o
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l dspec
           addDef n df $ cont
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
@@ -1790,11 +1801,17 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 fl' <- normLocality fl
                 curr_locality' <- normLocality curr_locality
                 assert (show $ owlpretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
-                (xts, (pr, rt, _)) <- unbind o
-                assert (show $ owlpretty "Wrong variable arity for " <> owlpretty f) $ length args == length xts
-                argTys <- mapM inferAExpr args
-                forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
-                let (prereq, retTy) = substs (zip (map fst xts) args) (pr, rt)
+                let go (db :: DepBind (Prop, Ty, Maybe Expr)) args = 
+                        case (db, args) of 
+                          (DPDone v, []) -> return v
+                          (DPDone _, _) -> typeError $ "Too many arguments for " ++ show (owlpretty f)
+                          (DPVar _ _, []) -> typeError $ "Too few arguments for " ++ show (owlpretty f)
+                          (DPVar t xd, a:as) -> do 
+                             t' <- inferAExpr a
+                             assertSubtype t' t
+                             (x, d) <- unbind xd
+                             go (subst x a d) as
+                (prereq, retTy, _) <- go o args
                 (fn, b) <- SMT.smtTypingQuery "precond" $ SMT.symAssert prereq
                 assert ("Precondition failed: " ++ show (owlpretty prereq) ++ show (owlpretty fn)) b
                 let happenedProp = pHappened f (is1, is2) args
@@ -2552,11 +2569,10 @@ defMatches s d1 d2 =
           (is1, DefSpec ab l1 pty) <- unbind blspec
           (is', DefSpec ab' l1' pty') <- unbind blspec'
           assert ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
-          (args, (pr1, t1, _)) <- unbind pty
-          (args', (pr2, t2, _)) <- unbind pty'
           assert ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
-          assert ("Def prereq mismatch") $ (bind is1 $ bind args pr1) `aeq` (bind is' $ bind args' pr2)
-          assert ("Def return ty mismatch") $ (bind is1 $ bind args t1) `aeq` (bind is' $ bind args' t2)
+          prereq_retty1 <- withDepBind pty $ \_ (x, y, _) -> return (x, y)
+          prereq_retty2 <- withDepBind pty' $ \_ (x, y, _) -> return (x, y)
+          assert ("Def mismatch on prereq or return ty") $ (bind is1 prereq_retty1) `aeq` (bind is' prereq_retty2)
       (Nothing, _) -> typeError $ "Missing def: " ++ s
 
 tyDefMatches :: String -> TyDef -> TyDef -> Check ()

@@ -968,6 +968,12 @@ type NameData = (String, NameType, Int) -- name, type, number of processID indic
 type DefData = (String, Locality, [(DataVar, Embed Ty)], Ty, Maybe Expr) -- func name, locality, arguments, return type, body
 type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [String]) -- number of locality indices, local state, shared state, defs, table names and codomains, names of counters
 
+unsafeUnbindDepBind :: Alpha a => DepBind a -> ([(DataVar, Embed Ty)], a)
+unsafeUnbindDepBind (DPDone a) = ([], a)
+unsafeUnbindDepBind (DPVar t xd) = 
+    let (x, d) = unsafeUnbind xd in
+    let (xs, a) = unsafeUnbindDepBind d in
+    ((x, embed t) : xs, a)
 
 -- Defer processing of defs until we have all type information
 preprocessDefs :: (LocalityName -> ExtractionMonad LocalityName) -> TB.ModBody -> M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName LocalityData)
@@ -983,7 +989,7 @@ preprocessDefs lookupLoc mb locMap = do
                 when (length sids > 1) $ throwError $ DefWithTooManySids owlName
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc =<< flattenPath locP
-                let (args, (_, retTy, body)) = unsafeUnbind (defspec ^. TB.preReq_retTy_body)      
+                let (args, (_, retTy, body)) = unsafeUnbindDepBind (defspec ^. TB.preReq_retTy_body)
                 let f (i, l, s, d, t, c) = (i, l, s, d ++ [(owlName, loc, args, retTy, body)], t, c)
                 makeFunc owlName loc args retTy
                 return $ M.adjust f locName m

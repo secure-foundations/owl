@@ -957,14 +957,24 @@ parseDecls =
         return $ DeclModule n imt bdy otype 
     )
 
-parseRegularDef n inds = do
-    symbol "("
+parseDepBind :: Alpha a => Parser (a -> DepBind a)
+parseDepBind = do
     args <- (do
         x <- identifier
         symbol ":"
         t <- parseTy
-        return $ (s2n x, embed t)
+        return (s2n x, t)
         ) `sepBy` (symbol ",")
+    return $ \x -> go args x
+        where
+            go [] x = DPDone x
+            go ((n, t):args) x = DPVar t (bind n $ go args x) 
+
+
+
+parseRegularDef n inds = do
+    symbol "("
+    bndk <- parseDepBind
     symbol ")"
     symbol "@"
     nl <- parseLocality
@@ -974,7 +984,7 @@ parseRegularDef n inds = do
     oe <- optionMaybe $ do
         symbol "="
         parseExpr
-    return $ DeclDef n (bind inds $ (nl, bind args (preReq, tyAnn, oe)))
+    return $ DeclDef n (bind inds $ (nl, bndk (preReq, tyAnn, oe)))
 
 parseHeader n inds = do 
     symbol "@"

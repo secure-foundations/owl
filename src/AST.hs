@@ -319,8 +319,8 @@ data ModuleExpX =
 
 type ModuleExp = Spanned ModuleExpX
 
-//data DepBind a = DPDone a | DPVar Ty (Bind DataVar (DepBind a))
-//    deriving (Show, Generic, Typeable)
+data DepBind a = DPDone a | DPVar Ty (Bind DataVar (DepBind a))
+    deriving (Show, Generic, Typeable)
 
 
 -- Decls are surface syntax
@@ -332,12 +332,7 @@ data DeclX =
     | DeclFun       String (Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
-                         Bind [(DataVar, Embed Ty)]
-                          (
-                            Maybe Prop,
-                            Ty,
-                            Maybe Expr
-                          )
+                         DepBind (Maybe Prop, Ty, Maybe Expr)
                         ))
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
@@ -514,6 +509,11 @@ instance Alpha KDFStrictness
 instance Subst AExpr KDFStrictness
 instance Subst Idx KDFStrictness
 instance Subst ResolvedPath KDFStrictness
+
+instance Alpha a => Alpha (DepBind a)
+instance (Alpha a, Subst ResolvedPath a) => Subst ResolvedPath (DepBind a)
+instance (Alpha a, Subst Idx a) => Subst Idx (DepBind a)
+instance (Alpha a, Subst AExpr a) => Subst AExpr (DepBind a)
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX

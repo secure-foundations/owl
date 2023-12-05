@@ -122,6 +122,15 @@ resolveError pos msg = do
     printDiagnostic stdout True True 4 defaultStyle diag 
     Resolve $ lift $ throwError () 
 
+resolveDepBind :: Alpha a => DepBind a -> (a -> Resolve a) -> Resolve (DepBind a)
+resolveDepBind  (DPDone x) f = DPDone <$> f x
+resolveDepBind (DPVar t b) f = do
+    t' <- resolveTy t
+    (x, y) <- unbind b
+    y' <- resolveDepBind y f
+    return $ DPVar t' $ bind x y'
+
+
 resolveDecls :: [Decl] -> Resolve [Decl]
 resolveDecls [] = return []
 resolveDecls (d:ds) = 
@@ -171,15 +180,13 @@ resolveDecls (d:ds) =
           return (d' : ds')
       DeclDef s ix -> do
           (is, (l, k)) <- unbind ix
-          (xets, (mp, t, oe)) <- unbind k
-          xets' <- forM xets $ \(x, et) -> do
-              et' <- embed <$> resolveTy (unembed et)
-              return (x, et')
           l' <- resolveLocality (d^.spanOf) l
-          mp' <- traverse resolveProp mp
-          t' <- resolveTy t
-          oe' <- traverse resolveExpr oe
-          let d' = Spanned (d^.spanOf) $ DeclDef s $ bind is (l', bind xets' (mp', t', oe'))
+          k' <- resolveDepBind k $ \(mp, t, oe) -> do
+              mp' <- traverse resolveProp mp
+              t' <- resolveTy t
+              oe' <- traverse resolveExpr oe
+              return (mp', t', oe')
+          let d' = Spanned (d^.spanOf) $ DeclDef s $ bind is (l', k') 
           p <- view curPath
           ds' <- local (over defPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')

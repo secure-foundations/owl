@@ -84,9 +84,12 @@ struct SDIS_msg {
     _sdis2: Data<adv> ||signature||
 }
 
-def PFA_FW (k11: if sec(skPDIS) then Name(ODHName<l1;0>(0x, 0x01)[0]) else Data<adv>) @ PFA
+def PFA_FW (gb : Ghost, k11: 
+    if (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) /\ corr(b)) 
+    then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PFA
 : Unit =
-    pcase (sec(a) /\ sec(b)) in 
+    pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
+    pcase (corr(a) /\ corr(b)) in
     corr_case ODHName<l1;0>(0x, 0x01)[0] in 
     input inp in // from PDIS (actual non-KE)
     case adec(k11, inp) {
@@ -105,7 +108,10 @@ def PFA_FW (k11: if sec(skPDIS) then Name(ODHName<l1;0>(0x, 0x01)[0]) else Data<
 
     
 
-def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(ODHName<l1;0>(0x, 0x01)[0]) else Data<adv>) @ PDIS
+def PDIS_actual(gb : Ghost, 
+    k11: 
+        if (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) /\ corr(b)) 
+        then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PDIS
 : Unit =
     pcase (sec(a) /\ sec(b)) in 
     let g_pow_b1 = dhpk(get(b1)) in
@@ -128,12 +134,14 @@ def PDIS_actual(k11:if sec(a) /\ sec(b) then Name(ODHName<l1;0>(0x, 0x01)[0]) el
                 
                 // request PFA to sign
                 let request = _req(1) in // TODO: 1 is the hash
+                pcase (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
+                pcase (corr(a) /\ corr(b)) in
+                corr_case ODHName<l1;0>(0x, 0x01)[0] in
                 let enc_request = aenc(k11, request) in
                 let _ = output enc_request to endpoint(PFA) in
 
                 // get its input
                 input inp2 in
-                corr_case ODHName<l1;0>(0x, 0x01)[0] in
                 case adec(k11, inp2) {
                     | None => ()
                     | Some m' =>
@@ -214,37 +222,12 @@ def PFA_KE () @ PFA
                 if !is_group_elem(g_pow_b) then () else {
                     let ss     = dh_combine(g_pow_b, get(a)) in
                     pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
-                    let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
-                    debug "=====";
-                    debug "=====";
-                    debug "=====";
-                    debug printTyContext;
-                    /*
-                    corr(skPDIS, a, b)
-                    k11 : adv
-
-                    corr(skPDIS, b) sec(a)
-                    good dh
-                    k11 : odh
-
-                    corr(skPDIS, b) sec(a)
-                    bad dh
-                    k11 : adv
-
-                    corr(a), sec(skPDIS, b)
-                    good dh
-                    k11 : odh
-
-                    sec(all)
-                    k11 : odh
-                    */
-
-                    // sec(skPDIS) ==> k11 : odh 
-                    // corr(skPDIS) ==> sec(a) \/ sec(b) ==> good
-                    //  dh => k11 : odh               
-
-                    ()
-                    // call PFA_FW (k11)
+                    let k11 : if 
+                        (corr(skPDIS) /\ ss != dh_combine(dhpk(get(a)),get(b))) \/
+                    (corr(a) /\ corr(b))
+                        then Data<adv> else Name(ODHName<l1;0>(0x, 0x01)[0])
+                        = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
+                    call PFA_FW(ss, k11)
                 }
             otherwise => ()
             }
@@ -276,7 +259,7 @@ def PDIS_KE () @ PDIS
                         pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
                         let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
                         let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
-                        call PDIS_actual(k11)
+                        call PDIS_actual(ss, k11)
                     }
                 otherwise => ()
             }

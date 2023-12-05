@@ -77,7 +77,7 @@ instance Subst ResolvedPath Def
 data DefSpec = DefSpec {
     _isAbstract :: Ignore Bool, 
     _defLocality :: Locality,
-    _preReq_retTy_body :: Bind [(DataVar, Embed Ty)] (Prop, Ty, Maybe Expr)
+    _preReq_retTy_body :: DepBind (Prop, Ty, Maybe Expr)
 }
     deriving (Show, Generic, Typeable)
 
@@ -1535,12 +1535,13 @@ instance OwlPretty DefSpec where
     owlpretty ds = 
         let abs = if unignore $ ds ^. isAbstract then owlpretty "abstract" else owlpretty "" in
         let loc = owlpretty (ds ^. defLocality) in
-        let (args, (req, retTy, body)) = unsafeUnbind (ds ^. preReq_retTy_body) in
-        let body' = case body of
-                Nothing -> owlpretty ""
-                Just e  -> owlpretty e
-        in
-        abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
+        owlpretty "DefSpec"
+        -- let (args, (req, retTy, body)) = unsafeUnbind (ds ^. preReq_retTy_body) in
+        -- let body' = case body of
+        --         Nothing -> owlpretty ""
+        --         Just e  -> owlpretty e
+        -- in
+        -- abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
 
 
 
