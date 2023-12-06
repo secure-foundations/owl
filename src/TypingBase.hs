@@ -640,7 +640,8 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
                  assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
                  return $ Just (snd (nts !! j), Nothing)
              ODHName p is x y i j -> do
-                 (_, _, _, (_, nt)) <- getODHNameInfo p is x y i j
+                 (_, _, _, nts) <- getODHNameInfo p is x y i j
+                 let nt = snd $ nts !! j
                  return $ Just (nt, Nothing)
     case res of
       Nothing -> return Nothing
@@ -665,6 +666,7 @@ getKDFAnnInfo ann a b c =
                       ne2' <- normalizeNameExp ne2
                       assert ("KDF name not well-formed; first argument (" ++ show (owlpretty ne2) ++ ") must equal the name " ++ show (owlpretty ne)) $ 
                           ne2' `aeq` ne
+                  
                 extractKDF kpos bnd a b c i
             _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
       KDF_IKMKey ne i ->  do 
@@ -682,7 +684,7 @@ getKDFAnnInfo ann a b c =
                   extractKDF kpos bnd a b c i 
               _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check (NameExp, NameExp, Prop, (KDFStrictness, NameType))
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
 getODHNameInfo (PRes (PDot p s)) (is, ps) a c i j = do
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
@@ -697,7 +699,7 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c i j = do
           assert ("Number of KDF case mismatch") $ i < length cases
           let (p, cases') = subst x a $ subst y c $ cases !! i
           assert ("KDF name row mismatch") $ j < length cases'
-          return (ne1, ne2, p, cases' !! j)
+          return (ne1, ne2, p, cases')
 
 extractKDF kpos bnd a b c i = do
     (((sx, x), (sy, y)), cases) <- unbind bnd 
@@ -1024,18 +1026,19 @@ kdfNameAxioms ot ann a b c i j = do
                     KDF_SaltKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
                     KDF_IKMKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
     assert ("KDF name index out of bounds") $ j < length nts                                         
-    nk <- getNameKind (snd $ nts !! j)
-    let validKDF = mkSpanned $ PValidKDF a b c i j nk
+    nks <- forM nts $ \(_, nt) -> getNameKind nt
+    let validKDF = mkSpanned $ PValidKDF a b c nks j 
     return $ tRefined ot ".res" $ 
         pImpl (pAnd secrecy p) validKDF
 
 odhNameAxioms :: Ty -> Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check Ty
 odhNameAxioms ot p (is, ps) a c i j = do
-    (ne1, ne2, p, (str, nt)) <- getODHNameInfo p (is, ps) a c i j
+    (ne1, ne2, p, nts) <- getODHNameInfo p (is, ps) a c i j
+    let (str, nt) = nts !! j
     let secrecy = pAnd (pNot $ pFlow (nameLbl ne1) advLbl) (pNot $ pFlow (nameLbl ne2) advLbl)
-    nk <- getNameKind nt
+    nks <- forM nts $ \(_, nt) -> getNameKind nt
     let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
-    let validKDF = mkSpanned $ PValidKDF a b c i j nk
+    let validKDF = mkSpanned $ PValidKDF a b c nks j 
     return $ tRefined ot ".res" $ 
         pImpl (pAnd secrecy p) validKDF
     
@@ -1099,7 +1102,10 @@ data DerivabilityApproximation = DSufficient | DNecessary
     deriving Eq
 
 derivabilitySufficient :: [(AExpr, Ty)] -> Check Prop
-derivabilitySufficient args = derivability DSufficient args
+derivabilitySufficient args = do
+    res <- derivability DSufficient args
+    liftIO $ putStrLn $ "derivabilitySufficient: " ++ show (owlpretty res)
+    return res
 --
 -- derivabilityNecessary produces an overapproximationg of when the arguments can be
 -- derived, in the sense that "arguments are derivable" ==> derivabilitySufficient.

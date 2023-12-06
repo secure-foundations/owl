@@ -192,7 +192,8 @@ data PropX =
     | PQuantIdx Quant  (Bind IdxVar Prop)
     | PQuantBV Quant  (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
-    | PValidKDF AExpr AExpr AExpr Int Int NameKind  -- Internal use
+    | PValidKDF AExpr AExpr AExpr [NameKind] Int
+    | PPublicKDFVal AExpr AExpr AExpr [NameKind] Int 
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr
     deriving (Show, Generic, Typeable)

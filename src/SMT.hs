@@ -56,10 +56,6 @@ setupIndexEnv = do
         return (i, x)
     symIndexEnv .= M.fromList assocs
 
-
-sPlus :: SExp -> SExp -> SExp
-sPlus e1 e2 = SApp [SAtom "plus", e1, e2]
-
 sZero :: SExp
 sZero = SAtom "zero"
 
@@ -172,32 +168,6 @@ mkSelfDisjointness fdfs = do
                         [v1_eq_v2]
                         ("self_disj_" ++ show (sn))
 
-class SMTNameKindOf a where
-    smtNameKindOf :: a -> Check SExp
-
-instance SMTNameKindOf NameType where
-    smtNameKindOf nt = 
-        case nt^.val of
-          NT_DH -> return $ SAtom "DHkey"
-          NT_Enc _ -> return $ SAtom "Enckey"
-          NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
-          NT_PKE _ -> return $ SAtom "PKEkey"
-          NT_Sig _ -> return $ SAtom "Sigkey"
-          NT_KDF _ _ -> return $ SAtom "KDFkey"
-          NT_MAC _ -> return $ SAtom "MACkey"
-          NT_Nonce -> return $ SAtom "Nonce"
-          NT_App p ps -> resolveNameTypeApp p ps >>= smtNameKindOf
-
-instance SMTNameKindOf NameKind where
-    smtNameKindOf nk = 
-        case nk of
-          NK_DH ->    return $ SAtom "DHkey"
-          NK_Enc ->   return $ SAtom "Enckey"
-          NK_KDF ->   return $ SAtom "KDFkey"
-          NK_PKE ->   return $ SAtom "PKEkey" 
-          NK_Sig ->   return $ SAtom "Sigkey"
-          NK_MAC ->   return $ SAtom "MACkey"
-          NK_Nonce -> return $ SAtom "Nonce"
 
 
 
@@ -482,12 +452,18 @@ interpretProp p = do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
           return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
-      (PValidKDF x y z i j nk) -> do
-          vx <- interpretAExp x
-          vy <- interpretAExp y
-          vz <- interpretAExp z
-          snk <- liftCheck $ smtNameKindOf nk
-          return $ SApp [SAtom "ValidKDF", vx, vy, vz, SAtom (show i), SAtom (show j), snk]
+      (PValidKDF a b c nks j) -> do
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          vc <- interpretAExp c
+          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+          let start = sPlus $ take j nk_lengths
+          let segment = nk_lengths !! j
+          return $ SApp [SAtom "ValidKDF", va, vb, vc, start, segment, SAtom (show $ nks !! j)]
+      (PPublicKDFVal x y z nks j) -> do
+          albl <- symLabel advLbl
+          kdfname <- mkKDFName x y z nks j
+          return $ sFlows (SApp [SAtom "LabelOf", kdfname]) albl
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do

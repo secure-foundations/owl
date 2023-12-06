@@ -60,6 +60,8 @@ nameDefFlows n nt = do
       NT_KDF pos bnd -> do 
           ctr <- getFreshCtr
           (((sx, x), (sy, y)), cases) <- liftCheck $ unbind bnd
+          -- TODO: below, we need to generealize
+          vn <- freshSMTName
           axs <- withSMTVars [x, y] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
                   let (p, nts) = cases !! i
@@ -116,7 +118,7 @@ mkCorrConstraint (CorrImpl l1 l2) = do
 mkCorrConstraint (CorrGroup ls) = do
     ladv <- symLabel advLbl
     vls <- mapM symLabel ls
-    let vgroup = foldr sJoin (SAtom "%zeroLbl") vls
+    let vgroup = sJoins vls 
     let ccs = map (\v -> sImpl (sFlows v ladv) (sFlows vgroup ladv)) vls
     return $ sAnd ccs
 
@@ -181,10 +183,14 @@ canonRange is l =
       LName ne -> return (is, CanonLName ne)
 
 
+sJoins :: [SExp] -> SExp
+sJoins [] = SAtom "%zeroLbl"
+sJoins xs = foldr1 sJoin xs
+
 symCanonLabel :: CanonLabel -> Sym SExp
 symCanonLabel (CanonAnd xs) = do
     vs <- mapM symCanonBig xs
-    return $ foldr sJoin (SAtom "%zeroLbl") vs
+    return $ sJoins vs
 
 symCanonBig :: CanonLabelBig -> Sym SExp
 symCanonBig c = do
@@ -284,10 +290,14 @@ lblFromSym s =
           l' <- lblFromSym l
           return $ mkSpanned $ LRangeIdx $ bind x l'
 
+joinLbls :: [Label] -> Label
+joinLbls [] = zeroLbl
+joinLbls xs = foldr1 joinLbl xs
+
 lblFromSym' :: S.Set (AlphaOrd SymLbl) -> Check Label
 lblFromSym' s = do
     xs <- mapM lblFromSym $ map _unAlphaOrd $ S.toList s
-    return $ foldr joinLbl zeroLbl xs
+    return $ joinLbls xs
 
 normLabel :: Label -> Check Label
 normLabel l = do

@@ -452,6 +452,18 @@
     :qid flows_zero_r
 )))
 
+(assert (forall ((x Label)) (!
+    (= (Join x %zeroLbl) x)
+    :pattern ((Join x %zeroLbl))
+    :qid join_zero_r
+)))
+
+(assert (forall ((x Label)) (!
+    (= (Join %zeroLbl x) x)
+    :pattern ((Join %zeroLbl x))
+    :qid join_zero_l
+)))
+
 (declare-const %ghost Label)
 (declare-const %top Label)
 (assert (forall ((x Label)) (! 

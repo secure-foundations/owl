@@ -504,6 +504,15 @@ withSMTVars xs k = do
     varVals .= vVs
     return res
 
+withSMTVarsTys :: [(DataVar, Ty)] -> Sym a -> Sym a
+withSMTVarsTys xs k = do
+    vVs <- use varVals
+    varVals %= (M.union $ M.fromList $ map (\(v, _) -> (v, SAtom $ show v)) xs)
+    let tyc = map (\(v, t) -> (v, (ignore $ show v, Nothing, t))) xs 
+    res <- local (over tyContext $ (++) tyc) k
+    varVals .= vVs
+    return res
+
 ---- Helpers for logging 
 
 logSMT :: String -> String -> IO String
@@ -561,6 +570,26 @@ flattenNameDefs xs = do
           --    return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
     return $ concat ys
             
+sPlus :: [SExp] -> SExp
+sPlus [] = SAtom "0"
+sPlus xs = SApp $ (SAtom "+") : xs
+
+sNameKindLength :: SExp -> SExp
+sNameKindLength n = SApp [SAtom "NameKindLength", n]
+
+mkKDFName :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym SExp
+mkKDFName a b c nks j = do
+    va <- interpretAExp a
+    vb <- interpretAExp b
+    vc <- interpretAExp c
+    nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+    let start = sPlus $ take j nk_lengths
+    let segment = nk_lengths !! j
+    return $ SApp [SAtom "KDFName", va, vb, vc, start, segment]
+
+
+
+
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
     ne' <- liftCheck $ normalizeNameExp ne
@@ -571,20 +600,12 @@ getSymName ne = do
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
       KDFName ann a b c j -> do 
-          let i = case (unignore ann) of
-                    KDF_SaltKey _ i -> i
-                    KDF_IKMKey _ i -> i
-          a' <- interpretAExp a
-          b' <- interpretAExp b
-          c' <- interpretAExp c
-          return $ SApp [SAtom "KDFName", a', b', c', SAtom (show i), SAtom (show j)]
+          (_, nts) <- liftCheck $ getKDFAnnInfo (unignore ann) a b c
+          mkKDFName a b c (map snd nts) j
       ODHName p ixs a c i j -> do 
-          (ne1, ne2, _, _) <- liftCheck $ getODHNameInfo p ixs a c i j
+          (ne1, ne2, _, nts) <- liftCheck $ getODHNameInfo p ixs a c i j
           let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
-          a' <- interpretAExp a
-          b' <- interpretAExp b
-          c' <- interpretAExp c
-          return $ SApp [SAtom "KDFName", a', b', c', SAtom (show i), SAtom (show j)]
+          mkKDFName a b c (map snd nts) j
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
@@ -644,3 +665,31 @@ instance OwlPretty CanonAtom where
     owlpretty (CanonTop) = owlpretty topLbl
     owlpretty (CanonGhost) = owlpretty ghostLbl
     owlpretty (CanonZero) = owlpretty zeroLbl
+
+
+class SMTNameKindOf a where
+    smtNameKindOf :: a -> Check SExp
+
+instance SMTNameKindOf NameType where
+    smtNameKindOf nt = 
+        case nt^.val of
+          NT_DH -> return $ SAtom "DHkey"
+          NT_Enc _ -> return $ SAtom "Enckey"
+          NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
+          NT_PKE _ -> return $ SAtom "PKEkey"
+          NT_Sig _ -> return $ SAtom "Sigkey"
+          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_MAC _ -> return $ SAtom "MACkey"
+          NT_Nonce -> return $ SAtom "Nonce"
+          NT_App p ps -> resolveNameTypeApp p ps >>= smtNameKindOf
+
+instance SMTNameKindOf NameKind where
+    smtNameKindOf nk = 
+        case nk of
+          NK_DH ->    return $ SAtom "DHkey"
+          NK_Enc ->   return $ SAtom "Enckey"
+          NK_KDF ->   return $ SAtom "KDFkey"
+          NK_PKE ->   return $ SAtom "PKEkey" 
+          NK_Sig ->   return $ SAtom "Sigkey"
+          NK_MAC ->   return $ SAtom "MACkey"
+          NK_Nonce -> return $ SAtom "Nonce"

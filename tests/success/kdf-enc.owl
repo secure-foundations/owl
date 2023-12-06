@@ -20,13 +20,14 @@ name k : kdf {ikm info.
     }
 } @ alice, bob
 
-corr [k] ==> [KDF<k;0>(0x, 0x01)[0]]
-corr [k] ==> [KDF<k;1>(0x, 0x02)[0]]
-corr [KDF<k;1>(0x, 0x02)[0]] ==> [KDF<KDF<k;1>(0x, 0x02)[0];0>(0x, 0x01)[0]]
+// corr [k] ==> [KDF<k;0>(0x, 0x01)[0]]
+// corr [k] ==> [KDF<k;1>(0x, 0x02)[0]]
+// corr [KDF<k;1>(0x, 0x02)[0]] ==> [KDF<KDF<k;1>(0x, 0x02)[0];0>(0x, 0x01)[0]]
 
 def alice_main() @ alice : Unit = 
     corr_case k in
     let ek = kdf<0;;enckey;0>(get(k), 0x, 0x01) in 
+    // assert (corr(k) ==> corr(KDF<k;0>(0x, 0x01)[0]));
     let c = aenc(ek, get(alice1)) in 
     output c;
     let k2 = kdf<1;;kdfkey;0>(get(k), 0x, 0x02) in

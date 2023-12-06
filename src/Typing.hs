@@ -1356,10 +1356,13 @@ checkProp p =
               _ <- inferAExpr x
               _ <- inferAExpr y
               return ()
-          (PValidKDF x y z i j nk) -> do
+          (PValidKDF x y z nks j) -> do
               _ <- mapM inferAExpr [x, y, z]
-              assert ("weird case for PValidKDF i") $ i >= 0
               assert ("weird case for PValidKDF j") $ j >= 0
+              return ()
+          (PPublicKDFVal x y z nks j) -> do
+              _ <- mapM inferAExpr [x, y, z]
+              assert ("weird case for PPublicKDFVal j") $ j >= 0
               return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
@@ -1499,7 +1502,9 @@ stripProp x p =
       PAADOf ne y -> do
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
-      PValidKDF a1 a2 a3 i j nk -> do
+      PValidKDF a1 a2 a3 nks j -> do
+          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
+      PPublicKDFVal a1 a2 a3 nks j -> do
           if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
@@ -2238,7 +2243,8 @@ inferKDF kpos a b c i j nks = do
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> Int -> Int -> Check (Maybe KDFInferResult) 
 inferKDFODH a (b, tb) c s ips i j = do
     pth <- curModName
-    (ne1, ne2, p, (str, nt)) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
+    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
+    let (str, nt) = str_nts !! j
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     res <- do
@@ -2357,8 +2363,8 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                    (Just v1, Just v2) -> do
                        assert ("KDF resulsts inconsistent") $ v1 `aeq` v2
                        return $ Just v1
-          case res of 
-            Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
+          ot <- case res of 
+            Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
             Just KDFAdv -> return $ tData advLbl advLbl
             Just (KDFGood strictness ne) -> do 
               let flowAx = case strictness of
@@ -2368,6 +2374,10 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
               return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                   pAnd flowAx $ 
                       pEq (aeLength (aeVar ".res")) lenConst
+          -- Now, derive derivability predicate
+          derivable <- derivabilitySufficient [a, b, c]
+          return $ tRefined ot "._" $ 
+                      pImpl derivable $ mkSpanned $ PPublicKDFVal (fst a) (fst b) (fst c) nks j 
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
