@@ -708,6 +708,7 @@ extractKDF kpos bnd a b c i = do
                    KDF_SaltPos -> subst x b $ subst y c $ cases !! i
                    KDF_IKMPos -> subst x a $ subst y b $ cases !! i
 
+
 getNameKind :: NameType -> Check NameKind
 getNameKind nt = 
     case nt^.val of
@@ -1043,28 +1044,6 @@ odhNameAxioms ot p (is, ps) a c i j = do
         pImpl (pAnd secrecy p) validKDF
     
 
--- If the random oracle preimage is corrupt, then the RO is as well.
--- N.B.: this list does _not_ have to be exhaustive. It is only used to
--- prune impossible paths. We still need to case on the RO label
---solvabilityAxioms :: AExpr -> NameExp -> Check Prop
---solvabilityAxioms ae roName = local (set tcScope TcGhost) $ do
---    ae' <- resolveANF ae
---    let args = splitConcats ae'
---    arg_t <- mapM inferAExpr args
---    -- If all labels are corrupt, the RO is corrupt
---    p <- derivabilitySufficient (zip args arg_t)
---    let ax1 = pImpl p (pFlow (nameLbl roName) advLbl)
---    strictness <- getROStrictness roName
---    let doStrictness = case (strictness, roName^.val) of
---                         (ROStrict (Just is), NameConst _ _ (Just (_, i))) -> i `elem` is
---                         (ROStrict Nothing, _) -> True
---                         _ -> False
---    ax2 <- case doStrictness of
---             True -> do 
---                p' <- derivabilityNecessary (zip args arg_t)
---                return $ pImpl (pFlow (nameLbl roName) advLbl) p'
---             _ -> return $ pTrue
---    return $ pAnd ax1 ax2
 
 resolveANF :: AExpr -> Check AExpr
 resolveANF a = do
@@ -1092,40 +1071,6 @@ resolveANF a = do
           return $ mkSpanned $ AEPackIdx i a2'
       AELenConst _ -> return a
       AEInt _ -> return a
-
--- derivabilitySufficient produces an overapproximation of when the arguments can be
--- derived, in the sense that derivabilitySufficient ==> arguments must be
--- derivable.
--- We currently approximate it since we do not precisely track weak secrecy.
-
-data DerivabilityApproximation = DSufficient | DNecessary
-    deriving Eq
-
-derivabilitySufficient :: [(AExpr, Ty)] -> Check Prop
-derivabilitySufficient args = do
-    res <- derivability DSufficient args
-    liftIO $ putStrLn $ "derivabilitySufficient: " ++ show (owlpretty res)
-    return res
---
--- derivabilityNecessary produces an overapproximationg of when the arguments can be
--- derived, in the sense that "arguments are derivable" ==> derivabilitySufficient.
--- We only use this one for strict RO names, where the name is only corrupt when
--- the preimage is derivable.
-
-derivabilityNecessary :: [(AExpr, Ty)] -> Check Prop
-derivabilityNecessary args = derivability DNecessary args
-
-derivability :: DerivabilityApproximation -> [(AExpr, Ty)] -> Check Prop
-derivability da args = do
-    ps <- forM args $ \(a, t) -> do
-        a' <- resolveANF a
-        if isConstant a' then return pTrue else
-            case (stripRefinements t)^.val of
-              TName n -> return $ pFlow (nameLbl n) advLbl
-              TSS n m -> return $ pOr (pFlow (nameLbl n) advLbl) (pFlow (nameLbl m) advLbl)
-              TDH_PK _ -> return $ pTrue -- DH public keys always derivable
-              _ -> return $ if da == DSufficient then pFalse else pTrue
-    return $ foldr pAnd pTrue ps
 
 isConstant :: AExpr -> Bool
 isConstant a = 

@@ -1360,10 +1360,6 @@ checkProp p =
               _ <- mapM inferAExpr [x, y, z]
               assert ("weird case for PValidKDF j") $ j >= 0
               return ()
-          (PPublicKDFVal x y z nks j) -> do
-              _ <- mapM inferAExpr [x, y, z]
-              assert ("weird case for PPublicKDFVal j") $ j >= 0
-              return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
               checkIdx i2
@@ -1503,8 +1499,6 @@ stripProp x p =
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
       PValidKDF a1 a2 a3 nks j -> do
-          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
-      PPublicKDFVal a1 a2 a3 nks j -> do
           if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
@@ -2201,7 +2195,7 @@ proveDisjointContents x y = do
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
 
-data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp
+data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
 
 instance Alpha KDFInferResult
@@ -2235,10 +2229,14 @@ inferKDF kpos a b c i j nks = do
                     let ann = case kpos of
                                 KDF_SaltPos -> KDF_SaltKey ne i
                                 KDF_IKMPos -> KDF_IKMKey ne i
-                    if b2 && (bp == Just True) then 
+                    if (bp == Just True) then
+                          if b2 then 
                                 return $ Just $ KDFGood str $ 
                                     mkSpanned $ KDFName (ignore ann) (fst a) (fst b) (fst c) j   
-                                else return Nothing
+                          else do
+                              l_corr <- coveringLabelOf [snd a, snd b, snd c]
+                              return $ Just $ KDFCorrupt l_corr nts 
+                    else return Nothing
 
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> Int -> Int -> Check (Maybe KDFInferResult) 
 inferKDFODH a (b, tb) c s ips i j = do
@@ -2255,15 +2253,18 @@ inferKDFODH a (b, tb) c s ips i j = do
               b2 <- decideProp p
               b3 <- flowsTo (nameLbl ne1) advLbl
               b4 <- flowsTo (nameLbl ne2) advLbl
-              case (b2, b3 && b4)  of
-                (Just True, False) -> do
-                    let ne = mkSpanned $ ODHName (PRes (PDot pth s)) ips (fst a) (fst c) i j
-                    return $ Just $ KDFGood str ne
-                _ -> return Nothing
+              if (b2 == Just True) then 
+                    if (not b3) && (not b4) then
+                        return $ Just $ KDFGood str $
+                            mkSpanned $ ODHName (PRes (PDot pth s)) ips (fst a) (fst c) i j
+                    else do
+                        l_corr <- coveringLabelOf [snd a, snd c]
+                        return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) str_nts
+              else return Nothing
           _ -> return Nothing
-    case res of
-        Just v -> return $ Just v
-        Nothing -> do
+    res2 <- case res of
+        Just v@(KDFGood _ _) -> return $ Just v
+        _ -> do 
             b' <- resolveANF b
             case b'^.val of
               AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
@@ -2286,6 +2287,9 @@ inferKDFODH a (b, tb) c s ips i j = do
                           _ -> return Nothing
                     _ -> return Nothing
               _ -> return Nothing
+    case res2 of
+      Nothing -> return res -- here, res is either Nothing or KDFCorrupt
+      Just _ -> return res2
 
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
@@ -2361,9 +2365,13 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                    (Just v, Nothing) -> return $ Just v
                    (Nothing, Nothing) -> return Nothing
                    (Just v1, Just v2) -> do
-                       assert ("KDF resulsts inconsistent") $ v1 `aeq` v2
-                       return $ Just v1
-          ot <- case res of 
+                       case (v1, v2) of
+                         (KDFCorrupt _ _, _) -> return $ Just v2 
+                         (_, KDFCorrupt _ _) -> return $ Just v1
+                         _ -> do 
+                           assert ("KDF resulsts inconsistent") $ v1 `aeq` v2
+                           return $ Just v1
+          case res of 
             Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
             Just KDFAdv -> return $ tData advLbl advLbl
             Just (KDFGood strictness ne) -> do 
@@ -2374,10 +2382,11 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
               return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                   pAnd flowAx $ 
                       pEq (aeLength (aeVar ".res")) lenConst
-          -- Now, derive derivability predicate
-          derivable <- derivabilitySufficient [a, b, c]
-          return $ tRefined ot "._" $ 
-                      pImpl derivable $ mkSpanned $ PPublicKDFVal (fst a) (fst b) (fst c) nks j 
+            Just (KDFCorrupt l_corr nts) -> do 
+                p <- corruptKDFChain nts
+                let args_public = pFlow l_corr advLbl
+                let ot = tDataAnn l_corr zeroLbl "public KDF"
+                return $ tRefined ot "._" $ pImpl args_public p
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args

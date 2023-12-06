@@ -85,11 +85,11 @@ struct SDIS_msg {
 }
 
 def PFA_FW (gb : Ghost, k11: 
-    if (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) /\ corr(b)) 
+    if (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) \/ corr(b)) 
     then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PFA
 : Unit =
     pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
-    pcase (corr(a) /\ corr(b)) in
+    pcase (corr(a) \/ corr(b)) in
     corr_case ODHName<l1;0>(0x, 0x01)[0] in 
     input inp in // from PDIS (actual non-KE)
     case adec(k11, inp) {
@@ -110,7 +110,8 @@ def PFA_FW (gb : Ghost, k11:
 
 def PDIS_actual(gb : Ghost, 
     k11: 
-        if (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) /\ corr(b)) 
+        if (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a)
+            \/ corr(b)) 
         then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PDIS
 : Unit =
     pcase (sec(a) /\ sec(b)) in 
@@ -135,7 +136,7 @@ def PDIS_actual(gb : Ghost,
                 // request PFA to sign
                 let request = _req(1) in // TODO: 1 is the hash
                 pcase (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
-                pcase (corr(a) /\ corr(b)) in
+                pcase (corr(a) \/ corr(b)) in
                 corr_case ODHName<l1;0>(0x, 0x01)[0] in
                 let enc_request = aenc(k11, request) in
                 let _ = output enc_request to endpoint(PFA) in
@@ -224,7 +225,7 @@ def PFA_KE () @ PFA
                     pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
                     let k11 : if 
                         (corr(skPDIS) /\ ss != dh_combine(dhpk(get(a)),get(b))) \/
-                    (corr(a) /\ corr(b))
+                    (corr(a) \/ corr(b))
                         then Data<adv> else Name(ODHName<l1;0>(0x, 0x01)[0])
                         = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
                     call PFA_FW(ss, k11)

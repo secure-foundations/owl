@@ -344,10 +344,9 @@ sInt :: Int -> SExp
 sInt i = SAtom $ show i
 
 sAnd :: [SExp] -> SExp
-sAnd xs = 
-    if length xs > 0 then 
-        SApp $ [SAtom "and"] ++ xs
-    else sTrue
+sAnd []  = sTrue
+sAnd [x] = x
+sAnd xs = SApp $ [SAtom "and"] ++ xs
 
 sAnd2 x y = sAnd [x, y]
 

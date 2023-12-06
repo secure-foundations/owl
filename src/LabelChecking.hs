@@ -61,7 +61,6 @@ nameDefFlows n nt = do
           ctr <- getFreshCtr
           (((sx, x), (sy, y)), cases) <- liftCheck $ unbind bnd
           -- TODO: below, we need to generealize
-          vn <- freshSMTName
           axs <- withSMTVars [x, y] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
                   let (p, nts) = cases !! i
@@ -83,8 +82,46 @@ nameDefFlows n nt = do
           let vy = SAtom (show y)
           return $ sForall [(vx, bitstringSort), (vy, bitstringSort)] axs [] ("kdfFlows_" ++ show ctr)
                    
+corruptNameType :: NameType -> Check Prop
+corruptNameType nt = do
+    case nt^.val of
+      NT_App p is -> (resolveNameTypeApp p is) >>= corruptNameType
+      NT_Nonce -> return pTrue
+      NT_DH -> return pTrue
+      NT_Enc t -> do
+          l <- coveringLabel' t
+          return $ pFlow l advLbl
+      NT_StAEAD t _ _ _ -> do
+          l <- coveringLabel' t
+          return $ pFlow l advLbl
+      NT_PKE t -> do
+          l <- coveringLabel' t
+          return $ pFlow l advLbl
+      NT_Sig t -> do
+          l <- coveringLabel' t
+          return $ pFlow l advLbl
+      NT_MAC t -> do
+          l <- coveringLabel' t
+          return $ pFlow l advLbl
+      NT_KDF pos bnd -> do
+          (((sx, x), (sy, y)), cases) <- unbind bnd                                 
+          ps <- withVars [(x, (ignore (show x), Nothing, tGhost)),
+                          (y, (ignore (show y), Nothing, tGhost))] $ do
+              axis <- forM [0 .. (length cases - 1)] $ \i -> do
+                  let (p, nts) = cases !! i
+                  axijs <- forM [0 .. (length nts - 1)] $ \j -> 
+                      corruptNameType $ snd $ nts !! j
+                  return $ foldr1 pAnd axijs
+              return $ foldr1 pAnd axis
+          return $ mkSpanned $ PQuantBV Forall $ bind x $ 
+              mkSpanned $ PQuantBV Forall $ bind y $ ps
 
 
+
+corruptKDFChain :: [(KDFStrictness, NameType)] -> Check Prop
+corruptKDFChain nts = do
+    ps <- forM nts $ \(_, nt) -> corruptNameType nt
+    return $ foldr1 pAnd ps
 
 smtLabelSetup :: Sym ()
 smtLabelSetup = do

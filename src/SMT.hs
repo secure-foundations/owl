@@ -460,10 +460,6 @@ interpretProp p = do
           let start = sPlus $ take j nk_lengths
           let segment = nk_lengths !! j
           return $ SApp [SAtom "ValidKDF", va, vb, vc, start, segment, SAtom (show $ nks !! j)]
-      (PPublicKDFVal x y z nks j) -> do
-          albl <- symLabel advLbl
-          kdfname <- mkKDFName x y z nks j
-          return $ sFlows (SApp [SAtom "LabelOf", kdfname]) albl
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do

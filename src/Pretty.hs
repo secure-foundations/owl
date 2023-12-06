@@ -195,8 +195,6 @@ instance  OwlPretty PropX where
         owlpretty q <+> x <+> owlpretty ": bv" <> owlpretty "." <+> p
     owlpretty (PValidKDF a b c nks j) = owlpretty "valid_kdf" <> 
         tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
-    owlpretty (PPublicKDFVal a b c nks j) = owlpretty "public_kdf_val" <> 
-        tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PHappened s ixs xs) = 

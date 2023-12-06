@@ -778,11 +778,6 @@ resolveProp p =
           b' <- resolveAExpr b
           c' <- resolveAExpr c
           return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' nks j 
-      PPublicKDFVal a b c nks j -> do
-          a' <- resolveAExpr a
-          b' <- resolveAExpr b
-          c' <- resolveAExpr c
-          return $ Spanned (p^.spanOf) $ PPublicKDFVal a' b' c' nks j 
       PQuantIdx q ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'
