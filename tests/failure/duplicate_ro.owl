@@ -1,8 +1,0 @@
-locality alice
-name d : nonce @ alice
-name X : DH @ alice
-name Y : DH @ alice
-
-name l1 : RO (pair(X, Y)) -> enckey Name(d)
-name l2 : RO (pair(X, Y)) -> enckey Name(d)
-
