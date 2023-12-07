@@ -289,12 +289,21 @@ fromSMT s setup k = traceFn ("fromSMT: " ++ s) $ do
           case resp of
             Right (b, fn) -> return (fn, b)
             Left err -> typeError $ "Z3 error: " ++ err   
+
+timeCheck :: String -> Check a -> Check a
+timeCheck s k = do
+    t <- liftIO $ getCurrentTime
+    res <- k
+    t' <- liftIO $ getCurrentTime
+    liftIO $ putStrLn $ "Time for " ++ s ++ ": " ++ show (diffUTCTime t' t)
+    return res
+
               
 raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
-raceSMT setup k1 k2 = do
+raceSMT setup k1 k2 = timeCheck "raceSMT" $ do
     oq1 <- getSMTQuery setup k1
     oq2 <- getSMTQuery setup k2
-    case (oq1, oq2) of
+    res <- case (oq1, oq2) of
       (Nothing, _) -> return (Nothing, Just False)
       (_, Nothing) -> return (Nothing, Just True)
       (Just q1, Just q2) -> do 
@@ -332,6 +341,7 @@ raceSMT setup k1 k2 = do
                 case o2 of
                   Nothing -> return (Nothing, Nothing)
                   Just (fn, b) -> return (fn, Just b)
+    return res
 
 
 

@@ -847,7 +847,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
           local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
               forM_ xs $ \(x, t) -> do
+                  logTypecheck $ "Checking struct ty " ++ show (owlpretty t)
                   checkTy t
+                  logTypecheck $ "Checked ty"
                   assert (show $ owlpretty x <+> owlpretty "already defined") $ not $ member x dfs
                   case t^.val of
                     TGhost -> return ()
@@ -875,7 +877,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
           assert ("Duplicate name type name: " ++ s) $ not $ member s tds
           ((is, ps), nt) <- unbind bnt
           local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is) $ 
+            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps) $ 
                 checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclODH s b -> do

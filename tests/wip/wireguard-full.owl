@@ -51,148 +51,95 @@ session j, pid n, pid m>(c, ts)) ++ tau
 func honest_H7_pre<i, j@n,m>(c, ts, tau, c') = 
     crh(honest_H6_pre<session i, session j, pid n, pid m>(c, ts, tau)) ++ c'
 
-
-name msg1_C1 : RO[e_init] strict crh(construction()) ++ e_init -> nonce
-    requires is_group_elem(e_init)
-    uniqueness_by ()
-
-
-counter aead_counter_msg1_C2<i@n> @ Initiator<n>
-
-name msg1_C2<@m> : RO[e_init] strict{0} get(msg1_C1[e_init;0]) ++ dh_combine(e_init, get(S_resp<@m>)) -> nonce || 
-    st_aead (exists n. dhpk(S_init<@n>))
-            aad x. true // x == crh(honest_H2_pre<idx session i>())
-            nonce aead_counter_msg1_C2
-            nonce_pattern *
-    requires is_group_elem(e_init)
-    uniqueness_by { is_constant_lemma(crh(construction())) }
-
-
-
-type Empty = (x:Data<adv>{false})
-
-counter aead_counter_msg1_C3<i@n> @ Initiator<n>
-
-predicate valid_init_ephemeral<n>(x) = exists i:idx. x == dhpk(get(E_init<i@n>))
-
-name msg1_C3<@n,m> : RO[e_init] strict get(msg1_C2<@m>[e_init;0]) ++ dh_combine(dhpk(get(S_resp<@m>)), get(S_init<@n>)) -> nonce || 
-    st_aead (if valid_init_ephemeral<n>[e_init] then Data<adv> |12| else Empty)
-            aad x. true // (exists c:bv. x == crh(honest_H3_pre<idx session i>(c)))
-            nonce aead_counter_msg1_C3
-            nonce_pattern *
-    requires is_group_elem(e_init)
-    uniqueness_by { is_constant_lemma(crh(construction())) }
-
-// // needs to use the crh hash function, rather than kdf
-// name msg1_mac1_key<@m> : RO strict{0} mac1() ++ dhpk(get(S_resp<@m>)) -> mackey Data<adv> 
-//     uniqueness_by { assume (mac1() != crh(construction())); 
-//                     is_constant_lemma(crh(construction())) }
-
-    
-name msg2_C4<@n,m> : RO[e_init,e_resp] strict{0} get(msg1_C3<@n,m>[e_init;0]) ++ e_resp -> nonce
-    requires is_group_elem(e_init)
-    requires is_group_elem(e_resp)
-    uniqueness_by { is_constant_lemma(crh(construction())) }
-
-    
-
-name msg2_C5<@n,m> : RO[e_init,e_resp, ss] strict{0} get(msg2_C4<@n,m>[e_init,e_resp;0]) ++ ss -> nonce
-    requires is_group_elem(ss)
-uniqueness_by  { 
-    is_constant_lemma(crh(construction()));
-    is_constant_lemma(mac1())
-}
-
-
-
-
-name msg2_C6<@n,m> : RO[e_init, e_resp, ss] strict{0}
-get(msg2_C5<@n,m>[e_init,e_resp, ss;0]) ++ dh_combine(e_resp, get(S_init<@n>)) -> nonce
-    requires is_group_elem(e_init)
-    requires is_group_elem(e_resp)
-    requires is_group_elem(ss)
-uniqueness_by  { 
-    is_constant_lemma(crh(construction()));
-    is_constant_lemma(mac1())
-}
-
-
-counter aead_counter_msg2_C7<j@m> @ Responder<m>
-
-
-predicate valid_resp_ephemeral<m>(x) = exists j:idx. x == dhpk(get(E_resp<j@m>))
-        
-name msg2_C7<@n,m> : RO[e_init, e_resp, ss] strict{0, 2}
-get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (zeros_32()) -> nonce || nonce || 
-    st_aead (if (valid_resp_ephemeral<m>[e_resp]) then Data<adv> |0| else Empty)
-
-            aad x. true // sec(S_init<@n>) /\ sec(S_resp<@m>) ==> exists c:bv, ts:bv, tau:bv. x == crh(honest_H6_pre<session i, pid n, session j, pid m>(c, ts, tau))
-            nonce aead_counter_msg2_C7
-            nonce_pattern *
-    requires is_group_elem(e_init)
-    requires is_group_elem(e_resp)
-    requires is_group_elem(ss)
-    uniqueness_by  { 
-        is_constant_lemma(crh(construction()));
-        forall e2:bv { 
-            assume (
-                 crh(construction()) ++ e2 != 
-                        get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++
-                        (zeros_32()))
-        };
-        ()
-        // forall n2:idx { 
-        //     disjoint_not_eq_lemma(preimage(msg1_mac1_key<@n2>), get(msg2_C6<@n,m>[e_init,e_resp, ss;0]) ++ (zeros_32()))
-        // }
-        
-    }
-
-corr<n,m>[e_init, e_resp, ss] adv ==> [msg2_C7<@n,m>[e_init,e_resp, ss;1]]
-
-// // needs to use the crh hash function, rather than kdf
-// name msg2_mac1_key<@n> : RO mac1() ++ dhpk(get(S_init<@n>)) -> mackey Data<adv>
-//     uniqueness_by { 
-//         is_constant_lemma(crh(construction()));
-//         forall n2:idx, m:idx, a:bv, b:bv, c:bv {
-//             disjoint_not_eq_lemma(mac1() ++ dhpk(get(S_init<@n>)),
-//                     preimage(msg2_C7<@n2,m>[a,b,c]))
-//         };
-//         assume (mac1() != crh(construction()))
-//     }
-            
-
-
-
 locality dummy : 2 // TODO just for now
-
 name channel_secret<@n,m> : nonce @ dummy<n,m>
 corr<n,m> [S_init<@n>] ==> [channel_secret<@n,m>]
 corr<n,m> [S_resp<@m>] ==> [channel_secret<@n,m>]
-
-/*
-
-type payload_i2r = Data<adv /\ [channel_secret], |adv|>
-type payload_r2i = Data<adv /\ [channel_secret], |adv|>
-*/
 
 counter N_init_send<i@n> @ Initiator<n>
 counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
-name transp_T<@n,m> : RO[e_init, e_resp, ss] strict get(msg2_C7<@n,m>[e_init, e_resp, ss;0]) ++ 0x -> 
-    st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
-        aad x. true
-        nonce N_init_send
-        nonce_pattern * ||
-    st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
-        aad x. true
-        nonce N_resp_send
-       nonce_pattern *
-    uniqueness_by { 
-        admit
+nametype C7<@n,m> = kdf {ikm info.
+    True -> 
+        st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+            aad x. true
+            nonce N_init_send
+            nonce_pattern * ||
+        st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+            aad x. true
+            nonce N_resp_send
+           nonce_pattern *
+}
+
+counter aead_counter_msg2_C7<j@m> @ Responder<m>
+
+nametype C6<@n, m> = kdf {ikm info.
+    True -> C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+           nonce_pattern *
+}
+
+nametype C5<@n,m> = kdf {ikm info.
+    True -> C6<@n,m>
+}
+
+odh L5<j@n,m> :
+    S_init<@n>, E_resp<j@m> -> {salt info.
+    True -> C6<@n,m>
+}
+
+nametype C4<@n,m> = kdf {ikm info.
+    True -> C5<@n,m>
+}
+
+odh L4<i,j@n,m> :
+    E_init<i@n>, E_resp<j@m> -> {salt info.
+    True -> C5<@n,m>
+}
+
+nametype C3<@n,m> = kdf {ikm info.
+    True -> C4<@n,m>
+}
+
+counter aead_counter_msg1_C3<i@n> @ Initiator<n>
+
+nametype C2<@n,m> = kdf {ikm info. 
+    True -> C3<@n,m> || st_aead (Data<adv> |12|)
+                           aad x. true
+                           nonce aead_counter_msg1_C3
+                           nonce_pattern *
+}
+
+odh L2<@n,m> : 
+    S_init<@n>, S_resp<@m> -> {salt info.
+        True -> C3<@n,m> || st_aead (Data<adv> |12|)
+                           aad x. true
+                           nonce aead_counter_msg1_C3
+                           nonce_pattern *
     }
 
+counter aead_counter_msg1_C2<i@n> @ Initiator<n>
+
+nametype C1<@n,m> = kdf {ikm info.
+    True -> C2<@n,m> || st_aead (exists n. dhpk(S_init<@n>))
+                         aad x. true
+                         nonce aead_counter_msg1_C2
+                         nonce_pattern *
+}
+
+odh L1<i@n,m> :
+    E_init<i@n>, S_resp<@m> -> {salt info.
+        True -> C2<@n,m> || st_aead (exists n. dhpk(S_init<@n>))
+                         aad x. true
+                         nonce aead_counter_msg1_C2
+                         nonce_pattern *
+}                                                            
+
+name psk<i,j@n,m> : C1<@n,m> @ Initiator<n>, Responder<m>
 
 ////////////////////////////
 // Message formats
@@ -246,6 +193,8 @@ def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 ////////////////////////////
 // Return data
 
+
+/*
 struct initiator_msg1_val<i,n,m> {
       _initiator_msg1_C3 : Name(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0])
     , _initiator_msg1_H4 : (x:Data<adv>{
@@ -256,8 +205,6 @@ struct initiator_msg1_val<i,n,m> {
         exists c:bv, ts:bv. x ==
     crh(honest_H4_pre<session i, pid n, pid m>(c, ts))})
 }
-
-
 
 
 
@@ -301,21 +248,27 @@ predicate valid_transp_keys_init<i,n,m>(s) =
     )
         
     
+*/
 
 
 ///////// Initiator code //////////
     
 
 def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
-  initiator_msg1_val<session i, pid n, pid m> =
+  Unit = // initiator_msg1_val<session i, pid n, pid m> =
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
     let e_init = dhpk(get(E_init<i@n>)) in 
-    let C1 = hash<msg1_C1[e_init]; 0>(C0, e_init) in 
+    let C1 = kdf<;;enckey;0>(C0, e_init, 0x) in 
     let H2 = crh(H1 ++ e_init) in
     let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(E_init<i@n>)) in
-    let C2 = hash<msg1_C2<@m>[e_init];0>(C1, ss_S_resp_E_init) in
+    let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
+    ()
+
+/*
+
+    hash<msg1_C2<@m>[e_init];0>(C1, ss_S_resp_E_init) in
     let k0 = hash<msg1_C2<@m>[e_init];1>(C1, ss_S_resp_E_init) in
     let msg1_static : Data<adv> |cipherlen(|group|)|
         = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, pack<n>(dhpk_S_init), H2) in 
@@ -705,3 +658,4 @@ def transp_recv_resp<j@n,m> (transp_keys_val :
 def Initiator_main<@n>() @ Initiator<n> : Unit = ()
 def Responder_main<@n>() @ Responder<n> : Unit = ()
 def dummy_main<@n,m>() @ dummy<n,m> : Unit = ()
+*/
