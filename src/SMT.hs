@@ -85,7 +85,7 @@ setupNameEnvRO = do
               Nothing -> return ()
               Just nt -> do
                 let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
-                withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+                withSMTIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
                     -- withSMTVars xs $ do 
                         nk <- liftCheck $ smtNameKindOf nt
                         emitAssertion $ sForall
@@ -94,7 +94,7 @@ setupNameEnvRO = do
                             [sApp (sn : (map fst ivs))] --  ++ (map fst xvs))]
                             ("nameKind_" ++ show sn)
 
-                        let nameExp = mkSpanned $ NameConst (map (IVar (ignore def)) is, map (IVar (ignore def)) ps) (PRes pth) 
+                        let nameExp = mkSpanned $ NameConst (map (\x -> IVar (ignore def) (ignore $ show x) x) is, map (\x -> IVar (ignore def) (ignore $ show x) x) ps) (PRes pth) 
 
                         lAxs <- nameDefFlows nameExp nt
                         emitAssertion $ sForall (ivs)
@@ -273,7 +273,7 @@ mkPred pth@(PRes (PDot p s)) = do
                 ((ixs, xs), pr) <- liftCheck $ unbind b
                 let ivs = map (\i -> (SAtom (show i), indexSort)) ixs
                 let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
-                withIndices (map (\i -> (i, IdxGhost)) ixs) $ 
+                withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ 
                     withSMTVars xs $ do
                         v <- interpretProp pr
                         emit $ SApp [SAtom "declare-fun", SAtom sn, SApp (replicate (length ixs) indexSort ++ replicate (length xs) bitstringSort), SAtom "Bool"]
@@ -475,7 +475,7 @@ interpretProp p = do
           (i, p') <- liftCheck $ unbind ip
           sIE <- use symIndexEnv
           symIndexEnv  %= (M.insert i (SAtom $ show i))
-          v <- local (over inScopeIndices $ TypingBase.insert i IdxGhost) $ interpretProp p'
+          v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
           symIndexEnv .= sIE
           case q of
             Forall -> return $ sForall [(SAtom $ show i, indexSort)] v [] $ "forall_" ++ show i
@@ -542,6 +542,14 @@ disjointProps ps = do
     vps <- mapM interpretProp ps
     emitToProve $ sAtMostOne vps
 
+symEqNameExp :: NameExp -> NameExp -> Check Bool
+symEqNameExp ne1 ne2 = do
+    (_, b) <- smtTypingQuery "symEqNameExp" $ do
+        s1 <- symNameExp ne1
+        s2 <- symNameExp ne2
+        emitToProve $ sEq s1 s2 
+    return b
+
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do
@@ -572,4 +580,6 @@ checkFlows l1 l2 = do
         emitToProve $ sNot $ SApp [SAtom "Flows", x, y]
                 }
     raceSMT smtSetup k2 k1
+
+
 

@@ -19,6 +19,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString as BS
 import Control.Monad.Reader
+import Data.Time.Clock
 import Control.Monad.Except
 import Control.Monad.Cont
 import CmdArgs
@@ -152,19 +153,27 @@ data ModBody = ModBody {
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
 
+data MemoEntry = MemoEntry { 
+    _memoInferAExpr :: IORef (M.Map (AlphaOrd AExpr) Ty) 
+}
+
 data Env = Env { 
+    -- These below must only be modified by the trusted functions, since memoization
+    -- depends on them
+    _inScopeIndices ::  Map IdxVar IdxType,
+    _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
+    ------
     _envFlags :: Flags,
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
-    _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
     _tcScope :: TcScope,
     _endpointContext :: [EndpointVar],
-    _inScopeIndices ::  Map IdxVar IdxType,
     _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
     _modContext :: Map (Name ResolvedPath) ModDef,
     _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
+    _memoStack :: [MemoEntry],
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int,
@@ -248,6 +257,8 @@ newtype Check a = Check { unCheck :: ReaderT Env (ExceptT Env IO) a }
 
 makeLenses ''DefSpec
 
+makeLenses ''MemoEntry
+
 makeLenses ''Env
 
 makeLenses ''ModBody
@@ -260,6 +271,8 @@ modDefKind (MFun _ _ xd) =
 modDefKind (MAlias p) = do
     md <- getModDef p
     modDefKind md
+
+
 
 
 makeModDefConcrete :: ModDef -> Check ModDef
@@ -330,6 +343,16 @@ loadSMTCache = do
                   liftIO $ putStrLn $ "Found smtcache file: " ++ hintsFile
                   liftIO $ writeIORef cacheref $ c
 
+timeCheck :: Float -> String -> Check a -> Check a
+timeCheck threshold s k = do
+    t <- liftIO $ getCurrentTime
+    res <- k
+    t' <- liftIO $ getCurrentTime
+    let dt = diffUTCTime t' t
+    when (dt > realToFrac threshold) $ liftIO $ putStrLn $ "Time for " ++ s ++ ": " ++ show dt
+    return res
+
+
 
 warn :: String -> Check ()
 warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
@@ -387,13 +410,13 @@ laxAssertion k = do
 -- withVars xs k = add xs to the typing environment, continue as k with extended
 -- envrionment
 
-withVars :: [(DataVar, (Ignore String, (Maybe AExpr), Ty))] -> Check a -> Check a
+withVars :: (MonadIO m, MonadReader Env m) => [(DataVar, (Ignore String, (Maybe AExpr), Ty))] -> m a -> m a
 withVars assocs k = do
-    tyC <- view tyContext
-    forM_ assocs $ \(x, _) -> 
-        assert (show $ ErrDuplicateVarName x) $ not $ elem x $ map fst tyC
-    local (over tyContext $ addVars assocs) k
+    local (over tyContext $ addVars assocs) $ withNewMemo $ k
 
+withIndices :: (MonadIO m, MonadReader Env m) => [(IdxVar, IdxType)] -> m a -> m a
+withIndices assocs k = do
+    local (over inScopeIndices $ \a -> assocs ++ a) $ withNewMemo $ k
 
 unsafeHead :: Lens' [a] a
 unsafeHead = lens gt st
@@ -411,6 +434,24 @@ unsafeLookup x = lens gt st
 
 curMod :: Lens' Env ModBody
 curMod = openModules . unsafeHead . _2
+
+curMemo :: Lens' Env MemoEntry
+curMemo = memoStack . unsafeHead
+
+mkMemoEntry :: Maybe MemoEntry -> IO MemoEntry
+mkMemoEntry Nothing = do 
+    r <- newIORef M.empty
+    return $ MemoEntry r
+mkMemoEntry (Just (MemoEntry r)) = do
+    mp <- readIORef r  
+    r' <- newIORef mp
+    return $ MemoEntry r'
+
+withNewMemo :: (MonadIO m, MonadReader Env m) => m a -> m a
+withNewMemo k = do
+    memos <- view memoStack
+    memo' <- liftIO $ mkMemoEntry $ Just $ head memos
+    local (over memoStack (memo':)) k
 
 curModName :: Check ResolvedPath
 curModName = do
@@ -440,7 +481,7 @@ traceFn ann k = do
       Nothing -> k
 
 inferIdx :: Idx -> Check IdxType
-inferIdx (IVar pos i) = do
+inferIdx (IVar pos iname i) = do
     let go k = 
             if unignore pos == def then k else withSpan pos k
     go $ do
@@ -450,9 +491,9 @@ inferIdx (IVar pos i) = do
           Just t -> 
               case (tc, t) of
                 (TcDef _, IdxGhost) ->  
-                    typeError $ "Index should be nonghost: " ++ show (owlpretty i) 
+                    typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
-          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty i)
+          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname)
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
@@ -460,7 +501,7 @@ checkIdx i = do
     return ()
 
 checkIdxSession :: Idx -> Check ()
-checkIdxSession i@(IVar pos _) = do
+checkIdxSession i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -468,7 +509,7 @@ checkIdxSession i@(IVar pos _) = do
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check ()
-checkIdxPId i@(IVar pos _) = do
+checkIdxPId i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -653,14 +694,14 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
 -- Also ensures that the name is well-formed: the annotation lines up with the
 -- AExprs.
 getKDFAnnInfo :: KDFAnn -> AExpr -> AExpr -> AExpr -> Check (Prop, [(KDFStrictness, NameType)])
-getKDFAnnInfo ann a b c = 
+getKDFAnnInfo ann a b c = do
     case ann of
       KDF_SaltKey ne i -> do 
           nt <- getNameType ne
           case nt^.val of
             NT_KDF kpos bnd -> do
                 assert ("KDF position wrong somehow") $ kpos == KDF_SaltPos
-                ta <- inferAExpr a 
+                ta <- inferAExpr a
                 case (stripRefinements ta)^.val of
                   TName ne2 -> do
                       ne2' <- normalizeNameExp ne2
@@ -875,61 +916,23 @@ normalizeAExpr ae = withSpan (ae^.spanOf) $
             Just (FunDef b) -> normalizeAExpr =<< extractFunDef b fs' aes'
             _ -> return $ Spanned (ae^.spanOf) $ AEApp pth fs' aes'
 
-simplifyProp :: Prop -> Check Prop
-simplifyProp p = do
-    p' <- go p
-    if p `aeq` p' then return p' else simplifyProp p'
-        where 
-            go p = case p^.val of
-                     PTrue -> return p
-                     PFalse -> return p
-                     PAnd (Spanned _ PTrue) p -> simplifyProp p
-                     PAnd p (Spanned _ PTrue) -> simplifyProp p
-                     PAnd (Spanned _ PFalse) p -> return pFalse
-                     PAnd p (Spanned _ PFalse) -> return pFalse
-                     PAnd p1 p2 -> do
-                         p1' <- simplifyProp p1
-                         p2' <- simplifyProp p2
-                         if p1' `aeq` p2' then return p1' else
-                             return $ mkSpanned $ PAnd p1' p2'
-                     POr (Spanned _ PTrue) p -> return pTrue
-                     POr p (Spanned _ PTrue) -> return pTrue
-                     POr (Spanned _ PFalse) p -> simplifyProp p
-                     POr p (Spanned _ PFalse) -> simplifyProp p
-                     POr p1 p2 -> do
-                         p1' <- simplifyProp p1
-                         p2' <- simplifyProp p2
-                         if p1' `aeq` p2' then return p1' else
-                             return $ mkSpanned $ POr p1' p2'
-                     PImpl (Spanned _ PTrue) p -> simplifyProp p
-                     PImpl _ (Spanned _ PTrue) -> return pTrue  
-                     PImpl (Spanned _ PFalse) p -> return pTrue
-                     PImpl p (Spanned _ PFalse) -> pNot <$> simplifyProp p
-                     PImpl p1 p2 -> do 
-                         p1' <- simplifyProp p1
-                         p2' <- simplifyProp p2
-                         return $ mkSpanned $ PImpl p1' p2'
-                     PEq a1 a2 -> do
-                         a1' <- normalizeAExpr a1
-                         a2' <- normalizeAExpr a2
-                         return $ mkSpanned $ PEq a1' a2'
-                     PLetIn a xp -> do
-                         (x, p) <- unbind xp
-                         simplifyProp $ subst x a p
-                     PNot (Spanned _ PTrue) -> return pFalse
-                     PNot (Spanned _ PFalse) -> return pTrue
-                     PNot p -> do
-                         p' <- simplifyProp p
-                         return $ mkSpanned $ PNot p'
-                     _ -> return p
+
+memoizeAExpr :: AExpr -> Check Ty -> Check Ty
+memoizeAExpr ae m = do
+    memo <- view $ curMemo . memoInferAExpr 
+    mp <- liftIO $ readIORef memo
+    case M.lookup (AlphaOrd ae) mp of 
+      Just t -> do
+          return t
+      Nothing -> do
+          t <- m
+          liftIO $ modifyIORef memo $ M.insert (AlphaOrd ae) t
+          return t
 
       
 
-
-
-
 inferAExpr :: AExpr -> Check Ty
-inferAExpr ae = withSpan (ae^.spanOf) $ do
+inferAExpr ae = withSpan (ae^.spanOf) $ memoizeAExpr ae $ do
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
@@ -948,7 +951,7 @@ inferAExpr ae = withSpan (ae^.spanOf) $ do
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
-      (AEPackIdx idx@(IVar _ i) a) -> do
+      (AEPackIdx idx@(IVar _ _ i) a) -> do
             _ <- local (set tcScope TcGhost) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
@@ -1235,7 +1238,7 @@ coveringLabel' t =
           return $ joinLbl l1 l2
       TExistsIdx xt -> do
           (x, t) <- unbind xt
-          l <- local (over (inScopeIndices) $ insert x IdxGhost) $ coveringLabel' t
+          l <- withIndices [(x, IdxGhost)] $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
       THexConst a -> return zeroLbl

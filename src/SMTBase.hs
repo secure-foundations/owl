@@ -290,17 +290,9 @@ fromSMT s setup k = traceFn ("fromSMT: " ++ s) $ do
             Right (b, fn) -> return (fn, b)
             Left err -> typeError $ "Z3 error: " ++ err   
 
-timeCheck :: String -> Check a -> Check a
-timeCheck s k = do
-    t <- liftIO $ getCurrentTime
-    res <- k
-    t' <- liftIO $ getCurrentTime
-    liftIO $ putStrLn $ "Time for " ++ s ++ ": " ++ show (diffUTCTime t' t)
-    return res
-
               
 raceSMT :: Sym () -> Sym () -> Sym () -> Check (Maybe String, Maybe Bool) -- bool corresponds to which said unsat first
-raceSMT setup k1 k2 = timeCheck "raceSMT" $ do
+raceSMT setup k1 k2 = do
     oq1 <- getSMTQuery setup k1
     oq2 <- getSMTQuery setup k2
     res <- case (oq1, oq2) of
@@ -496,11 +488,11 @@ sName n ivs = do
     let vn = SAtom $ "%name_" ++ n
     return $ sApp $ vn : ivs 
 
-withIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
-withIndices xs k = do
+withSMTIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
+withSMTIndices xs k = do
     sIE <- use symIndexEnv
     symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ show i)) xs) 
-    res <- local (over inScopeIndices $ (++) xs) k
+    res <- withIndices xs k
     symIndexEnv .= sIE
     return res
 
@@ -509,7 +501,7 @@ withSMTVars xs k = do
     vVs <- use varVals
     varVals %= (M.union $ M.fromList $ map (\v -> (v, SAtom $ show v)) xs)
     let tyc = map (\v -> (v, (ignore $ show v, Nothing, tGhost))) xs 
-    res <- local (over tyContext $ (++) tyc) k
+    res <- withVars tyc $ k
     varVals .= vVs
     return res
 
@@ -518,7 +510,7 @@ withSMTVarsTys xs k = do
     vVs <- use varVals
     varVals %= (M.union $ M.fromList $ map (\(v, _) -> (v, SAtom $ show v)) xs)
     let tyc = map (\(v, t) -> (v, (ignore $ show v, Nothing, t))) xs 
-    res <- local (over tyContext $ (++) tyc) k
+    res <- withVars tyc $ k 
     varVals .= vVs
     return res
 
@@ -541,14 +533,14 @@ logSMT filepath q = do
                      else return $ ".owl-log" </> (s ++ show i ++ ".smt2")
 
 symIndex :: Idx -> Sym SExp
-symIndex idx@(IVar ispan v) = do
+symIndex idx@(IVar ispan iname v) = do
     iEnv <- use symIndexEnv
     case M.lookup v iEnv of 
       Just i -> return i
       Nothing -> do
           indices <- view $ inScopeIndices
-          liftIO $ putStrLn $ "Unknown index: " ++ show v
-          liftCheck $ typeError (show $ owlpretty "SMT ERROR: unknown index " <> owlpretty v <> owlpretty " under inScopeIndices " <> owlpretty (map fst indices))
+          liftIO $ putStrLn $ "Unknown index: " ++ show (unignore iname)
+          liftCheck $ typeError (show $ owlpretty "SMT ERROR: unknown index " <> owlpretty iname <> owlpretty " under inScopeIndices " <> (list $ map (owlpretty . fst) indices) <> owlpretty " and iEnv " <> (list $ map (owlpretty . fst) $ M.toList iEnv))
 
 data SMTNameDef = 
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))

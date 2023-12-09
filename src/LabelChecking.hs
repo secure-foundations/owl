@@ -137,7 +137,7 @@ smtLabelSetup = do
     afcs <- liftCheck $ collectAdvCorrConstraints 
     forM_ (zip afcs [0 .. (length afcs - 1)]) $ \(ils, j) -> do 
         ((is, xs), cc) <- liftCheck $ unbind ils
-        withIndices (map (\i -> (i, IdxGhost)) is) $ do
+        withSMTIndices (map (\i -> (i, IdxGhost)) is) $ do
             withSMTVars xs $ do 
                 scc <- mkCorrConstraint cc
                 emitAssertion $ sForall 
@@ -166,7 +166,9 @@ getIdxVars l = toListOf fv l
 simplLabel :: Label -> Check Label
 simplLabel l = 
     case l^.val of
-      LName _ -> return l
+      LName n -> do
+          n' <- normalizeNameExp n
+          return (Spanned (l^.spanOf) $ LName n')
       LZero -> return l
       LAdv -> return l
       LTop -> return l
@@ -243,7 +245,7 @@ symCanonBig c = do
                   emitComment $ "label for " ++ show (owlpretty c)
                   emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
                   ivs <- mapM (\_ -> freshSMTIndexName) is
-                  lv <- withIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $
+                  lv <- withSMTIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $
                       symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
                   emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) [] ("big_" ++ x)
                   return $ SAtom x

@@ -7,9 +7,16 @@ name k : kdf {ikm info.
     }
 } @ alice
 
-def main() @ alice : Unit = 
+name f : dualkdf {salt info.
+    True -> strict kdf {ikm2 info2.
+        True -> enckey Name(d)
+    }
+} @ alice   
+
+def main() @ alice : (x:Unit{corr(k) /\ corr(f) ==> corr(d)}) = 
     corr_case k in
-    let k2 = kdf<0;;kdfkey;0>(get(k), 0x, 0x) in 
+    corr_case f in
+    let k2 = kdf<0;0;kdfkey;0>(get(k), get(f), 0x) in 
     let ek = kdf<0;;enckey;0>(k2, 0x, 0x) in 
     let c = aenc(ek, get(d)) in 
     output c

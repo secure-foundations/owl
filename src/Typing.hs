@@ -59,8 +59,9 @@ emptyEnv f = do
     r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m mempty rs r' r'' (typeError') Nothing False def
+    memo <- mkMemoEntry Nothing
+    return $ Env mempty mempty f initDetFuncs TcGhost mempty [(Nothing, emptyModBody ModConcrete)] mempty 
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') Nothing False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -82,6 +83,11 @@ trivialTypeOf :: [Ty] -> Check TyX
 trivialTypeOf ts = do
     l <- coveringLabelOf ts
     return $ TData l l (ignore Nothing)
+
+trivialTypeOfWithLength :: [Ty] -> AExpr -> Check TyX
+trivialTypeOfWithLength ts ae = do
+    t <- trivialTypeOf ts
+    return $ TRefined (mkSpanned t) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) ae
 
 extractNameFromType :: Ty -> Maybe NameExp
 extractNameFromType t =
@@ -362,6 +368,66 @@ interpUserFunc pth md (UninterpUserFunc f ar) = do
         return $ TRefined (tData l l) ".res" $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PRes $ PDot pth f) [] (map fst args))))
 
 
+normalizeProp :: Prop -> Check Prop
+normalizeProp p = do
+    p' <- go p
+    if p `aeq` p' then return p' else normalizeProp p'
+        where 
+            go p = case p^.val of
+                     PTrue -> return p
+                     PFalse -> return p
+                     PAnd (Spanned _ PTrue) p -> normalizeProp p
+                     PAnd p (Spanned _ PTrue) -> normalizeProp p
+                     PAnd (Spanned _ PFalse) p -> return pFalse
+                     PAnd p (Spanned _ PFalse) -> return pFalse
+                     PAnd p1 p2 -> do
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         if p1' `aeq` p2' then return p1' else
+                             return $ mkSpanned $ PAnd p1' p2'
+                     POr (Spanned _ PTrue) p -> return pTrue
+                     POr p (Spanned _ PTrue) -> return pTrue
+                     POr (Spanned _ PFalse) p -> normalizeProp p
+                     POr p (Spanned _ PFalse) -> normalizeProp p
+                     POr p1 p2 -> do
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         if p1' `aeq` p2' then return p1' else
+                             return $ mkSpanned $ POr p1' p2'
+                     PImpl (Spanned _ PTrue) p -> normalizeProp p
+                     PImpl _ (Spanned _ PTrue) -> return pTrue  
+                     PImpl (Spanned _ PFalse) p -> return pTrue
+                     PImpl p (Spanned _ PFalse) -> pNot <$> normalizeProp p
+                     PImpl p1 p2 -> do 
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         return $ mkSpanned $ PImpl p1' p2'
+                     PEq a1 a2 -> do
+                         a1' <- resolveANF a1 >>= normalizeAExpr 
+                         a2' <- resolveANF a2 >>= normalizeAExpr 
+                         return $ mkSpanned $ PEq a1' a2'
+                     PLetIn a xp -> do
+                         (x, p) <- unbind xp
+                         normalizeProp $ subst x a p
+                     PNot (Spanned _ PTrue) -> return pFalse
+                     PNot (Spanned _ PFalse) -> return pTrue
+                     PNot p -> do
+                         p' <- normalizeProp p
+                         return $ mkSpanned $ PNot p'
+                     PQuantBV q xp -> do
+                         (x, p') <- unbind xp
+                         p2' <- normalizeProp p'
+                         return $ if x `elem` toListOf fv p2' then (mkSpanned $ PQuantBV q (bind x p2')) else p2'
+                     PQuantIdx q xp -> do
+                         (x, p') <- unbind xp
+                         p2' <- normalizeProp p'
+                         return $ if x `elem` toListOf fv p2' then (mkSpanned $ PQuantIdx q (bind x p2')) else p2'
+                     PFlow a b -> do
+                         a' <- normLabel a
+                         b' <- normLabel b
+                         if a' `aeq` b' then return pTrue else return (mkSpanned $ PFlow a' b')
+                     _ -> return p
+
 
 -- Normalize a type expression. Only nontrivial computations are to normalize a
 -- nested refinement, and to normalize a case whether a name n is honest.
@@ -390,7 +456,7 @@ normalizeTy t0 = local (set tcScope TcGhost) $ do
         (TRefined t s xp) -> do
             t' <- normalizeTy t
             (x, p) <- unbind xp
-            p' <- withVars [(x, (ignore $ show x, Nothing, t'))] $ simplifyProp p
+            p' <- withVars [(x, (ignore $ show x, Nothing, t'))] $ normalizeProp p
             return $ Spanned (t0^.spanOf) $ TRefined t' s $ bind x p'
         (TUnion t1 t2) -> do
             t1' <- normalizeTy t1
@@ -436,7 +502,7 @@ normalizeTy t0 = local (set tcScope TcGhost) $ do
         (TExistsIdx xt) -> do
             (x, t) <- unbind xt
             if x `elem` getTyIdxVars t then do
-                t' <- local (over (inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
+                t' <- withIndices [(x, IdxGhost)] $ normalizeTy t
                 return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
             else normalizeTy t
         TAdmit -> return t0
@@ -508,7 +574,7 @@ isSubtype' t1 t2 = do
       (TExistsIdx xt1, TExistsIdx xt2) -> do
           (xi, t1) <- unbind xt1
           (xi', t2) <- unbind xt2
-          local (over (inScopeIndices) $ insert xi IdxGhost) $
+          withIndices [(xi, IdxGhost)] $ 
               isSubtype' t1 (subst xi' (mkIVar xi) t2)
       (_, TUnion t1' t2') -> do
           b1 <- isSubtype' t1 t1'
@@ -629,8 +695,7 @@ addNameDef n (is1, is2) (nt, nls) k = do
               withSpan (nt^.spanOf) $ assert (show $ owlpretty "Indices on abstract and concrete def of name" <+> owlpretty n <+> owlpretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
           _ -> typeError $ "Duplicate name: " ++ n
     withSpan (nt^.spanOf) $ assert (show $ owlpretty "Duplicate indices in definition: " <> owlpretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
-    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+    withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
             forM_ nls normLocality
             checkNameType nt
     local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (BaseDef (nt, nls)))) $ k
@@ -733,9 +798,8 @@ checkDecl d cont = withSpan (d^.spanOf) $
       DeclCounter n isloc -> do
           ensureNoConcreteDefs
           ((is1, is2), loc) <- unbind isloc
-          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
-                  normLocality loc
+          withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
+              normLocality loc
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclSMTOption s1 s2 -> do
         local (over z3Options $ M.insert s1 s2) $ cont
@@ -743,19 +807,18 @@ checkDecl d cont = withSpan (d^.spanOf) $
           ufs <- view $ curMod . userFuncs
           assert ("Duplicate function: " ++ show s) $ not $ member s ufs
           (((is, ps), xs), a) <- unbind bnd
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
-              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
-                    _ <- inferAExpr a
-                    return ()
+          withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
+              withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                  _ <- inferAExpr a
+                  return ()
           local (over (curMod . userFuncs) $ insert s (FunDef bnd)) $ cont
       DeclPredicate s bnd -> do 
         preds <- view $ curMod . predicates
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
         ((is, xs), p) <- unbind bnd
-        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
-                    checkProp p
+        withIndices (map (\i -> (i, IdxSession)) is) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
         ensureNoConcreteDefs
@@ -782,15 +845,13 @@ checkDecl d cont = withSpan (d^.spanOf) $
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
-              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-                  normLocality l
+          withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
+              normLocality l
           let df = DefHeader isl 
           addDef n df $ cont
       DeclDef n o1 -> do
           ((is1, is2), (l, db)) <- unbind o1
-          dspec <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
-              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+          dspec <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality l
                   withDepBind db $ \args (opreReq, tyAnn, bdy) -> do   
                       let preReq = case opreReq of
@@ -823,7 +884,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
           ((is, xs), (l1, l2)) <- unbind ils
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+          withIndices (map (\i -> (i, IdxGhost)) is) $ do
             withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
               checkLabel l1
               checkLabel l2
@@ -832,7 +893,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
       (DeclCorrGroup ils) -> do
           ensureNoConcreteDefs
           ((is, xs), ls) <- unbind ils
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
+          withIndices (map (\i -> (i, IdxGhost)) is) $ do
             withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
               mapM_ checkLabel ls
           let cc = bind (is, xs) $ CorrGroup ls
@@ -845,11 +906,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n tvars
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n dfs
           assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
-          local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
+          withIndices (map (\i -> (i, IdxGhost)) is) $ do
               forM_ xs $ \(x, t) -> do
-                  logTypecheck $ "Checking struct ty " ++ show (owlpretty t)
                   checkTy t
-                  logTypecheck $ "Checked ty"
                   assert (show $ owlpretty x <+> owlpretty "already defined") $ not $ member x dfs
                   case t^.val of
                     TGhost -> return ()
@@ -863,7 +922,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                       cont
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
-        local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
+        withIndices (map (\i -> (i, IdxGhost)) is) $ do
             mapM_ checkTy $ catMaybes $ map snd bdy
         assert ("Enum cases must be unique") $ uniq $ map fst bdy
         assert (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
@@ -876,15 +935,13 @@ checkDecl d cont = withSpan (d^.spanOf) $
           tds <- view $ curMod . nameTypeDefs
           assert ("Duplicate name type name: " ++ s) $ not $ member s tds
           ((is, ps), nt) <- unbind bnt
-          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps) $ 
+          withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do 
                 checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclODH s b -> do
           ensureNoConcreteDefs
           ((is, ps), (ne1, ne2, kdf)) <- unbind b
-          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps) $ do
+          withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do 
                 nt <- getNameType ne1
                 nt2 <- getNameType ne2
                 assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
@@ -933,8 +990,7 @@ notInODH salt info pk sk = do
     cur_odh <- view $ curMod . odh
     bs <- forM cur_odh $ \(_, bnd2) -> do
             ((is, ps), ((ne1, ne2, kdfBody))) <- unbind bnd2
-            local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
-                local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
+            withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
                     let pdisj = pNot $ pEq (dhCombine pk sk) (dhCombine (dhpk $ mkSpanned $ AEGet ne1)  
                                                                         (mkSpanned $ AEGet ne2))
                     pdisj2 <- notInKDFBody kdfBody salt info
@@ -946,12 +1002,10 @@ ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
 ensureODHDisjoint b = do
     cur_odh <- view $ curMod . odh
     ((is, ps), (ne1, ne2)) <- unbind b
-    local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
-        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
+    withIndices (map (\i -> (i, IdxSession)) is ++ map (\i -> (i, IdxPId)) ps) $ do
             forM_ cur_odh $ \(_, bnd2) -> do
                     ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
-                    local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is2) $ do 
-                        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do 
+                    withIndices (map (\i -> (i, IdxSession)) is2 ++ map (\i -> (i, IdxPId)) ps2) $ do
                             let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
                                             (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
                             let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
@@ -1026,7 +1080,7 @@ checkNoTopLbl l =
           checkNoTopLbl l2
       LRangeIdx il -> do
           (i, l) <- unbind il
-          local (over (inScopeIndices) $ insert i IdxGhost) $ checkNoTopLbl l
+          withIndices [(i, IdxGhost)] $ checkNoTopLbl l
       LGhost -> typeError $ "Ghost label not allowed here"
       _ -> return ()
 
@@ -1051,7 +1105,7 @@ checkNoTopTy t =
       TAdmit -> typeError $ "Admit type not allowed here"
       TExistsIdx it -> do
           (i, t) <- unbind it
-          local (over (inScopeIndices) $ insert i IdxGhost) $ checkNoTopTy t
+          withIndices [(i, IdxGhost)] $ checkNoTopTy t
       TConst s ps -> do
           td <- getTyDef s
           forM_ ps checkParam
@@ -1188,7 +1242,7 @@ checkTy t = withSpan (t^.spanOf) $
               return ()
           (TExistsIdx it) -> do
               (i, t) <- unbind it
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkTy t
+              withIndices [(i, IdxGhost)] $ checkTy t
           (TVK n) -> do
               nt <- getNameType n
               case nt^.val of
@@ -1273,7 +1327,7 @@ tyLenLbl t =
           return $ joinLbl l1 l2
       (TExistsIdx it) -> do
           (i, t) <- unbind it
-          l <- local (over (inScopeIndices) $ insert i IdxGhost) $ tyLenLbl t
+          l <- withIndices [(i, IdxGhost)] $ tyLenLbl t
           return $ mkSpanned $ LRangeIdx $ bind i l
       TAdmit -> return zeroLbl
       THexConst a -> return zeroLbl
@@ -1304,7 +1358,7 @@ checkLabel l =
               return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkLabel l
+              withIndices [(i, IdxGhost)] $ checkLabel l
 
 checkProp :: Prop -> Check ()
 checkProp p =
@@ -1328,7 +1382,7 @@ checkProp p =
               return ()
           (PQuantIdx _ ip) -> do
               (i, p) <- unbind ip
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
+              withIndices [(i, IdxGhost)] $ checkProp p
           (PQuantBV _ xp) -> do
               (x, p) <- unbind xp
               withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
@@ -1657,11 +1711,11 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
       (EDebug (DebugPrint s)) -> do
           liftIO $ putStrLn s
           getOutTy ot $ tUnit
-      (EDebug (DebugPrintTyOf a)) -> do
+      (EDebug (DebugPrintTyOf s a)) -> do
           t <- local (set tcScope $ TcGhost) $ inferAExpr a
           a' <- resolveANF a
           t' <- normalizeTy t
-          liftIO $ putStrLn $ show $ owlpretty "Type for " <> owlpretty a <> owlpretty ": " <> owlpretty t' 
+          liftIO $ putStrLn $ show $ owlpretty "Type for " <> owlpretty s <> owlpretty ": " <> owlpretty t' 
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
@@ -1705,6 +1759,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             Just t -> checkTy t
             Nothing -> return ()
           t1 <- checkExpr tyAnn e 
+          tc <- view tcScope
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
           stripTy x t2
@@ -1717,7 +1772,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           stripTy x t2
       (EChooseIdx ip ik) -> do
           (ix, p) <- unbind ip
-          local (over inScopeIndices $ insert ix IdxGhost) $ do
+          withIndices [(ix, IdxGhost)] $ do
               checkProp p
           (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
           (i, k) <- unbind ik
@@ -1725,13 +1780,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             Just True -> do
                 x <- freshVar
                 let tx = tLemma (subst ix (mkIVar i) p) 
-                to <- local (over inScopeIndices $ insert i IdxGhost) $ do
+                to <- withIndices [(i, IdxGhost)] $ do
                     withVars [(s2n x, (ignore x, Nothing, tx))] $ checkExpr ot k
                 if i `elem` getTyIdxVars to then
                     return (tExistsIdx (bind i to))
                 else return to
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ checkExpr ot k
+                t' <- withIndices [(i, IdxGhost)] $ checkExpr ot k
                 if i `elem` getTyIdxVars t' then
                     return (tExistsIdx (bind i t'))
                 else return t'
@@ -1742,14 +1797,14 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             TExistsIdx jt' -> do
                 (j, t') <- unbind jt'
                 let tx = tRefined (subst j (mkIVar i) t') ".res" (pEq (aeVar ".res") a) 
-                to <- local (over (inScopeIndices) $ insert i IdxGhost) $ do
+                to <- withIndices [(i, IdxGhost)] $ do 
                     withVars [(x, (ignore $ show x, Nothing, tx))] $ checkExpr ot e
                 to' <- stripTy x to
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
                 else return to'
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
+                t' <- withIndices [(i, IdxGhost)] $ withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
                 to' <- stripTy x t'
                 if i `elem` getTyIdxVars to' then
                     return (tExistsIdx (bind i to'))
@@ -1883,7 +1938,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
       (EForallIdx ik) -> do
           (i, k) <- unbind ik
-          t <- local (set tcScope TcGhost) $ local (over inScopeIndices $ mappend [(i, IdxGhost)]) $ do
+          t <- local (set tcScope TcGhost) $ withIndices [(i, IdxGhost)] $ do
               checkExpr Nothing k
           t' <- normalizeTy t
           case t'^.val of
@@ -2092,7 +2147,7 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
         TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
         TExistsIdx ity -> do
             (i, ty) <- unbind ity
-            local (over inScopeIndices $ insert i IdxGhost) $ getValidatedTy albl ty
+            withIndices [(i, IdxGhost)] $ getValidatedTy albl ty
         THexConst a -> return $ Just t 
     where     
     getLenConst :: NameExp -> Check AExpr
@@ -2201,6 +2256,17 @@ data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label 
     deriving (Show, Generic, Typeable)
 
 instance Alpha KDFInferResult
+
+unifyKDFInferResult :: KDFInferResult -> KDFInferResult -> Check KDFInferResult
+unifyKDFInferResult (KDFCorrupt _ _) v = return v
+unifyKDFInferResult v (KDFCorrupt _ _) = return v
+unifyKDFInferResult (KDFAdv) v = return v
+unifyKDFInferResult v KDFAdv = return v
+unifyKDFInferResult v1@(KDFGood str ne) (KDFGood str' ne') = do
+    if (str == str') then do
+                     b <- SMT.symEqNameExp ne ne'
+                     if b then return v1 else typeError "KDF results inconsistent"
+    else typeError "KDF results inconsistent"
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
             Int -> Int -> [NameKind] -> Check (Maybe KDFInferResult)
@@ -2328,7 +2394,7 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           let ns_disj = pAnd (pNot $ pNameExpEq n1 n2) $ pAnd (pNot $ pNameExpEq n1 n3) $ pNot $ pNameExpEq n2 n3
           let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
           let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-          p <- simplifyProp $  pImpl (foldr pAnd pTrue [ns_disj, pNot (pFlow (nameLbl n2) advLbl), pNot (pFlow (nameLbl n3) advLbl)])
+          p <- normalizeProp $  pImpl (foldr pAnd pTrue [ns_disj, pNot (pFlow (nameLbl n2) advLbl), pNot (pFlow (nameLbl n3) advLbl)])
                         (pNot $ pEq (dhCombine x (mkSpanned $ AEGet n1))
                                     (dhCombine (dhpk (mkSpanned $ AEGet n2)) (mkSpanned $ AEGet n3)))
    
@@ -2367,12 +2433,8 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                    (Just v, Nothing) -> return $ Just v
                    (Nothing, Nothing) -> return Nothing
                    (Just v1, Just v2) -> do
-                       case (v1, v2) of
-                         (KDFCorrupt _ _, _) -> return $ Just v2 
-                         (_, KDFCorrupt _ _) -> return $ Just v1
-                         _ -> do 
-                           assert ("KDF resulsts inconsistent") $ v1 `aeq` v2
-                           return $ Just v1
+                       v <- unifyKDFInferResult v1 v2
+                       return $ Just v1
           case res of 
             Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
             Just KDFAdv -> return $ tData advLbl advLbl
@@ -2385,7 +2447,7 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                   pAnd flowAx $ 
                       pEq (aeLength (aeVar ".res")) lenConst
             Just (KDFCorrupt l_corr nts) -> do 
-                p <- corruptKDFChain nts
+                p <- corruptKDFChain nts >>= normalizeProp
                 let args_public = pFlow l_corr advLbl
                 let ot = tDataAnn l_corr zeroLbl "public KDF"
                 return $ tRefined ot "._" $ pImpl args_public p

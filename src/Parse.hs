@@ -15,6 +15,7 @@ import qualified Data.Functor.Identity as I
 import qualified Data.Set as S
 import Unbound.Generics.LocallyNameless
 import AST
+import Pretty
 
 type Parser = ParsecT String () IO 
 
@@ -1071,7 +1072,7 @@ parseDebugCommand =
         symbol "("
         a <- parseAExpr
         symbol ")"
-        return $ DebugPrintTyOf a
+        return $ DebugPrintTyOf (ignore a) a
     )
     <|>
     (try $ do
@@ -1605,7 +1606,7 @@ parseIdx = do
     p <- getPosition
     i <- identifier
     p' <- getPosition
-    return $ IVar (ignore $ mkPos p p') (s2n i)
+    return $ IVar (ignore $ mkPos p p') (ignore i) (s2n i)
 
 parseIdxParams :: Parser ([Idx], [Idx])
 parseIdxParams = do

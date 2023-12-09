@@ -48,7 +48,7 @@ instance (OwlPretty a, OwlPretty b) => OwlPretty (a, b) where
     owlpretty (x, y) = parens $ owlpretty x <> pretty "," <+> owlpretty y
 
 instance OwlPretty Idx where
-    owlpretty (IVar _ s) = pretty $ show s
+    owlpretty (IVar _ s _) = pretty $ unignore s
 
 owlprettyIdxParams :: ([Idx], [Idx]) -> Doc AnsiStyle
 owlprettyIdxParams  ([], []) = mempty
@@ -336,7 +336,7 @@ instance  OwlPretty ExprX where
     owlpretty _ = owlpretty "unimp"
 
 instance  OwlPretty DebugCommand where
-    owlpretty (DebugPrintTyOf ae) = owlpretty "debugPrintTyOf(" <> owlpretty ae <> owlpretty ")"
+    owlpretty (DebugPrintTyOf ae _) = owlpretty "debugPrintTyOf(" <> owlpretty ae <> owlpretty ")"
     owlpretty (DebugPrint s) = owlpretty "debugPrint(" <> owlpretty s <> owlpretty ")"
     owlpretty (DebugPrintTy t) = owlpretty "debugPrintTy(" <> owlpretty t <> owlpretty ")"
     owlpretty (DebugPrintProp t) = owlpretty "debugPrintProp(" <> owlpretty t <> owlpretty ")"

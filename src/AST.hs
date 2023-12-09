@@ -95,12 +95,12 @@ instance Show ResolvedPath where
     show (PDot x y) = show x ++ "." ++ y
 
 
-data Idx = IVar (Ignore Position) IdxVar
+data Idx = IVar (Ignore Position) (Ignore String) IdxVar
     deriving (Show, Generic, Typeable)
 
 
 mkIVar :: IdxVar -> Idx
-mkIVar i = IVar (ignore def) i
+mkIVar i = IVar (ignore def) (ignore $ show i) i
 
 data Endpoint = 
     Endpoint  EndpointVar
@@ -457,7 +457,7 @@ data BuiltinLemma =
 
 
 data DebugCommand = 
-    DebugPrintTyOf AExpr
+    DebugPrintTyOf (Ignore AExpr) AExpr
       | DebugResolveANF AExpr
       | DebugPrint String
       | DebugPrintTy Ty
@@ -494,7 +494,7 @@ instance Subst b a => Subst b (Spanned a)
 instance Alpha Idx
 instance Alpha Endpoint
 instance Subst Idx Idx where
-    isvar (IVar _ v) = Just (SubstName v)
+    isvar (IVar _ _ v) = Just (SubstName v)
 instance Subst AExpr Idx
 instance Subst ResolvedPath Idx
 

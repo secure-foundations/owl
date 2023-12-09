@@ -716,7 +716,10 @@ resolveExpr e =
 resolveDebugCommand :: DebugCommand -> Resolve DebugCommand
 resolveDebugCommand dc = 
     case dc of
-      DebugPrintTyOf a -> DebugPrintTyOf <$> resolveAExpr a
+      DebugPrintTyOf s a -> do
+          s' <- resolveAExpr (unignore s)
+          a' <- resolveAExpr a
+          return $ DebugPrintTyOf (ignore s') a'
       DebugPrintTy t -> DebugPrintTy <$> resolveTy t
       DebugPrintProp p -> DebugPrintProp <$> resolveProp p
       DebugPrintExpr e -> DebugPrintExpr <$> resolveExpr e
