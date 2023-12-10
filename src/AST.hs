@@ -356,6 +356,7 @@ type Decl = Spanned DeclX
 data NameDecl = 
     DeclBaseName NameType [Locality]
       | DeclAbstractName
+      | DeclAbbrev NameExp
       deriving (Show, Generic, Typeable)
 
 data IsModuleType = ModType | ModConcrete

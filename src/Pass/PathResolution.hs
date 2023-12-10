@@ -163,6 +163,9 @@ resolveDecls (d:ds) =
           (is, ndecl) <- unbind ixs
           ndecl' <- case ndecl of
                       DeclAbstractName -> return DeclAbstractName
+                      DeclAbbrev ne2 -> do
+                          ne2' <- resolveNameExp ne2
+                          return $ DeclAbbrev ne2'
                       DeclBaseName nt ls -> do
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls

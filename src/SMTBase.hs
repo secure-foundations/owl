@@ -565,10 +565,7 @@ flattenNameDefs xs = do
           AbstractName -> do
               sn <- smtName n
               return [SMTBaseName ((SAtom $ "%name_" ++ sn), n) (bind (is, ps) Nothing)]
-          --RODef _ b -> do
-          --    sn <- smtName n
-          --    (xs, (a, p, nts)) <- liftCheck $ unbind b
-          --    return $ map (\i -> SMTROName ((SAtom $ "%name_" ++ sn ++ "_" ++ (show i)), n) i (bind ((is, ps), xs) (nts !! i))) [0 .. (length nts - 1)] 
+          AbbrevNameDef _ -> return []
     return $ concat ys
             
 sPlus :: [SExp] -> SExp

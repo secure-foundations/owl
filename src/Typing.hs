@@ -384,7 +384,7 @@ normalizeProp p = do
                          p1' <- normalizeProp p1
                          p2' <- normalizeProp p2
                          if p1' `aeq` p2' then return p1' else
-                             return $ mkSpanned $ PAnd p1' p2'
+                             return $ Spanned (p^.spanOf) $ PAnd p1' p2'
                      POr (Spanned _ PTrue) p -> return pTrue
                      POr p (Spanned _ PTrue) -> return pTrue
                      POr (Spanned _ PFalse) p -> normalizeProp p
@@ -393,7 +393,7 @@ normalizeProp p = do
                          p1' <- normalizeProp p1
                          p2' <- normalizeProp p2
                          if p1' `aeq` p2' then return p1' else
-                             return $ mkSpanned $ POr p1' p2'
+                             return $ Spanned (p^.spanOf) $ POr p1' p2'
                      PImpl (Spanned _ PTrue) p -> normalizeProp p
                      PImpl _ (Spanned _ PTrue) -> return pTrue  
                      PImpl (Spanned _ PFalse) p -> return pTrue
@@ -401,31 +401,31 @@ normalizeProp p = do
                      PImpl p1 p2 -> do 
                          p1' <- normalizeProp p1
                          p2' <- normalizeProp p2
-                         return $ mkSpanned $ PImpl p1' p2'
+                         return $ Spanned (p^.spanOf) $ PImpl p1' p2'
                      PEq a1 a2 -> do
                          a1' <- resolveANF a1 >>= normalizeAExpr 
                          a2' <- resolveANF a2 >>= normalizeAExpr 
-                         return $ mkSpanned $ PEq a1' a2'
+                         return $ Spanned (p^.spanOf) $ PEq a1' a2'
                      PLetIn a xp -> do
                          (x, p) <- unbind xp
                          normalizeProp $ subst x a p
                      PNot (Spanned _ PTrue) -> return pFalse
                      PNot (Spanned _ PFalse) -> return pTrue
-                     PNot p -> do
-                         p' <- normalizeProp p
-                         return $ mkSpanned $ PNot p'
+                     PNot p1 -> do
+                         p' <- normalizeProp p1
+                         return $ Spanned (p^.spanOf) $ PNot p'
                      PQuantBV q xp -> do
                          (x, p') <- unbind xp
-                         p2' <- normalizeProp p'
-                         return $ if x `elem` toListOf fv p2' then (mkSpanned $ PQuantBV q (bind x p2')) else p2'
+                         p2' <- withVars [(x, (ignore $ show x, Nothing, tGhost))] $ normalizeProp p'
+                         return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantBV q (bind x p2')) else p2'
                      PQuantIdx q xp -> do
                          (x, p') <- unbind xp
-                         p2' <- normalizeProp p'
-                         return $ if x `elem` toListOf fv p2' then (mkSpanned $ PQuantIdx q (bind x p2')) else p2'
+                         p2' <- withIndices [(x, IdxGhost)] $ normalizeProp p'
+                         return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantIdx q (bind x p2')) else p2'
                      PFlow a b -> do
                          a' <- normLabel a
                          b' <- normLabel b
-                         if a' `aeq` b' then return pTrue else return (mkSpanned $ PFlow a' b')
+                         if a' `aeq` b' then return pTrue else return (Spanned (p^.spanOf) $ PFlow a' b')
                      _ -> return p
 
 
@@ -700,6 +700,24 @@ addNameDef n (is1, is2) (nt, nls) k = do
             checkNameType nt
     local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (BaseDef (nt, nls)))) $ k
 
+addNameAbbrev :: String ->  ([IdxVar], [IdxVar]) -> NameExp -> Check a -> Check a
+addNameAbbrev n (is1, is2) ne k = do
+    md <- view curMod
+    case lookup n (md^.nameDefs) of
+      Nothing -> return ()
+      Just o -> do
+        ((is1', is2'), nd) <- unbind o
+        case nd of
+          AbstractName -> do
+              assert (show $ owlpretty "Indices on abstract and concrete def of name" <+> owlpretty n <+> owlpretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
+          _ -> typeError $ "Duplicate name: " ++ n
+    assert (show $ owlpretty "Duplicate indices in definition: " <> owlpretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
+    withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
+        _ <- getNameInfo ne
+        return ()
+    local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (AbbrevNameDef ne))) $ k
+
+
 sumOfLengths :: [AExpr] -> AExpr
 sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
 sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
@@ -826,6 +844,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
           DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
+          DeclAbbrev ne -> addNameAbbrev n (is1, is2) ne $ cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
           md <- case me^.val of
@@ -2682,6 +2701,7 @@ nameDefMatches s xn1 xn2 = do
       (BaseDef (nt1, ls1), BaseDef (nt2, ls2)) -> do
           assert ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
+      _ -> error "unimp: nameDefMatches"
 
 moduleMatches :: ModDef -> ModDef -> Check ()
 moduleMatches md1 md2 = 

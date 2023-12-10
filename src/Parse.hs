@@ -708,49 +708,17 @@ parseRequires = do
 
 parseNameDeclBody =
     (do
-        symbol ":"
-        (
-         --(do
-         --   reserved "RO"
-         --   xs_ <- optionMaybe $ do
-         --       symbol "["
-         --       xs <- (identifier `sepBy1` (symbol ","))
-         --       symbol "]"
-         --       return $ map s2n xs
-         --   let xs = case xs_ of
-         --              Nothing -> []
-         --              Just v -> v
-         --   ostrict <- optionMaybe $ do
-         --       reserved "strict"
-         --       optionMaybe $ do
-         --           symbol "{"
-         --           i <- (many1 digit) `sepBy1` (symbol ",")
-         --           symbol "}"
-         --           return $ map read i
-         --   let strictness = case ostrict of
-         --                      Just oi -> ROStrict oi
-         --                      Nothing -> ROUnstrict
-         --   e <- parseAExpr
-         --   symbol "->"
-         --   nts <- parseNameType `sepBy1` (symbol "||")
-         --   oreq <- parseRequires
-         --   let req = case oreq of
-         --               Nothing -> pTrue
-         --               Just v -> v
-         --   olem <- optionMaybe $ do
-         --       reserved "uniqueness_by"
-         --       parseExpr
-         --   let lem = case olem of
-         --               Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "unit") [] []
-         --               Just l -> l
-         --   return $ DeclRO strictness (bind xs (e, req, nts, lem))
-         --)
-         -- <|>
-         (do
-             nt <- parseNameType
-             symbol "@"
-             nl <- parseLocality `sepBy1` (symbol ",")
-             return $ DeclBaseName nt nl)))
+         symbol ":"
+         nt <- parseNameType
+         symbol "@"
+         nl <- parseLocality `sepBy1` (symbol ",")
+         return $ DeclBaseName nt nl)
+    <|>
+    (do
+        symbol "="
+        ne2 <- parseNameExp
+        return $ DeclAbbrev ne2
+    )
     <|>
     (return $ DeclAbstractName)
     

@@ -113,6 +113,7 @@ instance Subst ResolvedPath ModDef
 data NameDef = 
     BaseDef (NameType, [Locality])
       | AbstractName
+      | AbbrevNameDef NameExp
       deriving (Show, Generic, Typeable)
 
 instance Alpha NameDef
@@ -671,6 +672,7 @@ getNameInfo ne = withSpan (ne^.spanOf) $ do
                        assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
                        let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                        case nd of
+                         AbbrevNameDef ne2 -> getNameInfo ne2
                          AbstractName -> do
                              return Nothing
                          BaseDef (nt, lcls) -> do
@@ -1275,7 +1277,16 @@ owlprettyContext e =
 normalizeNameExp :: NameExp -> Check NameExp
 normalizeNameExp ne = 
     case ne^.val of
-      NameConst ips p -> return ne 
+      NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
+          md <- openModule p
+          case lookup n (md^.nameDefs) of
+            Nothing -> typeError $ show $ ErrUnknownName pth
+            Just b_nd -> do 
+                       ((is, ps), nd') <- unbind b_nd
+                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
+                       case nd of
+                         AbbrevNameDef ne2 -> normalizeNameExp ne2
+                         _ -> return ne
       KDFName ann x y z i -> do
           x' <- resolveANF x >>= normalizeAExpr 
           y' <- resolveANF y >>= normalizeAExpr
