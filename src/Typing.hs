@@ -280,16 +280,33 @@ initDetFuncs = withNormalizedTys $ [
     ))
     ]
 
-mkStructType :: ResolvedPath -> TyVar -> [FuncParam] -> [AExpr] -> [(String, Ty)] -> Check TyX
-mkStructType pth tv ps xs fields = do
-    etaRules <- forM [0 .. (length fields - 1)] $ \i -> 
-        return $ pEq (xs !! i) $ mkSpanned $ AEApp (PRes $ PDot pth (fst $ fields !! i)) ps [aeVar ".res"]
-    let etaRule = foldr pAnd pTrue etaRules
+mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
+mkStructType pth tv args ps b = do
+    (is, dp) <- unbind b
+    idxs <- getStructParams ps
+    assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty (PRes $ PDot pth tv)) $ length idxs == length is
+    let p = map (\(a, s) -> pEq a $ mkSpanned $ AEApp (PRes $ PDot pth s) ps [aeVar ".res"])
+                (zip (map fst args) (depBindNames $ substs (zip is idxs) dp))
     return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) ".res" $
-            bind (s2n ".res") $ 
-                pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths xs))
-                     etaRule
+        bind (s2n ".res") $ 
+            pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args)))
+                 (foldr pAnd pTrue p)
 
+tysMatchStructDef :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] -> Bind [IdxVar] (DepBind ()) -> Check Bool
+tysMatchStructDef pth sname args ps b = do
+    (is, dp) <- unbind b
+    idxs <- getStructParams ps
+    assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty sname ) $ length idxs == length is
+    go args $ substs (zip is idxs) dp
+        where
+            go [] (DPDone ()) = return True
+            go ((a, t):args) (DPVar t1 sx xk) = do
+                b1 <- isSubtype t t1 
+                if b1 then do
+                      (x, k) <- unbind xk
+                      go args $ subst x a k
+                else return False
+            go _ _ = typeError "Bad number of arguments to tyMatchStructDef"
 
         
 
@@ -297,16 +314,13 @@ interpUserFunc :: ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam]
 interpUserFunc pth md (StructConstructor tv) = do
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
-          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length $ depBindNames ys)
           return (ar, \ps xs -> do
               forM_ ps checkParam
-              nts <- extractStruct ps (show tv) idf 
               assert (show $ owlpretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               if length xs == ar then do
-                b <- foldM (\acc i -> do
-                    b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
-                    return $ acc && b1) True [0..(length xs - 1)]
-                if b then mkStructType pth tv ps (map fst xs) nts else trivialTypeOf (map snd xs)
+                b <- tysMatchStructDef pth tv xs ps idf 
+                if b then mkStructType pth tv xs ps idf else trivialTypeOf (map snd xs)
               else trivialTypeOf (map snd xs))
       _ -> typeError $ "Unknown struct: " ++ show tv
 interpUserFunc pth md (StructProjector tv field) = do
@@ -314,11 +328,11 @@ interpUserFunc pth md (StructProjector tv field) = do
     assert ("Struct accessors can only be called in ghost. Use a parse expression") $ tc `aeq` TcGhost
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
-          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length $ depBindNames ys)
           return (1, \ps args -> do
               forM_ ps checkParam
-              nts <- extractStruct ps (show tv) idf 
               assert (show $ owlpretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              nts <- extractStructTopDown ps (PRes $ PDot pth tv) (fst $ args !! 0) idf 
               case lookup field nts of
                 Just t -> do
                   b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PRes $ PDot pth tv) ps)
@@ -673,8 +687,7 @@ addTyDef s td k = do
             StructDef sd -> do
                 (is, xs') <- unbind sd
                 assert (show $ owlpretty "Cannot assign abstract type " <> owlpretty s <> owlpretty " to indexed struct") $ length is == 0
-                ls <- forM xs' $ \(_, t) -> tyLenLbl t
-                return $ foldr joinLbl zeroLbl ls
+                error "TODO: abstract ty for structs"
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError $ show $ owlpretty "Overlapping abstract types: " <> owlpretty s
           len_lbl' <- tyLenLbl $ mkSpanned $ TConst (topLevelPath s) []
@@ -786,17 +799,16 @@ ensureNoConcreteDefs = do
               assert ("Decl cannot appear after concrete def") $ unignore $ _isAbstract d
 
 
-withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(DataVar, Ty)] -> a -> Check b) -> Check (DepBind b)
+withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(DataVar, String, Ty)] -> a -> Check b) -> Check (DepBind b)
 withDepBind (DPDone x) k = DPDone <$> k [] x
-withDepBind (DPVar t xd) k = do
-    checkTy t
+withDepBind (DPVar t s xd) k = do
     (x, d) <- unbind xd
-    res <- withVars [(x, (ignore $ show x, Nothing, t))] $ withDepBind d $ \args v -> k ((x, t):args) v
-    return $ DPVar t (bind x res)
+    res <- withVars [(x, (ignore $ show x, Nothing, t))] $ withDepBind d $ \args v -> k ((x, s, t):args) v
+    return $ DPVar t s (bind x res)
                                           
 unsafeMapDepBind :: Alpha a => DepBind a -> (a -> b) -> b
 unsafeMapDepBind (DPDone x) k = k x
-unsafeMapDepBind (DPVar t xd) k = 
+unsafeMapDepBind (DPVar _ _ xd) k = 
     let (x, d) = unsafeUnbind xd in
     unsafeMapDepBind d k
                   
@@ -834,9 +846,10 @@ checkDecl d cont = withSpan (d^.spanOf) $
         preds <- view $ curMod . predicates
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
         ((is, xs), p) <- unbind bnd
-        withIndices (map (\i -> (i, IdxSession)) is) $ do
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
-                checkProp p
+        local (set tcScope TcGhost) $ do
+            withIndices (map (\i -> (i, IdxGhost)) is) $ do
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                    checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
         ensureNoConcreteDefs
@@ -873,12 +886,13 @@ checkDecl d cont = withSpan (d^.spanOf) $
           dspec <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
                   normLocality l
                   withDepBind db $ \args (opreReq, tyAnn, bdy) -> do   
+                      forM_ args $ \(_, _, t) -> checkTy t
                       let preReq = case opreReq of
                              Nothing -> pTrue
                              Just p -> p
                       checkProp preReq
                       checkTy tyAnn
-                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst args)
+                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map (\(x, _, _) -> x) args)
                       x <- freshVar
                       case bdy of
                         Nothing -> return $ (preReq, tyAnn, Nothing)
@@ -924,17 +938,21 @@ checkDecl d cont = withSpan (d^.spanOf) $
           tvars <- view $ curMod . tyDefs
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n tvars
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n dfs
-          assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
-          withIndices (map (\i -> (i, IdxGhost)) is) $ do
-              forM_ xs $ \(x, t) -> do
-                  checkTy t
-                  assert (show $ owlpretty x <+> owlpretty "already defined") $ not $ member x dfs
-                  case t^.val of
-                    TGhost -> return ()
-                    _ -> do
-                      llbl <- tyLenLbl t
-                      flowCheck llbl advLbl
-          let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
+          assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : depBindNames xs
+          snames_ <- withIndices (map (\i -> (i, IdxGhost)) is) $ do
+              withDepBind xs $ \args _ -> do 
+                  snames <- forM args $ \(x, s, t) -> do 
+                      checkTy t
+                      assert (show $ owlpretty s <+> owlpretty "already defined") $ not $ member s dfs
+                      case t^.val of
+                        TGhost -> return ()
+                        _ -> do
+                          llbl <- tyLenLbl t
+                          flowCheck llbl advLbl
+                      return s
+                  return snames
+          let snames = unsafeMapDepBind snames_ id 
+          let projs = map (\s -> (s, StructProjector n s)) snames 
           local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
                   addTyDef n (StructDef ixs) $ 
@@ -1137,8 +1155,11 @@ checkNoTopTy t =
             TyAbstract -> return ()
             TyAbbrev t1 -> checkNoTopTy t1
             StructDef ib -> do
-                sd <- extractStruct ps (show s) ib
-                forM_ sd $ \(_, t) -> checkNoTopTy t
+                (is, xs) <- unbind ib
+                _ <- withIndices (map (\i -> (i, IdxGhost)) is) $ do
+                    withDepBind xs $ \args _ -> do 
+                        forM_ args $ \(_, _, t) -> checkNoTopTy t
+                return ()
             EnumDef b -> do
                 ed <- extractEnum ps (show s) b
                 forM_ ed $ \(_, ot) -> traverse checkNoTopTy ot
@@ -1251,8 +1272,9 @@ checkTy t = withSpan (t^.spanOf) $
                 TyAbbrev t ->
                     assert (show $ owlpretty "Params should be empty for abbrev " <> owlpretty s) $ length ps == 0
                 StructDef ib -> do
-                    _ <- extractStruct ps (show s) ib
-                    return ()
+                    (is, dp) <- unbind ib
+                    idxs <- getStructParams ps
+                    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty s) $ length is == length idxs
                 EnumDef b -> do
                     _ <- extractEnum ps (show s) b
                     return ()
@@ -1321,10 +1343,18 @@ tyLenLbl t =
             TyAbstract -> return advLbl
             TyAbbrev t -> tyLenLbl t
             StructDef b -> do
-                bdy <- extractStruct ps (show s) b
-                local (set tcScope $ TcGhost) $ do
-                    ls <- forM bdy $ \(_, t) -> tyLenLbl t
-                    return $ foldr joinLbl zeroLbl ls
+                (is, xs) <- unbind b
+                idxs <- getStructParams ps
+                assert ("Wrong index arity for struct " ++ show (owlpretty s)) $ length is == length idxs
+                local (set tcScope TcGhost) $ go $ substs (zip is idxs) xs
+                    where
+                        go (DPDone _) = return zeroLbl
+                        go (DPVar t sx xk) = do
+                            l1 <- tyLenLbl t
+                            (x, k) <- unbind xk
+                            l2_ <- withVars [(x, (ignore sx, Nothing, t))] $ go k
+                            let l2 = if x `elem` toListOf fv l2_ then (mkSpanned $ LRangeVar $ bind x l2_) else l2_
+                            return $ joinLbl l1 l2
             EnumDef b -> do
                 bdy <- extractEnum ps (show s) b
                 ls <- forM bdy $ \(_, ot) ->
@@ -1723,7 +1753,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           ms <- view openModules
           getOutTy ot $ tUnit
       (EDebug (DebugResolveANF a)) -> do
-          liftIO $ putStrLn $ "Resolving ANF on " ++ show (owlpretty a) ++ ":"
+          liftIO $ putStrLn $ "esolving ANF on " ++ show (owlpretty a) ++ ":"
           b <- resolveANF a
           liftIO $ putStrLn $ "Got " ++ show (owlpretty b)
           getOutTy ot $ tUnit
@@ -1880,8 +1910,8 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                         case (db, args) of 
                           (DPDone v, []) -> return v
                           (DPDone _, _) -> typeError $ "Too many arguments for " ++ show (owlpretty f)
-                          (DPVar _ _, []) -> typeError $ "Too few arguments for " ++ show (owlpretty f)
-                          (DPVar t xd, a:as) -> do 
+                          (DPVar _ _ _, []) -> typeError $ "Too few arguments for " ++ show (owlpretty f)
+                          (DPVar t _ xd, a:as) -> do 
                              t' <- inferAExpr a
                              assertSubtype t' t
                              (x, d) <- unbind xd
@@ -1997,7 +2027,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
       EParse a t ok bk -> do
           t1 <- inferAExpr a
           checkTy t
-          sinfo <- obtainStructInfo t
+          sinfo <- obtainStructInfoTopDown a t
           b <- isSubtype t1 t
           otherwiseCase <- case ok of
                              Nothing -> return Nothing
@@ -2006,23 +2036,25 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             True -> do -- Well-typed case
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
-                bindings <- forM (zip b sinfo) $ \((x, s), (_, t, f)) -> do 
-                    let t' = tRefined t ".res" $ f a (aeVar ".res")
-                    return (x, (s, Nothing, t'))
-                tk <- withVars bindings $ checkExpr ot k   
+                bindings <- forM (zip b sinfo) $ \((x, s), (_, t)) -> do 
+                    return (x, (s, Nothing, t))
+                tk <- withVars bindings $ do
+                    tC <- view tyContext
+                    checkExpr ot k   
                 stripTys (map fst b) tk
             False -> do -- Ill-typed case
                 (b, k) <- unbind bk
                 assert ("Wrong number of variables on struct " ++ show (owlpretty t)) $ length b == length sinfo
                 l <- coveringLabel t1
-                validatedTys <- getValidatedStructTys (show $ owlpretty t) l $ map (\(x, t, _) -> (x, t)) sinfo
+                validatedTys <- getValidatedStructTys (show $ owlpretty t) l sinfo
                 -- let lt = tData l l 
                 -- tk <- withVars (map (\(x, s) -> (x, (s, Nothing, lt))) b) $ checkExpr ot k   
-                tk <- withVars (map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)) $ checkExpr ot k
-                tk2 <- case otherwiseCase of
+                let tc2 = map (\((x, s), (_, t)) -> (x, (s, Nothing, t))) (zip b validatedTys)
+                tk_otherwise <- case otherwiseCase of
                          Nothing -> typeError "Parse statement needs an otherwise case here"
                          Just t' -> return t'
-                assertSubtype tk2 tk
+                tk <- (withVars tc2 $ checkExpr ot k) >>= stripTys (map fst b) 
+                assertSubtype tk_otherwise tk
                 return tk
       (ECase e1 otk cases) -> do
           t <- checkExpr Nothing e1
@@ -2140,16 +2172,21 @@ getValidatedTy albl t = local (set tcScope TcGhost) $ do
                         -- enum, we just return Data<albl> and require a second `case` statement to parse it.
                         return $ Just $ tData albl albl 
               StructDef b -> do
-                memberTys <- map snd <$> extractStruct ps (show s) b
-                validatedTys <- mapM (getValidatedTy albl) memberTys
-                case sequence validatedTys of
-                    Nothing -> do
-                        warn $ "Unparsable struct type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
-                        return Nothing -- Unparsable nested struct type
-                    Just _ -> do
-                        -- All cases are parsable, but since we don't have a structural representation of the validated
-                        -- struct, we just return Data<albl> and require a second `parse` statement to parse it.
-                        return $ Just $ tData albl albl
+                (is, dp) <- unbind b
+                idxs <- getStructParams ps
+                assert ("Wrong index arity for struct") $ length idxs == length is
+                withIndices (map (\i -> (i, IdxGhost)) is) $ do
+                    res <- withDepBind dp $ \args _ -> do
+                        validatedTys <- mapM (getValidatedTy albl) (map (\(_, _, t) -> t) args)
+                        case sequence validatedTys of
+                            Nothing -> do
+                                warn $ "Unparsable struct type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
+                                return Nothing -- Unparsable nested struct type
+                            Just _ -> do
+                                -- All cases are parsable, but since we don't have a structural representation of the validated
+                                -- struct, we just return Data<albl> and require a second `parse` statement to parse it.
+                                return $ Just $ tData albl albl
+                    return $ unsafeMapDepBind res id
               TyAbbrev t' -> getValidatedTy albl t'
               TyAbstract -> typeError $ "Abstract type " ++ show (owlpretty t) ++ " is unparsable"
         TBool _ -> return $ Just $ mkSpanned $ TBool albl
@@ -2273,6 +2310,11 @@ proveDisjointContents x y = do
 
 data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
+
+instance OwlPretty KDFInferResult where
+    owlpretty KDFAdv = owlpretty "KDFAdv"
+    owlpretty (KDFGood str ne) = owlpretty "KDFGood(" <> owlpretty ne <> owlpretty ")"
+    owlpretty (KDFCorrupt l nts) = owlpretty "KDFCorrupt(" <> owlpretty l <> owlpretty ")"
 
 instance Alpha KDFInferResult
 
@@ -2453,7 +2495,7 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                    (Nothing, Nothing) -> return Nothing
                    (Just v1, Just v2) -> do
                        v <- unifyKDFInferResult v1 v2
-                       return $ Just v1
+                       return $ Just v
           case res of 
             Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
             Just KDFAdv -> return $ tData advLbl advLbl

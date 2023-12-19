@@ -124,11 +124,11 @@ resolveError pos msg = do
 
 resolveDepBind :: Alpha a => DepBind a -> (a -> Resolve a) -> Resolve (DepBind a)
 resolveDepBind  (DPDone x) f = DPDone <$> f x
-resolveDepBind (DPVar t b) f = do
+resolveDepBind (DPVar t s b) f = do
     t' <- resolveTy t
     (x, y) <- unbind b
     y' <- resolveDepBind y f
-    return $ DPVar t' $ bind x y'
+    return $ DPVar t' s $ bind x y'
 
 
 resolveDecls :: [Decl] -> Resolve [Decl]
@@ -229,14 +229,12 @@ resolveDecls (d:ds) =
           return (d' : ds')
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
-          vs' <- forM vs $ \(s, ot) -> do
-              ot' <- resolveTy ot
-              return (s, ot')
+          vs' <- resolveDepBind vs $ \_ -> return ()
           let d' = Spanned (d^.spanOf) $ DeclStruct s $ bind is vs'
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ 
               local (over funcPaths $ T.insert s p) $ 
-                  local (over funcPaths $ T.insertMany $ map (\(x, _) -> (x, p)) vs) $ 
+                  local (over funcPaths $ T.insertMany $ map (\x -> (x, p)) (depBindNames vs')) $ 
                       resolveDecls ds
           return (d' : ds')
       DeclTy s ot -> do

@@ -166,9 +166,7 @@ getIdxVars l = toListOf fv l
 simplLabel :: Label -> Check Label
 simplLabel l = 
     case l^.val of
-      LName n -> do
-          n' <- normalizeNameExp n
-          return (Spanned (l^.spanOf) $ LName n')
+      LName n -> return l
       LZero -> return l
       LAdv -> return l
       LTop -> return l
@@ -187,6 +185,8 @@ simplLabel l =
           else simplLabel l'
 
 
+canonNoBig :: CanonAtom -> CanonLabelBig
+canonNoBig x = CanonBig $ bind ([], []) x
 
 -- Canonizes the label, assuming it has been simplified
 -- 
@@ -197,29 +197,36 @@ canonLabel l = do
           (CanonAnd c1) <- canonLabel l1
           (CanonAnd c2) <- canonLabel l2
           return $ CanonAnd $ c1 ++ c2
-      LName ne -> return $ CanonAnd [CanonNoBig $ CanonLName ne]
-      LZero -> return $ CanonAnd [CanonNoBig $ CanonZero]
-      LAdv -> return $ CanonAnd [CanonNoBig $ CanonAdv]
-      LTop -> return $ CanonAnd [CanonNoBig $ CanonTop]
-      LGhost -> return $ CanonAnd [CanonNoBig $ CanonGhost]
-      LConst s -> return $ CanonAnd [CanonNoBig $ CanonConst s]
+      LName ne -> return $ CanonAnd [canonNoBig $ CanonLName ne]
+      LZero -> return $ CanonAnd [canonNoBig $ CanonZero]
+      LAdv -> return $ CanonAnd [canonNoBig $ CanonAdv]
+      LTop -> return $ CanonAnd [canonNoBig $ CanonTop]
+      LGhost -> return $ CanonAnd [canonNoBig $ CanonGhost]
+      LConst s -> return $ CanonAnd [canonNoBig $ CanonConst s]
       LRangeIdx il -> do 
           (i, l') <- liftCheck $ unbind il
-          (is, l) <- canonRange [i] l'
-          return $ CanonAnd [CanonBig $ bind (sort is) l]
+          ((is, xs), l) <- canonRange [i] [] l'
+          return $ CanonAnd [CanonBig $ bind (sort is, sort xs) l]
+      LRangeVar xl -> do 
+          (x, l') <- liftCheck $ unbind xl
+          ((is, xs), l) <- canonRange [] [x] l'
+          return $ CanonAnd [CanonBig $ bind (sort is, sort xs) l]
 
-canonRange :: [IdxVar] -> Label -> Sym ([IdxVar], CanonAtom)       
-canonRange is l = 
+canonRange :: [IdxVar] -> [DataVar] -> Label -> Sym (([IdxVar], [DataVar]), CanonAtom)       
+canonRange is xs l = 
     case l^.val of
       LJoin _ _ -> error "Internal error: should not get join inside big"
       LRangeIdx il' -> do
           (i, l') <- liftCheck $ unbind il'
-          canonRange (i : is) l'
-      LZero -> return (is, CanonZero)
-      LAdv -> return (is, CanonAdv)
-      LTop -> return (is, CanonTop)
-      LConst s -> return (is, CanonConst s)
-      LName ne -> return (is, CanonLName ne)
+          canonRange (i : is) xs l'
+      LRangeVar xl' -> do
+          (x, l') <- liftCheck $ unbind xl'
+          canonRange is (x : xs) l'
+      LZero -> return ((is, xs), CanonZero)
+      LAdv -> return ((is, xs), CanonAdv)
+      LTop -> return ((is, xs), CanonTop)
+      LConst s -> return ((is, xs), CanonConst s)
+      LName ne -> return ((is, xs), CanonLName ne)
 
 
 sJoins :: [SExp] -> SExp
@@ -238,17 +245,22 @@ symCanonBig c = do
       Just v -> return v
       Nothing -> do
         v <- case c of
-              CanonNoBig a -> symCanonAtom a
-              CanonBig il -> do
-                  (is, l) <- liftCheck $ unbind il -- All the i's must be relevant here
-                  x <- freshSMTName
-                  emitComment $ "label for " ++ show (owlpretty c)
-                  emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
-                  ivs <- mapM (\_ -> freshSMTIndexName) is
-                  lv <- withSMTIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $
-                      symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) l
-                  emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs) (sFlows lv (SAtom x)) [] ("big_" ++ x)
-                  return $ SAtom x
+              CanonBig ixl -> do
+                  ((is, xs), l) <- liftCheck $ unbind ixl
+                  let bnd_rel = any (\x -> x `elem` toListOf fv l) is || any (\x -> x `elem` toListOf fv l) xs
+                  case bnd_rel of
+                    False -> symCanonAtom l
+                    True -> do
+                        x <- freshSMTName
+                        emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
+                        ivs <- mapM (\_ -> freshSMTIndexName) is
+                        xvs <- mapM (\_ -> freshSMTIndexName) xs
+                        lv <- withSMTIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $ 
+                            withSMTVars (map s2n xvs) $
+                                symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) $ substs (zip xs (map (aeVar' . s2n) xvs)) l
+                        emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs ++ map (\x -> (SAtom x, bitstringSort)) xvs)
+                                                (sFlows lv (SAtom x)) [] ("big_" ++ x)
+                        return $ SAtom x
         labelVals %= M.insert (AlphaOrd c) v
         return v
 

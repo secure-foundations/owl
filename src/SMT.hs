@@ -197,6 +197,12 @@ setupTyEnv = do
             varVals %= (M.insert x v)
             go xs
 
+depBindLength :: Alpha a => DepBind a -> Int
+depBindLength (DPDone _) = 0
+depBindLength (DPVar _ _ b) = 
+    let (_, k) = unsafeUnbind b in
+    1 + depBindLength k
+
 -- TODO: reinterpret in terms of their SMT semantics
 setupUserFunc :: (ResolvedPath, UserFunc) -> Sym ()
 setupUserFunc (s, f) =
@@ -207,7 +213,7 @@ setupUserFunc (s, f) =
         td <- liftCheck $ getTyDef  (PRes $ PDot s tv)
         case td of
           StructDef idf -> do
-              let ar = length $ snd $ unsafeUnbind idf
+              let ar = depBindLength $ snd $ unsafeUnbind idf 
               setupFunc (PDot s tv, ar)
           _ -> error $ "Struct not found: " ++ show tv
       StructProjector _ proj -> setupFunc (PDot s proj, 1) -- Maybe leave uninterpreted?
@@ -325,6 +331,9 @@ sLambda k =
     let x = SAtom "%x" in
     SApp [SAtom "lambda", SApp [SApp [x, SAtom "Bits"]], k x]
 
+sLambdaExplicit :: SExp -> SExp -> SExp -> SExp
+sLambdaExplicit x sort bdy = SApp [SAtom "lambda", SApp [SApp [x, sort]], bdy]
+
 sRefined :: SExp -> (SExp -> SExp) -> SExp
 sRefined v k = 
     SApp [SAtom "Refined", v, sLambda k]
@@ -387,10 +396,7 @@ smtTy t =
           case td of
             TyAbstract -> return $ SAtom "Data"
             TyAbbrev t -> smtTy t
-            StructDef ixs -> do
-                dts <- liftCheck $ extractStruct  ps (show s) ixs
-                vts <- forM dts $ \(_, t) -> smtTy t
-                return $ sIterPair vts
+            StructDef ixs -> smtStruct ps s ixs 
             EnumDef ixs -> do
                 dts <- liftCheck $ extractEnum ps (show s) ixs
                 vts <- forM dts $ \(_, ot) -> 
@@ -401,11 +407,24 @@ smtTy t =
       THexConst a -> do
           h <- makeHex a
           return $ sRefined (SAtom "Data") $ \x -> x `sEq` h 
+
+smtStruct :: [FuncParam] -> Path -> Bind [IdxVar] (DepBind ()) -> Sym SExp
+smtStruct fps spath idp = do 
+    (is, dp) <- liftCheck $ unbind idp
+    idxs <- liftCheck $ getStructParams fps
+    liftCheck $ assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty spath <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
+    go $ substs (zip is idxs) dp
+        where
+            go (DPDone _) = error "unreachable"
+            go (DPVar t sx xk) = do
+                vt1 <- smtTy t
+                (x, k) <- liftCheck $ unbind xk
+                case k of
+                  DPDone _ -> return vt1
+                  _ -> do 
+                      vt2 <- withSMTVars [x] $ go k 
+                      return $ SApp [SAtom "Pair", vt1, sLambdaExplicit (SAtom $ show x) bitstringSort vt2]
             
-sIterPair :: [SExp]  -> SExp
-sIterPair [] = error "Got empty list in sIterPair"
-sIterPair [x] = x
-sIterPair (x:xs) = SApp [SAtom "Pair", x, sIterPair xs]
 
 sTypeSeq :: [SExp] -> SExp
 sTypeSeq [] = SAtom "(as seq.empty (Seq Type))"

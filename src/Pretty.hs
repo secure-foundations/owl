@@ -85,6 +85,9 @@ instance  OwlPretty LabelX where
     owlpretty (LRangeIdx l) = 
         let (b, l') = owlprettyBind l in
         owlpretty "/\\_" <> b <+> owlpretty "(" <> l' <> owlpretty ")"
+    owlpretty (LRangeVar l) = 
+        let (b, l') = owlprettyBind l in
+        owlpretty "/\\_" <> b <+> owlpretty "(" <> l' <> owlpretty ")"
 
 instance  OwlPretty (Path) where
     owlpretty (PRes p) = owlpretty p
@@ -333,7 +336,15 @@ instance  OwlPretty ExprX where
     owlpretty (EFalseElim k p) = owlpretty "false_elim in" <+> owlpretty k <+> owlpretty "when" <+> owlpretty p
     owlpretty (ETLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
     owlpretty (ETWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
-    owlpretty _ = owlpretty "unimp"
+    owlpretty (EParse a t oth b) = 
+        let (xs, k) = unsafeUnbind b in 
+        let o = case oth of
+                  Just e1 -> owlpretty "otherwise" <+> owlpretty e1
+                  Nothing -> mempty
+        in
+        owlpretty "parse" <+> owlpretty a <+> owlpretty (map fst xs) <+> owlpretty "as" <+> owlpretty t <+> owlpretty "in"
+        <+> owlpretty k <+> o
+    owlpretty _ = owlpretty "UNIMP: owlpretty"
 
 instance  OwlPretty DebugCommand where
     owlpretty (DebugPrintTyOf ae _) = owlpretty "debugPrintTyOf(" <> owlpretty ae <> owlpretty ")"

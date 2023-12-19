@@ -380,20 +380,16 @@ parseEnum = parseSpanned $ do
             return $ DeclEnum n $ bind is xs
         else fail $ "Duplicate cases in enum " ++ n
 
+
 parseStruct = parseSpanned $ do
     reserved "struct"
     n <- identifier                                                                  
     is <- parseIdxParamBinds1 
     symbol "{"
-    xs <- (do
-        s <- identifier
-        symbol ":"
-        t <- parseTy
-        return (s, t)) `sepBy` (symbol ",")
+    xs_ <- parseDepBind
+    let xs = xs_ () 
     symbol "}"
-    if uniq (map fst xs) then 
-        return $ DeclStruct n $ bind is xs
-    else fail $ "Duplicate cases in struct " ++ n
+    return $ DeclStruct n $ bind is xs
         
 parseProp :: Parser Prop
 parseProp = buildExpressionParser parsePropTable parsePropTerm
@@ -932,12 +928,12 @@ parseDepBind = do
         x <- identifier
         symbol ":"
         t <- parseTy
-        return (s2n x, t)
+        return (s2n x, x, t)
         ) `sepBy` (symbol ",")
     return $ \x -> go args x
         where
             go [] x = DPDone x
-            go ((n, t):args) x = DPVar t (bind n $ go args x) 
+            go ((n, s, t):args) x = DPVar t s (bind n $ go args x) 
 
 
 

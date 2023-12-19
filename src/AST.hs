@@ -152,6 +152,7 @@ data LabelX =
     | LJoin Label Label 
     | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
+    | LRangeVar (Bind DataVar Label)
     deriving (Show, Generic, Typeable)
 
 data LblConst = 
@@ -319,8 +320,9 @@ data ModuleExpX =
 
 type ModuleExp = Spanned ModuleExpX
 
-data DepBind a = DPDone a | DPVar Ty (Bind DataVar (DepBind a))
+data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
+
 
 
 -- Decls are surface syntax
@@ -337,7 +339,7 @@ data DeclX =
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
-    | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
+    | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
     | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]))
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind ([IdxVar], [IdxVar]) NameType)
@@ -515,6 +517,12 @@ instance Alpha a => Alpha (DepBind a)
 instance (Alpha a, Subst ResolvedPath a) => Subst ResolvedPath (DepBind a)
 instance (Alpha a, Subst Idx a) => Subst Idx (DepBind a)
 instance (Alpha a, Subst AExpr a) => Subst AExpr (DepBind a)
+
+depBindNames :: Alpha a => DepBind a -> [String]
+depBindNames (DPDone _) = []
+depBindNames (DPVar _ s k) =
+    let (_, k2) = unsafeUnbind k in 
+    s : depBindNames k2
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX

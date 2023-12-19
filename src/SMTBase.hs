@@ -80,8 +80,7 @@ data CanonLabel = CanonAnd [CanonLabelBig]
     deriving (Show, Generic, Typeable)
 
 data CanonLabelBig = 
-    CanonBig (Bind [IdxVar] CanonAtom) 
-      | CanonNoBig CanonAtom
+    CanonBig (Bind ([IdxVar], [DataVar]) CanonAtom) 
     deriving (Show, Generic, Typeable)
 
 data CanonAtom = 
@@ -652,10 +651,19 @@ instance OwlPretty CanonLabel where
         mconcat $ intersperse (owlpretty " /\\ ") (map owlpretty cs) 
 
 instance OwlPretty CanonLabelBig where        
-    owlpretty (CanonNoBig ca) = owlpretty ca
-    owlpretty (CanonBig ia) = 
-        let (is, a) = owlprettyBind ia in 
-        owlpretty "/\\_" <> is <> owlpretty "(" <> a <> owlpretty ")"
+    owlpretty (CanonBig xia) = 
+        let ((is, xs), a) = unsafeUnbind xia in 
+        let b1 = case is of
+                   [] -> mempty
+                   _ -> owlpretty "/\\_" <> owlpretty is
+        in
+        let b2 = case xs of 
+                   [] -> mempty
+                   _ -> owlpretty "/\\_" <> owlpretty xs
+        in
+        let p = if length is + length xs > 0 then (owlpretty "(" <> owlpretty a <> owlpretty  ")") else owlpretty a
+        in
+        b1 <> b2 <> p 
 
 instance OwlPretty CanonAtom where
     owlpretty (CanonLName a) = owlpretty (nameLbl a)

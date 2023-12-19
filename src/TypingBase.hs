@@ -188,7 +188,7 @@ data Env = Env {
 
 data TyDef = 
     EnumDef (Bind [IdxVar] [(String, Maybe Ty)])
-      | StructDef (Bind [IdxVar] [(String, Ty)])
+      | StructDef (Bind [IdxVar] (DepBind ()))
       | TyAbbrev Ty
       | TyAbstract -- Public length
     deriving (Show, Generic, Typeable)
@@ -1056,7 +1056,9 @@ resolveANF a = do
       AEVar s x -> do 
           tC <- view tyContext 
           case lookup x tC of
-            Nothing -> error $ "Unknown var during ANF: " ++ show x ++ ", " ++ show s 
+            Nothing -> do
+                tC <- view tyContext
+                typeError $ "Unknown var during ANF: " ++ show x ++ " under type context:" ++ "\n" ++ show (owlprettyTyContextANF tC)
             Just (_, ianf, _) -> 
                 case ianf of 
                   Nothing -> return a
@@ -1174,27 +1176,47 @@ extractEnum ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
--- Last element is the refinement on the type; first argument = struct value, second argument = field value 
-obtainStructInfo :: Ty -> Check [(String, Ty, AExpr -> AExpr -> Prop)]
-obtainStructInfo t =
+obtainStructInfoTopDown :: AExpr -> Ty -> Check [(String, Ty)]
+obtainStructInfoTopDown a t =
     case t^.val of
       TConst s@(PRes (PDot pth _)) ps -> do 
           td <- getTyDef s
           case td of
-            StructDef sd -> do
-                proj_ts <- extractStruct ps (show $ owlpretty t) sd
-                forM proj_ts $ \(fs, t) -> do 
-                    return (fs, t, \struct fld -> pEq fld (mkSpanned $ AEApp (PRes $ PDot pth fs) ps [struct]))
+            StructDef sd -> extractStructTopDown ps s a sd
             _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
       _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
 
-extractStruct :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Ty)]) -> Check [(String, Ty)]
-extractStruct ps s b = do
-    idxs <- getStructParams ps
-    (is, xs') <- unbind b
-    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty s <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
-    return $ substs (zip is idxs) xs'
+-- Get types of fields from struct expression 
+extractStructTopDown :: [FuncParam] -> Path -> AExpr -> Bind [IdxVar] (DepBind ()) -> Check [(String, Ty)]
+extractStructTopDown fps spath@(PRes (PDot pth s)) struct idp = do                                       
+    (is, dp) <- unbind idp
+    idxs <- getStructParams fps
+    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty spath <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
+    go struct $ substs (zip is idxs) dp
+        where
+            go struct (DPDone _) = return []
+            go struct (DPVar t sx xk) = do
+                (x, k) <- unbind xk
+                let fld = mkSpanned $ AEApp (PRes $ PDot pth sx) fps [struct]
+                let t2 = tRefined t ".res" $ pEq (aeVar ".res") fld
+                res <- go struct $ subst x fld k
+                return $ (sx, t2) : res
 
+
+coveringLabelStruct :: [FuncParam] -> Path -> Bind [IdxVar] (DepBind ()) -> Check Label
+coveringLabelStruct fps spath idp = do
+    (is, dp) <- unbind idp
+    idxs <- getStructParams fps
+    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty spath <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
+    go $ substs (zip is idxs) dp
+        where
+            go (DPDone _) = return zeroLbl
+            go (DPVar t sx xk) = do
+                l1 <- coveringLabel' t
+                (x, k) <- unbind xk
+                l2_ <- withVars [(x, (ignore sx, Nothing, t))] $ go k
+                let l2 = if x `elem` toListOf fv l2_ then (mkSpanned $ LRangeVar $ bind x l2_) else l2_
+                return $ joinLbl l1 l2 
 
 
 coveringLabel' :: Ty -> Check Label
@@ -1229,10 +1251,7 @@ coveringLabel' t =
                 return $ l2
             TyAbstract -> return $ joinLbl (lblConst $ TyLabelVar s) advLbl
             TyAbbrev t -> coveringLabel' t
-            StructDef ixs -> do
-                xs <- extractStruct ps (show s) ixs
-                ls <- forM xs $ \(_, t) -> coveringLabel' t
-                return $ foldr joinLbl zeroLbl ls
+            StructDef ixs -> coveringLabelStruct ps s ixs
       TAdmit -> return $ zeroLbl -- mostly a placeholder
       TCase _ t1 t2 -> do 
           l1 <- coveringLabel' t1
@@ -1256,6 +1275,10 @@ tyInfo t =
 owlprettyTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> OwlDoc
 owlprettyTyContext e = vsep $ map (\(x, (s, oanf, t)) -> 
     owlpretty (unignore s) <> tyInfo t <> owlpretty ":" <+> owlpretty t) e
+
+owlprettyTyContextANF :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> OwlDoc
+owlprettyTyContextANF e = vsep $ map (\(x, (s, oanf, t)) -> 
+    owlpretty x <> tyInfo t <> owlpretty oanf <> owlpretty ":" <+> owlpretty t) e
 
 owlprettyIndices :: Map IdxVar IdxType -> OwlDoc
 owlprettyIndices m = vsep $ map (\(i, it) -> owlpretty "index" <+> owlpretty i <> owlpretty ":" <+> owlpretty it) m

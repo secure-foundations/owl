@@ -970,10 +970,17 @@ type LocalityData = (Int, [NameData], [NameData], [DefData], [(String, Ty)], [St
 
 unsafeUnbindDepBind :: Alpha a => DepBind a -> ([(DataVar, Embed Ty)], a)
 unsafeUnbindDepBind (DPDone a) = ([], a)
-unsafeUnbindDepBind (DPVar t xd) = 
+unsafeUnbindDepBind (DPVar t _ xd) = 
     let (x, d) = unsafeUnbind xd in
     let (xs, a) = unsafeUnbindDepBind d in
     ((x, embed t) : xs, a)
+
+unsafeProjectStruct :: DepBind () -> [(String, Ty)]
+unsafeProjectStruct (DPDone _) = []
+unsafeProjectStruct (DPVar t sx xd) = 
+    let (x, d) = unsafeUnbind xd in 
+    (sx, t) : unsafeProjectStruct d
+
 
 -- Defer processing of defs until we have all type information
 preprocessDefs :: (LocalityName -> ExtractionMonad LocalityName) -> TB.ModBody -> M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName LocalityData)
@@ -1340,7 +1347,7 @@ extractTyDefs ((tv, td):ds) = do
             extractEnum name cases'
         extractTyDef name (TB.StructDef fields) = do
             let (_, fields') = unsafeUnbind fields
-            extractStruct name fields'
+            extractStruct name $ unsafeProjectStruct fields'
         extractTyDef name (TB.TyAbbrev t) = do
             lct <- layoutCTy UnboundedAllowed . doConcretifyTy $ t
             typeLayouts %= M.insert (rustifyName name) lct
