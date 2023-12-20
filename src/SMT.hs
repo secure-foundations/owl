@@ -420,11 +420,12 @@ smtStructRefinement fps spath idp structval = do
     idxs <- liftCheck $ getStructParams fps
     liftCheck $ assert ("Wrong index arity for struct") $ length is == length idxs
     (ps, lengths) <- go $ substs (zip is idxs) dp
+    let len = case lengths of
+                [] -> SApp [SAtom "I2B", SAtom "0"]
+                _ -> foldr1 (\x y -> SApp [SAtom "plus", x, y]) lengths
     let length_refinement = 
             sEq (sLength structval) 
-                (SApp [SAtom "I2B", 
-                    sPlus (map (\x -> SApp [SAtom "B2I", x]) lengths)
-                      ])
+                len
     return $ sAnd $ ps ++ [length_refinement]
         where
             -- First list is type refinements, second is list of lengths.

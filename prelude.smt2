@@ -389,6 +389,14 @@
     :qid mult_def
 )))
 
+(assert (forall ((x Int) (y Bits)) (!
+    (=> (>= x 0)
+        (= (mult (I2B x) y)
+           (I2B (* x (B2I y)))))
+    :pattern (mult (I2B x) y)
+    :qid mult_int_l
+)))
+
 (declare-fun crh (Bits) Bits)
 (declare-fun CrhLength () Int)
 (assert (> CrhLength 0))
