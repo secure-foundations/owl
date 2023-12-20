@@ -204,14 +204,16 @@ def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 // TODO: need dependent structs for specifying C2, or
 // need exists bv type
 
-/*
 struct initiator_msg1_val<i,n,m> {
       _initiator_msg2_C2 : Ghost,
-      _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/
-      sec(S_init<@n>)) then (exists )
+      _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
+        Name(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0])
+        else Data<adv>,
+      _initiator_msg1_H4 : Data<adv>
+}
 
-      Name(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0])
-    , _initiator_msg1_H4 : (x:Data<adv>{
+
+    /* , _initiator_msg1_H4 : (x:Data<adv>{
         (corr(msg1_C3<@n,m>[dhpk(get(E_init<i@n>)); 0])
             ==>
             (corr(S_init<@n>) \/ corr(S_resp<@m>)))
@@ -219,6 +221,7 @@ struct initiator_msg1_val<i,n,m> {
         exists c:bv, ts:bv. x ==
     crh(honest_H4_pre<session i, pid n, pid m>(c, ts))})
 }
+
 
 
 
@@ -270,7 +273,7 @@ predicate valid_transp_keys_init<i,n,m>(s) =
     
 
 def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
-  Unit = // initiator_msg1_val<session i, pid n, pid m> =
+  initiator_msg1_val<session i, pid n, pid m> =
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
@@ -307,8 +310,9 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let msg1_output /* : msg1 */ = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
-    //let retval = initiator_msg1_val<session i, pid n, pid m>(C3, H4) in
-    // retval
+    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3, H4) in
+    retval
+    /*
     assert (
         sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>))
         ==>
@@ -320,6 +324,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
         ==>
         C3 == get(c3<i@n,m>));
     ()
+    */
 
 /*
 
