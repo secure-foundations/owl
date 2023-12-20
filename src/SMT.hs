@@ -338,6 +338,12 @@ sRefined :: SExp -> (SExp -> SExp) -> SExp
 sRefined v k = 
     SApp [SAtom "Refined", v, sLambda k]
 
+sRefined' :: SExp -> (SExp -> Sym SExp) -> Sym SExp
+sRefined' v k = do
+    x <- SAtom <$> freshSMTName
+    vk <- k x
+    return $ SApp [SAtom "Refined", v, SApp [SAtom "lambda", SApp [SApp [x, SAtom "Bits"]], vk]] 
+
 smtTy :: Ty -> Sym SExp
 smtTy t = 
     case t^.val of
@@ -396,7 +402,7 @@ smtTy t =
           case td of
             TyAbstract -> return $ SAtom "Data"
             TyAbbrev t -> smtTy t
-            StructDef ixs -> smtStruct ps s ixs 
+            StructDef ixs -> sRefined' (SAtom "Data") $ \x -> smtStructRefinement ps pth ixs x
             EnumDef ixs -> do
                 dts <- liftCheck $ extractEnum ps (show s) ixs
                 vts <- forM dts $ \(_, ot) -> 
@@ -408,22 +414,34 @@ smtTy t =
           h <- makeHex a
           return $ sRefined (SAtom "Data") $ \x -> x `sEq` h 
 
-smtStruct :: [FuncParam] -> Path -> Bind [IdxVar] (DepBind ()) -> Sym SExp
-smtStruct fps spath idp = do 
+smtStructRefinement :: [FuncParam] -> ResolvedPath -> Bind [IdxVar] (DepBind ()) -> SExp -> Sym SExp
+smtStructRefinement fps spath idp structval = do 
     (is, dp) <- liftCheck $ unbind idp
     idxs <- liftCheck $ getStructParams fps
-    liftCheck $ assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty spath <> owlpretty ": got " <> owlpretty idxs <> owlpretty " expected " <> owlpretty (length is)) $ length idxs == length is 
-    go $ substs (zip is idxs) dp
+    liftCheck $ assert ("Wrong index arity for struct") $ length is == length idxs
+    (ps, lengths) <- go $ substs (zip is idxs) dp
+    let length_refinement = 
+            sEq (sLength structval) 
+                (SApp [SAtom "I2B", 
+                    sPlus (map (\x -> SApp [SAtom "B2I", x]) lengths)
+                      ])
+    return $ sAnd $ ps ++ [length_refinement]
         where
+            -- First list is type refinements, second is list of lengths.
+            -- This list of lengths skips over ghost types
+            go :: DepBind () -> Sym ([SExp], [SExp])
             go (DPDone _) = error "unreachable"
             go (DPVar t sx xk) = do
                 vt1 <- smtTy t
+                sn <- smtName $ PDot spath sx
+                let fld = SApp [SAtom sn, structval]
+                let plength1 = ([fld `sHasType` vt1], [sLength fld])
                 (x, k) <- liftCheck $ unbind xk
                 case k of
-                  DPDone _ -> return vt1
+                  DPDone _ -> return plength1
                   _ -> do 
-                      vt2 <- withSMTVars [x] $ go k 
-                      return $ SApp [SAtom "Pair", vt1, sLambdaExplicit (SAtom $ show x) bitstringSort vt2]
+                      (p2, lengths2) <- withSMTVars' [(x, fld)] $ go k
+                      return $ (fst plength1 ++ p2, snd plength1 ++ lengths2)
             
 
 sTypeSeq :: [SExp] -> SExp
@@ -432,6 +450,9 @@ sTypeSeq (x:xs) = SApp [SAtom "seq.++", SApp [SAtom "seq.unit", x], sTypeSeq xs]
 
 sEnumType :: [SExp] -> SExp
 sEnumType xs = SApp [SAtom "Enum", sTypeSeq xs]
+
+sHasType :: SExp -> SExp -> SExp
+sHasType v vt = SApp [SAtom "HasType", v, vt]
 
 tyConstraints :: Ty -> SExp -> Sym SExp
 tyConstraints t v = do

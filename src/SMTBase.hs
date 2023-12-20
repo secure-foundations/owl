@@ -504,6 +504,15 @@ withSMTVars xs k = do
     varVals .= vVs
     return res
 
+withSMTVars' :: [(DataVar, SExp)] -> Sym a -> Sym a
+withSMTVars' xs k = do
+    vVs <- use varVals
+    varVals %= (M.union $ M.fromList $ map (\(x, v) -> (x, v)) xs)
+    let tyc = map (\(x, v) -> (x, (ignore $ show x, Nothing, tGhost))) xs 
+    res <- withVars tyc $ k
+    varVals .= vVs
+    return res
+
 withSMTVarsTys :: [(DataVar, Ty)] -> Sym a -> Sym a
 withSMTVarsTys xs k = do
     vVs <- use varVals

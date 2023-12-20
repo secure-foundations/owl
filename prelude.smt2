@@ -152,16 +152,6 @@
     :qid hastype_refined
 )))
 
-(declare-fun Pair (Type (Array Bits Type)) Type)
-(assert (forall ((x Bits) (t1 Type) (t2 (Array Bits Type))) (!
-    (= (HasType x (Pair t1 t2)) (exists ((x1 Bits) (x2 Bits))
-        (and 
-            (= x (concat x1 x2))
-            (HasType x1 t1)
-            (HasType x2 (select t2 x1)))))
-    :pattern (HasType x (Pair t1 t2))
-    :qid hastype_pair
-)))
 
 (declare-fun Unit () Type)
 (assert (forall ((x Bits)) (!

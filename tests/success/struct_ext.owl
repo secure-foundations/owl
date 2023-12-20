@@ -2,7 +2,8 @@ locality alice
 
 struct t1 { 
     _t1_a : Data<adv> | |nonce| |,
-    _t1_b : Data<adv> | |vk| |
+    _t1_b : Data<adv> | |vk| |,
+    _t1_c : (x:Data<adv> {x == _t1_a ++ _t1_b})
 }
 
 struct t { 
@@ -11,8 +12,10 @@ struct t {
     _t_y : Data<adv> | |vk| |
 }
 
-def tst_ex (x : t) @ alice : Unit = 
-    assert (length(x) ==  (2 * |vk|) + |nonce|);
+def tst_ex (x : t1) @ alice : Unit = 
+    // let c = _t1_c(x) in 
+    assert (_t1_c(x) == _t1_a(x) ++ _t1_b(x));
+    // assert (length(x) ==  (3 * |vk|) + (2 * |nonce|));
     ()
 
 def alice_main () @ alice : Unit = ()
