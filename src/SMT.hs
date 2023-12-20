@@ -436,7 +436,10 @@ smtStructRefinement fps spath idp structval = do
                 vt1 <- smtTy t
                 sn <- smtName $ PDot spath sx
                 let fld = SApp [SAtom sn, structval]
-                let plength1 = ([fld `sHasType` vt1], [sLength fld])
+                let l = case (stripRefinements t)^.val of
+                          TGhost -> []
+                          _ -> [sLength fld]
+                let plength1 = ([fld `sHasType` vt1], l)
                 (x, k) <- liftCheck $ unbind xk
                 case k of
                   DPDone _ -> return plength1
