@@ -697,6 +697,11 @@ resolveExpr e =
           op' <- traverse resolveProp op
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EPCase p' op' k'
+      ECorrCaseNameOf a op k -> do 
+          a' <- resolveAExpr a
+          op' <- traverse resolveProp op
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ ECorrCaseNameOf a' op' k'
       ESetOption s1 s2 k -> do
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
@@ -782,14 +787,14 @@ resolveProp p =
           b' <- resolveAExpr b
           c' <- resolveAExpr c
           return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' nks j 
-      PQuantIdx q ip -> do
+      PQuantIdx q sx ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'
-          return $ Spanned (p^.spanOf) $ PQuantIdx q $ bind i p''
-      PQuantBV q xp -> do
+          return $ Spanned (p^.spanOf) $ PQuantIdx q sx $ bind i p''
+      PQuantBV q sx xp -> do
           (x, p') <- unbind xp
           p'' <- resolveProp p'
-          return $ Spanned (p^.spanOf) $ PQuantBV q $ bind x p''
+          return $ Spanned (p^.spanOf) $ PQuantBV q sx $ bind x p''
 
 
                                             

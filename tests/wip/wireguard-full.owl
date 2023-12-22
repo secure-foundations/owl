@@ -83,17 +83,26 @@ nametype C6<@n, m> = kdf {ikm info.
            nonce_pattern *
 }
 
+counter dummy<@n> @ Initiator<n>
+
 nametype C5<@n,m> = kdf {ikm info.
-    True -> strict C6<@n,m>
+    True -> strict C6<@n,m> || strict st_aead (Data<adv> |0|)
+                                aad x. true
+                                nonce dummy
+                                nonce_pattern *
 }
 
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
-    True -> strict C6<@n,m>
+    True -> strict C6<@n,m> || enckey (Data<adv> |0|)
 }
 
+
 nametype C4<@n,m> = kdf {ikm info.
-    True -> strict C5<@n,m>
+    True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
+                                aad x. true
+                                nonce dummy
+                                nonce_pattern *
 }
 
 odh L4<i,j@n,m> :
@@ -101,11 +110,17 @@ odh L4<i,j@n,m> :
     True -> strict C5<@n,m>
 }
 
+
+
 nametype C3<@n,m> = kdf {ikm info.
-    True -> strict C4<@n,m>
+    True -> strict C4<@n,m> || nonce || strict st_aead (Data<adv> |0|)
+                                            aad x. true
+                                            nonce dummy
+                                            nonce_pattern *
 }
 
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
+
 
 nametype C2<@n,m> = kdf {ikm info. 
     True -> strict C3<@n,m> || st_aead (Data<adv> |12|)
@@ -207,8 +222,11 @@ def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 struct initiator_msg1_val<i,n,m> {
       _initiator_msg2_C2 : Ghost,
       _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
-        Name(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0])
-        else Data<adv>,
+          (x:Name(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0]){
+              sec(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0])
+           })
+        // TODO: refine the name to also say that it is secret!
+        else (x:Data<adv>{true}),
       _initiator_msg1_H4 : Data<adv>
 }
 
@@ -296,7 +314,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp = // : Data<adv> |cipherlen(12)| =
         st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
-    let H4 = crh(H3 ++ msg1_timestamp) in
+    let H4 : Data<adv> = crh(H3 ++ msg1_timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
@@ -310,387 +328,430 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let msg1_output /* : msg1 */ = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
-    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3, H4) in
+    let C3' : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
+          (x:Name(ODHName<L2<@n,m>; 0>(C2, 0x)[0]){
+              sec(ODHName<L2<@n,m>; 0>(C2, 0x)[0])
+           }) else Data<adv>  = C3 in 
+    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3', H4) in
     retval
-    /*
-    assert (
-        sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>))
-        ==>
-            exists c2:bv. C3 == get(ODHName<L2<@n,m>; 0>(c2, 0x)[0])
-                             /\ sec(ODHName<L2<@n,m>; 0>(c2, 0x)[0])
-            );
-    assert (
-        (sec(S_resp<@m>) /\ sec(E_init<i@n>) /\ sec(S_init<@n>))
-        ==>
-        C3 == get(c3<i@n,m>));
-    ()
-    */
 
-/*
-
-    hash<msg1_C2<@m>[e_init];0>(C1, ss_S_resp_E_init) in
-    let k0 = hash<msg1_C2<@m>[e_init];1>(C1, ss_S_resp_E_init) in
 
 def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n>
-    : Option ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =
+    : Option Unit = // ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =  
+
     // set_option ":rlimit" "2000000" in 
     input inp in
     parse inp as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral', msg2_empty, msg2_mac1, msg2_mac2) in {
-    parse msg1_val as initiator_msg1_val<idx i, idx n, idx m>(C3, H4) in {
+        parse msg1_val as initiator_msg1_val<idx i, idx n, idx m>(C2, C3, H4) in {
 
-    guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
-    guard is_group_elem(msg2_ephemeral') in 
+        guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
+        guard is_group_elem(msg2_ephemeral') in 
 
-    let psk = zeros_32() in 
+        let psk = zeros_32() in 
 
-    pcase (exists j:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m>))) in
-    choose_idx j | msg2_ephemeral' == dhpk(get(E_resp<j@m>)) in
-    let msg2_ephemeral : if (msg2_ephemeral' == dhpk(get(E_resp<j@m>))) then dhpk(E_resp<j@m>) else 
-        (x:Data<adv> {x == msg2_ephemeral'}) = msg2_ephemeral' in 
-    let e_init = get(E_init<i@n>) in 
-    // let e_init_pk = dhpk(e_init) in
-    let C4 = hash<msg2_C4<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral]>(C3, msg2_ephemeral) in
-    let H5 = crh(H4 ++ msg2_ephemeral) in
-    let ss = dh_combine(msg2_ephemeral, e_init) in 
-    let C5 = hash<msg2_C5<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C4, ss) in
-    let C6 = hash<msg2_C6<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C5, dh_combine(msg2_ephemeral, get(S_init<@n>))) in
-    let C7 = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]>(C6, psk) in
-    let tau = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C6, psk) in
-    let k0 = hash<msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 2>(C6, psk) in
-    let H6 : Data<adv> = crh(H5 ++ tau) in
-    let emptystring = 0x in 
+        pcase (exists j:idx. exists m2:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in
+        choose_idx j | exists m2:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m2>)) in
+        choose_idx m2 | msg2_ephemeral' == dhpk(get(E_resp<j@m2>)) in
+        pcase (exists m2:idx. msg2_ephemeral' == dhpk(get(S_resp<@m2>))) when (! (exists j:idx. exists m2:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m2>)))) in 
+        choose_idx m2' | msg2_ephemeral' == dhpk(get(S_resp<@m2'>)) in
+        let msg2_ephemeral : if (msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) then dhpk(E_resp<j@m2>) else 
+            if (msg2_ephemeral' == dhpk(get(S_resp<@m2'>))) then dhpk(S_resp<@m2'>)
+                else 
+            (x:Data<adv> {x == msg2_ephemeral' /\ is_group_elem(x)
+                          /\ 
+                          (forall j:idx. forall m2:idx. x != dhpk(get(E_resp<j@m2>)))
+                          /\
+                          (forall m2:idx. x != dhpk(get(S_resp<@m2>)))
+            }) = msg2_ephemeral' in 
+        let e_init = get(E_init<i@n>) in 
+        // let e_init_pk = dhpk(e_init) in
+        corr_case S_resp<@m> in
+        corr_case S_resp<@m2> when (msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in
+        corr_case S_init<@n> in
+        corr_case E_init<i@n> in 
+        corr_case E_resp<j@m2> in 
+        corr_case S_resp<@m2'> when (msg2_ephemeral' == dhpk(get(S_resp<@m2'>))) in 
+        debug "======";
+        let C4 = kdf<0;;kdfkey || nonce || enckey;0>(C3, msg2_ephemeral, 0x) in 
+        let H5 : Data<adv> = crh(H4 ++ msg2_ephemeral) in 
+        let ss = dh_combine(msg2_ephemeral, e_init) in 
+
+        forall i3:idx, j3:idx, n3:idx, m3:idx {
+            cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral)
+        };
+        forall i3:idx, n3:idx, m3:idx {
+            cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral)
+        };
+        forall n3:idx, m3:idx {
+            cross_dh_lemma<E_init<i@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral)
+        };
+        forall n3:idx, j3:idx, m3:idx {
+            cross_dh_lemma<E_init<i@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral)
+        };
+        let C5 = kdf<0;odh L4<i,j@n,m2>[0], odh L1<i@n,m2'>[0];kdfkey||enckey;0>(C4, ss, 0x) in 
+        forall i3:idx, j3:idx, n3:idx, m3:idx {
+            cross_dh_lemma<S_init<@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral)
+        };
+        forall i3:idx, n3:idx, m3:idx {
+            cross_dh_lemma<S_init<@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral)
+        };
+        forall n3:idx, m3:idx {
+            cross_dh_lemma<S_init<@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral)
+        };
+        forall n3:idx, j3:idx, m3:idx {
+            cross_dh_lemma<S_init<@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral)
+        };
+        let C6 = kdf<0; odh L5<j@n,m2>[0], odh L2<@n,m2'>[0]; kdfkey || enckey;0>(C5, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
+        let C7 = kdf<0; 0; kdfkey || nonce || enckey; 0>(C6, psk, 0x) in 
+        let tau = kdf<0; 0; kdfkey || nonce || enckey; 1>(C6, psk, 0x) in 
+        let k0 = kdf<0; 0; kdfkey || nonce || enckey; 2>(C6, psk, 0x) in 
+        let H6 : Data<adv> = 0x1234 in // TODO: crh(H5 ++ tau) in
+        let emptystring = 0x in 
+        corr_case nameOf(k0) in 
+        case st_aead_dec(k0, msg2_empty, H6, 0x) as Option (Data<adv> |0|) {
+            | None => None<ty:Unit>()
+            | Some _ => None<ty:Unit>()
+            otherwise => None<ty:Unit>()
+        }
+        }
+    }
+    otherwise None<ty:Unit>()
     
-    corr_case msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss;2] in
-    case st_aead_dec(k0, msg2_empty, H6, 0x) {
-    | None => None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
-    | Some msg2_empty_dec => 
-        false_elim in
-        guard eq(msg2_empty_dec, emptystring) in 
-        let H7 = crh(H6 ++ msg2_empty) in
-        // Calculate transport keys
-        let T_init_send = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 0>(C7, 0x) in
-        let T_init_recv = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C7, 0x) in
-        let ghost e_init_pk = dhpk(get(E_init<i@n>)) in
-        let retval = transp_keys(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
-        assert(valid_transp_keys_init<i,n,m>[retval]);
-        Some(retval)
-    }
-    }
-    } otherwise None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
-
-///////// Responder code //////////
-
-
-struct responder_msg1_val {
-      _responder_msg1_C3 : Data<top> | |nonce| | 
-    , _responder_msg1_H4 : Data<adv> | |crh| |
-    , _responder_msg1_ephemeral : Data<adv> | |group| |
-    , _responder_msg1_sender_pk : Data<adv> | |group| |
-    , _responder_msg1_sender : Data<adv> |4|
-}
-
-
-predicate valid_h4<i,n,m>(x) = 
-    exists c:bv, ts:bv. x == crh(honest_H4_pre<session i, pid n, pid m>(c, ts))
-
-predicate valid_responder_msg1_val<n,m> (s) = 
-    let eph = _responder_msg1_ephemeral(s) in 
-    let h4 = _responder_msg1_H4(s) in 
-    let c3 = _responder_msg1_C3(s) in
-    is_group_elem(eph)  
-    /\ (_responder_msg1_sender_pk(s) == dhpk(get(S_init<@n>)))
-    /\ (forall i:idx. eph == dhpk(get(E_init<i@n>)) ==> 
-        c3 == get(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0])
-        /\ (sec(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0]) <==> 
-             sec(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));1]))
-        /\ valid_h4<i,n,m>[h4])
-    /\ ((forall i:idx. eph != dhpk(get(E_init<i@n>))) ==> 
-        c3 == get(msg1_C3<@n,m>[eph;0]) 
-        /\ corr(msg1_C3<@n,m>[eph;0])
-        /\ (corr(S_init<@n>) \/ corr(S_resp<@m>))
-        )
-
-
-
-predicate valid_transp_keys_resp<j,n,m>(s) = 
-    let dh_other = _transp_keys_init_ephemeral(s) in 
-    (_transp_keys_resp_ephemeral(s) == dhpk(get(E_resp<j@m>)))
-    /\
-    is_group_elem(dh_other)
-    /\
-    (forall i:idx. dh_other == dhpk(get(E_init<i@n>)) ==>
-        _transp_keys_T_init_send(s) == get(transp_T<@n,m>[
-            dhpk(get(E_init<i@n>)),
-            dhpk(get(E_resp<j@m>)),
-            dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))
-        ;0]) /\
-        _transp_keys_T_resp_send(s) == get(transp_T<@n,m>[
-            dhpk(get(E_init<i@n>)),
-            dhpk(get(E_resp<j@m>)),
-            dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))
-        ;1])) 
-    /\
-    ((forall i:idx. dh_other != dhpk(get(E_init<i@n>))) ==>
-        _transp_keys_T_init_send(s) == get(transp_T<@n,m>[
-            dh_other,
-            dhpk(get(E_resp<j@m>)),
-            dh_combine(dh_other, get(E_resp<j@m>))
-        ;0]) /\
-        _transp_keys_T_resp_send(s) == get(transp_T<@n,m>[
-            dh_other,
-            dhpk(get(E_resp<j@m>)),
-            dh_combine(dh_other, get(E_resp<j@m>))
-        ;1]) /\
-        (corr(S_init<@n>) \/ corr(S_resp<@m>))
-    )
-
-def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
-    : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
-
-def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
-     : Option (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
-     =
-     set_option ":rlimit" "2000000" in 
-     input inp in
-     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
-     guard eq(length(msg1_sender), 4) in 
-     guard is_group_elem(msg1_ephemeral') in 
-     let C0 = crh(construction()) in
-     let H0 = crh(C0 ++ identifier()) in 
-     let H1 = crh(H0 ++ dhpk_S_resp) in
-     pcase (exists n2:idx, i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>))) in
-     choose_idx n2 | exists i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in 
-     choose_idx i | msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in
-     let msg1_ephemeral : if (msg1_ephemeral' == dhpk(get(E_init<i@n2>))) then
-     dhpk(E_init<i@n2>) else (x:Data<adv>{x == msg1_ephemeral'}) = msg1_ephemeral' in
-     let C1 = hash<msg1_C1[msg1_ephemeral]>(C0, msg1_ephemeral) in 
-     let H2 = crh(H1 ++ msg1_ephemeral) in
-     let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
-     let C2 = hash<msg1_C2<@m>[msg1_ephemeral];0>(C1, ss_msg1_ephemeral_S_resp) in
-     let k0 = hash<msg1_C2<@m>[msg1_ephemeral];1>(C1, ss_msg1_ephemeral_S_resp) in
-     corr_case msg1_C2<@m>[msg1_ephemeral;1] in
-     case st_aead_dec(k0, msg1_static, H2, 0x) {
-         | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
-         | Some msg1_static_dec => 
-                false_elim in
-                let opk = call checkpk_resp<@m>(msg1_static_dec) in
-                case opk {
-                    | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
-                    | Some ss_S_init_S_resp_ =>
-                        unpack n, ss_S_init_S_resp = ss_S_init_S_resp_ in 
-                        let dhpk_S_init : dhpk(S_init<@n>) = msg1_static_dec in
-                        // guard eq(msg1_static_dec, dhpk_S_init) in // Not needed since we have the refinement on ss_S_init_S_resp
-                        let H3 = crh(H2 ++ msg1_static) in
-                        let C3 = hash<msg1_C3<@n,m>[msg1_ephemeral];0>(C2, ss_S_init_S_resp) in
-                        let k1 = hash<msg1_C3<@n,m>[msg1_ephemeral];1>(C2, ss_S_init_S_resp) in
-                        corr_case msg1_C3<@n,m>[msg1_ephemeral;1] in
-                        case st_aead_dec(k1, msg1_timestamp, H3, 0x) {
-                        | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
-                        | Some msg1_timestamp_dec =>
-                            false_elim in 
-                            let H4 = crh(H3 ++ msg1_timestamp) in
-                            let retval : x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = 
-                                responder_msg1_val(C3, H4, msg1_ephemeral, dhpk_S_init, msg1_sender) in
-                            let v : exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = pack<n>(retval) in 
-                            Some(v)
-                        }
-                }
-     }
-     } otherwise  None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
     
 
-def generate_msg2<j@m> (msg1_val':
-exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<m>
-    : exists n. s:transp_keys {valid_transp_keys_resp<j,n,m>[s]}
-    =
-    unpack n, msg1_val = msg1_val' in
-    parse msg1_val as responder_msg1_val(C3, H4, ephemeral', dhpk_S_init, msg2_receiver) in {
-    pcase ((exists i:idx. ephemeral' == dhpk(get(E_init<i@n>)))) in 
-    choose_idx i | ephemeral' == dhpk(get(E_init<i@n>)) in
-    let ephemeral : if (ephemeral' == dhpk(get(E_init<i@n>))) then dhpk(E_init<i@n>) else (x:Data<adv>{x == ephemeral'}) = ephemeral' in 
-    let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
-    let psk = zeros_32() in 
-    let C4 = hash<msg2_C4<@n,m>[ephemeral, e_resp_pk]>(C3, e_resp_pk) in
-    let H5 = crh(H4 ++ e_resp_pk) in
-    let ss = dh_combine(ephemeral, get(E_resp<j@m>)) in 
-    let C5 = hash<msg2_C5<@n,m>[ephemeral, e_resp_pk, ss]>(C4, ss) in
-    let C6 = hash<msg2_C6<@n,m>[ephemeral, e_resp_pk, ss]>(C5, dh_combine(dhpk_S_init, get(E_resp<j@m>))) in
-    let C7 = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];0>(C6, psk) in
-    let tau = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];1>(C6, psk) in
-    let k0 = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];2>(C6, psk) in
-    let H6 = crh(H5 ++ tau) in
-    let emptystring = 0x in
-    let msg2_empty = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, emptystring, H6) in
-    let H7 = crh(H6 ++ msg2_empty) in
-    let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
-    let msg2_tag = msg2_tag_value() in 
-    // let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
-    let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
-    let msg2_mac1 = mac(msg2_mac1_k,
-        msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
-        msg2_empty) in 
-    assume(length(msg2_mac1) == |maclen|);
-    let msg2_mac2 = zeros_16() in
-    let msg2_output: msg2 = msg2(
-        msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
-    ) in
-    // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
-    
-    // Calculate transport keys
-    let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
-    let T_resp_send = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 1>(C7, 0x) in
-    let retval : 
-         s:transp_keys {valid_transp_keys_resp<j,n,m>[s]}
-        = transp_keys(msg2_receiver, msg2_sender, ephemeral, e_resp_pk, T_resp_recv, T_resp_send) in
-    // assert valid_transp_keys_resp<j,n,m>[retval];
-    pack<n>(retval)
-    }
+//        corr_case msg2_C7<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss;2] in
+//        case st_aead_dec(k0, msg2_empty, H6, 0x) {
+//        | None => None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
+//        | Some msg2_empty_dec => 
+//            false_elim in
+//            guard eq(msg2_empty_dec, emptystring) in 
+//            let H7 = crh(H6 ++ msg2_empty) in
+//            // Calculate transport keys
+//            let T_init_send = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 0>(C7, 0x) in
+//            let T_init_recv = hash<transp_T<@n,m>[dhpk(get(E_init<i@n>)), msg2_ephemeral, ss]; 1>(C7, 0x) in
+//            let ghost e_init_pk = dhpk(get(E_init<i@n>)) in
+//            let retval = transp_keys(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
+//            assert(valid_transp_keys_init<i,n,m>[retval]);
+//            Some(retval)
+//        }
+//        }
+//        } otherwise None<ty: x:transp_keys{valid_transp_keys_init<i,n,m>[x]}>()
+//    
+//    
+//    
+//    ///////// Responder code //////////
+//    
+//    
+//    struct responder_msg1_val {
+//          _responder_msg1_C3 : Data<top> | |nonce| | 
+//        , _responder_msg1_H4 : Data<adv> | |crh| |
+//        , _responder_msg1_ephemeral : Data<adv> | |group| |
+//        , _responder_msg1_sender_pk : Data<adv> | |group| |
+//        , _responder_msg1_sender : Data<adv> |4|
+//    }
+//    
+//    
+//    predicate valid_h4<i,n,m>(x) = 
+//        exists c:bv, ts:bv. x == crh(honest_H4_pre<session i, pid n, pid m>(c, ts))
+//    
+//    predicate valid_responder_msg1_val<n,m> (s) = 
+//        let eph = _responder_msg1_ephemeral(s) in 
+//        let h4 = _responder_msg1_H4(s) in 
+//        let c3 = _responder_msg1_C3(s) in
+//        is_group_elem(eph)  
+//        /\ (_responder_msg1_sender_pk(s) == dhpk(get(S_init<@n>)))
+//        /\ (forall i:idx. eph == dhpk(get(E_init<i@n>)) ==> 
+//            c3 == get(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0])
+//            /\ (sec(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));0]) <==> 
+//                 sec(msg1_C3<@n,m>[dhpk(get(E_init<i@n>));1]))
+//            /\ valid_h4<i,n,m>[h4])
+//        /\ ((forall i:idx. eph != dhpk(get(E_init<i@n>))) ==> 
+//            c3 == get(msg1_C3<@n,m>[eph;0]) 
+//            /\ corr(msg1_C3<@n,m>[eph;0])
+//            /\ (corr(S_init<@n>) \/ corr(S_resp<@m>))
+//            )
+//    
+//    
+//    
+//    predicate valid_transp_keys_resp<j,n,m>(s) = 
+//        let dh_other = _transp_keys_init_ephemeral(s) in 
+//        (_transp_keys_resp_ephemeral(s) == dhpk(get(E_resp<j@m>)))
+//        /\
+//        is_group_elem(dh_other)
+//        /\
+//        (forall i:idx. dh_other == dhpk(get(E_init<i@n>)) ==>
+//            _transp_keys_T_init_send(s) == get(transp_T<@n,m>[
+//                dhpk(get(E_init<i@n>)),
+//                dhpk(get(E_resp<j@m>)),
+//                dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))
+//            ;0]) /\
+//            _transp_keys_T_resp_send(s) == get(transp_T<@n,m>[
+//                dhpk(get(E_init<i@n>)),
+//                dhpk(get(E_resp<j@m>)),
+//                dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))
+//            ;1])) 
+//        /\
+//        ((forall i:idx. dh_other != dhpk(get(E_init<i@n>))) ==>
+//            _transp_keys_T_init_send(s) == get(transp_T<@n,m>[
+//                dh_other,
+//                dhpk(get(E_resp<j@m>)),
+//                dh_combine(dh_other, get(E_resp<j@m>))
+//            ;0]) /\
+//            _transp_keys_T_resp_send(s) == get(transp_T<@n,m>[
+//                dh_other,
+//                dhpk(get(E_resp<j@m>)),
+//                dh_combine(dh_other, get(E_resp<j@m>))
+//            ;1]) /\
+//            (corr(S_init<@n>) \/ corr(S_resp<@m>))
+//        )
+//    
+//    def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
+//        : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
+//    
+//    def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
+//         : Option (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
+//         =
+//         set_option ":rlimit" "2000000" in 
+//         input inp in
+//         parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
+//         guard eq(length(msg1_sender), 4) in 
+//         guard is_group_elem(msg1_ephemeral') in 
+//         let C0 = crh(construction()) in
+//         let H0 = crh(C0 ++ identifier()) in 
+//         let H1 = crh(H0 ++ dhpk_S_resp) in
+//         pcase (exists n2:idx, i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>))) in
+//         choose_idx n2 | exists i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in 
+//         choose_idx i | msg1_ephemeral' == dhpk(get(E_init<i@n2>)) in
+//         let msg1_ephemeral : if (msg1_ephemeral' == dhpk(get(E_init<i@n2>))) then
+//         dhpk(E_init<i@n2>) else (x:Data<adv>{x == msg1_ephemeral'}) = msg1_ephemeral' in
+//         let C1 = hash<msg1_C1[msg1_ephemeral]>(C0, msg1_ephemeral) in 
+//         let H2 = crh(H1 ++ msg1_ephemeral) in
+//         let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
+//         let C2 = hash<msg1_C2<@m>[msg1_ephemeral];0>(C1, ss_msg1_ephemeral_S_resp) in
+//         let k0 = hash<msg1_C2<@m>[msg1_ephemeral];1>(C1, ss_msg1_ephemeral_S_resp) in
+//         corr_case msg1_C2<@m>[msg1_ephemeral;1] in
+//         case st_aead_dec(k0, msg1_static, H2, 0x) {
+//             | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
+//             | Some msg1_static_dec => 
+//                    false_elim in
+//                    let opk = call checkpk_resp<@m>(msg1_static_dec) in
+//                    case opk {
+//                        | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
+//                        | Some ss_S_init_S_resp_ =>
+//                            unpack n, ss_S_init_S_resp = ss_S_init_S_resp_ in 
+//                            let dhpk_S_init : dhpk(S_init<@n>) = msg1_static_dec in
+//                            // guard eq(msg1_static_dec, dhpk_S_init) in // Not needed since we have the refinement on ss_S_init_S_resp
+//                            let H3 = crh(H2 ++ msg1_static) in
+//                            let C3 = hash<msg1_C3<@n,m>[msg1_ephemeral];0>(C2, ss_S_init_S_resp) in
+//                            let k1 = hash<msg1_C3<@n,m>[msg1_ephemeral];1>(C2, ss_S_init_S_resp) in
+//                            corr_case msg1_C3<@n,m>[msg1_ephemeral;1] in
+//                            case st_aead_dec(k1, msg1_timestamp, H3, 0x) {
+//                            | None => None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
+//                            | Some msg1_timestamp_dec =>
+//                                false_elim in 
+//                                let H4 = crh(H3 ++ msg1_timestamp) in
+//                                let retval : x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = 
+//                                    responder_msg1_val(C3, H4, msg1_ephemeral, dhpk_S_init, msg1_sender) in
+//                                let v : exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = pack<n>(retval) in 
+//                                Some(v)
+//                            }
+//                    }
+//         }
+//         } otherwise  None<ty:(exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})>()
+//        
+//    
+//    def generate_msg2<j@m> (msg1_val':
+//    exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<m>
+//        : exists n. s:transp_keys {valid_transp_keys_resp<j,n,m>[s]}
+//        =
+//        unpack n, msg1_val = msg1_val' in
+//        parse msg1_val as responder_msg1_val(C3, H4, ephemeral', dhpk_S_init, msg2_receiver) in {
+//        pcase ((exists i:idx. ephemeral' == dhpk(get(E_init<i@n>)))) in 
+//        choose_idx i | ephemeral' == dhpk(get(E_init<i@n>)) in
+//        let ephemeral : if (ephemeral' == dhpk(get(E_init<i@n>))) then dhpk(E_init<i@n>) else (x:Data<adv>{x == ephemeral'}) = ephemeral' in 
+//        let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
+//        let psk = zeros_32() in 
+//        let C4 = hash<msg2_C4<@n,m>[ephemeral, e_resp_pk]>(C3, e_resp_pk) in
+//        let H5 = crh(H4 ++ e_resp_pk) in
+//        let ss = dh_combine(ephemeral, get(E_resp<j@m>)) in 
+//        let C5 = hash<msg2_C5<@n,m>[ephemeral, e_resp_pk, ss]>(C4, ss) in
+//        let C6 = hash<msg2_C6<@n,m>[ephemeral, e_resp_pk, ss]>(C5, dh_combine(dhpk_S_init, get(E_resp<j@m>))) in
+//        let C7 = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];0>(C6, psk) in
+//        let tau = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];1>(C6, psk) in
+//        let k0 = hash<msg2_C7<@n,m>[ephemeral, e_resp_pk, ss];2>(C6, psk) in
+//        let H6 = crh(H5 ++ tau) in
+//        let emptystring = 0x in
+//        let msg2_empty = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, emptystring, H6) in
+//        let H7 = crh(H6 ++ msg2_empty) in
+//        let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
+//        let msg2_tag = msg2_tag_value() in 
+//        // let msg2_mac1_k = hash<msg2_mac1_key<@n>>(mac1(), dhpk_S_init) in
+//        let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
+//        let msg2_mac1 = mac(msg2_mac1_k,
+//            msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
+//            msg2_empty) in 
+//        assume(length(msg2_mac1) == |maclen|);
+//        let msg2_mac2 = zeros_16() in
+//        let msg2_output: msg2 = msg2(
+//            msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
+//        ) in
+//        // let msg2_output = msg2(msg2_payload_value) in
+//        let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
+//        
+//        // Calculate transport keys
+//        let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
+//        let T_resp_send = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 1>(C7, 0x) in
+//        let retval : 
+//             s:transp_keys {valid_transp_keys_resp<j,n,m>[s]}
+//            = transp_keys(msg2_receiver, msg2_sender, ephemeral, e_resp_pk, T_resp_recv, T_resp_send) in
+//        // assert valid_transp_keys_resp<j,n,m>[retval];
+//        pack<n>(retval)
+//        }
+//    
+//    
+//    //// Transport layer messages ////
+//    
+//    
+//    
+//    def transp_send_init<i@n,m> (transp_keys_val :
+//    (x:transp_keys{valid_transp_keys_init<i,n,m>[x]}), plaintext : Data<adv /\ [channel_secret<@n,m>], |adv|>) @ Initiator<n>
+//        : Option(Unit) = 
+//        parse transp_keys_val as transp_keys(_, transp_receiver, _, eph_resp, i2r', _) in { 
+//        pcase (exists j:idx. eph_resp == dhpk(get(E_resp<j@m>))) in 
+//        choose_idx j | eph_resp == dhpk(get(E_resp<j@m>)) in
+//        let i2r : 
+//        Name(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)); 0])
+//            =  i2r' in
+//        let transp_counter = get_counter N_init_send<i@n> in
+//    
+//        // let transp_receiver = _transp_keys_responder(transp_keys_val) in
+//        let transp_tag = transp_tag_value() in 
+//        guard eq(length(transp_receiver), 4) in 
+//    
+//        let transp_packet = st_aead_enc<N_init_send<i@n>>(i2r, plaintext, 0x) in
+//    
+//        let transp_output = transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
+//        // let transp_output = transp(transp_payload_value) in
+//        let _ = output transp_output to endpoint(Responder<m>) in
+//        Some(())
+//        }
+//    
+//    predicate init_recv_secure_inner<i,j,n,m>(k) = 
+//        let e_init = get(E_init<i@n>) in
+//        let e_resp = get(E_resp<j@m>) in
+//        (_transp_keys_T_resp_send(k) == get(
+//        transp_T<@n,m>[
+//            dhpk(e_init),
+//            dhpk(e_resp),
+//            dh_combine(dhpk(e_init), e_resp); 1])
+//         /\
+//         sec(
+//            transp_T<@n,m>[
+//                dhpk(e_init),
+//                dhpk(e_resp),
+//                dh_combine(dhpk(e_init), e_resp); 1]))
+//        
+//    predicate init_recv_secure<i,n,m>(k) = 
+//        exists j:idx. init_recv_secure_inner<i,j,n,m>[k]
+//    
+//    def transp_recv_init<i@n,m> (transp_keys_val :
+//    (x:transp_keys{valid_transp_keys_init<i,n,m>[x]}), c : Data<adv>) @ Initiator<n> :   
+//        Option(if init_recv_secure<i,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
+//        = 
+//        parse c as transp(_, from, ctr, pkt) in {
+//        parse transp_keys_val as transp_keys(_, responder_name, _, eph_resp, _, r2i') in {
+//        guard eq(c, responder_name) in 
+//        pcase (exists j:idx. eph_resp == dhpk(get(E_resp<j@m>))) in 
+//        choose_idx j | eph_resp == dhpk(get(E_resp<j@m>)) in
+//        let r2i : 
+//         Name(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>));1])
+//           =  r2i' in       
+//        corr_case transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)) ;1] in 
+//        // Below to instantiate quantifier
+//        assert ((sec(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)) ;1]) /\ eph_resp == dhpk(get(E_resp<j@m>))) ==> 
+//        init_recv_secure_inner<i,j,n,m>[transp_keys_val]);
+//    
+//        st_aead_dec(r2i, pkt, 0x, ctr)
+//        }
+//        } otherwise None<ty: if init_recv_secure<i,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>>()
+//        
+//    
+//    def transp_send_resp<j@n,m> (transp_keys_val :
+//    (x:transp_keys{valid_transp_keys_resp<j,n,m>[x]}), plaintext : Data<adv /\
+//    [channel_secret<@n,m>], |adv|>) @ Responder<m>
+//        : Option(Unit) = 
+//        
+//        parse transp_keys_val as transp_keys(transp_receiver, _, eph_init, _, _, r2i') in {
+//        pcase (exists i:idx. eph_init == dhpk(get(E_init<i@n>))) in 
+//        choose_idx i | eph_init == dhpk(get(E_init<i@n>)) in
+//        let r2i : 
+//        Name(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)), dh_combine(eph_init,
+//        get(E_resp<j@m>)); 1])
+//           =  r2i' in       
+//        let transp_counter = get_counter N_resp_send<j@m> in
+//    
+//        let transp_tag = transp_tag_value() in 
+//        guard eq(length(transp_receiver), 4) in 
+//    
+//        let transp_packet = st_aead_enc<N_resp_send<j@m>>(r2i, plaintext, 0x) in
+//    
+//        let transp_output = 
+//            transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
+//        // let transp_output = transp(transp_payload_value) in
+//        let _ = output transp_output to endpoint(Initiator<n>) in
+//        Some(())
+//        }
+//    
+//    
+//    predicate resp_recv_secure_inner<i,j,n,m>(k) = 
+//        let e_init = get(E_init<i@n>) in
+//        let e_resp = get(E_resp<j@m>) in
+//        (_transp_keys_T_init_send(k) == get(
+//        transp_T<@n,m>[
+//            dhpk(e_init),
+//            dhpk(e_resp),
+//            dh_combine(dhpk(e_init), e_resp); 0])
+//         /\
+//         sec(
+//            transp_T<@n,m>[
+//                dhpk(e_init),
+//                dhpk(e_resp),
+//                dh_combine(dhpk(e_init), e_resp); 0]))
+//        
+//    predicate resp_recv_secure<j,n,m>(k) = 
+//        exists i:idx. resp_recv_secure_inner<i,j,n,m>[k]
+//    
+//    def transp_recv_resp<j@n,m> (transp_keys_val :
+//    (x:transp_keys{valid_transp_keys_resp<j,n,m>[x]}), c : Data<adv>) @ Responder<m> :   
+//        Option(if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
+//        = 
+//        parse c as transp(_, from, ctr, pkt) in {
+//        parse transp_keys_val as transp_keys(initiator_name, _, eph_init, _, i2r', _) in {
+//        guard eq(c, initiator_name) in 
+//        pcase (exists i:idx. eph_init == dhpk(get(E_init<i@n>))) in 
+//        choose_idx i | eph_init == dhpk(get(E_init<i@n>)) in
+//        let i2r : 
+//         Name(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)), dh_combine(eph_init, get(E_resp<j@m>));0])
+//           =  i2r' in       
+//        corr_case transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)),
+//        dh_combine(eph_init, get(E_resp<j@m>)) ;0] in 
+//        // Below to instantiate quantifier
+//        assert ((sec(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)),
+//        dh_combine(eph_init, get(E_resp<j@m>)) ;0]) /\ eph_init == dhpk(get(E_init<i@n>))) ==>
+//            resp_recv_secure_inner<i,j,n,m>[transp_keys_val]);
+//    
+//        st_aead_dec(i2r, pkt, 0x, ctr)
+//        }
+//        } otherwise None<ty: if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>>()
+//    
+//    
+//    
+//    
+//    
+//    ///////// Main functions //////////
+//    // TODO these can be removed once extraction stops demanding them
+//    
+//    def Initiator_main<@n>() @ Initiator<n> : Unit = ()
+//    def Responder_main<@n>() @ Responder<n> : Unit = ()
+//    def dummy_main<@n,m>() @ dummy<n,m> : Unit = ()
 
-
-//// Transport layer messages ////
-
-
-
-def transp_send_init<i@n,m> (transp_keys_val :
-(x:transp_keys{valid_transp_keys_init<i,n,m>[x]}), plaintext : Data<adv /\ [channel_secret<@n,m>], |adv|>) @ Initiator<n>
-    : Option(Unit) = 
-    parse transp_keys_val as transp_keys(_, transp_receiver, _, eph_resp, i2r', _) in { 
-    pcase (exists j:idx. eph_resp == dhpk(get(E_resp<j@m>))) in 
-    choose_idx j | eph_resp == dhpk(get(E_resp<j@m>)) in
-    let i2r : 
-    Name(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)); 0])
-        =  i2r' in
-    let transp_counter = get_counter N_init_send<i@n> in
-
-    // let transp_receiver = _transp_keys_responder(transp_keys_val) in
-    let transp_tag = transp_tag_value() in 
-    guard eq(length(transp_receiver), 4) in 
-
-    let transp_packet = st_aead_enc<N_init_send<i@n>>(i2r, plaintext, 0x) in
-
-    let transp_output = transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
-    // let transp_output = transp(transp_payload_value) in
-    let _ = output transp_output to endpoint(Responder<m>) in
-    Some(())
-    }
-
-predicate init_recv_secure_inner<i,j,n,m>(k) = 
-    let e_init = get(E_init<i@n>) in
-    let e_resp = get(E_resp<j@m>) in
-    (_transp_keys_T_resp_send(k) == get(
-    transp_T<@n,m>[
-        dhpk(e_init),
-        dhpk(e_resp),
-        dh_combine(dhpk(e_init), e_resp); 1])
-     /\
-     sec(
-        transp_T<@n,m>[
-            dhpk(e_init),
-            dhpk(e_resp),
-            dh_combine(dhpk(e_init), e_resp); 1]))
-    
-predicate init_recv_secure<i,n,m>(k) = 
-    exists j:idx. init_recv_secure_inner<i,j,n,m>[k]
-
-def transp_recv_init<i@n,m> (transp_keys_val :
-(x:transp_keys{valid_transp_keys_init<i,n,m>[x]}), c : Data<adv>) @ Initiator<n> :   
-    Option(if init_recv_secure<i,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
-    = 
-    parse c as transp(_, from, ctr, pkt) in {
-    parse transp_keys_val as transp_keys(_, responder_name, _, eph_resp, _, r2i') in {
-    guard eq(c, responder_name) in 
-    pcase (exists j:idx. eph_resp == dhpk(get(E_resp<j@m>))) in 
-    choose_idx j | eph_resp == dhpk(get(E_resp<j@m>)) in
-    let r2i : 
-     Name(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>));1])
-       =  r2i' in       
-    corr_case transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)) ;1] in 
-    // Below to instantiate quantifier
-    assert ((sec(transp_T<@n,m>[dhpk(get(E_init<i@n>)), eph_resp, dh_combine(eph_resp, get(E_init<i@n>)) ;1]) /\ eph_resp == dhpk(get(E_resp<j@m>))) ==> 
-    init_recv_secure_inner<i,j,n,m>[transp_keys_val]);
-
-    st_aead_dec(r2i, pkt, 0x, ctr)
-    }
-    } otherwise None<ty: if init_recv_secure<i,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>>()
-    
-
-def transp_send_resp<j@n,m> (transp_keys_val :
-(x:transp_keys{valid_transp_keys_resp<j,n,m>[x]}), plaintext : Data<adv /\
-[channel_secret<@n,m>], |adv|>) @ Responder<m>
-    : Option(Unit) = 
-    
-    parse transp_keys_val as transp_keys(transp_receiver, _, eph_init, _, _, r2i') in {
-    pcase (exists i:idx. eph_init == dhpk(get(E_init<i@n>))) in 
-    choose_idx i | eph_init == dhpk(get(E_init<i@n>)) in
-    let r2i : 
-    Name(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)), dh_combine(eph_init,
-    get(E_resp<j@m>)); 1])
-       =  r2i' in       
-    let transp_counter = get_counter N_resp_send<j@m> in
-
-    let transp_tag = transp_tag_value() in 
-    guard eq(length(transp_receiver), 4) in 
-
-    let transp_packet = st_aead_enc<N_resp_send<j@m>>(r2i, plaintext, 0x) in
-
-    let transp_output = 
-        transp(transp_tag, transp_receiver, transp_counter, transp_packet) in
-    // let transp_output = transp(transp_payload_value) in
-    let _ = output transp_output to endpoint(Initiator<n>) in
-    Some(())
-    }
-
-
-predicate resp_recv_secure_inner<i,j,n,m>(k) = 
-    let e_init = get(E_init<i@n>) in
-    let e_resp = get(E_resp<j@m>) in
-    (_transp_keys_T_init_send(k) == get(
-    transp_T<@n,m>[
-        dhpk(e_init),
-        dhpk(e_resp),
-        dh_combine(dhpk(e_init), e_resp); 0])
-     /\
-     sec(
-        transp_T<@n,m>[
-            dhpk(e_init),
-            dhpk(e_resp),
-            dh_combine(dhpk(e_init), e_resp); 0]))
-    
-predicate resp_recv_secure<j,n,m>(k) = 
-    exists i:idx. resp_recv_secure_inner<i,j,n,m>[k]
-
-def transp_recv_resp<j@n,m> (transp_keys_val :
-(x:transp_keys{valid_transp_keys_resp<j,n,m>[x]}), c : Data<adv>) @ Responder<m> :   
-    Option(if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>)
-    = 
-    parse c as transp(_, from, ctr, pkt) in {
-    parse transp_keys_val as transp_keys(initiator_name, _, eph_init, _, i2r', _) in {
-    guard eq(c, initiator_name) in 
-    pcase (exists i:idx. eph_init == dhpk(get(E_init<i@n>))) in 
-    choose_idx i | eph_init == dhpk(get(E_init<i@n>)) in
-    let i2r : 
-     Name(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)), dh_combine(eph_init, get(E_resp<j@m>));0])
-       =  i2r' in       
-    corr_case transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)),
-    dh_combine(eph_init, get(E_resp<j@m>)) ;0] in 
-    // Below to instantiate quantifier
-    assert ((sec(transp_T<@n,m>[eph_init, dhpk(get(E_resp<j@m>)),
-    dh_combine(eph_init, get(E_resp<j@m>)) ;0]) /\ eph_init == dhpk(get(E_init<i@n>))) ==>
-        resp_recv_secure_inner<i,j,n,m>[transp_keys_val]);
-
-    st_aead_dec(i2r, pkt, 0x, ctr)
-    }
-    } otherwise None<ty: if resp_recv_secure<j,n,m>[transp_keys_val] then Data<adv /\ [channel_secret<@n,m>], |adv|> else Data<adv>>()
-
-
-
-
-
-///////// Main functions //////////
-// TODO these can be removed once extraction stops demanding them
-
-def Initiator_main<@n>() @ Initiator<n> : Unit = ()
-def Responder_main<@n>() @ Responder<n> : Unit = ()
-def dummy_main<@n,m>() @ dummy<n,m> : Unit = ()
-*/

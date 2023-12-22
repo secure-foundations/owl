@@ -113,8 +113,8 @@ corruptNameType nt = do
                       corruptNameType $ snd $ nts !! j
                   return $ foldr1 pAnd axijs
               return $ foldr1 pAnd axis
-          return $ mkSpanned $ PQuantBV Forall $ bind x $ 
-              mkSpanned $ PQuantBV Forall $ bind y $ ps
+          return $ mkSpanned $ PQuantBV Forall (ignore $ show x) $ bind x $ 
+              mkSpanned $ PQuantBV Forall (ignore $ show y) $ bind y $ ps
 
 
 

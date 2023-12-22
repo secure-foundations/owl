@@ -190,8 +190,8 @@ data PropX =
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
-    | PQuantIdx Quant  (Bind IdxVar Prop)
-    | PQuantBV Quant  (Bind DataVar Prop)
+    | PQuantIdx Quant  (Ignore String) (Bind IdxVar Prop)
+    | PQuantBV Quant  (Ignore String) (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
     | PValidKDF AExpr AExpr AExpr [NameKind] Int
     | PApp Path [Idx] [AExpr]
@@ -425,6 +425,7 @@ data ExprX =
     | ECase Expr (Maybe (Ty, Expr)) [(String, Either Expr (Ignore String, Bind DataVar Expr))] 
         -- The (Ignore String) part is the name for the var
     | EPCase Prop (Maybe Prop) Expr
+    | ECorrCaseNameOf AExpr (Maybe Prop) Expr
     | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -433,7 +434,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-      CKDF (Maybe Int) (Maybe (Either Int (String, ([Idx], [Idx]), Int)))
+      CKDF (Maybe Int) (Maybe (Either Int [(String, ([Idx], [Idx]), Int)]))
            [NameKind]
            Int 
         -- TODO: annotation for the name row

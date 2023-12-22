@@ -164,7 +164,20 @@ pIsOr (Spanned _ (POr _ _)) = True
 pIsOr _ = False
 
 instance OwlPretty NameKind where
-    owlpretty n = owlpretty (show n)
+    owlpretty n = 
+        owlpretty $ case n of
+                      NK_KDF -> "kdfkey"
+                      NK_DH -> "dhkey"
+                      NK_Enc -> "enckey"
+                      NK_PKE -> "pkekey"
+                      NK_Sig -> "sigkey"
+                      NK_MAC -> "mackey"
+                      NK_Nonce -> "nonce"
+
+newtype NameKindRow = NameKindRow [NameKind]
+instance OwlPretty NameKindRow where
+    owlpretty (NameKindRow n) = mconcat $ intersperse (owlpretty "||") (map owlpretty n)
+
 
 instance  OwlPretty PropX where 
     owlpretty PTrue = owlpretty "true"
@@ -190,12 +203,12 @@ instance  OwlPretty PropX where
     owlpretty (PNot (Spanned _ (PFlow l1 l2))) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "!<=" <+> owlpretty l2
     owlpretty (PFlow l1 l2) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2
     owlpretty (PIsConstant a) = owlpretty "is_constant(" <> owlpretty a <> owlpretty ")"
-    owlpretty (PQuantIdx q b) = 
+    owlpretty (PQuantIdx q sx b) = 
         let (x, p) = owlprettyBind b in
-        owlpretty q <+> x <+> owlpretty ": idx" <> owlpretty "." <+> p
-    owlpretty (PQuantBV q b) = 
+        owlpretty q <+> owlpretty sx <+> owlpretty ": idx" <> owlpretty "." <+> p
+    owlpretty (PQuantBV q sx b) = 
         let (x, p) = owlprettyBind b in
-        owlpretty q <+> x <+> owlpretty ": bv" <> owlpretty "." <+> p
+        owlpretty q <+> owlpretty sx <+> owlpretty ": bv" <> owlpretty "." <+> p
     owlpretty (PValidKDF a b c nks j) = owlpretty "valid_kdf" <> 
         tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)

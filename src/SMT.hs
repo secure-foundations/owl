@@ -52,7 +52,7 @@ setupIndexEnv :: Sym ()
 setupIndexEnv = do
     inds <- view $ inScopeIndices
     assocs <- forM (map fst inds) $ \i -> do
-        x <- freshIndexVal (show i)
+        x <- freshIndexVal (cleanSMTIdent $ show i)
         return (i, x)
     symIndexEnv .= M.fromList assocs
 
@@ -509,21 +509,20 @@ interpretProp p = do
       (PIsConstant a) -> do
           v <- interpretAExp a
           return $ SApp [SAtom "IsConstant", v]
-      (PQuantBV q ip) -> do
+      (PQuantBV q _ ip) -> do
           (x, p) <- liftCheck $ unbind ip
           v <- withSMTVars [x] $ interpretProp p 
+          let xname = cleanSMTIdent $ show x
           case q of
-            Forall -> return $ sForall [(SAtom $ show x, bitstringSort)] v [] $ "forall_" ++ show x
-            Exists -> return $ sExists [(SAtom $ show x, bitstringSort)] v [] $ "exists_" ++ show x
-      (PQuantIdx q ip) -> do
+            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v [] $ "forall_" ++ xname
+            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v [] $ "exists_" ++ xname
+      (PQuantIdx q _ ip) -> do
           (i, p') <- liftCheck $ unbind ip
-          sIE <- use symIndexEnv
-          symIndexEnv  %= (M.insert i (SAtom $ show i))
           v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
-          symIndexEnv .= sIE
+          let iname = cleanSMTIdent $ show i
           case q of
-            Forall -> return $ sForall [(SAtom $ show i, indexSort)] v [] $ "forall_" ++ show i
-            Exists -> return $ sExists [(SAtom $ show i, indexSort)] v [] $ "exists_" ++ show i
+            Forall -> return $ sForall [(SAtom iname, indexSort)] v [] $ "forall_" ++ iname 
+            Exists -> return $ sExists [(SAtom iname, indexSort)] v [] $ "exists_" ++ iname
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1
@@ -540,7 +539,7 @@ mkSList sort [] = SApp [SAtom "as", SAtom "nil", SAtom ("(List " ++ sort ++")")]
 mkSList sort (x:xs) = SApp [SAtom "insert", x, mkSList sort xs]
     
 subTypeCheck :: Ty -> Ty -> Sym ()
-subTypeCheck t1 t2 = traceFn ("subTypeCheck(" ++ show (tupled $ map owlpretty [t1, t2]) ++ ")") $ do
+subTypeCheck t1 t2 = pushRoutine ("subTypeCheck(" ++ show (tupled $ map owlpretty [t1, t2]) ++ ")") $ do
     v <- mkTy Nothing t1
     c <- tyConstraints t2 v
 
@@ -576,7 +575,7 @@ symCheckEqTopLevel eghosts es = do
         emitToProve $ sAnd $ map (\(x, y) -> sEq x y) $ zip v_es v_eghosts 
 
 symAssert :: Prop -> Sym ()
-symAssert p = traceFn ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
+symAssert p = pushRoutine ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
     b <- interpretProp p
     emitComment $ "Proving prop " ++ show (owlpretty p)
     emitToProve b

@@ -555,8 +555,8 @@ parseQuantBinders =
 mkQuant :: Quant -> [(String, BinderType)] -> Prop -> Prop
 mkQuant q [] p = p
 mkQuant q ((i, bt):bs) p = case bt of
-    BTIdx -> mkSpanned $ PQuantIdx q $ bind (s2n i) $ mkQuant q bs p
-    BTBV -> mkSpanned $ PQuantBV q $ bind (s2n i) $ mkQuant q bs p
+    BTIdx -> mkSpanned $ PQuantIdx q (ignore i) $ bind (s2n i) $ mkQuant q bs p
+    BTBV -> mkSpanned $ PQuantBV q (ignore i) $ bind (s2n i) $ mkQuant q bs p
 
 mkEForall :: [(String, BinderType)] -> Expr -> Expr
 mkEForall [] e = e
@@ -1361,14 +1361,27 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "corr_case"
-        n <- parseNameExp
+        ccase <- alt
+                    (do
+                        reserved "nameOf"
+                        symbol "("
+                        a <- parseAExpr
+                        symbol ")"
+                        return $ Left a
+                    )
+                    (do
+                        n <- parseNameExp
+                        return $ Right n
+                    )
         op <- optionMaybe $ do
             reserved "when"
             parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase (pFlow (nameLbl n) advLbl) op e
-        )
+        return $ case ccase of
+                   Left a -> ECorrCaseNameOf a op e
+                   Right n  -> EPCase (pFlow (nameLbl n) advLbl) op e
+    )
     <|>
     (parseSpanned $ do
         reserved "pcase"
@@ -1447,13 +1460,16 @@ parseCryptOp =
         symbol ";"
         oann2 <- optionMaybe $ do
             (do
-                reserved "odh"
-                s <- identifier
-                p <- parseIdxParams
-                symbol "["
-                i <- many1 digit
-                symbol "]"
-                return $ Right (s, p, read i))
+                odhs <- (do
+                    reserved "odh"
+                    s <- identifier
+                    p <- parseIdxParams
+                    symbol "["
+                    i <- many1 digit
+                    symbol "]"
+                    return (s, p, read i)
+                        ) `sepBy1` (symbol ",")
+                return $ Right odhs)
             <|>
             (do
                 i <- many1 digit

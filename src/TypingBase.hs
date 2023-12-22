@@ -155,7 +155,8 @@ instance Alpha ModBody
 instance Subst ResolvedPath ModBody
 
 data MemoEntry = MemoEntry { 
-    _memoInferAExpr :: IORef (M.Map (AlphaOrd AExpr) Ty) 
+    _memoInferAExpr :: IORef (M.Map (AlphaOrd AExpr) Ty),
+    _memoNormalizeTy :: IORef (M.Map (AlphaOrd Ty) Ty)
 }
 
 data Env = Env { 
@@ -181,6 +182,7 @@ data Env = Env {
     _debugLogDepth :: IORef Int,
     _typeErrorHook :: (forall a. String -> Check a),
     _curDef :: Maybe String,
+    _tcRoutineStack :: [String],
     _inTypeError :: Bool,
     _curSpan :: Position
 }
@@ -439,19 +441,16 @@ curMod = openModules . unsafeHead . _2
 curMemo :: Lens' Env MemoEntry
 curMemo = memoStack . unsafeHead
 
-mkMemoEntry :: Maybe MemoEntry -> IO MemoEntry
-mkMemoEntry Nothing = do 
+mkMemoEntry :: IO MemoEntry
+mkMemoEntry = do 
     r <- newIORef M.empty
-    return $ MemoEntry r
-mkMemoEntry (Just (MemoEntry r)) = do
-    mp <- readIORef r  
-    r' <- newIORef mp
-    return $ MemoEntry r'
+    r2 <- newIORef M.empty
+    return $ MemoEntry r r2
 
 withNewMemo :: (MonadIO m, MonadReader Env m) => m a -> m a
 withNewMemo k = do
     memos <- view memoStack
-    memo' <- liftIO $ mkMemoEntry $ Just $ head memos
+    memo' <- liftIO $ mkMemoEntry 
     local (over memoStack (memo':)) k
 
 curModName :: Check ResolvedPath
@@ -466,20 +465,6 @@ withSpan x k = do
         res <- local (set curSpan (unignore x)) k
         return res
 
-traceFn :: (MonadIO m, MonadReader Env m) => String -> m a -> m a
-traceFn ann k = do
-    r <- view $ debugLogDepth
-    b <- view $ envFlags . fDebug
-    case b of
-      Just fname -> do
-          n <- liftIO $ readIORef r
-          -- liftIO $ appendFile fname $ replicate (n) ' ' ++ ann ++ "\n"
-          liftIO $ appendFile fname $ ann ++ "\n"
-          liftIO $ modifyIORef r (+1)
-          res <- k 
-          liftIO $ modifyIORef r (\x -> x - 1)
-          return res
-      Nothing -> k
 
 inferIdx :: Idx -> Check IdxType
 inferIdx (IVar pos iname i) = do
@@ -641,7 +626,7 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
 
 -- Resolves all App nodes
 normalizeNameType :: NameType -> Check NameType
-normalizeNameType nt = 
+normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
       NT_KDF pos bcases -> do
@@ -654,11 +639,15 @@ normalizeNameType nt =
           return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind p cases')
       _ -> return nt
 
-
-    
+pushRoutine :: MonadReader Env m => String -> m a -> m a
+pushRoutine s k = do
+    b <- view $ envFlags . fLogTypecheck
+    if b then 
+        local (over tcRoutineStack $ (s:)) k
+    else k
 
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
-getNameInfo ne = withSpan (ne^.spanOf) $ do
+getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
     res <- case ne^.val of 
              NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
                  md <- openModule p
@@ -703,13 +692,8 @@ getKDFAnnInfo ann a b c = do
           case nt^.val of
             NT_KDF kpos bnd -> do
                 assert ("KDF position wrong somehow") $ kpos == KDF_SaltPos
-                ta <- inferAExpr a
-                case (stripRefinements ta)^.val of
-                  TName ne2 -> do
-                      ne2' <- normalizeNameExp ne2
-                      assert ("KDF name not well-formed; first argument (" ++ show (owlpretty ne2) ++ ") must equal the name " ++ show (owlpretty ne)) $ 
-                          ne2' `aeq` ne
-                  
+                -- N.B: We do not check that a has the correct type here, but
+                -- this is guaranteed by construction
                 extractKDF kpos bnd a b c i
             _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
       KDF_IKMKey ne i ->  do 
@@ -717,13 +701,8 @@ getKDFAnnInfo ann a b c = do
             case nt^.val of
               NT_KDF kpos bnd -> do
                   assert ("KDF position wrong somehow") $ kpos == KDF_IKMPos
-                  tb <- inferAExpr b 
-                  case (stripRefinements tb)^.val of
-                      TName ne2 -> do
-                          ne2' <- normalizeNameExp ne2
-                          assert ("KDF name not well-formed; second argument must be the name") $ 
-                              ne2' `aeq` ne
-                      _ -> typeError $ "Expected KDF name, got " ++ show (owlpretty tb)
+                  -- N.B: We do not check that b has the correct type here, but
+                  -- this is guaranteed by construction
                   extractKDF kpos bnd a b c i 
               _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
 
@@ -888,7 +867,7 @@ lenConstOfUniformName ne = do
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check AExpr
-normalizeAExpr ae = withSpan (ae^.spanOf) $ 
+normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $ 
     case ae^.val of
       AEVar _ _ -> return ae
       AEHex _ -> return ae
@@ -918,6 +897,16 @@ normalizeAExpr ae = withSpan (ae^.spanOf) $
             Just (FunDef b) -> normalizeAExpr =<< extractFunDef b fs' aes'
             _ -> return $ Spanned (ae^.spanOf) $ AEApp pth fs' aes'
 
+withMemoize :: Alpha a => (Lens' MemoEntry (IORef (M.Map (AlphaOrd a) b))) -> (a -> Check b) -> a -> Check b
+withMemoize lns k x = do
+    memo <- view $ curMemo . lns
+    mp <- liftIO $ readIORef memo
+    case M.lookup (AlphaOrd x) mp of
+      Just v -> return v
+      Nothing -> do
+          v <- k x
+          liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
+          return v
 
 memoizeAExpr :: AExpr -> Check Ty -> Check Ty
 memoizeAExpr ae m = do
@@ -934,7 +923,7 @@ memoizeAExpr ae m = do
       
 
 inferAExpr :: AExpr -> Check Ty
-inferAExpr ae = withSpan (ae^.spanOf) $ memoizeAExpr ae $ do
+inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine "inferAExpr" $ do
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
@@ -1058,7 +1047,7 @@ resolveANF a = do
           case lookup x tC of
             Nothing -> do
                 tC <- view tyContext
-                typeError $ "Unknown var during ANF: " ++ show x ++ " under type context:" ++ "\n" ++ show (owlprettyTyContextANF tC)
+                typeError $ "Unknown var: " ++ show x
             Just (_, ianf, _) -> 
                 case ianf of 
                   Nothing -> return a

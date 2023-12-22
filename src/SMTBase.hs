@@ -275,7 +275,7 @@ queryZ3 logsmt filepath z3results mp q = do
             (_, err, _) -> return (Left err)
 
 fromSMT :: String -> Sym () -> Sym () -> Check (Maybe String, Bool)
-fromSMT s setup k = traceFn ("fromSMT: " ++ s) $ do
+fromSMT s setup k = pushRoutine ("fromSMT: " ++ s) $ do
     oq <- getSMTQuery setup k
     case oq of
       Nothing -> return (Nothing, True)
@@ -490,7 +490,7 @@ sName n ivs = do
 withSMTIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
 withSMTIndices xs k = do
     sIE <- use symIndexEnv
-    symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ show i)) xs) 
+    symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ cleanSMTIdent $ show i)) xs) 
     res <- withIndices xs k
     symIndexEnv .= sIE
     return res
@@ -498,7 +498,7 @@ withSMTIndices xs k = do
 withSMTVars :: [DataVar] -> Sym a -> Sym a
 withSMTVars xs k = do
     vVs <- use varVals
-    varVals %= (M.union $ M.fromList $ map (\v -> (v, SAtom $ show v)) xs)
+    varVals %= (M.union $ M.fromList $ map (\v -> (v, SAtom $ cleanSMTIdent $ show v)) xs)
     let tyc = map (\v -> (v, (ignore $ show v, Nothing, tGhost))) xs 
     res <- withVars tyc $ k
     varVals .= vVs

@@ -86,10 +86,12 @@ anf e =
       EOutput a oe -> do
           e1 <- anfAExpr a
           elet e1 Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EOutput (aevar (a^.spanOf) x) oe
-      ELet (Spanned sp (ERet a)) tyann Nothing s xk -> do 
+      -- If a bare let statement without a type annotation, treat it as an
+      -- ANF-inserted one
+      ELet (Spanned sp (ERet a)) Nothing Nothing s xk -> do 
           (x, k) <- unbind xk
           a' <- anfAExpr a
-          elet a' tyann (Just a) (Just s) $ \y -> 
+          elet a' Nothing (Just a) (Just s) $ \y -> 
               anf $ subst x (aevar (a^.spanOf) y) k
       ELet e1 tyann Nothing s xk -> do
               (x, k) <- unbind xk
@@ -176,6 +178,9 @@ anf e =
       EPCase p op k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ EPCase p op k'
+      ECorrCaseNameOf a op k -> do 
+         k' <- anf k
+         return $ Spanned (e^.spanOf) $ ECorrCaseNameOf a op k'
       ESetOption s1 s2 k -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
