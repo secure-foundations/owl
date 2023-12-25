@@ -29,7 +29,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -95,7 +95,7 @@ parseNameExp =
         j <- many1 digit
         symbol "]"
         let ann = KDF_SaltKey n (read i)
-        return $ KDFName (ignore ann) (Spanned (n^.spanOf) $ AEGet n) a b (read j))
+        return $ KDFName ann (Spanned (n^.spanOf) $ AEGet n) a b (read j))
     <|>
     (parseSpanned $ do
         reserved "DualKDF"
@@ -113,7 +113,7 @@ parseNameExp =
         j <- many1 digit
         symbol "]"
         let ann = KDF_IKMKey n (read i) 
-        return $ KDFName (ignore ann) a (Spanned (n^.spanOf) $ AEGet n) b (read j))
+        return $ KDFName ann a (Spanned (n^.spanOf) $ AEGet n) b (read j))
     <|>
     (parseSpanned $ do
         reserved "ODHName"
@@ -136,7 +136,15 @@ parseNameExp =
     (parseSpanned $ do
         i <- parsePath
         ps <- parseIdxParams 
-        return $ NameConst ps i) 
+        oxs <- optionMaybe $ do
+                symbol "["
+                xs <- parseAExpr `sepBy1` (symbol ",")
+                symbol "]"
+                return xs
+        let xs = case oxs of
+                   Just v -> v
+                   Nothing -> []
+        return $ NameConst ps i xs) 
 
 parsePath :: Parser Path
 parsePath = 
@@ -561,8 +569,8 @@ mkQuant q ((i, bt):bs) p = case bt of
 mkEForall :: [(String, BinderType)] -> Expr -> Expr
 mkEForall [] e = e
 mkEForall ((i, bt):bs) k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx $ bind (s2n i) $ mkEForall bs k
-    BTBV -> mkSpanned $ EForallBV $ bind (s2n i) $ mkEForall bs k
+    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ mkEForall bs k
+    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ mkEForall bs k
 
 
 prefixProp op f =
@@ -588,8 +596,6 @@ parsePropTable = [
     [ infixProp "<==>" pIff AssocNone ]
                  ]
 
-parseNoncePattern = 
-    (symbol "*" >> return NPHere)
 
 parseNameType = 
     parensPos parseNameType <|>
@@ -620,9 +626,7 @@ parseNameType =
         pr <- parseProp
         reserved "nonce"
         p <- parsePath
-        reserved "nonce_pattern"
-        np <- parseNoncePattern
-        return $ NT_StAEAD t (bind (s2n x) pr) p np
+        return $ NT_StAEAD t (bind (s2n x) pr) p 
     )
     <|>
     (parseSpanned $ do
@@ -711,9 +715,17 @@ parseNameDeclBody =
          return $ DeclBaseName nt nl)
     <|>
     (do
+        oxs <- optionMaybe $ do
+                symbol "["
+                xs <- identifier `sepBy1` (symbol ",")
+                symbol "]"
+                return xs
+        let xs = case oxs of
+                   Just v -> v
+                   Nothing -> []
         symbol "="
         ne2 <- parseNameExp
-        return $ DeclAbbrev ne2
+        return $ DeclAbbrev $ bind (map s2n xs) ne2
     )
     <|>
     (return $ DeclAbstractName)
@@ -1692,6 +1704,7 @@ parseAExprTable =
     [ 
         [ infixAExpr "*" "mult" AssocLeft ],
         [ infixAExpr "++" "concat" AssocLeft ],
+        [ infixAExpr "&&&" "andp" AssocLeft ],
         [ infixAExpr "&&" "andb" AssocLeft ],
         [ infixAExpr "+" "plus" AssocLeft ],
         [ prefixAExpr "!" "notb" ]

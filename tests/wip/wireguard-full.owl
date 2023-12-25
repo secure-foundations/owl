@@ -63,14 +63,13 @@ counter N_resp_recv<j@m> @ Responder<m>
 
 nametype C7<@n,m> = kdf {ikm info.
     True -> 
-        st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
             aad x. true
             nonce N_init_send
-            nonce_pattern * ||
-        st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+            ||
+        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
             aad x. true
             nonce N_resp_send
-           nonce_pattern *
 }
 
 counter aead_counter_msg2_C7<j@m> @ Responder<m>
@@ -80,8 +79,19 @@ nametype C6<@n, m> = kdf {ikm info.
         st_aead (Data<adv> |0|)
            aad x. true 
            nonce aead_counter_msg2_C7
-           nonce_pattern *
 }
+
+nametype C6_dual<@n, m> = dualkdf {salt info.
+    True -> strict C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+}
+
+name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
+name send_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[0]
+name recv_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[1]
+
 
 counter dummy<@n> @ Initiator<n>
 
@@ -89,7 +99,6 @@ nametype C5<@n,m> = kdf {ikm info.
     True -> strict C6<@n,m> || strict st_aead (Data<adv> |0|)
                                 aad x. true
                                 nonce dummy
-                                nonce_pattern *
 }
 
 odh L5<j@n,m> :
@@ -102,7 +111,6 @@ nametype C4<@n,m> = kdf {ikm info.
     True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
                                 aad x. true
                                 nonce dummy
-                                nonce_pattern *
 }
 
 odh L4<i,j@n,m> :
@@ -113,10 +121,9 @@ odh L4<i,j@n,m> :
 
 
 nametype C3<@n,m> = kdf {ikm info.
-    True -> strict C4<@n,m> || nonce || strict st_aead (Data<adv> |0|)
+    True -> strict C4<@n,m> || nonce || strict st_aead (x:Data<adv> |0|{False})
                                             aad x. true
                                             nonce dummy
-                                            nonce_pattern *
 }
 
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
@@ -126,7 +133,6 @@ nametype C2<@n,m> = kdf {ikm info.
     True -> strict C3<@n,m> || st_aead (Data<adv> |12|)
                            aad x. true
                            nonce aead_counter_msg1_C3
-                           nonce_pattern *
 }
 
 odh L2<@n,m> : 
@@ -134,7 +140,6 @@ odh L2<@n,m> :
         True -> strict C3<@n,m> || st_aead (Data<adv> |12|)
                            aad x. true
                            nonce aead_counter_msg1_C3
-                           nonce_pattern *
     }
 
 counter aead_counter_msg1_C2<i@n> @ Initiator<n>
@@ -143,7 +148,6 @@ nametype C1<@n,m> = kdf {ikm info.
     True -> strict C2<@n,m> || st_aead (exists n. dhpk(S_init<@n>))
                          aad x. true
                          nonce aead_counter_msg1_C2
-                         nonce_pattern *
 }
 
 odh L1<i@n,m> :
@@ -151,10 +155,7 @@ odh L1<i@n,m> :
         True -> strict C2<@n,m> || st_aead (exists n. dhpk(S_init<@n>))
                          aad x. true
                          nonce aead_counter_msg1_C2
-                         nonce_pattern *
 }                                                            
-
-name psk<i,j@n,m> : C1<@n,m> @ Initiator<n>, Responder<m>
 
 func kdf_pure
     arity 3
@@ -231,17 +232,18 @@ struct initiator_msg1_val<i,n,m> {
 }
 
 
-    /* , _initiator_msg1_H4 : (x:Data<adv>{
-        (corr(msg1_C3<@n,m>[dhpk(get(E_init<i@n>)); 0])
-            ==>
-            (corr(S_init<@n>) \/ corr(S_resp<@m>)))
-        /\
-        exists c:bv, ts:bv. x ==
-    crh(honest_H4_pre<session i, pid n, pid m>(c, ts))})
+struct transp_keys_init {
+      _tki_initiator : Data<adv> |4|,
+      _tki_responder : Data<adv> |4|,
+      _tki_init_eph : (x:Ghost{is_group_elem(x)}),
+      _tki_resp_eph : (x:Ghost{is_group_elem(x)}),
+      _tki_send : Data<top> | |enckey| |,
+      _tki_recv : Data<top> | |enckey| |
 }
 
 
 
+/*
 
 struct transp_keys {
       _transp_keys_initiator : Data<adv> |4|  // value of get_sender_i
@@ -336,8 +338,9 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     retval
 
 
-def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n>
-    : Option Unit = // ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =  
+def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>,
+psk : Name(psk<@n,m>), dhpk_S_resp : dhpk(S_resp<@m>)) @ Initiator<n>
+    : Option transp_keys_init = // ((x:transp_keys{valid_transp_keys_init<i,n,m>[x]})) =  
 
     // set_option ":rlimit" "2000000" in 
     input inp in
@@ -346,8 +349,6 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
 
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral') in 
-
-        let psk = zeros_32() in 
 
         pcase (exists j:idx. exists m2:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in
         choose_idx j | exists m2:idx. msg2_ephemeral' == dhpk(get(E_resp<j@m2>)) in
@@ -366,56 +367,53 @@ def receive_msg2<i@n,m> (msg1_val: initiator_msg1_val<session i, pid n, pid m>, 
         let e_init = get(E_init<i@n>) in 
         // let e_init_pk = dhpk(e_init) in
         corr_case S_resp<@m> in
-        corr_case S_resp<@m2> when (msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in
+        // corr_case S_resp<@m2> when (msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in
+        corr_case E_resp<j@m2> when (msg2_ephemeral' == dhpk(get(E_resp<j@m2>))) in 
         corr_case S_init<@n> in
         corr_case E_init<i@n> in 
-        corr_case E_resp<j@m2> in 
         corr_case S_resp<@m2'> when (msg2_ephemeral' == dhpk(get(S_resp<@m2'>))) in 
-        debug "======";
         let C4 = kdf<0;;kdfkey || nonce || enckey;0>(C3, msg2_ephemeral, 0x) in 
         let H5 : Data<adv> = crh(H4 ++ msg2_ephemeral) in 
         let ss = dh_combine(msg2_ephemeral, e_init) in 
 
         forall i3:idx, j3:idx, n3:idx, m3:idx {
-            cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral)
-        };
-        forall i3:idx, n3:idx, m3:idx {
-            cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral)
-        };
-        forall n3:idx, m3:idx {
-            cross_dh_lemma<E_init<i@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral)
-        };
-        forall n3:idx, j3:idx, m3:idx {
-            cross_dh_lemma<E_init<i@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral)
+            let lem1 = cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral) in 
+            let lem2 = cross_dh_lemma<S_init<@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral) in 
+            let lem3 = cross_dh_lemma<E_init<i@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral) in 
+            let lem4 = cross_dh_lemma<S_init<@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral) in 
+            let lem5 = cross_dh_lemma<E_init<i@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral) in
+            let lem6 = cross_dh_lemma<S_init<@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral) in 
+            let lem7 = cross_dh_lemma<E_init<i@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral) in
+            let lem8 = cross_dh_lemma<S_init<@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral) in
+            lem1 &&& lem2 &&& lem3 &&& lem4 &&& lem5 &&& lem6 &&& lem7 &&& lem8
         };
         let C5 = kdf<0;odh L4<i,j@n,m2>[0], odh L1<i@n,m2'>[0];kdfkey||enckey;0>(C4, ss, 0x) in 
-        forall i3:idx, j3:idx, n3:idx, m3:idx {
-            cross_dh_lemma<S_init<@n>, E_init<i3@n3>, E_resp<j3@m3>>(msg2_ephemeral)
-        };
-        forall i3:idx, n3:idx, m3:idx {
-            cross_dh_lemma<S_init<@n>, E_init<i3@n3>, S_resp<@m3>>(msg2_ephemeral)
-        };
-        forall n3:idx, m3:idx {
-            cross_dh_lemma<S_init<@n>, S_init<@n3>, S_resp<@m3>>(msg2_ephemeral)
-        };
-        forall n3:idx, j3:idx, m3:idx {
-            cross_dh_lemma<S_init<@n>, S_init<@n3>, E_resp<j3@m3>>(msg2_ephemeral)
-        };
         let C6 = kdf<0; odh L5<j@n,m2>[0], odh L2<@n,m2'>[0]; kdfkey || enckey;0>(C5, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
+        corr_case psk<@n,m> in 
         let C7 = kdf<0; 0; kdfkey || nonce || enckey; 0>(C6, psk, 0x) in 
         let tau = kdf<0; 0; kdfkey || nonce || enckey; 1>(C6, psk, 0x) in 
         let k0 = kdf<0; 0; kdfkey || nonce || enckey; 2>(C6, psk, 0x) in 
         let H6 : Data<adv> = 0x1234 in // TODO: crh(H5 ++ tau) in
         let emptystring = 0x in 
         corr_case nameOf(k0) in 
-        case st_aead_dec(k0, msg2_empty, H6, 0x) as Option (Data<adv> |0|) {
-            | None => None<ty:Unit>()
-            | Some _ => None<ty:Unit>()
-            otherwise => None<ty:Unit>()
+        case st_aead_dec(k0, msg2_empty, H6, 0x) as 
+            Option (if msg2_ephemeral == dhpk(get(E_resp<j@m2>)) then Data<adv> |0| else (x:Data<adv> {False})) {
+            | None => None<ty:transp_keys_init>()
+            | Some x => {
+                    false_elim in 
+                    let T_init_send = kdf<0;; enckey || enckey; 0>(C7, 0x, 0x) in 
+                    let T_init_recv = kdf<0;; enckey || enckey; 1>(C7, 0x, 0x) in 
+                    let ghost e_init_pk = dhpk(get(E_init<i@n>)) in
+                    let retval = transp_keys_init(msg2_receiver, msg2_sender, e_init_pk, msg2_ephemeral, T_init_send, T_init_recv) in
+                    debug printTyOf(T_init_send);
+                    debug printTyOf(T_init_recv);
+                    Some(retval)
+            }
+            otherwise => None<ty:transp_keys_init>()
         }
         }
     }
-    otherwise None<ty:Unit>()
+    otherwise None<ty:transp_keys_init>()
     
     
 

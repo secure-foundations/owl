@@ -128,8 +128,8 @@ data KDFStrictness = KDFStrict | KDFUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
 data NameExpX = 
-    NameConst ([Idx], [Idx]) Path 
-    | KDFName (Ignore KDFAnn) AExpr AExpr AExpr Int
+    NameConst ([Idx], [Idx]) Path [AExpr]
+    | KDFName KDFAnn AExpr AExpr AExpr Int
     | ODHName Path ([Idx], [Idx]) AExpr AExpr Int Int
     deriving (Show, Generic, Typeable)
 
@@ -243,7 +243,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
+    | NT_StAEAD Ty (Bind DataVar Prop) Path 
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx])
@@ -254,10 +254,6 @@ data NameTypeX =
 
 
 type NameType = Spanned NameTypeX
-
--- Nonce patterns are injective contexts
-data NoncePattern = NPHere
-    deriving (Show, Generic, Typeable)
 
 data TyX = 
     TData Label Label (Ignore (Maybe String))
@@ -358,7 +354,7 @@ type Decl = Spanned DeclX
 data NameDecl = 
     DeclBaseName NameType [Locality]
       | DeclAbstractName
-      | DeclAbbrev NameExp
+      | DeclAbbrev (Bind [DataVar] NameExp)
       deriving (Show, Generic, Typeable)
 
 data IsModuleType = ModType | ModConcrete
@@ -408,8 +404,8 @@ data ExprX =
     | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
     | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
-    | EForallBV (Bind DataVar Expr)
-    | EForallIdx (Bind IdxVar Expr)
+    | EForallBV String (Bind DataVar Expr)
+    | EForallIdx String (Bind IdxVar Expr)
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
@@ -552,11 +548,6 @@ instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
 instance Subst ResolvedPath NameTypeX
-
-instance Alpha NoncePattern
-instance Subst Idx NoncePattern
-instance Subst AExpr NoncePattern
-instance Subst ResolvedPath NoncePattern
 
 instance Alpha IdxType
 instance Subst Idx IdxType

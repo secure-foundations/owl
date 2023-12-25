@@ -113,7 +113,7 @@ instance Subst ResolvedPath ModDef
 data NameDef = 
     BaseDef (NameType, [Locality])
       | AbstractName
-      | AbbrevNameDef NameExp
+      | AbbrevNameDef (Bind [DataVar] NameExp)
       deriving (Show, Generic, Typeable)
 
 instance Alpha NameDef
@@ -479,7 +479,7 @@ inferIdx (IVar pos iname i) = do
                 (TcDef _, IdxGhost) ->  
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
-          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname)
+          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) ++ ", " ++ show i
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
@@ -646,10 +646,29 @@ pushRoutine s k = do
         local (over tcRoutineStack $ (s:)) k
     else k
 
+-- Equivalence on name types, coarser than alpha-equivalence (due to annotations)
+eqNameType :: NameType -> NameType -> Check Bool
+eqNameType (Spanned _ (NT_KDF _ bn1)) (Spanned _ (NT_KDF _ bn2)) = do
+    (x, n1) <- unbind bn1
+    (y, n2) <- unbind bn2
+    if length n1 == length n2 then do
+        bs <- forM (zip n1 n2) $ \((p1, cases1), (p2, cases2)) -> do
+            if length cases1 == length cases2 then do
+                bs2 <- forM (zip cases1 cases2) $ \((str1, nt1), (str2, nt2)) -> do
+                    (&& (str1 == str2)) <$> eqNameType nt1 nt2
+                return $ and bs2
+            else return False
+        return $ and bs
+    else return False
+eqNameType x y = return $ x `aeq` y
+
+
+
+
 getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
 getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
     res <- case ne^.val of 
-             NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
+             NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
                  md <- openModule p
                  tc <- view tcScope
                  forM_ vs1 checkIdxSession
@@ -661,14 +680,20 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
                        assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
                        let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                        case nd of
-                         AbbrevNameDef ne2 -> getNameInfo ne2
+                         AbbrevNameDef bne2 -> do
+                             (xs, ne2) <- unbind bne2
+                             assert ("Wrong arity for name abbreviation") $ length as == length xs
+                             _ <- mapM inferAExpr as
+                             getNameInfo $ substs (zip xs as) ne2
                          AbstractName -> do
+                             assert ("Value parameters not allowed for abstract names") $ length as == 0
                              return Nothing
                          BaseDef (nt, lcls) -> do
+                             assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just lcls) 
              KDFName ann x y z j -> do 
                  _ <- mapM inferAExpr [x, y, z]
-                 (_, nts) <- getKDFAnnInfo (unignore ann) x y z
+                 (_, nts) <- getKDFAnnInfo ann x y z
                  assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
                  return $ Just (snd (nts !! j), Nothing)
              ODHName p is x y i j -> do
@@ -738,7 +763,7 @@ getNameKind nt =
       NT_Sig _ -> return $ NK_Sig
       NT_Nonce -> return $ NK_Nonce
       NT_Enc _ -> return $ NK_Enc
-      NT_StAEAD _ _ _ _ -> return $ NK_Enc
+      NT_StAEAD _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
@@ -860,7 +885,7 @@ lenConstOfUniformName ne = do
         go nt = case nt^.val of
                     NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps -> resolveNameTypeApp p ps >>= go
@@ -967,18 +992,18 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                         return $ tName ne
                     _ -> return $ tName ne
           case ne^.val of
-            NameConst _ _ -> return ot
+            NameConst _ _ _ -> return ot
             KDFName ann a b c j -> do
-                let i = case (unignore ann) of
+                let i = case ann of
                           KDF_SaltKey _ i -> i
                           KDF_IKMKey _ i -> i
-                kdfNameAxioms ot (unignore ann) a b c i j
+                kdfNameAxioms ot ann a b c i j
             ODHName p ips a c i j -> do 
                 odhNameAxioms ot p ips a c i j
       (AEGetEncPK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ -> return ()
-            NameConst _ _ -> typeError $ "Cannot call get_encpk on indexed name"
+            NameConst ([], []) _ _ -> return ()
+            NameConst _ _ _ -> typeError $ "Cannot call get_encpk on indexed name"
             _ -> typeError $ "Cannot call get_encpk on PRF name" 
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -989,8 +1014,8 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                     _ -> typeError $ show $ owlpretty "Expected encryption sk: " <> owlpretty ne
       (AEGetVK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ -> return ()
-            NameConst _ _ -> typeError $ "Cannot call get_vk on indexed name"
+            NameConst ([], []) _ _ -> return ()
+            NameConst _ _ _ -> typeError $ "Cannot call get_vk on indexed name"
             _ -> typeError $ "Cannot call get_vk on PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -1129,7 +1154,7 @@ extractAAD ne a = do
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ _ -> do
+            NT_StAEAD _ yp _ -> do
                 (y, p) <- unbind yp
                 return $ subst y a p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
@@ -1289,7 +1314,7 @@ owlprettyContext e =
 normalizeNameExp :: NameExp -> Check NameExp
 normalizeNameExp ne = 
     case ne^.val of
-      NameConst (vs1, vs2) pth@(PRes (PDot p n)) -> do
+      NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
           md <- openModule p
           case lookup n (md^.nameDefs) of
             Nothing -> typeError $ show $ ErrUnknownName pth
@@ -1297,7 +1322,10 @@ normalizeNameExp ne =
                        ((is, ps), nd') <- unbind b_nd
                        let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                        case nd of
-                         AbbrevNameDef ne2 -> normalizeNameExp ne2
+                         AbbrevNameDef bne2 -> do
+                             (xs, ne2) <- unbind bne2
+                             assert ("Wrong arity") $ length xs == length as
+                             normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
       KDFName ann x y z i -> do
           x' <- resolveANF x >>= normalizeAExpr 

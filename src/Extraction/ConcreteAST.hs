@@ -158,8 +158,8 @@ concretify e =
         EAssert _ -> return CSkip
         EAssume _ -> error "Concretify on assume"
         EAdmit -> error "Concretify on admit"
-        EForallBV _ -> return CSkip
-        EForallIdx _ -> return CSkip
+        EForallBV _ _ -> return CSkip
+        EForallIdx _ _ -> return CSkip
         ECall a b c -> return $ CCall a b c
         EParse ae t ok bindpat -> do
             let (pats, k) = unsafeUnbind bindpat

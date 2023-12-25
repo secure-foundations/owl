@@ -60,8 +60,12 @@ corrColor = Red
 instance  OwlPretty NameExpX where
     owlpretty (KDFName _ a b c i) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
             owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ", " <> owlpretty i <> owlpretty ">"
-    owlpretty (NameConst vs n) = 
-        owlpretty n <> owlprettyIdxParams vs 
+    owlpretty (NameConst vs n xs) = 
+        let pxs = case xs of
+                    [] -> mempty
+                    _ -> list (map owlpretty xs)
+        in
+        owlpretty n <> owlprettyIdxParams vs <> pxs
     owlpretty (ODHName p ips a c i j) = 
         owlpretty "ODHName<" <> owlpretty p <> owlprettyIdxParams ips <> owlpretty ";" <> owlpretty i <> owlpretty ">"
             <> tupled [owlpretty a, owlpretty c] <> owlpretty "[" <> owlpretty j <> owlpretty "]"
@@ -225,12 +229,28 @@ instance  OwlPretty PropX where
         owlpretty "happened(" <> owlpretty s <> pids <> tupled (map owlpretty xs) <> owlpretty ")"
     owlpretty (PNot p) = owlpretty "!" <+> owlpretty p
 
+instance OwlPretty KDFStrictness where
+    owlpretty (KDFStrict) = owlpretty "strict"
+    owlpretty KDFUnstrict = mempty
+
 instance  OwlPretty NameTypeX where
-    owlpretty (NT_KDF kpos cases) = owlpretty "KDF"
+    owlpretty (NT_KDF kpos cases) = 
+        let (((sx, _), (sy, _)), c) = unsafeUnbind cases in 
+        let pcases = map (\(p, nts) ->
+                            owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
+                                                                    map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
+        in
+        let hd = case kpos of
+                   KDF_SaltPos -> owlpretty "KDF"
+                   KDF_IKMPos -> owlpretty "DualKDF"
+        in
+        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
-    owlpretty (NT_StAEAD ty xaad p pat) = 
+    owlpretty (NT_StAEAD ty xaad p) = 
         let (x, aad) = owlprettyBind xaad in
-        owlpretty "StAEAD" <+> owlpretty ty <+> owlpretty "(" <> x <> owlpretty "." <> aad <> owlpretty ")" <+> owlpretty p
+        owlpretty "st_aead" <+> owlpretty ty <+> 
+            nest 4 (owlpretty "aad" <> x <> owlpretty "." <> aad <> line 
+                    <> owlpretty "nonce" <+> owlpretty p)
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
     owlpretty (NT_App p is) = 
         owlpretty p <> owlprettyIdxParams is 
@@ -314,8 +334,8 @@ instance  OwlPretty ExprX where
     owlpretty (EUnpack a k) = owlpretty "unpack a .... TODO"
     owlpretty (EIf t e1 e2) = 
         owlpretty "if" <+> owlpretty t <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
-    owlpretty (EForallBV xpk) = owlpretty "forall_expr.. TODO" 
-    owlpretty (EForallIdx xpk) = owlpretty "forall_idx.. TODO"
+    owlpretty (EForallBV _ xpk) = owlpretty "forall_expr.. TODO" 
+    owlpretty (EForallIdx _ xpk) = owlpretty "forall_idx.. TODO"
     owlpretty (EGuard a e) = 
         owlpretty "guard" <+> owlpretty a <+> owlpretty "in" <+> owlpretty e
     owlpretty (ERet ae) = owlpretty ae

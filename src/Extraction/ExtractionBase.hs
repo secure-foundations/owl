@@ -505,7 +505,7 @@ lookupUserFunc fn = do
 
 flattenNameExp :: NameExp -> ExtractionMonad String
 flattenNameExp n = case n ^. val of
-  NameConst _ s -> do
+  NameConst _ s _ -> do
       p <- flattenPath s
       return $ rustifyName p
   -- _ -> throwError $ UnsupportedNameExp n

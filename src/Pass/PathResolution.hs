@@ -163,9 +163,10 @@ resolveDecls (d:ds) =
           (is, ndecl) <- unbind ixs
           ndecl' <- case ndecl of
                       DeclAbstractName -> return DeclAbstractName
-                      DeclAbbrev ne2 -> do
+                      DeclAbbrev bne2 -> do
+                          (xs, ne2) <- unbind bne2
                           ne2' <- resolveNameExp ne2
-                          return $ DeclAbbrev ne2'
+                          return $ DeclAbbrev $ bind xs ne2'
                       DeclBaseName nt ls -> do
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
@@ -322,9 +323,6 @@ resolveModuleExp pos me =
           me' <- local (over modPaths $ T.insert s (True, PPathVar (ClosedPathVar $ ignore s) v)) $ resolveModuleExp pos me 
           return $ Spanned (me^.spanOf) $ ModuleFun $ bind (v, s, embed t') me' 
 
-resolveNoncePattern :: NoncePattern -> Resolve NoncePattern
-resolveNoncePattern NPHere = return NPHere
-
 resolveNameType :: NameType -> Resolve NameType
 resolveNameType e = do
     e' <- go $ e^.val
@@ -341,13 +339,12 @@ resolveNameType e = do
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
-                  NT_StAEAD t xpr p np -> do
+                  NT_StAEAD t xpr p -> do
                       t' <- resolveTy t
                       (x, pr) <- unbind xpr
                       pr' <- resolveProp pr
                       p' <- resolvePath (e^.spanOf) PTCounter p
-                      np' <- resolveNoncePattern np
-                      return $ NT_StAEAD t' (bind x pr') p' np' 
+                      return $ NT_StAEAD t' (bind x pr') p' 
                   NT_KDF pos b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
                       cases' <- forM cases $ \(p, nts) -> do
@@ -408,15 +405,16 @@ resolveTy e = do
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
-        NameConst s p -> do
+        NameConst s p as -> do
             p' <- resolvePath (ne^.spanOf) PTName p
-            return $ Spanned (ne^.spanOf) $ NameConst s p' 
+            as' <- mapM resolveAExpr as
+            return $ Spanned (ne^.spanOf) $ NameConst s p' as'
         KDFName ann a b c i -> do
-            ann' <- resolveKDFAnn (unignore ann)
+            ann' <- resolveKDFAnn ann
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
-            return $ Spanned (ne^.spanOf) $ KDFName (ignore ann') a' b' c' i
+            return $ Spanned (ne^.spanOf) $ KDFName ann' a' b' c' i
         ODHName p ixs a c i j -> do
             p' <- resolvePath (ignore def) PTODH p
             a' <- resolveAExpr a
@@ -634,14 +632,14 @@ resolveExpr e =
           k' <- resolveExpr k
           p' <- resolveProp p
           return $ Spanned (e^.spanOf) $ EChooseIdx (bind i' p') (bind i k')
-      EForallBV xpk -> do
+      EForallBV s xpk -> do
           (x, k) <- unbind xpk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EForallBV (bind x k') 
-      EForallIdx xpk -> do
+          return $ Spanned (e^.spanOf) $ EForallBV s (bind x k') 
+      EForallIdx s xpk -> do
           (x, k) <- unbind xpk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EForallIdx (bind x k')
+          return $ Spanned (e^.spanOf) $ EForallIdx s (bind x k')
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1

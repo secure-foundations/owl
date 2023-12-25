@@ -94,7 +94,7 @@ setupNameEnvRO = do
                             [sApp (sn : (map fst ivs))] --  ++ (map fst xvs))]
                             ("nameKind_" ++ show sn)
 
-                        let nameExp = mkSpanned $ NameConst (map (\x -> IVar (ignore def) (ignore $ show x) x) is, map (\x -> IVar (ignore def) (ignore $ show x) x) ps) (PRes pth) 
+                        let nameExp = mkSpanned $ NameConst (map (\x -> IVar (ignore def) (ignore $ show x) x) is, map (\x -> IVar (ignore def) (ignore $ show x) x) ps) (PRes pth) [] 
 
                         lAxs <- nameDefFlows nameExp nt
                         emitAssertion $ sForall (ivs)

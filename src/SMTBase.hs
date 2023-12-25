@@ -600,13 +600,13 @@ getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
     ne' <- liftCheck $ normalizeNameExp ne
     case ne'^.val of
-      NameConst (is1, is2) s -> do
+      NameConst (is1, is2) s [] -> do
         sn <- smtName s
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
       KDFName ann a b c j -> do 
-          (_, nts) <- liftCheck $ getKDFAnnInfo (unignore ann) a b c
+          (_, nts) <- liftCheck $ getKDFAnnInfo ann a b c
           mkKDFName a b c (map snd nts) j
       ODHName p ixs a c i j -> do 
           (ne1, ne2, _, nts) <- liftCheck $ getODHNameInfo p ixs a c i j
@@ -690,7 +690,7 @@ instance SMTNameKindOf NameType where
         case nt^.val of
           NT_DH -> return $ SAtom "DHkey"
           NT_Enc _ -> return $ SAtom "Enckey"
-          NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
+          NT_StAEAD _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
           NT_KDF _ _ -> return $ SAtom "KDFkey"

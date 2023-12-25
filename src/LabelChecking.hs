@@ -37,7 +37,7 @@ nameDefFlows n nt = do
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
-      NT_StAEAD t _ _ _ -> do
+      NT_StAEAD t _ _ -> do
           l <- liftCheck $ coveringLabel' t
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
@@ -71,9 +71,9 @@ nameDefFlows n nt = do
                                   KDF_IKMPos -> KDF_IKMKey n i
                       let ne = case pos of
                                   KDF_SaltPos -> 
-                                      mkSpanned $ KDFName (ignore ann) (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
+                                      mkSpanned $ KDFName ann (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
                                   KDF_IKMPos -> 
-                                      mkSpanned $ KDFName (ignore ann) (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
+                                      mkSpanned $ KDFName ann (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
                       ne_axioms <- nameDefFlows ne nt
                       return $ ne_axioms
                   return $ sAnd axijs
@@ -91,7 +91,7 @@ corruptNameType nt = do
       NT_Enc t -> do
           l <- coveringLabel' t
           return $ pFlow l advLbl
-      NT_StAEAD t _ _ _ -> do
+      NT_StAEAD t _ _ -> do
           l <- coveringLabel' t
           return $ pFlow l advLbl
       NT_PKE t -> do
