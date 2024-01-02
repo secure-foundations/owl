@@ -559,6 +559,7 @@ resolveLemma :: Ignore Position -> BuiltinLemma -> Resolve BuiltinLemma
 resolveLemma pos lem =
     case lem of
       LemmaCRH -> return lem
+      LemmaKDFInj nks j -> return lem
       LemmaConstant -> return lem
       LemmaDisjNotEq -> return lem
       LemmaCrossDH n1 -> do

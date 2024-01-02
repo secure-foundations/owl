@@ -1532,6 +1532,16 @@ parseCryptOp =
     )
     <|>
     (do
+        reserved "kdf_inj_lemma"
+        symbol "<"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        return $ CLemma $ LemmaKDFInj nks (read j) 
+    )
+    <|>
+    (do
         reserved "is_constant_lemma"
         return $ CLemma $ LemmaConstant 
     )

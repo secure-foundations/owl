@@ -2424,6 +2424,38 @@ inferKDF kpos a b c (i, is_case) j nks = do
                     else return Nothing
                 NT_KDF kpos' _ -> typeError $ "Unexpected key position: expected " ++ show (kpos') ++ " but got " ++ show kpos
 
+-- Try to infer a valid local DH computation (pk, sk) from input
+-- (local = sk name is local to the module)
+getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
+getLocalDHComputation a = do
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    let go_from_ty = do
+            t <- inferAExpr a
+            case (stripRefinements t)^.val of
+              TSS n m -> do
+                  m_local <- nameExpIsLocal m
+                  n_local <- nameExpIsLocal n
+                  if m_local then return (Just (dhpk (aeGet n), m)) else 
+                     if n_local then return (Just (dhpk (aeGet m), n)) else return Nothing
+              _ -> return Nothing
+    a' <- resolveANF a
+    case a'^.val of
+      AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
+          tx <- inferAExpr x
+          xpub <- tyFlowsTo tx advLbl
+          xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
+          ty <- inferAExpr y
+          case extractNameFromType ty of
+            Just ny -> do
+                ny_local <- nameExpIsLocal ny
+                nty <- getNameType ny
+                case nty^.val of
+                  NT_DH -> 
+                      if (xwf == Just True) && xpub && ny_local then return (Just (x, ny)) else go_from_ty
+                  _ -> return Nothing
+            _ -> go_from_ty
+      _ -> go_from_ty
+
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> Check (Maybe KDFInferResult) 
 inferKDFODH a (b, tb) c s ips i j = do
     pth <- curModName
@@ -2451,38 +2483,26 @@ inferKDFODH a (b, tb) c s ips i j = do
     res2 <- case res of
         Just v@(KDFGood _ _) -> return $ Just v
         _ -> do 
-            b' <- resolveANF b
-            case b'^.val of
-              AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
-                  tx <- inferAExpr x
-                  xpub <- tyFlowsTo tx advLbl
-                  xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
-                  ty <- inferAExpr y
-                  case extractNameFromType ty of
-                    Just ny -> do
-                        ny_local <- nameExpIsLocal ny
-                        nty <- getNameType ny
-                        case nty^.val of
-                          NT_DH -> 
-                              if (xwf == Just True) then do
-                                     (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) (fst c) x y
-                                     ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
-                                     fst_pub <- tyFlowsTo (snd a) advLbl
-                                     -- 1. If we hash h^x with x secret and not in
-                                     --     ODH, then we get adv, if a is pub
-                                     -- 2. Otherwise if we hash h^x where h =
-                                     -- g^y, we get adv if x or y is public, and
-                                     -- a is public
-                                     if notODH && ny_sec && fst_pub then return (Just KDFAdv) else do 
-                                         case tx^.val of
-                                           TDH_PK nx -> do
-                                               nx_pub <- flowsTo (nameLbl nx) advLbl
-                                               if (nx_pub || (not $ ny_sec)) && fst_pub then return (Just KDFAdv) else return Nothing
-                                           _ -> return Nothing
-                              else return Nothing
-                          _ -> return Nothing
-                    _ -> return Nothing
-              _ -> return Nothing
+            oxy <- getLocalDHComputation b
+            case oxy of
+              Just (x, ny) -> do
+                -- h(a, g^xy, c) is public when:
+                --    (a, g^xy, c) not in ODH
+                --    the DH computation is local (involves a module-local DH name)
+                --    one of the x,y is secret
+                (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) (fst c) x (aeGet ny)
+                case notODH of
+                  False -> return Nothing
+                  True -> do
+                      ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
+                      if ny_sec then return (Just KDFAdv) else do
+                         tx <- inferAExpr x
+                         case tx^.val of
+                           TDH_PK nx -> do
+                               nx_sec <- not <$> flowsTo (nameLbl nx) advLbl
+                               if nx_sec then return (Just KDFAdv) else return Nothing
+                           _ -> return Nothing
+              Nothing -> return Nothing
     case res2 of
       Nothing -> return res -- here, res is either Nothing or KDFCorrupt
       Just _ -> return res2
@@ -2502,7 +2522,10 @@ nameKindLength nk =
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
+    tcs <- view tcScope
+    assert ("Crypto op " ++ show (owlpretty cop) ++ " cannot be executed in ghost") $ not $ tcs `aeq` TcGhost
     case cop of
+      CLemma (LemmaKDFInj nks j) -> typeError "unimp"
       CLemma (LemmaCRH) -> local (set tcScope TcGhost) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
@@ -2592,10 +2615,15 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                        return $ Just v
           assert ("Name kind index out of bounds") $ j < length nks
           let outLen = nameKindLength $ nks !! j
+          kdfProp <- do
+              a' <- resolveANF (fst a)
+              b' <- resolveANF (fst b)
+              c' <- resolveANF (fst c)
+              return $ mkSpanned $ PKDF a' b' c' nks j (aeVar ".res")
           let kdfRefinement t = tRefined t ".res" $ 
                 pAnd
                     (pEq (aeLength (aeVar ".res")) outLen)
-                    (mkSpanned $ PKDF (fst a) (fst b) (fst c) nks j (aeVar ".res"))
+                    kdfProp
           kdfRefinement <$> case res of 
             Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
             Just KDFAdv -> return $ tData advLbl advLbl

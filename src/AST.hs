@@ -200,7 +200,7 @@ data PropX =
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr AExpr
     | PKDF AExpr AExpr AExpr [NameKind] Int AExpr
-    deriving (Show, Generic, Typeable)
+    deriving (Show, Generic, Typeable)    
 
 data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
     deriving (Show, Generic, Typeable, Eq)
@@ -456,6 +456,7 @@ data CryptOp =
 
 data BuiltinLemma = 
       LemmaCRH 
+      | LemmaKDFInj [NameKind] Int
       | LemmaConstant 
       | LemmaDisjNotEq 
       | LemmaCrossDH NameExp 
