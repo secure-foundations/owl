@@ -56,10 +56,21 @@ owlprettyIdxParams (vs1, vs2) = pretty "<" <> pretty (intercalate "," (map (show
 
 flowColor = Cyan
 corrColor = Red
+tyColor = Magenta
+
+
+instance OwlPretty KDFAnn where
+    owlpretty (KDF_SaltKey ne i) = owlpretty "KDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
+    owlpretty (KDF_IKMKey ne i) = owlpretty "DualKDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
+
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName _ a b c i) = owlpretty "KDF<" <> owlpretty a <> owlpretty ", " <> 
-            owlpretty b <> owlpretty ", " <> owlpretty c <> owlpretty ", " <> owlpretty i <> owlpretty ">"
+    owlpretty (KDFName ann a b c i) = 
+        let pargs = case ann of
+                      KDF_SaltKey _ _ -> tupled [owlpretty b, owlpretty c]
+                      KDF_IKMKey _ _ -> tupled [owlpretty a, owlpretty c]
+        in
+        owlpretty ann <> pargs <> list [owlpretty i]
     owlpretty (NameConst vs n xs) = 
         let pxs = case xs of
                     [] -> mempty
@@ -104,50 +115,52 @@ instance OwlPretty ResolvedPath where
     owlpretty (PDot x y) = owlpretty x <> pretty "." <> owlpretty y
 
 instance  OwlPretty TyX where
-    owlpretty TUnit =
-        owlpretty "unit"
-    owlpretty (TBool l) = 
-            owlpretty "Bool<" <> owlpretty l <> owlpretty ">"
-    owlpretty (TGhost) = owlpretty "Ghost"
-    owlpretty (TData l1 l2 _) = 
-            if l1 `aeq` l2 then
-                owlpretty "Data" <> angles (owlpretty l1)
-            else
-                owlpretty "Data<" <> owlpretty l1 <> owlpretty ", |" <> owlpretty l2 <> owlpretty "|>"
-    owlpretty (TDataWithLength l1 a) = 
-            owlpretty "Data <" <> owlpretty l1 <> owlpretty ">" <+> owlpretty "|" <> owlpretty a <> owlpretty "|"
-    owlpretty (TRefined t s xp) = 
-        let (x, p) = owlprettyBind xp in
-        owlpretty s <> owlpretty ":" <> parens (owlpretty t) <> braces (nest 6 p)
-    owlpretty (TOption t) = 
-            owlpretty "Option" <+> owlpretty t
-    owlpretty (TCase p t1 t2) = 
-            owlpretty "if" <+> owlpretty p <+> owlpretty "then" <+> owlpretty t1 <> owlpretty " else " <> owlpretty t2 
-    owlpretty (TConst n ps) =
-            let args = 
-                    case ps of 
-                      [] -> mempty
-                      _ -> owlpretty "<" <> hsep (intersperse (pretty ",") (map owlpretty ps))  <> owlpretty ">"
-            in
-            owlpretty n <> args
-    owlpretty (TName n) =
-            owlpretty "Name(" <> owlpretty n <> owlpretty ")"
-    owlpretty (TVK n) =
-            owlpretty "vk(" <> owlpretty n <> owlpretty ")"
-    owlpretty (TDH_PK n) =
-            owlpretty "dhpk(" <> owlpretty n <> owlpretty ")"
-    owlpretty (TEnc_PK n) =
-            owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
-    owlpretty (TSS n m) =
-            owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
-    owlpretty TAdmit = owlpretty "admit"
-    owlpretty (TExistsIdx it) = 
-        let (i, t) = owlprettyBind it in
-        owlpretty "exists" <+> i <> owlpretty "." <+> t
-    owlpretty (TUnion t1 t2) =
-        owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
-    owlpretty (THexConst a) =
-        owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
+    owlpretty t = annotate (color tyColor) $ 
+        case t of
+            TUnit ->
+                owlpretty "unit"
+            (TBool l) -> 
+                owlpretty "Bool<" <> owlpretty l <> owlpretty ">"
+            (TGhost) -> owlpretty "Ghost"
+            (TData l1 l2 _) -> 
+                if l1 `aeq` l2 then
+                    owlpretty "Data" <> angles (owlpretty l1)
+                else
+                    owlpretty "Data<" <> owlpretty l1 <> owlpretty ", |" <> owlpretty l2 <> owlpretty "|>"
+            (TDataWithLength l1 a) -> 
+                owlpretty "Data <" <> owlpretty l1 <> owlpretty ">" <+> owlpretty "|" <> owlpretty a <> owlpretty "|"
+            (TRefined t s xp) -> 
+                let (x, p) = owlprettyBind xp in
+                owlpretty s <> owlpretty ":" <> parens (owlpretty t) <> braces (nest 6 p)
+            (TOption t) -> 
+                    owlpretty "Option" <+> owlpretty t
+            (TCase p t1 t2) -> 
+                    owlpretty "if" <+> owlpretty p <+> owlpretty "then" <+> owlpretty t1 <> owlpretty " else " <> owlpretty t2 
+            (TConst n ps) ->
+                    let args = 
+                            case ps of 
+                              [] -> mempty
+                              _ -> owlpretty "<" <> hsep (intersperse (pretty ",") (map owlpretty ps))  <> owlpretty ">"
+                    in
+                    owlpretty n <> args
+            (TName n) ->
+                    owlpretty "Name(" <> owlpretty n <> owlpretty ")"
+            (TVK n) ->
+                    owlpretty "vk(" <> owlpretty n <> owlpretty ")"
+            (TDH_PK n) ->
+                    owlpretty "dhpk(" <> owlpretty n <> owlpretty ")"
+            (TEnc_PK n) ->
+                    owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
+            (TSS n m) ->
+                    owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
+            TAdmit -> owlpretty "admit"
+            (TExistsIdx it) -> 
+                let (i, t) = owlprettyBind it in
+                owlpretty "exists" <+> i <> owlpretty "." <+> t
+            (TUnion t1 t2) ->
+                owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
+            (THexConst a) ->
+                owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
 
 instance  OwlPretty Quant where
     owlpretty Forall = owlpretty "forall"
@@ -196,6 +209,7 @@ instance  OwlPretty PropX where
         pp1 <+> owlpretty "\\/" <+> pp2
     owlpretty (PNot (Spanned _ (PEq a b))) = owlpretty a <+> owlpretty "!=" <+> owlpretty b
     owlpretty (PEq e1 e2) = owlpretty e1 <+> owlpretty "==" <+> owlpretty e2
+    owlpretty (PNot (Spanned _ (PEqIdx e1 e2))) = owlpretty e1 <+> owlpretty "!=idx" <+> owlpretty e2
     owlpretty (PEqIdx e1 e2) = owlpretty e1 <+> owlpretty "=idx" <+> owlpretty e2
     owlpretty (PLetIn a xe2) = 
         let (x, e2) = owlprettyBind xe2 in
@@ -215,8 +229,13 @@ instance  OwlPretty PropX where
         owlpretty q <+> owlpretty sx <+> owlpretty ": bv" <> owlpretty "." <+> p
     owlpretty (PValidKDF a b c nks j) = owlpretty "valid_kdf" <> 
         tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
+    owlpretty (PKDF a b c nks j res) = owlpretty "kdf" <>
+        angles ((hsep $ intersperse (owlpretty "||") $ map owlpretty nks) <> owlpretty ";" <> owlpretty j)
+        <>
+        tupled (map owlpretty [a, b, c, res])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
+    owlpretty (PInODH s info a b) = owlpretty "in_odh" <> tupled [owlpretty a, owlpretty b, owlpretty s, owlpretty info]
     owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -229,15 +248,21 @@ instance  OwlPretty PropX where
         owlpretty "happened(" <> owlpretty s <> pids <> tupled (map owlpretty xs) <> owlpretty ")"
     owlpretty (PNot p) = owlpretty "!" <+> owlpretty p
 
-instance OwlPretty KDFStrictness where
+instance OwlPretty KDFStrictness where                                      
     owlpretty (KDFStrict) = owlpretty "strict"
     owlpretty KDFUnstrict = mempty
+
+owlprettyIdxBinds1 :: [IdxVar] -> OwlDoc
+owlprettyIdxBinds1 [] = mempty
+owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map owlpretty xs) <> owlpretty ">"
+
 
 instance  OwlPretty NameTypeX where
     owlpretty (NT_KDF kpos cases) = 
         let (((sx, _), (sy, _)), c) = unsafeUnbind cases in 
-        let pcases = map (\(p, nts) ->
-                            owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
+        let pcases = map (\b ->
+                            let (is, (p, nts)) = unsafeUnbind b in 
+                            owlprettyIdxBinds1 is <> owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
                                                                     map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
         in
         let hd = case kpos of
@@ -287,7 +312,7 @@ instance  OwlPretty AExprX where
 instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaConstant) = owlpretty "is_constant_lemma"
     owlpretty (LemmaDisjNotEq) = owlpretty "disjoint_not_eq_lemma" 
-    owlpretty (LemmaCrossDH n1 n2 n3) = owlpretty "cross_dh_lemma" <> angles (tupled [owlpretty n1, owlpretty n2, owlpretty n3])
+    owlpretty (LemmaCrossDH n1) = owlpretty "cross_dh_lemma" <> angles (owlpretty n1) 
     owlpretty (LemmaCRH) = owlpretty "crh_lemma"
 
 instance  OwlPretty CryptOp where
@@ -331,7 +356,7 @@ instance  OwlPretty ExprX where
     owlpretty (EUnionCase a _ xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "union_case" <+> x <+> owlpretty "=" <> owlpretty a <+>  owlpretty "in" <+> k
-    owlpretty (EUnpack a k) = owlpretty "unpack a .... TODO"
+    owlpretty (EUnpack a s k) = owlpretty "unpack a .... TODO"
     owlpretty (EIf t e1 e2) = 
         owlpretty "if" <+> owlpretty t <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
     owlpretty (EForallBV _ xpk) = owlpretty "forall_expr.. TODO" 

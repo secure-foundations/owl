@@ -1,0 +1,283 @@
+
+/*
+
+type := 0x1 (1 byte) 
+reserved := 0^3 (3 bytes)
+sender := I_i (4 bytes)
+ephemeral (32 bytes)
+static (32 bytes)
+timestamp (12 bytes)
+mac1 (16 bytes) 
+mac2 (16 bytes)
+
+CONSTANTS:
+construction -> Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s
+identifier -> WireGuard v1 zx2c4 Jason@zx2c4.com
+mac1---- -> 0x6d6163312d2d2d2d
+
+*/
+
+func kdf_pure
+    arity 3
+
+func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c795f424c414b453273
+func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
+func mac1() = 0x6d6163312d2d2d2d
+
+func zeros_16() = 0x00000000000000000000000000000000
+func zeros_32() = 0x0000000000000000000000000000000000000000000000000000000000000000
+
+
+locality Initiator : 1
+locality Responder : 1
+
+// Ephemeral Diffie-Hellman keys
+name E_init<i@n> : DH @ Initiator<n>
+name E_resp<i@m> : DH @ Responder<m>
+
+// Static Diffie-Hellman keys (public keys should be preshared)
+name S_init<@n> : DH @ Initiator<n>
+name S_resp<@m> : DH @ Responder<m>
+
+
+func honest_H1_pre<@m>() = crh(crh(construction()) ++ identifier()) ++
+dhpk(get(S_resp<@m>))
+func honest_H2_pre<i@n, m>() = crh(honest_H1_pre<pid m>()) ++ dhpk(get(E_init<i@n>))
+func honest_H3_pre<i@n, m>(c) = 
+    crh(honest_H2_pre<session i, pid n, pid m >()) ++ c
+func honest_H4_pre<i@n, m>(c, ts) = 
+    crh(honest_H3_pre<session i, pid n, pid m>(c)) ++ ts
+func honest_H5_pre<i,j @ n, m>(c, ts) = 
+    crh(honest_H4_pre<session i, pid n, pid m>(c, ts)) ++ dhpk(get(E_resp<j@m>))
+func honest_H6_pre<i,j@n,m>(c, ts, tau) = crh(honest_H5_pre<session i,
+session j, pid n, pid m>(c, ts)) ++ tau
+func honest_H7_pre<i, j@n,m>(c, ts, tau, c') = 
+    crh(honest_H6_pre<session i, session j, pid n, pid m>(c, ts, tau)) ++ c'
+
+locality dummy : 2 // TODO just for now
+name channel_secret<@n,m> : nonce @ dummy<n,m>
+corr<n,m> [S_init<@n>] ==> [channel_secret<@n,m>]
+corr<n,m> [S_resp<@m>] ==> [channel_secret<@n,m>]
+
+counter N_init_send<i@n> @ Initiator<n>
+counter N_init_recv<i@n> @ Initiator<n>
+counter N_resp_send<j@m> @ Responder<m>
+counter N_resp_recv<j@m> @ Responder<m>
+
+nametype C7<@n,m> = kdf {ikm info.
+    True -> 
+        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+            aad x. true
+            nonce N_init_send
+            ||
+        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+            aad x. true
+            nonce N_resp_send
+}
+
+nametype C7_corr = kdf {ikm info.
+    True -> 
+        strict st_aead (x:Data<adv> {False})
+                    aad x. true
+                    nonce N_init_send
+            || 
+        strict st_aead (x:Data<adv> {False})
+                    aad x. true
+                    nonce N_resp_send
+}
+
+counter aead_counter_msg2_C7<j@m> @ Responder<m>
+
+
+
+name psk<@n,m>
+
+nametype C6<@n, m> = kdf {ikm info.
+    ikm == get(psk<@n,m>) -> strict C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+    ikm != get(psk<@n,m>) -> strict C7_corr || nonce || 
+                                st_aead (x:Data<adv> {False})
+                                    aad x. true
+                                    nonce aead_counter_msg2_C7
+
+}
+
+nametype C6_corr = kdf {ikm info.
+    True -> strict C7_corr || nonce || 
+                                st_aead (x:Data<adv> {False})
+                                    aad x. true
+                                    nonce aead_counter_msg2_C7
+
+}
+
+
+counter dummy<@n> @ Initiator<n>
+
+nametype C5<@n,m> = kdf {ikm info.
+    True -> strict C6<@n,m> || strict st_aead (Data<adv> |0|)
+                                aad x. true
+                                nonce dummy
+}
+
+nametype C5_corr = kdf {ikm info.
+    True -> strict C6_corr ||  strict st_aead (x:Data<adv> |0|{False})
+                                aad x. true
+                                nonce dummy
+}
+
+func c1<i@n>() = kdf_pure(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
+// name c2<i@n,m> = ODHName<L1<i@n,m>; 0>(c1<session i, pid n>(), 0x)[0]
+// name c3<i@n,m> = ODHName<L2<@n,m>; 0>(get(c2<i@n,m>), 0x)[0]
+
+
+
+
+nametype C4<@n,m> = kdf {ikm info.
+    True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
+                                aad x. true
+                                nonce dummy
+}
+
+nametype C4_corr = kdf {ikm info.
+    True -> strict C5_corr ||  strict st_aead (x:Data<adv> |0|{False})
+                                aad x. true
+                                nonce dummy
+}
+
+
+
+
+nametype C6_dual<@n, m> = dualkdf {salt info.
+    True -> strict C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+
+/*
+    ! (exists i:idx, j:idx, h:bv, c4:bv. 
+    salt == get(KDF<ODHName<L4<i,j@n,m>; 0>(c4, 0x)[0]; 0>(h, 0x)[0])) ->  strict corr_C7 || nonce || 
+                                st_aead (x:Data<adv> {False})
+                                    aad x. true
+                                    nonce aead_counter_msg2_C7
+                                    */
+        
+
+
+}
+
+name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
+name send_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[0]
+name recv_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[1]
+
+
+nametype C3<@n,m> = kdf {ikm info.
+    True -> strict C4<@n,m> || nonce || strict st_aead (Data<adv> |0|)
+                                            aad x. true
+                                            nonce dummy
+    /*
+    !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr || nonce || strict st_aead (x:Data<adv> |0|{False})
+                                            aad x. true
+                                            nonce dummy
+    */
+}
+
+counter aead_counter_msg1_C3<i@n> @ Initiator<n>
+
+
+nametype C2<@n,m> = kdf {ikm info. 
+    True -> strict C3<@n,m> || strict st_aead (Data<adv> |12|)
+                           aad x. true
+                           nonce aead_counter_msg1_C3
+}
+
+counter aead_counter_msg1_C2<i@n> @ Initiator<n>
+
+odh L1<i@n,m> :
+    E_init<i@n>, S_resp<@m> -> {salt info.
+        salt == c1<session i, pid n>() -> 
+            strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
+                             aad x. true
+                             nonce aead_counter_msg1_C2
+}                                                            
+
+predicate valid_c2<n,m>(salt) = 
+    exists i:idx. kdf<kdfkey||enckey; 0>(c1<session i, pid n>(),
+            dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x, salt)
+
+odh L2<@n,m> : 
+    S_init<@n>, S_resp<@m> -> {salt info.
+        valid_c2<n,m>[salt] -> 
+                strict C3<@n,m> || strict st_aead (Data<adv> |12|)
+                           aad x. true
+                           nonce aead_counter_msg1_C3
+    }
+
+odh L4<i,j@n,m> :
+    E_init<i@n>, E_resp<j@m> -> {salt info.
+     salt != kdf_pure(crh(construction()), dhpk(get(E_init<i@n>)), 0x) -> strict C5<@n,m>
+}
+
+odh L5<j@n,m> :
+    S_init<@n>, E_resp<j@m> -> {salt info.
+    True -> strict C6<@n,m> || enckey (Data<adv> |0|)
+}
+
+nametype C1<@n,m> = kdf {ikm info.
+    True -> strict C2<@n,m> || strict st_aead (exists n. dhpk(S_init<@n>))
+                         aad x. true
+                         nonce aead_counter_msg1_C2
+}
+
+
+
+
+
+////////////////////////////
+// Message formats
+
+struct msg1 {
+      _msg1_tag : Const(0x01000000)
+    , _msg1_sender : Data<adv> |4| // bytes??
+    , _msg1_ephemeral : Data<adv> | |group| |
+    , _msg1_static : Data<adv> | cipherlen(|group|) | 
+    , _msg1_timestamp: Data<adv> | cipherlen(12) |
+    // TODO cookie mechanism
+    , _msg1_mac1: Data<adv> | |maclen| |
+    , _msg1_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
+}
+
+struct msg2 {
+      _msg2_tag : Const(0x02000000)
+    , _msg2_sender: Data<adv> |4|
+    , _msg2_receiver: Data<adv> |4|
+    , _msg2_ephemeral: Data<adv> | |group| |
+    , _msg2_empty: Data<adv> | cipherlen(0) |
+    // TODO cookie mechanism
+    , _msg2_mac1: Data<adv> | |maclen| |
+    , _msg2_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
+}
+
+
+struct transp {
+      _transp_tag : Const(0x04000000)
+    , _transp_receiver : Data<adv> |4|
+    , _transp_counter  : Data<adv> | |counter| | 
+    , _transp_packet   : Data<adv> 
+}
+
+
+////////////////////////////
+// Primitives
+
+func padding() = 0x000000
+func msg1_tag_value() = 0x01000000
+func msg2_tag_value() = 0x02000000
+func transp_tag_value() = 0x04000000
+
+def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4| // TODO can we model this as a nonce?
+def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
+
+def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4| // TODO can we model this as a nonce?
+def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|

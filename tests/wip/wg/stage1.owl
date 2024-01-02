@@ -1,0 +1,141 @@
+include "defs.owl"
+
+struct initiator_msg1_val<i,n,m> {
+      _initiator_msg2_C2 : Ghost,
+      _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
+          (x:Name(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0]){
+              sec(ODHName<L2<@n,m>; 0>(_initiator_msg2_C2, 0x)[0])
+           })
+        // TODO: refine the name to also say that it is secret!
+        else (x:Data<adv>{true}),
+      _initiator_msg1_H4 : Data<adv>
+}
+
+def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @ Initiator<n> :
+  initiator_msg1_val<session i, pid n, pid m> =
+    let C0 = crh(construction()) in
+    let H0 = crh(C0 ++ identifier()) in 
+    let H1 = crh(H0 ++ dhpk_S_resp) in
+    let e_init = dhpk(get(E_init<i@n>)) in 
+    let C1 = kdf_pure(C0, e_init, 0x) in 
+    // let C1 = kdf<;;enckey;0>(C0, e_init, 0x) in 
+    let H2 = crh(H1 ++ e_init) in
+    let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(E_init<i@n>)) in
+    corr_case S_resp<@m> in
+    corr_case E_init<i@n> in
+    let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
+    let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
+    let msg1_static // : Data<adv> |cipherlen(|group|)|
+        = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, dhpk_S_init, H2) in 
+    let H3 = crh(H2 ++ msg1_static) in
+    // let ss_S_resp_S_init = dh_combine(dhpk_S_resp, get(S_init<@n>)) in
+    corr_case S_init<@n> in 
+    assert (exists i:idx. kdf<kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x, C2)); 
+    let C3 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 0>(C2, ss_S_resp_S_init, 0x) in 
+    let k1 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 1>(C2, ss_S_resp_S_init, 0x) in 
+    let timestamp = call timestamp_i<@n>() in
+    let msg1_timestamp = // : Data<adv> |cipherlen(12)| =
+        st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
+    let H4 : Data<adv> = crh(H3 ++ msg1_timestamp) in
+
+    let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
+    let msg1_tag = msg1_tag_value() in 
+
+    // let msg1_mac1_k = hash<msg1_mac1_key<@m>>(mac1(), dhpk_S_resp) in 
+    let msg1_mac1_k = crh(mac1() ++ dhpk_S_resp) in 
+    let msg1_mac1 = mac(msg1_mac1_k, 
+        msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
+    assume(length(msg1_mac1) == |maclen|);
+    let msg1_mac2 = zeros_16() in
+    let msg1_output /* : msg1 */ = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
+    // let msg1_output = msg1(msg1_payload_value) in
+    let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
+    let C3' : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
+          (x:Name(ODHName<L2<@n,m>; 0>(C2, 0x)[0]){
+              sec(ODHName<L2<@n,m>; 0>(C2, 0x)[0])
+           }) else Data<adv>  = C3 in 
+    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3', H4) in
+    retval
+
+
+def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
+    : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
+
+def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
+     : Option Unit // (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
+     =
+     set_option ":rlimit" "2000000" in 
+     input inp in
+     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
+     guard eq(length(msg1_sender), 4) in 
+     guard is_group_elem(msg1_ephemeral') in 
+     let C0 = crh(construction()) in
+     let H0 = crh(C0 ++ identifier()) in 
+     let H1 = crh(H0 ++ dhpk_S_resp) in
+     /*
+     pcase (exists n:idx, i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n>))) in
+     */
+         choose_idx n | exists i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n>)) in 
+         choose_idx i | msg1_ephemeral' == dhpk(get(E_init<i@n>)) in
+     assume (exists n2:idx. msg1_ephemeral' == dhpk(get(S_init<@n2>)));
+        choose_idx n2 | msg1_ephemeral' == dhpk(get(S_init<@n2>)) in 
+     let msg1_ephemeral : if (msg1_ephemeral' == dhpk(get(E_init<i@n>))) then dhpk(E_init<i@n>) else 
+        if (msg1_ephemeral' == dhpk(get(S_init<@n2>))) then dhpk(S_init<@n2>)
+            else 
+        (x:Data<adv>{x == msg1_ephemeral'
+            /\ (forall i2:idx,n2:idx. msg1_ephemeral' != dhpk(get(E_init<i2@n2>)))
+            /\ (forall n2:idx. msg1_ephemeral' != dhpk(get(S_init<@n2>)))
+        }) = msg1_ephemeral' in
+     let C1 = kdf_pure(C0, msg1_ephemeral, 0x) in 
+     let H2 = crh(H1 ++ msg1_ephemeral) in
+     let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
+     
+     assume corr(E_init<i@n>);
+     // corr_case E_init<i@n> in 
+     assume sec(S_resp<@m>);
+     assume sec(S_init<@n2>);
+     // corr_case S_resp<@m> in 
+     // corr_case S_init<@n2> when (msg1_ephemeral == dhpk(get(S_init<@n2>))) in 
+     cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
+     assume (!(valid_c2<n2,m>[C1]));
+     let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
+     let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
+     case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {
+         | None => None()
+         | Some msg1_static_dec => 
+                false_elim in
+                let oss = call checkpk_resp<@m>(msg1_static_dec) in
+                case oss {
+                    | None => None()
+                    | Some res =>
+                        unpack n2, ss = res in 
+                        let dhpk_S_init : dhpk(S_init<@n2>) = msg1_static_dec in
+                        assert (msg1_static_dec == dhpk(get(S_init<@n>)) ==> n =idx n2);
+                        // guard eq(msg1_static_dec, dhpk_S_init) in // Not needed since we have the refinement on ss_S_init_S_resp
+                        let H3 = crh(H2 ++ msg1_static) in
+                        corr_case S_init<@n2> in 
+                        assume (forall x:bv. C2 != kdf_pure(crh(construction()),
+                        x, 0x));
+                        let C3 = kdf<0;odh L2<@n,m>[0], odh L2<@n2, m>[0]; kdfkey || enckey; 0>(C2, ss, 0x) in 
+                        let k1 = kdf<0;odh L2<@n,m>[0], odh L2<@n2, m>[0]; kdfkey || enckey; 1>(C2, ss, 0x) in 
+                        // corr_case msg1_C3<@n,m>[msg1_ephemeral;1] in
+                        corr_case nameOf(k1) in 
+                        case st_aead_dec(k1, msg1_timestamp, H3, 0x) as Option (Data<adv> |12|) {
+                        | None => None()
+                        | Some msg1_timestamp_dec =>
+                            false_elim in 
+                            let H4 = crh(H3 ++ msg1_timestamp) in
+                            None()
+                            /*
+                            let retval : x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = 
+                                responder_msg1_val(C3, H4, msg1_ephemeral, dhpk_S_init, msg1_sender) in
+                            let v : exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = pack<n>(retval) in 
+                            Some(v)
+                            */
+                        otherwise => None()
+                        }
+                }
+        otherwise => None()
+     }
+     } otherwise None()
+

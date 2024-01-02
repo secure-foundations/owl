@@ -120,8 +120,6 @@ instance Alpha NameDef
 instance Subst ResolvedPath NameDef
 instance Subst Idx NameDef
 
-type KDFBody = (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
-
 data CorrConstraint = CorrImpl Label Label | CorrGroup [Label]
     deriving (Show, Generic, Typeable)
 
@@ -164,6 +162,7 @@ data Env = Env {
     -- depends on them
     _inScopeIndices ::  Map IdxVar IdxType,
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
+    _expectedTy :: Maybe Ty,
     ------
     _envFlags :: Flags,
     _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
@@ -479,7 +478,7 @@ inferIdx (IVar pos iname i) = do
                 (TcDef _, IdxGhost) ->  
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
-          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) ++ ", " ++ show i
+          Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) 
 
 checkIdx :: Idx -> Check ()
 checkIdx i = do
@@ -577,6 +576,29 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
+inKDFBody :: KDFBody -> AExpr -> AExpr -> Check Prop
+inKDFBody kdfBody salt info = do
+    (((sx, x), (sy, y)), cases') <- unbind kdfBody
+    let cases = subst x salt $ subst y info $ cases'
+    bs <- forM cases $ \bcase -> do
+        (xs, (p, _)) <- unbind bcase
+        return $ mkExistsIdx xs p
+    return $ foldr pOr pFalse bs
+
+inODHProp :: AExpr -> AExpr -> AExpr -> AExpr -> Check Prop
+inODHProp salt info pk sk = do
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    cur_odh <- view $ curMod . odh
+    ps <- forM cur_odh $ \(_, bnd2) -> do
+        ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
+        let pd1 = pEq (dhCombine pk sk) (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
+                                                          (mkSpanned $ AEGet ne2)
+                                               )
+        pd2 <- inKDFBody kdfBody salt info
+        return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
+    return $ foldr pOr pFalse ps
+
 --getROStrictness :: NameExp -> Check ROStrictness 
 --getROStrictness ne = 
 --    case ne^.val of
@@ -631,11 +653,13 @@ normalizeNameType nt = pushRoutine "normalizeNameType" $
       NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
       NT_KDF pos bcases -> do
           (p, cases) <- unbind bcases
-          cases' <- forM cases $ \(p, nts) -> do
-              nts' <- forM nts $ \(str, nt) -> do
-                  nt' <- normalizeNameType nt
-                  return (str, nt')
-              return (p, nts')
+          cases' <- forM cases $ \bcase -> do 
+              (is, (p, nts)) <- unbind bcase
+              withIndices (map (\i -> (i, IdxGhost)) is) $ do
+                  nts' <- forM nts $ \(str, nt) -> do
+                      nt' <- normalizeNameType nt
+                      return (str, nt')
+                  return $ bind is (p, nts')
           return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind p cases')
       _ -> return nt
 
@@ -646,26 +670,7 @@ pushRoutine s k = do
         local (over tcRoutineStack $ (s:)) k
     else k
 
--- Equivalence on name types, coarser than alpha-equivalence (due to annotations)
-eqNameType :: NameType -> NameType -> Check Bool
-eqNameType (Spanned _ (NT_KDF _ bn1)) (Spanned _ (NT_KDF _ bn2)) = do
-    (x, n1) <- unbind bn1
-    (y, n2) <- unbind bn2
-    if length n1 == length n2 then do
-        bs <- forM (zip n1 n2) $ \((p1, cases1), (p2, cases2)) -> do
-            if length cases1 == length cases2 then do
-                bs2 <- forM (zip cases1 cases2) $ \((str1, nt1), (str2, nt2)) -> do
-                    (&& (str1 == str2)) <$> eqNameType nt1 nt2
-                return $ and bs2
-            else return False
-        return $ and bs
-    else return False
-eqNameType x y = return $ x `aeq` y
-
-
-
-
-getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe [Locality]))
+getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
 getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
     res <- case ne^.val of 
              NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
@@ -690,7 +695,7 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
                              return Nothing
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
-                             return $ Just (nt, Just lcls) 
+                             return $ Just (nt, Just (PDot p n, lcls)) 
              KDFName ann x y z j -> do 
                  _ <- mapM inferAExpr [x, y, z]
                  (_, nts) <- getKDFAnnInfo ann x y z
@@ -731,10 +736,11 @@ getKDFAnnInfo ann a b c = do
                   extractKDF kpos bnd a b c i 
               _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a c i j = do
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
+    mapM_ inferIdx is_case
     md <- openModule p
     case lookup s (md^.odh) of
       Nothing -> typeError $ "Unknown ODH handle: " ++ show s
@@ -744,16 +750,23 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c i j = do
           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
           (((sx, x), (sy, y)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
-          let (p, cases') = subst x a $ subst y c $ cases !! i
+          let bpcases  = subst x a $ subst y c $ cases !! i
+          (xs_case, pcases')  <- unbind bpcases
+          assert ("KDF case index arity mismatch") $ length xs_case == length is_case
+          let (p, cases') = substs (zip xs_case is_case) pcases'
           assert ("KDF name row mismatch") $ j < length cases'
           return (ne1, ne2, p, cases')
 
-extractKDF kpos bnd a b c i = do
+extractKDF kpos bnd a b c (i, is_case) = do
+    mapM_ inferIdx is_case
     (((sx, x), (sy, y)), cases) <- unbind bnd 
     assert ("Number of case mismatch") $ i < length cases
-    return $ case kpos of
+    let bcase = case kpos of
                    KDF_SaltPos -> subst x b $ subst y c $ cases !! i
                    KDF_IKMPos -> subst x a $ subst y b $ cases !! i
+    (xs_case, case_bdy) <- unbind bcase
+    assert ("KDF case index arity mismatch") $ length xs_case == length is_case
+    return $ substs (zip xs_case is_case) case_bdy
 
 
 getNameKind :: NameType -> Check NameKind
@@ -812,19 +825,19 @@ popLogTypecheckScope = do
     n <- liftIO $ readIORef r
     liftIO $ writeIORef r (n-1)
 
-logTypecheck :: String -> Check ()
+logTypecheck :: OwlDoc -> Check ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
         r <- view $ typeCheckLogDepth
         n <- liftIO $ readIORef r
-        liftIO $ putStrLn $ replicate (n*2) ' ' ++ s
+        liftIO $ putDoc $ owlpretty (replicate (n*2) ' ') <> s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 
           r <- view $ debugLogDepth
           n <- liftIO $ readIORef r
-          liftIO $ appendFile fname $ replicate (n) ' ' ++ s ++ "\n"
+          liftIO $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
       Nothing -> return ()
 
 getTyDef :: Path -> Check TyDef
@@ -976,10 +989,13 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           ts <- view tcScope
           ntLclsOpt <- getNameInfo ne
           ot <- case ntLclsOpt of
-            Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
+            Nothing ->
+                case ts of
+                  TcGhost -> return $ tName ne
+                  _ -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
-                        Just xs -> mapM normLocality xs
+                        Just (_, xs) -> mapM normLocality xs
                         Nothing -> do
                             case ts of
                               TcGhost -> return []
@@ -1039,7 +1055,7 @@ splitConcats a =
 --   b. and the prop holds,
 --   c. then PValidKDF holds
 
-kdfNameAxioms :: Ty -> KDFAnn -> AExpr -> AExpr -> AExpr -> Int -> Int -> Check Ty
+kdfNameAxioms :: Ty -> KDFAnn -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check Ty
 kdfNameAxioms ot ann a b c i j = do
     (p, nts) <- getKDFAnnInfo ann a b c
     secrecy <- case ann of
@@ -1051,7 +1067,7 @@ kdfNameAxioms ot ann a b c i j = do
     return $ tRefined ot ".res" $ 
         pImpl (pAnd secrecy p) validKDF
 
-odhNameAxioms :: Ty -> Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> Int -> Int -> Check Ty
+odhNameAxioms :: Ty -> Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check Ty
 odhNameAxioms ot p (is, ps) a c i j = do
     (ne1, ne2, p, nts) <- getODHNameInfo p (is, ps) a c i j
     let (str, nt) = nts !! j

@@ -134,7 +134,7 @@ concretify e =
             (x, k) <- unbind xk
             k' <- concretify k
             return $ subst x a k'
-        EUnpack a ixk -> do
+        EUnpack a _ ixk -> do
             ((i, x), k) <- unbind ixk
             k' <- concretify k
             return $ subst x a k' -- i is dangling here, but that shouldn't matter

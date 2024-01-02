@@ -127,14 +127,16 @@ type AExpr = Spanned AExprX
 data KDFStrictness = KDFStrict | KDFUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
+type KDFSelector = (Int, [Idx])
+
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
     | KDFName KDFAnn AExpr AExpr AExpr Int
-    | ODHName Path ([Idx], [Idx]) AExpr AExpr Int Int
+    | ODHName Path ([Idx], [Idx]) AExpr AExpr KDFSelector Int
     deriving (Show, Generic, Typeable)
 
-data KDFAnn = KDF_SaltKey NameExp Int
-              | KDF_IKMKey NameExp Int
+data KDFAnn = KDF_SaltKey NameExp KDFSelector
+              | KDF_IKMKey NameExp KDFSelector
     deriving (Show, Generic, Typeable)
 
 type NameExp = Spanned NameExpX
@@ -195,7 +197,9 @@ data PropX =
     | PIsConstant AExpr -- Internal use
     | PValidKDF AExpr AExpr AExpr [NameKind] Int
     | PApp Path [Idx] [AExpr]
-    | PAADOf NameExp AExpr
+    | PAADOf NameExp AExpr         
+    | PInODH AExpr AExpr AExpr AExpr
+    | PKDF AExpr AExpr AExpr [NameKind] Int AExpr
     deriving (Show, Generic, Typeable)
 
 data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
@@ -249,7 +253,7 @@ data NameTypeX =
     | NT_App Path ([Idx], [Idx])
     | NT_KDF KDFPos 
         -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
-        (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])])
+        KDFBody
     deriving (Show, Generic, Typeable)
 
 
@@ -319,6 +323,8 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
+type KDFBody =  Bind ((String, DataVar), (String, DataVar)) 
+        [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
 
 
 -- Decls are surface syntax
@@ -336,7 +342,7 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
-    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]))
+    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind ([IdxVar], [IdxVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
@@ -379,6 +385,8 @@ aeVar' v = mkSpanned $ AEVar (ignore $ show v) v
 aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
+aeGet n = mkSpanned $ AEGet n
+
 builtinFunc :: String -> [AExpr] -> AExpr
 builtinFunc s xs = aeApp (PRes $ PDot PTop s) [] xs
 
@@ -401,7 +409,7 @@ data ExprX =
     | ELetGhost AExpr String (Bind DataVar Expr)
     | EBlock Expr -- Boundary for scoping; introduced by { }
     | EUnionCase AExpr String (Bind DataVar Expr)
-    | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
+    | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
     | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | EForallBV String (Bind DataVar Expr)
@@ -430,10 +438,9 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp = 
-      CKDF (Maybe Int) (Maybe (Either Int [(String, ([Idx], [Idx]), Int)]))
+      CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
            [NameKind]
            Int 
-        -- TODO: annotation for the name row
       | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
@@ -451,7 +458,7 @@ data BuiltinLemma =
       LemmaCRH 
       | LemmaConstant 
       | LemmaDisjNotEq 
-      | LemmaCrossDH NameExp NameExp NameExp
+      | LemmaCrossDH NameExp 
     deriving (Show, Generic, Typeable)
 
 
@@ -656,4 +663,13 @@ instance Alpha a => Ord (AlphaOrd a) where
 
 tLemma :: Prop -> Ty
 tLemma p = tRefined tUnit "._" p 
+
+
+mkForallIdx :: [IdxVar] -> Prop -> Prop
+mkForallIdx [] p = p
+mkForallIdx (x:xs) p = mkSpanned $ PQuantIdx Forall (ignore $ show x) $ bind x $ mkForallIdx xs p
+
+mkExistsIdx :: [IdxVar] -> Prop -> Prop
+mkExistsIdx [] p = p
+mkExistsIdx (x:xs) p = mkSpanned $ PQuantIdx Exists (ignore $ show x) $ bind x $ mkExistsIdx xs p
 

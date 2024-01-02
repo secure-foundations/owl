@@ -330,6 +330,7 @@
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
+(declare-fun KDF (Bits Bits Bits Int Int) Bits)
 (declare-fun KDFName (Bits Bits Bits Int Int) Name)
 (declare-fun ValidKDF (Bits Bits Bits Int Int NameKind) Bool)
 (assert 
@@ -518,27 +519,4 @@
     :pattern dh_combine_neq_dhpk
 )))
 
-;; RO(a, b, i) means that the _current_ random oracle maps a to b in slot i.
-(declare-fun RO (Bits Bits Int) Bool)
-
-(assert (forall ((x Bits) (x2 Bits) (y1 Bits) (y2 Bits) (i Int)) (!
-    (=> (and (= TRUE (eq y1 y2)) (RO x y1 i) (RO x2 y2 i))
-        (= TRUE (eq x x2)))
-    :pattern ((RO x y1 i) (RO x2 y2 i) (eq y1 y2))
-    :qid ro_inj_l
-)))
-
-(assert (forall ((x Bits) (y1 Bits) (y2 Bits) (i Int)) (!
-    (=> (and (RO x y1 i) (RO x y2 i))
-        (= TRUE (eq y1 y2)))
-    :pattern ((RO x y1 i) (RO x y2 i))
-    :qid ro_inj_r
-)))
-
-(assert (forall ((x Bits) (y Bits) (i Int) (c Bits)) (!
-    (=> (and (RO x y i) (IsConstant c))
-        (not (= TRUE (eq y c))))
-    :pattern ((eq y c) (RO x y i))
-    :qid ro_neq_constant
-)))
 

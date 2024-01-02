@@ -110,10 +110,10 @@ anf e =
           xk' <- anfBind xk
           ea <- anfAExpr a
           elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnionCase (aevar (a^.spanOf) y) s xk'
-      EUnpack a ixe -> do
+      EUnpack a s ixe -> do
           ixe' <- anfBind ixe
           ea <- anfAExpr a
-          elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) ixe'
+          elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) s ixe'
       EChooseIdx p ixe -> do
           ixe' <- anfBind ixe
           return $ Spanned (e^.spanOf) $ EChooseIdx p ixe'

@@ -249,12 +249,13 @@ resolveDecls (d:ds) =
           ne1' <- resolveNameExp ne1
           ne2' <- resolveNameExp ne2
           (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \(p, nts) -> do
+          cases' <- forM cases $ \bpnts -> do 
+              (ixs, (p, nts)) <- unbind bpnts 
               p' <- resolveProp p
               nts' <- forM nts $ \(str, nt) -> do
                   nt' <- resolveNameType nt
                   return (str, nt')
-              return (p', nts')
+              return $ bind ixs $ (p', nts')
           let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
           p <- view curPath
           ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
@@ -347,12 +348,13 @@ resolveNameType e = do
                       return $ NT_StAEAD t' (bind x pr') p' 
                   NT_KDF pos b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
-                      cases' <- forM cases $ \(p, nts) -> do
+                      cases' <- forM cases $ \bpnts -> do 
+                          (is, (p, nts)) <- unbind bpnts
                           p' <- resolveProp p
                           nts' <- forM nts $ \(str, nt) -> do
                               nt' <- resolveNameType nt
                               return (str, nt')
-                          return (p', nts')
+                          return $ bind is (p', nts')
                       return $ NT_KDF pos $ bind ((s, x), (s2, y)) cases'
 
 resolveTy :: Ty -> Resolve Ty
@@ -559,11 +561,9 @@ resolveLemma pos lem =
       LemmaCRH -> return lem
       LemmaConstant -> return lem
       LemmaDisjNotEq -> return lem
-      LemmaCrossDH n1 n2 n3 -> do
+      LemmaCrossDH n1 -> do
           n1' <- resolveNameExp n1
-          n2' <- resolveNameExp n2
-          n3' <- resolveNameExp n3
-          return $ LemmaCrossDH n1' n2' n3'
+          return $ LemmaCrossDH n1' 
 
 
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
@@ -621,11 +621,11 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EUnionCase a' s (bind x k')
-      EUnpack a xk -> do
+      EUnpack a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EUnpack a' (bind x k')
+          return $ Spanned (e^.spanOf) $ EUnpack a' s (bind x k')
       EChooseIdx ip ik -> do
           (i, k) <- unbind ik
           (i', p) <- unbind ip                         
@@ -758,6 +758,12 @@ resolveProp p =
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a
           return $ Spanned (p^.spanOf) $ PAADOf ne' a'
+      PInODH s info a b -> do
+          s' <- resolveAExpr s
+          info' <- resolveAExpr info
+          a' <- resolveAExpr a
+          b' <- resolveAExpr b
+          return $ Spanned (p^.spanOf) $ PInODH s' info' a' b'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp
@@ -785,6 +791,12 @@ resolveProp p =
           b' <- resolveAExpr b
           c' <- resolveAExpr c
           return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' nks j 
+      PKDF a b c nks j res -> do
+          a' <- resolveAExpr a
+          b' <- resolveAExpr b
+          c' <- resolveAExpr c
+          res' <- resolveAExpr res
+          return $ Spanned (p^.spanOf) $ PKDF a' b' c' nks j res'
       PQuantIdx q sx ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

@@ -63,19 +63,24 @@ nameDefFlows n nt = do
           -- TODO: below, we need to generealize
           axs <- withSMTVars [x, y] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
-                  let (p, nts) = cases !! i
+                  (ixs, (p, nts)) <- liftCheck $ unbind $ cases !! i
                   axijs <- forM [0 .. (length nts - 1)] $ \j -> do
                       let (strictness, nt) = nts !! j
-                      let ann = case pos of
-                                  KDF_SaltPos -> KDF_SaltKey n i 
-                                  KDF_IKMPos -> KDF_IKMKey n i
-                      let ne = case pos of
-                                  KDF_SaltPos -> 
-                                      mkSpanned $ KDFName ann (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
-                                  KDF_IKMPos -> 
-                                      mkSpanned $ KDFName ann (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
-                      ne_axioms <- nameDefFlows ne nt
-                      return $ ne_axioms
+                      ne_axioms <- withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
+                          let ann = case pos of
+                                      KDF_SaltPos -> KDF_SaltKey n (i, map mkIVar ixs) 
+                                      KDF_IKMPos -> KDF_IKMKey n (i, map mkIVar ixs)
+                          let ne = case pos of
+                                      KDF_SaltPos -> 
+                                          mkSpanned $ KDFName ann (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
+                                      KDF_IKMPos -> 
+                                          mkSpanned $ KDFName ann (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
+                          nameDefFlows ne nt
+                      ctr <- getFreshCtr
+                      return $ sForall (map (\i -> (SAtom $ cleanSMTIdent $ show i, indexSort)) ixs) 
+                                ne_axioms
+                                []
+                                ("ax_" ++ show ctr)
                   return $ sAnd axijs
               return $ sAnd axis
           let vx = SAtom (show x)
@@ -108,10 +113,10 @@ corruptNameType nt = do
           ps <- withVars [(x, (ignore (show x), Nothing, tGhost)),
                           (y, (ignore (show y), Nothing, tGhost))] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
-                  let (p, nts) = cases !! i
+                  (is_case, (p, nts)) <- unbind $ cases !! i
                   axijs <- forM [0 .. (length nts - 1)] $ \j -> 
                       corruptNameType $ snd $ nts !! j
-                  return $ foldr1 pAnd axijs
+                  return $ mkForallIdx is_case $ foldr1 pAnd axijs
               return $ foldr1 pAnd axis
           return $ mkSpanned $ PQuantBV Forall (ignore $ show x) $ bind x $ 
               mkSpanned $ PQuantBV Forall (ignore $ show y) $ bind y $ ps

@@ -77,6 +77,12 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
+parseKDFSelector :: Parser KDFSelector
+parseKDFSelector = do
+    i <- many1 digit
+    ps <- parseIdxParams1
+    return (read i, ps)
+
 parseNameExp :: Parser NameExp
 parseNameExp = 
     (parseSpanned $ do
@@ -84,7 +90,7 @@ parseNameExp =
         symbol "<"
         n <- parseNameExp
         symbol ";"
-        i <- many1 digit
+        i <- parseKDFSelector
         symbol ">"
         symbol "("
         a <- parseAExpr
@@ -94,7 +100,7 @@ parseNameExp =
         symbol "["
         j <- many1 digit
         symbol "]"
-        let ann = KDF_SaltKey n (read i)
+        let ann = KDF_SaltKey n i
         return $ KDFName ann (Spanned (n^.spanOf) $ AEGet n) a b (read j))
     <|>
     (parseSpanned $ do
@@ -102,7 +108,7 @@ parseNameExp =
         symbol "<"
         n <- parseNameExp
         symbol ";"
-        i <- many1 digit
+        i <- parseKDFSelector
         symbol ">"
         symbol "("
         a <- parseAExpr
@@ -112,7 +118,7 @@ parseNameExp =
         symbol "["
         j <- many1 digit
         symbol "]"
-        let ann = KDF_IKMKey n (read i) 
+        let ann = KDF_IKMKey n i
         return $ KDFName ann a (Spanned (n^.spanOf) $ AEGet n) b (read j))
     <|>
     (parseSpanned $ do
@@ -121,7 +127,7 @@ parseNameExp =
         p <- parsePath
         ps <- parseIdxParams
         symbol ";"
-        i <- many1 digit
+        i <- parseKDFSelector
         symbol ">"
         symbol "("
         a <- parseAExpr
@@ -131,7 +137,7 @@ parseNameExp =
         symbol "["
         j <- many1 digit
         symbol "]"
-        return $ ODHName p ps a c (read i) (read j))
+        return $ ODHName p ps a c i (read j))
     <|>
     (parseSpanned $ do
         i <- parsePath
@@ -523,6 +529,39 @@ parsePropTerm =
             return $ PAADOf ne x
             )
         <|>
+        (parseSpanned $ do
+            reserved "in_odh"
+            symbol "("
+            a <- parseAExpr
+            symbol ","
+            b <- parseAExpr
+            symbol ","
+            s <- parseAExpr
+            symbol ","
+            info <- parseAExpr
+            symbol ")"
+            return $ PInODH s info a b
+            )
+        <|>
+        (parseSpanned $ do
+            reserved "kdf"
+            symbol "<"
+            nks <- parseNameKind `sepBy1` (symbol "||")
+            symbol ";"
+            j <- many1 digit
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ","
+            b <- parseAExpr
+            symbol ","
+            c <- parseAExpr
+            symbol ","
+            res <- parseAExpr
+            symbol ")"
+            return $ PKDF a b c nks (read j) res
+            )
+        <|>
         (parseSpanned $ try $ do
             p <- parsePath
             is <- parseIdxParams1
@@ -656,8 +695,9 @@ parseNameType =
         return $ NT_App p ps
     )
 
-kdfCase :: Parser (Prop, [(KDFStrictness, NameType)])
+kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
 kdfCase = do 
+    ois <- parseIdxParamBinds1
     p <- parseProp
     symbol "->"
     nts <- (do
@@ -667,7 +707,7 @@ kdfCase = do
                             Nothing -> KDFUnstrict
                             Just _ -> KDFStrict
         return (strictness, nt)) `sepBy` (symbol "||")
-    return (p, nts)
+    return $ bind ois (p, nts)
 
 parseKDFHint :: Parser (NameExp, Int, Int)
 parseKDFHint = do 
@@ -1269,7 +1309,7 @@ parseExprTerm =
         a <- parseAExpr
         reserved "in"
         e <- parseExpr
-        return $ EUnpack a $ bind (s2n i, s2n x) e)
+        return $ EUnpack a (i, x) $ bind (s2n i, s2n x) e)
     <|>
     (parseSpanned $ do
         reserved "choose_idx"
@@ -1466,26 +1506,18 @@ parseCryptOp =
     (do
         reserved "kdf"
         symbol "<"
-        oann1 <- optionMaybe $ do
-            i <- many1 digit
-            return $ (read i)
+        oann1 <- parseKDFSelector `sepBy` (symbol ",")
         symbol ";"
-        oann2 <- optionMaybe $ do
-            (do
-                odhs <- (do
-                    reserved "odh"
-                    s <- identifier
-                    p <- parseIdxParams
-                    symbol "["
-                    i <- many1 digit
-                    symbol "]"
-                    return (s, p, read i)
-                        ) `sepBy1` (symbol ",")
-                return $ Right odhs)
-            <|>
-            (do
-                i <- many1 digit
-                return $ Left (read i))
+        oann2 <- (alt
+                    (do
+                        reserved "odh"
+                        s <- identifier
+                        p <- parseIdxParams
+                        symbol "["
+                        i <- parseKDFSelector
+                        symbol "]"
+                        return $ Right (s, p, i))
+                    (Left <$> parseKDFSelector)) `sepBy` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
@@ -1513,12 +1545,8 @@ parseCryptOp =
         reserved "cross_dh_lemma"
         symbol "<"
         x <- parseNameExp
-        symbol ","
-        y <- parseNameExp
-        symbol ","
-        z <- parseNameExp
         symbol ">"
-        return $ CLemma $ LemmaCrossDH x y z
+        return $ CLemma $ LemmaCrossDH x 
     )
     <|>
     (reserved "aenc" >> return CAEnc)
