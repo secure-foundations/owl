@@ -67,14 +67,25 @@ predicate is_e_init(x) =
 predicate is_s_init(x) =
     exists n2:idx. x == dhpk(get(S_init<@n2>))
 
-struct responder_msg1_val<n,m> {
+struct responder_msg1_val<i,n,m> {
+     _responder_init_eph : (x:Ghost{is_group_elem(x)}),
+     _responder_init_pk : (x:Ghost{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
      _responder_msg1_C2 : Ghost,
-     _responder_msg1_C3 : Name(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0]),
+     _responder_msg1_C3 : 
+        if (_responder_init_eph == dhpk(get(E_init<i@n>)) /\
+            _responder_init_pk == dhpk(get(S_init<@n>)) /\
+            sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)))
+            then
+                (x:Name(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0]){
+                    sec(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0])
+                 })
+            else
+                Data<adv>,
      _responder_msg1_H4 : Data<adv>
 }
 
-def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
-     : Option (exists n. responder_msg1_val<idx n, idx m>) // (exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]}) 
+def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
+     : Option (exists n. exists i. responder_msg1_val<idx i, idx n, idx m>) 
      =
      set_option ":rlimit" "2000000" in 
      input inp in
@@ -140,16 +151,9 @@ def receive_msg1<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                         | Some msg1_timestamp_dec =>
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
-                            debug hasType(C3, Name(ODHName<L2<@n,m>; 0>(C2, 0x)[0]));
-                            debug hasType(C3, Data<adv>);
-                            None()
-                            // Some(pack<n>(responder_msg1_val<idx n, idx m>(C2, C3, H4)))
-                            /*
-                            let retval : x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = 
-                                responder_msg1_val(C3, H4, msg1_ephemeral, dhpk_S_init, msg1_sender) in
-                            let v : exists n. x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]} = pack<n>(retval) in 
-                            Some(v)
-                            */
+
+                            Some(pack<n>(pack<i>(responder_msg1_val<idx i, idx
+                            n, idx m>(msg1_ephemeral, msg1_static_dec, C2, C3, H4))))
                         otherwise => None()
                         }
                 }
