@@ -725,6 +725,11 @@ resolveDebugCommand dc =
           s' <- resolveAExpr (unignore s)
           a' <- resolveAExpr a
           return $ DebugPrintTyOf (ignore s') a'
+      DebugHasType s a t -> do
+          s' <- resolveAExpr (unignore s)
+          a' <- resolveAExpr a
+          t' <- resolveTy t
+          return $ DebugHasType (ignore s') a' t'
       DebugPrintTy t -> DebugPrintTy <$> resolveTy t
       DebugPrintProp p -> DebugPrintProp <$> resolveProp p
       DebugPrintExpr e -> DebugPrintExpr <$> resolveExpr e
@@ -759,12 +764,11 @@ resolveProp p =
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a
           return $ Spanned (p^.spanOf) $ PAADOf ne' a'
-      PInODH s info a b -> do
+      PInODH s ikm info -> do
           s' <- resolveAExpr s
+          ikm' <- resolveAExpr ikm
           info' <- resolveAExpr info
-          a' <- resolveAExpr a
-          b' <- resolveAExpr b
-          return $ Spanned (p^.spanOf) $ PInODH s' info' a' b'
+          return $ Spanned (p^.spanOf) $ PInODH s' ikm' info'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp

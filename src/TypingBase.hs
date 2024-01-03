@@ -585,14 +585,14 @@ inKDFBody kdfBody salt info = do
         return $ mkExistsIdx xs p
     return $ foldr pOr pFalse bs
 
-inODHProp :: AExpr -> AExpr -> AExpr -> AExpr -> Check Prop
-inODHProp salt info pk sk = do
+inODHProp :: AExpr -> AExpr -> AExpr -> Check Prop
+inODHProp salt ikm info = do
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     cur_odh <- view $ curMod . odh
     ps <- forM cur_odh $ \(_, bnd2) -> do
         ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
-        let pd1 = pEq (dhCombine pk sk) (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
+        let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
                                                           (mkSpanned $ AEGet ne2)
                                                )
         pd2 <- inKDFBody kdfBody salt info

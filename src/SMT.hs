@@ -492,7 +492,7 @@ interpretProp p = do
       PAADOf ne a -> do
           p <- liftCheck $ extractAAD ne a
           interpretProp p
-      PInODH s i x y -> (liftCheck $ inODHProp x i x y) >>= interpretProp
+      PInODH s ikm info -> (liftCheck $ inODHProp s ikm info) >>= interpretProp
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2

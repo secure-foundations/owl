@@ -198,7 +198,7 @@ data PropX =
     | PValidKDF AExpr AExpr AExpr [NameKind] Int
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
-    | PInODH AExpr AExpr AExpr AExpr
+    | PInODH AExpr AExpr AExpr
     | PKDF AExpr AExpr AExpr [NameKind] Int AExpr
     deriving (Show, Generic, Typeable)    
 
@@ -466,6 +466,7 @@ data BuiltinLemma =
 
 data DebugCommand = 
     DebugPrintTyOf (Ignore AExpr) AExpr
+      | DebugHasType (Ignore AExpr) AExpr Ty
       | DebugResolveANF AExpr
       | DebugPrint String
       | DebugPrintTy Ty

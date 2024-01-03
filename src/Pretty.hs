@@ -63,6 +63,9 @@ instance OwlPretty KDFAnn where
     owlpretty (KDF_SaltKey ne i) = owlpretty "KDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
     owlpretty (KDF_IKMKey ne i) = owlpretty "DualKDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
 
+owlprettyKDFSelector :: KDFSelector -> OwlDoc
+owlprettyKDFSelector (i, []) = owlpretty i
+owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
     owlpretty (KDFName ann a b c i) = 
@@ -78,7 +81,7 @@ instance  OwlPretty NameExpX where
         in
         owlpretty n <> owlprettyIdxParams vs <> pxs
     owlpretty (ODHName p ips a c i j) = 
-        owlpretty "ODHName<" <> owlpretty p <> owlprettyIdxParams ips <> owlpretty ";" <> owlpretty i <> owlpretty ">"
+        owlpretty "ODHName<" <> owlpretty p <> owlprettyIdxParams ips <> owlpretty ";" <> owlprettyKDFSelector i <> owlpretty ">"
             <> tupled [owlpretty a, owlpretty c] <> owlpretty "[" <> owlpretty j <> owlpretty "]"
                                                      
 owlprettyBind :: (Alpha a, Alpha b, OwlPretty a, OwlPretty b) => Bind b a -> (OwlDoc, OwlDoc)
@@ -209,8 +212,8 @@ instance  OwlPretty PropX where
         pp1 <+> owlpretty "\\/" <+> pp2
     owlpretty (PNot (Spanned _ (PEq a b))) = owlpretty a <+> owlpretty "!=" <+> owlpretty b
     owlpretty (PEq e1 e2) = owlpretty e1 <+> owlpretty "==" <+> owlpretty e2
-    owlpretty (PNot (Spanned _ (PEqIdx e1 e2))) = owlpretty e1 <+> owlpretty "!=idx" <+> owlpretty e2
-    owlpretty (PEqIdx e1 e2) = owlpretty e1 <+> owlpretty "=idx" <+> owlpretty e2
+    owlpretty (PNot (Spanned _ (PEqIdx e1 e2))) = annotate (color flowColor) $ owlpretty e1 <+> owlpretty "!=idx" <+> owlpretty e2
+    owlpretty (PEqIdx e1 e2) = annotate (color flowColor) $ owlpretty e1 <+> owlpretty "=idx" <+> owlpretty e2
     owlpretty (PLetIn a xe2) = 
         let (x, e2) = owlprettyBind xe2 in
         owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty a <+> owlpretty "in" <+> e2
@@ -235,7 +238,7 @@ instance  OwlPretty PropX where
         tupled (map owlpretty [a, b, c, res])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
-    owlpretty (PInODH s info a b) = owlpretty "in_odh" <> tupled [owlpretty a, owlpretty b, owlpretty s, owlpretty info]
+    owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
     owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -294,8 +297,12 @@ instance  OwlPretty AExprX where
           (PRes (PDot PTop "concat"), [x, y]) -> owlpretty x <+> owlpretty "++" <+> owlpretty y
           (PRes (PDot PTop "zero"), []) -> owlpretty "0"
           (PRes (PDot PTop s), xs) -> owlpretty s <> tupled (map owlpretty xs)
-          _ -> owlpretty f <> pretty "(" <> mconcat (map owlpretty as) <> pretty ")"
-    owlpretty (AEHex s) = owlpretty "0x" <> owlpretty s
+          _ -> owlpretty f <> tupled (map owlpretty as)
+    owlpretty (AEHex s) = 
+        let ps = if length s > 6 then owlpretty (take 6 s) <> owlpretty "..."
+                                 else owlpretty s
+        in 
+        owlpretty "0x" <> ps
     owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
     owlpretty (AEInt i) = owlpretty i
     --owlpretty (AEPreimage p ps xs) = 

@@ -483,6 +483,14 @@ parsePropTerm =
             return $ PEqIdx t t2)
         <|>
         (try $ parseSpanned $ do
+            pbegin <- getPosition
+            t <- parseIdx
+            symbol "!=idx"
+            t2 <- parseIdx
+            pend <- getPosition
+            return $ PNot $ Spanned (ignore $ mkPos pbegin pend) $ PEqIdx t t2)
+        <|>
+        (try $ parseSpanned $ do
             l1 <- parseLabel
             symbol "<="
             l2 <- parseLabel
@@ -532,15 +540,13 @@ parsePropTerm =
         (parseSpanned $ do
             reserved "in_odh"
             symbol "("
-            a <- parseAExpr
-            symbol ","
-            b <- parseAExpr
-            symbol ","
             s <- parseAExpr
+            symbol ","
+            ikm <- parseAExpr
             symbol ","
             info <- parseAExpr
             symbol ")"
-            return $ PInODH s info a b
+            return $ PInODH s ikm info
             )
         <|>
         (parseSpanned $ do
@@ -1089,6 +1095,16 @@ parseDebugCommand =
         a <- parseAExpr
         symbol ")"
         return $ DebugPrintTyOf (ignore a) a
+    )
+    <|>
+    (try $ do
+        reserved "hasType"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        t <- parseTy
+        symbol ")"
+        return $ DebugHasType (ignore a) a t
     )
     <|>
     (try $ do

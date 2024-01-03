@@ -1448,11 +1448,10 @@ checkProp p =
                       NT_StAEAD _ _ _ -> return ()
                       _ -> typeError $ "Wrong name type for " ++ show (owlpretty ne) ++ ": expected StAEAD" 
                 Nothing -> typeError $ "Name cannot be abstract here: " ++ show (owlpretty ne)
-          PInODH s info x y -> do
+          PInODH s ikm info -> do
              _ <- inferAExpr s
+             _ <- inferAExpr ikm
              _ <- inferAExpr info
-             _ <- inferAExpr x
-             _ <- inferAExpr y
              return ()
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
@@ -1781,6 +1780,12 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           a' <- resolveANF a
           t' <- normalizeTy t
           liftIO $ putDoc $ owlpretty "Type for " <> owlpretty s <> owlpretty ": " <> owlpretty t' <> line
+          getOutTy ot $ tUnit
+      (EDebug (DebugHasType s a t)) -> do
+          checkTy t
+          ta <- local (set tcScope $ TcGhost) $ inferAExpr a
+          b <- isSubtype ta t
+          liftIO $ putDoc $ owlpretty s <+> owlpretty "has type" <+> owlpretty t <> owlpretty ":" <+> owlpretty b <> line
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
@@ -2378,9 +2383,9 @@ unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
     case (b && b2 && b3) of
       True -> return v1
       _ | not b3 -> do
-          typeError $ "KDF results inconsistent: mismatch on name types for selectors "  ++ show (owlpretty i) ++ ", " ++ show pe
-      _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness for selectors " ++ show (owlpretty i) ++ ", " ++ show pe
-      _ | not b -> typeError $ "KDF results inconsistent: result name types not equal for selectors " ++ show (owlpretty i) ++ ", " ++ show pe
+          typeError $ "KDF results inconsistent: mismatch on name types for selectors "  ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
+      _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
+      _ | not b -> typeError $ "KDF results inconsistent: result name types not equal for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
             KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult)
@@ -2490,7 +2495,7 @@ inferKDFODH a (b, tb) c s ips i j = do
                 --    (a, g^xy, c) not in ODH
                 --    the DH computation is local (involves a module-local DH name)
                 --    one of the x,y is secret
-                (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) (fst c) x (aeGet ny)
+                (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
                 case notODH of
                   False -> return Nothing
                   True -> do
