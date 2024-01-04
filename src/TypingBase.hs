@@ -50,14 +50,14 @@ insertMany :: Eq a => [(a, b)] -> [(a, b)] -> [(a, b)]
 insertMany kvs xs = kvs ++ filter (\p -> not (fst p `elem` map fst kvs)) xs 
 
 data TcScope = 
-      TcGhost 
+      TcGhost Bool -- Bool is if crypto lemmas are allowed
       | TcDef Locality
       deriving (Show, Generic, Typeable)
 
 instance Alpha TcScope
 
 instance OwlPretty TcScope where
-    owlpretty TcGhost = owlpretty "ghost"
+    owlpretty (TcGhost b)  = owlpretty "ghost"
     owlpretty (TcDef l) = owlpretty "def" <> tupled [owlpretty l]
 
 
@@ -490,7 +490,7 @@ checkIdxSession i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or Session ID") $ it /= IdxPId
+       TcGhost _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or Session ID") $ it /= IdxPId
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check ()
@@ -498,7 +498,7 @@ checkIdxPId i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
-       TcGhost -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or PId") $ it /= IdxSession
+       TcGhost _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or PId") $ it /= IdxSession
        TcDef _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty "expected PId") $ it == IdxPId
 
 openModule :: ResolvedPath -> Check ModBody
@@ -569,7 +569,7 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
           let l' = substs (zip is1 vs1) $ substs (zip is2 vs2) $ l
           tc <- view tcScope
           case tc of
-            TcGhost -> typeError $ "Must be in a def for the counter"
+            TcGhost _ -> typeError $ "Must be in a def for the counter"
             TcDef l2 -> do
                 l1' <- normLocality l'
                 l2' <- normLocality l2
@@ -981,7 +981,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ _ i) a) -> do
-            _ <- local (set tcScope TcGhost) $ inferIdx idx
+            _ <- local (set tcScope (TcGhost False)) $ inferIdx idx
             t <- inferAExpr a
             return $ mkSpanned $ TExistsIdx $ bind i t 
       (AEGet ne_) -> do
@@ -991,14 +991,14 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           ot <- case ntLclsOpt of
             Nothing ->
                 case ts of
-                  TcGhost -> return $ tName ne
+                  TcGhost _ -> return $ tName ne
                   _ -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
             Just (_, ls) -> do
                 ls' <- case ls of
                         Just (_, xs) -> mapM normLocality xs
                         Nothing -> do
                             case ts of
-                              TcGhost -> return []
+                              TcGhost _ -> return []
                               TcDef _ -> typeError $ show $ owlpretty "Calling get on name " <> owlpretty ne <> owlpretty " in non-ghost context"
                 case ts of
                     TcDef curr_locality -> do

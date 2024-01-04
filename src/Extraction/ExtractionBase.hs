@@ -41,7 +41,7 @@ runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runR
 liftCheck :: TB.Check a -> ExtractionMonad a
 liftCheck c = do
     e <- ask
-    o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope TB.TcGhost) c) e
+    o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e
     case o of 
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i

@@ -133,7 +133,7 @@ newtype Sym a = Sym {unSym :: ReaderT Env (StateT SolverEnv (ExceptT String IO))
 liftCheck :: Check a -> Sym a
 liftCheck c = do
     e <- ask
-    o <- liftIO $ runExceptT $ runReaderT (unCheck $ local (set tcScope TcGhost) c) e
+    o <- liftIO $ runExceptT $ runReaderT (unCheck $ local (set tcScope $ TcGhost False) c) e
     case o of 
       Left s -> Sym $ lift $ throwError $ "SMT ERROR" 
       Right i -> return i
