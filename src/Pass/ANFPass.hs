@@ -103,9 +103,9 @@ anf e =
           (x, k) <- unbind xk
           k' <- anf k
           return $ Spanned (e^.spanOf) $ ELetGhost a s (bind x k')
-      EBlock k -> do
+      EBlock k b -> do
           k' <- anf k
-          return $ Spanned (e^.spanOf) $ EBlock k'
+          return $ Spanned (e^.spanOf) $ EBlock k' b
       EUnionCase a s xk -> do
           xk' <- anfBind xk
           ea <- anfAExpr a

@@ -350,7 +350,10 @@ instance  OwlPretty ExprX where
     owlpretty (EOutput e l) = owlpretty "output" <+> owlpretty e <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
-    owlpretty (EBlock e) = owlpretty "{" <> owlpretty e <> owlpretty "}"
+    owlpretty (EBlock e p) = 
+        let pp = if p then owlpretty "proof " else mempty
+        in
+        pp <> owlpretty "{" <> owlpretty e <> owlpretty "}"
     owlpretty (ELet e1 tyAnn anf sx xk) = 
         let (x, k) = owlprettyBind xk in
         let tann = case tyAnn of

@@ -1827,7 +1827,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             _ -> do  -- Just continue
                 t <- withVars [(x, (ignore s, Nothing, t))] $ checkExpr ot e
                 getOutTy ot =<< stripTy x t
-      (EBlock k) -> checkExpr ot k
+      (EBlock k p) -> do
+          tc <- view tcScope
+          let tc' = case (tc, p) of
+                      (TcDef _, True) -> TcGhost True
+                      (TcGhost True, True) -> TcGhost True
+                      _ -> tc
+          local (set tcScope tc') $ checkExpr ot k
       (ELet e tyAnn anf sx xe') -> do
           let letTriv = xe' `aeq` (bind (s2n ".res") $ mkSpanned $ ERet (aeVar ".res"))
           tyAnn' <- case tyAnn of

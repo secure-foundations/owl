@@ -603,9 +603,9 @@ resolveExpr e =
           a' <- resolveAExpr a
           oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
           return $ Spanned (e^.spanOf) $ EOutput a' oe'
-      EBlock k -> do
+      EBlock k b -> do
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EBlock k'
+          return $ Spanned (e^.spanOf) $ EBlock k' b
       ELetGhost a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
