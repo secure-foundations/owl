@@ -976,7 +976,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                   snames <- forM args $ \(x, s, t) -> do 
                       checkTy t
                       assert (show $ owlpretty s <+> owlpretty "already defined") $ not $ member s dfs
-                      case t^.val of
+                      case (stripRefinements t)^.val of
                         TGhost -> return ()
                         _ -> do
                           llbl <- tyLenLbl t
@@ -2994,7 +2994,7 @@ typeError' msg = do
     writeSMTCache
     -- Uncomment for debugging
     -- rs <- view tcRoutineStack
-    -- logTypecheck $ "Routines: " ++ L.intercalate ", " rs
+    -- logTypecheck $ owlpretty "Routines: " <> (mconcat $ L.intersperse (owlpretty ", ") $ map owlpretty rs)
     -- inds <- view inScopeIndices
     -- logTypecheck $ "Indices: " ++ show (owlprettyIndices inds)
     Check $ lift $ throwError e

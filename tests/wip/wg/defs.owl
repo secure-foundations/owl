@@ -276,3 +276,36 @@ def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
 
 def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4| // TODO can we model this as a nonce?
 def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
+
+
+//////////////////////////
+// Intermediate structures / definitions
+
+// Struct for initator state between messages
+struct initiator_msg1_val<i,n,m> {
+      _initiator_msg1_C2 : Ghost,
+      _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
+          (x:Name(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0]){
+              sec(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0])
+           })
+        else Data<adv>,
+      _initiator_msg1_H4 : Data<adv>
+}
+
+// Struct for responder state between messages
+struct responder_msg1_val<i,n,m> {
+     _responder_init_eph : (x:Ghost{is_group_elem(x)}),
+     _responder_init_pk : (x:Ghost{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
+     _responder_msg1_C2 : Ghost,
+     _responder_msg1_C3 : 
+        if (_responder_init_eph == dhpk(get(E_init<i@n>)) /\
+            _responder_init_pk == dhpk(get(S_init<@n>)) /\
+            sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)))
+            then
+                (x:Name(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0]){
+                    sec(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0])
+                 })
+            else
+                Data<adv>,
+     _responder_msg1_H4 : Data<adv>
+}
