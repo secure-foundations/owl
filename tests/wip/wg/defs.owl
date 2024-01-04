@@ -17,9 +17,6 @@ mac1---- -> 0x6d6163312d2d2d2d
 
 */
 
-func kdf_pure
-    arity 3
-
 func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c795f424c414b453273
 func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
 func mac1() = 0x6d6163312d2d2d2d
@@ -127,12 +124,7 @@ nametype C5_corr = kdf {ikm info.
                                 nonce dummy
 }
 
-func c1<i@n>() = kdf_pure(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
-// name c2<i@n,m> = ODHName<L1<i@n,m>; 0>(c1<session i, pid n>(), 0x)[0]
-// name c3<i@n,m> = ODHName<L2<@n,m>; 0>(get(c2<i@n,m>), 0x)[0]
-
-
-
+predicate valid_c1<i,n>(x) = kdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x, x)
 
 nametype C4<@n,m> = kdf {ikm info.
     True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
@@ -196,14 +188,17 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 odh L1<i@n,m> :
     E_init<i@n>, S_resp<@m> -> {salt info.
-        salt == c1<session i, pid n>() -> 
+        valid_c1<i,n>[salt] -> 
             strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
                              aad x. true
                              nonce aead_counter_msg1_C2
 }                                                            
 
 predicate valid_c2<n,m>(salt) = 
-    exists i:idx. kdf<kdfkey||enckey; 0>(c1<session i, pid n>(),
+    exists c1:bv.
+    exists i:idx. 
+        valid_c1<i,n>[c1] /\ 
+        kdf<kdfkey||enckey; 0>(c1,
             dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x, salt)
 
 odh L2<@n,m> : 
@@ -216,7 +211,7 @@ odh L2<@n,m> :
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-     salt != kdf_pure(crh(construction()), dhpk(get(E_init<i@n>)), 0x) -> strict C5<@n,m>
+     !valid_c1<i@n>(salt) -> strict C5<@n,m>
 }
 
 odh L5<j@n,m> :

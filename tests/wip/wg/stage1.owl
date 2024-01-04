@@ -6,8 +6,7 @@ struct initiator_msg1_val<i,n,m> {
           (x:Name(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0]){
               sec(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0])
            })
-        // TODO: refine the name to also say that it is secret!
-        else (x:Data<adv>{true}),
+        else Data<adv>,
       _initiator_msg1_H4 : Data<adv>
 }
 
@@ -17,7 +16,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
     let e_init = dhpk(get(E_init<i@n>)) in 
-    let C1 = kdf_pure(C0, e_init, 0x) in 
+    let C1 = kdf<;;kdfkey;0>(C0, e_init, 0x) in 
     // let C1 = kdf<;;enckey;0>(C0, e_init, 0x) in 
     let H2 = crh(H1 ++ e_init) in
     let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(E_init<i@n>)) in
@@ -107,7 +106,7 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
             /\ (!is_e_init[msg1_ephemeral']) 
             /\ (!is_s_init[msg1_ephemeral'])
         }) = msg1_ephemeral' in
-     let C1 = kdf_pure(C0, msg1_ephemeral, 0x) in 
+     let C1 = kdf<;;kdfkey;0>(C0, msg1_ephemeral, 0x) in 
      let H2 = crh(H1 ++ msg1_ephemeral) in
      let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
      
@@ -116,7 +115,7 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      corr_case S_init<@n2> when is_s_init[msg1_ephemeral'] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // TODO: be able to prove below assume
-     assume (!is_e_init[msg1_ephemeral'] ==> !(valid_c2<n2,m>[C1]));
+         assume (!is_e_init[msg1_ephemeral'] ==> !(valid_c2<n2,m>[C1]));
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {
