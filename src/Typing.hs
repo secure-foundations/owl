@@ -2752,7 +2752,9 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
       CMac -> do
           assert ("Wrong number of arguments to mac") $ length args == 2
           let [(_, t1), (_, t)] = args
-          case extractNameFromType t1 of
+          let withMacLength t = 
+                  tRefined t ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "maclen")
+          withMacLength <$> case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
             Just k -> do 
                 nt <-  local (set tcScope $ TcGhost False) $ getNameType k
@@ -2760,7 +2762,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                   NT_MAC t' -> do
                       assertSubtype t t'
                       l <- coveringLabel t'
-                      return $ mkSpanned $ TRefined (tData l advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
+                      return $ tData l advLbl 
                   _ -> mkSpanned <$> trivialTypeOf [t1, t]
       CMacVrfy -> do
           assert ("Wrong number of arguments to mac_vrfy") $ length args == 3

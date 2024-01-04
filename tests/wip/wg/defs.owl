@@ -211,7 +211,7 @@ odh L2<@n,m> :
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-     !valid_c1<i@n>(salt) -> strict C5<@n,m>
+     (!valid_c1<i,n>[salt]) -> strict C5<@n,m>
 }
 
 odh L5<j@n,m> :

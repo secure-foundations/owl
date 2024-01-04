@@ -44,7 +44,6 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let msg1_mac1_k = crh(mac1() ++ dhpk_S_resp) in 
     let msg1_mac1 = mac(msg1_mac1_k, 
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
-    assume(length(msg1_mac1) == |maclen|);
     let msg1_mac2 = zeros_16() in
     let msg1_output /* : msg1 */ = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
