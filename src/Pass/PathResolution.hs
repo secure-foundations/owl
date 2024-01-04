@@ -554,6 +554,11 @@ resolveAExpr a =
           return $ Spanned (a^.spanOf) $ AEPackIdx i a'
       AELenConst _ -> return a
       AEInt _ -> return a
+      AEKDF a2 b c nks j -> do
+          a2' <- resolveAExpr a2
+          b' <- resolveAExpr b
+          c' <- resolveAExpr c
+          return $ Spanned (a^.spanOf) $ AEKDF a2' b' c' nks j 
 
 resolveLemma :: Ignore Position -> BuiltinLemma -> Resolve BuiltinLemma
 resolveLemma pos lem =
@@ -796,12 +801,6 @@ resolveProp p =
           b' <- resolveAExpr b
           c' <- resolveAExpr c
           return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' nks j 
-      PKDF a b c nks j res -> do
-          a' <- resolveAExpr a
-          b' <- resolveAExpr b
-          c' <- resolveAExpr c
-          res' <- resolveAExpr res
-          return $ Spanned (p^.spanOf) $ PKDF a' b' c' nks j res'
       PQuantIdx q sx ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

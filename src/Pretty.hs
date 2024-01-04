@@ -232,10 +232,6 @@ instance  OwlPretty PropX where
         owlpretty q <+> owlpretty sx <+> owlpretty ": bv" <> owlpretty "." <+> p
     owlpretty (PValidKDF a b c nks j) = owlpretty "valid_kdf" <> 
         tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
-    owlpretty (PKDF a b c nks j res) = owlpretty "kdf" <>
-        angles ((hsep $ intersperse (owlpretty "||") $ map owlpretty nks) <> owlpretty ";" <> owlpretty j)
-        <>
-        tupled (map owlpretty [a, b, c, res])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
@@ -305,6 +301,10 @@ instance  OwlPretty AExprX where
         owlpretty "0x" <> ps
     owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
     owlpretty (AEInt i) = owlpretty i
+    owlpretty (AEKDF a b c nks j) = owlpretty "ghost_kdf" <>
+        angles ((hsep $ intersperse (owlpretty "||") $ map owlpretty nks) <> owlpretty ";" <> owlpretty j)
+        <>
+        tupled (map owlpretty [a, b, c])
     --owlpretty (AEPreimage p ps xs) = 
     --    let pxs = case xs of
     --                [] -> mempty

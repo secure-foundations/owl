@@ -29,7 +29,6 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let H3 = crh(H2 ++ msg1_static) in
     // let ss_S_resp_S_init = dh_combine(dhpk_S_resp, get(S_init<@n>)) in
     corr_case S_init<@n> in 
-    assert (exists i:idx. kdf<kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x, C2)); 
     let C3 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 0>(C2, ss_S_resp_S_init, 0x) in 
     let k1 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 1>(C2, ss_S_resp_S_init, 0x) in 
     let timestamp = call timestamp_i<@n>() in
@@ -114,9 +113,40 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      corr_case S_init<@n2> when is_s_init[msg1_ephemeral'] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // TODO: be able to prove below assume
-     let _ = proof {
-         assume (!is_e_init[msg1_ephemeral'] ==> !(valid_c2<n2,m>[C1]))
-     } in 
+     assert (C1 == gkdf<kdfkey;0>(crh(construction()), msg1_ephemeral, 0x));
+     /*
+     assert (valid_c2<n2,m>[C1] ==>
+         exists c1:bv,i:idx.
+            kdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n2>)), 0x, c1)
+            /\
+            kdf<kdfkey||enckey;0>(c1, 
+                dh_combine(dhpk(get(E_init<i@n2>)), get(S_resp<@m>)), 0x,
+                C1
+            ));
+     */
+     /*
+     C1 == kdf<kdfkey;0>(crh(construction()), dhpk(get(S_init<@n2>)), 0x)
+     == kdf<kdfkey||enckey;0>(
+            kdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n2>)), 0x),
+            dh_combine(dhpk(get(E_init<i@n2>)), get(S_resp<@m>)), 0x)
+     */
+
+
+    /*
+
+     assert (
+        msg1_ephemeral == dhpk(get(S_init<@n2>)) ==>
+        forall c1:bv, i:idx. 
+            kdf<kdfkey||enckey;0>(c1, 
+                dh_combine(dhpk(get(E_init<i@n2>)), get(S_resp<@m>)), 0x,
+                C1)
+            ==>
+             kdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n2>)), 0x, c1)
+             /\
+
+            c1 == crh(construction()));
+     */
+     assume (is_s_init[msg1_ephemeral'] ==> !(valid_c2<n2,m>[C1]));
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {

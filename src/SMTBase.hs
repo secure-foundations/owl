@@ -473,6 +473,14 @@ interpretAExp ae' = do
       AEHex s -> makeHex s
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
+      AEKDF a b c nks j -> do
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          vc <- interpretAExp c
+          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+          let start = sPlus $ take j nk_lengths
+          let segment = nk_lengths !! j
+          return $ SApp [SAtom "KDF", va, vb, vc, start, segment]
       --AEPreimage p ps as -> do
       --    aes <- liftCheck $ getROPreimage p ps as
       --    interpretAExp aes

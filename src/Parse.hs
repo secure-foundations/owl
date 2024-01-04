@@ -29,7 +29,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -547,25 +547,6 @@ parsePropTerm =
             info <- parseAExpr
             symbol ")"
             return $ PInODH s ikm info
-            )
-        <|>
-        (parseSpanned $ do
-            reserved "kdf"
-            symbol "<"
-            nks <- parseNameKind `sepBy1` (symbol "||")
-            symbol ";"
-            j <- many1 digit
-            symbol ">"
-            symbol "("
-            a <- parseAExpr
-            symbol ","
-            b <- parseAExpr
-            symbol ","
-            c <- parseAExpr
-            symbol ","
-            res <- parseAExpr
-            symbol ")"
-            return $ PKDF a b c nks (read j) res
             )
         <|>
         (parseSpanned $ try $ do
@@ -1819,6 +1800,23 @@ parseAExprTerm =
         symbol "|"
         return $ AELenConst x
     )
+    <|>
+        (parseSpanned $ do
+            reserved "gkdf"
+            symbol "<"
+            nks <- parseNameKind `sepBy1` (symbol "||")
+            symbol ";"
+            j <- many1 digit
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ","
+            b <- parseAExpr
+            symbol ","
+            c <- parseAExpr
+            symbol ")"
+            return $ AEKDF a b c nks (read j) 
+            )
     <|>
     --(parseSpanned $ do 
     --    reserved "preimage"

@@ -124,7 +124,8 @@ nametype C5_corr = kdf {ikm info.
                                 nonce dummy
 }
 
-predicate valid_c1<i,n>(x) = kdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x, x)
+func c1<i@n>() = 
+    gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
 
 nametype C4<@n,m> = kdf {ikm info.
     True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
@@ -188,18 +189,17 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 odh L1<i@n,m> :
     E_init<i@n>, S_resp<@m> -> {salt info.
-        valid_c1<i,n>[salt] -> 
+        salt == c1<session i, pid n>() -> 
             strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
                              aad x. true
                              nonce aead_counter_msg1_C2
 }                                                            
 
 predicate valid_c2<n,m>(salt) = 
-    exists c1:bv.
     exists i:idx. 
-        valid_c1<i,n>[c1] /\ 
-        kdf<kdfkey||enckey; 0>(c1,
-            dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x, salt)
+        (salt ==
+        gkdf<kdfkey||enckey; 0>(c1<session i, pid n>(),
+            dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x))
 
 odh L2<@n,m> : 
     S_init<@n>, S_resp<@m> -> {salt info.
@@ -211,7 +211,7 @@ odh L2<@n,m> :
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-     (!valid_c1<i,n>[salt]) -> strict C5<@n,m>
+     salt != c1<session i, pid n>() -> strict C5<@n,m>
 }
 
 odh L5<j@n,m> :

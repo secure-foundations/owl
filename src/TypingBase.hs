@@ -910,6 +910,11 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
       AEVar _ _ -> return ae
       AEHex _ -> return ae
       AEInt _ -> return ae
+      AEKDF a b c nks j -> do
+          a' <- normalizeAExpr a
+          b' <- normalizeAExpr a
+          c' <- normalizeAExpr c
+          return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
       AELenConst _ -> return ae
       AEPackIdx i a -> do
           a' <- normalizeAExpr a
@@ -977,6 +982,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
+      (AEKDF a b c nks j) -> do
+          _ <- mapM inferAExpr [a, b, c]
+          assert ("name kind index out of bounds") $ j < length nks
+          return $ tGhost
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
@@ -1108,6 +1117,11 @@ resolveANF a = do
           return $ mkSpanned $ AEPackIdx i a2'
       AELenConst _ -> return a
       AEInt _ -> return a
+      AEKDF a b c nks j -> do
+          a' <- resolveANF a
+          b' <- resolveANF b
+          c' <- resolveANF c
+          return $ mkSpanned $ AEKDF a' b' c' nks j
 
 isConstant :: AExpr -> Bool
 isConstant a = 

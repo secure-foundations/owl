@@ -505,16 +505,6 @@ interpretProp p = do
           let start = sPlus $ take j nk_lengths
           let segment = nk_lengths !! j
           return $ SApp [SAtom "ValidKDF", va, vb, vc, start, segment, SAtom (show $ nks !! j)]
-      (PKDF a b c nks j res) -> do
-          va <- interpretAExp a
-          vb <- interpretAExp b
-          vc <- interpretAExp c
-          vres <- interpretAExp res
-          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-          let start = sPlus $ take j nk_lengths
-          let segment = nk_lengths !! j
-          return $ SApp [SAtom "=", SAtom "TRUE",
-                            SApp [SAtom "KDF", va, vb, vc, start, segment]]
       (PEqIdx i1 i2) ->
         liftM2 (sEq) (symIndex i1) (symIndex i2)
       (PIsConstant a) -> do

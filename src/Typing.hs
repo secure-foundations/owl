@@ -1475,10 +1475,6 @@ checkProp p =
               _ <- mapM inferAExpr [x, y, z]
               assert ("weird case for PValidKDF j") $ j >= 0
               return ()
-          (PKDF a b c nks j res) -> do
-              _ <- mapM inferAExpr [a, b, c, res]
-              assert ("name kind index out of bounds") $ j < length nks
-              return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
               checkIdx i2
@@ -2645,7 +2641,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
               a' <- resolveANF (fst a)
               b' <- resolveANF (fst b)
               c' <- resolveANF (fst c)
-              return $ mkSpanned $ PKDF a' b' c' nks j (aeVar ".res")
+              return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
           let kdfRefinement t = tRefined t ".res" $ 
                 pAnd
                     (pEq (aeLength (aeVar ".res")) outLen)

@@ -120,6 +120,7 @@ data AExprX =
     | AEPackIdx Idx AExpr
     | AELenConst String
     | AEInt Int
+    | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
     deriving (Show, Generic, Typeable)
 
 type AExpr = Spanned AExprX
@@ -199,7 +200,6 @@ data PropX =
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr
-    | PKDF AExpr AExpr AExpr [NameKind] Int AExpr
     deriving (Show, Generic, Typeable)    
 
 data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
@@ -231,6 +231,9 @@ pEq x y = mkSpanned $ PEq x y
 
 pNot :: Prop -> Prop
 pNot p = mkSpanned $ PNot p
+
+pKDF a b c nks j res = 
+    pEq res (mkSpanned $ AEKDF a b c nks j)
 
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2

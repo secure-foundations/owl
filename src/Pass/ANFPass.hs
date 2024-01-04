@@ -47,6 +47,7 @@ anfAExpr a =
       AEGetVK _ -> return $ Spanned (a^.spanOf) $ ERet a
       AELenConst _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEInt _ -> return $ Spanned (a^.spanOf) $ ERet a
+      AEKDF _ _ _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEPackIdx i a' -> do
           e1 <- anfAExpr a'
           x <- fresh $ s2n ".x"
