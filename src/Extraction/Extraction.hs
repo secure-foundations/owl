@@ -938,7 +938,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
         intoOk rustExpr = owlpretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> owlpretty "};" <> line <> owlpretty "Ok(res_inner)"
         genMainWrapper owlName lname execRetTy specRetTy = 
             owlpretty "#[verifier(external_body)] pub exec fn" <+> owlpretty (rustifyName owlName) <> owlpretty "_wrapper" <> 
-            parens (owlpretty "&self, s: &mut" <+> owlpretty (stateName lname)) <> owlpretty "->" <> parens (owlpretty "_:" <+> owlpretty execRetTy) <> braces (line <>
+            parens (owlpretty "&self, s: &mut" <+> owlpretty (stateName lname)) <> owlpretty "->" <> owlpretty execRetTy <> braces (line <>
                 owlpretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
                 owlpretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  owlpretty owlName <> owlpretty "_spec(*self, *s)" <> owlpretty ");" <> line <>
 
