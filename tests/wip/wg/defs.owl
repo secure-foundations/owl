@@ -124,7 +124,7 @@ nametype C5_corr = kdf {ikm info.
                                 nonce dummy
 }
 
-func c1<i@n>() = 
+func honest_c1<i@n>() = 
     gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
 
 nametype C4<@n,m> = kdf {ikm info.
@@ -189,21 +189,37 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 odh L1<i@n,m> :
     E_init<i@n>, S_resp<@m> -> {salt info.
-        salt == c1<session i, pid n>() -> 
+        salt == honest_c1<session i, pid n>() -> 
             strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
                              aad x. true
                              nonce aead_counter_msg1_C2
 }                                                            
 
-predicate valid_c2<n,m>(salt) = 
-    exists i:idx. 
-        (salt ==
-        gkdf<kdfkey||enckey; 0>(c1<session i, pid n>(),
-            dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x))
+func honest_c2<i@n,m>() =
+    gkdf<kdfkey||enckey;0>(honest_c1<session i, pid n>(),
+        dh_combine(dhpk(get(E_init<i@n>)), get(S_resp<@m>)), 0x)
+
+func honest_c3<i@n,m>() = 
+    gkdf<kdfkey||enckey;0>(honest_c2<session i, pid n, pid m>(), 
+        dh_combine(dhpk(get(S_init<@n>)), get(S_resp<@m>)),
+        0x
+    )
+
+func honest_c4<i,j@n,m>() = 
+    gkdf<kdfkey||nonce||enckey;0>(honest_c3<session i, pid n, pid m>(),
+        dhpk(get(E_resp<j@m>)),
+        0x
+    )
+
+func honest_c5<i,j@n,m>() = 
+    gkdf<kdfkey||enckey;0>(honest_c4<session i, session j, pid n, pid m>(),
+        dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>)),
+        0x
+    )
 
 odh L2<@n,m> : 
     S_init<@n>, S_resp<@m> -> {salt info.
-        valid_c2<n,m>[salt] -> 
+        (exists i:idx. salt == honest_c2<session i, pid n, pid m>()) -> 
                 strict C3<@n,m> || strict st_aead (Data<adv> |12|)
                            aad x. true
                            nonce aead_counter_msg1_C3
@@ -211,12 +227,13 @@ odh L2<@n,m> :
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-     salt != c1<session i, pid n>() -> strict C5<@n,m>
+     salt != honest_c1<session i, pid n>() -> strict C5<@n,m>
 }
 
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
-    True -> strict C6<@n,m> || enckey (Data<adv> |0|)
+    (! exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
+        -> strict C6<@n,m> || enckey (Data<adv> |0|)
 }
 
 nametype C1<@n,m> = kdf {ikm info.
@@ -292,9 +309,15 @@ struct initiator_msg1_val<i,n,m> {
       _initiator_msg1_H4 : Data<adv>
 }
 
+predicate is_e_init(x) =
+    exists n:idx, i:idx. x == dhpk(get(E_init<i@n>))
+
+predicate is_s_init(x) =
+    exists n2:idx. x == dhpk(get(S_init<@n2>))
+
 // Struct for responder state between messages
 struct responder_msg1_val<i,n,m> {
-     _responder_init_eph : (x:Ghost{is_group_elem(x)}),
+     _responder_init_eph : (x:Data<adv>{is_group_elem(x) /\ (x == dhpk(get(E_init<i@n>)) \/ !is_e_init[x])}),
      _responder_init_pk : (x:Ghost{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
      _responder_msg1_C2 : Ghost,
      _responder_msg1_C3 : 

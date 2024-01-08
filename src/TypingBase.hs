@@ -912,7 +912,7 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
       AEInt _ -> return ae
       AEKDF a b c nks j -> do
           a' <- normalizeAExpr a
-          b' <- normalizeAExpr a
+          b' <- normalizeAExpr b
           c' <- normalizeAExpr c
           return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
       AELenConst _ -> return ae

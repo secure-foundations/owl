@@ -49,11 +49,6 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
 def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
     : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
 
-predicate is_e_init(x) =
-    exists n:idx, i:idx. x == dhpk(get(E_init<i@n>))
-
-predicate is_s_init(x) =
-    exists n2:idx. x == dhpk(get(S_init<@n2>))
 
 
 def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
@@ -89,12 +84,6 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // TODO: be able to prove below assume
      assert (C1 == gkdf<kdfkey;0>(crh(construction()), msg1_ephemeral, 0x));
-     assert (valid_c2<n2,m>[C1] ==>
-         exists i:idx.
-             C1 == gkdf<kdfkey||enckey;0>(
-                gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n2>)), 0x),
-                dh_combine(dhpk(get(E_init<i@n2>)), get(S_resp<@m>)),
-                0x));
      assume (
           gkdf<kdfkey;0>(crh(construction()), dhpk(get(S_init<@m>)), 0x)
           !=
@@ -102,7 +91,6 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                     gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n2>)), 0x),
                 dh_combine(dhpk(get(E_init<i@n2>)), get(S_resp<@m>)),
                 0x));
-     assert (is_s_init[msg1_ephemeral'] ==> !(valid_c2<n2,m>[C1]));
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {
