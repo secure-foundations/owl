@@ -1017,8 +1017,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
                 b1 <- nameExpIsLocal ne1
                 b2 <- nameExpIsLocal ne2
+
                 assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
                 assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
+                let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
+                assert ("All indices in odh must appear in name expressions") indsLocal
                 checkNameType $ mkSpanned $ NT_KDF KDF_IKMPos kdf
           ensureODHDisjoint (bind (is, ps) (ne1, ne2))
           local (over (curMod . odh) $ insert s b) $ cont
