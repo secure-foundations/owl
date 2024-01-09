@@ -76,6 +76,7 @@ def B_main<j> () @ B
                 parse m' as m1<idx i>(n0', _, m1_pkA_e) in 
                 case m1_pkA_e as m1_pkA_enum {
                 | m1_pkA_tag m1_pkA =>
+                    pcase (i =idx j) in 
                     if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
                         let hybridKB          = get(hybrid_skB) in
                         let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in

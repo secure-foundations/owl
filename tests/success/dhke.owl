@@ -27,7 +27,8 @@ enum DHKEResult {
     | NoData
 }
 
-corr [X] /\ [Y] ==> [d]
+corr [X] ==> [d]
+corr [Y] ==> [d]
 corr [skB] ==> [d] /\ [X] /\ [Y]
 corr [skA] ==> [d] /\ [X] /\ [Y]
 

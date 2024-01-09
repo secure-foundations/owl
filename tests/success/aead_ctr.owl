@@ -12,7 +12,6 @@ counter M<@i> @ bob<i>
 name k<@i> : st_aead Name(X<@i>)
     aad x. (x == get(aad_val<@i>))
     nonce N
-    nonce_pattern *
     @ alice<i>
 
 def alice_main<@i>() @ alice<i> : Unit = 

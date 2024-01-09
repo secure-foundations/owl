@@ -268,10 +268,11 @@ initDetFuncs = withNormalizedTys $ [
           ([], [(x, t1), (y, t2)]) ->
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
-                    l <- if n `aeq` m then return zeroLbl else (coveringLabelOf $ map snd args)
+                    b <- decideProp $ pEq (aeGet n) (aeGet m)
+                    l <- if isJust b then return zeroLbl else (coveringLabelOf $ map snd args)
                     return $ TRefined (mkSpanned $ TBool l) ".res" $ bind (s2n ".res") $
                         pImpl (pEq (aeVar ".res") (aeApp (topLevelPath "true") [] []))
-                              (pEq (mkSpanned $ AEGet n) (mkSpanned $ AEGet m))
+                              (pEq (aeGet n) (aeGet m))
                 (TName n, m) -> do
                   nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of

@@ -22,3 +22,6 @@ struct t {
     _z : z_enum,
     _s : s
 }
+
+def main(x : t) @ alice : Unit = 
+    assert True

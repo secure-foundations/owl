@@ -326,93 +326,89 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
-sLambda :: (SExp -> SExp) -> SExp
-sLambda k = 
-    let x = SAtom "%x" in
-    SApp [SAtom "lambda", SApp [SApp [x, SAtom "Bits"]], k x]
 
-sLambdaExplicit :: SExp -> SExp -> SExp -> SExp
-sLambdaExplicit x sort bdy = SApp [SAtom "lambda", SApp [SApp [x, sort]], bdy]
-
-sRefined :: SExp -> (SExp -> SExp) -> SExp
-sRefined v k = 
-    SApp [SAtom "Refined", v, sLambda k]
-
-sRefined' :: SExp -> (SExp -> Sym SExp) -> Sym SExp
-sRefined' v k = do
-    x <- SAtom <$> freshSMTName
-    vk <- k x
-    return $ SApp [SAtom "Refined", v, SApp [SAtom "lambda", SApp [SApp [x, SAtom "Bits"]], vk]] 
-
-smtTy :: Ty -> Sym SExp
-smtTy t = 
+smtTy :: SExp -> Ty -> Sym SExp
+smtTy xv t = 
     case t^.val of
-      TData _ _ _ -> return $ SAtom "Data"
-      TGhost -> return $ SAtom "Data"
+      TData _ _ _ -> return sTrue
+      TGhost -> return sTrue
       TDataWithLength _ a -> do
           v <- interpretAExp a
-          return $ sRefined (SAtom "Data") $ \x -> (sLength x) `sEq` v
-      TBool _ -> return $ SAtom "TBool"  
+          return $ sLength xv `sEq` v
+      TBool _ -> return $ xv `sHasType` (SAtom "TBool")
       TRefined t s xp -> do
-          vt <- smtTy t
+          vt <- smtTy xv t
           (x, p) <- liftCheck $ unbind xp
           vE <- use varVals
-          varVals %= (M.insert x (SAtom (show x)))
+          varVals %= (M.insert x xv)
           v2 <- interpretProp p
           varVals .= vE
-          return $ SApp [SAtom "Refined", vt, SApp [SAtom "lambda", SApp [SApp [SAtom (show x), SAtom "Bits"]], v2]]
-      TOption t -> do
-          vt <- smtTy t
-          return $ sEnumType [SAtom "Unit", vt]
+          return $ vt `sAnd2` v2
+      TOption t -> sMkEnumCond xv [tUnit, t]
       TName n -> do
           vn <- getSymName n
-          return $ SApp [SAtom "TName", vn]
+          return $ xv `sHasType` (SApp [SAtom "TName", vn])
       TVK n -> do
           vn <- symNameExp n
           vk <- getTopLevelFunc ("vk")
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` (SApp [vk, vn])
+          return $ xv `sEq` (SApp [vk, vn])
       TDH_PK n -> do
           vn <- symNameExp n
           dhpk <- getTopLevelFunc ("dhpk")
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` (SApp [dhpk, vn])
+          return $ xv `sEq` (SApp [dhpk, vn])
       TEnc_PK n -> do
           vn <- symNameExp n
           encpk <- getTopLevelFunc ("enc_pk")
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` (SApp [encpk, vn])
+          return $ xv `sEq` (SApp [encpk, vn])
       TSS n m -> do
           vn <- symNameExp n
           vm <- symNameExp m
           dhpk <- getTopLevelFunc ("dhpk")
           dh_combine <- getTopLevelFunc ("dh_combine")
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
-      TUnit -> return $ SAtom "Unit"
-      TAdmit -> return $ SAtom "Unit"
+          return $ xv `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
+      TUnit -> return $ xv `sHasType` (SAtom "Unit")
+      TAdmit -> return $ sTrue
       TUnion t1 t2 -> do
-          vt1 <- smtTy t1
-          vt2 <- smtTy t2
-          return $ SApp [SAtom "Union", vt1, vt2]
+          vt1 <- smtTy xv t1
+          vt2 <- smtTy xv t2
+          return $ vt1 `sOr` vt2
       TCase p t1 t2 -> do
           vp <- interpretProp p
-          vt1 <- smtTy t1
-          vt2 <- smtTy t2
-          return $ SApp [SAtom "TCase", vp, vt1, vt2]
-      TExistsIdx _ -> return $ SAtom "Data" -- Opaque to SMT
+          vt1 <- smtTy xv t1
+          vt2 <- smtTy xv t2
+          return $ (sImpl vp vt1) `sAnd2` (sImpl (sNot vp) vt2)
+      TExistsIdx _ -> return $ sTrue -- Opaque to SMT
       TConst s@(PRes (PDot pth _)) ps -> do
           td <- liftCheck $ getTyDef  s
           case td of
-            TyAbstract -> return $ SAtom "Data"
-            TyAbbrev t -> smtTy t
-            StructDef ixs -> sRefined' (SAtom "Data") $ \x -> smtStructRefinement ps pth ixs x
+            TyAbstract -> return sTrue
+            TyAbbrev t -> smtTy xv t
+            StructDef ixs -> smtStructRefinement ps pth ixs xv
             EnumDef ixs -> do
                 dts <- liftCheck $ extractEnum ps (show s) ixs
-                vts <- forM dts $ \(_, ot) -> 
-                    case ot of
-                      Just t -> smtTy t
-                      Nothing -> return $ SAtom "Unit"
-                return $ sEnumType vts
+                let ts = map (\(_, ot) -> case ot of
+                                              Just t -> t
+                                              Nothing -> tUnit) dts
+                sMkEnumCond xv ts
       THexConst a -> do
           h <- makeHex a
-          return $ sRefined (SAtom "Data") $ \x -> x `sEq` h 
+          return $ xv `sEq` h 
+
+sMkEnumCond :: SExp -> [Ty] -> Sym SExp
+sMkEnumCond xv ts = do
+    liftCheck $ assert ("sMkEnumCond: tys must be non-null") $ length ts > 0
+    let tag = SApp [SAtom "Prefix", xv, SAtom "2"]
+    let payload = SApp [SAtom "Postfix", xv, SAtom "2"]
+    let p1 = SApp [SAtom "OkInt", tag]
+    let p2 = SApp [SAtom ">=", SApp [SAtom "B2I", sLength xv], SAtom "2"]
+    let p3 = SApp [SAtom "<", SApp [SAtom "B2I", tag], SAtom (show $ length ts)]
+    conds <- forM [0 .. (length ts - 1)] $ \i -> do
+        tv <- smtTy payload (ts !! i)
+        return $ sImpl (sEq (SApp [SAtom "B2I", tag]) (SAtom $ show i)) tv
+    return $ sAnd $ p1 : p2 : p3 : conds
+                    
+
+
 
 smtStructRefinement :: [FuncParam] -> ResolvedPath -> Bind [IdxVar] (DepBind ()) -> SExp -> Sym SExp
 smtStructRefinement fps spath idp structval = do 
@@ -433,13 +429,13 @@ smtStructRefinement fps spath idp structval = do
             go :: DepBind () -> Sym ([SExp], [SExp])
             go (DPDone _) = error "unreachable"
             go (DPVar t sx xk) = do
-                vt1 <- smtTy t
                 sn <- smtName $ PDot spath sx
                 let fld = SApp [SAtom sn, structval]
+                vt1 <- smtTy fld t
                 let l = case (stripRefinements t)^.val of
                           TGhost -> []
                           _ -> [sLength fld]
-                let plength1 = ([fld `sHasType` vt1], l)
+                let plength1 = ([vt1], l)
                 (x, k) <- liftCheck $ unbind xk
                 case k of
                   DPDone _ -> return plength1
@@ -452,21 +448,11 @@ sTypeSeq :: [SExp] -> SExp
 sTypeSeq [] = SAtom "(as seq.empty (Seq Type))"
 sTypeSeq (x:xs) = SApp [SAtom "seq.++", SApp [SAtom "seq.unit", x], sTypeSeq xs]
 
-sEnumType :: [SExp] -> SExp
-sEnumType xs = SApp [SAtom "Enum", sTypeSeq xs]
-
 sHasType :: SExp -> SExp -> SExp
 sHasType v vt = SApp [SAtom "HasType", v, vt]
 
 tyConstraints :: Ty -> SExp -> Sym SExp
-tyConstraints t v = do
-    vt <- smtTy t
-    return $ SApp [SAtom "HasType", v, vt]
-
-
-
-
-
+tyConstraints t v = smtTy v t
 
 interpretProp :: Prop -> Sym SExp
 interpretProp p = do

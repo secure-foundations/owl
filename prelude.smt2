@@ -132,24 +132,11 @@
     :qid hastype_tbool
 )))
 
-(declare-const Data Type)
-(assert (forall ((x Bits)) (!
-    (= (HasType x Data) true)
-    :pattern (HasType x Data)
-    :qid hastype_data
-)))
-
 (declare-const Nat Type)
 (assert (forall ((x Bits)) (!
     (= (HasType x Nat) (>= (B2I x) 0))
     :pattern (HasType x Nat)
     :qid hastype_nat
-)))
-(declare-fun Refined (Type (Array Bits Bool)) Type)
-(assert (forall ((x Bits) (t Type) (p (Array Bits Bool))) (!
-    (= (HasType x (Refined t p)) (and (HasType x t) (select p x)))
-    :pattern (HasType x (Refined t p))
-    :qid hastype_refined
 )))
 
 
@@ -158,20 +145,6 @@
     (= (HasType x Unit) (= x UNIT))
     :pattern (HasType x Unit)
     :qid hastype_unit
-)))
-
-(declare-fun Union (Type Type) Type)
-(assert (forall ((x Bits) (t1 Type) (t2 Type)) (!
-    (= (HasType x (Union t1 t2)) (or (HasType x t1) (HasType x t2)))
-    :pattern (HasType x (Union t1 t2))
-    :qid hastype_union
-)))
-
-(declare-fun TCase (Bool Type Type) Type)
-(assert (forall ((x Bits) (b Bool) (t1 Type) (t2 Type)) (!
-    (= (HasType x (TCase b t1 t2)) (ite b (HasType x t1) (HasType x t2)))
-    :pattern (HasType x (TCase b t1 t2))
-    :qid hastype_tcase
 )))
 
 (declare-fun EnumTag (Int) Bits)
@@ -186,22 +159,6 @@
 
 (define-fun TestEnumTag ((x Int) (y Bits)) Bits
     (eq (Prefix y 2) (EnumTag x)))
-
-
-(declare-fun Enum ((Seq Type)) Type)
-(assert (forall ((x Bits) (ts (Seq Type))) (!
-    (= (HasType x (Enum ts))
-       (and
-        (OkInt (Prefix x 2))
-        (>= (B2I (length x)) 2) ; 2 bytes for tag
-        (< (B2I (Prefix x 2)) (seq.len ts)) ; tag is in range
-        (HasType (Postfix x 2) (seq.nth ts (B2I (Prefix x 2)))) ; payload has correct type
-       )
-    )
-    :pattern (HasType x (Enum ts))
-    :qid hastype_enum
-)))
-
 
 (declare-sort Name)
 (declare-fun ValueOf (Name) Bits)

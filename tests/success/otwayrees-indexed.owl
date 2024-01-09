@@ -165,6 +165,7 @@ def Alice_main<i> (
                     | mA1 _ => alice_None<idx i, idx j'>()
                     | mA2 msg2 =>
                         parse msg2 as kA_message_2<idx i', idx j'>(nA', kAB') in
+                        pcase (i =idx i') in
                         if checknonce(nA', nA) then
                             alice_Some<idx i, idx j'>(kAB')
                         else alice_None<idx i, idx j'>()
@@ -233,9 +234,11 @@ def Bob_main<i> (
                         | mB1 _ => bob_None<idx i, idx j'>()
                         | mB2 msg2 =>
                             parse msg2 as kB_message_2<idx i', idx j'>(nB', msg2') in
+                            pcase (i =idx i') in 
                             if checknonce(nB', nB)
                                 then
                                 // let _ = assert(sec(KB) ==> (i =idx i')) in
+                                false_elim in 
                                 let _ = output msg4_BtoA(M', x1') to endpoint(Alice) in
                                 bob_Some<idx i, idx j'>(msg2')
                             else
