@@ -346,8 +346,19 @@ smtTy xv t =
           return $ vt `sAnd2` v2
       TOption t -> sMkEnumCond xv [tUnit, t]
       TName n -> do
+          kdfRefinement <- case n^.val of
+                             NameConst _ _ _ -> return sTrue
+                             KDFName ann a b c j -> do
+                                  (_, nts) <- liftCheck $ getKDFAnnInfo ann a b c
+                                  (va, vb, vc, start, segment) <- getKDFArgs a b c (map snd nts) j
+                                  return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             ODHName p ixs a c i j -> do 
+                                 (ne1, ne2, _, nts) <- liftCheck $ getODHNameInfo p ixs a c i j
+                                 let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
+                                 (va, vb, vc, start, segment) <- getKDFArgs a b c (map snd nts) j
+                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
           vn <- getSymName n
-          return $ xv `sHasType` (SApp [SAtom "TName", vn])
+          return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do
           vn <- symNameExp n
           vk <- getTopLevelFunc ("vk")

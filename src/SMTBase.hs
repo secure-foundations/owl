@@ -591,6 +591,16 @@ sPlus xs = SApp $ (SAtom "+") : xs
 sNameKindLength :: SExp -> SExp
 sNameKindLength n = SApp [SAtom "NameKindLength", n]
 
+getKDFArgs :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym (SExp, SExp, SExp, SExp, SExp)
+getKDFArgs a b c nks j = do
+    va <- interpretAExp a
+    vb <- interpretAExp b
+    vc <- interpretAExp c
+    nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+    let start = sPlus $ take j nk_lengths
+    let segment = nk_lengths !! j
+    return (va, vb, vc, start, segment)
+
 mkKDFName :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym SExp
 mkKDFName a b c nks j = do
     va <- interpretAExp a

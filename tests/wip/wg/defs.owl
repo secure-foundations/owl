@@ -205,12 +205,15 @@ func honest_c3<i@n,m>() =
         0x
     )
 
-func c3_resp<@m>(pk, eph) = 
-    gkdf<kdfkey||enckey;0>(
+func c2_resp<@m>(eph) = 
         gkdf<kdfkey||enckey;0>(
             gkdf<kdfkey;0>(crh(construction()), eph, 0x),
             dh_combine(eph, get(S_resp<@m>)), 
-            0x),
+            0x)
+
+func c3_resp<@m>(pk, eph) = 
+    gkdf<kdfkey||enckey;0>(
+        c2_resp<pid m>(eph),
         dh_combine(pk, get(S_resp<@m>)),
         0x
     )
@@ -348,8 +351,8 @@ predicate is_s_init(x) =
 // Struct for responder state between messages
 struct responder_msg1_val<i,n,m> {
      _responder_init_eph : (x:Data<adv>{is_group_elem(x) /\ (x == dhpk(get(E_init<i@n>)) \/ !is_e_init[x])}),
-     _responder_init_pk : (x:Ghost{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
-     _responder_msg1_C2 : Ghost,
+     _responder_init_pk : (x:Data<adv>{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
+     _responder_msg1_C2 : (x:Ghost{x == c2_resp<pid m>(_responder_init_eph)}),
      _responder_msg1_C3 : 
         if (_responder_init_eph == dhpk(get(E_init<i@n>)) /\
             _responder_init_pk == dhpk(get(S_init<@n>)) /\
