@@ -165,7 +165,7 @@ mkSelfDisjointness fdfs = do
                                                                              SApp [SAtom "ValueOf", v2]]]
                     emitAssertion $ sForall (q1 ++ q2)
                         (v1_eq_v2 `sImpl` q1_eq_q2)
-                        [v1_eq_v2]
+                        [v1, v2]
                         ("self_disj_" ++ show (sn))
 
 

@@ -2513,7 +2513,10 @@ inferKDFODH a (b, tb) c s ips i j = do
                 --    (a, g^xy, c) not in ODH
                 --    the DH computation is local (involves a module-local DH name)
                 --    one of the x,y is secret
-                (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
+                (fn, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
+                case fn of
+                  Nothing -> return ()
+                  Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
                 case notODH of
                   False -> return Nothing
                   True -> do
