@@ -963,7 +963,24 @@ memoizeAExpr ae m = do
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd ae) t
           return t
 
-      
+ensureNonGhostLbl l = do
+    case l^.val of
+      LGhost -> typeError $ "Ghost value not allowed here"
+      LJoin l1 l2 -> do
+          ensureNonGhostLbl l1
+          ensureNonGhostLbl l2
+      LRangeIdx il -> do
+          let (i, l) = unsafeUnbind il
+          ensureNonGhostLbl l
+      LRangeVar xl -> do
+          let (x, l) = unsafeUnbind xl
+          ensureNonGhostLbl l
+      _ -> return ()
+
+ensureNonGhostTy :: Ty -> Check ()
+ensureNonGhostTy t = do
+    l <- coveringLabel' t
+    ensureNonGhostLbl l
 
 inferAExpr :: AExpr -> Check Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine "inferAExpr" $ do

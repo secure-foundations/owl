@@ -1128,6 +1128,9 @@ checkNoTopLbl l =
       LRangeIdx il -> do
           (i, l) <- unbind il
           withIndices [(i, IdxGhost)] $ checkNoTopLbl l
+      LRangeVar il -> do
+          (x, l) <- unbind il
+          checkNoTopLbl l
       LGhost -> typeError $ "Ghost label not allowed here"
       _ -> return ()
 
@@ -1734,6 +1737,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           args <- forM aes $ \a -> do
               t <- inferAExpr a
               t' <- normalizeTy t
+              withSpan (a^.spanOf) $ ensureNonGhostTy t'
               return (a, t')
           getOutTy ot =<< checkCryptoOp cop args
       (EInput sx xsk) -> do

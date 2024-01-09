@@ -205,6 +205,29 @@ func honest_c3<i@n,m>() =
         0x
     )
 
+func c3_resp<@m>(pk, eph) = 
+    gkdf<kdfkey||enckey;0>(
+        gkdf<kdfkey||enckey;0>(
+            gkdf<kdfkey;0>(crh(construction()), eph, 0x),
+            dh_combine(eph, get(S_resp<@m>)), 
+            0x),
+        dh_combine(pk, get(S_resp<@m>)),
+        0x
+    )
+
+func c4_resp<j@m>(pk, eph) = 
+    gkdf<kdfkey||nonce||enckey;0>(c3_resp<pid m>(pk, eph),
+        dhpk(get(E_resp<j@m>)),
+        0x
+    )
+
+func c5_resp<j@m>(pk, eph) = 
+    gkdf<kdfkey||enckey;0>(c4_resp<session j, pid m>(pk, eph),
+        dh_combine(eph, get(E_resp<j@m>)),
+        0x
+    )
+    
+
 func honest_c4<i,j@n,m>() = 
     gkdf<kdfkey||nonce||enckey;0>(honest_c3<session i, pid n, pid m>(),
         dhpk(get(E_resp<j@m>)),
@@ -232,8 +255,15 @@ odh L4<i,j@n,m> :
 
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
-        !(exists i:idx. salt == honest_c1<session i, pid n>()) -> 
+        !(exists i:idx. salt == honest_c1<session i, pid n>()) 
+        /\ (exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
+            -> 
             strict C6<@n,m> || enckey (Data<adv> |0|)
+        !(exists i:idx. salt == honest_c1<session i, pid n>()) 
+        /\ !(exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
+            -> strict C6_corr || enckey (Data<adv> |0|)
+
+        
 }
 
 nametype C1<@n,m> = kdf {ikm info.
@@ -329,6 +359,8 @@ struct responder_msg1_val<i,n,m> {
                     sec(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0])
                  })
             else
-                Data<adv>,
+                (x:Data<adv>{
+                    x == c3_resp<pid m>(_responder_init_pk, _responder_init_eph)
+                 }),
      _responder_msg1_H4 : Data<adv>
 }

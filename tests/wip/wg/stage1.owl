@@ -138,13 +138,17 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                             ss != dh_combine(dhpk(get(S_init<@n>)),
                             get(S_resp<@m>)));
                         let C3 = kdf<0;odh L2<@n,m>[0], odh L2<@n3,m>[0]; kdfkey || enckey; 0>(C2, ss, 0x) in 
+                        assume (C3 == honest_c3<session i, pid n, pid m>() ==>
+                            C2 == honest_c2<session i, pid n, pid m>() /\
+                            ss == dh_combine(dhpk(get(S_init<@n>)),
+                            get(S_resp<@m>))
+                        );
                         let k1 = kdf<0;odh L2<@n,m>[0], odh L2<@n3,m>[0]; kdfkey || enckey; 1>(C2, ss, 0x) in 
                         case st_aead_dec(k1, msg1_timestamp, H3, 0x) as Option (Data<adv> |12|) {
                         | None => None()
                         | Some msg1_timestamp_dec =>
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
-
                             Some(pack<n>(pack<i>(responder_msg1_val<idx i, idx
                             n, idx m>(msg1_ephemeral, msg1_static_dec, C2, C3, H4))))
                         otherwise => None()

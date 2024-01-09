@@ -66,7 +66,7 @@ anfAExprList sp args k = go args []
         go (arg:args) acc = do
             e1 <- anfAExpr arg
             x <- fresh $ s2n ".x"
-            ek <- go args (acc ++ [aevar sp x])
+            ek <- go args (acc ++ [aevar (arg^.spanOf) x])
             return $ Spanned sp $ ELet e1 Nothing (Just arg) (show x) (bind x ek)
 
 
