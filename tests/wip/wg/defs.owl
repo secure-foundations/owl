@@ -259,14 +259,8 @@ odh L4<i,j@n,m> :
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
         !(exists i:idx. salt == honest_c1<session i, pid n>()) 
-        /\ (exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
             -> 
             strict C6<@n,m> || enckey (Data<adv> |0|)
-        !(exists i:idx. salt == honest_c1<session i, pid n>()) 
-        /\ !(exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
-            -> strict C6_corr || enckey (Data<adv> |0|)
-
-        
 }
 
 nametype C1<@n,m> = kdf {ikm info.

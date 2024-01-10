@@ -1023,7 +1023,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
                 let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
                 assert ("All indices in odh must appear in name expressions") indsLocal
-                checkNameType $ mkSpanned $ NT_KDF KDF_IKMPos kdf
+                checkNameType $ Spanned (d^.spanOf) $ NT_KDF KDF_IKMPos kdf
           ensureODHDisjoint (bind (is, ps) (ne1, ne2))
           local (over (curMod . odh) $ insert s b) $ cont
       (DeclTy s ot) -> do
@@ -2381,7 +2381,7 @@ instance Alpha KDFInferResult
 
 unifyKDFInferResult :: 
     KDFSelector ->
-    Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)
+    Maybe (Either KDFSelector (String, ([Idx], [Idx]), KDFSelector))
     ->
     KDFInferResult -> KDFInferResult -> Check KDFInferResult
 unifyKDFInferResult _ _ (KDFCorrupt _ _) v = return v
@@ -2400,8 +2400,9 @@ unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
                (Just (nt1, _), Just (nt2, _)) -> return $ nt1 `aeq` nt2
                (_, _) -> return False
     let pe = case e of
-                Left i -> owlpretty i
-                Right (s, ips, i) -> list [owlpretty s, owlpretty ips, owlpretty i]
+                Just (Left i) -> owlpretty i
+                Just (Right (s, ips, i)) -> list [owlpretty s, owlpretty ips, owlpretty i]
+                Nothing -> mempty
     case (b && b2 && b3) of
       True -> return v1
       _ | not b3 -> do
@@ -2507,35 +2508,34 @@ inferKDFODH a (b, tb) c s ips i j = do
                         return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) str_nts
               else return Nothing
           _ -> return Nothing
-    res2 <- case res of
-        Just v@(KDFGood _ _) -> return $ Just v
-        _ -> do 
-            oxy <- getLocalDHComputation b
-            case oxy of
-              Just (x, ny) -> do
-                -- h(a, g^xy, c) is public when:
-                --    (a, g^xy, c) not in ODH
-                --    the DH computation is local (involves a module-local DH name)
-                --    one of the x,y is secret
-                (fn, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
-                case fn of
-                  Nothing -> return ()
-                  Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
-                case notODH of
-                  False -> return Nothing
-                  True -> do
-                      ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
-                      if ny_sec then return (Just KDFAdv) else do
-                         tx <- inferAExpr x
-                         case tx^.val of
-                           TDH_PK nx -> do
-                               nx_sec <- not <$> flowsTo (nameLbl nx) advLbl
-                               if nx_sec then return (Just KDFAdv) else return Nothing
-                           _ -> return Nothing
-              Nothing -> return Nothing
-    case res2 of
-      Nothing -> return res -- here, res is either Nothing or KDFCorrupt
-      Just _ -> return res2
+    return res
+
+-- Try to see if the ODH computation is out of bounds
+inferKDFODHOOB :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe KDFInferResult) 
+inferKDFODHOOB a (b, tb) c = do 
+    oxy <- getLocalDHComputation b
+    case oxy of
+      Just (x, ny) -> do
+        -- h(a, g^xy, c) is public when:
+        --    (a, g^xy, c) not in ODH
+        --    the DH computation is local (involves a module-local DH name)
+        --    one of the x,y is secret
+        (fn, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
+        case fn of
+          Nothing -> return ()
+          Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
+        case notODH of
+          False -> return Nothing
+          True -> do
+              ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
+              if ny_sec then return (Just KDFAdv) else do
+                 tx <- inferAExpr x
+                 case tx^.val of
+                   TDH_PK nx -> do
+                       nx_sec <- not <$> flowsTo (nameLbl nx) advLbl
+                       if nx_sec then return (Just KDFAdv) else return Nothing
+                   _ -> return Nothing
+      Nothing -> return Nothing
 
 
 nameKindLength :: NameKind -> AExpr
@@ -2628,15 +2628,19 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
               let go os =
                       case os of
                         [] -> do
-                            pub <- tyFlowsTo (snd b) advLbl
-                            assert ("No KDF hints worked for second argument; IKM must then flow to adv") pub
-                            return Nothing
+                            r <- inferKDFODHOOB a b c
+                            case r of
+                              Just KDFAdv -> return $ Just (Nothing, KDFAdv)
+                              Nothing -> do
+                                pub <- tyFlowsTo (snd b) advLbl
+                                assert ("No KDF hints worked for second argument; IKM must then flow to adv") pub
+                                return Nothing
                         e:os' -> do
                             r <- case e of
                                    Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
                                    Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j
                             case r of
-                              Just v -> return $ Just (e, v)
+                              Just v -> return $ Just (Just e, v)
                               Nothing -> go os'
               go oann2
           res <- case (res1, res2) of
