@@ -2984,6 +2984,12 @@ moduleMatches md1 md2 =
 --moduleMatches :: Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
 --moduleMatches xmd1 ymd2 = do
 
+normalizeTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Check (Map DataVar (Ignore String, (Maybe AExpr), Ty))
+normalizeTyContext ctxt =
+    forM ctxt $ \(x, (s, a, t)) -> do
+        t' <- normalizeTy t
+        return (x, (s, a, t'))
+
 typeError' :: String -> Check a
 typeError' msg = do
     pos <- view curSpan
@@ -2996,7 +3002,7 @@ typeError' msg = do
               False -> do
                 (_, b) <- local (set inTypeError True) $ SMT.smtTypingQuery "typeError false check" $ SMT.symAssert $ mkSpanned PFalse
                 return $ if b then [E.Note "Inconsistent type context detected. Try using false_elim?"] else []
-    tyc <- removeAnfVars <$> view tyContext 
+    tyc <- (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
     e <- ask
