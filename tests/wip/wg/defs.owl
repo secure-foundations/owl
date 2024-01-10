@@ -258,7 +258,9 @@ odh L4<i,j@n,m> :
 
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
-        !(exists i:idx. salt == honest_c1<session i, pid n>()) 
+        (! exists i:idx. salt == honest_c1<session i, pid n>()) 
+        /\
+        (exists i:idx. salt == c5_resp<session j, pid m>(dhpk(get(S_init<@n>)), dhpk(get(E_init<i@n>))))
             -> 
             strict C6<@n,m> || enckey (Data<adv> |0|)
 }
