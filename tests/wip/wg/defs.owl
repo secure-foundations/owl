@@ -86,11 +86,26 @@ nametype C7_corr = kdf {ikm info.
 counter aead_counter_msg2_C7<j@m> @ Responder<m>
 
 
+nametype C6_dual<@n, m> = dualkdf {salt info.
+    True -> strict C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+}
 
-name psk<@n,m>
+name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
+name send_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[0]
+name recv_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[1]
 
 nametype C6<@n, m> = kdf {ikm info.
-    ikm == get(psk<@n,m>) -> strict C7<@n,m> || nonce || 
+    ikm == 0x -> 
+        strict C7<@n,m> || nonce || 
+        st_aead (Data<adv> |0|)
+           aad x. true 
+           nonce aead_counter_msg2_C7
+/*
+    ikm == get(psk<@n,m>) -> 
+        strict C7<@n,m> || nonce || 
         st_aead (Data<adv> |0|)
            aad x. true 
            nonce aead_counter_msg2_C7
@@ -98,6 +113,7 @@ nametype C6<@n, m> = kdf {ikm info.
                                 st_aead (x:Data<adv> {False})
                                     aad x. true
                                     nonce aead_counter_msg2_C7
+                                    */
 
 }
 
@@ -142,27 +158,6 @@ nametype C4_corr = kdf {ikm info.
 
 
 
-nametype C6_dual<@n, m> = dualkdf {salt info.
-    True -> strict C7<@n,m> || nonce || 
-        st_aead (Data<adv> |0|)
-           aad x. true 
-           nonce aead_counter_msg2_C7
-
-/*
-    ! (exists i:idx, j:idx, h:bv, c4:bv. 
-    salt == get(KDF<ODHName<L4<i,j@n,m>; 0>(c4, 0x)[0]; 0>(h, 0x)[0])) ->  strict corr_C7 || nonce || 
-                                st_aead (x:Data<adv> {False})
-                                    aad x. true
-                                    nonce aead_counter_msg2_C7
-                                    */
-        
-
-
-}
-
-name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
-name send_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[0]
-name recv_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[1]
 
 
 nametype C3<@n,m> = kdf {ikm info.
