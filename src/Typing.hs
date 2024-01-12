@@ -61,7 +61,7 @@ emptyEnv f = do
     rs <- newIORef []
     memo <- mkMemoEntry 
     return $ Env mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] mempty rs r' r'' (typeError') Nothing [] False def
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType Nothing [] False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -563,6 +563,7 @@ normalizeLabel l = do
 
 isSubtype' t1 t2 = do
     case (t1^.val, t2^.val) of
+      (t1', t2') | t1' `aeq` t2' -> return True
       (_, TGhost) -> return True
       _ | isSingleton t2 -> do 
           (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
@@ -584,7 +585,6 @@ isSubtype' t1 t2 = do
               b2 <- isSubtype' t1 t2'
               return $ b1 && b2
       (TAdmit, _) -> return True
-      (t1', t2') | t1' `aeq` t2' -> return True
       (TOption t1, TOption t2) -> isSubtype' t1 t2
       (_, TRefined t _ p) -> do
           b1 <- isSubtype' t1 t
@@ -668,6 +668,7 @@ isSubtype t1 t2 = do
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
     b <- isSubtype' t1' t2'
+    logTypecheck $ owlpretty "isSubtype: " <> list [owlpretty t1', line, owlpretty t2'] <> owlpretty " = " <> owlpretty b <> line
     return b
 
 
@@ -1478,10 +1479,6 @@ checkProp p =
               _ <- inferAExpr x
               _ <- inferAExpr y
               return ()
-          (PValidKDF x y z nks j) -> do
-              _ <- mapM inferAExpr [x, y, z]
-              assert ("weird case for PValidKDF j") $ j >= 0
-              return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
               checkIdx i2
@@ -1531,27 +1528,13 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName ann a b c i -> do 
+      KDFName a b c nks j nt -> do
           a' <- resolveANF a
           b' <- resolveANF b
           c' <- resolveANF c
-          ann' <- case ann of 
-                      KDF_SaltKey ne i -> do
-                          ne' <- stripNameExp x ne
-                          return $ KDF_SaltKey ne' i
-                      KDF_IKMKey ne i -> do
-                          ne' <- stripNameExp x ne
-                          return $ KDF_IKMKey ne' i
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c') then do 
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return (Spanned (e^.spanOf) $ KDFName ann' a' b' c' i)
-      ODHName p ps a c i j -> do 
-          a' <- resolveANF a
-          c' <- resolveANF c
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars c') then do 
-             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return (Spanned (e^.spanOf) $ ODHName p ps a' c' i j)
-
+          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt
       
 stripLabel :: DataVar -> Label -> Check Label
 stripLabel x l = return l
@@ -1625,8 +1608,6 @@ stripProp x p =
       PAADOf ne y -> do
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
-      PValidKDF a1 a2 a3 nks j -> do
-          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2 ++ getAExprDataVars a3) then return pTrue else return p 
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =
@@ -2436,16 +2417,13 @@ inferKDF kpos a b c (i, is_case) j nks = do
                     nks2 <- forM nts $ \(_, nt) -> getNameKind nt
                     assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ nks == nks2
                     assert "KDF row index out of bounds" $ j < length nts                    
-                    let (str, _) = nts !! j
+                    let (str, nt) = nts !! j
                     bp <- decideProp p
                     b2 <- not <$> flowsTo (nameLbl ne) advLbl
-                    let ann = case kpos of
-                                KDF_SaltPos -> KDF_SaltKey ne (i, is_case)
-                                KDF_IKMPos -> KDF_IKMKey ne (i, is_case)
                     if (bp == Just True) then
                           if b2 then 
                                 return $ Just $ KDFGood str $ 
-                                    mkSpanned $ KDFName ann (fst a) (fst b) (fst c) j   
+                                    mkSpanned $ KDFName (fst a) (fst b) (fst c) nks j nt   
                           else do
                               l_corr <- coveringLabelOf [snd a, snd b, snd c]
                               return $ Just $ KDFCorrupt l_corr nts 
@@ -2484,10 +2462,12 @@ getLocalDHComputation a = do
             _ -> go_from_ty
       _ -> go_from_ty
 
-inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> Check (Maybe KDFInferResult) 
-inferKDFODH a (b, tb) c s ips i j = do
+inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult) 
+inferKDFODH a (b, tb) c s ips i j nks2 = do
     pth <- curModName
     (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
+    nks <- mapM (\(_, nt) -> getNameKind nt) str_nts
+    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ nks == nks2
     let (str, nt) = str_nts !! j
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
@@ -2502,7 +2482,7 @@ inferKDFODH a (b, tb) c s ips i j = do
               if (b2 == Just True) then 
                     if (not b3) && (not b4) then
                         return $ Just $ KDFGood str $
-                            mkSpanned $ ODHName (PRes (PDot pth s)) ips (fst a) (fst c) i j
+                            mkSpanned $ KDFName (fst a) b (fst c) nks j nt 
                     else do
                         l_corr <- coveringLabelOf [snd a, snd c]
                         return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) str_nts
@@ -2638,7 +2618,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                         e:os' -> do
                             r <- case e of
                                    Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
-                                   Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j
+                                   Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j nks 
                             case r of
                               Just v -> return $ Just (Just e, v)
                               Nothing -> go os'

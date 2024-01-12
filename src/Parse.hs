@@ -88,56 +88,21 @@ parseNameExp =
     (parseSpanned $ do
         reserved "KDF"
         symbol "<"
-        n <- parseNameExp
+        nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
-        i <- parseKDFSelector
+        j <- many1 digit
+        symbol ";"
+        nt <- parseNameType
         symbol ">"
         symbol "("
         a <- parseAExpr
         symbol ","
         b <- parseAExpr
-        symbol ")"
-        symbol "["
-        j <- many1 digit
-        symbol "]"
-        let ann = KDF_SaltKey n i
-        return $ KDFName ann (Spanned (n^.spanOf) $ AEGet n) a b (read j))
-    <|>
-    (parseSpanned $ do
-        reserved "DualKDF"
-        symbol "<"
-        n <- parseNameExp
-        symbol ";"
-        i <- parseKDFSelector
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ","
-        b <- parseAExpr
-        symbol ")"
-        symbol "["
-        j <- many1 digit
-        symbol "]"
-        let ann = KDF_IKMKey n i
-        return $ KDFName ann a (Spanned (n^.spanOf) $ AEGet n) b (read j))
-    <|>
-    (parseSpanned $ do
-        reserved "ODHName"
-        symbol "<"
-        p <- parsePath
-        ps <- parseIdxParams
-        symbol ";"
-        i <- parseKDFSelector
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
         symbol ","
         c <- parseAExpr
         symbol ")"
-        symbol "["
-        j <- many1 digit
-        symbol "]"
-        return $ ODHName p ps a c i (read j))
+        return $ KDFName a b c nks (read j) nt
+    )
     <|>
     (parseSpanned $ do
         i <- parsePath

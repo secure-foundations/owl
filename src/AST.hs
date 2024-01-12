@@ -128,17 +128,12 @@ type AExpr = Spanned AExprX
 data KDFStrictness = KDFStrict | KDFUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
-type KDFSelector = (Int, [Idx])
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName KDFAnn AExpr AExpr AExpr Int
-    | ODHName Path ([Idx], [Idx]) AExpr AExpr KDFSelector Int
+    | KDFName AExpr AExpr AExpr [NameKind] Int NameType
     deriving (Show, Generic, Typeable)
 
-data KDFAnn = KDF_SaltKey NameExp KDFSelector
-              | KDF_IKMKey NameExp KDFSelector
-    deriving (Show, Generic, Typeable)
 
 type NameExp = Spanned NameExpX
 
@@ -196,7 +191,6 @@ data PropX =
     | PQuantIdx Quant  (Ignore String) (Bind IdxVar Prop)
     | PQuantBV Quant  (Ignore String) (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
-    | PValidKDF AExpr AExpr AExpr [NameKind] Int
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr
@@ -440,6 +434,8 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
+type KDFSelector = (Int, [Idx])
+
 data CryptOp = 
       CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
            [NameKind]
@@ -636,11 +632,6 @@ instance Subst Idx ExprX
 instance Subst Idx Endpoint
 instance Subst Idx DebugCommand
 instance Subst ResolvedPath ExprX
-
-instance Alpha KDFAnn
-instance Subst AExpr KDFAnn
-instance Subst Idx KDFAnn
-instance Subst ResolvedPath KDFAnn
 
 instance Alpha CryptOp
 instance Subst AExpr CryptOp

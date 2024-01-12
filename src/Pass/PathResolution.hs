@@ -411,28 +411,12 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName ann a b c i -> do
-            ann' <- resolveKDFAnn ann
+        KDFName a b c nks j nt -> do
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
-            return $ Spanned (ne^.spanOf) $ KDFName ann' a' b' c' i
-        ODHName p ixs a c i j -> do
-            p' <- resolvePath (ignore def) PTODH p
-            a' <- resolveAExpr a
-            c' <- resolveAExpr c
-            return $ Spanned (ne^.spanOf) $ ODHName p' ixs a' c' i j
-         
-
-resolveKDFAnn :: KDFAnn -> Resolve KDFAnn
-resolveKDFAnn ann = 
-    case ann of
-      KDF_SaltKey ne i -> do
-          ne' <- resolveNameExp ne
-          return $ KDF_SaltKey ne' i
-      KDF_IKMKey ne i -> do
-          ne' <- resolveNameExp ne
-          return $ KDF_IKMKey ne' i
+            nt' <- resolveNameType nt
+            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -796,11 +780,6 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
-      PValidKDF a b c nks j -> do
-          a' <- resolveAExpr a
-          b' <- resolveAExpr b
-          c' <- resolveAExpr c
-          return $ Spanned (p^.spanOf) $ PValidKDF a' b' c' nks j 
       PQuantIdx q sx ip -> do
           (i, p') <- unbind ip
           p''  <- resolveProp p'

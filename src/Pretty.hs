@@ -58,31 +58,30 @@ flowColor = Cyan
 corrColor = Red
 tyColor = Magenta
 
-
-instance OwlPretty KDFAnn where
-    owlpretty (KDF_SaltKey ne i) = owlpretty "KDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
-    owlpretty (KDF_IKMKey ne i) = owlpretty "DualKDF<" <> owlpretty ne <> list [owlpretty i] <> owlpretty ">"
-
 owlprettyKDFSelector :: KDFSelector -> OwlDoc
 owlprettyKDFSelector (i, []) = owlpretty i
 owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName ann a b c i) = 
-        let pargs = case ann of
-                      KDF_SaltKey _ _ -> tupled [owlpretty b, owlpretty c]
-                      KDF_IKMKey _ _ -> tupled [owlpretty a, owlpretty c]
-        in
-        owlpretty ann <> pargs <> list [owlpretty i]
+    owlpretty (KDFName a b c nks j nt) = 
+        Prettyprinter.group $ 
+        owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
+                            <>
+                            owlpretty ";"
+                            <>
+                            owlpretty j
+                            <>
+                            owlpretty ";"
+                            <>
+                            (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            <> owlpretty ">"
+                            <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 
         let pxs = case xs of
                     [] -> mempty
                     _ -> list (map owlpretty xs)
         in
         owlpretty n <> owlprettyIdxParams vs <> pxs
-    owlpretty (ODHName p ips a c i j) = 
-        owlpretty "ODHName<" <> owlpretty p <> owlprettyIdxParams ips <> owlpretty ";" <> owlprettyKDFSelector i <> owlpretty ">"
-            <> tupled [owlpretty a, owlpretty c] <> owlpretty "[" <> owlpretty j <> owlpretty "]"
                                                      
 owlprettyBind :: (Alpha a, Alpha b, OwlPretty a, OwlPretty b) => Bind b a -> (OwlDoc, OwlDoc)
 owlprettyBind b = 
@@ -230,8 +229,6 @@ instance  OwlPretty PropX where
     owlpretty (PQuantBV q sx b) = 
         let (x, p) = owlprettyBind b in
         owlpretty q <+> owlpretty sx <+> owlpretty ": bv" <> owlpretty "." <+> p
-    owlpretty (PValidKDF a b c nks j) = owlpretty "valid_kdf" <> 
-        tupled (map owlpretty [a, b, c]) --  ++ [owlpretty i, owlpretty j, owlpretty nk])
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ intersperse (owlpretty ", ") $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]

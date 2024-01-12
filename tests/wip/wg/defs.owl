@@ -94,8 +94,6 @@ nametype C6_dual<@n, m> = dualkdf {salt info.
 }
 
 name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
-name send_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[0]
-name recv_key<@n,m> [c7] = KDF<DualKDF<psk<@n,m>; 0>(c7, 0x)[0];0>(0x, 0x)[1]
 
 nametype C6<@n, m> = kdf {ikm info.
     ikm == 0x -> 
@@ -322,12 +320,15 @@ def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 //////////////////////////
 // Intermediate structures / definitions
 
+func dh(x, y) = dh_combine(dhpk(x), y)
+
 // Struct for initator state between messages
 struct initiator_msg1_val<i,n,m> {
       _initiator_msg1_C2 : Ghost,
       _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
-          (x:Name(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0]){
-              sec(ODHName<L2<@n,m>; 0>(_initiator_msg1_C2, 0x)[0])
+          (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>), get(S_resp<@m>)), _initiator_msg1_C2, 0x)){
+               sec(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>),
+               get(S_resp<@m>)), _initiator_msg1_C2, 0x))
            })
         else Data<adv>,
       _initiator_msg1_H4 : Data<adv>
@@ -349,9 +350,11 @@ struct responder_msg1_val<i,n,m> {
             _responder_init_pk == dhpk(get(S_init<@n>)) /\
             sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)))
             then
-                (x:Name(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0]){
-                    sec(ODHName<L2<@n,m>; 0>(_responder_msg1_C2, 0x)[0])
-                 })
+                  (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>),
+                  get(S_resp<@m>)), _responder_msg1_C2, 0x)){
+                       sec(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>),
+                       get(S_resp<@m>)), _responder_msg1_C2, 0x))
+                   })
             else
                 (x:Data<adv>{
                     x == c3_resp<pid m>(_responder_init_pk, _responder_init_eph)

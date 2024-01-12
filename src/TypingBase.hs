@@ -180,6 +180,7 @@ data Env = Env {
     _typeCheckLogDepth :: IORef Int,
     _debugLogDepth :: IORef Int,
     _typeErrorHook :: (forall a. String -> Check a),
+    _checkNameTypeHook :: (NameType -> Check ()),
     _curDef :: Maybe String,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
@@ -696,45 +697,17 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName ann x y z j -> do 
-                 _ <- mapM inferAExpr [x, y, z]
-                 (_, nts) <- getKDFAnnInfo ann x y z
-                 assert ("Hash select parameter for KDF name out of bounds") $ j < length nts
-                 return $ Just (snd (nts !! j), Nothing)
-             ODHName p is x y i j -> do
-                 (_, _, _, nts) <- getODHNameInfo p is x y i j
-                 let nt = snd $ nts !! j
+             KDFName a b c nks j nt -> do
+                 _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
+                 nth <- view checkNameTypeHook
+                 nth nt
+                 assert ("Name kind row index out of scope") $ j < length nks
                  return $ Just (nt, Nothing)
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
-
-
--- Also ensures that the name is well-formed: the annotation lines up with the
--- AExprs.
-getKDFAnnInfo :: KDFAnn -> AExpr -> AExpr -> AExpr -> Check (Prop, [(KDFStrictness, NameType)])
-getKDFAnnInfo ann a b c = do
-    case ann of
-      KDF_SaltKey ne i -> do 
-          nt <- getNameType ne
-          case nt^.val of
-            NT_KDF kpos bnd -> do
-                assert ("KDF position wrong somehow") $ kpos == KDF_SaltPos
-                -- N.B: We do not check that a has the correct type here, but
-                -- this is guaranteed by construction
-                extractKDF kpos bnd a b c i
-            _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
-      KDF_IKMKey ne i ->  do 
-            nt <- getNameType ne
-            case nt^.val of
-              NT_KDF kpos bnd -> do
-                  assert ("KDF position wrong somehow") $ kpos == KDF_IKMPos
-                  -- N.B: We do not check that b has the correct type here, but
-                  -- this is guaranteed by construction
-                  extractKDF kpos bnd a b c i 
-              _ -> typeError $ "Name not KDF:" ++ show (owlpretty ne)
 
 getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
 getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
@@ -756,17 +729,6 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           let (p, cases') = substs (zip xs_case is_case) pcases'
           assert ("KDF name row mismatch") $ j < length cases'
           return (ne1, ne2, p, cases')
-
-extractKDF kpos bnd a b c (i, is_case) = do
-    mapM_ inferIdx is_case
-    (((sx, x), (sy, y)), cases) <- unbind bnd 
-    assert ("Number of case mismatch") $ i < length cases
-    let bcase = case kpos of
-                   KDF_SaltPos -> subst x b $ subst y c $ cases !! i
-                   KDF_IKMPos -> subst x a $ subst y b $ cases !! i
-    (xs_case, case_bdy) <- unbind bcase
-    assert ("KDF case index arity mismatch") $ length xs_case == length is_case
-    return $ substs (zip xs_case is_case) case_bdy
 
 
 getNameKind :: NameType -> Check NameKind
@@ -983,7 +945,7 @@ ensureNonGhostTy t = do
     ensureNonGhostLbl l
 
 inferAExpr :: AExpr -> Check Ty
-inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine "inferAExpr" $ do
+inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
     case ae^.val of
       AEVar _ x -> do 
         tC <- view tyContext
@@ -1033,15 +995,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
-          case ne^.val of
-            NameConst _ _ _ -> return ot
-            KDFName ann a b c j -> do
-                let i = case ann of
-                          KDF_SaltKey _ i -> i
-                          KDF_IKMKey _ i -> i
-                kdfNameAxioms ot ann a b c i j
-            ODHName p ips a c i j -> do 
-                odhNameAxioms ot p ips a c i j
+          return ot 
       (AEGetEncPK ne) -> do
           case ne^.val of
             NameConst ([], []) _ _ -> return ()
@@ -1072,39 +1026,6 @@ splitConcats a =
     case a^.val of
       AEApp f _ xs | f `aeq` topLevelPath "concat" -> concatMap splitConcats xs
       _ -> [a]
-
--- 1. Based on the annotation and the j, emit that the length is as expected
--- (We already know it is well-formed, so the annotation lines up with the
--- aexpr's)
--- 3. If the annotation is a KDF key (say, the left one): 
---   a. If the key is secret,
---   b. and the prop holds,
---   c. then PValidKDF holds
-
-kdfNameAxioms :: Ty -> KDFAnn -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check Ty
-kdfNameAxioms ot ann a b c i j = do
-    (p, nts) <- getKDFAnnInfo ann a b c
-    secrecy <- case ann of
-                    KDF_SaltKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
-                    KDF_IKMKey ne i -> return $ pNot $ pFlow (nameLbl ne) advLbl
-    assert ("KDF name index out of bounds") $ j < length nts                                         
-    nks <- forM nts $ \(_, nt) -> getNameKind nt
-    let validKDF = mkSpanned $ PValidKDF a b c nks j 
-    return $ tRefined ot ".res" $ 
-        pImpl (pAnd secrecy p) validKDF
-
-odhNameAxioms :: Ty -> Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check Ty
-odhNameAxioms ot p (is, ps) a c i j = do
-    (ne1, ne2, p, nts) <- getODHNameInfo p (is, ps) a c i j
-    let (str, nt) = nts !! j
-    let secrecy = pAnd (pNot $ pFlow (nameLbl ne1) advLbl) (pNot $ pFlow (nameLbl ne2) advLbl)
-    nks <- forM nts $ \(_, nt) -> getNameKind nt
-    let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
-    let validKDF = mkSpanned $ PValidKDF a b c nks j 
-    return $ tRefined ot ".res" $ 
-        pImpl (pAnd secrecy p) validKDF
-    
-
 
 resolveANF :: AExpr -> Check AExpr
 resolveANF a = do
@@ -1374,15 +1295,11 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName ann x y z i -> do
-          x' <- resolveANF x >>= normalizeAExpr 
-          y' <- resolveANF y >>= normalizeAExpr
-          z' <- resolveANF z >>= normalizeAExpr 
-          return $ Spanned (ne^.spanOf) $ KDFName ann x' y' z' i
-      ODHName p ips a c i j -> do 
+      KDFName a b c nks j nt -> do
           a' <- resolveANF a >>= normalizeAExpr 
+          b' <- resolveANF b >>= normalizeAExpr 
           c' <- resolveANF c >>= normalizeAExpr 
-          return $ Spanned (ne^.spanOf) $ ODHName p ips a' c' i j
+          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt
 
 -- Traversing modules to collect global info
 

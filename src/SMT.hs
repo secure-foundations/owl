@@ -40,7 +40,7 @@ smtSetup = do
             smtLabelSetup 
             setupTyEnv 
 
-smtTypingQuery s = fromSMT s smtSetup
+smtTypingQuery s = fromSMT initSolverEnv s smtSetup
 
 setupSMTOptions :: Sym ()
 setupSMTOptions = do
@@ -265,33 +265,6 @@ lookupIndex x xs = go 0 xs
 builtInSMTFuncs :: [String]
 builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh"]
 
-mkPred :: Path -> Sym SExp  
-mkPred pth@(PRes (PDot p s)) = do
-    pis <- use predInterps
-    sn <- smtName pth
-    case M.lookup sn pis of
-      Just v -> return v
-      Nothing ->  do
-          md <- liftCheck $ openModule p
-          case lookup s (md^.predicates) of
-            Nothing -> error $ "Predicate " ++ show pth ++ " not found. " 
-            Just b -> do
-                ((ixs, xs), pr) <- liftCheck $ unbind b
-                let ivs = map (\i -> (SAtom (show i), indexSort)) ixs
-                let xvs = map (\x -> (SAtom (show x), bitstringSort)) xs
-                withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ 
-                    withSMTVars xs $ do
-                        v <- interpretProp pr
-                        emit $ SApp [SAtom "declare-fun", SAtom sn, SApp (replicate (length ixs) indexSort ++ replicate (length xs) bitstringSort), SAtom "Bool"]
-                        let ax = sForall
-                                    (ivs ++ xvs)
-                                    (SApp [SAtom "=", sApp (SAtom sn : (map fst ivs) ++ (map fst xvs)), v])
-                                    [sApp (SAtom sn : (map fst ivs) ++ (map fst xvs))]
-                                    ("predDef_" ++ sn)
-                        emitAssertion $ ax
-                        return ()
-                predInterps %= (M.insert sn (SAtom sn))
-                return $ SAtom sn
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()
 setupFunc (s, ar) = do
@@ -326,6 +299,16 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
+kdfPerm va vb vc start segment nt = do
+    permctr <- use kdfPermCounter
+    case M.lookup (AlphaOrd nt) permctr of
+      Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
+      Nothing -> do
+          nv <- getFreshCtr
+          kdfPermCounter %= M.insert (AlphaOrd nt) (SAtom $ show nv)
+          return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, (SAtom $ show nv)]
+
+
 
 smtTy :: SExp -> Ty -> Sym SExp
 smtTy xv t = 
@@ -348,15 +331,10 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             KDFName ann a b c j -> do
-                                  (_, nts) <- liftCheck $ getKDFAnnInfo ann a b c
-                                  (va, vb, vc, start, segment) <- getKDFArgs a b c (map snd nts) j
-                                  return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
-                             ODHName p ixs a c i j -> do 
-                                 (ne1, ne2, _, nts) <- liftCheck $ getODHNameInfo p ixs a c i j
-                                 let b = builtinFunc "dh_combine" [builtinFunc "dhpk" [mkSpanned $ AEGet ne1], mkSpanned $ AEGet ne2]
-                                 (va, vb, vc, start, segment) <- getKDFArgs a b c (map snd nts) j
-                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             KDFName a b c nks j nt -> do 
+                                 (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
+                                 p <- kdfPerm va vb vc start segment nt
+                                 return $ sAnd2 p $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do
@@ -464,77 +442,6 @@ sHasType v vt = SApp [SAtom "HasType", v, vt]
 
 tyConstraints :: Ty -> SExp -> Sym SExp
 tyConstraints t v = smtTy v t
-
-interpretProp :: Prop -> Sym SExp
-interpretProp p = do
-    case p^.val of
-      PTrue -> return sTrue
-      PFalse -> return sFalse
-      (PAnd p1 p2) -> 
-        liftM2 (sAnd2) (interpretProp p1) (interpretProp p2)
-      (POr p1 p2) ->
-        liftM2 (sOr) (interpretProp p1) (interpretProp p2)
-      (PImpl p1 p2) ->
-        liftM2 (sImpl) (interpretProp p1) (interpretProp p2)
-      (PNot p) ->
-        sNot <$> interpretProp p
-      PLetIn a xp -> do
-          (x, p) <- liftCheck $ unbind xp
-          interpretProp $ subst x a p
-      PApp s is ps -> do 
-          vs <- mkPred s 
-          ixs <- mapM symIndex is
-          vps <- mapM interpretAExp ps
-          return $ sApp (vs : ixs ++ vps)
-      PAADOf ne a -> do
-          p <- liftCheck $ extractAAD ne a
-          interpretProp p
-      PInODH s ikm info -> (liftCheck $ inODHProp s ikm info) >>= interpretProp
-      (PEq p1 p2) -> do
-          v1 <- interpretAExp p1
-          v2 <- interpretAExp p2
-          return $ SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", v1, v2]]
-      (PValidKDF a b c nks j) -> do
-          va <- interpretAExp a
-          vb <- interpretAExp b
-          vc <- interpretAExp c
-          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-          let start = sPlus $ take j nk_lengths
-          let segment = nk_lengths !! j
-          return $ SApp [SAtom "ValidKDF", va, vb, vc, start, segment, SAtom (show $ nks !! j)]
-      (PEqIdx i1 i2) ->
-        liftM2 (sEq) (symIndex i1) (symIndex i2)
-      (PIsConstant a) -> do
-          v <- interpretAExp a
-          return $ SApp [SAtom "IsConstant", v]
-      (PQuantBV q _ ip) -> do
-          (x, p) <- liftCheck $ unbind ip
-          v <- withSMTVars [x] $ interpretProp p 
-          let xname = cleanSMTIdent $ show x
-          case q of
-            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v [] $ "forall_" ++ xname
-            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v [] $ "exists_" ++ xname
-      (PQuantIdx q _ ip) -> do
-          (i, p') <- liftCheck $ unbind ip
-          v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
-          let iname = cleanSMTIdent $ show i
-          case q of
-            Forall -> return $ sForall [(SAtom iname, indexSort)] v [] $ "forall_" ++ iname 
-            Exists -> return $ sExists [(SAtom iname, indexSort)] v [] $ "exists_" ++ iname
-      (PHappened s (id1, id2) xs) -> do
-          vs <- mapM interpretAExp xs
-          ivs <- mapM symIndex id1
-          ivs' <- mapM symIndex id2
-          sn <- smtName s
-          return $ SApp $ [SAtom "Happened", SAtom ("\"" ++ sn ++ "\""), mkSList "Index" (ivs ++ ivs'), mkSList "Bits" vs]
-      (PFlow l1 l2 ) -> do
-        x <- symLabel l1
-        y <- symLabel l2
-        return $ SApp [SAtom "Flows", x, y]
-         
-mkSList :: String -> [SExp] -> SExp
-mkSList sort [] = SApp [SAtom "as", SAtom "nil", SAtom ("(List " ++ sort ++")")]
-mkSList sort (x:xs) = SApp [SAtom "insert", x, mkSList sort xs]
     
 subTypeCheck :: Ty -> Ty -> Sym ()
 subTypeCheck t1 t2 = pushRoutine ("subTypeCheck(" ++ show (tupled $ map owlpretty [t1, t2]) ++ ")") $ do
@@ -604,7 +511,9 @@ symDecideProp p = do
         b <- interpretProp $ pNot p;
         emitToProve b 
                 }
-    raceSMT smtSetup k2 k1
+    raceSMT initSolverEnv smtSetup k2 k1
+
+initSolverEnv = initSolverEnv_ symLabel
 
 checkFlows :: Label -> Label -> Check (Maybe String, Maybe Bool)
 checkFlows l1 l2 = do
@@ -620,7 +529,7 @@ checkFlows l1 l2 = do
         y <- symLabel l2;
         emitToProve $ sNot $ SApp [SAtom "Flows", x, y]
                 }
-    raceSMT smtSetup k2 k1
+    raceSMT initSolverEnv smtSetup k2 k1
 
 
 

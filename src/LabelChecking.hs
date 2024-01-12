@@ -67,18 +67,17 @@ nameDefFlows n nt = do
                   axijs <- forM [0 .. (length nts - 1)] $ \j -> do
                       let (strictness, nt) = nts !! j
                       ne_axioms <- withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
-                          let ann = case pos of
-                                      KDF_SaltPos -> KDF_SaltKey n (i, map mkIVar ixs) 
-                                      KDF_IKMPos -> KDF_IKMKey n (i, map mkIVar ixs)
-                          let ne = case pos of
-                                      KDF_SaltPos -> 
-                                          mkSpanned $ KDFName ann (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) j
-                                      KDF_IKMPos -> 
-                                          mkSpanned $ KDFName ann (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) j
+                          nks <- liftCheck $ mapM (\(_, nt) -> getNameKind nt) nts
+                          let ne = case pos of 
+                                     KDF_SaltPos -> 
+                                         mkSpanned $ KDFName (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) nks j nt
+                                     KDF_IKMPos -> 
+                                         mkSpanned $ KDFName (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) nks j nt
                           nameDefFlows ne nt
                       ctr <- getFreshCtr
+                      vp <- interpretProp p
                       return $ sForall (map (\i -> (SAtom $ cleanSMTIdent $ show i, indexSort)) ixs) 
-                                ne_axioms
+                                (sImpl vp ne_axioms)
                                 []
                                 ("ax_" ++ show ctr)
                   return $ sAnd axijs

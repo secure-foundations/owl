@@ -289,28 +289,10 @@
 
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
 (declare-fun KDFName (Bits Bits Bits Int Int) Name)
-(declare-fun ValidKDF (Bits Bits Bits Int Int NameKind) Bool)
-(assert 
-    (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int) (nk1 NameKind) 
-             (x1 Bits) (y1 Bits) (z1 Bits) (i1 Int) (j1 Int) (nk2 NameKind)) (!
-        (=> (and (ValidKDF x y z i j nk1) (ValidKDF x1 y1 z1 i1 j1 nk2)
-                 (= (KDFName x y z i j) (KDFName x1 y1 z1 i1 j1)))
-            (and
-                 (= TRUE (eq x x1))
-                 (= TRUE (eq y y1))
-                 (= TRUE (eq z z1))
-                 (= i i1)
-                 (= j j1)
-                 (= nk1 nk2)))
-        :pattern ((ValidKDF x y z i j nk1) (ValidKDF x1 y1 z1 i1 j1 nk2))
-        :qid kdfname_inj
-)))
-(assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int) (nk NameKind)) (!
-    (=> (ValidKDF x y z i j nk)
-        (HasNameKind (KDFName x y z i j) nk))
-    :pattern (ValidKDF x y z i j nk)
-    :qid kdfname_hasnamekind
-)))
+
+; Abstract permission that the specified KDF hash has a certain name type
+; (name type given by last argument counter)
+(declare-fun KDFPerm (Bits Bits Bits Int Int Int) Bool)
 
 (assert (forall ((n1 Name) (n2 Name)) (!
     (=> (= TRUE (eq (ValueOf n1) (ValueOf n2)))
