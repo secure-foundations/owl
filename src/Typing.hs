@@ -668,7 +668,6 @@ isSubtype t1 t2 = do
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
     b <- isSubtype' t1' t2'
-    logTypecheck $ owlpretty "isSubtype: " <> list [owlpretty t1', line, owlpretty t2'] <> owlpretty " = " <> owlpretty b <> line
     return b
 
 
@@ -2393,7 +2392,7 @@ unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
 
 inferKDF :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> 
             KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult)
-inferKDF kpos a b c (i, is_case) j nks = do
+inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
     mapM_ inferIdx is_case
     let (principal, other) = case kpos of
                               KDF_SaltPos -> (a, b)
@@ -2433,7 +2432,7 @@ inferKDF kpos a b c (i, is_case) j nks = do
 -- Try to infer a valid local DH computation (pk, sk) from input
 -- (local = sk name is local to the module)
 getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
-getLocalDHComputation a = do
+getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     let go_from_ty = do
             t <- inferAExpr a
@@ -2463,7 +2462,7 @@ getLocalDHComputation a = do
       _ -> go_from_ty
 
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult) 
-inferKDFODH a (b, tb) c s ips i j nks2 = do
+inferKDFODH a (b, tb) c s ips i j nks2 = pushRoutine ("inferKDFODH") $ do
     pth <- curModName
     (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
     nks <- mapM (\(_, nt) -> getNameKind nt) str_nts
@@ -2492,7 +2491,7 @@ inferKDFODH a (b, tb) c s ips i j nks2 = do
 
 -- Try to see if the ODH computation is out of bounds
 inferKDFODHOOB :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe KDFInferResult) 
-inferKDFODHOOB a (b, tb) c = do 
+inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do 
     oxy <- getLocalDHComputation b
     case oxy of
       Just (x, ny) -> do
@@ -2591,7 +2590,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let [a, b, c] = args
           cpub <- tyFlowsTo (snd c) advLbl
           assert ("Third argument to KDF must flow to adv") cpub
-          res1 <- do
+          res1 <- local (set tcScope $ TcGhost False) $ do
               let go os = 
                       case os of
                         [] -> do
@@ -2604,7 +2603,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                               Just v -> return $ Just (i, v)
                               Nothing ->  go os'
               go oann1
-          res2 <- do
+          res2 <- local (set tcScope $ TcGhost False) $ do
               let go os =
                       case os of
                         [] -> do

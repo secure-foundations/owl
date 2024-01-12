@@ -326,9 +326,9 @@ func dh(x, y) = dh_combine(dhpk(x), y)
 struct initiator_msg1_val<i,n,m> {
       _initiator_msg1_C2 : Ghost,
       _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
-          (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>), get(S_resp<@m>)), _initiator_msg1_C2, 0x)){
-               sec(KDF<kdfkey||enckey;0;C3<@n,m>>(dh(get(S_init<@n>),
-               get(S_resp<@m>)), _initiator_msg1_C2, 0x))
+          (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>), get(S_resp<@m>)),  0x)){
+               sec(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>),
+               get(S_resp<@m>)), 0x))
            })
         else Data<adv>,
       _initiator_msg1_H4 : Data<adv>

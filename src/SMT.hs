@@ -299,7 +299,8 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
-kdfPerm va vb vc start segment nt = do
+kdfPerm va vb vc start segment nt_ = do
+    nt <- liftCheck $ normalizeNameType nt_
     permctr <- use kdfPermCounter
     case M.lookup (AlphaOrd nt) permctr of
       Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
