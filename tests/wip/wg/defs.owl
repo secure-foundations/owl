@@ -61,15 +61,21 @@ counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
+nametype transp_key_init_send<@n,m> = 
+            st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+                aad x. true
+                nonce N_init_send
+
+nametype transp_key_resp_send<@n,m> = 
+            st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
+                aad x. true
+                nonce N_resp_send
+
 nametype C7<@n,m> = kdf {ikm info.
     True -> 
-        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
-            aad x. true
-            nonce N_init_send
+        strict transp_key_init_send<@n,m>
             ||
-        strict st_aead (Data<adv /\ [channel_secret<@n,m>], |adv|>)
-            aad x. true
-            nonce N_resp_send
+        strict transp_key_resp_send<@n,m>
 }
 
 nametype C7_corr = kdf {ikm info.
@@ -127,7 +133,8 @@ nametype C6_corr = kdf {ikm info.
 counter dummy<@n> @ Initiator<n>
 
 nametype C5<@n,m> = kdf {ikm info.
-    True -> strict C6<@n,m> || strict st_aead (Data<adv> |0|)
+    True -> 
+    strict C6<@n,m> || strict st_aead (Data<adv> |0|)
                                 aad x. true
                                 nonce dummy
 }
@@ -142,7 +149,8 @@ func honest_c1<i@n>() =
     gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
 
 nametype C4<@n,m> = kdf {ikm info.
-    True -> strict C5<@n,m> || strict st_aead (Data<adv> |0|)
+    True -> strict C5<@n,m> 
+        || strict st_aead (Data<adv> |0|)
                                 aad x. true
                                 nonce dummy
 }
@@ -247,6 +255,9 @@ odh L2<@n,m> :
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
      salt != honest_c1<session i, pid n>() -> strict C5<@n,m>
+        || strict st_aead (Data<adv> |0|)
+                                aad x. true
+                                nonce dummy
 }
 
 odh L5<j@n,m> :
@@ -361,4 +372,10 @@ struct responder_msg1_val<i,n,m> {
                     x == c3_resp<pid m>(_responder_init_pk, _responder_init_eph)
                  }),
      _responder_msg1_H4 : Data<adv>
+}
+
+struct transp_keys<n,m> {
+    tk_c7 : Ghost,
+    k_init_send : SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tk_c7, 0x, 0x)),
+    k_resp_send : SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tk_c7, 0x, 0x))
 }
