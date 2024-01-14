@@ -374,8 +374,30 @@ struct responder_msg1_val<i,n,m> {
      _responder_msg1_H4 : Data<adv>
 }
 
-struct transp_keys<n,m> {
+predicate resp_session_ok<i,j,n,m>(eph, pk) = 
+     is_e_init[eph] /\ (
+        (pk == dhpk(get(S_init<@n>))
+         /\
+         ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(S_init<@n>))))
+        \/
+        (pk != dhpk(get(S_init<@n>))
+         /\
+          (sec(E_init<i@n>) /\ sec(E_resp<j@m>))))       
+
+struct transp_keys<i,j,n,m> {
+    tk_eph : Ghost,
+    tk_pk : Ghost,
     tk_c7 : Ghost,
-    k_init_send : SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tk_c7, 0x, 0x)),
-    k_resp_send : SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tk_c7, 0x, 0x))
+    k_init_send : if resp_session_ok<i,j,n,m>[tk_eph, tk_pk] then
+    SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tk_c7, 0x, 0x))
+    else Data<adv>,
+    k_resp_send : if resp_session_ok<i,j,n,m>[tk_eph, tk_pk] then 
+        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tk_c7, 0x, 0x))
+        else Data<adv>
 }
