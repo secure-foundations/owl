@@ -273,7 +273,7 @@ data TyX =
     | TEnc_PK NameExp -- Singleton type
     | TSS NameExp NameExp -- Singleton type
     | TAdmit -- return type of admit 
-    | TExistsIdx (Bind IdxVar Ty) -- Label of which idx I am is adversary
+    | TExistsIdx String (Bind IdxVar Ty) -- Label of which idx I am is adversary
     | THexConst String -- Singleton type; hex constant
     deriving (Show, Generic, Typeable)
 
@@ -305,8 +305,8 @@ tName t = mkSpanned (TName t)
 tAdmit :: Ty
 tAdmit = mkSpanned TAdmit
 
-tExistsIdx :: (Bind IdxVar Ty) -> Ty
-tExistsIdx t = mkSpanned (TExistsIdx t)
+tExistsIdx :: String -> (Bind IdxVar Ty) -> Ty
+tExistsIdx s t = mkSpanned (TExistsIdx s t)
 
 data ModuleExpX = 
     ModuleBody IsModuleType (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
@@ -407,7 +407,7 @@ data ExprX =
     | EBlock Expr Bool -- Boundary for scoping; introduced by { }. The bool is if it is a proof block, or regular
     | EUnionCase AExpr String (Bind DataVar Expr)
     | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
-    | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
+    | EChooseIdx String (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | EForallBV String (Bind DataVar Expr)
     | EForallIdx String (Bind IdxVar Expr)

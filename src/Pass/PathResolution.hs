@@ -392,10 +392,10 @@ resolveTy e = do
                   TEnc_PK ne -> TEnc_PK <$> resolveNameExp ne
                   TSS ne ne' -> liftM2 TSS (resolveNameExp ne) (resolveNameExp ne')
                   TAdmit -> return TAdmit
-                  TExistsIdx xt -> do
+                  TExistsIdx s xt -> do
                       (x, t) <- unbind xt
                       t' <- resolveTy t
-                      return $ TExistsIdx $ bind x t'
+                      return $ TExistsIdx s $ bind x t'
                   TCase p t1 t2 -> do
                       p' <- resolveProp p
                       t1' <- resolveTy t1
@@ -616,12 +616,12 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EUnpack a' s (bind x k')
-      EChooseIdx ip ik -> do
+      EChooseIdx s ip ik -> do
           (i, k) <- unbind ik
           (i', p) <- unbind ip                         
           k' <- resolveExpr k
           p' <- resolveProp p
-          return $ Spanned (e^.spanOf) $ EChooseIdx (bind i' p') (bind i k')
+          return $ Spanned (e^.spanOf) $ EChooseIdx s (bind i' p') (bind i k')
       EForallBV s xpk -> do
           (x, k) <- unbind xpk
           k' <- resolveExpr k

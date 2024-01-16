@@ -160,7 +160,7 @@ data MemoEntry = MemoEntry {
 data Env = Env { 
     -- These below must only be modified by the trusted functions, since memoization
     -- depends on them
-    _inScopeIndices ::  Map IdxVar IdxType,
+    _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
     _expectedTy :: Maybe Ty,
     ------
@@ -417,7 +417,7 @@ withVars :: (MonadIO m, MonadReader Env m) => [(DataVar, (Ignore String, (Maybe 
 withVars assocs k = do
     local (over tyContext $ addVars assocs) $ withNewMemo $ k
 
-withIndices :: (MonadIO m, MonadReader Env m) => [(IdxVar, IdxType)] -> m a -> m a
+withIndices :: (MonadIO m, MonadReader Env m) => [(IdxVar, (Ignore String, IdxType))] -> m a -> m a
 withIndices assocs k = do
     local (over inScopeIndices $ \a -> assocs ++ a) $ withNewMemo $ k
 
@@ -474,7 +474,7 @@ inferIdx (IVar pos iname i) = do
         m <- view $ inScopeIndices
         tc <- view tcScope
         case lookup i m of
-          Just t -> 
+          Just (_, t) -> 
               case (tc, t) of
                 (TcDef _, IdxGhost) ->  
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
@@ -656,7 +656,7 @@ normalizeNameType nt = pushRoutine "normalizeNameType" $
           (p, cases) <- unbind bcases
           cases' <- forM cases $ \bcase -> do 
               (is, (p, nts)) <- unbind bcase
-              withIndices (map (\i -> (i, IdxGhost)) is) $ do
+              withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
                   nts' <- forM nts $ \(str, nt) -> do
                       nt' <- normalizeNameType nt
                       return (str, nt')
@@ -968,10 +968,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
           return $ tData zeroLbl zeroLbl
-      (AEPackIdx idx@(IVar _ _ i) a) -> do
+      (AEPackIdx idx@(IVar _ s i) a) -> do
             _ <- local (set tcScope (TcGhost False)) $ inferIdx idx
             t <- inferAExpr a
-            return $ mkSpanned $ TExistsIdx $ bind i t 
+            return $ mkSpanned $ TExistsIdx (unignore s) $ bind i t 
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
@@ -1239,9 +1239,9 @@ coveringLabel' t =
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
           return $ joinLbl l1 l2
-      TExistsIdx xt -> do
+      TExistsIdx s xt -> do
           (x, t) <- unbind xt
-          l <- withIndices [(x, IdxGhost)] $ coveringLabel' t
+          l <- withIndices [(x, (ignore s, IdxGhost))] $ coveringLabel' t
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
       THexConst a -> return zeroLbl
@@ -1262,8 +1262,8 @@ owlprettyTyContextANF :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> OwlDo
 owlprettyTyContextANF e = vsep $ map (\(x, (s, oanf, t)) -> 
     owlpretty x <> tyInfo t <> owlpretty oanf <> owlpretty ":" <+> owlpretty t) e
 
-owlprettyIndices :: Map IdxVar IdxType -> OwlDoc
-owlprettyIndices m = vsep $ map (\(i, it) -> owlpretty "index" <+> owlpretty i <> owlpretty ":" <+> owlpretty it) m
+owlprettyIndices :: Map IdxVar (Ignore String, IdxType) -> OwlDoc
+owlprettyIndices m = vsep $ map (\(i, (s, it)) -> owlpretty "index" <+> owlpretty (unignore s) <> owlpretty ":" <+> owlpretty it) m
 
 owlprettyContext :: Env -> OwlDoc
 owlprettyContext e =

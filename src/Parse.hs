@@ -298,7 +298,7 @@ parseTyTerm =
         i <- identifier
         symbol "."
         t <- parseTy
-        return $ TExistsIdx $ bind (s2n i) t 
+        return $ TExistsIdx i $ bind (s2n i) t 
     )
     <|>
     (try $ parseSpanned $ do
@@ -1295,7 +1295,7 @@ parseExprTerm =
         p <- parseProp
         reserved "in"
         k <- parseExpr
-        return $ EChooseIdx (bind (s2n i) p) $ bind (s2n i) k)
+        return $ EChooseIdx i (bind (s2n i) p) $ bind (s2n i) k)
     <|>
     (parseSpanned $ do
         reserved "call"

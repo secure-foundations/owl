@@ -156,7 +156,7 @@ instance  OwlPretty TyX where
             (TSS n m) ->
                     owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
             TAdmit -> owlpretty "admit"
-            (TExistsIdx it) -> 
+            (TExistsIdx _ it) -> 
                 let (i, t) = owlprettyBind it in
                 owlpretty "exists" <+> i <> owlpretty "." <+> t
             (TUnion t1 t2) ->

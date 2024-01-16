@@ -115,9 +115,9 @@ anf e =
           ixe' <- anfBind ixe
           ea <- anfAExpr a
           elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnpack (aevar (a^.spanOf) y) s ixe'
-      EChooseIdx p ixe -> do
+      EChooseIdx s p ixe -> do
           ixe' <- anfBind ixe
-          return $ Spanned (e^.spanOf) $ EChooseIdx p ixe'
+          return $ Spanned (e^.spanOf) $ EChooseIdx s p ixe'
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2

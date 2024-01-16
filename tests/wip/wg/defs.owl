@@ -337,13 +337,15 @@ func dh(x, y) = dh_combine(dhpk(x), y)
 
 // Struct for initator state between messages
 struct initiator_msg1_val<i,n,m> {
-      _initiator_msg1_C2 : Ghost,
+      _initiator_msg1_C2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
       _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
           (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>), get(S_resp<@m>)),  0x)){
                sec(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>),
                get(S_resp<@m>)), 0x))
            })
-        else Data<adv>,
+       else (x:Data<adv>{
+           x == honest_c3<session i, pid n, pid m>()
+       }),
       _initiator_msg1_H4 : Data<adv>
 }
 

@@ -530,7 +530,7 @@ withSMTIndices :: [(IdxVar, IdxType)] -> Sym a -> Sym a
 withSMTIndices xs k = do
     sIE <- use symIndexEnv
     symIndexEnv %= (M.union $ M.fromList $ map (\(i, _) -> (i, SAtom $ cleanSMTIdent $ show i)) xs) 
-    res <- withIndices xs k
+    res <- withIndices (map (\(x, t) -> (x, (ignore $ show x, t))) xs) k
     symIndexEnv .= sIE
     return res
 

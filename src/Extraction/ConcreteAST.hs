@@ -82,7 +82,7 @@ concretifyTy t =
     TEnc_PK n -> return $ CTEnc_PK n
     TSS n n' -> return $ CTSS n n'
     TAdmit -> error "concretifyTy on TAdmit"
-    TExistsIdx it -> do
+    TExistsIdx _ it -> do
       (_, t) <- unbind it
       concretifyTy t
     THexConst a -> return $ CTHex a
@@ -138,7 +138,7 @@ concretify e =
             ((i, x), k) <- unbind ixk
             k' <- concretify k
             return $ subst x a k' -- i is dangling here, but that shouldn't matter
-        EChooseIdx _ ixk -> do
+        EChooseIdx _ _ ixk -> do
             (i, k) <- unbind ixk
             k' <- concretify k
             return k' -- i is free here; irrelevant
