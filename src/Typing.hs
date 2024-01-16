@@ -1256,7 +1256,6 @@ checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 checkTy :: Ty -> Check ()
 checkTy t = withSpan (t^.spanOf) $ 
     local (set tcScope $ TcGhost False) $ do
-        logTypecheck $ owlpretty "Checking ty " <> owlpretty t
         case t^.val of
           TUnit -> return ()
           TBool l -> checkLabel l
@@ -1426,7 +1425,6 @@ checkLabel l =
 checkProp :: Prop -> Check ()
 checkProp p =
     local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ do
-        logTypecheck $ owlpretty "Checking prop " <> owlpretty p
         case p^.val of
           PTrue -> return ()
           PFalse -> return ()
