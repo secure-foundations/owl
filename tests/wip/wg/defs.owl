@@ -195,6 +195,12 @@ func honest_c6<i,j@n,m>() =
         0x
     )
 
+func honest_c7<i,j@n,m>() = 
+    gkdf<kdfkey||nonce||enckey; 0>(honest_c6<session i, session j, pid n, pid m>(),
+        0x,
+        0x
+    )
+
 corr<i,j,n,m> adv ==> 
     [KDF<kdfkey||nonce||enckey;1;nonce>(honest_c6<session i, session j, pid n, pid m>(), 0x, 0x)]
 

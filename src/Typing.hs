@@ -1376,7 +1376,6 @@ tyLenLbl t =
                 return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
       (TCase _ t1 t2) -> do
           t' <- normalizeTy t
-          logTypecheck $ owlpretty "Normalized " <> owlpretty t <> owlpretty " to " <> owlpretty t'
           case t'^.val of
             TCase p _ _ -> do
                 l1 <- tyLenLbl t1
@@ -1450,7 +1449,6 @@ checkProp p =
               withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
           PApp s is xs -> do
               ts <- mapM inferAExpr xs
-              logTypecheck $ owlpretty "Check PApp: " <> owlpretty p <> owlpretty " with args " <> owlpretty (zip xs ts)
               p <- extractPredicate s is xs
               checkProp p
           PAADOf ne x -> do
