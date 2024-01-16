@@ -254,7 +254,9 @@ odh L2<@n,m> :
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-     salt != honest_c1<session i, pid n>() -> strict C5<@n,m>
+     salt != honest_c1<session i, pid n>() /\
+     salt == honest_c4<session i,session j, pid n,pid m>()
+     -> strict C5<@n,m>
         || strict st_aead (Data<adv> |0|)
                                 aad x. true
                                 nonce dummy
@@ -375,20 +377,16 @@ struct responder_msg1_val<i,n,m> {
 }
 
 predicate resp_session_ok<i,j,n,m>(eph, pk) = 
-     is_e_init[eph] /\ (
-        (pk == dhpk(get(S_init<@n>))
-         /\
-         ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
+     is_e_init[eph] /\ 
+     pk == dhpk(get(S_init<@n>))
+     /\
+     ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
           \/
           (sec(E_resp<j@m>) /\ sec(S_init<@n>))
           \/
           (sec(S_resp<@m>) /\ sec(E_init<i@n>))
           \/
-          (sec(S_resp<@m>) /\ sec(S_init<@n>))))
-        \/
-        (pk != dhpk(get(S_init<@n>))
-         /\
-          (sec(E_init<i@n>) /\ sec(E_resp<j@m>))))       
+          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
 
 struct transp_keys<i,j,n,m> {
     tk_eph : Ghost,

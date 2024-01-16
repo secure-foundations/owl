@@ -2517,6 +2517,23 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
       Nothing -> return Nothing
 
 
+findKDFODHColl :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe String)
+findKDFODHColl (a, _) (b, _) (c, _) = do
+    cur_odh <- view $ curMod . odh
+    findColl a b c cur_odh
+        where
+            findColl salt ikm info [] = return Nothing
+            findColl salt ikm info ((s,bnd) : odhs) = do
+                let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+                let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+                ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd
+                let pd1 = pEq ikm (dhCombine (dhpk $ aeGet ne1) (aeGet ne2))
+                pd2 <- inKDFBody kdfBody salt info
+                res <- decideProp $ pNot $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
+                case res of
+                  Just True -> findColl salt ikm info odhs
+                  _ -> return $ Just s
+
 nameKindLength :: NameKind -> AExpr
 nameKindLength nk =
     aeLenConst $ case nk of
@@ -2612,8 +2629,11 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                               Just KDFAdv -> return $ Just (Nothing, KDFAdv)
                               Nothing -> do
                                 pub <- tyFlowsTo (snd b) advLbl
-                                assert ("No KDF hints worked for second argument; IKM must then flow to adv") pub
-                                return Nothing
+                                case pub of 
+                                  True -> return Nothing
+                                  False -> do
+                                      coll <- findKDFODHColl a b c 
+                                      typeError $ "KDF malformed but collided with: " ++ show (owlpretty coll) ++ ". Type of ikm: " ++ show (owlpretty $ snd b)
                         e:os' -> do
                             r <- case e of
                                    Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
