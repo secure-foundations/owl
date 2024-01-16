@@ -1255,7 +1255,8 @@ checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()
 checkTy t = withSpan (t^.spanOf) $ 
-    local (set tcScope $ TcGhost False) $
+    local (set tcScope $ TcGhost False) $ do
+        logTypecheck $ owlpretty "Checking ty " <> owlpretty t
         case t^.val of
           TUnit -> return ()
           TBool l -> checkLabel l
@@ -1376,6 +1377,7 @@ tyLenLbl t =
                 return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
       (TCase _ t1 t2) -> do
           t' <- normalizeTy t
+          logTypecheck $ owlpretty "Normalized " <> owlpretty t <> owlpretty " to " <> owlpretty t'
           case t'^.val of
             TCase p _ _ -> do
                 l1 <- tyLenLbl t1
@@ -1423,7 +1425,8 @@ checkLabel l =
 
 checkProp :: Prop -> Check ()
 checkProp p =
-    local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ 
+    local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ do
+        logTypecheck $ owlpretty "Checking prop " <> owlpretty p
         case p^.val of
           PTrue -> return ()
           PFalse -> return ()
@@ -1448,6 +1451,8 @@ checkProp p =
               (x, p) <- unbind xp
               withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
           PApp s is xs -> do
+              ts <- mapM inferAExpr xs
+              logTypecheck $ owlpretty "Check PApp: " <> owlpretty p <> owlpretty " with args " <> owlpretty (zip xs ts)
               p <- extractPredicate s is xs
               checkProp p
           PAADOf ne x -> do
@@ -2666,6 +2671,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
             Just (KDFGood strictness ne) -> pushRoutine "KDF.good" $ do 
               let flowAx = case strictness of
                              KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                             KDFPub -> pFlow (nameLbl ne) advLbl 
                              KDFUnstrict -> pTrue
               lenConst <- local (set tcScope $ TcGhost False) $ lenConstOfUniformName ne
               return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
@@ -3009,7 +3015,10 @@ typeError' msg = do
               False -> do
                 (_, b) <- local (set inTypeError True) $ SMT.smtTypingQuery "typeError false check" $ SMT.symAssert $ mkSpanned PFalse
                 return $ if b then [E.Note "Inconsistent type context detected. Try using false_elim?"] else []
-    tyc <- (removeAnfVars <$> view tyContext) >>= normalizeTyContext
+    tyc <- case ite of
+             True -> removeAnfVars <$> view tyContext
+             False ->
+                local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
     e <- ask

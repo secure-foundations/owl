@@ -246,6 +246,7 @@ instance  OwlPretty PropX where
 
 instance OwlPretty KDFStrictness where                                      
     owlpretty (KDFStrict) = owlpretty "strict"
+    owlpretty (KDFPub) = owlpretty "public"
     owlpretty KDFUnstrict = mempty
 
 owlprettyIdxBinds1 :: [IdxVar] -> OwlDoc

@@ -125,7 +125,7 @@ data AExprX =
 
 type AExpr = Spanned AExprX
 
-data KDFStrictness = KDFStrict | KDFUnstrict
+data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
 

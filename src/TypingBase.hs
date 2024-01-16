@@ -902,7 +902,7 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
             Just (FunDef b) -> normalizeAExpr =<< extractFunDef b fs' aes'
             _ -> return $ Spanned (ae^.spanOf) $ AEApp pth fs' aes'
 
-withMemoize :: Alpha a => (Lens' MemoEntry (IORef (M.Map (AlphaOrd a) b))) -> (a -> Check b) -> a -> Check b
+withMemoize :: (Alpha a, OwlPretty a, OwlPretty b) => (Lens' MemoEntry (IORef (M.Map (AlphaOrd a) b))) -> (a -> Check b) -> a -> Check b
 withMemoize lns k x = do
     memo <- view $ curMemo . lns
     mp <- liftIO $ readIORef memo
@@ -912,18 +912,6 @@ withMemoize lns k x = do
           v <- k x
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
           return v
-
-memoizeAExpr :: AExpr -> Check Ty -> Check Ty
-memoizeAExpr ae m = do
-    memo <- view $ curMemo . memoInferAExpr 
-    mp <- liftIO $ readIORef memo
-    case M.lookup (AlphaOrd ae) mp of 
-      Just t -> do
-          return t
-      Nothing -> do
-          t <- m
-          liftIO $ modifyIORef memo $ M.insert (AlphaOrd ae) t
-          return t
 
 ensureNonGhostLbl l = do
     case l^.val of
@@ -951,7 +939,8 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
         tC <- view tyContext
         case lookup x tC of 
           Just (_, _, t) -> return t
-          Nothing -> typeError $ show $ ErrUnknownVar x
+          Nothing -> do
+              local (set inTypeError True) $ typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
         ts <- mapM inferAExpr args
         (ar, k) <- getFuncInfo f

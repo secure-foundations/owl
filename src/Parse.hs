@@ -658,17 +658,23 @@ parseNameType =
         return $ NT_App p ps
     )
 
+parseKDFStrictness = 
+    (reserved "strict" >> return KDFStrict)
+    <|>
+    (reserved "public" >> return KDFPub)
+
+
 kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
 kdfCase = do 
     ois <- parseIdxParamBinds1
     p <- parseProp
     symbol "->"
     nts <- (do
-        ostrict <- optionMaybe $ reserved "strict"
+        ostrict <- optionMaybe $ parseKDFStrictness
         nt <- parseNameType
         let strictness = case ostrict of 
                             Nothing -> KDFUnstrict
-                            Just _ -> KDFStrict
+                            Just v -> v
         return (strictness, nt)) `sepBy` (symbol "||")
     return $ bind ois (p, nts)
 
