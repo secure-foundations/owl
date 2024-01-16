@@ -2688,7 +2688,11 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           checkCounterIsLocal p iargs
           assert ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
           let [(_, t1), (x, t), (y, t2)] = args
-          case extractNameFromType t1 of
+          let withCorrectLength k = do
+                      t <- k
+                      return $ tRefined t ".res" $ pEq (aeLength (aeVar ".res")) 
+                        (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+          withCorrectLength $ case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
@@ -2702,7 +2706,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
                           pImpl (pNot $ pFlow (nameLbl k) advLbl)
                                 (subst xa (aeVar ".res") aadp)
-                      if b1 && b2 then return $ tRefined (tData advLbl advLbl) ".res" $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+                      if b1 && b2 then return $ tData advLbl advLbl 
                                   else mkSpanned <$> trivialTypeOf (map snd args)
                   _ -> mkSpanned <$> trivialTypeOf (map snd args)
       CDecStAEAD -> do

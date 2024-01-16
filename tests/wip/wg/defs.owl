@@ -107,19 +107,8 @@ nametype C6<@n, m> = kdf {ikm info.
         st_aead (Data<adv> |0|)
            aad x. true 
            nonce aead_counter_msg2_C7
-/*
-    ikm == get(psk<@n,m>) -> 
-        strict C7<@n,m> || nonce || 
-        st_aead (Data<adv> |0|)
-           aad x. true 
-           nonce aead_counter_msg2_C7
-    ikm != get(psk<@n,m>) -> strict C7_corr || nonce || 
-                                st_aead (x:Data<adv> {False})
-                                    aad x. true
-                                    nonce aead_counter_msg2_C7
-                                    */
-
 }
+
 
 nametype C6_corr = kdf {ikm info.
     True -> strict C7_corr || nonce || 
@@ -243,6 +232,16 @@ func honest_c5<i,j@n,m>() =
         dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>)),
         0x
     )
+
+func honest_c6<i,j@n,m>() = 
+    gkdf<kdfkey||enckey; 0>(honest_c5<session i, session j, pid n, pid m>(),
+        dh_combine(dhpk(get(S_init<@n>)), get(E_resp<j@m>)),
+        0x
+    )
+
+corr<i,j,n,m> adv ==> 
+    [KDF<kdfkey||nonce||enckey;1;nonce>(honest_c6<session i, session j, pid n, pid m>(), 0x, 0x)]
+
 
 odh L2<@n,m> : 
     S_init<@n>, S_resp<@m> -> {salt info.
