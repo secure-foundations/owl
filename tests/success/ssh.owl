@@ -86,12 +86,13 @@ struct SDIS_msg {
 
 def PFA_FW (gb : Ghost, k11: 
     if (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) \/ corr(b)) 
-    then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PFA
+    then Data<adv> else Name(KDF<enckey;0;enckey sign_request_response>(0x,
+    dh_combine(dhpk(get(b)), get(a)), 0x01))) @ PFA 
 : Unit =
     pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
     pcase (corr(a) \/ corr(b)) in
-    corr_case ODHName<l1;0>(0x, 0x01)[0] in 
     input inp in // from PDIS (actual non-KE)
+    corr_case nameOf(k11) in 
     case adec(k11, inp) {
         | None => ()
         | Some m' =>
@@ -112,7 +113,9 @@ def PDIS_actual(gb : Ghost,
     k11: 
         if (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a)
             \/ corr(b)) 
-        then Data<adv> else Name(ODHName<l1; 0>(0x, 0x01)[0])) @ PDIS
+        then Data<adv> else 
+     Name(KDF<enckey;0;enckey sign_request_response>(0x,
+    dh_combine(dhpk(get(b)), get(a)), 0x01))) @ PDIS
 : Unit =
     pcase (sec(a) /\ sec(b)) in 
     let g_pow_b1 = dhpk(get(b1)) in
@@ -137,12 +140,12 @@ def PDIS_actual(gb : Ghost,
                 let request = _req(1) in // TODO: 1 is the hash
                 pcase (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
                 pcase (corr(a) \/ corr(b)) in
-                corr_case ODHName<l1;0>(0x, 0x01)[0] in
                 let enc_request = aenc(k11, request) in
                 let _ = output enc_request to endpoint(PFA) in
 
                 // get its input
                 input inp2 in
+                corr_case nameOf(k11) in
                 case adec(k11, inp2) {
                     | None => ()
                     | Some m' =>
@@ -187,7 +190,7 @@ def SDIS_actual () @ SDIS
                         let k    = kdf<;odh l2[0];enckey;0>(0x, ss, 0x02) in 
                         
                         input inp2 in
-                        corr_case ODHName<l2;0>(0x, 0x02)[0] in
+                        corr_case nameOf(k) in 
                         case adec(k, inp2) as Option (Data<adv>)  {
                             | None => ()
                             | Some m'' =>
@@ -223,10 +226,7 @@ def PFA_KE () @ PFA
                 if !is_group_elem(g_pow_b) then () else {
                     let ss     = dh_combine(g_pow_b, get(a)) in
                     pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
-                    let k11 : if 
-                        (corr(skPDIS) /\ ss != dh_combine(dhpk(get(a)),get(b))) \/
-                    (corr(a) \/ corr(b))
-                        then Data<adv> else Name(ODHName<l1;0>(0x, 0x01)[0])
+                    let k11 
                         = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
                     call PFA_FW(ss, k11)
                 }
