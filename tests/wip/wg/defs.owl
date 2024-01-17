@@ -227,7 +227,7 @@ odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
         (! exists i:idx. salt == honest_c1<session i, pid n>()) 
         /\
-        (exists i:idx. salt == c5_resp<session j, pid m>(dhpk(get(S_init<@n>)), dhpk(get(E_init<i@n>))))
+        (exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>()) 
             -> 
             strict C6<@n,m> || enckey (Data<adv> |0|)
 }
@@ -351,14 +351,39 @@ predicate resp_session_ok<i,j,n,m>(eph, pk) =
           \/
           (sec(S_resp<@m>) /\ sec(S_init<@n>)))
 
-struct transp_keys<i,j,n,m> {
-    tk_eph : Ghost,
-    tk_pk : Ghost,
-    tk_c7 : Ghost,
-    k_init_send : if resp_session_ok<i,j,n,m>[tk_eph, tk_pk] then
-    SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tk_c7, 0x, 0x))
+struct transp_keys_resp<i,j,n,m> {
+    tkr_eph : Ghost,
+    tkr_pk : Ghost,
+    tkr_c7 : Ghost,
+    tkr_k_init_send : if resp_session_ok<i,j,n,m>[tkr_eph, tkr_pk] then
+    SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tkr_c7, 0x, 0x))
     else Data<adv>,
-    k_resp_send : if resp_session_ok<i,j,n,m>[tk_eph, tk_pk] then 
-        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tk_c7, 0x, 0x))
+    tkr_k_resp_send : if resp_session_ok<i,j,n,m>[tkr_eph, tkr_pk] then 
+        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tkr_c7, 0x, 0x))
+        else Data<adv>
+}
+
+predicate tki_secure<i,j,n,m>(eph, c7) = 
+    eph == dhpk(get(E_resp<j@m>))
+    /\
+    c7 == honest_c7<session i, session j, pid n, pid m>()
+    /\
+     ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
+
+
+struct transp_keys_init<i,j,n,m> {
+    tki_eph : Ghost,
+    tki_c7 : Ghost,
+    tki_k_init_send : if tki_secure<i,j,n,m>[tki_eph, tki_c7] then
+        SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7, 0x, 0x))
+        else Data<adv>,
+    tki_k_resp_send : if tki_secure<i,j,n,m>[tki_eph, tki_c7] then
+        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x))
         else Data<adv>
 }

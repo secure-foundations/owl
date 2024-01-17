@@ -38,13 +38,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let msg1_output /* : msg1 */ = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
     let _ = output msg1_output to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
-    let C3' : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
-          (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(C2, dh(get(S_init<@n>), get(S_resp<@m>)), 0x))
-           {
-               sec(KDF<kdfkey||enckey;0;C3<@n,m>>(C2,  dh(get(S_init<@n>), get(S_resp<@m>)), 0x))
-           })
-          else Data<adv> = C3 in 
-    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3', H4) in
+    let retval = initiator_msg1_val<session i, pid n, pid m>(C2, C3, H4) in
     retval
 
 
@@ -58,34 +52,26 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      =
      set_option ":rlimit" "2000000" in 
      input inp in
-     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral', msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
+     parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
      guard eq(length(msg1_sender), 4) in 
-     guard is_group_elem(msg1_ephemeral') in 
+     guard is_group_elem(msg1_ephemeral) in 
      let C0 = crh(construction()) in
      let H0 = crh(C0 ++ identifier()) in 
      let H1 = crh(H0 ++ dhpk_S_resp) in
-     pcase (is_e_init[msg1_ephemeral']) in 
-         choose_idx n | exists i:idx. msg1_ephemeral' == dhpk(get(E_init<i@n>)) in 
-         choose_idx i | msg1_ephemeral' == dhpk(get(E_init<i@n>)) in
-     pcase (is_s_init[msg1_ephemeral']) when (!is_e_init[msg1_ephemeral']) in 
-        choose_idx n2 | msg1_ephemeral' == dhpk(get(S_init<@n2>)) in 
-     let msg1_ephemeral : if (msg1_ephemeral' == dhpk(get(E_init<i@n>))) then dhpk(E_init<i@n>) else 
-        if (msg1_ephemeral' == dhpk(get(S_init<@n2>))) then dhpk(S_init<@n2>)
-            else 
-        (x:Data<adv>{x == msg1_ephemeral'
-            /\ (!is_e_init[msg1_ephemeral']) 
-            /\ (!is_s_init[msg1_ephemeral'])
-        }) = msg1_ephemeral' in
+     pcase (is_e_init[msg1_ephemeral]) in 
+         choose_idx n | exists i:idx. msg1_ephemeral == dhpk(get(E_init<i@n>)) in 
+         choose_idx i | msg1_ephemeral == dhpk(get(E_init<i@n>)) in
+     pcase (is_s_init[msg1_ephemeral]) when (!is_e_init[msg1_ephemeral]) in 
+        choose_idx n2 | msg1_ephemeral == dhpk(get(S_init<@n2>)) in 
      let C1 = kdf<;;kdfkey;0>(C0, msg1_ephemeral, 0x) in 
      let H2 = crh(H1 ++ msg1_ephemeral) in
      let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
      
      corr_case S_resp<@m> in 
-     corr_case E_init<i@n> when is_e_init[msg1_ephemeral'] in 
-     corr_case S_init<@n2> when is_s_init[msg1_ephemeral'] in 
+     corr_case E_init<i@n> when is_e_init[msg1_ephemeral] in 
+     corr_case S_init<@n2> when is_s_init[msg1_ephemeral] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
-     // TODO: be able to prove below assume
-     assert (C1 == gkdf<kdfkey;0>(crh(construction()), msg1_ephemeral, 0x));
+     // H(a, b, c) != H(H(a, b, c), d, e)
      assume (
         ! exists i:idx. C1 == honest_c2<session i, pid n2, pid m>());
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 

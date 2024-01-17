@@ -652,7 +652,7 @@ isSingleton t =
 
 tyFlowsTo :: Ty -> Label -> Check Bool
 tyFlowsTo t l = 
-    case t^.val of
+    case (stripRefinements t)^.val of
       TSS n m -> do
           ob1 <- tryFlowsTo (joinLbl (nameLbl n) advLbl) l
           ob2 <- tryFlowsTo (joinLbl (nameLbl m) advLbl) l
@@ -836,7 +836,7 @@ withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(DataVar, String, Ty)] -> a 
 withDepBind (DPDone x) k = DPDone <$> k [] x
 withDepBind (DPVar t s xd) k = do
     (x, d) <- unbind xd
-    res <- withVars [(x, (ignore $ show x, Nothing, t))] $ withDepBind d $ \args v -> k ((x, s, t):args) v
+    res <- withVars [(x, (ignore s, Nothing, t))] $ withDepBind d $ \args v -> k ((x, s, t):args) v
     return $ DPVar t s (bind x res)
                                           
 unsafeMapDepBind :: Alpha a => DepBind a -> (a -> b) -> b
@@ -2350,13 +2350,13 @@ proveDisjointContents x y = do
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
 
-data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label [(KDFStrictness, NameType)]
+data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label 
     deriving (Show, Generic, Typeable)
 
 instance OwlPretty KDFInferResult where
     owlpretty KDFAdv = owlpretty "KDFAdv"
     owlpretty (KDFGood str ne) = owlpretty "KDFGood(" <> owlpretty ne <> owlpretty ")"
-    owlpretty (KDFCorrupt l nts) = owlpretty "KDFCorrupt(" <> owlpretty l <> owlpretty ")"
+    owlpretty (KDFCorrupt l) = owlpretty "KDFCorrupt(" <> owlpretty l <> owlpretty ")"
 
 instance Alpha KDFInferResult
 
@@ -2365,8 +2365,8 @@ unifyKDFInferResult ::
     Maybe (Either KDFSelector (String, ([Idx], [Idx]), KDFSelector))
     ->
     KDFInferResult -> KDFInferResult -> Check KDFInferResult
-unifyKDFInferResult _ _ (KDFCorrupt _ _) v = return v
-unifyKDFInferResult _ _ v (KDFCorrupt _ _) = return v
+unifyKDFInferResult _ _ (KDFCorrupt _) v = return v
+unifyKDFInferResult _ _ v (KDFCorrupt _) = return v
 unifyKDFInferResult _ _ (KDFAdv) v = return v
 unifyKDFInferResult _ _ v KDFAdv = return v
 unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
@@ -2426,7 +2426,7 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                     mkSpanned $ KDFName (fst a) (fst b) (fst c) nks j nt   
                           else do
                               l_corr <- coveringLabelOf [snd a, snd b, snd c]
-                              return $ Just $ KDFCorrupt l_corr nts 
+                              return $ Just $ KDFCorrupt l_corr 
                     else return Nothing
                 NT_KDF kpos' _ -> typeError $ "Unexpected key position: expected " ++ show (kpos') ++ " but got " ++ show kpos
 
@@ -2485,7 +2485,7 @@ inferKDFODH a (b, tb) c s ips i j nks2 = pushRoutine ("inferKDFODH") $ do
                             mkSpanned $ KDFName (fst a) b (fst c) nks j nt 
                     else do
                         l_corr <- coveringLabelOf [snd a, snd c]
-                        return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) str_nts
+                        return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) 
               else return Nothing
           _ -> return Nothing
     return res
@@ -2673,11 +2673,8 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
               return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                   pAnd flowAx $ 
                       pEq (aeLength (aeVar ".res")) lenConst
-            Just (KDFCorrupt l_corr nts) -> pushRoutine "KDF.corrupt" $ do 
-                p <- local (set tcScope $ TcGhost False) $ corruptKDFChain nts >>= normalizeProp
-                let args_public = pFlow l_corr advLbl
-                let ot = tDataAnn l_corr zeroLbl "public KDF"
-                return $ tRefined ot "._" $ pImpl args_public p
+            Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
+                return $ tDataAnn l_corr zeroLbl "corrupt KDF"
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args

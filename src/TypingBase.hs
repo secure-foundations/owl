@@ -1207,7 +1207,7 @@ coveringLabel' t =
       (TVK n) -> return $ advLbl
       (TDH_PK n) -> return $ advLbl
       (TEnc_PK n) -> return $ advLbl
-      (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m) -- TODO: is this right? Definitely sound
+      (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m)
       (TUnion t1 t2) -> do
           l1 <- coveringLabel' t1
           l2 <- coveringLabel' t2
