@@ -51,8 +51,7 @@ session j, pid n, pid m>(c, ts)) ++ tau
 func honest_H7_pre<i, j@n,m>(c, ts, tau, c') = 
     crh(honest_H6_pre<session i, session j, pid n, pid m>(c, ts, tau)) ++ c'
 
-locality dummy : 2 // TODO just for now
-name channel_secret<@n,m> : nonce @ dummy<n,m>
+name channel_secret<@n,m> : nonce 
 corr<n,m> [S_init<@n>] ==> [channel_secret<@n,m>]
 corr<n,m> [S_resp<@m>] ==> [channel_secret<@n,m>]
 
@@ -98,13 +97,10 @@ nametype C6<@n, m> = kdf {ikm info.
            nonce aead_counter_msg2_C7
 }
 
-counter dummy<@n> @ Initiator<n>
 
 nametype C5<@n,m> = kdf {ikm info.
     True -> 
-    strict C6<@n,m> || strict st_aead (Data<adv> |0|)
-                                aad x. true
-                                nonce dummy
+    strict C6<@n,m> 
 }
 
 func honest_c1<i@n>() = 
@@ -112,9 +108,6 @@ func honest_c1<i@n>() =
 
 nametype C4<@n,m> = kdf {ikm info.
     True -> strict C5<@n,m> 
-        || strict st_aead (Data<adv> |0|)
-                                aad x. true
-                                nonce dummy
 }
 
 nametype C3<@n,m> = kdf {ikm info.
@@ -171,7 +164,7 @@ func c4_resp<j@m>(pk, eph) =
     )
 
 func c5_resp<j@m>(pk, eph) = 
-    gkdf<kdfkey||enckey;0>(c4_resp<session j, pid m>(pk, eph),
+    gkdf<kdfkey;0>(c4_resp<session j, pid m>(pk, eph),
         dh_combine(eph, get(E_resp<j@m>)),
         0x
     )
@@ -184,13 +177,13 @@ func honest_c4<i,j@n,m>() =
     )
 
 func honest_c5<i,j@n,m>() = 
-    gkdf<kdfkey||enckey;0>(honest_c4<session i, session j, pid n, pid m>(),
+    gkdf<kdfkey;0>(honest_c4<session i, session j, pid n, pid m>(),
         dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>)),
         0x
     )
 
 func honest_c6<i,j@n,m>() = 
-    gkdf<kdfkey||enckey; 0>(honest_c5<session i, session j, pid n, pid m>(),
+    gkdf<kdfkey; 0>(honest_c5<session i, session j, pid n, pid m>(),
         dh_combine(dhpk(get(S_init<@n>)), get(E_resp<j@m>)),
         0x
     )
@@ -218,9 +211,6 @@ odh L4<i,j@n,m> :
      salt != honest_c1<session i, pid n>() /\
      salt == honest_c4<session i,session j, pid n,pid m>()
      -> strict C5<@n,m>
-        || strict st_aead (Data<adv> |0|)
-                                aad x. true
-                                nonce dummy
 }
 
 odh L5<j@n,m> :
@@ -229,7 +219,7 @@ odh L5<j@n,m> :
         /\
         (exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>()) 
             -> 
-            strict C6<@n,m> || enckey (Data<adv> |0|)
+            strict C6<@n,m> 
 }
 
 nametype C1<@n,m> = kdf {ikm info.
