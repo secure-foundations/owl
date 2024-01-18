@@ -13,6 +13,8 @@ name f : dualkdf {salt info.
     }
 } @ alice   
 
+corr [k] /\ [f] ==> [d]
+
 def main() @ alice : (x:Unit{corr(k) /\ corr(f) ==> corr(d)}) = 
     corr_case k in
     corr_case f in

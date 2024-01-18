@@ -72,8 +72,10 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      corr_case S_init<@n2> when is_s_init[msg1_ephemeral] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // H(a, b, c) != H(H(a, b, c), d, e)
+     /*
      assume (
         ! exists i:idx. C1 == honest_c2<session i, pid n2, pid m>());
+     */
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {

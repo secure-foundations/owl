@@ -719,8 +719,12 @@ parseNameDeclBody =
     (do
          symbol ":"
          nt <- parseNameType
-         symbol "@"
-         nl <- parseLocality `sepBy1` (symbol ",")
+         onl <- optionMaybe $ do
+             symbol "@"
+             parseLocality `sepBy1` (symbol ",")
+         let nl = case onl of
+                    Nothing -> []
+                    Just v -> v
          return $ DeclBaseName nt nl)
     <|>
     (do

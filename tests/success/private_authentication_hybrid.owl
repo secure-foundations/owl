@@ -78,6 +78,7 @@ def B_main<j> () @ B
                 | m1_pkA_tag m1_pkA =>
                     pcase (i =idx j) in 
                     if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
+                        false_elim in 
                         let hybridKB          = get(hybrid_skB) in
                         let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in
                         let _ = output enc_hybridKB to endpoint(A) in
