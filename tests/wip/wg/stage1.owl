@@ -72,15 +72,14 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
      corr_case S_init<@n2> when is_s_init[msg1_ephemeral] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // H(a, b, c) != H(H(a, b, c), d, e)
-     /*
      assume (
         ! exists i:idx. C1 == honest_c2<session i, pid n2, pid m>());
-     */
-     let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
-     let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
-     case st_aead_dec(k0, msg1_static, H2, 0x) as Option (dhpk(S_init<@n>)) {
+     let C2 = kdf<;odh L1<i@n,m>[0], odh L2<@n2, m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
+     let k0 = kdf<;odh L1<i@n,m>[0], odh L2<@n2, m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
+     case st_aead_dec(k0, msg1_static, H2, 0x) as Option (Data<adv>) {
          | None => None()
          | Some msg1_static_dec => 
+                assume (h3_pred<n2, m>[H2] ==> False);
                 false_elim in
                 let oss = call checkpk_resp<@m>(msg1_static_dec) in
                 case oss {
@@ -137,6 +136,14 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                         case st_aead_dec(k1, msg1_timestamp, H3, 0x) as Option (Data<adv> |12|) {
                         | None => None()
                         | Some msg1_timestamp_dec =>
+                            assume (h3_pred<n,m>[H3] ==> 
+                                exists i:idx. msg1_ephemeral ==
+                                dhpk(get(E_init<i@n>))
+                            );
+                            assume (h3_pred<n3,m>[H3] ==> 
+                                exists i:idx. msg1_ephemeral ==
+                                dhpk(get(E_init<i@n3>))
+                            );
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
                             Some(pack<n>(pack<i>(responder_msg1_val<idx i, idx
