@@ -2092,15 +2092,21 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 assertSubtype tk_otherwise tk
                 return tk
       (ECase e1 otk cases) -> do
+          -- TODO: we need to check that, if we have an annotation, in the good case, we simply subtype
+          -- into the validated ty, but we still return the true type
           t <- checkExpr Nothing e1
           t <- stripRefinements <$> normalizeTy t
           (wfCase, tcases, ok) <- case otk of
             Just (tAnn, k) -> do
                 checkTy tAnn
                 tAnn' <- normalizeTy tAnn
-                tc <- withSpan (e1^.spanOf) $ obtainTyCases tAnn' ""
                 b <- isSubtype t tAnn'
-                return (b, tc, Just k)
+                if b then do
+                         tc <- withSpan (e1^.spanOf) $ obtainTyCases t ""
+                         return (b, tc, Just k)
+                     else do
+                         tc <- withSpan (e1^.spanOf) $ obtainTyCases tAnn' ""
+                         return (b, tc, Just k)
             Nothing -> do
                 tc <- withSpan (e1^.spanOf) $ obtainTyCases t ". Try adding an annotation to the case statement."
                 return (True, tc, Nothing)
