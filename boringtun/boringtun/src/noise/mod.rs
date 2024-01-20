@@ -45,9 +45,9 @@ const N_SESSIONS: usize = 8;
 pub enum TunnResult<'a> {
     Done,
     Err(WireGuardError),
-    WriteToNetwork(&'a mut [u8]),
-    WriteToTunnelV4(&'a mut [u8], Ipv4Addr),
-    WriteToTunnelV6(&'a mut [u8], Ipv6Addr),
+    WriteToNetwork(&'a [u8]),
+    WriteToTunnelV4(&'a [u8], Ipv4Addr),
+    WriteToTunnelV6(&'a [u8], Ipv6Addr),
 }
 
 impl<'a> From<WireGuardError> for TunnResult<'a> {
@@ -461,7 +461,7 @@ impl Tunn {
 
     /// Check if an IP packet is v4 or v6, truncate to the length indicated by the length field
     /// Returns the truncated packet and the source IP as TunnResult
-    fn validate_decapsulated_packet<'a>(&mut self, packet: &'a mut [u8]) -> TunnResult<'a> {
+    fn validate_decapsulated_packet<'a>(&mut self, packet: &'a [u8]) -> TunnResult<'a> {
         let (computed_len, src_ip_address) = match packet.len() {
             0 => return TunnResult::Done, // This is keepalive, and not an error
             _ if packet[0] >> 4 == 4 && packet.len() >= IPV4_MIN_HEADER_SIZE => {
@@ -501,8 +501,8 @@ impl Tunn {
         self.rx_bytes += computed_len;
 
         match src_ip_address {
-            IpAddr::V4(addr) => TunnResult::WriteToTunnelV4(&mut packet[..computed_len], addr),
-            IpAddr::V6(addr) => TunnResult::WriteToTunnelV6(&mut packet[..computed_len], addr),
+            IpAddr::V4(addr) => TunnResult::WriteToTunnelV4(&packet[..computed_len], addr),
+            IpAddr::V6(addr) => TunnResult::WriteToTunnelV6(&packet[..computed_len], addr),
         }
     }
 
