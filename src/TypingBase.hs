@@ -162,6 +162,7 @@ data Env = Env {
     -- depends on them
     _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
+    _pathCondition :: [Prop],
     _expectedTy :: Maybe Ty,
     ------
     _envFlags :: Flags,

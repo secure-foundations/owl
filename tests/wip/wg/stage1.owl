@@ -118,7 +118,7 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                                     dh_combine(dhpk(get(E_init<j@n3>)), get(S_resp<@m>)),
                                     0x)
                         );
-                        pcase (n !=idx n3) in
+                        pcase (n =idx n3) in
 
 
                         assert (n !=idx n3 ==>
@@ -144,8 +144,12 @@ def receive_msg1<@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                                 exists i:idx. msg1_ephemeral ==
                                 dhpk(get(E_init<i@n3>))
                             );
+                            debug "Reached end of receive_msg1";
+                            debug "=========";
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
+                            debug hasType(msg1_ephemeral, dhpk(E_init<i@n>));
+                            debug hasType(msg1_static_dec, dhpk(S_init<@n>));
                             Some(pack<n>(pack<i>(responder_msg1_val<idx i, idx
                             n, idx m>(msg1_ephemeral, msg1_static_dec, C2, C3, H4))))
                         otherwise => None()

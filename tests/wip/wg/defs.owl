@@ -79,11 +79,15 @@ nametype C7<@n,m> = kdf {ikm info.
 
 counter aead_counter_msg2_C7<j@m> @ Responder<m>
 
+predicate valid_h6<n,m>(h) = 
+    exists i:idx,j:idx,c:bv,ts:bv,tau:bv.
+        h == crh(honest_H6_pre<session i, session j, pid n, pid m>(c, ts, tau))
+        
 
 nametype C6_dual<@n, m> = dualkdf {salt info.
     True -> strict C7<@n,m> || nonce || 
         strict st_aead (Data<adv> |0|)
-           aad x. true 
+           aad x. valid_h6<n,m>[x] 
            nonce aead_counter_msg2_C7
 }
 
@@ -93,7 +97,7 @@ nametype C6<@n, m> = kdf {ikm info.
     ikm == 0x -> 
         strict C7<@n,m> || nonce || 
         strict st_aead (Data<adv> |0|)
-           aad x. true 
+           aad x. valid_h6<n,m>[x] 
            nonce aead_counter_msg2_C7
 }
 
@@ -308,7 +312,8 @@ struct initiator_msg1_val<i,n,m> {
        else (x:Data<adv>{
            x == honest_c3<session i, pid n, pid m>()
        }),
-      _initiator_msg1_H4 : Data<adv>
+      _initiator_msg1_H4 : (x:Data<adv>{exists c:bv, ts:bv. 
+        x == crh(honest_H4_pre<session i, pid n, pid m>(c, ts))})
 }
 
 predicate is_e_init(x) =

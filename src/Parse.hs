@@ -1091,11 +1091,11 @@ parseDebugCommand =
     )
     <|>
     (try $ do
-        reserved "printProp"
+        reserved "decideProp"
         symbol "("
         p <- parseProp
         symbol ")"
-        return $ DebugPrintProp p
+        return $ DebugDecideProp p
         )
     <|>
     (try $ do
@@ -1110,6 +1110,11 @@ parseDebugCommand =
     (try $ do
         reserved "printModules"
         return $ DebugPrintModules
+    )
+    <|>
+    (try $ do
+        reserved "printPathCondition"
+        return $ DebugPrintPathCondition
     )
     <|>
     (try $ do

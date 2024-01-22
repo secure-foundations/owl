@@ -418,11 +418,12 @@ instance  OwlPretty DebugCommand where
     owlpretty (DebugPrintTyOf ae _) = owlpretty "debugPrintTyOf(" <> owlpretty ae <> owlpretty ")"
     owlpretty (DebugPrint s) = owlpretty "debugPrint(" <> owlpretty s <> owlpretty ")"
     owlpretty (DebugPrintTy t) = owlpretty "debugPrintTy(" <> owlpretty t <> owlpretty ")"
-    owlpretty (DebugPrintProp t) = owlpretty "debugPrintProp(" <> owlpretty t <> owlpretty ")"
+    owlpretty (DebugDecideProp t) = owlpretty "debugDecideProp(" <> owlpretty t <> owlpretty ")"
     owlpretty (DebugPrintTyContext anf) = owlpretty "debugPrintTyContext" <+> (if anf then owlpretty "anf" else mempty)
     owlpretty (DebugPrintExpr e) = owlpretty "debugPrintExpr(" <> owlpretty e <> owlpretty ")"
     owlpretty (DebugPrintLabel l) = owlpretty "debugPrintLabel(" <> owlpretty l <> owlpretty ")"
     owlpretty (DebugResolveANF a) = owlpretty "resolveANF" <> parens (owlpretty a)
+    owlpretty _ = owlpretty "unimp"
 
 instance  OwlPretty FuncParam where
     owlpretty (ParamStr s) = owlpretty s

@@ -469,7 +469,8 @@ data DebugCommand =
       | DebugResolveANF AExpr
       | DebugPrint String
       | DebugPrintTy Ty
-      | DebugPrintProp Prop
+      | DebugPrintPathCondition
+      | DebugDecideProp Prop
       | DebugPrintTyContext Bool
       | DebugPrintExpr Expr
       | DebugPrintLabel Label

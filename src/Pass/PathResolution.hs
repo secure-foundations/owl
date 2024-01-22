@@ -720,13 +720,14 @@ resolveDebugCommand dc =
           t' <- resolveTy t
           return $ DebugHasType (ignore s') a' t'
       DebugPrintTy t -> DebugPrintTy <$> resolveTy t
-      DebugPrintProp p -> DebugPrintProp <$> resolveProp p
+      DebugDecideProp p -> DebugDecideProp <$> resolveProp p
       DebugPrintExpr e -> DebugPrintExpr <$> resolveExpr e
       DebugPrintLabel l -> DebugPrintLabel <$> resolveLabel l
       DebugResolveANF a -> DebugResolveANF <$> resolveAExpr a
       DebugPrint _ -> return dc
       DebugPrintTyContext _ -> return dc
       DebugPrintModules -> return dc
+      DebugPrintPathCondition -> return dc
 
 
 resolveProp :: Prop -> Resolve Prop

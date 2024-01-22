@@ -60,7 +60,7 @@ emptyEnv f = do
     m <- newIORef $ M.empty
     rs <- newIORef []
     memo <- mkMemoEntry 
-    return $ Env mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
+    return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
         interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType Nothing [] False def
 
 
@@ -1753,35 +1753,44 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           let lineno =  fst $ begin $ unignore $ e^.spanOf
           getOutTy ot $ tRefined tUnit ("assumption_line_" ++ show lineno) p
       (EAdmit) -> getOutTy ot $ tAdmit
+      (EDebug (DebugPrintPathCondition)) -> do
+          pc <- view pathCondition
+          logTypecheck $ owlpretty "Path condition: " <> list (map owlpretty pc)
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintModules)) -> do
           ms <- view openModules
           getOutTy ot $ tUnit
       (EDebug (DebugResolveANF a)) -> do
-          liftIO $ putStrLn $ "esolving ANF on " ++ show (owlpretty a) ++ ":"
+          logTypecheck $ owlpretty $ "resolving ANF on " ++ show (owlpretty a) ++ ":"
           b <- resolveANF a
-          liftIO $ putStrLn $ "Got " ++ show (owlpretty b)
+          logTypecheck . owlpretty $ "Got " ++ show (owlpretty b)
           getOutTy ot $ tUnit
       (EDebug (DebugPrint s)) -> do
-          liftIO $ putStrLn s
+          logTypecheck $ owlpretty s
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTyOf s a)) -> do
           t <- local (set tcScope $ TcGhost False) $ inferAExpr a
           a' <- resolveANF a
           t' <- normalizeTy t
-          liftIO $ putDoc $ owlpretty "Type for " <> owlpretty s <> owlpretty ": " <> owlpretty t' <> line
+          logTypecheck $ owlpretty "Type for " <> owlpretty s <> owlpretty ": " <> owlpretty t' 
           getOutTy ot $ tUnit
       (EDebug (DebugHasType s a t)) -> do
           checkTy t
-          ta <- local (set tcScope $ TcGhost False) $ inferAExpr a
+          ta' <- local (set tcScope $ TcGhost False) $ inferAExpr a
+          let ta = tRefined ta' ".res" $ pEq (aeVar ".res") a
           b <- isSubtype ta t
-          liftIO $ putDoc $ owlpretty s <+> owlpretty "has type" <+> owlpretty t <> owlpretty ":" <+> owlpretty b <> line
+          logTypecheck $ owlpretty s <+> owlpretty "has type" <+> owlpretty t <> owlpretty ":" <+> owlpretty b 
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
-          liftIO $ putStrLn $ show $ owlpretty t <+> owlpretty "normalizes to: " <> owlpretty t'
+          logTypecheck $ owlpretty t <+> owlpretty "normalizes to: " <> owlpretty t'
           getOutTy ot $ tUnit
-      (EDebug (DebugPrintProp p)) -> do
-          liftIO $ putDoc $ owlpretty p
+      (EDebug (DebugDecideProp p)) -> do
+          b <- decideProp p
+          let pb = case b of
+                     Just v -> owlpretty v
+                     Nothing -> owlpretty "Inconclusive"
+          logTypecheck $ owlpretty "Deciding " <> owlpretty p <> owlpretty ": " <> pb
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTyContext anf)) -> do
           tC <- view tyContext
@@ -1992,7 +2001,11 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           case doFalseElim of
             True -> do
                (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
-               if b then getOutTy ot tAdmit else checkExpr ot e
+               if b then do
+                        pc <- view pathCondition
+                        logTypecheck $ owlpretty "Reached contradiction! Path condition: " <> list (map owlpretty pc)
+                        getOutTy ot tAdmit 
+                    else checkExpr ot e
             False -> checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
@@ -2046,13 +2059,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- freshVar
-              _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ do
+              _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ local (over pathCondition $ (p:)) $ do
                   logTypecheck $ owlpretty "Case split: " <> owlpretty p
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
                   r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
                   popLogTypecheckScope
-              _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ do
+              _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ local (over pathCondition $ (pNot p : )) $ do
                   logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
                   pushLogTypecheckScope
                   (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
