@@ -2395,10 +2395,10 @@ unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
     ni1 <- getNameInfo ne
     ni2 <- getNameInfo ne'
     let b2 = (str == str')
-    b3 <- case (ni1, ni2) of
-               (Nothing, Nothing) -> return True
-               (Just (nt1, _), Just (nt2, _)) -> return $ nt1 `aeq` nt2
-               (_, _) -> return False
+    (b3, pnt) <- case (ni1, ni2) of
+               (Nothing, Nothing) -> return (True, mempty)
+               (Just (nt1, _), Just (nt2, _)) -> return (nt1 `aeq` nt2, owlpretty nt1 <> line <> line <> line <> owlpretty nt2)
+               (_, _) -> return (False, mempty)
     let pe = case e of
                 Just (Left i) -> owlpretty i
                 Just (Right (s, ips, i)) -> list [owlpretty s, owlpretty ips, owlpretty i]
@@ -2406,7 +2406,7 @@ unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
     case (b && b2 && b3) of
       True -> return v1
       _ | not b3 -> do
-          typeError $ "KDF results inconsistent: mismatch on name types for selectors "  ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
+          typeError $ "KDF results inconsistent: mismatch on name types for selectors "  ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe ++ ": \n" ++ show pnt
       _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
       _ | not b -> typeError $ "KDF results inconsistent: result name types not equal for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
 
@@ -2434,15 +2434,15 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                     assert ("KDF case index arity mismatch") $ length ixs == length is_case
                     let (p, nts) = substs (zip ixs is_case) $ pnts
                     nks2 <- forM nts $ \(_, nt) -> getNameKind nt
-                    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ nks == nks2
-                    assert "KDF row index out of bounds" $ j < length nts                    
+                    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+                    assert "KDF row index out of bounds" $ j < length nks                    
                     let (str, nt) = nts !! j
                     bp <- decideProp p
                     b2 <- not <$> flowsTo (nameLbl ne) advLbl
                     if (bp == Just True) then
                           if b2 then 
                                 return $ Just $ KDFGood str $ 
-                                    mkSpanned $ KDFName (fst a) (fst b) (fst c) nks j nt   
+                                    mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt   
                           else do
                               l_corr <- coveringLabelOf [snd a, snd b, snd c]
                               return $ Just $ KDFCorrupt l_corr 
@@ -2482,11 +2482,12 @@ getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
       _ -> go_from_ty
 
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult) 
-inferKDFODH a (b, tb) c s ips i j nks2 = pushRoutine ("inferKDFODH") $ do
+inferKDFODH a (b, tb) c s ips i j nks = pushRoutine ("inferKDFODH") $ do
     pth <- curModName
     (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
-    nks <- mapM (\(_, nt) -> getNameKind nt) str_nts
-    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ nks == nks2
+    nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
+    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+    assert "KDF row index out of bounds" $ j < length nks                    
     let (str, nt) = str_nts !! j
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
@@ -2501,7 +2502,7 @@ inferKDFODH a (b, tb) c s ips i j nks2 = pushRoutine ("inferKDFODH") $ do
               if (b2 == Just True) then 
                     if (not b3) && (not b4) then
                         return $ Just $ KDFGood str $
-                            mkSpanned $ KDFName (fst a) b (fst c) nks j nt 
+                            mkSpanned $ KDFName (fst a) b (fst c) nks2 j nt 
                     else do
                         l_corr <- coveringLabelOf [snd a, snd c]
                         return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) 
@@ -3035,6 +3036,10 @@ typeError' msg = do
     let diag = E.addFile (E.addReport def rep) (fn) f  
     e <- ask
     E.printDiagnostic S.stdout True True 4 E.defaultStyle diag 
+    pc <- view pathCondition
+    case pc of
+      [] -> return ()
+      _ -> liftIO $ putDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
     liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line
     writeSMTCache
     -- Uncomment for debugging

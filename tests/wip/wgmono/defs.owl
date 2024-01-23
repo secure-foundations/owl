@@ -124,6 +124,7 @@ nametype C5_corr = kdf {ikm info.
     True -> strict C6_corr
 }
 
+
 nametype C5<@n,m> = kdf {ikm info.
     True -> 
     strict C6<@n,m> 
@@ -131,6 +132,10 @@ nametype C5<@n,m> = kdf {ikm info.
 
 func honest_c1<i@n>() = 
     gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
+
+nametype C4_corr = kdf {ikm info.
+    True -> strict C5_corr
+}
 
 nametype C4<@n,m> = kdf {ikm info.
     True -> strict C5<@n,m> 
@@ -145,7 +150,7 @@ nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
 
 nametype C3<@n,m> = kdf {ikm info.
     (exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4<@n,m> || strict useless_enc
-    !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> public C4<@n,m> || strict useless_enc
+    !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr || strict useless_enc
 }
 
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
