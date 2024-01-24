@@ -991,6 +991,7 @@ nameInit s nt = case nt^.val of
     NT_StAEAD {} -> 
                 return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
     NT_MAC _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_hmac::gen_rand_key(&hmac_mode());"
+    NT_KDF _ _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_hkdf::gen_rand_kdf_key();"
     NT_PKE _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
     NT_DH ->    return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_dhke::gen_ecdh_key_pair();"
