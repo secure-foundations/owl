@@ -429,6 +429,10 @@ initFuncs =
             ("andb", (\args -> case args of
                 [(Bool,x), (Bool,y)] -> return $ (Bool, x ++ " && " ++ y)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
+            )),
+            ("notb", (\args -> case args of
+                [(Bool,x)] -> return $ (Bool, "! " ++ x)
+                _ -> throwError $ TypeError $ "got wrong args for andb"
             ))
         ] 
 

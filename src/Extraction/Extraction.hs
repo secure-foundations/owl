@@ -846,20 +846,21 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
                     "Mismatched types for parse expr: want to parse as" ++ show owlT ++ " but arg inferred to have type " ++ show rtAe
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
-funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
+funcCallPrinter :: String -> [Maybe (String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
 funcCallPrinter owlName rustArgs retTy callArgs = do
     let callMacro = case retTy of
             Option _ -> "owl_call_ret_option!"
             _ -> "owl_call!"
-    if length rustArgs == length callArgs then
+    if length rustArgs == length callArgs then do
+        let nonGhostCallArgs = map snd . filter (\(aopt, b) -> isJust aopt) . zip rustArgs $ callArgs
         return $ (retTy, show $ owlpretty callMacro <> tupled [
-              owlpretty "itree"
-            , owlpretty "*mut_state"
-            , owlpretty owlName <> owlpretty "_spec" <>
-                tupled (owlpretty "*self" : owlpretty "*mut_state" : (map (\(rty, arg) -> owlpretty (viewVar rty (unclone arg))) $ callArgs))
-            , owlpretty "self." <> owlpretty (rustifyName owlName) <>
-                tupled (owlpretty "mut_state" : (map (\(rty, arg) -> owlpretty arg) $ callArgs))
-        ])
+                owlpretty "itree"
+                , owlpretty "*mut_state"
+                , owlpretty owlName <> owlpretty "_spec" <>
+                    tupled (owlpretty "*self" : owlpretty "*mut_state" : (map (\(rty, arg) -> owlpretty (viewVar rty (unclone arg))) $ callArgs))
+                , owlpretty "self." <> owlpretty (rustifyName owlName) <>
+                    tupled (owlpretty "mut_state" : (map (\(rty, arg) -> owlpretty arg) $ callArgs))
+            ])
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
         unclone str = fromMaybe str (stripPrefix (show rcClone) str)
@@ -868,10 +869,15 @@ extractArg :: (String, RustTy) -> OwlDoc
 extractArg (s, rt) =
     owlpretty s <> owlpretty ":" <+> owlpretty rt
 
-rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (String, RustTy)
+rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (Maybe (String, RustTy))
 rustifyArg (v, t) = do
-    rt <- rustifyArgTy . doConcretifyTy . unembed $ t
-    return (rustifyName $ show v, rt)
+    -- Filter out ghost arguments
+    let t' = unembed t
+    case t' ^. val of
+        TGhost -> return Nothing
+        _ -> do
+            rt <- rustifyArgTy . doConcretifyTy $ t'
+            return $ Just (rustifyName $ show v, rt)
 
 -- rustifySidArg :: IdxVar -> (String, RustTy)
 -- rustifySidArg v =
@@ -902,7 +908,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
             -- debugLog $ show $ owlpretty anfBody
             return (Just concreteBody, Just anfBody)
         Nothing -> return (Nothing, Nothing)
-    rustArgs <- mapM rustifyArg owlArgs
+    rustArgs <- catMaybes <$> mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
