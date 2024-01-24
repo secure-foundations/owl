@@ -859,6 +859,7 @@ funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] 
 funcCallPrinter owlName rustArgs retTy callArgs = do
     let callMacro = case retTy of
             Option _ -> "owl_call_ret_option!"
+            Unit -> "owl_call_ret_unit!"
             _ -> "owl_call!"
     if length rustArgs == length callArgs then do
         let ghostCheckedCallArgs = map (\((_,rt), b) -> if rt == VerusGhost then Nothing else Just b) . zip rustArgs $ callArgs
@@ -874,7 +875,7 @@ funcCallPrinter owlName rustArgs retTy callArgs = do
     where
         printSpecArg raopt = case raopt of
             Just (rty, arg) -> owlpretty (viewVar rty (unclone arg))
-            Nothing -> owlpretty "ghost_unit()"
+            Nothing -> owlpretty "spec_ghost_unit()"
         printExecArg raopt = case raopt of
             Just (rty, arg) -> owlpretty arg
             Nothing -> owlpretty "ghost_unit()"
@@ -899,6 +900,13 @@ makeFunc owlName _ owlArgs owlRetTy = do
     rustArgs <- mapM rustifyArg owlArgs
     rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
     funcs %= M.insert owlName (funcCallPrinter owlName rustArgs rtb)
+
+    let argIsGhost = map (\(_, t) -> t == VerusGhost) rustArgs
+    let callPrinter args = 
+            let ghostifiedArgs = map (\(a,g) -> if g then owlpretty "spec_ghost_unit()" else a) (zip args argIsGhost) in
+            owlpretty "call" <> parens (owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : ghostifiedArgs))
+    specFuncs %= M.insert owlName callPrinter
+
     return ()
 
 

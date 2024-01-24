@@ -349,27 +349,31 @@ extractExpr (CRet a) = do
 extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
     ftail <- flattenPath f
-    return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
+    sfs <- use specFuncs
+    case sfs M.!? ftail of
+        Just printer -> return $ printer as'
+        Nothing -> throwError $ TypeError $ "got bad args for spec call: " ++ show ftail ++ "(" ++ show as ++ ")"
+    -- return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
 extractExpr (CCase a otk xs) = do
     a' <- extractAExpr a
-    (parseCall, badk) <- case otk of
+    (parseCall, badk, enumName) <- case otk of
             Just (CTConst p, bk) -> do
                 t <- tailPath p
                 bk' <- extractExpr bk
-                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk')
-            Nothing -> return (a', owlpretty "")
+                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk', owlpretty (specName t) <> owlpretty "::")
+            Nothing -> return (a', owlpretty "", owlpretty "")
             Just (t, _) -> throwError $ TypeError $ "got parsing case statement with bad type " ++ show t
     pcases <-
             mapM (\(c, o) ->
                 case o of
                 Left e -> do
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
                     x' <- extractVar x
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
                 ) xs
     return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
 extractExpr (CCrypt cop args) = do
@@ -410,17 +414,17 @@ extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemente
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
 
-specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad (Maybe OwlDoc)
+specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
 specExtractArg (v, t) = do    
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
     v' <- extractVar v
-    return $ Just $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
+    return $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
 
 
 extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
-    specArgs <- catMaybes <$> mapM specExtractArg owlArgs
+    specArgs <- mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $
             owlpretty "cfg:" <+> owlpretty (cfgName lname)
             : owlpretty "mut_state:" <+> owlpretty (stateName lname)
@@ -434,9 +438,10 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
             let p = pureDef owlName specArgs specRt
             specArgVars <- mapM extractVar . map fst $ owlArgs
             return (parens (owlpretty "ret" <> parens (owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgVars)), p)
-    let defBody = owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
-                    body
-                <> line)
+    let defBody = owlpretty "owl_spec!" <> 
+                    parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
+                        body
+                    <> line)
     return $ owlpretty "#[verifier::opaque] pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
         defBody <> line <>
         rbrace <> line <> line <> pureDef

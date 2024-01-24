@@ -82,6 +82,7 @@ data Env = Env {
     _hmacMode :: HMACMode,
     _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
+    _specFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
     _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _typeLayouts :: M.Map String Layout,
@@ -439,7 +440,7 @@ initFuncs =
         ] 
 
 initEnv :: Flags -> String -> TB.Map String TB.UserFunc -> Env
-initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
+initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
 
 lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
 lookupTyLayout' n = do
