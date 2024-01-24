@@ -77,15 +77,22 @@ nametype C7<@n,m> = kdf {ikm info.
         strict transp_key_resp_send<@n,m>
 }
 
+nametype transp_key_init_send_corr = 
+      st_aead (x:Data<adv>{False})
+                        aad x. true
+                        nonce N_init_send
+
+nametype transp_key_resp_send_corr = 
+      st_aead (x:Data<adv>{False})
+                        aad x. true
+                        nonce N_resp_send
+    
+
 nametype C7_corr = kdf {ikm info.
     True ->
-        strict (st_aead (x:Data<adv>{False})
-                        aad x. true
-                        nonce N_init_send)
+        strict transp_key_init_send_corr
         ||
-        strict (st_aead (x:Data<adv>{False})
-                        aad x. true
-                        nonce N_resp_send)
+        strict transp_key_resp_send_corr
 }
 
 counter aead_counter_msg2_C7<j@m> @ Responder<m>
@@ -241,16 +248,6 @@ odh L5<j@n,m> :
         (exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
             -> 
             strict C6<@n,m> 
-
-        /*
-        !(exists i:idx. salt == honest_c2<session i, pid n, pid m>())
-        /\
-        !(exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
-            ->
-            strict C6_corr<@n,m>
-        */
-
-
 }
 
 nametype C1<@n,m> = kdf {ikm info.

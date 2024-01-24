@@ -3,14 +3,48 @@ include "defs.owl"
 predicate is_e_init(h) = exists n:idx,i:idx. h == dhpk(get(E_init<i@n>))
 predicate is_s_init(h) = exists n:idx. h == dhpk(get(S_init<@n>))
 
+predicate tkr_secure<j,n_eph,n_pk,m>(eph) = 
+    exists i:idx. 
+        eph == dhpk(get(E_init<i@n_eph>))
+        /\
+        (n_eph !=idx n_pk ==> sec(E_init<i@n_eph>))
+        /\
+         ((sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))
+          \/
+          (sec(E_resp<j@m>) /\ sec(S_init<@n_pk>))
+          \/
+          (sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
+          \/
+          (sec(S_resp<@m>) /\ sec(S_init<@n_pk>)))
+
+
+struct transp_keys_resp<j,n_eph,n_pk,m> {
+    tkr_eph : Ghost,
+    tkr_c7 : Ghost,
+    tkr_k_init_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
+        if n_eph =idx n_pk then 
+            SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x,
+            0x))
+        else 
+            SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x))
+        else Data<adv>, 
+    tkr_k_resp_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
+        if n_eph =idx n_pk then
+            SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7, 0x, 0x))
+        else
+            SecName(KDF<enckey||enckey;1;transp_key_resp_send_corr>(tkr_c7, 0x, 0x))
+        else Data<adv> 
+}
+
 def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
     : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))
 
 def resp_main<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
-     : Option Unit 
+     : Option (exists n_eph. exists n_pk. transp_keys_resp<session j, pid n_eph,
+     pid n_pk, pid m>) 
      =
      set_option ":rlimit" "2000000" in 
-     input inp in
+input inp in
      parse inp as msg1(msg1_tag, msg1_sender, msg1_ephemeral, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in {
      guard eq(length(msg1_sender), 4) in 
      guard is_group_elem(msg1_ephemeral) in 
@@ -44,12 +78,13 @@ def resp_main<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                     | None => None()
                     | Some res =>
                         unpack n3, ss = res in 
-                        let dhpk_S_init : dhpk(S_init<@n3>) = msg1_static_dec in
-                        cross_dh_lemma<S_resp<@m>>(dhpk_S_init);
+                        cross_dh_lemma<S_resp<@m>>(msg1_static_dec);
                         let H3 = crh(H2 ++ msg1_static) in
                         corr_case S_init<@n3> in 
                         
                         pcase (n =idx n3) in
+                        let dhpk_S_init : if n =idx n3 then dhpk(S_init<@n>)
+                        else dhpk(S_init<@n3>) = msg1_static_dec in
                         assume (
                         (msg1_ephemeral == dhpk(get(E_init<i@n>)) /\ n !=idx n3)
                         ==>
@@ -66,8 +101,6 @@ def resp_main<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                         | Some msg1_timestamp_dec =>
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
-                            // Some(pack<n>(pack<i>(responder_msg1_val<idx i, idx
-                            // n, idx m>(msg1_ephemeral, msg1_static_dec, C2, C3, H4))))
                             let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
                             let c4 = kdf<0;;kdfkey;0>(C3, e_resp_pk, 0x) in 
                             let h5 = crh(H4 ++ e_resp_pk) in 
@@ -95,8 +128,6 @@ def resp_main<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                             let c7 = kdf<0;; kdfkey || nonce || enckey; 0>(c6, 0x, 0x) in 
                             let tau = kdf<0;; kdfkey || nonce || enckey; 1>(c6, 0x, 0x) in 
                             let k0 = kdf<0;; kdfkey || nonce || enckey; 2>(c6, 0x, 0x) in 
-                            let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
-                            let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
                             let msg2_tag = msg2_tag_value() in 
                             let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
                             let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
@@ -113,7 +144,16 @@ def resp_main<j@m> (dhpk_S_resp: dhpk(S_resp<@m>)) @ Responder<m>
                                 msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
                             ) in
                             let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
-                            Some (())
+                            let tk1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
+                            let tk2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
+                            /*
+                            debug printTyOf(tk1);
+                            debug printPathCondition;
+                            */
+                            Some (pack<n>(
+                                pack<n3>(
+                                transp_keys_resp<session j, pid n, pid n3, pid
+                                m>(msg1_ephemeral, c7, tk1, tk2))))
                         otherwise => None()
                         }
                 }
