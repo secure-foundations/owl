@@ -76,14 +76,14 @@ def bob_main () @ bob
        let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
        corr_case nameOf(k) in 
        input ii, _ in 
-       case adec(k, ii) as Option (Name(d)) {
+       case adec(k, ii) /* as Option (Name(d)) */ {
        | None => ()
        | Some dd => 
          let ddd : if (sec(X) /\ sec(Y) /\ sec(KDF<enckey;0; enckey
          Name(d)>(0x, ss, 0x))) then
             Name(d) else Data<adv> = dd in
          ()
-       otherwise => ()
+       // otherwise => ()
        }
      | None => ()
     }

@@ -90,7 +90,7 @@ data Env = Env {
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
-    _hashCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (roname, aexpr args), can't use M.Map with AExpr keys
+    _kdfCalls :: [(([NameKind], [AExpr]), (RustTy, String))], -- key is (aexpr args, name kinds), can't use M.Map with AExpr keys
     _adtCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (adt name, aexpr args)
     _userFuncsCompiled :: M.Map String (OwlDoc, OwlDoc) -- (compiled spec, compiled exec)
 }
@@ -629,6 +629,7 @@ resolveANF binds a = do
             return $ mkSpanned $ AEPackIdx i a2'
         AELenConst _ -> return a
         AEInt _ -> return a
+        AEKDF _ _ _ _ _ -> return a
 
 
 lookupStringAExprMap :: [((String, [AExpr]), a)] -> (String, [AExpr]) -> Maybe a
@@ -638,12 +639,44 @@ lookupStringAExprMap (((ln, largs), r) : tl) (n, args) =
     then Just r
     else lookupStringAExprMap tl (n, args)
 
-lookupHashCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
-lookupHashCall k = do
-    hcs <- use hashCalls
-    return $ lookupStringAExprMap hcs k
+lookupNameKindAExprMap :: [(([NameKind], [AExpr]), a)] -> [NameKind] -> [AExpr] -> Maybe a
+lookupNameKindAExprMap [] nks args = Nothing
+lookupNameKindAExprMap (((lnks, largs), r) : tl) nks args =
+    if all (uncurry (==)) (zip nks lnks) && all (uncurry aeq) (zip args largs)
+    then Just r
+    else lookupNameKindAExprMap tl nks args
+
+
+lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad (Maybe (RustTy, String))
+lookupKdfCall nks k = do
+    hcs <- use kdfCalls
+    return $ lookupNameKindAExprMap hcs nks k
 
 lookupAdtCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
 lookupAdtCall k = do
     adtcs <- use adtCalls
     return $ lookupStringAExprMap adtcs k
+
+makeKdfSliceMap :: [NameKind] -> ExtractionMonad ([String], M.Map Int ([String], [String], Layout))
+makeKdfSliceMap nks = do
+    (totLen, sliceMap) <- foldM (\(t, m) (i, nk) -> do
+            (rtstr, len) <- case nk of
+                -- NK_KDF -> do
+                --     l <- useKdfKeySize
+                --     return ("kdf", l)
+                -- NK_DH 
+                NK_Enc -> do
+                    l <- useAeadKeySize
+                    return ("enckey", l)
+                -- NK_PKE 
+                -- NK_Sig 
+                NK_MAC -> do
+                    l <- useHmacKeySize
+                    return ("mackey", l)
+                NK_Nonce -> do
+                    l <- useAeadNonceSize
+                    return ("nonce", l)
+                _ -> throwError $ UnsupportedOracleReturnType (show nk)
+            return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
+        ) (["0"], M.empty) (zip [0..] nks)
+    return (totLen, sliceMap)

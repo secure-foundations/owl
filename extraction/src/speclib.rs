@@ -197,7 +197,7 @@ pub closed spec(checked) fn dh_combine(pubkey: Seq<u8>, privkey: Seq<u8>) -> (ss
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn kdf(len: usize, salt: Seq<u8>, x: Seq<u8>) -> (h: Seq<u8>)
+pub closed spec(checked) fn kdf(len: usize, salt: Seq<u8>, ikm: Seq<u8>, info: Seq<u8>) -> (h: Seq<u8>)
 { unimplemented!() }
 
 #[verifier(external_body)]

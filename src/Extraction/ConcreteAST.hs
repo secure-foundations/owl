@@ -194,6 +194,11 @@ concretify e =
         EIncCtr p idxs -> return $ CIncCtr p idxs
         EGetCtr p idxs -> return $ CGetCtr p idxs
         ESetOption _ _ e -> concretify e
+        ELetGhost _ _ xk -> do
+            -- TODO check this
+            let (_, k) = unsafeUnbind xk
+            concretify k
+        ECorrCaseNameOf _ _ k -> concretify k
         -- _ -> error $ "Concretify on " ++ show (owlpretty e)
 
 doConcretify :: Expr -> CExpr
@@ -223,6 +228,8 @@ instance OwlPretty CTy where
             owlpretty "shared_secret(" <> owlpretty n <> owlpretty ", " <> owlpretty m <> owlpretty ")"
     owlpretty (CTHex a) =
             owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
+    owlpretty CTGhost = 
+            owlpretty "Ghost"
     -- owlpretty (CTUnion t1 t2) =
     --     owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 
