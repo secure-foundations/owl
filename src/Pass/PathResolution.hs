@@ -680,11 +680,11 @@ resolveExpr e =
                 Left e1 -> do { e1' <- resolveExpr e1; return (s, Left e1') }
                 Right (s1, xk) -> do { (x, k) <- unbind xk; k' <- resolveExpr k; return (s, Right (s1, bind x k') ) }
           return $ Spanned (e^.spanOf) $ ECase a' otk' cases'
-      EPCase p op k -> do
+      EPCase p op ob k -> do
           p' <- resolveProp p
           op' <- traverse resolveProp op
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EPCase p' op' k'
+          return $ Spanned (e^.spanOf) $ EPCase p' op' ob k'
       ECorrCaseNameOf a op k -> do 
           a' <- resolveAExpr a
           op' <- traverse resolveProp op

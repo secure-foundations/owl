@@ -1044,6 +1044,22 @@ parseAppChain imt n = parseSpanned $ do
       mkModuleApp m (x : xs) = mkModuleApp (mkSpanned $ ModuleApp m x) xs
 
 
+parseAttribute = do
+    symbol "#"
+    symbol "["
+    s <- many $ alphaNum <|> char '_' <|> space
+    symbol "]"
+    return s
+
+parsePCaseAttribute = do
+    o <- optionMaybe parseAttribute
+    case o of
+      Nothing -> return Nothing
+      Just s ->
+          case s of
+            "assume false" -> return $ Just False
+            "assume true" -> return $ Just True
+            _ -> fail $ "Unknown attribute for PCase: " ++ s
 
 
 parseDebugCommand = 
@@ -1405,6 +1421,7 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "corr_case"
+        attr <- parsePCaseAttribute
         ccase <- alt
                     (do
                         reserved "nameOf"
@@ -1424,18 +1441,19 @@ parseExprTerm =
         e <- parseExpr
         return $ case ccase of
                    Left a -> ECorrCaseNameOf a op e
-                   Right n  -> EPCase (pFlow (nameLbl n) advLbl) op e
+                   Right n  -> EPCase (pFlow (nameLbl n) advLbl) op attr e
     )
     <|>
     (parseSpanned $ do
         reserved "pcase"
+        attr <- parsePCaseAttribute
         p <- parseProp
         op <- optionMaybe $ do
             reserved "when"
             parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase p op e
+        return $ EPCase p op attr e
         )
     <|>
     (parseSpanned $ do

@@ -794,7 +794,7 @@ logTypecheck s = do
     when b $ do
         r <- view $ typeCheckLogDepth
         n <- liftIO $ readIORef r
-        liftIO $ putDoc $ owlpretty (replicate (n*2) ' ') <> s <> line
+        liftIO $ putDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 

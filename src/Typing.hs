@@ -533,7 +533,19 @@ normalizeTy = withMemoize (memoNormalizeTy) $ \t0 ->
             (TSS n m) -> do
                 n' <- normalizeNameExp n
                 m' <- normalizeNameExp m
-                return $ Spanned (t0^.spanOf) $ TSS n' m'
+                b1 <- decideProp $ pFlow (nameLbl n') advLbl
+                let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+                let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+                let corr_t = Spanned (t0^.spanOf) $ TRefined (tData advLbl advLbl) ".res" $
+                        bind (s2n ".res") $
+                            pEq (aeVar ".res") (dhCombine (dhpk (aeGet n')) (aeGet m'))
+                case b1 of
+                  Just True -> return corr_t
+                  _ -> do
+                      b2 <- decideProp $ pFlow (nameLbl m') advLbl
+                      case b2 of
+                        Just True -> return corr_t
+                        _ -> return $ Spanned (t0^.spanOf) $ TSS n' m'
             TConst s ps -> do
                 td <- getTyDef s
                 case td of
@@ -2041,9 +2053,9 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           t <- inferAExpr a
           t' <- normalizeTy t
           case extractNameFromType t' of
-            Just n ->  checkExpr ot $ Spanned (e^.spanOf) $ EPCase (pFlow (nameLbl n) advLbl) op k
+            Just n ->  checkExpr ot $ Spanned (e^.spanOf) $ EPCase (pFlow (nameLbl n) advLbl) op Nothing k
             Nothing -> checkExpr ot k
-      (EPCase p op k) -> do
+      (EPCase p op attr k) -> do
           _ <- local (set tcScope $ TcGhost False) $ checkProp p
           doCaseSplit <- case op of
                            Nothing -> return True
@@ -2054,23 +2066,31 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           retT <- case ot of
                     Just t -> return t
                     Nothing -> typeError $ "pcase must have expected return type"
+          let (doFalse, doTrue) = case attr of
+                                    Nothing -> (True, True)
+                                    Just False -> (True, False)
+                                    Just True -> (False, True)
           case doCaseSplit of 
             False -> checkExpr ot k
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- freshVar
-              _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ local (over pathCondition $ (p:)) $ do
-                  logTypecheck $ owlpretty "Case split: " <> owlpretty p
-                  pushLogTypecheckScope
-                  (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                  popLogTypecheckScope
-              _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ local (over pathCondition $ (pNot p : )) $ do
-                  logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
-                  pushLogTypecheckScope
-                  (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                  popLogTypecheckScope
+              when doTrue $ do
+                  _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ local (over pathCondition $ (p:)) $ do
+                      logTypecheck $ owlpretty "Case split: " <> owlpretty p
+                      pushLogTypecheckScope
+                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                      r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
+                      popLogTypecheckScope
+                  return ()
+              when doFalse $ do 
+                  _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ local (over pathCondition $ (pNot p : )) $ do
+                      logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
+                      pushLogTypecheckScope
+                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                      r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
+                      popLogTypecheckScope
+                  return ()
               normalizeTy retT
       EParse a t ok bk -> do
           t1 <- inferAExpr a

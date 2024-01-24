@@ -98,6 +98,8 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         assume (m !=idx m2 ==>
             c4 != honest_c4<session i, session j, pid n, pid m2>()
         );
+        // TODO: I loosened up the spec of c5_corr so as to make it usable by
+        // the responder. But now I am getting a mismatch
         let c5 = kdf<0; odh L4<i,j@n,m>[0], odh L4<i,j@n,m2>[1]; kdfkey; 0>(c4, ss, 0x) in                                     
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
 
@@ -111,7 +113,7 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         assume (m !=idx m2 ==>
             !(exists i:idx. c5 == honest_c5<session i, session j, pid n, pid m2>())
         );
-        let c6 = kdf<0; odh L5<j@n,m>[0], odh L5<j@n,m2>[1]; kdfkey; 0>(c5, 
+        let c6 = kdf<0; odh L5<j@n,m>[0] /* , odh L5<j@n,m2>[1] */; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x
         ) in 
         let c7 = kdf<0;;kdfkey || nonce || enckey; 0>(c6, 0x, 0x) in 
@@ -119,11 +121,18 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         let k0 = kdf<0;;kdfkey || nonce || enckey; 2>(c6, 0x, 0x) in 
         let h6 : Data<adv> = crh(h5 ++ tau) in 
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x) 
-        as Option (Data<adv> |0|) {
+        as Option (Data<adv>|0|) {
             | None => None()
             | Some x => {
-                    assume (valid_h6<n,m>[h6] ==>
-                        m =idx m2);
+                    assume (valid_h6[h6] ==>
+                        m =idx m2 /\
+                        exists m2:idx. exists j:idx. msg2_ephemeral ==
+                        dhpk(get(E_resp<j@m2>)))
+                        ;
+                    assume (valid_h6[h6] ==>
+                        m =idx m2 /\
+                        exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>))
+                        );
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
