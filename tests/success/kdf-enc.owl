@@ -9,6 +9,11 @@ name alice1 : nonce @ alice
 name alice2 : nonce @ alice
 name alice3 : nonce @ alice
 
+// hack so vest doesn't complain
+struct s {
+    _a : Data<adv> ||nonce||,
+    _b : Data<adv> ||nonce||
+}
 
 name k : kdf {ikm info.
     (info == 0x01) -> enckey Name(alice1) 
@@ -28,12 +33,14 @@ def alice_main() @ alice : Unit =
     let ek = kdf<0;;enckey;0>(get(k), 0x, 0x01) in 
     // assert (corr(k) ==> corr(KDF<k;0>(0x, 0x01)[0]));
     let c = aenc(ek, get(alice1)) in 
-    output c;
+    output c to endpoint(bob);
     let k2 = kdf<1;;kdfkey;0>(get(k), 0x, 0x02) in
     let ek2 = kdf<0;;enckey;0>(k2, 0x, 0x01) in
     let c2 = aenc(ek2, get(alice2)) in 
-    output c2;
+    output c2 to endpoint(bob);
     ()
+
+def bob_main() @ bob : Unit = ()
 
 /*
 def bob_main() @ bob : Unit = 

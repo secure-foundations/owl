@@ -321,6 +321,9 @@ counterSize = 8 -- TODO This is specific to Wireguard---should be a param
 crhSize :: Int
 crhSize = 32 -- TODO This is specific to Wireguard
 
+kdfKeySize :: Int
+kdfKeySize = 32 -- TODO This is specific to Wireguard
+
 initLenConsts :: M.Map String Int
 initLenConsts = M.fromList [
         (rustifyName "signature", 256),
@@ -331,6 +334,7 @@ initLenConsts = M.fromList [
         (rustifyName "pke_sk", pkeKeySize),
         (rustifyName "pke_pk", pkePubKeySize),
         (rustifyName "sigkey", sigKeySize),
+        (rustifyName "kdfkey", kdfKeySize),
         (rustifyName "vk", vkSize),
         (rustifyName "DH", dhSize),
         (rustifyName "group", dhSize),
@@ -661,9 +665,9 @@ makeKdfSliceMap :: [NameKind] -> ExtractionMonad ([String], M.Map Int ([String],
 makeKdfSliceMap nks = do
     (totLen, sliceMap) <- foldM (\(t, m) (i, nk) -> do
             (rtstr, len) <- case nk of
-                -- NK_KDF -> do
-                --     l <- useKdfKeySize
-                --     return ("kdf", l)
+                NK_KDF -> do
+                    let l = kdfKeySize
+                    return ("kdfkey", l)
                 -- NK_DH 
                 NK_Enc -> do
                     l <- useAeadKeySize

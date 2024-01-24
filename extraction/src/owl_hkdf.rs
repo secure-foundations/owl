@@ -4,6 +4,10 @@ use vstd::prelude::*;
 
 verus! {
 
+pub open spec fn spec_kdfkey_size() -> usize { 32 }
+pub const fn kdfkey_size() -> (r:usize) ensures r == spec_kdfkey_size() { 32 }
+
+
 #[verifier(external_body)]
 pub fn extract_expand_to_len(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let h = Hkdf::<Sha256>::new(Some(salt), ikm);

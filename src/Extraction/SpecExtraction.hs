@@ -186,6 +186,7 @@ specLenConsts = M.fromList [
         ("enckey", "KEY_SIZE()"),
         ("nonce", "NONCE_SIZE()"),
         ("mackey", "MACKEY_SIZE()"),
+        ("kdfkey", "KDFKEY_SIZE()"),
         -- ("maclen", hmacLen),
         -- ("pkekey", pkeKeySize),
         -- ("sigkey", sigKeySize),

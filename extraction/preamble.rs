@@ -45,7 +45,8 @@ pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sh
 pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
 pub open const spec fn MACKEY_SIZE() -> usize { owl_hmac::spec_key_size(HMAC_MODE()) }
 pub const fn mackey_size() -> (r:usize) ensures r == MACKEY_SIZE() { owl_hmac::key_size(hmac_mode()) }
-
+pub open const spec fn KDFKEY_SIZE() -> usize { owl_hkdf::spec_kdfkey_size() }
+pub const fn kdfkey_size() -> (r:usize) ensures r == KDFKEY_SIZE() { owl_hkdf::kdfkey_size() }
 
 #[verifier(external_type_specification)]
 #[verifier(external_body)]

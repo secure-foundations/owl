@@ -531,7 +531,8 @@ extractCryptOp binds op owlArgs = do
         printLenConst "nonce" = return "nonce_size()"
         printLenConst "enckey" = return "key_size()"
         printLenConst "mackey" = return "mackey_size()"
-        printLenConst s = throwError $ UndefinedSymbol $ "unrecognized oracle length const: " ++ s
+        printLenConst "kdfkey" = return "kdfkey_size()"
+        printLenConst s = throwError $ UndefinedSymbol $ "unrecognized length const: " ++ s
 
 
 -- Compute return type as well
@@ -635,6 +636,8 @@ extractAExpr binds (AELenConst s) = do
       Nothing -> do
         throwError $ UndefinedSymbol s
       Just n -> return (Number, owlpretty "", owlpretty n)
+extractAExpr binds (AEKDF _ _ _ _ _) = do
+    throwError $ GhostInExec "AEKDF"
 -- extractAExpr binds (AEPreimage p _ _) = do
 --         p' <- flattenPath p
 --         throwError $ PreimageInExec p'
@@ -1096,6 +1099,7 @@ preprocessModBody mb = do
                     NT_PKE _ -> do return pkeKeySize
                     NT_Sig _ -> do return sigKeySize
                     NT_DH -> return dhSize
+                    NT_KDF _ _ -> do return kdfKeySize
                     _ -> do
                         throwError $ UnsupportedNameType nt
                 let nsids = length sids
@@ -1122,7 +1126,9 @@ preprocessModBody mb = do
                         else
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
-
+              TB.AbbrevNameDef _ -> do
+                throwError $ ErrSomethingFailed "TODO sortName for AbbrevNameDef"
+-- returns (locality stuff, shared names, public keys)
         -- sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
         -- sortOrcl (n, b) = do
         --     let (_, (args, rtys)) = unsafeUnbind b
