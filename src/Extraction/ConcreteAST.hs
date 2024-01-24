@@ -186,7 +186,7 @@ concretify e =
                     k' <- concretify k
                     return $ Just (t', k')
             return $ CLet a' Nothing (bind avar $ CCase (mkSpanned $ AEVar (ignore $ show avar) avar) otk' cases')
-        EPCase _ _ k -> concretify k
+        EPCase _ _ _ k -> concretify k
         EFalseElim e _ -> concretify e
         ETLookup n a -> return $ CTLookup n a
         ETWrite n a a2 -> return $ CTWrite n a a2

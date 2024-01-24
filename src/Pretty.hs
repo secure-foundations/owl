@@ -395,7 +395,7 @@ instance  OwlPretty ExprX where
                       Right (_, xe) -> let (x, e) = owlprettyBind xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
         owlpretty "case" <+> tyann <+> owlpretty t <> line <> vsep pcases <+> otherwise
-    owlpretty (EPCase p op e) = 
+    owlpretty (EPCase p op attr e) = 
         owlpretty "pcase" <+> parens (owlpretty p) <+> owlpretty "in" <+> owlpretty e
     owlpretty (EDebug dc) = owlpretty "debug" <+> owlpretty dc
     owlpretty (ESetOption s1 s2 e) = owlpretty "set_option" <+> owlpretty (show s1) <+> owlpretty "=" <+> owlpretty (show s2) <+> owlpretty "in" <+> owlpretty e                                         

@@ -425,7 +425,7 @@ data ExprX =
     | EParse AExpr Ty (Maybe Expr) (Bind [(DataVar, Ignore String)] Expr)
     | ECase Expr (Maybe (Ty, Expr)) [(String, Either Expr (Ignore String, Bind DataVar Expr))] 
         -- The (Ignore String) part is the name for the var
-    | EPCase Prop (Maybe Prop) Expr
+    | EPCase Prop (Maybe Prop) (Maybe Bool) Expr
     | ECorrCaseNameOf AExpr (Maybe Prop) Expr
     | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr

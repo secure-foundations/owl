@@ -176,9 +176,9 @@ anf e =
                         k' <- anf k
                         return $ Just (t, k)
           elet e1' Nothing (Nothing) Nothing $ \y -> return $ Spanned (e^.spanOf) $ ECase (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) y) otk' cases'
-      EPCase p op k -> do 
+      EPCase p op ob k -> do 
          k' <- anf k
-         return $ Spanned (e^.spanOf) $ EPCase p op k'
+         return $ Spanned (e^.spanOf) $ EPCase p op ob k'
       ECorrCaseNameOf a op k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ ECorrCaseNameOf a op k'

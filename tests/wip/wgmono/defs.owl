@@ -104,10 +104,10 @@ nametype C6_dual<@n, m> = dualkdf {salt info.
 
 name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
 
-nametype C6_corr = kdf {ikm info.
+nametype C6_corr<@n,m> = kdf {ikm info.
     True -> strict C7_corr || public nonce ||
-        strict st_aead (x:(Data<adv> |0|){False})
-                       aad x. true
+        strict st_aead (Data<adv> |0|) // (x:(Data<adv> |0|){False})
+                       aad x. (exists m2:idx. valid_h6<n,m2>[x])
                        nonce aead_counter_msg2_C7
 }
 
@@ -120,8 +120,8 @@ nametype C6<@n, m> = kdf {ikm info.
 }
 
 
-nametype C5_corr = kdf {ikm info.
-    True -> strict C6_corr
+nametype C5_corr<@n,m> = kdf {ikm info.
+    True -> strict C6_corr<@n,m>
 }
 
 
@@ -133,8 +133,8 @@ nametype C5<@n,m> = kdf {ikm info.
 func honest_c1<i@n>() = 
     gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n>)), 0x)
 
-nametype C4_corr = kdf {ikm info.
-    True -> strict C5_corr
+nametype C4_corr<@n,m> = kdf {ikm info.
+    True -> strict C5_corr<@n,m>
 }
 
 nametype C4<@n,m> = kdf {ikm info.
@@ -150,7 +150,7 @@ nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
 
 nametype C3<@n,m> = kdf {ikm info.
     (exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4<@n,m> || strict useless_enc
-    !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr || strict useless_enc
+    !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr<@n,m> || strict useless_enc
 }
 
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
@@ -231,7 +231,7 @@ odh L4<i,j@n,m> :
         (salt != honest_c1<session i, pid n>())
         /\
         (salt != honest_c4<session i, session j, pid n, pid m>())
-            -> strict C5_corr
+            -> strict C5_corr<@n,m>
 }
 
 odh L5<j@n,m> :
@@ -246,7 +246,7 @@ odh L5<j@n,m> :
         /\
         !(exists i:idx. salt == honest_c5<session i, session j, pid n, pid m>())
             ->
-            strict C6_corr
+            strict C6_corr<@n,m>
 
 
 }
