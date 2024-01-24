@@ -401,21 +401,26 @@ extractExpr (CParse a (CTConst p) otk bindpat) = do
         owlpretty "as" <+> parens (owlpretty (specName t) <> braces ((hsep . punctuate (space <> comma)) patfields' <> space)) <+> 
         owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> 
         badk
+extractExpr (CLetGhost xk) = do
+    let (x, k) = unsafeUnbind xk
+    x' <- extractVar x
+    k' <- extractExpr k
+    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> owlpretty "()" <+> owlpretty "in" <> line <> k'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
 
-specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
-specExtractArg (v, t) = do
+specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad (Maybe OwlDoc)
+specExtractArg (v, t) = do    
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
     v' <- extractVar v
-    return $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
+    return $ Just $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
 
 
 extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
     lname <- flattenPath lpath
-    specArgs <- mapM specExtractArg owlArgs
+    specArgs <- catMaybes <$> mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $
             owlpretty "cfg:" <+> owlpretty (cfgName lname)
             : owlpretty "mut_state:" <+> owlpretty (stateName lname)

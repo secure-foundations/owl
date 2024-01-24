@@ -252,6 +252,12 @@ pub open spec fn andb(x: bool, y: bool) -> bool
     x && y
 }
 
+pub open spec fn notb(x: bool) -> bool
+{
+    !x
+}
+
+
 pub open spec fn length(x: Seq<u8>) -> usize
     recommends x.len() < usize::MAX
 {

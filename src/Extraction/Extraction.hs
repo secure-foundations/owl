@@ -158,7 +158,7 @@ rustFieldTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustFieldTy CTBool = return Bool
 rustFieldTy CTUnit = return Unit
-rustFieldTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustFieldTy CTGhost = throwError $ GhostInExec "rustFieldTy of ghost"
 rustFieldTy _ = return VecU8
 
         
@@ -372,7 +372,7 @@ extractEnum owlName owlCases' = do
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
                     (owlpretty . rustifyName) owlCase <>
                         (parens . hsep . punctuate comma . map (\(t,a) -> (case t of
-                                -- ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
+                                ADT name -> owlpretty "serialize_" <> owlpretty name <> owlpretty "(&" <> owlpretty a <> owlpretty ")"
                                 Rc VecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&*" <> owlpretty a)
                                 VecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&" <> owlpretty a)
                                 _ -> owlpretty a)) $ args
@@ -764,14 +764,17 @@ extractExpr inK loc binds (CCase ae otk cases) = do
                         (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
                         return (rt'', owlpretty (rustifyName c) <> owlpretty "()" <+> owlpretty "=>" <+> braces (vsep [preE, ePrettied]))
                     Right xk -> do
-                        caseRustTy <- case enumCases M.!? c of
-                                Just (Just t) -> return t
-                                _ -> throwError $ ErrSomethingFailed $ "inconsistent types for case " ++ c ++ " in enum " ++ enumOwlName
                         let (x, k) = unsafeUnbind xk
                         let rustX = rustifyName . show $ x
+                        (caseRustTy, caseName, makeCaseName) <- case enumCases M.!? c of
+                                Just (Just VecU8) -> do 
+                                    let makeCaseName = owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> rcNew <> parens (owlpretty "tmp_" <> owlpretty rustX) <> owlpretty ";"
+                                    return (Rc VecU8, "tmp_" ++ rustX, makeCaseName)
+                                Just (Just t) -> return (t, rustX, owlpretty "")
+                                _ -> throwError $ ErrSomethingFailed $ "inconsistent types for case " ++ c ++ " in enum " ++ enumOwlName
                         (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (caseRustTy, Nothing) binds) k
-                        return (rt'', owlpretty (rustifyName c) <> parens (owlpretty rustX) <+> owlpretty "=>"
-                                    <+> braces (line <> preK <> line <> kPrettied <> line))
+                        return (rt'', owlpretty (rustifyName c) <> parens (owlpretty caseName) <+> owlpretty "=>"
+                                    <+> braces (line <> makeCaseName <> line <> preK <> line <> kPrettied <> line))
         branchRt <- case casesPrettiedRts of
             [] -> throwError $ TypeError "case on enum with no cases"
             (b, _) : _ -> return b
@@ -844,40 +847,47 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
             return (binds, rt, preAe <> preK, e)
         _ -> do throwError $ TypeError $ 
                     "Mismatched types for parse expr: want to parse as" ++ show owlT ++ " but arg inferred to have type " ++ show rtAe
+extractExpr inK loc binds (CLetGhost xk) = do
+    let (x, k) = unsafeUnbind xk
+    let rustX = rustifyName . show $ x
+    (_, rt, preK, kPrettied) <- extractExpr inK loc (M.insert rustX (VerusGhost, Nothing) binds) k
+    let letbinding = owlpretty "let ghost" <+> owlpretty rustX <+> owlpretty "= ();"
+    return (binds, rt, owlpretty "", letbinding <> line <> preK <> line <> kPrettied)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
-funcCallPrinter :: String -> [Maybe (String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
+funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
 funcCallPrinter owlName rustArgs retTy callArgs = do
     let callMacro = case retTy of
             Option _ -> "owl_call_ret_option!"
             _ -> "owl_call!"
     if length rustArgs == length callArgs then do
-        let nonGhostCallArgs = map snd . filter (\(aopt, b) -> isJust aopt) . zip rustArgs $ callArgs
+        let ghostCheckedCallArgs = map (\((_,rt), b) -> if rt == VerusGhost then Nothing else Just b) . zip rustArgs $ callArgs
         return $ (retTy, show $ owlpretty callMacro <> tupled [
                 owlpretty "itree"
                 , owlpretty "*mut_state"
                 , owlpretty owlName <> owlpretty "_spec" <>
-                    tupled (owlpretty "*self" : owlpretty "*mut_state" : (map (\(rty, arg) -> owlpretty (viewVar rty (unclone arg))) $ callArgs))
+                    tupled (owlpretty "*self" : owlpretty "*mut_state" : (map printSpecArg ghostCheckedCallArgs))
                 , owlpretty "self." <> owlpretty (rustifyName owlName) <>
-                    tupled (owlpretty "mut_state" : (map (\(rty, arg) -> owlpretty arg) $ callArgs))
+                    tupled (owlpretty "mut_state" : (map printExecArg ghostCheckedCallArgs))
             ])
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
+        printSpecArg raopt = case raopt of
+            Just (rty, arg) -> owlpretty (viewVar rty (unclone arg))
+            Nothing -> owlpretty "ghost_unit()"
+        printExecArg raopt = case raopt of
+            Just (rty, arg) -> owlpretty arg
+            Nothing -> owlpretty "ghost_unit()"
         unclone str = fromMaybe str (stripPrefix (show rcClone) str)
 
 extractArg :: (String, RustTy) -> OwlDoc
 extractArg (s, rt) =
     owlpretty s <> owlpretty ":" <+> owlpretty rt
 
-rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (Maybe (String, RustTy))
+rustifyArg :: (DataVar, Embed Ty) -> ExtractionMonad (String, RustTy)
 rustifyArg (v, t) = do
-    -- Filter out ghost arguments
-    let t' = unembed t
-    case t' ^. val of
-        TGhost -> return Nothing
-        _ -> do
-            rt <- rustifyArgTy . doConcretifyTy $ t'
-            return $ Just (rustifyName $ show v, rt)
+    rt <- rustifyArgTy . doConcretifyTy . unembed $ t
+    return (rustifyName $ show v, rt)
 
 -- rustifySidArg :: IdxVar -> (String, RustTy)
 -- rustifySidArg v =
@@ -908,7 +918,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
             -- debugLog $ show $ owlpretty anfBody
             return (Just concreteBody, Just anfBody)
         Nothing -> return (Nothing, Nothing)
-    rustArgs <- catMaybes <$> mapM rustifyArg owlArgs
+    rustArgs <- mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
     rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))

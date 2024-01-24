@@ -95,6 +95,7 @@ data CExpr =
     | CInput (Bind (DataVar, EndpointVar) CExpr)
     | COutput AExpr (Maybe Endpoint)
     | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
+    | CLetGhost (Bind DataVar CExpr)
     | CBlock CExpr -- Boundary for scoping; introduced by { }
     | CIf AExpr CExpr CExpr
     | CRet AExpr
@@ -121,7 +122,8 @@ concretify e =
         EOutput a eo -> return $ COutput a eo
         ELet e1 tyann oanf _ xk | isGhostTyAnn tyann -> do
             let (x, k) = unsafeUnbind xk   
-            concretify k
+            k' <- concretify k
+            return $ CLetGhost (bind x k')
         ELet e1 tyann oanf _ xk -> do
             e1' <- concretify e1
             let (x, k) = unsafeUnbind xk
@@ -196,8 +198,9 @@ concretify e =
         ESetOption _ _ e -> concretify e
         ELetGhost _ _ xk -> do
             -- TODO check this
-            let (_, k) = unsafeUnbind xk
-            concretify k
+            let (x, k) = unsafeUnbind xk
+            k' <- concretify k
+            return $ CLetGhost (bind x k')
         ECorrCaseNameOf _ _ k -> concretify k
         -- _ -> error $ "Concretify on " ++ show (owlpretty e)
 
@@ -270,3 +273,6 @@ instance OwlPretty CExpr where
     owlpretty (CParse ae t ok bindpat) = 
         let (pats, k) = owlprettyBind bindpat in
         owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> parens pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
+    owlpretty (CLetGhost xk) =
+        let (x, k) = owlprettyBind xk in
+        owlpretty "letghost" <+> x <+> owlpretty "in" <> line <> k

@@ -64,22 +64,22 @@ odh l2:
         (info == 0x02) -> enckey Data<adv>
     }
 
-struct PFA_msg {
+struct pfa_msg {
     _pfa1: dhpk(a),
     _pfa2: Data<adv> ||signature||
 }
 
-struct PDIS_msg1 {
+struct pdis_msg1 {
     _pdis1_1: dhpk(b),
     _pdis2_1: Data<adv> ||signature||
 }
 // can just use an enum in the above struct instead of two structs
-struct PDIS_msg2 {
+struct pdis_msg2 {
     _pdis1_2: dhpk(b1),
     _pdis2_2: Data<adv> ||signature|| 
 }
 
-struct SDIS_msg {
+struct sdis_msg {
     _sdis1: dhpk(c),
     _sdis2: Data<adv> ||signature||
 }
@@ -120,12 +120,12 @@ def PDIS_actual(gb : Ghost,
     pcase (sec(a) /\ sec(b)) in 
     let g_pow_b1 = dhpk(get(b1)) in
     let signed_g_pow_b1 = sign(get(skPDIS), _comm_with_sdis(g_pow_b1)) in
-    let _ = output PDIS_msg2(g_pow_b1, signed_g_pow_b1) to endpoint(SDIS) in
+    let _ = output pdis_msg2(g_pow_b1, signed_g_pow_b1) to endpoint(SDIS) in
     
     input inp in
     let vkSDIS = get_vk(skSDIS) in
     corr_case skSDIS in
-    parse inp as SDIS_msg(sdis1, sdis2) in 
+    parse inp as sdis_msg(sdis1, sdis2) in 
     case vrfy(vkSDIS, sdis1, sdis2) {
         | None => ()
         | Some g_pow_c =>
@@ -137,7 +137,7 @@ def PDIS_actual(gb : Ghost,
                 let k = kdf<; odh l2[0]; enckey; 0>(0x, ss, 0x02) in
                 
                 // request PFA to sign
-                let request = _req(1) in // TODO: 1 is the hash
+                let request = _req(0x01) in // TODO: 0x01 is the hash
                 pcase (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
                 pcase (corr(a) \/ corr(b)) in
                 let enc_request = aenc(k11, request) in
@@ -169,12 +169,12 @@ def SDIS_actual () @ SDIS
 : Unit =
     let g_pow_c = dhpk(get(c)) in
     let signed_g_pow_c = sign(get(skSDIS), g_pow_c) in
-    let _ = output SDIS_msg(g_pow_c, signed_g_pow_c) to endpoint(PDIS) in
+    let _ = output sdis_msg(g_pow_c, signed_g_pow_c) to endpoint(PDIS) in
 
     input inp in
     let vkPDIS = get_vk(skPDIS) in
     corr_case skPDIS in
-    parse inp as PDIS_msg2(pdis1_2, pdis2_2) in 
+    parse inp as pdis_msg2(pdis1_2, pdis2_2) in 
     case vrfy(vkPDIS, pdis1_2, pdis2_2) {
         | None => ()
         | Some m =>
@@ -191,12 +191,12 @@ def SDIS_actual () @ SDIS
                         
                         input inp2 in
                         corr_case nameOf(k) in 
-                        case adec(k, inp2) as Option (Data<adv>)  {
+                        case adec(k, inp2) /* as Option (Data<adv>) */ {
                             | None => ()
                             | Some m'' =>
                                 // m'' is the signature which was forwarded using the agent from the client
                                 ()
-                            otherwise => ()
+                            /* otherwise => () */
                         }
                     }
                 otherwise => ()
@@ -209,12 +209,12 @@ def PFA_KE () @ PFA
 : Unit =
     let g_pow_a = dhpk(get(a)) in
     let signed_g_pow_a = sign(get(skPFA), _signed_by_PFA_g_pow_a(g_pow_a)) in
-    let _ = output PFA_msg(g_pow_a, signed_g_pow_a) to endpoint(PDIS) in
+    let _ = output pfa_msg(g_pow_a, signed_g_pow_a) to endpoint(PDIS) in
 
     input inp in // signed g_pow_b
     let vkPDIS = get_vk(skPDIS) in
     corr_case skPDIS in
-    parse inp as PDIS_msg1(pdis1_1, pdis2_1) in      
+    parse inp as pdis_msg1(pdis1_1, pdis2_1) in      
     case vrfy(vkPDIS, pdis1_1, pdis2_1) {
         | None => ()
         | Some m =>
@@ -241,12 +241,12 @@ def PDIS_KE () @ PDIS
 : Unit =
     let g_pow_b = dhpk(get(b)) in
     let signed_g_pow_b = sign(get(skPDIS), _comm_with_pfa(g_pow_b)) in
-    let _ = output PDIS_msg1(g_pow_b, signed_g_pow_b) to endpoint(PFA) in
+    let _ = output pdis_msg1(g_pow_b, signed_g_pow_b) to endpoint(PFA) in
 
     input inp in // from PFA (KE), signed g_pow_a
     let vkPFA = get_vk(skPFA) in
     corr_case skPFA in
-    parse inp as PFA_msg(pfa1, pfa2) in 
+    parse inp as pfa_msg(pfa1, pfa2) in 
     case vrfy(vkPFA, pfa1, pfa2) {
         | None => ()
         | Some m =>
@@ -259,7 +259,7 @@ def PDIS_KE () @ PDIS
                         let ss   = dh_combine(g_pow_a, get(b)) in
                         pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
                         let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
-                        let _ = output 0 to endpoint(SDIS) in // TODO: The hash stuff
+                        let _ = output 0x to endpoint(SDIS) in // TODO: The hash stuff
                         call PDIS_actual(ss, k11)
                     }
                 otherwise => ()

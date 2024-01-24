@@ -95,4 +95,10 @@ pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
 }
 
+pub fn ghost_unit() -> (res: Ghost<()>)
+    ensures res == Ghost(())
+{
+    Ghost(())
+}
+
 } // verus!

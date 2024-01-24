@@ -46,7 +46,7 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
-data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy
+data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy | VerusGhost
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty RustTy where
@@ -58,8 +58,9 @@ instance OwlPretty RustTy where
   owlpretty (ADT s) = owlpretty s
   owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
   owlpretty (Rc r) = owlpretty "Arc" <> angles (owlpretty r)
+  owlpretty VerusGhost = owlpretty "Ghost<()>"
  
-data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
+data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy | SpecGhost
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty SpecTy where
@@ -70,6 +71,7 @@ instance OwlPretty SpecTy where
   owlpretty SpecUnit = owlpretty "()"
   owlpretty (SpecADT s) = owlpretty s
   owlpretty (SpecOption r) = owlpretty "Option" <> angles (owlpretty r)
+  owlpretty SpecGhost = owlpretty "Ghost<()>"
 
 type OwlFunDef = Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr
 
@@ -533,7 +535,7 @@ rustifyArgTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
-rustifyArgTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustifyArgTy CTGhost = return VerusGhost
 rustifyArgTy _ = return $ Rc VecU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
@@ -550,7 +552,7 @@ rustifyRetTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool
 rustifyRetTy CTUnit = return Unit
-rustifyRetTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustifyRetTy CTGhost = return VerusGhost
 rustifyRetTy _ = return $ Rc VecU8
 
 -- For computing data structure members
@@ -563,6 +565,7 @@ specDataTyOf Unit = SpecUnit
 specDataTyOf (ADT s) = SpecADT (specName . unrustifyName $ s)
 specDataTyOf (Option rt) = SpecOption (specDataTyOf rt)
 specDataTyOf (Rc rt) = specDataTyOf rt
+specDataTyOf VerusGhost = SpecGhost
 
 rustifySpecDataTy :: CTy -> ExtractionMonad SpecTy
 rustifySpecDataTy ct = do
@@ -602,6 +605,7 @@ viewVar Unit s = s
 viewVar (ADT _) s = s ++ ".dview()" -- TODO nesting?
 viewVar (Option rt) s = s ++ ".dview()"
 viewVar (Rc rt) s = viewVar rt s
+viewVar VerusGhost s = s
 
 hexStringToByteList :: String -> ExtractionMonad OwlDoc
 hexStringToByteList [] = return $ owlpretty ""
