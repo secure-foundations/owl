@@ -376,7 +376,7 @@ extractEnum owlName owlCases' = do
         _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
     vestFmt <- genVestFormat name layoutCases
     viewImpl <- genViewImpl owlName rustCases
-    let parsleyWrappers = genParsleyWrappers owlName
+    let parsleyWrappers = genParsleyWrappers owlName rustCases'
     enumFuncs <- mkEnumFuncs owlName owlCases
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
@@ -417,12 +417,27 @@ extractEnum owlName owlCases' = do
             debugPrint $ "unimplemented: genVestFormat for enum " ++ name
             return $ owlpretty ""
 
-        genParsleyWrappers :: String -> OwlDoc
-        genParsleyWrappers owlName = 
+        genParsleyWrappers :: String -> M.Map String (Maybe RustTy) -> OwlDoc
+        genParsleyWrappers owlName rustCases' = 
             let name = rustifyName owlName in
             let specname = specName owlName in
             let specParse = owlpretty "parse_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in 
             let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (owlpretty "arg.dview()") in
+            let parseEnsuresLenValid (c,topt) =
+                    case topt of
+                        Nothing -> owlpretty ""
+                        Just OwlBuf -> owlpretty "res.is_Some() ==> res.get_Some_0().is_" <> owlpretty c <> owlpretty "() ==> res.get_Some_0().get_" <> owlpretty c <> owlpretty "_0().len_valid(),"
+                        Just _ -> owlpretty "" 
+                    in
+            let serRequiresLenValid (c,topt) =
+                    case topt of
+                        Nothing -> owlpretty ""
+                        Just OwlBuf -> owlpretty "arg.is_" <> owlpretty c <> owlpretty "() ==> arg.get_" <> owlpretty c <> owlpretty "_0().len_valid(),"
+                        Just _ -> owlpretty "" 
+                    in
+            -- let serRequiresLenValid (f,_) = 
+            --         owlpretty "arg." <> owlpretty f <> owlpretty ".len_valid()," 
+            --     in
             -- let specSerialize = owlpretty "serialize_" <> owlpretty specname <> parens (
             --             owlpretty (specName owlName) <> 
             --             (braces . hsep . punctuate comma) (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "arg." <> owlpretty (rustifyName f) <> owlpretty ".dview()") rustFields)
@@ -436,8 +451,8 @@ extractEnum owlName owlCases' = do
                 owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty ">") <> line <>
                 owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
                 owlpretty "        res.is_None() ==>" <+> specParse <> owlpretty ".is_None()," <> line <>
-                owlpretty "        res.is_Some() ==> res.get_Some_0().dview() == " <> specParse <> owlpretty ".get_Some_0()" <> line <>
-                -- vsep (map parseEnsuresField rustFields) <> line <>
+                owlpretty "        res.is_Some() ==> res.get_Some_0().dview() == " <> specParse <> owlpretty ".get_Some_0()," <> line <>
+                vsep (map parseEnsuresLenValid $ M.assocs rustCases') <> line <>
             lbrace <> line <>
                 owlpretty "todo!(\"call parsley exec parser\")" <> line <>
             rbrace <> line <> line <>
@@ -445,6 +460,8 @@ extractEnum owlName owlCases' = do
             owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
             owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                 owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
+                owlpretty "requires" <+>
+                vsep (map serRequiresLenValid $ M.assocs rustCases') <> line <>
                 owlpretty "ensures res.dview() ==" <+> specSerialize <> line <>
             lbrace <> line <>
                 owlpretty "todo!(\"call parsley exec serializer and unwrap\")" <> line <>
