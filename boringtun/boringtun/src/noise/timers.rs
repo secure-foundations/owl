@@ -305,7 +305,7 @@ impl Tunn {
         }
 
         if keepalive_required {
-            return self.encapsulate(&mut [], dst);
+            return self.encapsulate(&[], dst);
         }
 
         TunnResult::Done
