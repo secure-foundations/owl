@@ -389,7 +389,7 @@ extractEnum owlName owlCases' = do
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
                     (owlpretty . rustifyName) owlCase <>
                         (parens . hsep . punctuate comma . map (\(t,a) -> (case t of
-                                ADT name -> owlpretty "serialize_" <> owlpretty name <> owlpretty "(&" <> owlpretty a <> owlpretty ")"
+                                ADT name -> owlpretty "OwlBuf::from_vec" <> parens (owlpretty "serialize_" <> owlpretty name <> owlpretty "(&" <> owlpretty a <> owlpretty ")")
                                 -- OwlBuf -> owlpretty "slice_to_vec" <> parens (pretty "&*" <> owlpretty a)
                                 VecU8 -> owlpretty "OwlBuf::from_vec" <> parens (owlpretty a)
                                 _ -> owlpretty a)) $ args
@@ -917,7 +917,9 @@ funcCallPrinter owlName rustArgs retTy callArgs = do
             Just (rty, arg) -> owlpretty (viewVar rty ({- unclone -} arg))
             Nothing -> owlpretty "spec_ghost_unit()"
         printExecArg raopt = case raopt of
-            Just (rty, arg) -> owlpretty arg
+            Just (OwlBuf, arg) -> owlpretty arg <> owlpretty ".as_slice()"
+            Just (VecU8, arg) -> owlpretty "vec_as_slice" <> parens (owlpretty "&" <> owlpretty arg)
+            Just (_, arg) -> owlpretty arg
             Nothing -> owlpretty "ghost_unit()"
         -- unclone str = fromMaybe str (stripPrefix (show rcClone) str)
 

@@ -545,7 +545,7 @@ rustifyArgTy (CTConst p) = do
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
 rustifyArgTy CTGhost = return VerusGhost
-rustifyArgTy _ = return $ VecU8
+rustifyArgTy _ = return $ SliceU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
 rustifyRetTy (CTOption ct) = do
