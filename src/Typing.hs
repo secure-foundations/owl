@@ -2752,7 +2752,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Nothing -> do
+                      l <- coveringLabelOf [t1, t, t2, tnonce]
+                      b <- flowsTo l advLbl
+                      if b then 
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
+                      else 
+                          return $ tDataAnn l l "corrupt dec"
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -2766,7 +2772,9 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                             return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y aad
                       else if (b1 && b2 && b3 && b4) then do 
                           return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
-                      else (mkSpanned <$> trivialTypeOf (map snd args))
+                      else do
+                          t <- trivialTypeOf (map snd args)
+                          return $ mkSpanned $ TOption $ mkSpanned t
                   _ -> do
                       l <- coveringLabelOf [t1, t, t2, tnonce]
                       b <- flowsTo l advLbl

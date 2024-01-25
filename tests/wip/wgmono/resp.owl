@@ -1,40 +1,5 @@
 include "defs.owl"
 
-predicate is_e_init(h) = exists n:idx,i:idx. h == dhpk(get(E_init<i@n>))
-predicate is_s_init(h) = exists n:idx. h == dhpk(get(S_init<@n>))
-
-predicate tkr_secure<j,n_eph,n_pk,m>(eph) = 
-    exists i:idx. 
-        eph == dhpk(get(E_init<i@n_eph>))
-        /\
-        (n_eph !=idx n_pk ==> sec(E_init<i@n_eph>))
-        /\
-         ((sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))
-          \/
-          (sec(E_resp<j@m>) /\ sec(S_init<@n_pk>))
-          \/
-          (sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
-          \/
-          (sec(S_resp<@m>) /\ sec(S_init<@n_pk>)))
-
-
-struct transp_keys_resp<j,n_eph,n_pk,m> {
-    tkr_eph : Ghost,
-    tkr_c7 : Ghost,
-    tkr_k_init_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
-        if n_eph =idx n_pk then 
-            SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x,
-            0x))
-        else 
-            SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x))
-        else Data<adv>, 
-    tkr_k_resp_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
-        if n_eph =idx n_pk then
-            SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7, 0x, 0x))
-        else
-            SecName(KDF<enckey||enckey;1;transp_key_resp_send_corr>(tkr_c7, 0x, 0x))
-        else Data<adv> 
-}
 
 def checkpk_resp<@m>(pk : Data<adv>) @ Responder<m>
     : Option (exists n. (x:shared_secret(S_init<@n>, S_resp<@m>){dhpk(get(S_init<@n>)) == pk}))

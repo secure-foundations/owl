@@ -52,8 +52,6 @@ func honest_H7_pre<i, j@n,m>(c, ts, tau, c') =
     crh(honest_H6_pre<session i, session j, pid n, pid m>(c, ts, tau)) ++ c'
 
 name channel_secret<@n,m> : nonce 
-corr<n,m> [S_init<@n>] ==> [channel_secret<@n,m>]
-corr<n,m> [S_resp<@m>] ==> [channel_secret<@n,m>]
 
 counter N_init_send<i@n> @ Initiator<n>
 counter N_init_recv<i@n> @ Initiator<n>
@@ -314,98 +312,83 @@ def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 
 func dh(x, y) = dh_combine(dhpk(x), y)
 
-/*
 
-// Struct for initator state between messages
-struct initiator_msg1_val<i,n,m> {
-      _initiator_msg1_C2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
-      _initiator_msg1_C3 : if sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)) then 
-          (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>), get(S_resp<@m>)),  0x)){
-               sec(KDF<kdfkey||enckey;0;C3<@n,m>>(_initiator_msg1_C2, dh(get(S_init<@n>),
-               get(S_resp<@m>)), 0x))
-           })
-       else (x:Data<adv>{
-           x == honest_c3<session i, pid n, pid m>()
-       }),
-      _initiator_msg1_H4 : (x:Data<adv>{exists c:bv, ts:bv. 
-        x == crh(honest_H4_pre<session i, pid n, pid m>(c, ts))})
-}
 
-predicate is_e_init(x) =
-    exists n:idx, i:idx. x == dhpk(get(E_init<i@n>))
+/////////////////////////
+// Transport keys for initiator
 
-predicate is_s_init(x) =
-    exists n2:idx. x == dhpk(get(S_init<@n2>))
+predicate tki_secure<i,n,m>(eph) = 
+    exists j:idx. 
+        eph == dhpk(get(E_resp<j@m>))
+        /\
+         ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
+          \/
+          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
 
-// Struct for responder state between messages
-struct responder_msg1_val<i,n,m> {
-     _responder_init_eph : (x:Data<adv>{is_group_elem(x) /\ (x == dhpk(get(E_init<i@n>)) \/ !is_e_init[x])}),
-     _responder_init_pk : (x:Data<adv>{exists n2:idx. x == dhpk(get(S_init<@n2>))}),
-     _responder_msg1_C2 : (x:Ghost{x == c2_resp<pid m>(_responder_init_eph)}),
-     _responder_msg1_C3 : 
-        if (_responder_init_eph == dhpk(get(E_init<i@n>)) /\
-            _responder_init_pk == dhpk(get(S_init<@n>)) /\
-            sec(S_resp<@m>) /\ (sec(E_init<i@n>) \/ sec(S_init<@n>)))
-            then
-                  (x:Name(KDF<kdfkey||enckey;0;C3<@n,m>>( _responder_msg1_C2, dh(get(S_init<@n>),
-                  get(S_resp<@m>)), 0x)){
-                       sec(KDF<kdfkey||enckey;0;C3<@n,m>>(
-                         _responder_msg1_C2,
-                       dh(get(S_init<@n>), get(S_resp<@m>)),  0x))
-                   })
-            else
-                (x:Data<adv>{
-                    x == c3_resp<pid m>(_responder_init_pk, _responder_init_eph)
-                 }),
-     _responder_msg1_H4 : Data<adv>
-}
-
-predicate resp_session_ok<i,j,n,m>(eph, pk) = 
-     is_e_init[eph] /\ 
-     pk == dhpk(get(S_init<@n>))
+predicate tki_corrupt<i,n,m>(eph) =
+     ((corr(S_resp<@m>) \/ corr(E_init<i@n>))
+          /\
+      (corr(S_resp<@m>) \/ corr(S_init<@n>)))
      /\
-     ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
+     (forall j:idx. eph == dhpk(get(E_resp<j@m>))
+        ==>
+         ((corr(E_resp<j@m>) \/ corr(E_init<i@n>))
+          /\
+          (corr(E_resp<j@m>) \/ corr(S_init<@n>))
+     ))
+    
 
-struct transp_keys_resp<i,j,n,m> {
-    tkr_eph : Ghost,
-    tkr_pk : Ghost,
-    tkr_c7 : Ghost,
-    tkr_k_init_send : if resp_session_ok<i,j,n,m>[tkr_eph, tkr_pk] then
-    SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tkr_c7, 0x, 0x))
-    else Data<adv>,
-    tkr_k_resp_send : if resp_session_ok<i,j,n,m>[tkr_eph, tkr_pk] then 
-        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tkr_c7, 0x, 0x))
-        else Data<adv>
-}
-
-predicate tki_secure<i,j,n,m>(eph, c7) = 
-    eph == dhpk(get(E_resp<j@m>))
-    /\
-    c7 == honest_c7<session i, session j, pid n, pid m>()
-    /\
-     ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
-
-
-struct transp_keys_init<i,j,n,m> {
+struct transp_keys_init<i,n,m> {
     tki_eph : Ghost,
     tki_c7 : Ghost,
-    tki_k_init_send : if tki_secure<i,j,n,m>[tki_eph, tki_c7] then
+    tki_k_init_send : if tki_secure<i,n,m>[tki_eph] then
         SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7, 0x, 0x))
-        else Data<adv>,
-    tki_k_resp_send : if tki_secure<i,j,n,m>[tki_eph, tki_c7] then
+        else (x:Data<adv>{tki_corrupt<i,n,m>[tki_eph]}),
+    tki_k_resp_send : if tki_secure<i,n,m>[tki_eph] then
         SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x))
-        else Data<adv>
+        else (x:Data<adv>{tki_corrupt<i,n,m>[tki_eph]})
 }
-*/
+
+
+/////////////////////////
+// Pre-Transport keys for initiator
+
+predicate is_e_init(h) = exists n:idx,i:idx. h == dhpk(get(E_init<i@n>))
+predicate is_s_init(h) = exists n:idx. h == dhpk(get(S_init<@n>))
+
+predicate tkr_secure<j,n_eph,n_pk,m>(eph) = 
+    exists i:idx. 
+        eph == dhpk(get(E_init<i@n_eph>))
+        /\
+        (n_eph !=idx n_pk ==> sec(E_init<i@n_eph>))
+        /\
+         ((sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))
+          \/
+          (sec(E_resp<j@m>) /\ sec(S_init<@n_pk>))
+          \/
+          (sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
+          \/
+          (sec(S_resp<@m>) /\ sec(S_init<@n_pk>)))
+
+
+struct transp_keys_resp<j,n_eph,n_pk,m> {
+    tkr_eph : Ghost,
+    tkr_c7 : Ghost,
+    tkr_k_init_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
+        if n_eph =idx n_pk then 
+            SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x,
+            0x))
+        else 
+            SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x))
+        else Data<adv>, 
+    tkr_k_resp_send : if tkr_secure<j,n_eph,n_pk,m>[tkr_eph] then
+        if n_eph =idx n_pk then
+            SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7, 0x, 0x))
+        else
+            SecName(KDF<enckey||enckey;1;transp_key_resp_send_corr>(tkr_c7, 0x, 0x))
+        else Data<adv> 
+}
