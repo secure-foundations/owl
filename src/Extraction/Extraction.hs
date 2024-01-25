@@ -108,6 +108,7 @@ layoutCTy u (CTSS n n') = do
     let l = dhSize
     return $ LBytes l
 layoutCTy u (CTHex s) = return $ LHexConst s
+layoutCTy _ CTGhost = throwError $ GhostInExec "layoutCTy of ghost"
 
 isNestable :: Layout -> Bool
 isNestable (LBytes _) = True
@@ -157,7 +158,7 @@ rustFieldTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustFieldTy CTBool = return Bool
 rustFieldTy CTUnit = return Unit
-rustFieldTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustFieldTy CTGhost = throwError $ GhostInExec "rustFieldTy of ghost"
 rustFieldTy _ = return VecU8
 
         
@@ -371,7 +372,7 @@ extractEnum owlName owlCases' = do
                 map (\(owlCase, _) -> (owlCase, (rustifyName owlName, ADT (rustifyName owlName), False, \args -> return $ show $
                     (owlpretty . rustifyName) owlCase <>
                         (parens . hsep . punctuate comma . map (\(t,a) -> (case t of
-                                -- ADT _ -> parens (owlpretty "*" <> owlpretty a <> owlpretty ".data") <> owlpretty ".as_slice()"
+                                ADT name -> owlpretty "serialize_" <> owlpretty name <> owlpretty "(&" <> owlpretty a <> owlpretty ")"
                                 Rc VecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&*" <> owlpretty a)
                                 VecU8 -> owlpretty "clone_vec_u8" <> parens (pretty "&" <> owlpretty a)
                                 _ -> owlpretty a)) $ args
@@ -442,49 +443,58 @@ extractCryptOp binds op owlArgs = do
     let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
     let args = map (\(r, _, p) -> (r, show p)) argsPretties
     (rt, preCryptOp, str) <- case (op, args) of
-        -- (CHash ((ropath,_,_):_) i, args) -> do 
-        --    -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
-        --    -- so we can just use the first one to calculate the length to extract to
-        --    roname <- flattenPath ropath
-        --    orcls <- use oracles
-        --    (outLen, sliceIdxs) <- case orcls M.!? roname of
-        --        Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
-        --        Just (outLen', sliceIdxs) -> do
-        --            outLen'' <- mapM printLenConst outLen'
-        --            return (intercalate "+" outLen'', sliceIdxs)
-        --    (start, end) <- case sliceIdxs M.!? i of
-        --        Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
-        --        Just (s', e', _) -> do
-        --            s'' <- mapM printLenConst s'
-        --            e'' <- mapM printLenConst e'
-        --            return (intercalate "+" s'', intercalate "+" e'')
-        --    -- Check if we have already evaluated this RO; if not, evaluate it
-        --    resolvedArgs <- mapM (resolveANF binds) owlArgs
-        --    oopt <- lookupHashCall (roname, resolvedArgs)
-        --    (genOrcl, orclName) <- case oopt of
-        --        Just (Rc VecU8, name) -> return (pretty "", name)
-        --        Nothing -> do
-        --            rovar' <- fresh . s2n $ roname
-        --            let rovar = rustifyName . show $ rovar'
-        --            hashCalls %= (:) ((roname, resolvedArgs), (Rc VecU8, rovar))
-        --            orclArgs <- case args of
-        --                    [ikm] -> return [(Number, outLen), (Rc VecU8, "self.salt"), ikm]
-        --                    [salt, ikm] -> return [(Number, outLen), salt, ikm]
-        --                    _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
-        --            let genOrcl = 
-        --                    owlpretty "let" <+> owlpretty rovar <+> owlpretty "=" <+>
-        --                    owlpretty (printOwlOp "owl_extract_expand_to_len" orclArgs) <> owlpretty ";"
-        --            return (genOrcl, rovar)
-        --        _ -> throwError $ ErrSomethingFailed "precomputed hash value has wrong type"
-        --    let sliceOrcl = rcNew <> parens (
-        --                        owlpretty "slice_to_vec" <> parens (
-        --                            owlpretty "slice_subrange" <> parens (
-        --                                owlpretty "vec_as_slice" <> parens (owlpretty "&*" <> owlpretty orclName) <> comma <+>
-        --                                owlpretty start <> comma <+> owlpretty end
-        --                            )
-        --                        )
-        --                    )
-        --    return (Rc VecU8, genOrcl, sliceOrcl)
+        (CKDF _ _ nks nkidx, [salt, ikm, info]) -> do
+            
+            -- Typechecking checks that the list of hints is non-empty and that all hints point to consistent return type name kinds,
+            -- so we can just use the first one to calculate the length to extract to
+            --    roname <- flattenPath ropath
+            --    orcls <- use oracles
+            --    (outLen, sliceIdxs) <- case orcls M.!? roname of
+            --        Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
+            --        Just (outLen', sliceIdxs) -> do
+            --            outLen'' <- mapM printLenConst outLen'
+            --            return (intercalate "+" outLen'', sliceIdxs)
+            --    (start, end) <- case sliceIdxs M.!? i of
+            --        Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
+            --        Just (s', e', _) -> do
+            --            s'' <- mapM printLenConst s'
+            --            e'' <- mapM printLenConst e'
+            --            return (intercalate "+" s'', intercalate "+" e'')
+            -- TODO we can just use `resolvedArgs` to look up the hash call, or just add the nks, we don't need the ghost args?
+            (outLen, sliceIdxs) <- do
+                (outLen', sliceIdxs) <- makeKdfSliceMap nks
+                outLen'' <- mapM printLenConst outLen'
+                return (intercalate "+" outLen'', sliceIdxs)
+            (start, end) <- case sliceIdxs M.!? nkidx of
+                Nothing -> throwError $ TypeError $ "bad index " ++ show nkidx ++ " to kdf with return type " ++ show nks
+                Just (s', e', _) -> do
+                    s'' <- mapM printLenConst s'
+                    e'' <- mapM printLenConst e'
+                    return (intercalate "+" s'', intercalate "+" e'')
+            -- Check if we have already evaluated this RO; if not, evaluate it
+            resolvedArgs <- mapM (resolveANF binds) owlArgs
+            oopt <- lookupKdfCall nks resolvedArgs
+            (genOrcl, orclName) <- case oopt of
+                Just (Rc VecU8, name) -> return (pretty "", name)
+                Nothing -> do
+                    rovar' <- fresh . s2n $ "kdfval"
+                    let rovar = rustifyName . show $ rovar'
+                    kdfCalls %= (:) ((nks, resolvedArgs), (Rc VecU8, rovar))
+                    let kdfArgs = [(Number, outLen), salt, ikm, info]
+                    let genOrcl = 
+                            owlpretty "let" <+> owlpretty rovar <+> owlpretty "=" <+>
+                            owlpretty (printOwlOp "owl_extract_expand_to_len" kdfArgs) <> owlpretty ";"
+                    return (genOrcl, rovar)
+                _ -> throwError $ ErrSomethingFailed "precomputed hash value has wrong type"
+            let sliceOrcl = rcNew <> parens (
+                                owlpretty "slice_to_vec" <> parens (
+                                    owlpretty "slice_subrange" <> parens (
+                                        owlpretty "vec_as_slice" <> parens (owlpretty "&*" <> owlpretty orclName) <> comma <+>
+                                        owlpretty start <> comma <+> owlpretty end
+                                    )
+                                )
+                            )
+            return (Rc VecU8, genOrcl, sliceOrcl)
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do 
             typeAnnot <- do
@@ -521,7 +531,8 @@ extractCryptOp binds op owlArgs = do
         printLenConst "nonce" = return "nonce_size()"
         printLenConst "enckey" = return "key_size()"
         printLenConst "mackey" = return "mackey_size()"
-        printLenConst s = throwError $ UndefinedSymbol $ "unrecognized oracle length const: " ++ s
+        printLenConst "kdfkey" = return "kdfkey_size()"
+        printLenConst s = throwError $ UndefinedSymbol $ "unrecognized length const: " ++ s
 
 
 -- Compute return type as well
@@ -625,6 +636,8 @@ extractAExpr binds (AELenConst s) = do
       Nothing -> do
         throwError $ UndefinedSymbol s
       Just n -> return (Number, owlpretty "", owlpretty n)
+extractAExpr binds (AEKDF _ _ _ _ _) = do
+    throwError $ GhostInExec "AEKDF"
 -- extractAExpr binds (AEPreimage p _ _) = do
 --         p' <- flattenPath p
 --         throwError $ PreimageInExec p'
@@ -751,14 +764,17 @@ extractExpr inK loc binds (CCase ae otk cases) = do
                         (_, rt'', preE, ePrettied) <- extractExpr inK loc binds e
                         return (rt'', owlpretty (rustifyName c) <> owlpretty "()" <+> owlpretty "=>" <+> braces (vsep [preE, ePrettied]))
                     Right xk -> do
-                        caseRustTy <- case enumCases M.!? c of
-                                Just (Just t) -> return t
-                                _ -> throwError $ ErrSomethingFailed $ "inconsistent types for case " ++ c ++ " in enum " ++ enumOwlName
                         let (x, k) = unsafeUnbind xk
                         let rustX = rustifyName . show $ x
+                        (caseRustTy, caseName, makeCaseName) <- case enumCases M.!? c of
+                                Just (Just VecU8) -> do 
+                                    let makeCaseName = owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> rcNew <> parens (owlpretty "tmp_" <> owlpretty rustX) <> owlpretty ";"
+                                    return (Rc VecU8, "tmp_" ++ rustX, makeCaseName)
+                                Just (Just t) -> return (t, rustX, owlpretty "")
+                                _ -> throwError $ ErrSomethingFailed $ "inconsistent types for case " ++ c ++ " in enum " ++ enumOwlName
                         (_, rt'', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (caseRustTy, Nothing) binds) k
-                        return (rt'', owlpretty (rustifyName c) <> parens (owlpretty rustX) <+> owlpretty "=>"
-                                    <+> braces (line <> preK <> line <> kPrettied <> line))
+                        return (rt'', owlpretty (rustifyName c) <> parens (owlpretty caseName) <+> owlpretty "=>"
+                                    <+> braces (line <> makeCaseName <> line <> preK <> line <> kPrettied <> line))
         branchRt <- case casesPrettiedRts of
             [] -> throwError $ TypeError "case on enum with no cases"
             (b, _) : _ -> return b
@@ -831,24 +847,38 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
             return (binds, rt, preAe <> preK, e)
         _ -> do throwError $ TypeError $ 
                     "Mismatched types for parse expr: want to parse as" ++ show owlT ++ " but arg inferred to have type " ++ show rtAe
+extractExpr inK loc binds (CLetGhost xk) = do
+    let (x, k) = unsafeUnbind xk
+    let rustX = rustifyName . show $ x
+    (_, rt, preK, kPrettied) <- extractExpr inK loc (M.insert rustX (VerusGhost, Nothing) binds) k
+    let letbinding = owlpretty "let ghost" <+> owlpretty rustX <+> owlpretty "= ();"
+    return (binds, rt, owlpretty "", letbinding <> line <> preK <> line <> kPrettied)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
 funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
 funcCallPrinter owlName rustArgs retTy callArgs = do
     let callMacro = case retTy of
             Option _ -> "owl_call_ret_option!"
+            Unit -> "owl_call_ret_unit!"
             _ -> "owl_call!"
-    if length rustArgs == length callArgs then
+    if length rustArgs == length callArgs then do
+        let ghostCheckedCallArgs = map (\((_,rt), b) -> if rt == VerusGhost then Nothing else Just b) . zip rustArgs $ callArgs
         return $ (retTy, show $ owlpretty callMacro <> tupled [
-              owlpretty "itree"
-            , owlpretty "*mut_state"
-            , owlpretty owlName <> owlpretty "_spec" <>
-                tupled (owlpretty "*self" : owlpretty "*mut_state" : (map (\(rty, arg) -> owlpretty (viewVar rty (unclone arg))) $ callArgs))
-            , owlpretty "self." <> owlpretty (rustifyName owlName) <>
-                tupled (owlpretty "mut_state" : (map (\(rty, arg) -> owlpretty arg) $ callArgs))
-        ])
+                owlpretty "itree"
+                , owlpretty "*mut_state"
+                , owlpretty owlName <> owlpretty "_spec" <>
+                    tupled (owlpretty "*self" : owlpretty "*mut_state" : (map printSpecArg ghostCheckedCallArgs))
+                , owlpretty "self." <> owlpretty (rustifyName owlName) <>
+                    tupled (owlpretty "mut_state" : (map printExecArg ghostCheckedCallArgs))
+            ])
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
+        printSpecArg raopt = case raopt of
+            Just (rty, arg) -> owlpretty (viewVar rty (unclone arg))
+            Nothing -> owlpretty "spec_ghost_unit()"
+        printExecArg raopt = case raopt of
+            Just (rty, arg) -> owlpretty arg
+            Nothing -> owlpretty "ghost_unit()"
         unclone str = fromMaybe str (stripPrefix (show rcClone) str)
 
 extractArg :: (String, RustTy) -> OwlDoc
@@ -870,6 +900,13 @@ makeFunc owlName _ owlArgs owlRetTy = do
     rustArgs <- mapM rustifyArg owlArgs
     rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
     funcs %= M.insert owlName (funcCallPrinter owlName rustArgs rtb)
+
+    let argIsGhost = map (\(_, t) -> t == VerusGhost) rustArgs
+    let callPrinter args = 
+            let ghostifiedArgs = map (\(a,g) -> if g then owlpretty "spec_ghost_unit()" else a) (zip args argIsGhost) in
+            owlpretty "call" <> parens (owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : ghostifiedArgs))
+    specFuncs %= M.insert owlName callPrinter
+
     return ()
 
 
@@ -938,7 +975,7 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
         intoOk rustExpr = owlpretty "let res_inner = {" <> line <> line <> rustExpr <> line <> line <> owlpretty "};" <> line <> owlpretty "Ok(res_inner)"
         genMainWrapper owlName lname execRetTy specRetTy = 
             owlpretty "#[verifier(external_body)] pub exec fn" <+> owlpretty (rustifyName owlName) <> owlpretty "_wrapper" <> 
-            parens (owlpretty "&self, s: &mut" <+> owlpretty (stateName lname)) <> owlpretty "->" <> parens (owlpretty "_:" <+> owlpretty execRetTy) <> braces (line <>
+            parens (owlpretty "&self, s: &mut" <+> owlpretty (stateName lname)) <> owlpretty "->" <> owlpretty execRetTy <> braces (line <>
                 owlpretty "let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();" <> line <>
                 owlpretty "let tracked (Tracked(call_token), _) = split_bind(dummy_tok," <+>  owlpretty owlName <> owlpretty "_spec(*self, *s)" <> owlpretty ");" <> line <>
 
@@ -954,6 +991,7 @@ nameInit s nt = case nt^.val of
     NT_StAEAD {} -> 
                 return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
     NT_MAC _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_hmac::gen_rand_key(&hmac_mode());"
+    NT_KDF _ _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_hkdf::gen_rand_kdf_key();"
     NT_PKE _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
     NT_Sig _ -> return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_pke::gen_rand_keys();"
     NT_DH ->    return $ owlpretty "let" <+> (parens . hsep . punctuate comma . map owlpretty $ [rustifyName s, "pk_" ++ rustifyName s]) <+> owlpretty "=" <+> owlpretty "owl_dhke::gen_ecdh_key_pair();"
@@ -1086,6 +1124,7 @@ preprocessModBody mb = do
                     NT_PKE _ -> do return pkeKeySize
                     NT_Sig _ -> do return sigKeySize
                     NT_DH -> return dhSize
+                    NT_KDF _ _ -> do return kdfKeySize
                     _ -> do
                         throwError $ UnsupportedNameType nt
                 let nsids = length sids
@@ -1112,7 +1151,9 @@ preprocessModBody mb = do
                         else
                             -- name is local and can be locally generated
                             return (foldl gPriv locMap locNames, shared, pubkeys)
-
+              TB.AbbrevNameDef _ -> do
+                throwError $ ErrSomethingFailed "TODO sortName for AbbrevNameDef"
+-- returns (locality stuff, shared names, public keys)
         -- sortOrcl :: (String, (Bind [IdxVar] ([AExpr], [NameType]))) -> ExtractionMonad ()
         -- sortOrcl (n, b) = do
         --     let (_, (args, rtys)) = unsafeUnbind b

@@ -46,7 +46,7 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
-data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy
+data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy | VerusGhost
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty RustTy where
@@ -58,8 +58,9 @@ instance OwlPretty RustTy where
   owlpretty (ADT s) = owlpretty s
   owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
   owlpretty (Rc r) = owlpretty "Arc" <> angles (owlpretty r)
+  owlpretty VerusGhost = owlpretty "Ghost<()>"
  
-data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy
+data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy | SpecGhost
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty SpecTy where
@@ -70,6 +71,7 @@ instance OwlPretty SpecTy where
   owlpretty SpecUnit = owlpretty "()"
   owlpretty (SpecADT s) = owlpretty s
   owlpretty (SpecOption r) = owlpretty "Option" <> angles (owlpretty r)
+  owlpretty SpecGhost = owlpretty "Ghost<()>"
 
 type OwlFunDef = Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr
 
@@ -80,6 +82,7 @@ data Env = Env {
     _hmacMode :: HMACMode,
     _owlUserFuncs :: [(String, TB.UserFunc)],
     _funcs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
+    _specFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
     _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _typeLayouts :: M.Map String Layout,
@@ -90,7 +93,7 @@ data Env = Env {
     _includes :: S.Set String, -- files we have included so far
     _freshCtr :: Integer,
     _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
-    _hashCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (roname, aexpr args), can't use M.Map with AExpr keys
+    _kdfCalls :: [(([NameKind], [AExpr]), (RustTy, String))], -- key is (aexpr args, name kinds), can't use M.Map with AExpr keys
     _adtCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (adt name, aexpr args)
     _userFuncsCompiled :: M.Map String (OwlDoc, OwlDoc) -- (compiled spec, compiled exec)
 }
@@ -321,6 +324,9 @@ counterSize = 8 -- TODO This is specific to Wireguard---should be a param
 crhSize :: Int
 crhSize = 32 -- TODO This is specific to Wireguard
 
+kdfKeySize :: Int
+kdfKeySize = 32 -- TODO This is specific to Wireguard
+
 initLenConsts :: M.Map String Int
 initLenConsts = M.fromList [
         (rustifyName "signature", 256),
@@ -331,6 +337,7 @@ initLenConsts = M.fromList [
         (rustifyName "pke_sk", pkeKeySize),
         (rustifyName "pke_pk", pkePubKeySize),
         (rustifyName "sigkey", sigKeySize),
+        (rustifyName "kdfkey", kdfKeySize),
         (rustifyName "vk", vkSize),
         (rustifyName "DH", dhSize),
         (rustifyName "group", dhSize),
@@ -425,11 +432,15 @@ initFuncs =
             ("andb", (\args -> case args of
                 [(Bool,x), (Bool,y)] -> return $ (Bool, x ++ " && " ++ y)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
+            )),
+            ("notb", (\args -> case args of
+                [(Bool,x)] -> return $ (Bool, "! " ++ x)
+                _ -> throwError $ TypeError $ "got wrong args for andb"
             ))
         ] 
 
 initEnv :: Flags -> String -> TB.Map String TB.UserFunc -> Env
-initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
+initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
 
 lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
 lookupTyLayout' n = do
@@ -525,7 +536,7 @@ rustifyArgTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
-rustifyArgTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustifyArgTy CTGhost = return VerusGhost
 rustifyArgTy _ = return $ Rc VecU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
@@ -542,7 +553,7 @@ rustifyRetTy (CTConst p) = do
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool
 rustifyRetTy CTUnit = return Unit
-rustifyRetTy CTGhost = throwError $ GhostInExec "rustifyArgTy of ghost"
+rustifyRetTy CTGhost = return VerusGhost
 rustifyRetTy _ = return $ Rc VecU8
 
 -- For computing data structure members
@@ -555,6 +566,7 @@ specDataTyOf Unit = SpecUnit
 specDataTyOf (ADT s) = SpecADT (specName . unrustifyName $ s)
 specDataTyOf (Option rt) = SpecOption (specDataTyOf rt)
 specDataTyOf (Rc rt) = specDataTyOf rt
+specDataTyOf VerusGhost = SpecGhost
 
 rustifySpecDataTy :: CTy -> ExtractionMonad SpecTy
 rustifySpecDataTy ct = do
@@ -594,6 +606,7 @@ viewVar Unit s = s
 viewVar (ADT _) s = s ++ ".dview()" -- TODO nesting?
 viewVar (Option rt) s = s ++ ".dview()"
 viewVar (Rc rt) s = viewVar rt s
+viewVar VerusGhost s = s
 
 hexStringToByteList :: String -> ExtractionMonad OwlDoc
 hexStringToByteList [] = return $ owlpretty ""
@@ -629,6 +642,7 @@ resolveANF binds a = do
             return $ mkSpanned $ AEPackIdx i a2'
         AELenConst _ -> return a
         AEInt _ -> return a
+        AEKDF _ _ _ _ _ -> return a
 
 
 lookupStringAExprMap :: [((String, [AExpr]), a)] -> (String, [AExpr]) -> Maybe a
@@ -638,12 +652,44 @@ lookupStringAExprMap (((ln, largs), r) : tl) (n, args) =
     then Just r
     else lookupStringAExprMap tl (n, args)
 
-lookupHashCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
-lookupHashCall k = do
-    hcs <- use hashCalls
-    return $ lookupStringAExprMap hcs k
+lookupNameKindAExprMap :: [(([NameKind], [AExpr]), a)] -> [NameKind] -> [AExpr] -> Maybe a
+lookupNameKindAExprMap [] nks args = Nothing
+lookupNameKindAExprMap (((lnks, largs), r) : tl) nks args =
+    if all (uncurry (==)) (zip nks lnks) && all (uncurry aeq) (zip args largs)
+    then Just r
+    else lookupNameKindAExprMap tl nks args
+
+
+lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad (Maybe (RustTy, String))
+lookupKdfCall nks k = do
+    hcs <- use kdfCalls
+    return $ lookupNameKindAExprMap hcs nks k
 
 lookupAdtCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
 lookupAdtCall k = do
     adtcs <- use adtCalls
     return $ lookupStringAExprMap adtcs k
+
+makeKdfSliceMap :: [NameKind] -> ExtractionMonad ([String], M.Map Int ([String], [String], Layout))
+makeKdfSliceMap nks = do
+    (totLen, sliceMap) <- foldM (\(t, m) (i, nk) -> do
+            (rtstr, len) <- case nk of
+                NK_KDF -> do
+                    let l = kdfKeySize
+                    return ("kdfkey", l)
+                -- NK_DH 
+                NK_Enc -> do
+                    l <- useAeadKeySize
+                    return ("enckey", l)
+                -- NK_PKE 
+                -- NK_Sig 
+                NK_MAC -> do
+                    l <- useHmacKeySize
+                    return ("mackey", l)
+                NK_Nonce -> do
+                    l <- useAeadNonceSize
+                    return ("nonce", l)
+                _ -> throwError $ UnsupportedOracleReturnType (show nk)
+            return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
+        ) (["0"], M.empty) (zip [0..] nks)
+    return (totLen, sliceMap)

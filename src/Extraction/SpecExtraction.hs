@@ -186,6 +186,7 @@ specLenConsts = M.fromList [
         ("enckey", "KEY_SIZE()"),
         ("nonce", "NONCE_SIZE()"),
         ("mackey", "MACKEY_SIZE()"),
+        ("kdfkey", "KDFKEY_SIZE()"),
         -- ("maclen", hmacLen),
         -- ("pkekey", pkeKeySize),
         -- ("sigkey", sigKeySize),
@@ -260,6 +261,7 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
         ne' <- flattenNameExp ne
         return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEPackIdx s a) = extractAExpr a
+    extractAExpr' (AEKDF _ _ _ _ _) = throwError $ GhostInExec "AEKDF"
     --extractAExpr' (AEPreimage p _ _) = do
     --    p' <- flattenPath p
     --    throwError $ PreimageInExec p'
@@ -268,22 +270,18 @@ extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad OwlDoc
 extractCryptOp op owlArgs = do
     args <- mapM extractAExpr owlArgs
     case (op, args) of
-        --(CHash ((ropath,_,_):_) i, args) -> do
-        --    roname <- flattenPath ropath
-        --    orcls <- use oracles
-        --    (outLen, sliceIdxs) <- case orcls M.!? roname of
-        --        Nothing -> throwError $ TypeError $ "unrecognized random oracle " ++ roname
-        --        Just p -> return p
-        --    (start, end, _) <- case sliceIdxs M.!? i of
-        --        Nothing -> throwError $ TypeError $ "bad index " ++ show i ++ " to random oracle " ++ roname
-        --        Just p -> return p
+        (CKDF _ _ nks nkidx, [salt, ikm, info]) -> do
+           (outLen, sliceIdxs) <- makeKdfSliceMap nks
+           (start, end, _) <- case sliceIdxs M.!? nkidx of
+               Nothing -> throwError $ TypeError $ "bad index " ++ show nkidx ++ " to spec kdf with return type " ++ show nks
+               Just p -> return p
         --    orclArgs <- case args of
         --        [ikm] -> return [owlpretty "cfg.salt.dview()", ikm]
         --        [salt, ikm] -> return [salt, ikm]
         --        _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
-        --    return $ 
-        --        owlpretty "ret" <> parens 
-        --            (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : orclArgs) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
+           return $ 
+               owlpretty "ret" <> parens 
+                   (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : args) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
@@ -351,27 +349,31 @@ extractExpr (CRet a) = do
 extractExpr (CCall f is as) = do
     as' <- mapM extractAExpr as
     ftail <- flattenPath f
-    return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
+    sfs <- use specFuncs
+    case sfs M.!? ftail of
+        Just printer -> return $ printer as'
+        Nothing -> throwError $ TypeError $ "got bad args for spec call: " ++ show ftail ++ "(" ++ show as ++ ")"
+    -- return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
 extractExpr (CCase a otk xs) = do
     a' <- extractAExpr a
-    (parseCall, badk) <- case otk of
+    (parseCall, badk, enumName) <- case otk of
             Just (CTConst p, bk) -> do
                 t <- tailPath p
                 bk' <- extractExpr bk
-                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk')
-            Nothing -> return (a', owlpretty "")
+                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk', owlpretty (specName t) <> owlpretty "::")
+            Nothing -> return (a', owlpretty "", owlpretty "")
             Just (t, _) -> throwError $ TypeError $ "got parsing case statement with bad type " ++ show t
     pcases <-
             mapM (\(c, o) ->
                 case o of
                 Left e -> do
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
                 Right xe -> do
                     let (x, e) = unsafeUnbind xe
                     x' <- extractVar x
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
+                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
                 ) xs
     return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
 extractExpr (CCrypt cop args) = do
@@ -403,12 +405,17 @@ extractExpr (CParse a (CTConst p) otk bindpat) = do
         owlpretty "as" <+> parens (owlpretty (specName t) <> braces ((hsep . punctuate (space <> comma)) patfields' <> space)) <+> 
         owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> 
         badk
+extractExpr (CLetGhost xk) = do
+    let (x, k) = unsafeUnbind xk
+    x' <- extractVar x
+    k' <- extractExpr k
+    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> owlpretty "()" <+> owlpretty "in" <> line <> k'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
 
 specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
-specExtractArg (v, t) = do
+specExtractArg (v, t) = do    
     st <- rustifyArgTy . doConcretifyTy . unembed $ t
     v' <- extractVar v
     return $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
@@ -431,9 +438,10 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
             let p = pureDef owlName specArgs specRt
             specArgVars <- mapM extractVar . map fst $ owlArgs
             return (parens (owlpretty "ret" <> parens (owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgVars)), p)
-    let defBody = owlpretty "owl_spec!" <> parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
-                    body
-                <> line)
+    let defBody = owlpretty "owl_spec!" <> 
+                    parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
+                        body
+                    <> line)
     return $ owlpretty "#[verifier::opaque] pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
         defBody <> line <>
         rbrace <> line <> line <> pureDef

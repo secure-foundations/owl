@@ -173,11 +173,11 @@ pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Arc<Vec<u8>>)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8]) -> (h: Arc<Vec<u8>>) 
-    ensures h.dview() == kdf(len.dview(), salt.dview(), ikm.dview()),
+pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8], info: &[u8]) -> (h: Arc<Vec<u8>>) 
+    ensures h.dview() == kdf(len.dview(), salt.dview(), ikm.dview(), info.dview()),
             h.dview().len() == len
 {
-    arc_new(owl_hkdf::extract_expand_to_len(ikm, salt, len))
+    arc_new(owl_hkdf::extract_expand_to_len(ikm, salt, info, len))
 }
 
 #[verifier(external_body)]

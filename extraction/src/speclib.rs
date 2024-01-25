@@ -197,7 +197,7 @@ pub closed spec(checked) fn dh_combine(pubkey: Seq<u8>, privkey: Seq<u8>) -> (ss
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn kdf(len: usize, salt: Seq<u8>, x: Seq<u8>) -> (h: Seq<u8>)
+pub closed spec(checked) fn kdf(len: usize, salt: Seq<u8>, ikm: Seq<u8>, info: Seq<u8>) -> (h: Seq<u8>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -252,10 +252,21 @@ pub open spec fn andb(x: bool, y: bool) -> bool
     x && y
 }
 
+pub open spec fn notb(x: bool) -> bool
+{
+    !x
+}
+
+
 pub open spec fn length(x: Seq<u8>) -> usize
     recommends x.len() < usize::MAX
 {
     x.len() as usize
+}
+
+pub open spec fn spec_ghost_unit() -> Ghost<()>
+{
+    Ghost(())
 }
 
 }
@@ -492,6 +503,17 @@ pub mod itree {
 
     #[allow(unused_macros)]
     #[macro_export]
+    macro_rules! owl_call_ret_unit {
+        [$($tail:tt)*] => {
+            ::builtin_macros::verus_exec_macro_exprs!{
+                owl_call_internal!(res, res.dview(), $($tail)*)
+            }
+        };
+    }
+
+
+    #[allow(unused_macros)]
+    #[macro_export]
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
@@ -624,7 +646,7 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{
-            if let Some(parseval) = $parser($a.as_seq()) {
+            if let Some(parseval) = $parser($a) { // TODO check whether we need .as_seq() here? Causes typechecking issues?
                 match parseval {
                     $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
                 }
