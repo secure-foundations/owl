@@ -607,11 +607,11 @@ impl Device {
                 let src_buf =
                     unsafe { &mut *(&mut t.src_buf[..] as *mut [u8] as *mut [MaybeUninit<u8>]) };
                 while let Ok((packet_len, addr)) = udp.recv_from(src_buf) {
-                    let packet = &t.src_buf[..packet_len];
+                    let mut packet = &mut t.src_buf[..packet_len];
                     // The rate limiter initially checks mac1 and mac2, and optionally asks to send a cookie
                     let parsed_packet = match rate_limiter.verify_packet(
                         Some(addr.as_socket().unwrap().ip()),
-                        packet,
+                        &mut packet,
                         &mut t.dst_buf,
                     ) {
                         Ok(packet) => packet,
@@ -669,7 +669,7 @@ impl Device {
                     if flush {
                         // Flush pending queue
                         while let TunnResult::WriteToNetwork(packet) =
-                            p.tunnel.decapsulate(None, &[], &mut t.dst_buf[..])
+                            p.tunnel.decapsulate(None, &mut [], &mut t.dst_buf[..])
                         {
                             let _: Result<_, _> = udp.send_to(packet, &addr);
                         }
@@ -722,7 +722,7 @@ impl Device {
                     let mut p = peer.lock();
                     match p.tunnel.decapsulate(
                         Some(peer_addr),
-                        &t.src_buf[..read_bytes],
+                        &mut t.src_buf[..read_bytes],
                         &mut t.dst_buf[..],
                     ) {
                         TunnResult::Done => {}
@@ -746,7 +746,7 @@ impl Device {
                     if flush {
                         // Flush pending queue
                         while let TunnResult::WriteToNetwork(packet) =
-                            p.tunnel.decapsulate(None, &[], &mut t.dst_buf[..])
+                            p.tunnel.decapsulate(None, &mut [], &mut t.dst_buf[..])
                         {
                             let _: Result<_, _> = udp.send(packet);
                         }

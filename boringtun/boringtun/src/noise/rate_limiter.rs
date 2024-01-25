@@ -153,7 +153,7 @@ impl RateLimiter {
     pub fn verify_packet<'a, 'b>(
         &self,
         src_addr: Option<IpAddr>,
-        src: &'a [u8],
+        src: &'a mut [u8],
         dst: &'b mut [u8],
     ) -> Result<Packet<'a>, TunnResult<'b>> {
         let packet = Tunn::parse_incoming_packet(src)?;

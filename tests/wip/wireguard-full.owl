@@ -335,7 +335,7 @@ def generate_msg1<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init : dhpk(S_i
     let msg1_mac1_k = crh(mac1() ++ dhpk_S_resp) in 
     let msg1_mac1 = mac(msg1_mac1_k, 
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
-    assume(length(msg1_mac1) == |maclen|);
+    // assume(length(msg1_mac1) == |maclen|);
     let msg1_mac2 = zeros_16() in
     let msg1_output: msg1 = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     // let msg1_output = msg1(msg1_payload_value) in
@@ -541,13 +541,13 @@ exists n. (x:responder_msg1_val{valid_responder_msg1_val<n,m>[x]})) @ Responder<
     let msg2_mac1 = mac(msg2_mac1_k,
         msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
         msg2_empty) in 
-    assume(length(msg2_mac1) == |maclen|);
+    // assume(length(msg2_mac1) == |maclen|);
     let msg2_mac2 = zeros_16() in
     let msg2_output: msg2 = msg2(
         msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
     ) in
     // let msg2_output = msg2(msg2_payload_value) in
-    let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
+    let _ = output msg2_output  to endpoint(Initiator<n>)  in // (TODO: endpoint? )
     
     // Calculate transport keys
     let T_resp_recv = hash<transp_T<@n,m>[ephemeral, e_resp_pk, ss]; 0>(C7, 0x) in
