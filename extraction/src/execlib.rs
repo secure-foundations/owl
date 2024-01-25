@@ -115,7 +115,7 @@ impl<'x> OwlBuf<'x> {
         slice_eq(self_slice, other_slice)
     }
 
-    pub fn another_ref(&self) -> (result: OwlBuf)
+    pub fn another_ref<'a>(&'a self) -> (result: OwlBuf<'x>)
         requires self.len_valid(),
         ensures  result.dview() == self.dview(),
                     result.len_valid(),

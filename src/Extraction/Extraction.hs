@@ -573,7 +573,8 @@ extractAExpr binds (AEVar _ owlV) = do
       Nothing -> do
         -- debugPrint $ "failed to find " ++ show v ++ " in binds: " ++ show binds
         return (VecU8, owlpretty "", owlpretty v)
-      Just (OwlBuf, _) -> return (OwlBuf, owlpretty "", {- owlpretty "OwlBuf::another_ref" <> parens (owlpretty "&" <> -} owlpretty v {- ) -})
+      Just (OwlBuf, _) -> return (OwlBuf, owlpretty "", owlpretty "OwlBuf::another_ref" <> parens (owlpretty "&" <> owlpretty v))
+      -- Just (OwlBuf, _) -> return (OwlBuf, owlpretty "", owlpretty v)
       -- Just (ADT t) -> 
       Just (rt, _) -> return (rt, owlpretty "", owlpretty v)
 extractAExpr binds (AEApp owlFn fparams owlArgs) = do
