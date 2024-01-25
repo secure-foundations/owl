@@ -585,7 +585,9 @@ extractAExpr binds (AEApp owlFn fparams owlArgs) = do
     fdef <- lookupFunc owlFn
     case fdef of
         Just f -> do
-            (rt, str) <- f args
+            -- For aexpr calls, we should never use the spec aexpr name, since that would only be for specs in the owl_call! macro
+            let args' = map (\(r, p) -> (r, p, "")) args
+            (rt, str) <- f args'
             return (rt, preArgs, owlpretty str)
         Nothing -> do
             adtf <- lookupAdtFunc =<< flattenPath owlFn
@@ -735,7 +737,13 @@ extractExpr inK loc binds (CCall owlFn (sids, pids) owlArgs) = do
     fs <- use funcs
     argsPretties <- mapM (extractAExpr binds . view val) owlArgs
     let preArgs = foldl (\p (_,s,_) -> p <> s) (owlpretty "") argsPretties
-    let args = map (\sid -> (Number, sidName . show . owlpretty $ sid)) sids ++ map (\(r, _, p) -> (r, show p)) argsPretties
+    let lookupAExpr a = 
+            case a ^. val of
+                AEVar _ owlV -> rustifyName . show $ owlV
+                -- other cases would be a violation of ANF, and break other parts of the compiler
+    let args = 
+            map (\sid -> (Number, sidName . show . owlpretty $ sid, sidName . show . owlpretty $ sid)) sids ++ 
+            map (\((r, _, p), a) -> (r, show p, lookupAExpr a)) (zip argsPretties owlArgs)
     powlFn <- flattenPath owlFn
     case fs M.!? powlFn of
       Nothing -> do
@@ -896,7 +904,7 @@ extractExpr inK loc binds (CLetGhost xk) = do
     return (binds, rt, owlpretty "", letbinding <> line <> preK <> line <> kPrettied)
 extractExpr inK loc binds c = throwError $ ErrSomethingFailed $ "unimplemented case for extractExpr: " ++ (show . owlpretty $ c)
 
-funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String)] -> ExtractionMonad (RustTy, String)
+funcCallPrinter :: String -> [(String, RustTy)] -> RustTy -> [(RustTy, String, String)] -> ExtractionMonad (RustTy, String)
 funcCallPrinter owlName rustArgs retTy callArgs = do
     let callMacro = case retTy of
             Option _ -> "owl_call_ret_option!"
@@ -915,12 +923,12 @@ funcCallPrinter owlName rustArgs retTy callArgs = do
     else throwError $ TypeError $ "got wrong args for call to " ++ owlName
     where
         printSpecArg raopt = case raopt of
-            Just (rty, arg) -> owlpretty (viewVar rty ({- unclone -} arg))
+            Just (rty, _, argname) -> owlpretty (viewVar rty ({- unclone -} argname))
             Nothing -> owlpretty "spec_ghost_unit()"
         printExecArg raopt = case raopt of
-            Just (OwlBuf, arg) -> owlpretty arg <> owlpretty ".as_slice()"
-            Just (VecU8, arg) -> owlpretty "vec_as_slice" <> parens (owlpretty "&" <> owlpretty arg)
-            Just (_, arg) -> owlpretty arg
+            Just (OwlBuf, arg, _) -> owlpretty arg <> owlpretty ".as_slice()"
+            Just (VecU8, arg, _) -> owlpretty "vec_as_slice" <> parens (owlpretty "&" <> owlpretty arg)
+            Just (_, arg, _) -> owlpretty arg
             Nothing -> owlpretty "ghost_unit()"
         -- unclone str = fromMaybe str (stripPrefix (show rcClone) str)
 

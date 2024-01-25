@@ -83,7 +83,7 @@ data Env = Env {
     _aeadCipherMode :: AEADCipherMode,
     _hmacMode :: HMACMode,
     _owlUserFuncs :: [(String, TB.UserFunc)],
-    _funcs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
+    _funcs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
     _specFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
     _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
@@ -365,71 +365,71 @@ printOwlOp :: String -> [(RustTy, String)] -> String
 printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
 
 
-initFuncs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String))
+initFuncs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String))
 initFuncs = 
     let eqChecker = (\args -> case args of
-                                [(Bool, x), (Bool, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Number, x), (Number, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(String, x), (String, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Unit, x), (Unit, y)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(Bool, x, _), (Bool, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(Number, x, _), (Number, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(String, x, _), (String, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(Unit, x, _), (Unit, y, _)] -> return $ (Bool, x ++ " == " ++ y)
                                 -- [(ADT _,x), (ADT _,y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)")
                                 -- [(Rc VecU8, x), (Rc VecU8, y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(VecU8, x), (VecU8, y)] -> return $ (Bool, "vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(SliceU8, x), (SliceU8, y)] -> return $ (Bool, "slice_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(OwlBuf, x), (OwlBuf, y)] -> return $ (Bool, "slice_eq(&" ++ x ++ ".as_slice() , &" ++ y ++ ".as_slice())")
+                                [(VecU8, x, _), (VecU8, y, _)] -> return $ (Bool, "vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
+                                [(SliceU8, x, _), (SliceU8, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ", &" ++ y ++ ")")
+                                [(OwlBuf, x, _), (OwlBuf, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ".as_slice() , &" ++ y ++ ".as_slice())")
                                 _ -> throwError $ TypeError $ "got wrong args for eq"
                         ) 
     in M.fromList [
             ("eq", eqChecker),
             ("checknonce", eqChecker),
             ("dhpk", (\args -> case args of
-                    [x] -> do return $ (VecU8, printOwlOp "owl_dhpk" [x])
+                    [(t, x, _)] -> do return $ (VecU8, printOwlOp "owl_dhpk" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
             )),
             ("dh_combine", (\args -> case args of
-                    [pk, sk] -> do return $ (VecU8, printOwlOp "owl_dh_combine" [pk, sk]) 
+                    [(pkt, pk, _), (skt, sk, _)] -> do return $ (VecU8, printOwlOp "owl_dh_combine" [(pkt, pk), (skt, sk)]) 
                     _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
             )),
             ("unit", (\_ -> return (Unit, "()"))),
             ("true", (\_ -> return (Bool, "true"))),
             ("false", (\_ -> return (Bool, "false"))),
             ("Some", (\args -> case args of
-                    [(t,x)] -> return $ (Option t, "Some(" ++ x ++ ")")
+                    [(t,x, _)] -> return $ (Option t, "Some(" ++ x ++ ")")
                     _ -> throwError $ TypeError $ "got wrong number of args for Some"
             )),
             ("None", (\_ -> return (Option Unit, "None"))), -- dummy
             ("length", (\args -> case args of
                     -- [(Rc VecU8,x)] -> return $ (Number, "vec_length(&(*" ++ x ++ "))")
-                    [(VecU8,x)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
-                    [(SliceU8,x)] -> return $ (Number, "slice_len(&" ++ x ++ ")")
-                    [(OwlBuf,x)] -> return $ (Number, "" ++ x ++ ".len()")
+                    [(VecU8,x, _)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
+                    [(SliceU8,x, _)] -> return $ (Number, "slice_len(&" ++ x ++ ")")
+                    [(OwlBuf,x, _)] -> return $ (Number, "" ++ x ++ ".len()")
                     _ -> throwError $ TypeError $ "got wrong number of args for length"
             )),
             ("zero", (\_ -> return (Number, "0"))),
             ("plus", (\args -> case args of
-                    [(Number, x), (Number, y)] -> return $ (Number, x ++ " + " ++ y)
+                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " + " ++ y)
                     _ -> throwError $ TypeError $ "got wrong number of args for plus"
             )),
             ("mult", (\args -> case args of
-                    [(Number, x), (Number, y)] -> return $ (Number, x ++ " * " ++ y)
+                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " * " ++ y)
                     _ -> throwError $ TypeError $ "got wrong number of args for mult"
             )),
             ("cipherlen", (\args -> case args of
-                    [(_,x)] -> do
+                    [(_,x, _)] -> do
                         tsz <- useAeadTagSize
                         return $ (Number, x ++ " + " ++ show tsz)
                     _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
             )),
             ("is_group_elem", (\args -> case args of
-                    [x] -> return $ (Bool, printOwlOp "owl_is_group_elem" [x])
+                    [(t,x,_)] -> return $ (Bool, printOwlOp "owl_is_group_elem" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for is_group_elem"
             )),
             ("concat", (\args -> case args of
-                    [x, y] -> return $ (VecU8, printOwlOp "owl_concat" [x, y])
+                    [(tx,x,_), (ty,y,_)] -> return $ (VecU8, printOwlOp "owl_concat" [(tx, x), (ty, y)])
                     _ -> throwError $ TypeError $ "got wrong number of args for concat"
             )),
             ("crh", (\args -> case args of
-                    [x] -> return $ (VecU8, printOwlOp "owl_crh" [x])
+                    [(t,x,_)] -> return $ (VecU8, printOwlOp "owl_crh" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for crh"
             )),
             -- ("xor", (VecU8, \args -> case args of
@@ -438,11 +438,11 @@ initFuncs =
             --     _ -> throwError $ TypeError $ "got wrong args for xor"
             -- )),
             ("andb", (\args -> case args of
-                [(Bool,x), (Bool,y)] -> return $ (Bool, x ++ " && " ++ y)
+                [(Bool,x, _), (Bool,y, _)] -> return $ (Bool, x ++ " && " ++ y)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
             )),
             ("notb", (\args -> case args of
-                [(Bool,x)] -> return $ (Bool, "! " ++ x)
+                [(Bool,x, _)] -> return $ (Bool, "! " ++ x)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
             ))
         ] 
@@ -488,7 +488,7 @@ lookupNameLayout n = do
                     throwError $ UndefinedSymbol n'
 
 
-lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String)] -> ExtractionMonad (RustTy, String)))
+lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)))
 lookupFunc fpath = do
     fs <- use funcs
     f <- tailPath fpath
