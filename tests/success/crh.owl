@@ -1,22 +1,8 @@
 locality alice
 
-name x : nonce @ alice
-name y : nonce @ alice
+def tst(a : Data<adv>, b : Data<adv>, c : Data<adv>, d : Data<adv>) @ alice : Unit = 
+    let h1 = crh(crh(a) ++ b) in 
+    let h2 = crh(crh(c) ++ d) in 
+    crh_lemma(h1, h2); 
+    assert (h1 == h2 ==> a == c /\ b == d)
 
-name z<i> : nonce @ alice
-
-def tst() @ alice : Unit = 
-    crh_lemma(get(x), get(y)); 
-    assert (crh(get(x)) != crh(get(y)));
-    ()
-
-def tst2<i,j>() @ alice : Unit = 
-    crh_lemma(get(z<i>), get(z<j>)); 
-    assert (
-        (crh(get(z<i>)) == crh(get(z<j>)))
-        ==>
-        get(z<i>) == get(z<j>)
-    );
-    assert (get(z<i>) == get(z<j>)) ==> i =idx j;
-    ()
-    

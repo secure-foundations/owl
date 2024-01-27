@@ -2586,6 +2586,18 @@ nameKindLength nk =
                                NK_MAC -> "mackey"
                                NK_Nonce -> "nonce"
 
+crhInjLemma :: AExpr -> AExpr -> Check Prop
+crhInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEApp (PRes (PDot PTop "crh")) [] [a], AEApp (PRes (PDot PTop "crh")) [] [b]) -> do
+          let p1 = pImpl (pEq x y) (pEq a b)
+          p2 <- crhInjLemma a b
+          return $ pAnd p1 p2
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- crhInjLemma a c
+          p2 <- crhInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2599,13 +2611,10 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
       CLemma (LemmaCRH) -> local (set tcScope $ TcGhost False) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
-          x' <- resolveANF x
-          y' <- resolveANF y
-          return $ tRefined tUnit "._" $
-              pImpl
-                (pEq (aeApp (topLevelPath "crh") [] [x])
-                     (aeApp (topLevelPath "crh") [] [y]))
-                (pEq x y)
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- crhInjLemma x' y'
+          return $ tLemma p 
       CLemma (LemmaDisjNotEq) -> do
           assert ("disjoint_not_eq_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
