@@ -2599,6 +2599,20 @@ crhInjLemma x y =
           return $ pAnd p1 p2
       _ -> return pTrue
 
+kdfInjLemma :: AExpr -> AExpr -> Check Prop
+kdfInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | nks == nks' && j == j' && j < length nks -> do 
+          let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
+          p2 <- kdfInjLemma a a'
+          p3 <- kdfInjLemma b b'
+          return $ pAnd p1 $ pAnd p2 p3
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- kdfInjLemma a c
+          p2 <- kdfInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
+
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
     tcs <- view tcScope
@@ -2607,7 +2621,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
       (TcGhost _, _) -> typeError $ "Crypto op " ++ show (owlpretty cop) ++ " cannot be executed in ghost"
       _ -> return ()
     case cop of
-      CLemma (LemmaKDFInj nks j) -> typeError "unimp"
+      CLemma (LemmaKDFInj) -> local (set tcScope $ TcGhost False) $ do 
+          assert ("kdf_inj_lemma takes two arguments") $ length args == 2
+          let [(x, _), (y, _)] = args
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- kdfInjLemma x' y'
+          return $ tLemma p 
       CLemma (LemmaCRH) -> local (set tcScope $ TcGhost False) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
