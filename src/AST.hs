@@ -455,7 +455,7 @@ data CryptOp =
 
 data BuiltinLemma = 
       LemmaCRH 
-      | LemmaKDFInj [NameKind] Int
+      | LemmaKDFInj 
       | LemmaConstant 
       | LemmaDisjNotEq 
       | LemmaCrossDH NameExp 

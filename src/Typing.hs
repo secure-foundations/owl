@@ -664,7 +664,11 @@ isSingleton t =
 
 tyFlowsTo :: Ty -> Label -> Check Bool
 tyFlowsTo t l = 
-    case (stripRefinements t)^.val of
+    case t^.val of
+      TRefined t0 s xp -> do
+          x <- freshVar
+          withVars [(s2n x, (ignore $ show x, Nothing, t))] $
+              tyFlowsTo t0 l
       TSS n m -> do
           ob1 <- tryFlowsTo (joinLbl (nameLbl n) advLbl) l
           ob2 <- tryFlowsTo (joinLbl (nameLbl m) advLbl) l
@@ -672,7 +676,11 @@ tyFlowsTo t l =
       _ -> do
           l1 <- coveringLabel t
           ob <- tryFlowsTo l1 l
-          return $ ob == Just True
+          case ob of
+            Nothing -> do
+                logTypecheck $ owlpretty "Warning: tyFlowsTo inconclusive on " <> owlpretty t <> owlpretty ", " <> owlpretty l
+                return False
+            Just b -> return b
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
@@ -2545,7 +2553,8 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
           Nothing -> return ()
           Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
         case notODH of
-          False -> return Nothing
+          False -> do
+              return Nothing
           True -> do
               ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
               if ny_sec then return (Just KDFAdv) else do
@@ -2554,8 +2563,10 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
                    TDH_PK nx -> do
                        nx_sec <- not <$> flowsTo (nameLbl nx) advLbl
                        if nx_sec then return (Just KDFAdv) else return Nothing
-                   _ -> return Nothing
-      Nothing -> return Nothing
+                   _ -> do
+                       return Nothing
+      Nothing -> do
+          return Nothing
 
 
 findKDFODHColl :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe String)
@@ -2586,6 +2597,32 @@ nameKindLength nk =
                                NK_MAC -> "mackey"
                                NK_Nonce -> "nonce"
 
+crhInjLemma :: AExpr -> AExpr -> Check Prop
+crhInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEApp (PRes (PDot PTop "crh")) [] [a], AEApp (PRes (PDot PTop "crh")) [] [b]) -> do
+          let p1 = pImpl (pEq x y) (pEq a b)
+          p2 <- crhInjLemma a b
+          return $ pAnd p1 p2
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- crhInjLemma a c
+          p2 <- crhInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
+
+kdfInjLemma :: AExpr -> AExpr -> Check Prop
+kdfInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | nks == nks' && j == j' && j < length nks -> do 
+          let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
+          p2 <- kdfInjLemma a a'
+          p3 <- kdfInjLemma b b'
+          return $ pAnd p1 $ pAnd p2 p3
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- kdfInjLemma a c
+          p2 <- kdfInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2595,17 +2632,20 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
       (TcGhost _, _) -> typeError $ "Crypto op " ++ show (owlpretty cop) ++ " cannot be executed in ghost"
       _ -> return ()
     case cop of
-      CLemma (LemmaKDFInj nks j) -> typeError "unimp"
+      CLemma (LemmaKDFInj) -> local (set tcScope $ TcGhost False) $ do 
+          assert ("kdf_inj_lemma takes two arguments") $ length args == 2
+          let [(x, _), (y, _)] = args
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- kdfInjLemma x' y'
+          return $ tLemma p 
       CLemma (LemmaCRH) -> local (set tcScope $ TcGhost False) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
-          x' <- resolveANF x
-          y' <- resolveANF y
-          return $ tRefined tUnit "._" $
-              pImpl
-                (pEq (aeApp (topLevelPath "crh") [] [x])
-                     (aeApp (topLevelPath "crh") [] [y]))
-                (pEq x y)
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- crhInjLemma x' y'
+          return $ tLemma p 
       CLemma (LemmaDisjNotEq) -> do
           assert ("disjoint_not_eq_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
@@ -2752,7 +2792,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Nothing -> do
+                      l <- coveringLabelOf [t1, t, t2, tnonce]
+                      b <- flowsTo l advLbl
+                      if b then 
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
+                      else 
+                          return $ tDataAnn l l "corrupt dec"
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -2766,7 +2812,9 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                             return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y aad
                       else if (b1 && b2 && b3 && b4) then do 
                           return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
-                      else (mkSpanned <$> trivialTypeOf (map snd args))
+                      else do
+                          t <- trivialTypeOf (map snd args)
+                          return $ mkSpanned $ TOption $ mkSpanned t
                   _ -> do
                       l <- coveringLabelOf [t1, t, t2, tnonce]
                       b <- flowsTo l advLbl

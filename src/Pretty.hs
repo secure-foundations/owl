@@ -320,8 +320,7 @@ instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaDisjNotEq) = owlpretty "disjoint_not_eq_lemma" 
     owlpretty (LemmaCrossDH n1) = owlpretty "cross_dh_lemma" <> angles (owlpretty n1) 
     owlpretty (LemmaCRH) = owlpretty "crh_lemma"
-    owlpretty (LemmaKDFInj nks j) = owlpretty "kdf_inj_lemma" <> angles ((hsep $ intersperse (owlpretty "||") (map owlpretty nks)) <> owlpretty ";" <> owlpretty j)
-    
+    owlpretty (LemmaKDFInj ) = owlpretty "kdf_inj_lemma" 
 
 instance  OwlPretty CryptOp where
     -- owlpretty (CHash _ _) = owlpretty "hash"

@@ -647,7 +647,7 @@ parseNameType =
         x <- identifier
         y <- identifier
         symbol "."
-        kdfCases <- many1 kdfCase
+        kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
         return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
     )
@@ -813,7 +813,7 @@ parseDecls =
         x <- identifier
         y <- identifier
         symbol "."
-        kdfCases <- many1 kdfCase
+        kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
         return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y)) kdfCases))
     )
@@ -1543,12 +1543,7 @@ parseCryptOp =
     <|>
     (do
         reserved "kdf_inj_lemma"
-        symbol "<"
-        nks <- parseNameKind `sepBy1` (symbol "||")
-        symbol ";"
-        j <- many1 digit
-        symbol ">"
-        return $ CLemma $ LemmaKDFInj nks (read j) 
+        return $ CLemma $ LemmaKDFInj 
     )
     <|>
     (do

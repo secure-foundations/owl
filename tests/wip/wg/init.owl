@@ -1,44 +1,34 @@
 include "defs.owl"
 
-predicate tki_secure<i,n,m>(eph) = 
-    exists j:idx. 
-        eph == dhpk(get(E_resp<j@m>))
-        /\
-         ((sec(E_resp<j@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(E_resp<j@m>) /\ sec(S_init<@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(E_init<i@n>))
-          \/
-          (sec(S_resp<@m>) /\ sec(S_init<@n>)))
-
-predicate tki_corrupt<i,n,m>(eph) =
-     ((corr(S_resp<@m>) \/ corr(E_init<i@n>))
-          /\
-      (corr(S_resp<@m>) \/ corr(S_init<@n>)))
-     /\
-     (forall j:idx. eph == dhpk(get(E_resp<j@m>))
-        ==>
-         ((corr(E_resp<j@m>) \/ corr(E_init<i@n>))
-          /\
-          (corr(E_resp<j@m>) \/ corr(S_init<@n>))
-     ))
     
+predicate is_e_resp(eph) = 
+    exists m:idx,j:idx.
+        eph == dhpk(get(E_resp<j@m>))
 
-struct transp_keys_init<i,n,m> {
-    tki_eph : Ghost,
-    tki_c7 : Ghost,
-    tki_k_init_send : if tki_secure<i,n,m>[tki_eph] then
-        SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7, 0x, 0x))
-        else (x:Data<adv>{tki_corrupt<i,n,m>[tki_eph]}),
-    tki_k_resp_send : if tki_secure<i,n,m>[tki_eph] then
-        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x))
-        else (x:Data<adv>{tki_corrupt<i,n,m>[tki_eph]})
+predicate is_s_resp(eph) = 
+    exists m:idx.
+        eph == dhpk(get(S_resp<@m>))
+
+predicate init_safe<i,n,m>() =
+    (sec(S_resp<@m>) /\ sec(E_init<i@n>)) 
+    \/
+    (sec(S_resp<@m>) /\ sec(S_init<@n>)) 
+    
+struct init_sent_state<i,n,m> {
+    c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
+    static_ss : (x:Ghost{x == dh_combine(dhpk(get(S_init<@n>)),
+    get(S_resp<@m>))}),
+    h4 : Data<adv>,
+    c3 : if init_safe<i,n,m>[] then
+        SecName(KDF<kdfkey||enckey;0;C3<@n,m>>(c2, static_ss, 0x))
+        else
+            (x:Data<adv>{x == honest_c3<session i, pid n, pid n, pid m>()})
 }
 
-def init_main<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
-dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
-Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+def init_stage1<i@n,m>
+    (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
+    dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
+    Initiator<n> : init_sent_state<session i, pid n, pid m> = 
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
@@ -70,6 +60,15 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
     let msg1_mac2 = zeros_16() in
     let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     output msg1_output; // to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
+    init_sent_state<session i, pid n, pid m>(C2, ss_S_resp_S_init, h4, c3)
+
+def init_stage2<i@n,m>
+    (st : init_sent_state<session i, pid n, pid m>)
+    @
+    Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+    pcase init_safe<i, n, m>[] in 
+    parse st as init_sent_state<session i, pid n, pid m>(c2, static_ss, h4, c3)
+    in 
     input i in
     parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral,
     msg2_empty_enc, msg2_mac1, msg2_mac2) in
@@ -77,43 +76,52 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in 
         let e_init = get(E_init<i@n>) in 
-        pcase (exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
+        pcase is_e_resp[msg2_ephemeral]  in
             choose_idx m2 | exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
             choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
-        pcase (exists m3:idx. msg2_ephemeral == dhpk(get(S_resp<@m3>)))
-            when !(exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)))
+        pcase is_s_resp[msg2_ephemeral]
+            when !is_e_resp[msg2_ephemeral]
         in 
             choose_idx m3 | msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
         pcase (m =idx m2) when (msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
         corr_case E_resp<j@m2> when (msg2_ephemeral == dhpk(get(E_resp<j@m2>)) /\ m !=idx m2) in 
         let c4 = kdf<0,1;;kdfkey;0>(c3, msg2_ephemeral, 0x) in 
-        let h5 = crh(h4 ++ msg2_ephemeral) in                      
+        let h5 : Data<adv> = crh(h4 ++ msg2_ephemeral) in                      
         let ss = dh_combine(msg2_ephemeral, e_init) in 
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
         corr_case E_resp<j@m> in 
         assume (c4 != honest_c1<session i, pid n>());
         assume (m !=idx m2 ==>
-            c4 != honest_c4<session i, session j, pid n, pid m>()
+            c4 != honest_c4<session i, session j, pid n, pid n, pid m2>()
+            /\
+            ! exists n_pk:idx.
+                exists i:idx.
+                    c4 == honest_c4<session i, session j, pid n, pid n_pk, pid
+                    m2>()
         );
-        assume (m !=idx m2 ==>
-            c4 != honest_c4<session i, session j, pid n, pid m2>()
-        );
-        // TODO: I loosened up the spec of c5_corr so as to make it usable by
-        // the responder. But now I am getting a mismatch
-        let c5 = kdf<0; odh L4<i,j@n,m>[0], odh L4<i,j@n,m2>[1]; kdfkey; 0>(c4, ss, 0x) in                                     
+        corr_case E_init<i@n> in 
+        let c5 = kdf<0; odh L4<i,j@n,m>[0]; kdfkey; 0>(c4, ss, 0x) in                                     
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
 
         corr_case S_resp<@m3> when msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
-        assume (!(exists i:idx. c5 == honest_c2<session i, pid n, pid m>()));
-        assume (!(exists i:idx. c5 == honest_c2<session i, pid n, pid m2>()));
-        assume (!(exists i:idx. c5 == honest_c2<session i, pid n, pid m3>()));
-        assume (m !=idx m2 ==>
-            !(exists i:idx. c5 == honest_c5<session i, session j, pid n, pid m>())
+        assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m3>());
+        assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m>());
+        assume (forall n_eph:idx.
+            ! exists i:idx.
+                c5 == honest_c2<session i, pid n_eph, pid m3>()
+        );
+        assume (forall n_eph:idx.
+            ! exists i:idx.
+                c5 == honest_c2<session i, pid n_eph, pid m>()
         );
         assume (m !=idx m2 ==>
-            !(exists i:idx. c5 == honest_c5<session i, session j, pid n, pid m2>())
+            ! exists n_eph:idx.
+                exists i:idx.
+                    c5 == honest_c5<session i, session j, pid n_eph, pid n, pid
+                    m2>()
         );
-        let c6 = kdf<0; odh L5<j@n,m>[0] /* , odh L5<j@n,m2>[1] */; kdfkey; 0>(c5, 
+        corr_case S_init<@n> in 
+        let c6 = kdf<0; odh L5<j@n,m>[0]; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x
         ) in 
         let c7 = kdf<0;;kdfkey || nonce || enckey; 0>(c6, 0x, 0x) in 
@@ -136,10 +144,18 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
-                    Some(transp_keys_init<session i, pid n, pid m>(msg2_ephemeral, c7, k1, k2))
+                    Some(transp_keys_init<session i, pid n, pid
+                    m>(msg2_receiver, msg2_sender, msg2_ephemeral, c7, k1, k2))
                 }
             otherwise => None()
         }
     }
     otherwise None()
-    
+
+
+def init_main<i@n,m> 
+(dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
+dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
+Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+    let st = call init_stage1<i@n,m>(dhpk_S_resp, dhpk_S_init, ss_S_resp_S_init) in
+    call init_stage2<i@n,m>(st)
