@@ -864,6 +864,36 @@ unsafeMapDepBind (DPDone x) k = k x
 unsafeMapDepBind (DPVar _ _ xd) k = 
     let (x, d) = unsafeUnbind xd in
     unsafeMapDepBind d k
+
+checkTyPubLenOrGhost :: Ty -> Check ()
+checkTyPubLenOrGhost t = do
+    case (stripRefinements t)^.val of
+      TGhost -> return ()
+      TConst s@(PRes (PDot pth tv)) ps -> do
+          td <- getTyDef s
+          case td of
+            StructDef ib -> do
+                (is, xs) <- unbind ib
+                _ <- withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    withDepBind xs $ \args _ -> do 
+                        forM_ args $ \(_, _, t) -> checkTyPubLenOrGhost t
+                return ()
+            EnumDef bs -> do
+                bdy <- extractEnum ps (show s) bs
+                forM_ bdy $ \(s, ot) -> 
+                    case ot of
+                      Nothing -> return ()
+                      Just t0 -> 
+                          checkTyPubLenOrGhost t0
+            _ -> do
+                  llbl <- tyLenLbl t
+                  flowCheck llbl advLbl
+      _ -> do
+          llbl <- tyLenLbl t
+          flowCheck llbl advLbl
+
+                
+
                   
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
@@ -997,11 +1027,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                   snames <- forM args $ \(x, s, t) -> do 
                       checkTy t
                       assert (show $ owlpretty s <+> owlpretty "already defined") $ not $ member s dfs
-                      case (stripRefinements t)^.val of
-                        TGhost -> return ()
-                        _ -> do
-                          llbl <- tyLenLbl t
-                          flowCheck llbl advLbl
+                      checkTyPubLenOrGhost t
                       return s
                   return snames
           let snames = unsafeMapDepBind snames_ id 

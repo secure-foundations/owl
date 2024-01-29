@@ -136,6 +136,7 @@ simplLabel l =
       LGhost -> return l
       LConst _ -> return l
       LJoin l1 l2 -> liftM2 joinLbl (simplLabel l1) (simplLabel l2)
+      LRangeVar _ -> return l
       LRangeIdx il -> do
           (i, l') <- unbind il
           if i `elem` getIdxVars l' then 
@@ -283,6 +284,11 @@ mkSymLbl l =
       LTop -> return $ S.singleton $ AlphaOrd STop
       LGhost -> return $ S.singleton $ AlphaOrd SGhost
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
+      LRangeVar xl -> do
+          (xi, l) <- unbind xl
+          if xi `elem` toListOf fv l then 
+                                   typeError $ "Trying to simplify label containing range over bv"
+                                   else mkSymLbl l
       LRangeIdx xl -> do
           (xi, l) <- unbind xl
           if xi `elem` getIdxVars l then  do

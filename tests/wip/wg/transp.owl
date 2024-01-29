@@ -28,82 +28,70 @@ Initiator<n>
     let o = transp(transp_tag, init, transp_counter, c) in 
     output o
 
-struct transp_keys_resp_post<j,n,m> {
-    tkrp_msg2_receiver : Data<adv> |4|,
-    tkrp_msg2_sender : Data<adv> |4|,
-    tkrp_eph : Ghost,
-    tkrp_c7 : Ghost,
-    tkrp_k_init_send : if resp_clean<j,n,n,m>[tkrp_eph] then
-              SecName(KDF<enckey||enckey;0;transp_key_init_send<@n,m>>(tkrp_c7, 0x, 0x))
-        else
-        Data<adv>, 
-    tkrp_k_resp_send : if resp_clean<j,n,n,m>[tkrp_eph] then
-            SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n,m>>(tkrp_c7,
-            0x, 0x))
-        else Data<adv> 
-}
-
-enum resp_keys_state<j,n,m> {
-    | NeedRecv (exists n_pk. transp_keys_resp<session j, pid n, pid n_pk, pid m>)
-    | PostRecv (transp_keys_resp_post<session j, pid n, pid m>)
-
+struct resp_transp_recv_result<j,n_pk,n,m> {
+    rr_st : transp_keys_resp<session j, pid n_pk, pid n, pid m>,
+    rr_msg : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>
 }
 
 def resp_recv<j@n,m>(
-    tki : resp_keys_state<session j, pid n, pid m>) @ Responder<m> 
-    : Option Data<adv /\ [channel_secret_init_send<@n,m>]> = 
+    tki : exists n_pk. transp_keys_resp<session j, pid n_pk, pid n, pid m>) 
+    @ Responder<m>
+    : Option (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>) = 
     input i in 
-    case tki {
-        | NeedRecv tki_ => 
-            unpack n_pk, tki' = tki_ in
-            parse tki' as transp_keys_resp<session j, pid n, pid n_pk, pid m>(init, resp, eph, c7, init_send,
-            resp_send) in 
-            parse i as transp(tag, from, ctr, pkt) in {
-                guard eq(from, init) in 
-                pcase resp_clean<j,n,n_pk,m>[eph] in 
-                pcase n =idx n_pk in 
-                case st_aead_dec(init_send, pkt, 0x, ctr) as Option (Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>)
-                {
-                    | Some x =>
-                        false_elim in 
-                        Some(x)
-                    | None => None()
-                    otherwise => None()
-                }
-            }
-            otherwise None()
-        | PostRecv tki_ => 
-            parse tki_ as transp_keys_resp_post<session j, pid n, pid m>(init, resp, eph, c7, init_send,
-            resp_send) in 
-            parse i as transp(tag, from, ctr, pkt) in {
-                guard eq(from, init) in 
-                pcase resp_clean<j,n,n,m>[eph] in 
-                st_aead_dec(init_send, pkt, 0x, ctr)
-            }
-            otherwise None()
+    unpack n_pk, tki' = tki in
+    parse tki' as transp_keys_resp<session j, pid n_pk, pid n, pid m>(init,
+    resp, eph, c7, _, init_send,
+    resp_send) in 
+    parse i as transp(tag, from, ctr, pkt) in {
+        guard eq(from, init) in 
+        pcase resp_clean<j,n_pk,n,m>[eph] in 
+        pcase n =idx n_pk in 
+        let d = st_aead_dec(init_send, pkt, 0x, ctr) in 
+        case d as Option (Data<adv /\
+        [channel_secret_init_send<@n,m>], |adv|>)
+        {
+            | Some x =>
+                false_elim in 
+                let st' : transp_keys_resp<session j, pid n_pk, pid
+                n,
+                pid m> =
+                    transp_keys_resp<session j, pid n_pk, pid n, pid
+                    m>(init, resp, eph, c7, true, init_send, resp_send)
+                 in
+                Some(pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
+                m>(st', x)))
+            | None => None()
+            otherwise => None()
+        }
     }
+    otherwise None()
                 
 
 
 def resp_send<j@n,m>(tki : 
-           resp_keys_state<session j, pid n, pid m>,
+  exists n_pk. transp_keys_resp<session j, pid n_pk, pid n, pid m>,
     msg : Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>
     ) @
 Responder<m>
-    : Unit
+    : Option Unit // State stays the same after this
  = 
- case tki {
-     | NeedRecv _ => ()
-     | PostRecv tki_ => 
-            parse tki_ as transp_keys_resp_post<session j, pid n, pid m>(init, resp, eph, c7, init_send,
-            resp_send) in 
-            pcase #[assume false] resp_clean<j,n,n,m>[eph] in 
-            // N.B.: Below is required
-            assume (exists i:idx. eph == dhpk(get(E_init<i@n>)));
-            let transp_counter = get_counter N_resp_send<j@m> in
-            let c = st_aead_enc<N_resp_send<j@m>>(resp_send, msg, 0x) in 
-            let transp_tag = transp_tag_value() in 
-            let o = transp(transp_tag, resp, transp_counter, c) in 
-            output o
- }
+  unpack npk, tki_ = tki in 
 
+    parse tki_ as transp_keys_resp<session j, pid npk, pid n, pid m>(init, resp,
+    eph, c7, b, init_send,
+    resp_send) in 
+    guard b in {
+    pcase resp_clean<j,npk,n,m>[eph] in 
+    assert (resp_clean<j,npk,n,m>[eph] ==> n =idx npk);
+    // N.B.: Below is required
+    assume (exists i:idx. eph == dhpk(get(E_init<i@npk>)));
+    assume (n =idx npk);
+
+    let transp_counter = get_counter N_resp_send<j@m> in
+    let c = st_aead_enc<N_resp_send<j@m>>(resp_send, msg, 0x) in 
+    let transp_tag = transp_tag_value() in 
+    let o = transp(transp_tag, resp, transp_counter, c) in 
+    output o;
+    Some(())
+    }

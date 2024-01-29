@@ -376,7 +376,7 @@ struct transp_keys_init<i,n,m> {
 
 
 /////////////////////////
-// Pre-Transport keys for initiator
+// (Pre-)Transport keys for initiator
 
 predicate resp_clean<j,n_pk,n_eph,m>(eph) = 
     (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)))
@@ -395,6 +395,7 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
     tkr_msg2_sender : Data<adv> |4|,
     tkr_eph : Ghost,
     tkr_c7 : Ghost,
+    tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_eph]) ==> n_pk =idx n_eph}),
     tkr_k_init_send : if resp_clean<j,n_pk,n_eph,m>[tkr_eph] then
         if n_pk =idx n_eph then 
               SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x))
