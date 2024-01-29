@@ -23,9 +23,21 @@ predicate resp_stage1_clean<j,n_pk, n_eph,m>(eph) =
 
 
 struct resp_received_state<j,n_pk, n_eph, m> {
-    msg1_ephemeral : (x:Data<adv>{is_group_elem(x)}),
-    c2 : Ghost,
-    h4 : Data<adv>,
+    msg1_sender : Data<adv> |4|, 
+    dhpk_S_init : if n_eph =idx n_pk then dhpk(S_init<@n_eph>) else
+    dhpk(S_init<@n_pk>),
+    msg1_ephemeral : (x:Data<adv>{is_group_elem(x) /\
+        ((exists i:idx. x == dhpk(get(E_init<i@n_eph>))) \/ !is_e_init[x])
+    }),
+    c2 : (x:Ghost{
+        x == gkdf<kdfkey||enckey;0>(
+            gkdf<kdfkey;0>(crh(construction()),msg1_ephemeral, 0x), 
+            dh_combine(msg1_ephemeral, get(S_resp<@m>)), 0x)
+      }),
+    h4 : (x:Data<adv>{
+        exists ts:bv,c:bv. 
+        x == crh(crh(crh(crh(crh(crh(construction()) ++ identifier()) ++ dhpk(get(S_resp<@m>))) ++ msg1_ephemeral) ++ c) ++ ts)
+    }),
     c3 : if resp_stage1_clean<j,n_pk,n_eph,m>[msg1_ephemeral] then
         if n_pk =idx n_eph then 
             SecName(KDF<kdfkey||enckey;0;C3<@n_eph,m>>(c2, dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)), 0x))
@@ -33,7 +45,8 @@ struct resp_received_state<j,n_pk, n_eph, m> {
             SecName(KDF<kdfkey||enckey;0;C3_corr>(c2, dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)), 0x))
                 
         else
-            Data<adv>
+            (x:Data<adv>{x == gkdf<kdfkey||enckey;0>(c2,
+            dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)), 0x)})
 }
 
 def resp_stage1<j@m> (dhpk_S_resp : dhpk(S_resp<@m>)) @ Responder<m>
@@ -99,9 +112,16 @@ input inp in
                         | Some msg1_timestamp_dec =>
                             false_elim in 
                             let H4 = crh(H3 ++ msg1_timestamp) in
-                            Some(pack<n>(pack<n3>(resp_received_state<session j,
-                            pid n3, pid n, pid
-                            m>(msg1_ephemeral, C2, H4, C3))))
+                            assert (exists i:idx. (msg1_ephemeral ==
+                            dhpk(get(E_init<i@n>)) \/
+                            !is_e_init[msg1_ephemeral]));
+                            assert (is_group_elem(msg1_ephemeral));
+                            let st : resp_received_state<session j, pid n3, pid
+                            n, pid m> = 
+                                resp_received_state<session j, pid n3, pid n,
+                                pid m>(msg1_sender, dhpk_S_init, msg1_ephemeral, C2, H4, C3)
+                                in 
+                            Some(pack<n>(pack<n3>(st)))
                         otherwise => None()
                         }
                 }
@@ -111,7 +131,23 @@ input inp in
     otherwise None()
 
 
-/*
+def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<session j, pid
+    n_pk, pid n_eph, pid m>) @ Responder<m> : 
+     Option (exists n_eph. exists n_pk. 
+        transp_keys_resp<session j, pid n_pk, pid n_eph,
+        pid m>) = 
+     set_option ":rlimit" "2000000" in 
+ unpack n, st' = st in 
+ unpack n3, st'' = st' in 
+ parse st'' as resp_received_state<session j, pid n3, pid n, pid
+ m>(msg2_receiver, dhpk_S_init, msg1_ephemeral, C2, H4, C3) in 
+ pcase resp_stage1_clean<j,n3,n,m>[msg1_ephemeral] in 
+ pcase is_e_init[msg1_ephemeral] in 
+ choose_idx i | msg1_ephemeral == dhpk(get(E_init<i@n>))  in
+ pcase (is_s_init[msg1_ephemeral]) when (!is_e_init[msg1_ephemeral]) in 
+    choose_idx n2 | msg1_ephemeral == dhpk(get(S_init<@n2>)) in 
+ pcase (exists i:idx. msg1_ephemeral == dhpk(get(E_init<i@n>))) in 
+ pcase n3 =idx n in 
  let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
  let c4 = kdf<0;;kdfkey;0>(C3, e_resp_pk, 0x) in 
  let h5 = crh(H4 ++ e_resp_pk) in 
@@ -122,7 +158,10 @@ input inp in
      c4 != honest_c4<session i, session j, pid n, pid n, pid m>()
      /\
      c4 != honest_c4<session i, session j, pid n3,
-     pid n3, pid m>()
+     pid n3, pid m>() /\
+     forall n_pk:idx.
+     ! exists i:idx.
+         c4 == honest_c4<session i, session j, pid n, pid n_pk, pid m>()
  );
  assume (! exists i:idx. 
      c4 == honest_c5<session i, session j, pid n2, pid n2, pid m>());
@@ -131,6 +170,7 @@ input inp in
      c4 == honest_c5<session i, session j, pid n_eph,
      pid n2, pid m>()
  );
+ corr_case E_init<i@n> when is_e_init[msg1_ephemeral] in 
  let c5 = kdf<0; odh L4<i,j@n,m>[0], odh
  L4<i,j@n,m>[1<n3>]; kdfkey; 0>(c4, ss, 0x) in 
  assume (((!is_e_init[msg1_ephemeral])) ==>
@@ -145,6 +185,8 @@ input inp in
          ==>
          (na =idx n /\
          nb =idx n3));
+ corr_case S_init<@n> in 
+ corr_case S_init<@n3> when (n3 !=idx n) in 
  let c6 = kdf<0; odh L5<j@n,m>[0], odh
  L5<j@n3,m>[1<n>]; kdfkey;0>(c5, dh_combine(dhpk_S_init, get(E_resp<j@m>)), 0x) in 
  let c7 = kdf<0;; kdfkey || nonce || enckey; 0>(c6, 0x, 0x) in 
@@ -172,11 +214,11 @@ input inp in
  Some (pack<n>(
      pack<n3>(
      transp_keys_resp<session j, pid n3, pid n, pid
-     m>(msg1_ephemeral, c7, tk1, tk2))))
-
- */
+     m>(msg2_receiver, msg2_sender, msg1_ephemeral, c7, tk1, tk2))))
 
 
+
+/*
 
 
 
@@ -312,3 +354,4 @@ input inp in
         otherwise => None()
      }
      } otherwise None()
+     */

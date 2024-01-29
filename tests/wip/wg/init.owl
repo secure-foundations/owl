@@ -144,7 +144,8 @@ def init_stage2<i@n,m>
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
-                    Some(transp_keys_init<session i, pid n, pid m>(msg2_ephemeral, c7, k1, k2))
+                    Some(transp_keys_init<session i, pid n, pid
+                    m>(msg2_receiver, msg2_sender, msg2_ephemeral, c7, k1, k2))
                 }
             otherwise => None()
         }
