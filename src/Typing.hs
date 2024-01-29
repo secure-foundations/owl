@@ -664,7 +664,11 @@ isSingleton t =
 
 tyFlowsTo :: Ty -> Label -> Check Bool
 tyFlowsTo t l = 
-    case (stripRefinements t)^.val of
+    case t^.val of
+      TRefined t0 s xp -> do
+          x <- freshVar
+          withVars [(s2n x, (ignore $ show x, Nothing, t))] $
+              tyFlowsTo t0 l
       TSS n m -> do
           ob1 <- tryFlowsTo (joinLbl (nameLbl n) advLbl) l
           ob2 <- tryFlowsTo (joinLbl (nameLbl m) advLbl) l
@@ -672,7 +676,11 @@ tyFlowsTo t l =
       _ -> do
           l1 <- coveringLabel t
           ob <- tryFlowsTo l1 l
-          return $ ob == Just True
+          case ob of
+            Nothing -> do
+                logTypecheck $ owlpretty "Warning: tyFlowsTo inconclusive on " <> owlpretty t <> owlpretty ", " <> owlpretty l
+                return False
+            Just b -> return b
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
@@ -2545,7 +2553,8 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
           Nothing -> return ()
           Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
         case notODH of
-          False -> return Nothing
+          False -> do
+              return Nothing
           True -> do
               ny_sec <- not <$> flowsTo (nameLbl ny) advLbl
               if ny_sec then return (Just KDFAdv) else do
@@ -2554,8 +2563,10 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
                    TDH_PK nx -> do
                        nx_sec <- not <$> flowsTo (nameLbl nx) advLbl
                        if nx_sec then return (Just KDFAdv) else return Nothing
-                   _ -> return Nothing
-      Nothing -> return Nothing
+                   _ -> do
+                       return Nothing
+      Nothing -> do
+          return Nothing
 
 
 findKDFODHColl :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe String)

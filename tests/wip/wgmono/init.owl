@@ -1,12 +1,19 @@
 include "defs.owl"
 
     
-    
+predicate is_e_resp(eph) = 
+    exists m:idx,j:idx.
+        eph == dhpk(get(E_resp<j@m>))
+
+predicate is_s_resp(eph) = 
+    exists m:idx.
+        eph == dhpk(get(S_resp<@m>))
     
 
 def init_main<i@n,m> (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
 dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
 Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+    set_option ":rlimit" "2000000" in 
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
@@ -45,11 +52,11 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in 
         let e_init = get(E_init<i@n>) in 
-        pcase (exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
+        pcase is_e_resp[msg2_ephemeral]  in
             choose_idx m2 | exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
             choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
-        pcase (exists m3:idx. msg2_ephemeral == dhpk(get(S_resp<@m3>)))
-            when !(exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)))
+        pcase is_s_resp[msg2_ephemeral]
+            when !is_e_resp[msg2_ephemeral]
         in 
             choose_idx m3 | msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
         pcase (m !=idx m2) when (msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
@@ -61,16 +68,32 @@ Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
         corr_case E_resp<j@m> in 
         assume (c4 != honest_c1<session i, pid n>());
         assume (m !=idx m2 ==>
-            c4 != honest_c4<session i, session j, pid n, pid m2>()
+            c4 != honest_c4<session i, session j, pid n, pid n, pid m2>()
+            /\
+            ! exists n_pk:idx.
+                exists i:idx.
+                    c4 == honest_c4<session i, session j, pid n, pid n_pk, pid
+                    m2>()
         );
         let c5 = kdf<0; odh L4<i,j@n,m>[0]; kdfkey; 0>(c4, ss, 0x) in                                     
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
 
         corr_case S_resp<@m3> when msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
         assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m3>());
+        assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m>());
+        assume (forall n_eph:idx.
+            ! exists i:idx.
+                c5 == honest_c2<session i, pid n_eph, pid m3>()
+        );
+        assume (forall n_eph:idx.
+            ! exists i:idx.
+                c5 == honest_c2<session i, pid n_eph, pid m>()
+        );
         assume (m !=idx m2 ==>
-            ! exists  i:idx. c5 == honest_c5<session i, session j, pid n, pid
-            m2>()
+            ! exists n_eph:idx.
+                exists i:idx.
+                    c5 == honest_c5<session i, session j, pid n_eph, pid n, pid
+                    m2>()
         );
         let c6 = kdf<0; odh L5<j@n,m>[0]; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x

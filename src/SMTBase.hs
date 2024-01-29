@@ -119,13 +119,14 @@ data SolverEnv = SolverEnv {
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),
     _predInterps :: M.Map String SExp,
+    _inODHInterp :: Maybe SExp,
     _smtLog :: [SExp],
     _trivialVC :: Bool,
     _freshSMTCtr :: Int
                  }
                                     
 
-initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] True 0
+initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty Nothing [] True 0
 
 
 newtype Sym a = Sym {unSym :: ReaderT Env (StateT SolverEnv (ExceptT String IO)) a }
@@ -256,6 +257,30 @@ mkPred pth@(PRes (PDot p s)) = do
                         return ()
                 predInterps %= (M.insert sn (SAtom sn))
                 return $ SAtom sn
+
+symInODHProp :: Sym SExp
+symInODHProp = do
+    o <- use inODHInterp 
+    case o of
+      Just v -> return v
+      Nothing -> do
+          x1 <- freshSMTName
+          x2 <- freshSMTName
+          x3 <- freshSMTName
+          withSMTVars [s2n x1, s2n x2, s2n x3] $ do
+              p <- liftCheck $ inODHProp (aeVar' $ s2n x1) (aeVar' $ s2n x2) (aeVar' $ s2n x3)
+              v <- interpretProp p
+              emitRaw $ "(declare-fun %inODHProp (Bits Bits Bits) Bool)"
+              let ax = sForall 
+                         [(SAtom x1, bitstringSort), (SAtom x2, bitstringSort), (SAtom x3, bitstringSort)]
+                         (SApp [SAtom "=", sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3], v])
+                         [sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3]]
+                         ("inODHDef")
+              emitAssertion ax
+              return $ SAtom "%inODHProp"
+              assign inODHInterp $ Just $ SAtom "%inODHProp"
+              return $ SAtom "%inODHProp"
+
 
 getSMTQuery :: SolverEnv -> Sym () -> Sym () -> Check (Maybe String) -- Returns Nothing if trivially true
 getSMTQuery senv setup k = do
@@ -720,7 +745,12 @@ interpretProp p = do
       PAADOf ne a -> do
           p <- liftCheck $ extractAAD ne a
           interpretProp p
-      PInODH s ikm info -> (liftCheck $ inODHProp s ikm info) >>= interpretProp
+      PInODH s ikm info -> do
+          pv <- symInODHProp
+          v1 <- interpretAExp s
+          v2 <- interpretAExp ikm
+          v3 <- interpretAExp info
+          return $ sApp [pv, v1, v2, v3]
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
