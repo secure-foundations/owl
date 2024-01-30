@@ -467,25 +467,18 @@ lookupTyLayout n = do
 
 lookupNameLayout :: NameExp -> ExtractionMonad Layout
 lookupNameLayout n = do
-    n' <- flattenNameExp n
+    n' <- case n ^. val of 
+        NameConst _ _ _  -> flattenNameExp n
+        KDFName _ _ _ nks i _ -> do
+            let nk = nks !! i
+            return $ rustifyName . show . owlpretty $ nk
     o <- lookupTyLayout' n'
     case o of
         Just l -> return l
         Nothing -> do
-            case n ^. val of
-                --NameConst _ p (Just (_, i)) -> do
-                --    owlName <- flattenPath p
-                --    os <- use oracles
-                --    case os M.!? owlName of
-                --        Just (_, sliceMap) -> do
-                --            case sliceMap M.!? i of
-                --                Just (_, _, l) -> return l
-                --                Nothing -> throwError $ UndefinedSymbol n'
-                --        Nothing -> throwError $ UndefinedSymbol n'
-                _ -> do
-                    ls <- use typeLayouts
-                    debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
-                    throwError $ UndefinedSymbol n'
+            ls <- use typeLayouts
+            debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
+            throwError $ UndefinedSymbol n'
 
 
 lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)))
@@ -527,6 +520,9 @@ flattenNameExp n = case n ^. val of
   NameConst _ s _ -> do
       p <- flattenPath s
       return $ rustifyName p
+--   KDFName _ _ -> do
+--       p <- flattenPath (n ^. val)
+--       return $ rustifyName p
   -- _ -> throwError $ UnsupportedNameExp n
 
 

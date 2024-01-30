@@ -115,7 +115,7 @@ nametype C6_dual<@n, m> = dualkdf {salt info.
            nonce aead_counter_msg2_C7
 }
 
-name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
+// name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
 
 nametype C6_corr = kdf {ikm info.
     True -> strict C7_corr || public nonce ||

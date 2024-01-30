@@ -47,6 +47,14 @@ data CTy =
 instance Alpha CTy
 instance Subst AExpr CTy
 
+compatTys :: CTy -> CTy -> Bool
+compatTys (CTName n1) (CTName n2) =
+    case (n1 ^. val, n2 ^. val) of
+        (KDFName _ _ _ nks1 i1 _, KDFName _ _ _ nks2 i2 _) ->
+            (nks1 !! i1) `aeq` (nks2 !! i2)
+        _ -> n1 `aeq` n2
+compatTys ct1 ct2 = ct1 `aeq` ct2
+
 -- For struct compilation, not general
 concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
@@ -64,7 +72,8 @@ concretifyTy t =
       case (ct, ct') of
         (cct, CTData) -> return cct
         (CTData, cct') -> return cct'
-        _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TCase failed"
+        _ -> if ct `compatTys` ct' then return ct else 
+            error $ "concretifyTy on TCase failed: " ++ show (owlpretty ct) ++ ", " ++ show (owlpretty ct')
     TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
     TUnion t t' -> do
@@ -73,7 +82,7 @@ concretifyTy t =
       case (ct, ct') of
         (cct, CTData) -> return cct
         (CTData, cct') -> return cct'
-        _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TUnion failed"
+        _ -> if ct `compatTys` ct' then return ct else error "concretifyTy on TUnion failed"
       -- return $ CTUnion ct ct'
     TUnit -> return CTUnit
     TName n -> return $ CTName n
@@ -158,7 +167,7 @@ concretify e =
         ERet a -> return $ CRet a
         EDebug _ -> return CSkip 
         EAssert _ -> return CSkip
-        EAssume _ -> error "Concretify on assume"
+        EAssume _ -> return CSkip -- error "Concretify on assume"
         EAdmit -> error "Concretify on admit"
         EForallBV _ _ -> return CSkip
         EForallIdx _ _ -> return CSkip

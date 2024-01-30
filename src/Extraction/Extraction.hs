@@ -1154,6 +1154,14 @@ preprocessModBody mb = do
                     -- ...
                 -- _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
 
+        resolveNameApp :: Path -> ExtractionMonad (Bind ([IdxVar], [IdxVar]) NameType)
+        resolveNameApp p = do
+            s <- tailPath p
+            let ntds = mb ^. TB.nameTypeDefs
+            case lookup s ntds of
+                Just b -> return b
+                _ -> throwError $ ErrSomethingFailed $ "couldn't resolve name app " ++ show s
+
         sortName :: (LocalityName -> ExtractionMonad LocalityName) 
                     -> (M.Map LocalityName LocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
                     -> (String, (Bind ([IdxVar], [IdxVar]) TB.NameDef))
@@ -1184,6 +1192,12 @@ preprocessModBody mb = do
               --   oracles %= M.insert name (totLen, sliceMap)
               --   return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
               TB.BaseDef (nt, loc) -> do
+                nt <- case nt ^. val of
+                    NT_App p _ -> do
+                        b <- resolveNameApp p
+                        let (_, nt) = unsafeUnbind b
+                        return nt
+                    _ -> return nt
                 nameLen <- case nt ^. val of
                     NT_Nonce -> do useAeadNonceSize
                     NT_Enc _ -> do useAeadKeySize
@@ -1233,7 +1247,7 @@ preprocessModBody mb = do
 
 
 -- return (main func name, exec code, spec code, unverified lib code)
-extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (String, OwlDoc, OwlDoc, OwlDoc)
+extractLoc :: [NameData] -> (LocalityName, LocalityData) -> ExtractionMonad (Maybe String, OwlDoc, OwlDoc, OwlDoc)
 extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
     debugLog $ "Extracting locality " ++ loc
     -- check name sharing is ok
@@ -1246,18 +1260,22 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
     initLoc <- genInitLoc loc localNames sharedNames pubKeys tbls
     let initMutState = genInitMutState loc ctrs
     let configDef = configLibCode loc cfs
-    case find (\(n,_,as,_,_) -> isSuffixOf "_main" n && null as) defs of
-        Just (mainName,_,_,_,_) -> do
-            (fns, fnspecs) <- unzip <$> mapM (\(n, l, as, t, e) -> extractDef n l as t e (n == mainName)) defs
-            return (rustifyName mainName,
-                owlpretty "pub struct" <+> owlpretty (stateName loc) <+> braces mfs <> line <>
-                owlpretty "impl" <+> owlpretty (stateName loc) <+> braces (line <> initMutState) <>
-                owlpretty "pub struct" <+> owlpretty (cfgName loc) <+> braces sfs <> line <>
-                owlpretty "impl" <+> owlpretty (cfgName loc) <+> braces (line <> initLoc <+> vsep fns)
-                <> line <> line,
-                vsep fnspecs,
-                configDef)
-        Nothing -> throwError $ LocalityWithNoMain loc
+    let mainName = case find (\(n,_,as,_,_) -> isSuffixOf "_main" n && null as) defs of
+            Just (mainName,_,_,_,_) -> Just (rustifyName mainName)
+            Nothing -> Nothing
+    let isMainName n = case mainName of
+            Just mn -> n == mn
+            Nothing -> False
+    (fns, fnspecs) <- unzip <$> mapM (\(n, l, as, t, e) -> extractDef n l as t e (isMainName n)) defs
+    return (mainName,
+        owlpretty "pub struct" <+> owlpretty (stateName loc) <+> braces mfs <> line <>
+        owlpretty "impl" <+> owlpretty (stateName loc) <+> braces (line <> initMutState) <>
+        owlpretty "pub struct" <+> owlpretty (cfgName loc) <+> braces sfs <> line <>
+        owlpretty "impl" <+> owlpretty (cfgName loc) <+> braces (line <> initLoc <+> vsep fns)
+        <> line <> line,
+        vsep fnspecs,
+        configDef)
+
     where
         -- genIndexedNameGetter (n, nt, nsids, _) = if nsids == 0 then return $ owlpretty "" else do
         --     ni <- nameInit n nt
@@ -1335,7 +1353,7 @@ extractLoc pubKeys (loc, (idxs, localNames, sharedNames, defs, tbls, ctrs)) = do
 
 
 -- returns (index map, executable code, spec code, unverified lib code)
-extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName String, OwlDoc, OwlDoc, OwlDoc)
+extractLocs :: [NameData] ->  M.Map LocalityName LocalityData -> ExtractionMonad (M.Map LocalityName (Maybe String), OwlDoc, OwlDoc, OwlDoc)
 extractLocs pubkeys locMap = do
     let addrs = mkAddrs 0 $ M.keys locMap
     (sidArgMap, ps, spec_ps, ls) <- foldM (go pubkeys) (M.empty, [], [], []) $ M.assocs locMap
@@ -1487,8 +1505,13 @@ extractModBody mb = do
     (ep, callMain) <- do 
         fs <- use flags
         if fs ^. fExtractHarness then do
-            ep <- entryPoint locMap sharedNames pubKeys mainNames
-            return (ep, owlpretty "fn main() { entrypoint() }" <> line)
+            if all isJust mainNames then do
+                ep <- entryPoint locMap sharedNames pubKeys (M.map fromJust mainNames)
+                return (ep, owlpretty "fn main() { entrypoint() }" <> line)
+            else do 
+                let noMainLocs = M.filter isNothing mainNames
+                let noMainLoc = head $ M.keys noMainLocs
+                throwError $ LocalityWithNoMain noMainLoc
         else return $ (owlpretty "// no entry point", owlpretty "fn main() { /* entrypoint() */ }" <> line)
     p <- owlprettyFile "extraction/preamble.rs"
     lp <- owlprettyFile "extraction/lib_preamble.rs"
