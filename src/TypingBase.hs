@@ -1236,6 +1236,23 @@ coveringLabel' t =
           return $ joinLbl advLbl l1
       THexConst a -> return zeroLbl
 
+quantFree :: Prop -> Check Bool
+quantFree p = 
+    case p^.val of
+      PQuantIdx _ _ _ -> return False
+      PQuantBV _ _ _ -> return False
+      PAADOf ne a -> extractAAD ne a >>= quantFree
+      PInODH a b c -> return True -- Abstracted by a predicate in SMT
+      PApp ps is xs -> return True -- Abstracted by a predicate in SMT
+      PAnd p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
+      POr p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
+      PNot p1 -> quantFree p1
+      PLetIn a xp -> do
+          (x, p) <- unbind xp
+          quantFree $ subst x a p
+      _ -> return True
+
+
 tyInfo :: Ty -> OwlDoc
 tyInfo t = 
     case (stripRefinements t)^.val of

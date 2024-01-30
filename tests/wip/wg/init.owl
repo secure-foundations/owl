@@ -66,6 +66,7 @@ def init_stage2<i@n,m>
     (st : init_sent_state<session i, pid n, pid m>)
     @
     Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+    set_option ":rlimit" "1000000" in 
     pcase init_safe<i, n, m>[] in 
     parse st as init_sent_state<session i, pid n, pid m>(c2, static_ss, h4, c3)
     in 

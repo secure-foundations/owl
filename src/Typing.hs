@@ -574,82 +574,87 @@ normalizeLabel l = do
 -- Subtype checking, assuming the types are normalized
 
 isSubtype' t1 t2 = do
-    case (t1^.val, t2^.val) of
-      (t1', t2') | t1' `aeq` t2' -> return True
-      (_, TGhost) -> return True
-      _ | isSingleton t2 -> do 
-          (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
-          return b 
-      (TCase p t1' t2', _) -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' (if b then t1' else t2') t2
-            Nothing -> do
-              b1 <- isSubtype' t1' t2
-              b2 <- isSubtype' t2' t2
+    x <- freshVar
+    falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
+       (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
+       return b
+    if falseTy then return True else 
+        case (t1^.val, t2^.val) of
+          (t1', t2') | t1' `aeq` t2' -> return True
+          (_, TGhost) -> return True
+          _ | isSingleton t2 -> do 
+              (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
+              return b 
+          (TCase p t1' t2', _) -> do
+              r <- decideProp p
+              case r of
+                Just b -> isSubtype' (if b then t1' else t2') t2
+                Nothing -> do
+                  b1 <- isSubtype' t1' t2
+                  b2 <- isSubtype' t2' t2
+                  return $ b1 && b2
+          (_, TCase p t1' t2') -> do
+              r <- decideProp p
+              case r of
+                Just b -> isSubtype' t1 (if b then t1' else t2')
+                Nothing -> do
+                  b1 <- isSubtype' t1 t1'
+                  b2 <- isSubtype' t1 t2'
+                  return $ b1 && b2
+          (TAdmit, _) -> return True
+          (TOption t1, TOption t2) -> isSubtype' t1 t2
+          (_, TRefined t _ p) -> do
+              b1 <- isSubtype' t1 t
+              (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
               return $ b1 && b2
-      (_, TCase p t1' t2') -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' t1 (if b then t1' else t2')
-            Nothing -> do
+          (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
+          (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
+          (TUnit,  _) -> do
+            isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
+          (TBool l1, TBool l2) -> do
+              ob <- tryFlowsTo l1 l2
+              case ob of
+                Nothing -> return False
+                Just b -> return b
+          (TConst x ps1, TConst y ps2) -> do
+              x' <- normalizePath x
+              y' <- normalizePath y
+              td <- getTyDef x
+              case (aeq x' y', td) of
+                (True, EnumDef _) -> return $ aeq ps1 ps2 
+                (True, StructDef _) -> do
+                    assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
+                    qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
+                        case (p1, p2) of
+                          (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
+                          _ -> typeError $ "Bad param to struct: didn't get index"
+                    let p = foldr pAnd pTrue qs
+                    (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
+                    return b
+                _ -> return False
+          (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
+          (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
+              (xi, t1) <- unbind xt1
+              (xi', t2) <- unbind xt2
+              withIndices [(xi, (ignore s1, IdxGhost))] $ 
+                  isSubtype' t1 (subst xi' (mkIVar xi) t2)
+          (_, TUnion t1' t2') -> do
               b1 <- isSubtype' t1 t1'
               b2 <- isSubtype' t1 t2'
-              return $ b1 && b2
-      (TAdmit, _) -> return True
-      (TOption t1, TOption t2) -> isSubtype' t1 t2
-      (_, TRefined t _ p) -> do
-          b1 <- isSubtype' t1 t
-          (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b2
-      (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
-      (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
-      (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
-      (TBool l1, TBool l2) -> do
-          ob <- tryFlowsTo l1 l2
-          case ob of
-            Nothing -> return False
-            Just b -> return b
-      (TConst x ps1, TConst y ps2) -> do
-          x' <- normalizePath x
-          y' <- normalizePath y
-          td <- getTyDef x
-          case (aeq x' y', td) of
-            (True, EnumDef _) -> return $ aeq ps1 ps2 
-            (True, StructDef _) -> do
-                assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
-                qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
-                    case (p1, p2) of
-                      (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
-                      _ -> typeError $ "Bad param to struct: didn't get index"
-                let p = foldr pAnd pTrue qs
-                (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
-                return b
-            _ -> return False
-      (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
-      (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
-          (xi, t1) <- unbind xt1
-          (xi', t2) <- unbind xt2
-          withIndices [(xi, (ignore s1, IdxGhost))] $ 
-              isSubtype' t1 (subst xi' (mkIVar xi) t2)
-      (_, TUnion t1' t2') -> do
-          b1 <- isSubtype' t1 t1'
-          b2 <- isSubtype' t1 t2'
-          return $ b1 || b2
-      (t, TDataWithLength l a) -> do
-          b1 <- isSubtype' t1 (tData l l)
-          (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b
-      (t, TData l1 l2 _) -> do
-        l2' <- tyLenLbl t1
-        b1 <- tyFlowsTo t1 l1 
-        ob2 <- tryFlowsTo l2' l2
-        case ob2 of
-          Nothing -> return False
-          Just b2 -> return $ b1 && b2
-      (TRefined t _ _, _) -> isSubtype' t t2
-      _ -> return False
+              return $ b1 || b2
+          (t, TDataWithLength l a) -> do
+              b1 <- isSubtype' t1 (tData l l)
+              (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
+              return $ b1 && b
+          (t, TData l1 l2 _) -> do
+            l2' <- tyLenLbl t1
+            b1 <- tyFlowsTo t1 l1 
+            ob2 <- tryFlowsTo l2' l2
+            case ob2 of
+              Nothing -> return False
+              Just b2 -> return $ b1 && b2
+          (TRefined t _ _, _) -> isSubtype' t t2
+          _ -> return False
 
 isSingleton :: Ty -> Bool
 isSingleton t = 
