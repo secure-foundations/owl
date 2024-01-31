@@ -53,6 +53,7 @@ compatTys (CTName n1) (CTName n2) =
         (KDFName _ _ _ nks1 i1 _, KDFName _ _ _ nks2 i2 _) ->
             (nks1 !! i1) `aeq` (nks2 !! i2)
         _ -> n1 `aeq` n2
+compatTys (CTDH_PK _) (CTDH_PK _) = True
 compatTys ct1 ct2 = ct1 `aeq` ct2
 
 -- For struct compilation, not general
@@ -201,6 +202,7 @@ concretify e =
         EFalseElim e _ -> concretify e
         ETLookup n a -> return $ CTLookup n a
         ETWrite n a a2 -> return $ CTWrite n a a2
+        ECrypt (CLemma _) _ -> return CSkip -- lemma calls are ghost
         ECrypt op args -> return $ CCrypt op args
         EIncCtr p idxs -> return $ CIncCtr p idxs
         EGetCtr p idxs -> return $ CGetCtr p idxs

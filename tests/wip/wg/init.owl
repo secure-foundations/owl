@@ -18,7 +18,7 @@ struct init_sent_state<i,n,m> {
     c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
     static_ss : (x:Ghost{x == dh_combine(dhpk(get(S_init<@n>)),
     get(S_resp<@m>))}),
-    h4 : Data<adv>,
+    h4 : Data<adv> | |crh| |,
     c3 : if init_safe<i,n,m>[] then
         SecName(KDF<kdfkey||enckey;0;C3<@n,m>>(c2, static_ss, 0x))
         else
@@ -49,7 +49,7 @@ def init_stage1<i@n,m>
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp = // : Data<adv> |cipherlen(12)| =
         st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
-    let h4 : Data<adv> = crh(H3 ++ msg1_timestamp) in
+    let h4 : Data<adv> ||crh||  = crh(H3 ++ msg1_timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
@@ -59,7 +59,7 @@ def init_stage1<i@n,m>
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
     let msg1_mac2 = zeros_16() in
     let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
-    output msg1_output; // to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
+    output msg1_output; // to endpoint(Responder<m>); // TODO: does it make sense to index the responder?
     init_sent_state<session i, pid n, pid m>(C2, ss_S_resp_S_init, h4, c3)
 
 def init_stage2<i@n,m>
@@ -129,7 +129,8 @@ def init_stage2<i@n,m>
         let k0 = kdf<0;;kdfkey || nonce || enckey; 2>(c6, 0x, 0x) in 
         let h6 : Data<adv> = crh(h5 ++ tau) in 
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x) 
-        as Option (Data<adv>|0|) {
+        // as Option (Data<adv>|0|) 
+        {
             | None => None()
             | Some x => {
                     assume (valid_h6[h6] ==>
@@ -147,15 +148,17 @@ def init_stage2<i@n,m>
                     Some(transp_keys_init<session i, pid n, pid
                     m>(msg2_receiver, msg2_sender, msg2_ephemeral, c7, k1, k2))
                 }
-            otherwise => None()
+            // otherwise => None()
         }
     }
     otherwise None()
 
 
-def init_main<i@n,m> 
-(dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
-dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
-Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
-    let st = call init_stage1<i@n,m>(dhpk_S_resp, dhpk_S_init, ss_S_resp_S_init) in
-    call init_stage2<i@n,m>(st)
+// def init_main<i@n,m> 
+// (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
+// dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>)) @
+// Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
+//     let st = call init_stage1<i@n,m>(dhpk_S_resp, dhpk_S_init, ss_S_resp_S_init) in
+//     call init_stage2<i@n,m>(st)
+
+def init_dummy<@n>() @ Initiator<n> : Unit = ()

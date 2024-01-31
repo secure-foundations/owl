@@ -50,6 +50,17 @@ impl OwlSpecSerialize for Seq<u8> {
     }
 }
 
+impl OwlSpecSerialize for bool {
+    open spec fn as_seq(self) -> Seq<u8> {
+        if self {
+            seq![1u8]
+        } else {
+            seq![0u8]
+        }
+    }
+}
+
+
 pub trait OwlSpecAsCtr {
     spec fn as_ctr(self) -> usize where Self: Sized;
 }
@@ -640,7 +651,7 @@ pub mod itree {
             in { $($next:tt)* }) => 
         {verus_proof_expr! {{
             let $structTy { $($fieldName),* } = $a;
-            $(let $varName = $fieldName.as_seq();)*
+            $(let $varName = $fieldName;)*
             owl_spec!($mut_state, $mut_type, $($next)*)
         }}};
         ($mut_state:ident, $mut_type:ident, 

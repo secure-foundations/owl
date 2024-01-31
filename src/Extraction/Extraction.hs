@@ -557,6 +557,7 @@ extractCryptOp binds op owlArgs = do
         (CMacVrfy, [k, x, v]) -> do return (Option $ VecU8, owlpretty "", owlpretty $ printOwlOp "owl_mac_vrfy" [k, x, v])
         (CSign, [k, x]) -> do return (VecU8, owlpretty "", owlpretty $ printOwlOp "owl_sign" [k, x])
         (CSigVrfy, [k, x, v]) -> do return (Option $ VecU8, owlpretty "", owlpretty $ printOwlOp "owl_vrfy" [k, x, v])
+        (CLemma _, _) -> do return (Unit, owlpretty "", owlpretty "()")
         (_, _) -> do throwError $ TypeError $ "got bad args for crypto op: " ++ show (owlpretty op) ++ "(" ++ show (map owlpretty args) ++ ")"
     return (rt, preArgs <> line <> preCryptOp, str)
     where 
