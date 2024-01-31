@@ -87,14 +87,27 @@ def init_stage2<i@n,m>
         pcase (m =idx m2) when (msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
         corr_case E_resp<j@m2> when (msg2_ephemeral == dhpk(get(E_resp<j@m2>)) /\ m !=idx m2) in 
         let c4 = kdf<0,1;;kdfkey;0>(c3, msg2_ephemeral, 0x) in 
+        let ghost c4_ghost = gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x) in 
         let h5 : Data<adv> = crh(h4 ++ msg2_ephemeral) in                      
         let ss = dh_combine(msg2_ephemeral, e_init) in 
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
         corr_case E_resp<j@m> in 
-        assume (c4 != honest_c1<session i, pid n>());
-        assume (m !=idx m2 ==>
-            c4 != honest_c4<session i, session j, pid n, pid n, pid m2>()
-            /\
+        kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c1<session i, pid n>());
+        kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c4<session
+        i, session j, pid n, pid n, pid m2>());
+        kdf_inj_lemma(honest_c3<session i, pid n, pid n, pid m>(),
+            honest_c3<session i, pid n, pid n, pid m2>());
+        assert (m !=idx m2 ==>
+            c4 != honest_c4<session i, session j, pid n, pid n, pid m2>());
+        forall n_pk:idx, i':idx {
+            kdf_inj_lemma(honest_c3<session i, pid n, pid n, pid m>(),
+                honest_c3<session i', pid n, pid n_pk, pid m2>());
+            kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c4<session
+                i', session j, pid n, pid n_pk, pid m2>());
+            assert (m !=idx m2 ==> c4 != honest_c4<session i', session j, pid n, pid n_pk, pid
+                    m2>())
+        };
+        assert (m !=idx m2 ==>
             ! exists n_pk:idx.
                 exists i:idx.
                     c4 == honest_c4<session i, session j, pid n, pid n_pk, pid
@@ -102,20 +115,42 @@ def init_stage2<i@n,m>
         );
         corr_case E_init<i@n> in 
         let c5 = kdf<0; odh L4<i,j@n,m>[0]; kdfkey; 0>(c4, ss, 0x) in                                     
+        let ghost c5_ghost = gkdf<kdfkey;0>(c4_ghost, ss, 0x) in 
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
 
         corr_case S_resp<@m3> when msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
-        assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m3>());
-        assume (! exists i:idx. c5 == honest_c2<session i, pid n, pid m>());
-        assume (forall n_eph:idx.
+        forall i':idx {
+            assert (dh_combine(dhpk(get(S_init<@n>)), get(S_resp<@m>)) != dhpk(get(E_init<i'@n>)));
+            kdf_inj_lemma(c5_ghost, honest_c2<session i', pid n, pid m3>());
+            kdf_inj_lemma(c5_ghost, honest_c2<session i', pid n, pid m>());
+            let lem1 = assert (c5 != honest_c2<session i', pid n, pid m3>()) in
+            let lem2 = assert (c5 != honest_c2<session i', pid n, pid m>())  in
+            lem1 &&& lem2
+        };
+        assert (! exists i:idx. c5 == honest_c2<session i, pid n, pid m3>());
+        assert (! exists i:idx. c5 == honest_c2<session i, pid n, pid m>());
+        forall n_eph:idx,i':idx {
+            kdf_inj_lemma(c5_ghost, honest_c2<session i', pid
+            n_eph, pid m>());
+            kdf_inj_lemma(c5_ghost, honest_c2<session i', pid
+            n_eph, pid m3>());
+            let lem1 = assert (c5 != honest_c2<session i', pid n_eph, pid m3>()) in
+            let lem2 = assert (c5 != honest_c2<session i', pid n_eph, pid m>()) in
+            lem1 &&& lem2
+        };
+        assert (forall n_eph:idx.
             ! exists i:idx.
                 c5 == honest_c2<session i, pid n_eph, pid m3>()
         );
-        assume (forall n_eph:idx.
+        assert (forall n_eph:idx.
             ! exists i:idx.
                 c5 == honest_c2<session i, pid n_eph, pid m>()
         );
-        assume (m !=idx m2 ==>
+        forall n_eph:idx, i':idx {
+            kdf_inj_lemma(c5_ghost, honest_c5<session i',
+            session j, pid n_eph, pid n, pid m2>())
+        };
+        assert (m !=idx m2 ==>
             ! exists n_eph:idx.
                 exists i:idx.
                     c5 == honest_c5<session i, session j, pid n_eph, pid n, pid

@@ -1897,7 +1897,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           t' <- normalizeTy t
           t'' <- ghostifyTy a t'
           (x, k) <- unbind xk
-          t2 <- withVars [(x, (ignore sx, Nothing, t''))] (checkExpr ot k)
+          t2 <- withVars [(x, (ignore sx, Just a, t''))] (checkExpr ot k)
           stripTy x t2
       (EChooseIdx s ip ik) -> do
           (ix, p) <- unbind ip
@@ -2644,7 +2644,7 @@ crhInjLemma x y =
 kdfInjLemma :: AExpr -> AExpr -> Check Prop
 kdfInjLemma x y = 
     case (x^.val, y^.val) of
-      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | nks == nks' && j == j' && j < length nks -> do 
+      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | j < length nks && j' < length nks' && (nks !! j == nks' !! j') -> do
           let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
           p2 <- kdfInjLemma a a'
           p3 <- kdfInjLemma b b'
