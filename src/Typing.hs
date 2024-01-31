@@ -1919,6 +1919,23 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 if i `elem` getTyIdxVars t' then
                     return (tExistsIdx s (bind i t'))
                 else return t'
+      (EChooseBV s ip ik) -> do
+          (x, p) <- unbind ip
+          withVars [(x, (ignore s, Nothing, tGhost))] $ do
+              checkProp p
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantBV Exists (ignore s) ip
+          (y, k) <- unbind ik
+          getOutTy ot =<< case b of
+            Just True -> do
+                let tx = tRefined tGhost ".x" $ subst x (aeVar ".x") p
+                to <- withVars [(x, (ignore s, Nothing, tx))] $
+                    checkExpr ot $ subst y (aeVar' x) k
+                if x `elem` toListOf fv to then 
+                    stripTy x to
+                else return to
+            _ -> do
+                to <- withVars [(y, (ignore s, Nothing, tGhost))] $ checkExpr ot k
+                if y `elem` toListOf fv to then stripTy y to else return to
       (EUnpack a (si, sx) ixk) -> do
           t <- inferAExpr a
           ((i, x), e_) <- unbind ixk
@@ -2061,17 +2078,25 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
       (EForallBV s xk) -> do
-          (x, k) <- unbind xk
+          (x, (oreq, k)) <- unbind xk
           t <- local (set tcScope $ TcGhost False) $ withVars [(x, (ignore s, Nothing, tGhost))] $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+              case oreq of
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ 
+                        checkExpr Nothing k >>= normalizeTy
+                Nothing -> checkExpr Nothing k >>= normalizeTy
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       (EForallIdx s ik) -> do
-          (i, k) <- unbind ik
+          (i, (oreq, k)) <- unbind ik
           tc <- view tcScope
           -- We allow crypto lemmas underneath forall_idx, because there are
           -- only polynomially many indices.
@@ -2081,13 +2106,20 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                       TcGhost False -> TcGhost False
                       _ -> TcGhost True
           t <- local (set tcScope $ tc') $ withIndices [(i, (ignore $ show i, IdxGhost))] $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+              case oreq of
+                Nothing -> checkExpr Nothing k >>= normalizeTy
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ checkExpr Nothing k >>= normalizeTy
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       (ECorrCaseNameOf a op k) -> do
           t <- inferAExpr a
           t' <- normalizeTy t

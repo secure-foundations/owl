@@ -118,19 +118,22 @@ anf e =
       EChooseIdx s p ixe -> do
           ixe' <- anfBind ixe
           return $ Spanned (e^.spanOf) $ EChooseIdx s p ixe'
+      EChooseBV s p ixe -> do
+          ixe' <- anfBind ixe
+          return $ Spanned (e^.spanOf) $ EChooseBV s p ixe'
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
           ea <- anfAExpr a
           elet ea Nothing ( Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EIf (aevar (a^.spanOf) y) e1' e2'
       EForallBV s xpk -> do
-          (x, k) <- unbind xpk
+          (x, (op, k)) <- unbind xpk
           k' <- anf k
-          return $ Spanned (e^.spanOf) $ EForallBV s $ bind x k'
+          return $ Spanned (e^.spanOf) $ EForallBV s $ bind x (op, k')
       EForallIdx s xpk -> do
-          (x, k) <- unbind xpk
+          (x, (op, k)) <- unbind xpk
           k' <- anf k
-          return $ Spanned (e^.spanOf) $ EForallIdx s $ bind x k'
+          return $ Spanned (e^.spanOf) $ EForallIdx s $ bind x (op, k')
       EGuard a e -> do
           e' <- anf e
           ea <- anfAExpr a

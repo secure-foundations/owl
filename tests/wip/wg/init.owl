@@ -18,7 +18,8 @@ struct init_sent_state<i,n,m> {
     c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
     static_ss : (x:Ghost{x == dh_combine(dhpk(get(S_init<@n>)),
     get(S_resp<@m>))}),
-    h4 : Data<adv>,
+    h4 : (x:Data<adv>{exists c:bv,ts:bv. x == crh(honest_H4_pre<session i, pid
+    n,pid m>(c, ts))}),
     c3 : if init_safe<i,n,m>[] then
         SecName(KDF<kdfkey||enckey;0;C3<@n,m>>(c2, static_ss, 0x))
         else
@@ -49,7 +50,7 @@ def init_stage1<i@n,m>
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp = // : Data<adv> |cipherlen(12)| =
         st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in 
-    let h4 : Data<adv> = crh(H3 ++ msg1_timestamp) in
+    let h4 = crh(H3 ++ msg1_timestamp) in
 
     let msg1_sender : Data<adv> |4| = call get_sender_i<@n>() in
     let msg1_tag = msg1_tag_value() in 
@@ -88,7 +89,7 @@ def init_stage2<i@n,m>
         corr_case E_resp<j@m2> when (msg2_ephemeral == dhpk(get(E_resp<j@m2>)) /\ m !=idx m2) in 
         let c4 = kdf<0,1;;kdfkey;0>(c3, msg2_ephemeral, 0x) in 
         let ghost c4_ghost = gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x) in 
-        let h5 : Data<adv> = crh(h4 ++ msg2_ephemeral) in                      
+        let h5 = crh(h4 ++ msg2_ephemeral) in                      
         let ss = dh_combine(msg2_ephemeral, e_init) in 
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
         corr_case E_resp<j@m> in 
@@ -163,20 +164,45 @@ def init_stage2<i@n,m>
         let c7 = kdf<0;;kdfkey || nonce || enckey; 0>(c6, 0x, 0x) in 
         let tau = kdf<0;;kdfkey || nonce || enckey; 1>(c6, 0x, 0x) in 
         let k0 = kdf<0;;kdfkey || nonce || enckey; 2>(c6, 0x, 0x) in 
-        let h6 : Data<adv> = crh(h5 ++ tau) in 
+        let h6 = crh(h5 ++ tau) in 
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x) 
         as Option (Data<adv>|0|) {
             | None => None()
             | Some x => {
-                    assume (valid_h6[h6] ==>
-                        m =idx m2 /\
-                        exists m2:idx. exists j:idx. msg2_ephemeral ==
-                        dhpk(get(E_resp<j@m2>)))
-                        ;
-                    assume (valid_h6[h6] ==>
-                        m =idx m2 /\
-                        exists m2:idx. exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>))
-                        );
+                    forall n':idx,m':idx,i':idx,j':idx
+                        assuming (exists c:bv,ts:bv,tau:bv. 
+                            h6 == crh(honest_H6_pre<session i', session j', pid
+                            n',
+                            pid m'>(c, ts, tau)))
+                    {
+                        choose_bv c | exists ts:bv,tau:bv. h6 ==
+                        crh(honest_H6_pre<session i', session j', pid n', pid m'>(c, ts, tau)) in
+                        choose_bv ts | exists tau:bv. h6 ==
+                        crh(honest_H6_pre<session i', session j', pid n', pid m'>(c, ts, tau)) in
+                        choose_bv tau | h6 == crh(honest_H6_pre<session i',
+                        session j', pid n', pid m'>(c, ts, tau)) in
+                        crh_lemma(h6, crh(honest_H6_pre<session i', session j',
+                        pid n', pid m'>(c, ts, tau)));
+                        assert (h4 == crh(honest_H4_pre<session i', pid n', pid
+                        m'>(c, ts)));
+                        choose_bv h4_c | exists h4_ts:bv. 
+                            h4 == crh(honest_H4_pre<session i, pid n, pid m>(h4_c, h4_ts)) in 
+                        choose_bv h4_ts | 
+                            h4 == crh(honest_H4_pre<session i, pid n, pid m>(h4_c, h4_ts)) in 
+                        crh_lemma(
+                            crh(honest_H4_pre<session i, pid n, pid m>(h4_c,
+                            h4_ts)),
+                            crh(honest_H4_pre<session i', pid n', pid m'>(c,
+                            ts)));
+                        assert (honest_H1_pre<pid m>() ==
+                        honest_H1_pre<pid m'>());
+                        assert (dhpk(get(S_resp<@m>)) ==
+                        dhpk(get(S_resp<@m'>)));
+                        let lem1 = assert (m =idx m2) in 
+                        let lem2 = assert (is_e_resp[msg2_ephemeral]) in 
+                        lem1 &&& lem2
+                    };
+                
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
