@@ -706,8 +706,8 @@ extractExpr inK loc binds (CInput xsk) = do
             owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";"
     return (binds, rt', owlpretty "", vsep [letbinding, prek, kPrettied])
 extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
-    unanf <- resolveANF binds ae
-    debugPrint . show . owlpretty $ unanf
+    -- unanf <- resolveANF binds ae
+    -- debugPrint . show . owlpretty $ unanf
     (rty, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     let aePrettied' = owlpretty $ printOwlArg (rty, show aePrettied)    
     l <- case lopt of
@@ -740,11 +740,13 @@ extractExpr inK loc binds (CLet e oanf xk) = do
     let wrappedRt = case rt of
             VecU8 -> OwlBuf
             SliceU8 -> OwlBuf
+            Option VecU8 -> Option OwlBuf
             _ -> rt
     (_, rt', preK, kPrettied) <- extractExpr inK loc (M.insert rustX (wrappedRt, oanf) binds) k
     let eWrapped = case rt of
             VecU8 -> owlpretty "OwlBuf::from_vec" <> parens (owlpretty "temp_" <> owlpretty rustX)
             SliceU8 -> owlpretty "OwlBuf::from_slice" <> parens (owlpretty "&temp_" <> owlpretty rustX)
+            Option VecU8 -> owlpretty "OwlBuf::from_vec_option" <> parens (owlpretty "temp_" <> owlpretty rustX)
             _ -> owlpretty "temp_" <> owlpretty rustX
     let letbinding = case e of
             CSkip -> owlpretty ""
@@ -1012,12 +1014,12 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
         Nothing -> return (Nothing, Nothing)
     rustArgs <- mapM rustifyArg owlArgs
     -- let rustSidArgs = map rustifySidArg sidArgs
-    rtb <- rustifyArgTy $ doConcretifyTy owlRetTy
+    rtb <- rustifyRetTy $ doConcretifyTy owlRetTy
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
     (attr, body) <- case anfBody of
         Just anfBody' -> do
             (binds, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
-            debugPrint $ show $ owlpretty (M.assocs binds)
+            -- debugPrint $ show $ owlpretty (M.assocs binds)
             let reveal = owlpretty "reveal" <> parens (owlpretty owlName <> owlpretty "_spec") <> owlpretty ";"
             return (owlpretty "", reveal <> line <> preBody <> line <> body)
         Nothing -> return (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)")

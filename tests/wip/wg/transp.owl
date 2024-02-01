@@ -9,7 +9,8 @@ Initiator<n>
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, resp) in 
         pcase init_clean<i,n,m>[eph] in 
-        st_aead_dec(resp_send, pkt, 0x, ctr)
+        let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
+        p
     }
     otherwise None()
 

@@ -50,6 +50,16 @@ impl<'x> OwlBuf<'x> {
         proof { assert_seqs_equal!(v.dview(), v.dview().subrange(0int, len as int)); }
         OwlBuf::Owned(rc_new(v), 0, len)
     }
+ 
+    pub fn from_vec_option(v: Option<Vec<u8>>) -> (result: Option<OwlBuf<'x>>)
+        ensures dview_option(result) == dview_option(v),
+                result.is_Some() ==> result.get_Some_0().len_valid(),
+    {
+        match v {
+            Some(v) => Some(OwlBuf::from_vec(v)),
+            None => None,
+        }
+    }
 
     // Member functions
     pub fn len(&self) -> (result: usize)

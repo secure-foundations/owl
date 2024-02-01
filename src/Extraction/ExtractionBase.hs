@@ -545,7 +545,7 @@ rustifyArgTy _ = return $ SliceU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
 rustifyRetTy (CTOption ct) = do
-    rt <- rustifyArgTy ct
+    rt <- rustifyRetTy ct
     return $ Option rt
 rustifyRetTy (CTConst p) = do
     n <- flattenPath p
