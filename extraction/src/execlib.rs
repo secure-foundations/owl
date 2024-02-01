@@ -382,6 +382,32 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 }
 
 #[verifier(external_body)]
+pub exec fn owl_enc_st_aead_into(dst: &mut [u8], k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<(), OwlError>)
+    ensures
+        res.is_Ok() ==> (dst.dview(), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
+        // *nonce == *old(nonce) + 1,
+{
+    todo!()
+    // if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
+    // let mut iv = nonce.to_le_bytes().to_vec();
+    // iv.resize(nonce_size(), 0u8);
+    // let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
+    //     Ok(mut c) => {
+    //         let mut v = iv.to_owned();
+    //         v.append(&mut c);
+    //         v
+    //     },
+    //     Err(_e) => {
+    //         // dbg!(e);
+    //         vec![]
+    //     }
+    // };
+    // *nonce += 1;
+    // Ok(res)
+}
+
+
+#[verifier(external_body)]
 pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x: Option<Vec<u8>>)
     ensures
         dview_option(x) == dec_st_aead(k.dview(), c.dview(), nonce.dview(), aad.dview())

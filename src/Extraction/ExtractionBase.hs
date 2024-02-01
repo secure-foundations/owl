@@ -701,3 +701,14 @@ makeKdfSliceMap nks = do
             return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
         ) (["0"], M.empty) (zip [0..] nks)
     return (totLen, sliceMap)
+
+
+canBeVest :: Layout -> Bool
+canBeVest (LStruct _ fs) = go True . map snd $ fs
+    where 
+        go acc [] = acc
+        go acc [LUnboundedBytes] = acc
+        go acc (LBytes _ : t) = go acc t
+        go acc (LHexConst _ : t) = go acc t
+        go _ _ = False
+canBeVest _ = False
