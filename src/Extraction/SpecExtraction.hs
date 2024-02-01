@@ -41,8 +41,8 @@ import ExtractionBase
 
 
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
-extractStruct owlName owlFields = do
+extractStruct :: String -> [(String, Ty)] -> Bool -> ExtractionMonad OwlDoc
+extractStruct owlName owlFields isVest = do
     let name = specName owlName
     let owlFieldsConcrete = map (\(n,t) -> case doConcretifyTy t of CTGhost -> Nothing; t' -> Just (n,t')) owlFields
     let owlFieldsNoGhost = catMaybes owlFieldsConcrete
@@ -80,10 +80,12 @@ extractStruct owlName owlFields = do
                     owlpretty "let" <+> mkNestPattern (map (specName . fst) fields) <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
                     owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . specName . fst) $ fields)) <> line <>
                     owlpretty "} else { None }" 
-            let parser = owlpretty "#[verifier::opaque] pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
-                            owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
-                            parserBody <> line
-                        )
+            let parser = 
+                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <>
+                    owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
+                        owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
+                        (if isVest then parserBody else owlpretty "// can't autogenerate vest parser" <> line <> owlpretty "todo!()") <> line
+                    )
             let fieldLen f = owlpretty "x." <> owlpretty (specName f) <> owlpretty ".len()"
             let fieldLens = map (\(f,_) -> fieldLen f) fields
             let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> fieldLen f) 
@@ -97,15 +99,22 @@ extractStruct owlName owlFields = do
                         owlpretty "Some(seq_truncate(serialized.data, n))" <> line <>
                         owlpretty "} else { None }" <> line
                     ) <> owlpretty "else { None }"
-            let serializer = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
+            let serializer = 
+                    (if isVest then 
+                        owlpretty "#[verifier::opaque]" <> line <>
+                        owlpretty "pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
-                            serializerBody <> line
-                        )
-            let serializerWrapper = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                            serializerBody <> line)
+                    else owlpretty "")
+            let serializerWrapper = 
+                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <> 
+                    owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
-                            owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
-                            owlpretty "val" <> line <>
-                            owlpretty "} else { seq![] }" <> line
+                            (if isVest then 
+                                owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
+                                owlpretty "val" <> line <>
+                                owlpretty "} else { seq![] }" <> line
+                            else owlpretty "// can't autogenerate vest serializer" <> line <> owlpretty "todo!()")
                         )
             let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
                             owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 

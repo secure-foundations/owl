@@ -214,7 +214,7 @@ extractStruct owlName owlFields = do
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
     structs %= M.insert name (map liftMaybe rustFields)
-    structSpec <- Spec.extractStruct owlName owlFields
+    structSpec <- Spec.extractStruct owlName owlFields isVest
     return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec, vestFmt)
     where
         liftMaybe (s,t) = case t of Nothing -> Nothing ; Just t -> Just (s,t)
