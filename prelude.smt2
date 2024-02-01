@@ -300,12 +300,24 @@
     :pattern (eq (ValueOf n1) (ValueOf n2))
     :qid valueof_name_inj
 )))
+
 (assert (forall ((x Bits) (n Name)) (!
     (=> (IsConstant x)
         (not (= TRUE (eq x (ValueOf n)))))
     :pattern ((IsConstant x) (eq x (ValueOf n)))
     :qid isconstant_neq_name
 )))
+
+; The below can be generalized
+(assert (forall ((a Bits) (x Bits) (y Bits) (n Name) (i Int) (j Int)) (!
+    (=> (and 
+            (HasNameKind n DHkey)
+            (IsConstant a))
+         (not (= TRUE (eq a (KDF x (dhpk (ValueOf n)) y i j)))))
+    :pattern ((IsConstant a) (eq a (KDF x (dhpk (ValueOf n)) y i j)))
+    :qid isconstant_neq_kdf_dhpk
+)))
+
 
 (declare-fun andb (Bits Bits) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
