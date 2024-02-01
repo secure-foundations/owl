@@ -382,9 +382,11 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 }
 
 #[verifier(external_body)]
-pub exec fn owl_enc_st_aead_into(dst: &mut [u8], k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<(), OwlError>)
+pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Ghost<Seq<u8>>, OwlError>)
     ensures
-        res.is_Ok() ==> (dst.dview(), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
+        res.is_Ok() ==> (dst.dview().subrange(start as int, end as int), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
+        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.dview(), msg.dview(), *old(nonce), aad.dview()),
+        res.is_Ok() ==> res.get_Ok_0().view() == dst.dview().subrange(start as int, end as int)
         // *nonce == *old(nonce) + 1,
 {
     todo!()

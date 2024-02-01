@@ -712,3 +712,8 @@ canBeVest (LStruct _ fs) = go True . map snd $ fs
         go acc (LHexConst _ : t) = go acc t
         go _ _ = False
 canBeVest _ = False
+
+bufOpt :: ExtractionMonad Bool
+bufOpt = do
+    fs <- use flags
+    return $ fs ^. fExtractBufOpt

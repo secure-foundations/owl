@@ -687,9 +687,9 @@ extractAExpr binds (AEKDF _ _ _ _ _) = do
 --         p' <- flattenPath p
 --         throwError $ PreimageInExec p'
 
+
 -- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
 -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
-
 extractExpr :: Bool -> Locality -> M.Map String (RustTy, Maybe AExpr) -> CExpr -> ExtractionMonad (M.Map String (RustTy, Maybe AExpr), RustTy, OwlDoc, OwlDoc)
 extractExpr inK loc binds CSkip = return (binds, Unit, owlpretty "", owlpretty "()")
 extractExpr inK loc binds (CInput xsk) = do
@@ -706,6 +706,8 @@ extractExpr inK loc binds (CInput xsk) = do
             owlpretty "let" <+> owlpretty rustX <+> owlpretty "=" <+> eWrapped <> owlpretty ";"
     return (binds, rt', owlpretty "", vsep [letbinding, prek, kPrettied])
 extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
+    unanf <- resolveANF binds ae
+    debugPrint . show . owlpretty $ unanf
     (rty, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     let aePrettied' = owlpretty $ printOwlArg (rty, show aePrettied)    
     l <- case lopt of
@@ -725,6 +727,8 @@ extractExpr inK (Locality myLname myLidxs) binds (COutput ae lopt) = do
 extractExpr inK loc binds (CLet e oanf xk) = do
     let (x, k) = unsafeUnbind xk
     let rustX = rustifyName . show $ x
+    -- debugPrint rustX
+    -- debugPrint . show . owlpretty . M.assocs $ binds
     tempBindingLHS <- case e of 
             CCall {} -> do 
                 t <- getCurRetTy
@@ -756,6 +760,8 @@ extractExpr inK loc binds (CIf ae eT eF) = do
     (_, rt', preeF, eFPrettied) <- extractExpr inK loc binds eF
     return (binds, rt, owlpretty "", preAe <> line <> owlpretty "if" <+> aePrettied <+> braces (vsep [preeT, eTPrettied]) <+> owlpretty "else" <+> braces (vsep [preeF, eFPrettied]))
 extractExpr inK loc binds (CRet ae) = do
+    -- unanf <- resolveANF binds ae
+    -- debugPrint . show . owlpretty $ unanf
     (rt, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     let aePrettied' = if inK then tupled [aePrettied, owlpretty "Tracked(itree)"] else aePrettied
     return (binds, rt, preAe, aePrettied')
@@ -987,6 +993,7 @@ makeFunc owlName _ owlArgs owlRetTy = do
     return ()
 
 
+
 -- The `owlBody` is expected to *not* be in ANF yet (for extraction purposes)
 -- the last `bool` argument is if this is the main function for this locality, in which case we additionally return a wrapper for the entry point
 extractDef :: String -> Locality -> [(DataVar, Embed Ty)] -> Ty -> Maybe Expr -> Bool -> ExtractionMonad (OwlDoc, OwlDoc)
@@ -1009,7 +1016,8 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
     curRetTy .= (Just . show $ parens (owlpretty (specTyOf rtb) <> comma <+> owlpretty (stateName lname)))
     (attr, body) <- case anfBody of
         Just anfBody' -> do
-            (_, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
+            (binds, rtb, preBody, body) <- extractExpr True loc (M.fromList . map (\(s,r) -> (s, (r, Nothing))) $ rustArgs) anfBody'
+            debugPrint $ show $ owlpretty (M.assocs binds)
             let reveal = owlpretty "reveal" <> parens (owlpretty owlName <> owlpretty "_spec") <> owlpretty ";"
             return (owlpretty "", reveal <> line <> preBody <> line <> body)
         Nothing -> return (owlpretty "#[verifier(external_body)]" <> line, owlpretty "todo!(/* implement " <> owlpretty name <> owlpretty " */)")
