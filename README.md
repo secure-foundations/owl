@@ -27,9 +27,9 @@ Suppose you want to extract the protocol in `protocol.owl`, which contains local
     This should output one `.owl_config` file for each of the localities in the protocol (in this example, `loc_alice.owl_config`, `loc_bob.owl_config`, `loc_charlie.owl_config`). These files contain all the pre-initialized names for the protocol (such as pre-shared symmetric keys, public keys for other localities, shared salt for the KDF, etc).
 4.  Open one shell for each of the localities in the protocol (in this example, three shells). In all of them, `cd` to the `extraction` subdirectory.
 5.  In each of the shells, run `cargo run -- run LOCALITY PATH-TO-LOCALITY-CONFIG`. In this example, you would run:  
-    - Shell 1: `cargo run -- run alice loc_alice.owl_config`  
-    - Shell 2: `cargo run -- run bob loc_bob.owl_config`  
-    - Shell 3: `cargo run -- run charlie loc_charlie.owl_config`  
+    - Shell 1: `cargo run -- run Top_alice loc_Top_alice.owl_config`
+    - Shell 2: `cargo run -- run Top_bob loc_Top_bob.owl_config`
+    - Shell 3: `cargo run -- run Top_charlie loc_Top_charlie.owl_config`
     These should all be started within 5 seconds of each other. The extraction harness waits 5 seconds before beginning execution of the locality; this is to ensure that the user has time to start the other localities. Otherwise, the protocol code may fail because another locality's TCP socket is not ready to receive yet.
 6.  You should see the return values of each of the localities printed in their corresponding shells.
 
