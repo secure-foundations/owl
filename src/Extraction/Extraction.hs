@@ -299,9 +299,9 @@ initFuncs = M.fromList [
                 [(_,pk), (_,sk)] -> return $ sk ++ ".owl_dh_combine(&" ++ pk ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
         )),
-        ("UNIT", (Unit, \_ -> return "()")),
-        ("TRUE", (Bool, \_ -> return "true")),
-        ("FALSE", (Bool, \_ -> return "false")),
+        ("unit", (Unit, \_ -> return "()")),
+        ("true", (Bool, \_ -> return "true")),
+        ("false", (Bool, \_ -> return "false")),
         ("Some", (Option VecU8, \args -> case args of
                 [(_,x)] -> return $ "Some(" ++ x ++ ")"
                 _ -> throwError $ TypeError $ "got wrong number of args for Some"
