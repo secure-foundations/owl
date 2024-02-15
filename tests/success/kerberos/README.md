@@ -3,13 +3,30 @@
 
 Kerberos consists of several exchanges:  
 
+***AS Exchange***
+
+The Authentication Service (AS) Exchange between the client and the
+   Kerberos Authentication Server is initiated by a client when it
+   wishes to obtain authentication credentials for a given server but
+   currently holds no credentials.  In its basic form, the client's
+   secret key is used for encryption and decryption.  This exchange is
+   typically used at the initiation of a login session to obtain
+   credentials for a Ticket-Granting Server, which will subsequently be
+   used to obtain credentials for other servers without requiring further 
+   use of the client's secret key. This exchange is also used to request 
+   credentials for services that must not be mediated through the 
+   Ticket-Granting Service, but rather require knowledge of a principal's secret key, 
+   such as the password-changing service (the password-changing service denies requests
+   unless the requester can demonstrate knowledge of the user's old
+   password; requiring this knowledge prevents unauthorized password
+   changes by someone walking up to an unattended session).
 
 **Client to Kerberos KDC**
 
-**KRB_AS_REQ:** consists of client’s identity, server’s identity, supplementary credential metadata, and a randomly generated nonce to detect replays.
-
-
 **KRB_KDC_REQ:** no application tag, but is incorporated into either KRB_AS_REQ for an initial ticket or KRB_TGS_REQ for an additional ticket.
+
+**KRB_AS_REQ:** consists of client’s identity, server’s identity, supplementary credential metadata, and a randomly generated nonce to detect replays. 
+
 ```
 AS-REQ          ::= [APPLICATION 10] KDC-REQ
 TGS-REQ         ::= [APPLICATION 12] KDC-REQ
@@ -27,6 +44,8 @@ PA-DATA         ::= SEQUENCE {
 }
 ```
 
+PA-DATA stores pre-authentication data which is historically used to augment the initial authentication exchange.
+
 **padata-type**<br>
       Indicates the way that the padata-value element is to be
       interpreted.  Negative values of padata-type are reserved for
@@ -36,6 +55,18 @@ PA-DATA         ::= SEQUENCE {
 **padata-value**<br>
       Usually contains the DER encoding of another type; the padata-type
       field identifies which type is encoded here.
+
+      padata-type  Name             Contents of padata-value
+
+      1            pa-tgs-req       DER encoding of AP-REQ
+
+      2            pa-enc-timestamp DER encoding of PA-ENC-TIMESTAMP
+
+      3            pa-pw-salt       salt (not ASN.1 encoded)
+
+      11           pa-etype-info    DER encoding of ETYPE-INFO
+
+      19           pa-etype-info2   DER encoding of ETYPE-INFO2
 
 ```
 KDC-REQ-BODY    ::= SEQUENCE {
@@ -64,7 +95,66 @@ KDC-REQ-BODY    ::= SEQUENCE {
 
 **Kerberos KDC to Client**
 
+The KRB_KDC_REP message format is used for the reply from the KDC for
+   either an initial (AS) request or a subsequent (TGS) request.  There
+   is no message type for KRB_KDC_REP.  Instead, the type will be either
+   KRB_AS_REP or KRB_TGS_REP.  The key used to encrypt the ciphertext
+   part of the reply depends on the message type.  For KRB_AS_REP, the
+   ciphertext is encrypted in the client's secret key, and the client's
+   key version number is included in the key version number for the
+   encrypted data.  For KRB_TGS_REP, the ciphertext is encrypted in the
+   sub-session key from the Authenticator; if it is absent, the
+   ciphertext is encrypted in the session key from the TGT used in the
+   request.  In that case, no version number will be present in the
+   EncryptedData sequence.
+
 **KRB_AS_REP:** consists of a ticket for the client to present to the server, and (session key || matching nonce)_client’s SK.
+
+```
+   AS-REP          ::= [APPLICATION 11] KDC-REP
+
+   TGS-REP         ::= [APPLICATION 13] KDC-REP
+
+   KDC-REP         ::= SEQUENCE {
+           pvno            [0] INTEGER (5),
+           msg-type        [1] INTEGER (11 -- AS -- | 13 -- TGS --),
+           padata          [2] SEQUENCE OF PA-DATA OPTIONAL
+                                   -- NOTE: not empty --,
+           crealm          [3] Realm,
+           cname           [4] PrincipalName,
+           ticket          [5] Ticket,
+           enc-part        [6] EncryptedData
+                                   -- EncASRepPart or EncTGSRepPart,
+                                   -- as appropriate
+   }
+
+   EncASRepPart    ::= [APPLICATION 25] EncKDCRepPart
+
+   EncTGSRepPart   ::= [APPLICATION 26] EncKDCRepPart
+
+   EncKDCRepPart   ::= SEQUENCE {
+           key             [0] EncryptionKey,
+           last-req        [1] LastReq,
+           nonce           [2] UInt32,
+           key-expiration  [3] KerberosTime OPTIONAL,
+           flags           [4] TicketFlags,
+           authtime        [5] KerberosTime,
+           starttime       [6] KerberosTime OPTIONAL,
+           endtime         [7] KerberosTime,
+           renew-till      [8] KerberosTime OPTIONAL,
+           srealm          [9] Realm,
+           sname           [10] PrincipalName,
+           caddr           [11] HostAddresses OPTIONAL
+   }
+
+   LastReq         ::=     SEQUENCE OF SEQUENCE {
+           lr-type         [0] Int32,
+           lr-value        [1] KerberosTime
+   }
+```
+
+TODO: explain the fields
+
 ```
 Ticket          ::= [APPLICATION 1] SEQUENCE {
            tkt-vno         [0] INTEGER (5),
@@ -219,6 +309,56 @@ AuthorizationData       ::= SEQUENCE OF SEQUENCE {
       negative values are reserved for local use.  Non-negative values
       are reserved for registered use.
 
+***CS Exchange***
+
+The client/server authentication (CS) exchange is used by network
+   applications to authenticate the client to the server and vice versa.
+   The client MUST have already acquired credentials for the server
+   using the AS or TGS exchange.
+
+
+**Client to Application Server**
+
+The KRB_AP_REQ message contains the Kerberos protocol version number,
+   the message type KRB_AP_REQ, an options field to indicate any options
+   in use, and the ticket and authenticator themselves.  The KRB_AP_REQ
+   message is often referred to as the "authentication header".
+
+
+```
+   AP-REQ          ::= [APPLICATION 14] SEQUENCE {
+           pvno            [0] INTEGER (5),
+           msg-type        [1] INTEGER (14),
+           ap-options      [2] APOptions,
+           ticket          [3] Ticket,
+           authenticator   [4] EncryptedData -- Authenticator
+   }
+
+   APOptions       ::= KerberosFlags
+           -- reserved(0),
+           -- use-session-key(1),
+           -- mutual-required(2)
+```
+
+
+***TGS Exchange***
+
+The TGS exchange between a client and the Kerberos TGS is initiated
+by a client when it seeks to obtain authentication credentials for a
+given server (which might be registered in a remote realm), when it
+seeks to renew or validate an existing ticket, or when it seeks to
+obtain a proxy ticket.  In the first case, the client must already
+have acquired a ticket for the Ticket-Granting Service using the AS
+exchange (the TGT is usually obtained when a client initially
+authenticates to the system, such as when a user logs in).  The
+message format for the TGS exchange is almost identical to that for
+the AS exchange.  The primary difference is that encryption and
+decryption in the TGS exchange does not take place under the client's
+key.  Instead, the session key from the TGT or renewable ticket, or
+sub-session key from an Authenticator is used.  As is the case for
+all application servers, expired tickets are not accepted by the TGS,
+so once a renewable or TGT expires, the client must use a separate
+exchange to obtain valid tickets.
 
 **DER**
 
