@@ -29,7 +29,6 @@ The Authentication Service (AS) Exchange between the client and the
 
 ```
 AS-REQ          ::= [APPLICATION 10] KDC-REQ
-TGS-REQ         ::= [APPLICATION 12] KDC-REQ
 KDC-REQ         ::= SEQUENCE {
         pvno            [1] INTEGER (5) ,
         msg-type      [2] INTEGER (10 -- AS -- | 12 -- TGS --),
@@ -112,8 +111,6 @@ The KRB_KDC_REP message format is used for the reply from the KDC for
 
 ```
    AS-REP          ::= [APPLICATION 11] KDC-REP
-
-   TGS-REP         ::= [APPLICATION 13] KDC-REP
 
    KDC-REP         ::= SEQUENCE {
            pvno            [0] INTEGER (5),
@@ -389,6 +386,16 @@ sub-session key from an Authenticator is used.  As is the case for
 all application servers, expired tickets are not accepted by the TGS,
 so once a renewable or TGT expires, the client must use a separate
 exchange to obtain valid tickets.
+
+**Client to TGS**
+```
+   TGS-REQ         ::= [APPLICATION 12] KDC-REQ
+```
+
+**TGS to Client**
+```
+   TGS-REP         ::= [APPLICATION 13] KDC-REP
+```
 
 **DER**
 
