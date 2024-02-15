@@ -338,6 +338,36 @@ The KRB_AP_REQ message contains the Kerberos protocol version number,
            -- reserved(0),
            -- use-session-key(1),
            -- mutual-required(2)
+
+-- Unencrypted authenticator
+   Authenticator   ::= [APPLICATION 2] SEQUENCE  {
+           authenticator-vno       [0] INTEGER (5),
+           crealm                  [1] Realm,
+           cname                   [2] PrincipalName,
+           cksum                   [3] Checksum OPTIONAL,
+           cusec                   [4] Microseconds,
+           ctime                   [5] KerberosTime,
+           subkey                  [6] EncryptionKey OPTIONAL,
+           seq-number              [7] UInt32 OPTIONAL,
+           authorization-data      [8] AuthorizationData OPTIONAL
+   }
+```
+
+**Application Server to Client**
+
+```
+   AP-REP          ::= [APPLICATION 15] SEQUENCE {
+           pvno            [0] INTEGER (5),
+           msg-type        [1] INTEGER (15),
+           enc-part        [2] EncryptedData -- EncAPRepPart
+   }
+
+   EncAPRepPart    ::= [APPLICATION 27] SEQUENCE {
+           ctime           [0] KerberosTime,
+           cusec           [1] Microseconds,
+           subkey          [2] EncryptionKey OPTIONAL,
+           seq-number      [3] UInt32 OPTIONAL
+   }
 ```
 
 
