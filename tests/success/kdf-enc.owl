@@ -16,9 +16,9 @@ struct s {
 }
 
 name k : kdf {ikm info.
-    (info == 0x01) -> enckey Name(alice1) 
+    (info == 0x01) -> enckey Name(alice1),
     (info == 0x02) -> strict kdf {ikm info.
-        (info == 0x01) -> enckey Name(alice2)
+        (info == 0x01) -> enckey Name(alice2),
         (info == 0x02) -> kdf {ikm info.
             (info == 0x01) -> enckey Name(alice3)
         }

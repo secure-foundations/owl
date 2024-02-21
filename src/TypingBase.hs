@@ -1128,15 +1128,17 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
-obtainTyCases :: Ty -> String -> Check [(String, Maybe Ty)]
+obtainTyCases :: Ty -> String -> Check (ResolvedPath, [(String, Maybe Ty)])
 obtainTyCases t err = 
     case t^.val of
-      TConst s ps -> do
+      TConst s@(PRes (PDot pth _)) ps -> do
           td <- getTyDef s
           case td of
-            EnumDef b -> extractEnum ps (show s) b
+            EnumDef b -> do
+                vs <- extractEnum ps (show s) b
+                return (pth, vs)
             _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
-      TOption t0 -> return [("None", Nothing), ("Some", Just t0)]
+      TOption t0 -> return (PTop, [("None", Nothing), ("Some", Just t0)])
       _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
 
 

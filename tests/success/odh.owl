@@ -1,0 +1,16 @@
+locality alice
+
+name X : DH @ alice
+name Y : DH @ alice
+
+name n<i> : nonce @ alice
+corr <i> adv ==> [n<i>] 
+
+odh L : 
+    X, Y -> {salt info.
+    //     salt == 0x -> nonce,
+        <i> salt == get(n<i>) -> nonce
+    }
+
+def main() @ alice : Unit = 
+    assert (!in_odh(0x, dh_combine(dhpk(get(X)), get(Y)), 0x))

@@ -2199,6 +2199,9 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           -- TODO: we need to check that, if we have an annotation, in the good case, we simply subtype
           -- into the validated ty, but we still return the true type
           t <- checkExpr Nothing e1
+          e1_a <- case e1^.val of
+                    ERet a -> return a
+                    _ -> typeError "Expected AExpr for case after ANF"
           t <- stripRefinements <$> normalizeTy t
           (wfCase, tcases, ok) <- case otk of
             Just (tAnn, k) -> do
@@ -2219,9 +2222,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
               flowCheck lt advLbl
           assert ("Duplicate case") $ uniq (map fst cases)
           assert ("Cases must not be nonempty") $ length cases > 0
-          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
+          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst $ snd tcases))
           branch_ts <- forM cases $ \(c, ocase) -> do
-              let (Just otcase) = lookup c tcases
+              let enumPathPre = fst tcases
+              let (Just otcase) = lookup c $ snd tcases
               case (otcase, ocase) of
                 (Nothing, Left ek) -> checkExpr ot ek
                 (Just t1, Right (s, xk)) -> do
@@ -2235,7 +2239,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                         return $ case t' of
                             Nothing -> tData lt lt
                             Just t' -> t'
-                    tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
+                    -- Hack since we currently do not interpret option types the
+                    -- same as enums
+                    let xt_refined = case c of
+                                       "Some" -> xt
+                                       "None" -> xt
+                                       _ -> tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]
+                    tout <- withVars [(x, (s, Nothing, xt_refined))] $ checkExpr ot k
                     case ot of
                       Just _ -> return tout
                       Nothing -> stripTy x tout
