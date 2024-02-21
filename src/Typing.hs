@@ -2227,7 +2227,14 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
               let enumPathPre = fst tcases
               let (Just otcase) = lookup c $ snd tcases
               case (otcase, ocase) of
-                (Nothing, Left ek) -> checkExpr ot ek
+                (Nothing, Left ek) -> do
+                    case c of
+                      "None" -> checkExpr ot ek
+                      "Some" -> checkExpr ot ek
+                      _ -> do
+                          x <- freshVar
+                          t <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]))] $ checkExpr ot ek
+                          stripTy (s2n x) t
                 (Just t1, Right (s, xk)) -> do
                     (x, k) <- unbind xk
                     -- Generate type of bound case variable. Note that if this is a parsing `case` statement,
