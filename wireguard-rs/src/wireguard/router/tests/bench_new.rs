@@ -5,7 +5,18 @@ use super::*;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
+use std::ops::Deref;
+use std::sync::Mutex;
+use std::time::Duration;
+
+
+
+const SIZE_MSG: usize = 1024;
+const SIZE_KEEPALIVE: usize = message_data_len(0);
+const TIMEOUT: Duration = Duration::from_millis(1000);
+
 
 // only used in benchmark
 #[cfg(feature = "unstable")]
@@ -18,77 +29,52 @@ use num_cpus;
 #[cfg(feature = "unstable")]
 use test::Bencher;
 
-//
-struct TransmissionCounter {
-    sent: AtomicUsize,
-    recv: AtomicUsize,
-}
 
-impl TransmissionCounter {
-    #[allow(dead_code)]
-    fn new() -> TransmissionCounter {
-        TransmissionCounter {
-            sent: AtomicUsize::new(0),
-            recv: AtomicUsize::new(0),
-        }
-    }
+// struct TransmissionCounter {
+//     sent: AtomicUsize,
+//     recv: AtomicUsize,
+// }
 
-    #[allow(dead_code)]
-    fn reset(&self) {
-        self.sent.store(0, Ordering::SeqCst);
-        self.recv.store(0, Ordering::SeqCst);
-    }
+// impl TransmissionCounter {
+//     #[allow(dead_code)]
+//     fn new() -> TransmissionCounter {
+//         TransmissionCounter {
+//             sent: AtomicUsize::new(0),
+//             recv: AtomicUsize::new(0),
+//         }
+//     }
 
-    #[allow(dead_code)]
-    fn sent(&self) -> usize {
-        self.sent.load(Ordering::Acquire)
-    }
+//     #[allow(dead_code)]
+//     fn reset(&self) {
+//         self.sent.store(0, Ordering::SeqCst);
+//         self.recv.store(0, Ordering::SeqCst);
+//     }
 
-    #[allow(dead_code)]
-    fn recv(&self) -> usize {
-        self.recv.load(Ordering::Acquire)
-    }
-}
+//     #[allow(dead_code)]
+//     fn sent(&self) -> usize {
+//         self.sent.load(Ordering::Acquire)
+//     }
 
-struct BencherCallbacks {}
+//     #[allow(dead_code)]
+//     fn recv(&self) -> usize {
+//         self.recv.load(Ordering::Acquire)
+//     }
+// }
 
-impl Callbacks for BencherCallbacks {
-    type Opaque = Arc<TransmissionCounter>;
-    fn send(t: &Self::Opaque, size: usize, _sent: bool, _keypair: &Arc<KeyPair>, _counter: u64) {
-        t.sent.fetch_add(size, Ordering::SeqCst);
-    }
-    fn recv(t: &Self::Opaque, size: usize, _sent: bool, _keypair: &Arc<KeyPair>) {
-        t.recv.fetch_add(size, Ordering::SeqCst);
-    }
-    fn need_key(_t: &Self::Opaque) {}
-    fn key_confirmed(_t: &Self::Opaque) {}
-}
+// struct BencherCallbacks {}
 
-#[cfg(feature = "profiler")]
-use cpuprofiler::PROFILER;
+// impl Callbacks for BencherCallbacks {
+//     type Opaque = Arc<TransmissionCounter>;
+//     fn send(t: &Self::Opaque, size: usize, _sent: bool, _keypair: &Arc<KeyPair>, _counter: u64) {
+//         t.sent.fetch_add(size, Ordering::SeqCst);
+//     }
+//     fn recv(t: &Self::Opaque, size: usize, _sent: bool, _keypair: &Arc<KeyPair>) {
+//         t.recv.fetch_add(size, Ordering::SeqCst);
+//     }
+//     fn need_key(_t: &Self::Opaque) {}
+//     fn key_confirmed(_t: &Self::Opaque) {}
+// }
 
-#[cfg(feature = "profiler")]
-fn profiler_stop() {
-    println!("Stopping profiler");
-    PROFILER.lock().unwrap().stop().unwrap();
-}
-
-#[cfg(feature = "profiler")]
-fn profiler_start(name: &str) {
-    use std::path::Path;
-
-    // find first available path to save profiler output
-    let mut n = 0;
-    loop {
-        let path = format!("./{}-{}.profile", name, n);
-        if !Path::new(path.as_str()).exists() {
-            println!("Starting profiler: {}", path);
-            PROFILER.lock().unwrap().start(path).unwrap();
-            break;
-        };
-        n += 1;
-    }
-}
 
 #[cfg(test)]
 use super::super::super::types::RouterDeviceType;
@@ -99,9 +85,282 @@ use test::Bencher;
 #[cfg(test)]
 use std::net::IpAddr;
 
+
+
+struct EventTracker<E> {
+    rx: Mutex<Receiver<E>>,
+    tx: Mutex<Sender<E>>,
+}
+
+impl<E> EventTracker<E> {
+    fn new() -> Self {
+        let (tx, rx) = channel();
+        EventTracker {
+            rx: Mutex::new(rx),
+            tx: Mutex::new(tx),
+        }
+    }
+
+    fn log(&self, e: E) {
+        self.tx.lock().unwrap().send(e).unwrap();
+    }
+
+    fn wait(&self, timeout: Duration) -> Option<E> {
+        match self.rx.lock().unwrap().recv_timeout(timeout) {
+            Ok(v) => Some(v),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => panic!("Disconnect"),
+        }
+    }
+
+    fn now(&self) -> Option<E> {
+        self.wait(Duration::from_millis(0))
+    }
+}
+
+// type for tracking events inside the router module
+struct Inner {
+    send: EventTracker<(usize, bool)>,
+    recv: EventTracker<(usize, bool)>,
+    need_key: EventTracker<()>,
+    key_confirmed: EventTracker<()>,
+}
+
+#[derive(Clone)]
+struct Opaque {
+    inner: Arc<Inner>,
+}
+
+impl Deref for Opaque {
+    type Target = Inner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+struct TestCallbacks();
+
+impl Opaque {
+    fn new() -> Opaque {
+        Opaque {
+            inner: Arc::new(Inner {
+                send: EventTracker::new(),
+                recv: EventTracker::new(),
+                need_key: EventTracker::new(),
+                key_confirmed: EventTracker::new(),
+            }),
+        }
+    }
+}
+
+macro_rules! no_events {
+    ($opq:expr) => {
+        assert_eq!($opq.send.now(), None, "unexpected send event");
+        assert_eq!($opq.recv.now(), None, "unexpected recv event");
+        assert_eq!($opq.need_key.now(), None, "unexpected need_key event");
+        assert_eq!(
+            $opq.key_confirmed.now(),
+            None,
+            "unexpected key_confirmed event"
+        );
+    };
+}
+
+impl Callbacks for TestCallbacks {
+    type Opaque = Opaque;
+
+    fn send(t: &Self::Opaque, size: usize, sent: bool, _keypair: &Arc<KeyPair>, _counter: u64) {
+        t.send.log((size, sent))
+    }
+
+    fn recv(t: &Self::Opaque, size: usize, sent: bool, _keypair: &Arc<KeyPair>) {
+        t.recv.log((size, sent))
+    }
+
+    fn need_key(t: &Self::Opaque) {
+        t.need_key.log(());
+    }
+
+    fn key_confirmed(t: &Self::Opaque) {
+        t.key_confirmed.log(());
+    }
+}
+
+
 // #[cfg(feature = "unstable")]
 #[cfg(test)]
-fn bench_router_outbound(b: &mut Bencher, dev_type: RouterDeviceType) {
+fn bench_router(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: RouterDeviceType) {
+    use crate::platform::udp::Reader;
+
+    // 10 GB transmission per iteration
+    // const BYTES_PER_ITER: usize = 100000 * 1440;
+    const NUM_PACKETS: usize = 1000;
+
+    const MAX_SIZE_BODY: usize = 1 << 15;
+
+    // inner payload of IPv4 packet is 1440 bytes
+    const BYTES_PER_PACKET: usize = 1440;
+
+    let mut confirm_packet_size = SIZE_KEEPALIVE;
+
+
+    // create device
+    let ((bind_reader1, bind_writer1), (bind_reader2, bind_writer2)) =
+    dummy::PairBind::pair();
+
+    // create matching device
+    let (_fake, _, tun_writer1, _) = dummy::TunTest::create(false);
+    let (_fake, _, tun_writer2, _) = dummy::TunTest::create(false);
+
+    let router1: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer1, dev1_type);
+    router1.set_outbound_writer(bind_writer1);
+
+    let router2: Device<_, TestCallbacks, _, _> = Device::new(1, tun_writer2, dev2_type);
+    router2.set_outbound_writer(bind_writer2);
+
+    let p1 = ("192.168.1.0", 24, "192.168.1.20");
+    let p2 = ("172.133.133.133", 32, "172.133.133.133");
+
+    // prepare opaque values for tracing callbacks
+
+    let opaque1 = Opaque::new();
+    let opaque2 = Opaque::new();
+
+    // create peers with matching keypairs and assign subnets
+
+    let peer1 = router1.new_peer(opaque1.clone());
+    let peer2 = router2.new_peer(opaque2.clone());
+
+    {
+        let (mask, len, _ip) = p1;
+        let mask: IpAddr = mask.parse().unwrap();
+        peer1.add_allowed_ip(mask, len);
+        peer1.add_keypair(dummy_keypair(false));
+    }
+
+    {
+        let (mask, len, _ip) = p2;
+        let mask: IpAddr = mask.parse().unwrap();
+        peer2.add_allowed_ip(mask, len);
+        peer2.set_endpoint(dummy::UnitEndpoint::new());
+    }
+
+    // add a keypair
+    assert_eq!(peer1.get_endpoint(), None, "no endpoint has yet been set");
+    peer2.add_keypair(dummy_keypair(true));
+
+    // this should cause a key-confirmation packet (keepalive or staged packet)
+    assert_eq!(
+        opaque2.send.wait(TIMEOUT),
+        Some((confirm_packet_size, true)),
+        "expected successful transmission of a confirmation packet"
+    );
+
+    // no other events should fire
+    no_events!(opaque1);
+    no_events!(opaque2);
+
+    // read confirming message received by the other end ("across the internet")
+    let mut buf = vec![0u8; SIZE_MSG * 2];
+    let (len, from) = bind_reader1.read(&mut buf).unwrap();
+    buf.truncate(len);
+
+    assert_eq!(
+        len, confirm_packet_size,
+        "unexpected size of confirmation message"
+    );
+
+    // pass to the router for processing
+    router1
+        .recv(from, buf)
+        .expect("failed to receive confirmation message");
+
+    // check that a receive event is fired
+    assert_eq!(
+        opaque1.recv.wait(TIMEOUT),
+        Some((confirm_packet_size, true)),
+        "we expect processing to be successful"
+    );
+
+    // the key is confirmed
+    assert_eq!(
+        opaque1.key_confirmed.wait(TIMEOUT),
+        Some(()),
+        "confirmation message should confirm the key"
+    );
+
+    // peer1 learns the endpoint
+    assert!(
+        peer1.get_endpoint().is_some(),
+        "peer1 should learn the endpoint of peer2 from the confirmation message (roaming)"
+    );
+
+    // no other events should fire
+    no_events!(opaque1);
+    no_events!(opaque2);
+
+
+    let (dst,_,_) = p1;
+    let (src,_,_) = p2;
+
+    // create "IP packet"
+    let dst = dst.parse().unwrap();
+    let src = match dst {
+        IpAddr::V4(_) => "127.0.0.1".parse().unwrap(),
+        IpAddr::V6(_) => "::1".parse().unwrap(),
+    };
+    let packet = make_packet(BYTES_PER_PACKET, src, dst, 0);
+
+    // suffix with zero and reserve capacity for tag
+    // (normally done to enable in-place transport message construction)
+    let mut msg = pad(&packet);
+    msg.reserve(16);
+
+    let mut ctr: u64 = 0;
+
+    // repeatedly transmit 1000 packets
+    b.iter(|| {
+    // for j in 0..1 {
+        // opaque.reset();
+        // while opaque.sent() < BYTES_PER_ITER / packet.len() {
+        for i in 0..NUM_PACKETS {
+            let packet = make_packet(BYTES_PER_PACKET, src, dst, i as u64);
+
+            // suffix with zero and reserve capacity for tag
+            // (normally done to enable in-place transport message construction)
+            let mut msg = pad(&packet);
+            msg.reserve(16);
+
+            router1
+                .send(msg)
+                .expect("failed to crypto-route packet");
+
+            let mut buf: Vec<u8> = vec![0u8; 2000 + 512];
+            // // receive ("across the internet") on the other end
+            let (len, from) = bind_reader2.read(&mut buf).unwrap();
+            buf.truncate(len);
+            router2.recv(from, buf).unwrap();
+        }
+    //}
+    });
+}
+
+#[bench]
+fn bench_router_noowl(b: &mut Bencher) {
+    bench_router(b, RouterDeviceType::NoOwl, RouterDeviceType::NoOwl);
+}
+
+#[bench]
+fn bench_router_owl(b: &mut Bencher) {
+    bench_router(b, RouterDeviceType::OwlInitiator, RouterDeviceType::NoOwl);
+}
+
+
+/* 
+// #[cfg(feature = "unstable")]
+#[cfg(test)]
+fn bench_router_bidirectional(b: &mut Bencher, dev_type: RouterDeviceType) {
     // 10 GB transmission per iteration
     // const BYTES_PER_ITER: usize = 100000 * 1440;
     const NUM_PACKETS: usize = 1000;
@@ -156,18 +415,37 @@ fn bench_router_outbound(b: &mut Bencher, dev_type: RouterDeviceType) {
         }
     });
 }
+*/
 
-#[bench]
-fn bench_router_outbound_noowl(b: &mut Bencher) {
-    bench_router_outbound(b, RouterDeviceType::NoOwl);
-}
+// #[bench]
+// fn bench_bidirectional_1_rs_rs(b: &mut Bencher) {
+//     b.iter(|| {
+//         bench_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, 1)
+//     });
+// }
 
-#[bench]
-fn bench_router_outbound_owlinitiator(b: &mut Bencher) {
-    bench_router_outbound(b, RouterDeviceType::OwlInitiator);
-}
+// #[bench]
+// fn bench_bidirectional_3_rs_owl_responder(b: &mut Bencher) {
+//     b.iter(|| {
+//         bench_bidirectional(RouterDeviceType::NoOwl, RouterDeviceType::OwlResponder, 1)
+//     });
+// }
 
-/*
+// #[bench]
+// fn bench_bidirectional_2_owl_initiator_rs(b: &mut Bencher) {
+//     b.iter(|| {
+//         bench_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::NoOwl, 1)
+//     });
+// }
+
+// #[bench]
+// fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
+//     b.iter(|| {
+//         bench_bidirectional(RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder, 1)
+//     });
+// }
+
+/* 
 #[test]
 fn bench_router_bidirectional(b: &mut Bencher) {
     const MAX_SIZE_BODY: usize = 1500;
@@ -396,6 +674,9 @@ fn bench_router_bidirectional(b: &mut Bencher) {
     }
 }
 
+*/
+
+/* 
 #[bench]
 fn bench_router_inbound(b: &mut Bencher) {
     struct BencherCallbacks {}
@@ -455,4 +736,4 @@ fn bench_router_inbound(b: &mut Bencher) {
     #[cfg(feature = "profiler")]
     profiler_stop();
 }
-*/
+*/ 

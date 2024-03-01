@@ -10,6 +10,8 @@ use super::workers::HandshakeJob;
 use super::tun::Tun;
 use super::udp::UDP;
 
+use super::types::RouterDeviceType;
+
 use super::workers::{handshake_worker, tun_worker, udp_worker};
 
 use std::fmt;
@@ -274,7 +276,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
 
         // create router
         let router: router::Device<B::Endpoint, PeerInner<T, B>, T::Writer, B::Writer> =
-            router::Device::new(num_cpus::get(), writer);
+            router::Device::new(num_cpus::get(), writer, RouterDeviceType::NoOwl);
 
         // create arc to state
         let wg = WireGuard {

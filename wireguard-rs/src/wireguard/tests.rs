@@ -55,6 +55,31 @@ pub fn make_packet(size: usize, src: IpAddr, dst: IpAddr, id: u64) -> Vec<u8> {
     msg
 }
 
+
+
+#[cfg(test)]
+use test::Bencher;
+
+#[bench]
+fn bench_make_packet(b: &mut Bencher) {
+    const BYTES_PER_PACKET: usize = 1440;
+    const NUM_PACKETS: usize = 1000;
+
+    // create "IP packet"
+    let dst =  "192.168.1.20".parse().unwrap();
+    let src = match dst {
+        IpAddr::V4(_) => "127.0.0.1".parse().unwrap(),
+        IpAddr::V6(_) => "::1".parse().unwrap(),
+    };
+
+    b.iter(|| {
+        for i in 0..NUM_PACKETS {
+            make_packet(BYTES_PER_PACKET, src, dst, 0);
+        }
+    });
+}
+
+
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
 }

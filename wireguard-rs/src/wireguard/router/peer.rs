@@ -1,5 +1,5 @@
 use super::super::constants::*;
-use super::super::{tun, udp, Endpoint, KeyPair};
+use super::super::{tun, udp, Endpoint, KeyPair, types::RouterDeviceType};
 
 use super::anti_replay::AntiReplay;
 use super::device::DecryptionState;
@@ -71,7 +71,7 @@ pub struct Peer<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
 /// A PeerHandle cannot be cloned (unlike the wrapped type).
 /// A PeerHandle dereferences to a Peer (meaning you can use it like a Peer struct)
 pub struct PeerHandle<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
-    peer: Peer<E, C, T, B>,
+    pub peer: Peer<E, C, T, B>,
 }
 
 impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Clone for Peer<E, C, T, B> {
@@ -249,7 +249,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Peer<E, C, T,
     ///
     /// - `msg` : A padded vector holding the message (allows in-place construction of the transport header)
     /// - `stage`: Should the message be staged if no key is available
-    pub(super) fn send(&self, msg: Vec<u8>, stage: bool) {
+    pub(super) fn send(&self, msg: Vec<u8>, stage: bool, device_type: RouterDeviceType) {
         // check if key available
         let (job, need_key) = {
             let mut enc_key = self.enc_key.lock();
@@ -273,7 +273,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Peer<E, C, T,
                     } else {
                         log::debug!("encryption state available, nonce = {}", state.nonce);
                         let job =
-                            SendJob::new(msg, state.nonce, state.keypair.clone(), self.clone());
+                            SendJob::new(msg, state.nonce, state.keypair.clone(), self.clone(), device_type);
                         if self.outbound.push(job.clone()) {
                             state.nonce += 1;
                             (Some(job), false)
@@ -306,7 +306,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Peer<E, C, T,
             match staged.pop_front() {
                 Some(msg) => {
                     sent = true;
-                    self.send(msg, false);
+                    self.send(msg, false, RouterDeviceType::NoOwl);
                 }
                 None => break sent,
             }
@@ -499,7 +499,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> PeerHandle<E,
 
     pub fn send_keepalive(&self) {
         log::trace!("peer.send_keepalive");
-        self.peer.send(vec![0u8; SIZE_MESSAGE_PREFIX], false)
+        self.peer.send(vec![0u8; SIZE_MESSAGE_PREFIX], false, RouterDeviceType::NoOwl)
     }
 
     /// Map a subnet to the peer
