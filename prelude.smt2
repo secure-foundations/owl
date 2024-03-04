@@ -327,6 +327,15 @@
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
 (declare-fun KDFName (Bits Bits Bits Int Int) Name)
 
+(assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
+    (=>
+        (and (>= j 0) (>= i 0))
+        (= (length (KDF x y z i j)) (I2B j)
+    ))
+    :pattern ((KDF x y z i j))
+    :qid kdf_length
+)))
+
 ; Abstract permission that the specified KDF hash has a certain name type
 ; (name type given by last argument counter)
 (declare-fun KDFPerm (Bits Bits Bits Int Int Int) Bool)

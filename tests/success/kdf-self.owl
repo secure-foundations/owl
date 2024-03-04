@@ -1,0 +1,22 @@
+locality alice
+
+name alice_secret : nonce @ alice
+
+counter C @ alice
+
+name k0 : kdf {ikm info self.
+    info == 0x01 -> public nonce |counter|,
+    info == 0x02 -> st_aead Data<[alice_secret] /\ adv, |adv|>
+                            aad x. true
+                            nonce C
+                            pattern i. xor(i, gkdf<nonce |counter|;0>(self, ikm, 0x01))
+} @ alice
+
+corr [k0] ==> [alice_secret]
+
+def main() @ alice : Unit = 
+    corr_case k0 in
+    let base_nonce = kdf<0;;nonce |counter|;0>(get(k0), 0x, 0x01) in 
+    let k_enc = kdf<1;;enckey;0>(get(k0), 0x, 0x02) in
+    let c = st_aead_enc<C, pattern i. xor(i, base_nonce)>(k_enc, get(alice_secret), 0x) in 
+    output c
