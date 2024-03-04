@@ -32,7 +32,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh"]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor"]
 
 data PathType = 
     PTName
@@ -335,17 +335,19 @@ resolveNameType e = do
                       pth' <- resolvePath (e^.spanOf) PTNameType pth
                       return $ NT_App pth' is
                   NT_DH -> return t
-                  NT_Nonce -> return t
+                  NT_Nonce _ -> return t
                   NT_Sig t -> NT_Sig <$> resolveTy t
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
-                  NT_StAEAD t xpr p -> do
+                  NT_StAEAD t xpr p ypat -> do
                       t' <- resolveTy t
                       (x, pr) <- unbind xpr
                       pr' <- resolveProp pr
                       p' <- resolvePath (e^.spanOf) PTCounter p
-                      return $ NT_StAEAD t' (bind x pr') p' 
+                      (y, pat) <- unbind ypat
+                      pat' <- resolveAExpr pat
+                      return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
                   NT_KDF pos b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
                       cases' <- forM cases $ \bpnts -> do 
@@ -564,10 +566,13 @@ resolveCryptOp pos cop =
           return $ CLemma l'
       CKDF x y nks i -> return cop
       CAEnc -> return CAEnc
-      CEncStAEAD p is -> do
+      CEncStAEAD p is xpat -> do
+          (x, pat) <- unbind xpat
+          pat' <- resolveAExpr pat
           p' <- resolvePath pos PTCounter p
-          return $ CEncStAEAD p' is
-      CDecStAEAD -> return CDecStAEAD
+          return $ CEncStAEAD p' is $ bind x pat'
+      CDecStAEAD -> do
+          return $ CDecStAEAD 
       CADec -> return CADec
       CPKDec -> return CPKDec
       CPKEnc -> return CPKEnc

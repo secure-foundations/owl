@@ -31,7 +31,7 @@ corr [k] ==> [alice2]
 // This is just a hack for extraction to test slicing the KDF output
 // It's not supposed to mean anything cryptographically
 name kk : kdf {ikm info.
-    True -> strict nonce || nonce
+    True -> strict (nonce) || nonce
 } @ bob
 corr adv ==> [kk]
 

@@ -504,7 +504,8 @@ extractCryptOp binds op owlArgs = do
             let encOp = owlpretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (Rc VecU8, owlpretty "", genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option $ Rc VecU8, owlpretty "", owlpretty $ printOwlOp "owl_dec" [k, x])
-        (CEncStAEAD np _, [k, x, aad]) -> do 
+        (CEncStAEAD np _ xpat, [k, x, aad]) -> do 
+            error "TODO: fix extraction for pattern"
             n <- flattenPath np
             let encOp = owlpretty $ printOwlOp "owl_enc_st_aead" [k, x, (Number, "&mut mut_state." ++ rustifyName n), aad]
             let unwrapped = 
@@ -986,7 +987,10 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
 
 nameInit :: String -> NameType -> ExtractionMonad OwlDoc
 nameInit s nt = case nt^.val of
-    NT_Nonce -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
+    NT_Nonce l -> 
+        case l of
+          "nonce" -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
+          _ -> throwError $ ErrSomethingFailed "Currently unsupported: custom nonce lengths"
     NT_Enc _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
     NT_StAEAD {} -> 
                 return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
@@ -1117,7 +1121,10 @@ preprocessModBody mb = do
               --   return (locMap, shared, pubkeys) -- RO defs go in a separate data structure
               TB.BaseDef (nt, loc) -> do
                 nameLen <- case nt ^. val of
-                    NT_Nonce -> do useAeadNonceSize
+                    NT_Nonce l -> 
+                        case l of
+                          "nonce" -> useAeadNonceSize
+                          _ -> throwError $ ErrSomethingFailed "Custom nonce lengths unsupported"
                     NT_Enc _ -> do useAeadKeySize
                     NT_StAEAD {} -> do useAeadKeySize
                     NT_MAC _ -> do useHmacKeySize

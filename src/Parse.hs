@@ -609,7 +609,15 @@ parseNameType =
     <|>
     (parseSpanned $ do
         reserved "nonce"
-        return NT_Nonce)
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NT_Nonce len)
     <|>
     (parseSpanned $ do
         reserved "sigkey"
@@ -630,7 +638,16 @@ parseNameType =
         pr <- parseProp
         reserved "nonce"
         p <- parsePath
-        return $ NT_StAEAD t (bind (s2n x) pr) p 
+        opat <- optionMaybe $ do
+            reserved "pattern"
+            y <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n y) a
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ NT_StAEAD t (bind (s2n x) pr) p pat 
     )
     <|>
     (parseSpanned $ do
@@ -1584,11 +1601,23 @@ parseCryptOp =
         symbol "<"
         p <- parsePath
         inds <- parseIdxParams
+        opat <- optionMaybe $ do
+            symbol ","
+            reserved "pattern"
+            x <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n x) a
         symbol ">"
-        return $ CEncStAEAD p inds
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ CEncStAEAD p inds pat
     )
     <|>
-    (reserved "st_aead_dec" >> return CDecStAEAD)
+    (do
+        reserved "st_aead_dec" 
+        return $ CDecStAEAD)
     <|>
     (reserved "pkenc" >> return CPKEnc)
     <|>
@@ -1609,7 +1638,17 @@ parseNameKind =
     <|>
     (reserved "mackey" >> return NK_MAC)
     <|>
-    (reserved "nonce" >> return NK_Nonce)
+    (do
+        reserved "nonce" 
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NK_Nonce len)
 
 parseParam :: Parser FuncParam
 parseParam = 

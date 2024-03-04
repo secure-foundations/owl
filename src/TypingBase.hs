@@ -737,9 +737,9 @@ getNameKind nt =
     case nt^.val of
       NT_DH ->    return $ NK_DH
       NT_Sig _ -> return $ NK_Sig
-      NT_Nonce -> return $ NK_Nonce
+      NT_Nonce l -> return $ NK_Nonce l
       NT_Enc _ -> return $ NK_Enc
-      NT_StAEAD _ _ _ -> return $ NK_Enc
+      NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
@@ -859,9 +859,9 @@ lenConstOfUniformName ne = do
       Just (nt, _) -> go nt
     where
         go nt = case nt^.val of
-                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                    NT_Nonce l -> return $ mkSpanned $ AELenConst l
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                    NT_StAEAD _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps -> resolveNameTypeApp p ps >>= go
@@ -933,6 +933,9 @@ ensureNonGhostTy t = do
     l <- coveringLabel' t
     ensureNonGhostLbl l
 
+lengthConstants :: [String]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+
 inferAExpr :: AExpr -> Check Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
     case ae^.val of
@@ -956,7 +959,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("name kind index out of bounds") $ j < length nks
           return $ tGhost
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` lengthConstants 
           return $ tData zeroLbl zeroLbl
       (AEPackIdx idx@(IVar _ s i) a) -> do
             _ <- local (set tcScope (TcGhost False)) $ inferIdx idx
@@ -981,7 +984,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                 case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality curr_locality
-                        assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
+                        if null ls' then 
+                                    typeError $ "Cannot call get on ghost name: " ++ show (owlpretty ne)
+                                    else 
+                                    assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
@@ -1112,7 +1118,7 @@ extractAAD ne a = do
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ -> do
+            NT_StAEAD _ yp _ _ -> do
                 (y, p) <- unbind yp
                 return $ subst y a p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne

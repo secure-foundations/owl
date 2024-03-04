@@ -215,7 +215,8 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "is_group_elem" 1 $ \args -> do
         l <- coveringLabel $ head args
         return $ TBool l,
-    mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, -- Used for RO
+    mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, 
+    mkSimpleFunc "xor" 2 $ \args -> trivialTypeOf args, 
     mkSimpleFunc "cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "pk_cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "vk" 1 $ \args ->
@@ -276,14 +277,14 @@ initDetFuncs = withNormalizedTys $ [
                 (TName n, m) -> do
                   nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
-                    NT_Nonce -> do
+                    NT_Nonce _ -> do
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
                   nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
-                    NT_Nonce -> do
+                    NT_Nonce _ -> do
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
@@ -1146,8 +1147,8 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
 nameTypeUniform :: NameType -> Check ()
 nameTypeUniform nt =  
     case nt^.val of
-      NT_Nonce -> return ()
-      NT_StAEAD _ _ _ -> return ()
+      NT_Nonce _ -> return ()
+      NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
       NT_App p ps -> resolveNameTypeApp p ps >>= nameTypeUniform
       NT_MAC _ -> return ()
@@ -1239,7 +1240,9 @@ checkNameType nt = withSpan (nt^.spanOf) $
       NT_Sig t -> do
           checkTy t
           checkNoTopTy t
-      NT_Nonce -> return ()
+      NT_Nonce l -> do
+          assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
+          return ()
       NT_KDF kdfPos b -> do 
           (((sx, x), (sy, y)), cases) <- unbind b 
           withVars [(x, (ignore sx, Nothing, tGhost)), 
@@ -1262,12 +1265,21 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTyPubLen t
       NT_App p ps -> do
           resolveNameTypeApp p ps >>= checkNameType
-      NT_StAEAD t xaad p -> do
+      NT_StAEAD t xaad p ypat -> do
           checkTy t
           checkNoTopTy t
           checkTyPubLen t
           (x, aad) <- unbind xaad
           withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp aad
+          (y, pat) <- unbind ypat
+          (y', _) <- freshen y
+          let pat' = subst y (aeVar' y') pat
+          let ghostNonceTy = tRefined tGhost ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "counter")
+          (_, pat_inj) <- withVars [(y, (ignore $ show y, Nothing, ghostNonceTy)), (y', (ignore $ show y', Nothing, ghostNonceTy))] $  local (set tcScope $ TcGhost False) $ do
+              _ <- inferAExpr pat
+              SMT.smtTypingQuery "pat_injectivity" $ SMT.symAssert $
+                  pImpl (pEq pat pat') (pEq (aeVar' y) (aeVar' y'))
+          assert ("Pattern injectivity failed") $ pat_inj
           checkCounter p
       NT_PKE t -> do
           checkTy t
@@ -1508,7 +1520,7 @@ checkProp p =
               case ni of
                 Just (nt, _) -> 
                     case nt^.val of
-                      NT_StAEAD _ _ _ -> return ()
+                      NT_StAEAD _ _ _ _ -> return ()
                       _ -> typeError $ "Wrong name type for " ++ show (owlpretty ne) ++ ": expected StAEAD" 
                 Nothing -> typeError $ "Name cannot be abstract here: " ++ show (owlpretty ne)
           PInODH s ikm info -> do
@@ -2377,10 +2389,10 @@ getValidatedTy albl t = local (set tcScope $ TcGhost False) $ do
                 where
                     go nt = 
                         case nt^.val of
-                            NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                            NT_Nonce l -> return $ mkSpanned $ AELenConst l
                             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
                             NT_App p ps -> resolveNameTypeApp p ps >>= go
-                            NT_StAEAD _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                            NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                             NT_DH -> return $ mkSpanned $ AELenConst "group"
                             NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
@@ -2675,7 +2687,7 @@ nameKindLength nk =
                                NK_PKE -> "pkekey"
                                NK_Sig -> "sigkey"
                                NK_MAC -> "mackey"
-                               NK_Nonce -> "nonce"
+                               NK_Nonce l -> l
 
 crhInjLemma :: AExpr -> AExpr -> Check Prop
 crhInjLemma x y = 
@@ -2703,6 +2715,21 @@ kdfInjLemma x y =
           p2 <- kdfInjLemma b d
           return $ pAnd p1 p2
       _ -> return pTrue
+
+patternPublicAndEquivalent :: Bind DataVar AExpr -> Bind DataVar AExpr -> Check Bool
+patternPublicAndEquivalent pat1 pat2 = do
+    (x, pat) <- unbind pat1
+    (y, pat') <- unbind pat2
+    let ctrTy = tRefined (tData advLbl advLbl) ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "counter")
+    withVars [(x, (ignore $ show x, Nothing, ctrTy))] $ do
+        t <- inferAExpr pat
+        b1 <- tyFlowsTo t advLbl
+        if b1 then do
+              (_, b2) <- SMT.smtTypingQuery "pattern equivalence check" $ SMT.symAssert $ pEq pat (subst y (aeVar' x) pat')
+              return b2
+        else return False
+
+
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2843,7 +2870,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Wrong number of arguments to decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
           doADec t1 t args
-      CEncStAEAD p iargs -> do
+      CEncStAEAD p iargs xpat -> do
           checkCounterIsLocal p iargs
           assert ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
           let [(_, t1), (x, t), (y, t2)] = args
@@ -2856,7 +2883,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad p' -> do
+                  NT_StAEAD tm xaad p' ypat' -> do
                       pnorm <- normalizePath p
                       pnorm' <- normalizePath p'
                       assert ("Wrong counter for AEAD: expected " ++ show (owlpretty p') ++ " but got " ++ show (owlpretty p)) $ pnorm `aeq` pnorm'
@@ -2865,12 +2892,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
                           pImpl (pNot $ pFlow (nameLbl k) advLbl)
                                 (subst xa (aeVar ".res") aadp)
-                      if b1 && b2 then return $ tData advLbl advLbl 
+                      b3 <- patternPublicAndEquivalent xpat ypat'
+                      if b1 && b2 && b3 then return $ tData advLbl advLbl 
                                   else mkSpanned <$> trivialTypeOf (map snd args)
                   _ -> mkSpanned <$> trivialTypeOf (map snd args)
       CDecStAEAD -> do
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
-          let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
+          let [(_, t1), (x, t), (y, t2), (xnonce, tnonce)] = args
           case extractNameFromType t1 of
             Nothing -> do
                       l <- coveringLabelOf [t1, t, t2, tnonce]
@@ -2882,7 +2910,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad _ -> do
+                  NT_StAEAD tm xaad _ ypat -> do
                       b1 <- flowsTo (nameLbl k) advLbl
                       b2 <- tyFlowsTo tnonce advLbl
                       b3 <- tyFlowsTo t advLbl

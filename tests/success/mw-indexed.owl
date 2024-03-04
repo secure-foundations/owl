@@ -18,9 +18,6 @@ corr adv ==> /\_i [NT<i>] // can remove this with xor property
 name id<i> : nonce @ T
 corr adv ==> /\_i [id<i>] // can remove this with xor property
 
-func xor
-    arity 2
-
 enum zero_or_one {
 | zz
 | oo

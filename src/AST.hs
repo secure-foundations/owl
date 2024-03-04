@@ -196,9 +196,8 @@ data PropX =
     | PInODH AExpr AExpr AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
+data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
-
 
 type Prop = Spanned PropX
 
@@ -242,9 +241,9 @@ data KDFPos = KDF_SaltPos | KDF_IKMPos
 data NameTypeX =
     NT_DH
     | NT_Sig Ty
-    | NT_Nonce
+    | NT_Nonce String 
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind DataVar Prop) Path 
+    | NT_StAEAD Ty (Bind DataVar Prop) Path (Bind DataVar AExpr) 
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx])
@@ -444,8 +443,8 @@ data CryptOp =
       | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
-      | CEncStAEAD Path ([Idx], [Idx])
-      | CDecStAEAD
+      | CEncStAEAD Path ([Idx], [Idx]) (Bind DataVar AExpr)
+      | CDecStAEAD 
       | CPKEnc
       | CPKDec
       | CMac

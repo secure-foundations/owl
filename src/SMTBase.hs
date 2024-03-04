@@ -472,28 +472,28 @@ getTopLevelFunc s = do
     sn <- smtName $ topLevelPath s
     getFunc sn
 
-lengthConstant :: String -> Sym SExp
+lengthConstant :: String -> SExp
 lengthConstant s = 
     case s of
-      "nonce" -> return $ SApp [SAtom "NameKindLength", SAtom "Nonce"]    
-      "DH" -> return $ SApp [SAtom "NameKindLength", SAtom "DHkey"]
-      "enckey" -> return $ SApp [SAtom "NameKindLength", SAtom "Enckey"]
-      "pke_sk" -> return $ SApp [SAtom "NameKindLength", SAtom "PKEkey"]
-      "sigkey" -> return $ SApp [SAtom "NameKindLength", SAtom "Sigkey"]
-      "kdfkey" -> return $ SApp [SAtom "NameKindLength", SAtom "KDFkey"]
-      "mackey" -> return $ SApp [SAtom "NameKindLength", SAtom "MACkey"]
-      "signature" -> return $ SAtom "SignatureLen"
-      "group" -> return $ SAtom "GroupLen"
-      "vk" -> return $ SAtom "VKLen"
-      "pke_pk" -> return $ SAtom "PKEPubLen"
-      "maclen" -> return $ SAtom "MAClen"
-      "tag" -> return $ SAtom "Taglen"
-      "counter" -> return $ SAtom "Counterlen"
-      "crh" -> return $ SAtom "CrhLength"
+      "nonce" -> SAtom "NonceLength"
+      "DH" -> SApp [SAtom "NameKindLength", SAtom "DHkey"]
+      "enckey" ->  SApp [SAtom "NameKindLength", SAtom "Enckey"]
+      "pke_sk" ->  SApp [SAtom "NameKindLength", SAtom "PKEkey"]
+      "sigkey" ->  SApp [SAtom "NameKindLength", SAtom "Sigkey"]
+      "kdfkey" ->  SApp [SAtom "NameKindLength", SAtom "KDFkey"]
+      "mackey" ->  SApp [SAtom "NameKindLength", SAtom "MACkey"]
+      "signature" -> SAtom "SignatureLen"
+      "group" -> SAtom "GroupLen"
+      "vk" -> SAtom "VKLen"
+      "pke_pk" -> SAtom "PKEPubLen"
+      "maclen" -> SAtom "MAClen"
+      "tag" -> SAtom "Taglen"
+      "counter" -> SAtom "Counterlen"
+      "crh" -> SAtom "CrhLength"
 
 symLenConst :: String -> Sym SExp
 symLenConst s = do
-    v <- lengthConstant s
+    let v = lengthConstant s
     return $ SApp [SAtom "I2B", v]
 
 sLength :: SExp -> SExp
@@ -826,12 +826,14 @@ instance SMTNameKindOf NameType where
         case nt^.val of
           NT_DH -> return $ SAtom "DHkey"
           NT_Enc _ -> return $ SAtom "Enckey"
-          NT_StAEAD _ _ _ -> return $ SAtom "Enckey"
+          NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
           NT_KDF _ _ -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
-          NT_Nonce -> return $ SAtom "Nonce"
+          NT_Nonce l -> do
+              let v = lengthConstant l 
+              return $ SApp [SAtom "Nonce", v]
           NT_App p ps -> resolveNameTypeApp p ps >>= smtNameKindOf
 
 instance SMTNameKindOf NameKind where
@@ -843,4 +845,6 @@ instance SMTNameKindOf NameKind where
           NK_PKE ->   return $ SAtom "PKEkey" 
           NK_Sig ->   return $ SAtom "Sigkey"
           NK_MAC ->   return $ SAtom "MACkey"
-          NK_Nonce -> return $ SAtom "Nonce"
+          NK_Nonce l -> do
+              let v = lengthConstant l 
+              return $ SApp [SAtom "Nonce", v] 

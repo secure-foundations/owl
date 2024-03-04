@@ -686,9 +686,10 @@ makeKdfSliceMap nks = do
                 NK_MAC -> do
                     l <- useHmacKeySize
                     return ("mackey", l)
-                NK_Nonce -> do
+                NK_Nonce nl -> do
+                    when (nl /= "nonce") $ throwError $ ErrSomethingFailed "custom nonce lengths unsupported"
                     l <- useAeadNonceSize
-                    return ("nonce", l)
+                    return (nl, l)
                 _ -> throwError $ UnsupportedOracleReturnType (show nk)
             return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
         ) (["0"], M.empty) (zip [0..] nks)

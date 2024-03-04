@@ -87,6 +87,7 @@
 )))
 
 
+
 (declare-fun eq (Bits Bits) Bits)
 (declare-fun TRUE () Bits)
 (declare-fun FALSE () Bits)
@@ -170,12 +171,18 @@
     :qid hastype_name
 )))
 
+(declare-const NonceLength Int)
+(assert (>= NonceLength 32))
 
 (declare-sort NameKind)
 (declare-fun NameKindLength (NameKind) Int)
 (declare-const Enckey NameKind)
-(declare-const Nonce NameKind)
-(assert (>= (NameKindLength Nonce) 32))
+(declare-fun Nonce (Int) NameKind)
+(assert (forall ((i Int)) (!
+    (= (NameKindLength (Nonce i)) i)
+    :pattern (Nonce i)
+    :qid nonce_length
+)))
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
@@ -282,6 +289,36 @@
     :pattern ((eq (dhpk x) (dhpk y)))
     :qid dhpk_inj
  )))
+
+(declare-fun xor (Bits Bits) Bits) ; concat and truncate to smaller
+(assert (forall ((x Bits) (y Bits)) (!
+    (= TRUE (eq (xor x y) (xor y x)))
+    :pattern (xor x y)
+    :qid xor_comm
+)))
+
+(assert (forall ((x Bits) (y Bits) (z Bits)) (!
+    (=>
+        (and 
+            (= TRUE (eq (xor x y) (xor x z)))
+            (= (length x) (length y))
+            (= (length x) (length z)))
+        (= TRUE (eq y z)))
+    :pattern (eq (xor x y) (xor x z))
+    :qid xor_cancel_l
+)))
+
+(assert (forall ((x Bits) (y Bits) (z Bits)) (!
+    (=>
+        (and 
+            (= TRUE (eq (xor y x) (xor z x)))
+            (= (length x) (length y))
+            (= (length x) (length z)))
+        (= TRUE (eq y z)))
+    :pattern (eq (xor y x) (xor z x))
+    :qid xor_cancel_r
+)))
+
 
 
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never

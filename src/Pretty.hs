@@ -192,7 +192,10 @@ instance OwlPretty NameKind where
                       NK_PKE -> "pkekey"
                       NK_Sig -> "sigkey"
                       NK_MAC -> "mackey"
-                      NK_Nonce -> "nonce"
+                      NK_Nonce len -> 
+                          case len of
+                            "nonce" -> "nonce"
+                            _ -> "nonce |" ++ len ++ "|"
 
 newtype NameKindRow = NameKindRow [NameKind]
 instance OwlPretty NameKindRow where
@@ -269,11 +272,14 @@ instance  OwlPretty NameTypeX where
         in
         hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
-    owlpretty (NT_StAEAD ty xaad p) = 
+    owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in
+        let (y, ppat) = owlprettyBind pat in 
         owlpretty "st_aead" <+> owlpretty ty <+> 
             nest 4 (owlpretty "aad" <> x <> owlpretty "." <> aad <> line 
-                    <> owlpretty "nonce" <+> owlpretty p)
+                    <> owlpretty "nonce" <+> owlpretty p <> line <>
+                    owlpretty "pat" <> y <> ppat
+                        )
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
     owlpretty (NT_App p is) = 
         owlpretty p <> owlprettyIdxParams is 
@@ -281,7 +287,10 @@ instance  OwlPretty NameTypeX where
     owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
     -- owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"
     owlpretty NT_DH = owlpretty "DH"
-    owlpretty NT_Nonce = owlpretty "nonce"
+    owlpretty (NT_Nonce l) = 
+        case l of
+          "nonce" -> owlpretty "nonce"
+          _ -> owlpretty $ "nonce |" ++ l ++ "|"
 
 
 instance  OwlPretty AExprX where
@@ -336,7 +345,7 @@ instance  OwlPretty CryptOp where
     owlpretty CSign = owlpretty "sign"
     owlpretty CSigVrfy = owlpretty "vrfy"
     owlpretty (CKDF _ _ _ _) = owlpretty "kdf"
-    owlpretty (CEncStAEAD p (idx1, idx2)) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
+    owlpretty (CEncStAEAD p (idx1, idx2) _) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
     owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
 
 instance  OwlPretty ExprX where 
