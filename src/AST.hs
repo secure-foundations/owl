@@ -407,10 +407,11 @@ data ExprX =
     | EBlock Expr Bool -- Boundary for scoping; introduced by { }. The bool is if it is a proof block, or regular
     | EUnionCase AExpr String (Bind DataVar Expr)
     | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
+    | EChooseBV String (Bind DataVar Prop) (Bind DataVar Expr)
     | EChooseIdx String (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
-    | EForallBV String (Bind DataVar Expr)
-    | EForallIdx String (Bind IdxVar Expr)
+    | EForallBV String (Bind DataVar (Maybe Prop, Expr))
+    | EForallIdx String (Bind IdxVar (Maybe Prop, Expr))
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])

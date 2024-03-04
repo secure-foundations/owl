@@ -23,3 +23,14 @@ def alice<i, j> (x : t<idx i, idx j>) @ alice : Unit =
 def alice2 (x : Bool<adv>) @ alice : Unit = 
     assert (x == true \/ x == false);
     assert (! (x == true /\ x == false))
+
+def alice3<i,j>(x : t<idx i, idx j>) @ alice : Unit = 
+    case x {
+        | A a => {
+            assert (A?(x));
+            assert (!B?(x));
+            ()
+        }
+        | B b => ()
+        | C => ()
+    }

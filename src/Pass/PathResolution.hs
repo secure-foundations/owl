@@ -622,14 +622,22 @@ resolveExpr e =
           k' <- resolveExpr k
           p' <- resolveProp p
           return $ Spanned (e^.spanOf) $ EChooseIdx s (bind i' p') (bind i k')
+      EChooseBV s ip ik -> do
+          (i, k) <- unbind ik
+          (i', p) <- unbind ip                         
+          k' <- resolveExpr k
+          p' <- resolveProp p
+          return $ Spanned (e^.spanOf) $ EChooseBV s (bind i' p') (bind i k')
       EForallBV s xpk -> do
-          (x, k) <- unbind xpk
+          (x, (op, k)) <- unbind xpk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EForallBV s (bind x k') 
+          op' <- traverse resolveProp op
+          return $ Spanned (e^.spanOf) $ EForallBV s (bind x (op', k')) 
       EForallIdx s xpk -> do
-          (x, k) <- unbind xpk
+          (x, (op, k)) <- unbind xpk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EForallIdx s (bind x k')
+          op' <- traverse resolveProp op
+          return $ Spanned (e^.spanOf) $ EForallIdx s (bind x (op', k'))
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1

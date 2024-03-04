@@ -54,3 +54,10 @@ impl KeyPair {
         self.recv.id
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub enum RouterDeviceType {
+    NoOwl,
+    OwlInitiator,
+    OwlResponder,
+}

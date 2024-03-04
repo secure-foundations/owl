@@ -30,7 +30,8 @@ struct resp_received_state<j,n_pk, n_eph, m> {
         ((exists i:idx. x == dhpk(get(E_init<i@n_eph>))) \/ !is_e_init[x])
     }),
     c2 : (x:Ghost{
-        x == gkdf<kdfkey||enckey;0>(
+        x == 
+        gkdf<kdfkey||enckey;0>(
             gkdf<kdfkey;0>(crh(construction()),msg1_ephemeral, 0x), 
             dh_combine(msg1_ephemeral, get(S_resp<@m>)), 0x)
       }),
@@ -61,13 +62,14 @@ input inp in
      let C0 = crh(construction()) in
      let H0 = crh(C0 ++ identifier()) in 
      let H1 = crh(H0 ++ dhpk_S_resp) in
-     pcase 
+     pcase  
          (is_e_init[msg1_ephemeral]) in 
          choose_idx n | exists i:idx. msg1_ephemeral == dhpk(get(E_init<i@n>)) in 
          choose_idx i | msg1_ephemeral == dhpk(get(E_init<i@n>)) in
      pcase (is_s_init[msg1_ephemeral]) when (!is_e_init[msg1_ephemeral]) in 
         choose_idx n2 | msg1_ephemeral == dhpk(get(S_init<@n2>)) in 
      let C1 = kdf<;;kdfkey;0>(C0, msg1_ephemeral, 0x) in 
+     let ghost c1_ghost = gkdf<kdfkey;0>(C0, msg1_ephemeral, 0x) in 
      let H2 = crh(H1 ++ msg1_ephemeral) in
      let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
      
@@ -76,8 +78,16 @@ input inp in
      corr_case  S_init<@n2> when is_s_init[msg1_ephemeral] in 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // H(a, b, c) != H(H(a, b, c), d, e)
-     assume (forall n:idx. ! exists i:idx. C1 == honest_c2<session i, pid n, pid m>());
+     {
+         forall n:idx,i:idx {
+             kdf_inj_lemma(c1_ghost, honest_c2<session i, pid n, pid m>())
+         };
+         // TODO: maybe need axiom about this
+         is_constant_lemma(crh(construction()));
+         assert (forall n:idx. ! exists i:idx. C1 == honest_c2<session i, pid n, pid m>())
+     };
      let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
+     let ghost c2_ghost = gkdf<kdfkey||enckey;0>(c1_ghost, ss_msg1_ephemeral_S_resp, 0x) in 
      let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in 
      case st_aead_dec(k0, msg1_static, H2, 0x) /* as Option (Data<adv>) */ {
          | None => None()
@@ -95,17 +105,25 @@ input inp in
                         pcase (n =idx n3) in
                         let dhpk_S_init : if n =idx n3 then dhpk(S_init<@n>)
                         else dhpk(S_init<@n3>) = msg1_static_dec in
+                        {
+                            forall n:idx,i:idx {
+                                kdf_inj_lemma(c2_ghost, honest_c2<session i, pid n, pid m>())
+                            };
+                            let lem1 = assert ((!is_e_init[msg1_ephemeral]) ==> 
+                                forall n:idx.
+                                (! exists i:idx. C2 == honest_c2<session i, pid n, pid m>())
+                                ) in
+                            let lem2 = assert (n !=idx n3 ==>
+                                !exists i:idx. C2 == honest_c2<session i, pid n3,
+                                pid m>()
+                            ) in
+                            lem1 &&& lem2
+                        };
 
-                        assume ((!is_e_init[msg1_ephemeral]) ==> 
-                            forall n:idx.
-                            (! exists i:idx. C2 == honest_c2<session i, pid n, pid m>())
-                            );
-                        assume (n !=idx n3 ==>
-                            !exists i:idx. C2 == honest_c2<session i, pid n3,
-                            pid m>()
-                        );
                         
                         let C3 = kdf<0;odh L2<@n,m>[0], odh L2<@n3,m>[1<n>]; kdfkey || enckey; 0>(C2, ss, 0x) in 
+                        let ghost c3_ghost = gkdf<kdfkey||enckey;0>(c2_ghost,
+                        ss, 0x) in 
                         let k1 = kdf<0;odh L2<@n,m>[0], odh L2<@n3,m>[1<n>]; kdfkey || enckey; 1>(C2, ss, 0x) in 
                         case st_aead_dec(k1, msg1_timestamp, H3, 0x) /* as Option (Data<adv> |12|) */ {
                         | None => None()
@@ -149,36 +167,58 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
  pcase (exists i:idx. msg1_ephemeral == dhpk(get(E_init<i@n>))) in 
  pcase n3 =idx n in 
  let e_resp_pk = dhpk(get(E_resp<j@m>)) in 
+ let ghost c2_ghost = 
+        gkdf<kdfkey||enckey;0>(
+            gkdf<kdfkey;0>(crh(construction()),msg1_ephemeral, 0x), 
+            dh_combine(msg1_ephemeral, get(S_resp<@m>)), 0x) in 
+ let ghost c3_ghost = gkdf<kdfkey||enckey;0>(c2_ghost,
+            dh_combine(dhpk(get(S_init<@n3>)), get(S_resp<@m>)), 0x) in 
  let c4 = kdf<0;;kdfkey;0>(C3, e_resp_pk, 0x) in 
+ let ghost c4_ghost = gkdf<kdfkey;0>(c3_ghost, e_resp_pk, 0x) in 
  let h5 = crh(H4 ++ e_resp_pk) in 
  let ss = dh_combine(msg1_ephemeral, get(E_resp<j@m>)) in 
  cross_dh_lemma<E_resp<j@m>>(msg1_ephemeral);
  corr_case E_resp<j@m> in 
- assume (n !=idx n3 ==>
-     c4 != honest_c4<session i, session j, pid n, pid n, pid m>()
-     /\
+ forall n1:idx, n2:idx, i:idx { 
+        kdf_inj_lemma(c4_ghost, honest_c4<session i, session j, pid n1, pid n2,
+        pid m>())
+    };
+ assert (n !=idx n3 ==>
+     c4 != honest_c4<session i, session j, pid n, pid n, pid m>());
+ assert (n !=idx n3 ==> 
      c4 != honest_c4<session i, session j, pid n3,
-     pid n3, pid m>() /\
+     pid n3, pid m>());
+ /*
+ assert (n !=idx n3 ==> 
      forall n_pk:idx.
      ! exists i:idx.
          c4 == honest_c4<session i, session j, pid n, pid n_pk, pid m>()
  );
- assume (! exists i:idx. 
+ */
+ forall n_eph:idx, i:idx {
+     kdf_inj_lemma(c4_ghost, honest_c5<session i, session j, pid n_eph, pid n2, pid
+     m>())
+ };
+ assert (! exists i:idx. 
      c4 == honest_c5<session i, session j, pid n2, pid n2, pid m>());
- assume (! exists n_eph:idx.
+ assert (! exists n_eph:idx.
      exists i:idx.
      c4 == honest_c5<session i, session j, pid n_eph,
      pid n2, pid m>()
  );
  corr_case E_init<i@n> when is_e_init[msg1_ephemeral] in 
- let c5 = kdf<0; odh L4<i,j@n,m>[0], odh
- L4<i,j@n,m>[1<n3>]; kdfkey; 0>(c4, ss, 0x) in 
- assume (((!is_e_init[msg1_ephemeral])) ==>
+ let c5 = kdf<0; odh L4<i,j@n,m>[0], odh L4<i,j@n,m>[1<n3>]; kdfkey; 0>(c4, ss, 0x) in 
+ let c5_ghost = gkdf<kdfkey;0>(c4_ghost, ss, 0x) in 
+ forall n1:idx,n2:idx,i:idx {
+     kdf_inj_lemma(c5_ghost, honest_c5<session i, session j, pid n1, pid n2, pid
+     m>())
+ };
+ assert (((!is_e_init[msg1_ephemeral])) ==>
      forall n1:idx, n2:idx.
      (!exists i:idx. 
          c5 == honest_c5<session i, session j, 
          pid n1, pid n2, pid m>()));
- assume (
+ assert (
      forall na:idx,nb:idx.
          (exists i:idx. c5 == honest_c5<session i, session j,
              pid na, pid nb, pid m>())
@@ -201,8 +241,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
  let msg2_mac1 = mac(msg2_mac1_k,
          msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
          msg2_empty) in 
- // TODO needs to be encoded
- assume(length(msg2_mac1) == |maclen|);
+ assert (length(msg2_mac1) == |maclen|);
  let msg2_mac2 = zeros_16() in
  let msg2_output: msg2 = msg2(
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2

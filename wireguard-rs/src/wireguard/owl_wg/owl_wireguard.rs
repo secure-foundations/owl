@@ -713,7 +713,7 @@ pub open spec fn transp_recv_init_spec(
     owl_spec!(mut_state,state_Initiator,
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused35 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : _unused36 , owlSpec__transp_keys_responder : responder_name , owlSpec__transp_keys_T_init_send : _unused37 , owlSpec__transp_keys_T_resp_send : r2i_ }) in {
-(if (c == responder_name) then (let r2i = ((ret (r2i_))) in
+(if (from == responder_name) then (let r2i = ((ret (r2i_))) in
 (ret(dec_st_aead(r2i, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
@@ -917,7 +917,7 @@ pub open spec fn transp_recv_resp_spec(
     owl_spec!(mut_state,state_Responder,
 (parse (parse_owlSpec_transp(c)) as (owlSpec_transp{owlSpec__transp_tag : _unused723 , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
 (parse (transp_keys_val) as (owlSpec_transp_keys{owlSpec__transp_keys_initiator : initiator_name , owlSpec__transp_keys_responder : _unused724 , owlSpec__transp_keys_T_init_send : i2r_ , owlSpec__transp_keys_T_resp_send : _unused725 }) in {
-(if (c == initiator_name) then (let i2r = ((ret (i2r_))) in
+(if (from == initiator_name) then (let i2r = ((ret (i2r_))) in
 (ret(dec_st_aead(i2r, pkt, ctr, empty_seq_u8())))) else ((ret (Option::None))))
 } )
 } otherwise ((ret (Option::None))))
@@ -1842,10 +1842,30 @@ pub struct cfg_Initiator<O> {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
-    pub device: crate::wireguard::handshake::device::DeviceInner<O>,
+    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
 impl<O> cfg_Initiator<O> {    
+
+    pub exec fn owl_transp_recv_init_wrapper(
+        &self,         
+        mut_state: &mut state_Initiator,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_c: Arc<Vec<u8>>,
+    ) -> (_: Option<Arc<Vec<u8>>>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_recv_init(Tracked(call_token), mut_state, owl_transp_keys_val, owl_c).unwrap();
+        res
+    }
+    
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_init(
         &self,
@@ -1888,7 +1908,7 @@ impl<O> cfg_Initiator<O> {
                     let owl__8 = arc_new(parseval.owl__transp_keys_T_init_send);
                     let owl_r2i_7 = arc_new(parseval.owl__transp_keys_T_resp_send);
                     {
-                        let temp_owl__x28 = { arc_clone(&owl_c11339) };
+                        let temp_owl__x28 = { arc_clone(&owl_from5) };
                         let owl__x28 = arc_clone(&temp_owl__x28);
                         let temp_owl__x30 = { arc_clone(&owl_responder_name11) };
                         let owl__x30 = arc_clone(&temp_owl__x30);
@@ -1937,6 +1957,27 @@ impl<O> cfg_Initiator<O> {
         Ok(res_inner)
     }
     
+    pub exec fn owl_transp_send_init_wrapper(
+        &self,         
+        mut_state: &mut state_Initiator,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_plaintext: Arc<Vec<u8>>,
+        obuf: &mut [u8]
+    ) -> (_: Option<()>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_send_init(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
+
+
     #[verifier::spinoff_prover]
     pub fn owl_transp_send_init(
         &self,
@@ -2056,6 +2097,108 @@ impl<O> cfg_Initiator<O> {
             }
         };
         Ok(res_inner)
+    }
+
+    pub fn owl_transp_send_init_inplace(
+        &self,
+        mut_state: &mut state_Initiator,
+        owl_transp_keys_val: owl_transp_keys,
+        buf: &mut [u8]
+    ) -> (_: Option<()>) {
+        reveal(transp_send_init_spec);
+        let temp_owl__x113 = { owl_transp_keys_val };
+        let owl__x113 = temp_owl__x113;
+        let parseval = owl__x113;
+        let owl__44 = arc_new(parseval.owl__transp_keys_initiator);
+        let owl_transp_receiver43 = arc_new(parseval.owl__transp_keys_responder);
+        let owl_i2r_40 = arc_new(parseval.owl__transp_keys_T_init_send);
+        let owl__39 = arc_new(parseval.owl__transp_keys_T_resp_send);
+        {
+            let temp_owl__x49 = { arc_clone(&owl_i2r_40) };
+            let owl__x49 = arc_clone(&temp_owl__x49);
+            let temp_owl__x50 = { arc_clone(&owl__x49) };
+            let owl__x50 = arc_clone(&temp_owl__x50);
+            let temp_owl__x52 = { owl_counter_as_bytes(&(mut_state.owl_N_init_send)) };
+            let owl__x52 = arc_new(temp_owl__x52);
+            let temp_owl__x56 = { owl_transp_tag_value() };
+            let owl__x56 = arc_new(temp_owl__x56);
+            let temp_owl__x57 = { arc_clone(&owl__x56) };
+            let owl__x57 = arc_clone(&temp_owl__x57);
+            let temp_owl__x108 = { arc_clone(&owl_transp_receiver43) };
+            let owl__x108 = arc_clone(&temp_owl__x108);
+            let temp_owl__x109 = { vec_length(&(*arc_clone(&owl__x108))) };
+            let owl__x109 = temp_owl__x109;
+            let temp_owl__x111 = { 4 };
+            let owl__x111 = temp_owl__x111;
+            let temp_owl__x112 = { owl__x109 == owl__x111 };
+            let owl__x112 = temp_owl__x112;
+            if owl__x112 {
+                let temp_owl__x63 = { arc_clone(&owl__x50) };
+                let owl__x63 = arc_clone(&temp_owl__x63);
+                let temp_owl__x67 = {
+                    {
+                        let x: Vec<u8> = mk_vec_u8![];
+                        x
+                    }
+                };
+                let owl__x67 = arc_new(temp_owl__x67);
+                let temp_owl__x68 = {
+                    let len = buf.len();
+                    match owl_enc_st_aead_inplace(
+                        vec_as_slice(&(*arc_clone(&owl__x63))),
+                        &mut buf[16..],
+                        &mut mut_state.owl_N_init_send,
+                        vec_as_slice(&(*arc_clone(&owl__x67))),
+                    ) {
+                        Ok(ctxt) => ctxt,
+                        Err(e) => { panic!() },
+                    };
+                    // arc_new(buf[16..].to_vec())
+                };
+                // let owl__x68 = arc_clone(&temp_owl__x68);
+                let temp_owl__x84 = { arc_clone(&owl__x57) };
+                let owl__x84 = arc_clone(&temp_owl__x84);
+                let temp_owl__x86 = { arc_clone(&owl_transp_receiver43) };
+                let owl__x86 = arc_clone(&temp_owl__x86);
+                let temp_owl__x88 = { arc_clone(&owl__x52) };
+                let owl__x88 = arc_clone(&temp_owl__x88);
+                // let temp_owl__x90 = { arc_clone(&owl__x68) };
+                // let owl__x90 = arc_clone(&temp_owl__x90);
+                // let temp_owl__x92 = {
+                // owl_transp {
+                //     owl__transp_tag: clone_vec_u8(&*arc_clone(&owl__x84)),
+                //     owl__transp_receiver: clone_vec_u8(&*arc_clone(&owl__x86)),
+                //     owl__transp_counter: clone_vec_u8(&*arc_clone(&owl__x88)),
+                //     owl__transp_packet: buf[16..].to_vec(),
+                // }
+                // };
+                // let owl__x92 = temp_owl__x92;
+                // let temp_owl__x93 = { owl__x92 };
+                // let owl__x93 = temp_owl__x93;
+                // let temp_owl__x97 = { owl__x93 };
+                // let owl__x97 = temp_owl__x97;
+                buf[0..4].copy_from_slice(&*arc_clone(&owl__x84));
+                buf[4..8].copy_from_slice(&*arc_clone(&owl__x86));
+                buf[8..16].copy_from_slice(&*arc_clone(&owl__x88));                
+                // let temp_owl__x98 = {
+                // owl_output::<(Option<()>, state_Initiator)>(
+                //     Tracked(&mut itree),
+                //     vec_as_slice(&(serialize_owl_transp(&owl__x97))),
+                //     &Responder_addr(),
+                //     &Initiator_addr(),
+                //     buf
+                // )
+                // };
+                // let owl__x98 = temp_owl__x98;
+                let temp_owl__x101 = { () };
+                let owl__x101 = temp_owl__x101;
+                let temp_owl__x102 = { Some(owl__x101) };
+                let owl__x102 = temp_owl__x102;
+                owl__x102
+            } else {
+                None
+            }
+        }
     }
     
     pub exec fn owl_receive_msg2_wrapper(&self, s: &mut state_Initiator, dhpk_S_resp: Arc<Vec<u8>>, msg1_val: owl_initiator_msg1_val, ibuf: &[u8]) -> (_: Option<owl_transp_keys>) {
@@ -2943,7 +3086,7 @@ impl<O> cfg_Initiator<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let v = self.device.get_singleton_id();
+            let v = self.device.as_ref().unwrap().get_singleton_id();
             (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)
@@ -2971,11 +3114,30 @@ pub struct cfg_Responder<O> {
     pub pk_owl_E_resp: Arc<Vec<u8>>,
     pub pk_owl_E_init: Arc<Vec<u8>>,
     pub salt: Arc<Vec<u8>>,
-    pub device: crate::wireguard::handshake::device::DeviceInner<O>,
+    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
 impl<O> cfg_Responder<O> { 
 
+    pub exec fn owl_transp_recv_resp_wrapper(
+        &self,         
+        mut_state: &mut state_Responder,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_c: Arc<Vec<u8>>,
+    ) -> (_: Option<Arc<Vec<u8>>>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_recv_resp_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_recv_resp(Tracked(call_token), mut_state, owl_transp_keys_val, owl_c).unwrap();
+        res
+    }
+    
     #[verifier::spinoff_prover]
     pub fn owl_transp_recv_resp(
         &self,
@@ -3018,15 +3180,15 @@ impl<O> cfg_Responder<O> {
                     let owl_i2r_696 = arc_new(parseval.owl__transp_keys_T_init_send);
                     let owl__695 = arc_new(parseval.owl__transp_keys_T_resp_send);
                     {
-                        let temp_owl__x716 = { arc_clone(&owl_c14558) };
+                        let temp_owl__x716 = { arc_clone(&owl_from693) };
                         let owl__x716 = arc_clone(&temp_owl__x716);
                         let temp_owl__x718 = { arc_clone(&owl_initiator_name700) };
                         let owl__x718 = arc_clone(&temp_owl__x718);
-                        let temp_owl__x719 = {
-                        rc_vec_eq(&arc_clone(&owl__x716), &arc_clone(&owl__x718))
-                        };
-                        let owl__x719 = temp_owl__x719;
-                        if owl__x719 {
+                        // let temp_owl__x719 = {
+                        // rc_vec_eq(&arc_clone(&owl__x716), &arc_clone(&owl__x718))
+                        // };
+                        // let owl__x719 = temp_owl__x719;
+                        //if owl__x719 {
                             let temp_owl__x705 = { arc_clone(&owl_i2r_696) };
                             let owl__x705 = arc_clone(&temp_owl__x705);
                             let temp_owl__x706 = { arc_clone(&owl__x705) };
@@ -3053,9 +3215,9 @@ impl<O> cfg_Responder<O> {
                                 ),
                                 Tracked(itree),
                             )
-                        } else {
-                            (None, Tracked(itree))
-                        }
+                        // } else {
+                        //     (None, Tracked(itree))
+                        // }
                     }
                 }
             } else {
@@ -3067,6 +3229,26 @@ impl<O> cfg_Responder<O> {
         Ok(res_inner)
     }
     
+    pub exec fn owl_transp_send_resp_wrapper(
+        &self,         
+        mut_state: &mut state_Responder,
+        owl_transp_keys_val: owl_transp_keys,
+        owl_plaintext: Arc<Vec<u8>>,
+        obuf: &mut [u8]
+    ) -> (_: Option<()>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_transp_send_resp(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_transp_send_resp(
         &self,
@@ -4128,7 +4310,7 @@ impl<O> cfg_Responder<O> {
             use std::convert::TryInto;
 
             let pk: [u8; 32] = (&*owl_pk8139).as_slice().try_into().unwrap();
-            (self.device.get_ss(&pk)
+            (self.device.as_ref().unwrap().get_ss(&pk)
                 .map(|ss| Arc::new(ss.to_vec())),
             Tracked(itree))
         };
@@ -4179,7 +4361,7 @@ impl<O> cfg_Responder<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let v = self.device.get_singleton_id();
+            let v = self.device.as_ref().unwrap().get_singleton_id();
             (Arc::new(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)

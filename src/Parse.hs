@@ -29,7 +29,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -568,11 +568,13 @@ mkQuant q ((i, bt):bs) p = case bt of
     BTIdx -> mkSpanned $ PQuantIdx q (ignore i) $ bind (s2n i) $ mkQuant q bs p
     BTBV -> mkSpanned $ PQuantBV q (ignore i) $ bind (s2n i) $ mkQuant q bs p
 
-mkEForall :: [(String, BinderType)] -> Expr -> Expr
-mkEForall [] e = e
-mkEForall ((i, bt):bs) k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ mkEForall bs k
-    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ mkEForall bs k
+mkEForall :: [(String, BinderType)] -> Maybe Prop -> Expr -> Expr
+mkEForall [(i, bt)] op k = case bt of
+    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (op, k)
+    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (op, k)
+mkEForall ((i, bt):bs) op k = case bt of
+    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
+    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
 
 
 prefixProp op f =
@@ -1275,38 +1277,35 @@ parseExprTerm =
         return $ EUnionCase a x $ bind (s2n x) e
     )
     <|>
-    (try $ do
-        p <- getPosition
-        reserved "let"
-        reserved "ghost"
-        x <- identifier 
-        reservedOp "="
-        a <- parseAExpr 
-        reserved "in"
-        p' <- getPosition
-        e' <- parseExpr
-        return $ Spanned (ignore $ mkPos p p') $ ELetGhost a x $ bind (s2n x) e' 
-    )
-    <|>
     (do
         p <- getPosition
         reserved "let"
-        xts <- ((do
-                x <- identifier
-                tyAnn <- optionMaybe $ do
-                    symbol ":"
-                    parseTy
-                return (x, tyAnn))
-            `sepBy` (reservedOp ","))
-        reservedOp "="
-        es <- parseExpr `sepBy` (reservedOp ",")
-        reserved "in"
-        p' <- getPosition
-        e' <- parseExpr
-        if length xts /= length es then fail "must have same number of binders and expressions" else
-            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
-            return $ foldl f e' $ zip xts es
-    )
+        alt
+            (do
+                reserved "ghost"
+                x <- identifier 
+                reservedOp "="
+                a <- parseAExpr 
+                reserved "in"
+                p' <- getPosition
+                e' <- parseExpr
+                return $ Spanned (ignore $ mkPos p p') $ ELetGhost a x $ bind (s2n x) e')
+            (do
+                xts <- ((do
+                        x <- identifier
+                        tyAnn <- optionMaybe $ do
+                            symbol ":"
+                            parseTy
+                        return (x, tyAnn))
+                    `sepBy` (reservedOp ","))
+                reservedOp "="
+                es <- parseExpr `sepBy` (reservedOp ",")
+                reserved "in"
+                p' <- getPosition
+                e' <- parseExpr
+                if length xts /= length es then fail "must have same number of binders and expressions" else
+                    let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
+                    return $ foldl f e' $ zip xts es))
     <|>
     (parseSpanned $ do
         reserved "unpack"
@@ -1329,6 +1328,15 @@ parseExprTerm =
         return $ EChooseIdx i (bind (s2n i) p) $ bind (s2n i) k)
     <|>
     (parseSpanned $ do
+        reserved "choose_bv"
+        i <- identifier
+        symbol "|"
+        p <- parseProp
+        reserved "in"
+        k <- parseExpr
+        return $ EChooseBV i (bind (s2n i) p) $ bind (s2n i) k)
+    <|>
+    (parseSpanned $ do
         reserved "call"
         x <- parsePath
         inds <- parseIdxParams
@@ -1349,10 +1357,13 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "forall"
         bs <- parseQuantBinders
+        oAssume <- optionMaybe $ do
+            reserved "assuming"
+            parseProp
         symbol "{"
         k <- parseExpr
         symbol "}"
-        return $ (mkEForall bs k)^.val
+        return $ (mkEForall bs oAssume k)^.val
     )
     <|>
     (parseSpanned $ do

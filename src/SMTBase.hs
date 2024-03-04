@@ -326,7 +326,8 @@ queryZ3 logsmt filepath z3results mp q = do
                     case ofn of
                       Nothing -> return ()
                       Just b -> modifyIORef z3results ((b, z3result) :)
-                    atomicModifyIORef' mp $ \m -> (M.insert hq (P._isUnsat z3result) m, ())
+                    when (P._isUnsat z3result) $ do 
+                        atomicModifyIORef' mp $ \m -> (M.insert hq True m, ())
                     return $ Right (P._isUnsat z3result, ofn)
             (_, err, _) -> return (Left err)
 
@@ -763,17 +764,21 @@ interpretProp p = do
       (PQuantBV q _ ip) -> do
           (x, p) <- liftCheck $ unbind ip
           v <- withSMTVars [x] $ interpretProp p 
+          canTrig <- liftCheck $ quantFree p
+          let trig = if canTrig then [v] else []
           let xname = cleanSMTIdent $ show x
           case q of
-            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v [] $ "forall_" ++ xname
-            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v [] $ "exists_" ++ xname
+            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v trig $ "forall_" ++ xname
+            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v trig $ "exists_" ++ xname
       (PQuantIdx q _ ip) -> do
           (i, p') <- liftCheck $ unbind ip
           v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
           let iname = cleanSMTIdent $ show i
+          canTrig <- liftCheck $ quantFree p
+          let trig = if canTrig then [v] else []
           case q of
-            Forall -> return $ sForall [(SAtom iname, indexSort)] v [] $ "forall_" ++ iname 
-            Exists -> return $ sExists [(SAtom iname, indexSort)] v [] $ "exists_" ++ iname
+            Forall -> return $ sForall [(SAtom iname, indexSort)] v trig $ "forall_" ++ iname 
+            Exists -> return $ sExists [(SAtom iname, indexSort)] v trig $ "exists_" ++ iname
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1

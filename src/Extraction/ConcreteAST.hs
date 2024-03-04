@@ -154,6 +154,9 @@ concretify e =
             (i, k) <- unbind ixk
             k' <- concretify k
             return k' -- i is free here; irrelevant
+        EChooseBV _ _ xk -> do
+            (x, k) <- unbind xk
+            concretify k -- x is ghost, irrelevant. TODO: make a unit?
         EIf a e1 e2 -> do
             c1 <- concretify e1
             c2 <- concretify e2

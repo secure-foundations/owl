@@ -1128,15 +1128,17 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
-obtainTyCases :: Ty -> String -> Check [(String, Maybe Ty)]
+obtainTyCases :: Ty -> String -> Check (ResolvedPath, [(String, Maybe Ty)])
 obtainTyCases t err = 
     case t^.val of
-      TConst s ps -> do
+      TConst s@(PRes (PDot pth _)) ps -> do
           td <- getTyDef s
           case td of
-            EnumDef b -> extractEnum ps (show s) b
+            EnumDef b -> do
+                vs <- extractEnum ps (show s) b
+                return (pth, vs)
             _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
-      TOption t0 -> return [("None", Nothing), ("Some", Just t0)]
+      TOption t0 -> return (PTop, [("None", Nothing), ("Some", Just t0)])
       _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
 
 
@@ -1235,6 +1237,23 @@ coveringLabel' t =
           let l1 = mkSpanned $ LRangeIdx $ bind x l
           return $ joinLbl advLbl l1
       THexConst a -> return zeroLbl
+
+quantFree :: Prop -> Check Bool
+quantFree p = 
+    case p^.val of
+      PQuantIdx _ _ _ -> return False
+      PQuantBV _ _ _ -> return False
+      PAADOf ne a -> extractAAD ne a >>= quantFree
+      PInODH a b c -> return True -- Abstracted by a predicate in SMT
+      PApp ps is xs -> return True -- Abstracted by a predicate in SMT
+      PAnd p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
+      POr p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
+      PNot p1 -> quantFree p1
+      PLetIn a xp -> do
+          (x, p) <- unbind xp
+          quantFree $ subst x a p
+      _ -> return True
+
 
 tyInfo :: Ty -> OwlDoc
 tyInfo t = 

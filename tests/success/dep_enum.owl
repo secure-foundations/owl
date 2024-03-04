@@ -1,0 +1,16 @@
+locality Server
+
+name X : nonce @ Server
+name K : enckey Name(X) @ Server
+
+enum ServerSt { 
+    | NoEncrypt
+    | Encrypt Name(K)
+}
+
+def go(st : ServerSt, m : if NoEncrypt?(st) then Data<adv> else Name(X)) @
+Server : Unit = 
+    case st {
+        | NoEncrypt => output m
+        | Encrypt k => let c = aenc(k, m) in output c
+    }

@@ -19,7 +19,7 @@ use super::receive::ReceiveJob;
 use super::route::RoutingTable;
 use super::worker::{worker, JobUnion};
 
-use super::super::{tun, udp, Endpoint, KeyPair};
+use super::super::{tun, udp, Endpoint, KeyPair, types::RouterDeviceType};
 use super::ParallelQueue;
 
 pub struct DeviceInner<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> {
@@ -36,6 +36,8 @@ pub struct DeviceInner<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer
 
     // work queue
     pub(super) work: ParallelQueue<JobUnion<E, C, T, B>>,
+
+    device_type: RouterDeviceType,
 }
 
 pub struct EncryptionState {
@@ -103,7 +105,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> Drop
 }
 
 impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> DeviceHandle<E, C, T, B> {
-    pub fn new(num_workers: usize, tun: T) -> DeviceHandle<E, C, T, B> {
+    pub fn new(num_workers: usize, tun: T, device_type: RouterDeviceType) -> DeviceHandle<E, C, T, B> {
         let (work, mut consumers) = ParallelQueue::new(num_workers, PARALLEL_QUEUE_SIZE);
         let device = Device {
             inner: Arc::new(DeviceInner {
@@ -112,6 +114,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> DeviceHandle<
                 outbound: RwLock::new((true, None)),
                 recv: RwLock::new(HashMap::new()),
                 table: RoutingTable::new(),
+                device_type,
             }),
         };
 
@@ -196,7 +199,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> DeviceHandle<
             .ok_or(RouterError::NoCryptoKeyRoute)?;
 
         // schedule for encryption and transmission to peer
-        peer.send(msg, true);
+        peer.send(msg, true, self.state.inner.device_type);
         Ok(())
     }
 
@@ -239,7 +242,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> DeviceHandle<
             .ok_or(RouterError::UnknownReceiverId)?;
 
         // create inbound job
-        let job = ReceiveJob::new(msg, dec.clone(), src);
+        let job = ReceiveJob::new(msg, dec.clone(), src, self.state.inner.device_type);
 
         // 1. add to sequential queue (drop if full)
         // 2. then add to parallel work queue (wait if full)

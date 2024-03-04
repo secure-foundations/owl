@@ -574,82 +574,87 @@ normalizeLabel l = do
 -- Subtype checking, assuming the types are normalized
 
 isSubtype' t1 t2 = do
-    case (t1^.val, t2^.val) of
-      (t1', t2') | t1' `aeq` t2' -> return True
-      (_, TGhost) -> return True
-      _ | isSingleton t2 -> do 
-          (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
-          return b 
-      (TCase p t1' t2', _) -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' (if b then t1' else t2') t2
-            Nothing -> do
-              b1 <- isSubtype' t1' t2
-              b2 <- isSubtype' t2' t2
+    x <- freshVar
+    falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
+       (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
+       return b
+    if falseTy then return True else 
+        case (t1^.val, t2^.val) of
+          (t1', t2') | t1' `aeq` t2' -> return True
+          (_, TGhost) -> return True
+          _ | isSingleton t2 -> do 
+              (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
+              return b 
+          (TCase p t1' t2', _) -> do
+              r <- decideProp p
+              case r of
+                Just b -> isSubtype' (if b then t1' else t2') t2
+                Nothing -> do
+                  b1 <- isSubtype' t1' t2
+                  b2 <- isSubtype' t2' t2
+                  return $ b1 && b2
+          (_, TCase p t1' t2') -> do
+              r <- decideProp p
+              case r of
+                Just b -> isSubtype' t1 (if b then t1' else t2')
+                Nothing -> do
+                  b1 <- isSubtype' t1 t1'
+                  b2 <- isSubtype' t1 t2'
+                  return $ b1 && b2
+          (TAdmit, _) -> return True
+          (TOption t1, TOption t2) -> isSubtype' t1 t2
+          (_, TRefined t _ p) -> do
+              b1 <- isSubtype' t1 t
+              (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
               return $ b1 && b2
-      (_, TCase p t1' t2') -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' t1 (if b then t1' else t2')
-            Nothing -> do
+          (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
+          (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
+          (TUnit,  _) -> do
+            isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
+          (TBool l1, TBool l2) -> do
+              ob <- tryFlowsTo l1 l2
+              case ob of
+                Nothing -> return False
+                Just b -> return b
+          (TConst x ps1, TConst y ps2) -> do
+              x' <- normalizePath x
+              y' <- normalizePath y
+              td <- getTyDef x
+              case (aeq x' y', td) of
+                (True, EnumDef _) -> return $ aeq ps1 ps2 
+                (True, StructDef _) -> do
+                    assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
+                    qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
+                        case (p1, p2) of
+                          (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
+                          _ -> typeError $ "Bad param to struct: didn't get index"
+                    let p = foldr pAnd pTrue qs
+                    (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
+                    return b
+                _ -> return False
+          (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
+          (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
+              (xi, t1) <- unbind xt1
+              (xi', t2) <- unbind xt2
+              withIndices [(xi, (ignore s1, IdxGhost))] $ 
+                  isSubtype' t1 (subst xi' (mkIVar xi) t2)
+          (_, TUnion t1' t2') -> do
               b1 <- isSubtype' t1 t1'
               b2 <- isSubtype' t1 t2'
-              return $ b1 && b2
-      (TAdmit, _) -> return True
-      (TOption t1, TOption t2) -> isSubtype' t1 t2
-      (_, TRefined t _ p) -> do
-          b1 <- isSubtype' t1 t
-          (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b2
-      (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
-      (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
-      (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
-      (TBool l1, TBool l2) -> do
-          ob <- tryFlowsTo l1 l2
-          case ob of
-            Nothing -> return False
-            Just b -> return b
-      (TConst x ps1, TConst y ps2) -> do
-          x' <- normalizePath x
-          y' <- normalizePath y
-          td <- getTyDef x
-          case (aeq x' y', td) of
-            (True, EnumDef _) -> return $ aeq ps1 ps2 
-            (True, StructDef _) -> do
-                assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
-                qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
-                    case (p1, p2) of
-                      (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
-                      _ -> typeError $ "Bad param to struct: didn't get index"
-                let p = foldr pAnd pTrue qs
-                (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
-                return b
-            _ -> return False
-      (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
-      (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
-          (xi, t1) <- unbind xt1
-          (xi', t2) <- unbind xt2
-          withIndices [(xi, (ignore s1, IdxGhost))] $ 
-              isSubtype' t1 (subst xi' (mkIVar xi) t2)
-      (_, TUnion t1' t2') -> do
-          b1 <- isSubtype' t1 t1'
-          b2 <- isSubtype' t1 t2'
-          return $ b1 || b2
-      (t, TDataWithLength l a) -> do
-          b1 <- isSubtype' t1 (tData l l)
-          (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b
-      (t, TData l1 l2 _) -> do
-        l2' <- tyLenLbl t1
-        b1 <- tyFlowsTo t1 l1 
-        ob2 <- tryFlowsTo l2' l2
-        case ob2 of
-          Nothing -> return False
-          Just b2 -> return $ b1 && b2
-      (TRefined t _ _, _) -> isSubtype' t t2
-      _ -> return False
+              return $ b1 || b2
+          (t, TDataWithLength l a) -> do
+              b1 <- isSubtype' t1 (tData l l)
+              (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
+              return $ b1 && b
+          (t, TData l1 l2 _) -> do
+            l2' <- tyLenLbl t1
+            b1 <- tyFlowsTo t1 l1 
+            ob2 <- tryFlowsTo l2' l2
+            case ob2 of
+              Nothing -> return False
+              Just b2 -> return $ b1 && b2
+          (TRefined t _ _, _) -> isSubtype' t t2
+          _ -> return False
 
 isSingleton :: Ty -> Bool
 isSingleton t = 
@@ -1892,7 +1897,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           t' <- normalizeTy t
           t'' <- ghostifyTy a t'
           (x, k) <- unbind xk
-          t2 <- withVars [(x, (ignore sx, Nothing, t''))] (checkExpr ot k)
+          t2 <- withVars [(x, (ignore sx, Just a, t''))] (checkExpr ot k)
           stripTy x t2
       (EChooseIdx s ip ik) -> do
           (ix, p) <- unbind ip
@@ -1914,6 +1919,23 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 if i `elem` getTyIdxVars t' then
                     return (tExistsIdx s (bind i t'))
                 else return t'
+      (EChooseBV s ip ik) -> do
+          (x, p) <- unbind ip
+          withVars [(x, (ignore s, Nothing, tGhost))] $ do
+              checkProp p
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantBV Exists (ignore s) ip
+          (y, k) <- unbind ik
+          getOutTy ot =<< case b of
+            Just True -> do
+                let tx = tRefined tGhost ".x" $ subst x (aeVar ".x") p
+                to <- withVars [(x, (ignore s, Nothing, tx))] $
+                    checkExpr ot $ subst y (aeVar' x) k
+                if x `elem` toListOf fv to then 
+                    stripTy x to
+                else return to
+            _ -> do
+                to <- withVars [(y, (ignore s, Nothing, tGhost))] $ checkExpr ot k
+                if y `elem` toListOf fv to then stripTy y to else return to
       (EUnpack a (si, sx) ixk) -> do
           t <- inferAExpr a
           ((i, x), e_) <- unbind ixk
@@ -2056,17 +2078,25 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
       (EForallBV s xk) -> do
-          (x, k) <- unbind xk
+          (x, (oreq, k)) <- unbind xk
           t <- local (set tcScope $ TcGhost False) $ withVars [(x, (ignore s, Nothing, tGhost))] $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+              case oreq of
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ 
+                        checkExpr Nothing k >>= normalizeTy
+                Nothing -> checkExpr Nothing k >>= normalizeTy
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       (EForallIdx s ik) -> do
-          (i, k) <- unbind ik
+          (i, (oreq, k)) <- unbind ik
           tc <- view tcScope
           -- We allow crypto lemmas underneath forall_idx, because there are
           -- only polynomially many indices.
@@ -2076,13 +2106,20 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                       TcGhost False -> TcGhost False
                       _ -> TcGhost True
           t <- local (set tcScope $ tc') $ withIndices [(i, (ignore $ show i, IdxGhost))] $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+              case oreq of
+                Nothing -> checkExpr Nothing k >>= normalizeTy
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ checkExpr Nothing k >>= normalizeTy
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       (ECorrCaseNameOf a op k) -> do
           t <- inferAExpr a
           t' <- normalizeTy t
@@ -2162,6 +2199,9 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           -- TODO: we need to check that, if we have an annotation, in the good case, we simply subtype
           -- into the validated ty, but we still return the true type
           t <- checkExpr Nothing e1
+          e1_a <- case e1^.val of
+                    ERet a -> return a
+                    _ -> typeError "Expected AExpr for case after ANF"
           t <- stripRefinements <$> normalizeTy t
           (wfCase, tcases, ok) <- case otk of
             Just (tAnn, k) -> do
@@ -2182,11 +2222,19 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
               flowCheck lt advLbl
           assert ("Duplicate case") $ uniq (map fst cases)
           assert ("Cases must not be nonempty") $ length cases > 0
-          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases))
+          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst $ snd tcases))
           branch_ts <- forM cases $ \(c, ocase) -> do
-              let (Just otcase) = lookup c tcases
+              let enumPathPre = fst tcases
+              let (Just otcase) = lookup c $ snd tcases
               case (otcase, ocase) of
-                (Nothing, Left ek) -> checkExpr ot ek
+                (Nothing, Left ek) -> do
+                    case c of
+                      "None" -> checkExpr ot ek
+                      "Some" -> checkExpr ot ek
+                      _ -> do
+                          x <- freshVar
+                          t <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]))] $ checkExpr ot ek
+                          stripTy (s2n x) t
                 (Just t1, Right (s, xk)) -> do
                     (x, k) <- unbind xk
                     -- Generate type of bound case variable. Note that if this is a parsing `case` statement,
@@ -2198,7 +2246,13 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                         return $ case t' of
                             Nothing -> tData lt lt
                             Just t' -> t'
-                    tout <- withVars [(x, (s, Nothing, xt))] $ checkExpr ot k
+                    -- Hack since we currently do not interpret option types the
+                    -- same as enums
+                    let xt_refined = case c of
+                                       "Some" -> xt
+                                       "None" -> xt
+                                       _ -> tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]
+                    tout <- withVars [(x, (s, Nothing, xt_refined))] $ checkExpr ot k
                     case ot of
                       Just _ -> return tout
                       Nothing -> stripTy x tout
@@ -2639,7 +2693,7 @@ crhInjLemma x y =
 kdfInjLemma :: AExpr -> AExpr -> Check Prop
 kdfInjLemma x y = 
     case (x^.val, y^.val) of
-      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | nks == nks' && j == j' && j < length nks -> do 
+      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | j < length nks && j' < length nks' && (nks !! j == nks' !! j') -> do
           let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
           p2 <- kdfInjLemma a a'
           p3 <- kdfInjLemma b b'
