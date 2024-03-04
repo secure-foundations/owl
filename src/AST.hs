@@ -319,7 +319,7 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
-type KDFBody =  Bind ((String, DataVar), (String, DataVar)) 
+type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
         [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
 
 

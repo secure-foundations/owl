@@ -665,10 +665,14 @@ parseNameType =
         symbol "{"
         x <- identifier
         y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
         symbol "."
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
+        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
     )
     <|>
     (parseSpanned $ do
@@ -831,10 +835,14 @@ parseDecls =
         symbol "{"
         x <- identifier
         y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
         symbol "."
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y)) kdfCases))
+        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
     )
     <|>
     (parseSpanned $ do

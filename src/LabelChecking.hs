@@ -59,9 +59,9 @@ nameDefFlows n nt = do
           return $ sFlows lv ln
       NT_KDF pos bnd -> do 
           ctr <- getFreshCtr
-          (((sx, x), (sy, y)), cases) <- liftCheck $ unbind bnd
+          (((sx, x), (sy, y), (sz, z)), cases) <- liftCheck $ unbind bnd
           -- TODO: below, we need to generealize
-          axs <- withSMTVars [x, y] $ do
+          axs <- withSMTVars [x, y, z] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
                   (ixs, (p, nts)) <- liftCheck $ unbind $ cases !! i
                   axijs <- forM [0 .. (length nts - 1)] $ \j -> do

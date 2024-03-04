@@ -578,10 +578,10 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-inKDFBody :: KDFBody -> AExpr -> AExpr -> Check Prop
-inKDFBody kdfBody salt info = do
-    (((sx, x), (sy, y)), cases') <- unbind kdfBody
-    let cases = subst x salt $ subst y info $ cases'
+inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check Prop
+inKDFBody kdfBody salt info self = do
+    (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
+    let cases = subst x salt $ subst y info $ subst z self $ cases'
     bs <- forM cases $ \bcase -> do
         (xs, (p, _)) <- unbind bcase
         return $ mkExistsIdx xs p
@@ -597,7 +597,7 @@ inODHProp salt ikm info = do
         let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
                                                           (mkSpanned $ AEGet ne2)
                                                )
-        pd2 <- inKDFBody kdfBody salt info
+        pd2 <- inKDFBody kdfBody salt info ikm
         return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
     return $ foldr pOr pFalse ps
 
@@ -712,6 +712,8 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
 
 getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
 getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
     mapM_ inferIdx is_case
@@ -722,9 +724,10 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           ((ixs, pxs), bdy) <- unbind bd
           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          (((sx, x), (sy, y)), cases) <- unbind kdfBody
+          let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
+          (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ cases !! i
+          let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
           (xs_case, pcases')  <- unbind bpcases
           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
           let (p, cases') = substs (zip xs_case is_case) pcases'

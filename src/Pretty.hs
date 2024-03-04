@@ -260,7 +260,7 @@ owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map
 
 instance  OwlPretty NameTypeX where
     owlpretty (NT_KDF kpos cases) = 
-        let (((sx, _), (sy, _)), c) = unsafeUnbind cases in 
+        let (((sx, _), (sy, _), (sself, _)), c) = unsafeUnbind cases in 
         let pcases = map (\b ->
                             let (is, (p, nts)) = unsafeUnbind b in 
                             owlprettyIdxBinds1 is <> owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
@@ -270,7 +270,7 @@ instance  OwlPretty NameTypeX where
                    KDF_SaltPos -> owlpretty "KDF"
                    KDF_IKMPos -> owlpretty "DualKDF"
         in
-        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
+        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
     owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in

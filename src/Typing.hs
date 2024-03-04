@@ -1244,13 +1244,17 @@ checkNameType nt = withSpan (nt^.spanOf) $
           assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
           return ()
       NT_KDF kdfPos b -> do 
-          (((sx, x), (sy, y)), cases) <- unbind b 
+          (((sx, x), (sy, y), (sself, xself)), cases) <- unbind b 
           withVars [(x, (ignore sx, Nothing, tGhost)), 
-                    (y, (ignore sy, Nothing, tGhost))] $ do
+                    (y, (ignore sy, Nothing, tGhost)),
+                    (xself, (ignore sself, Nothing, tGhost))] $ do
               assert ("KDF cases must be non-empty") $ not $ null cases
               ps <- forM cases $ \bcase -> do
                   (ixs, (p, nts)) <- unbind bcase 
                   withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) ixs) $ do 
+                      withSpan (p^.spanOf) $ 
+                          assert ("Self variable must not appear in precondition") $ 
+                              not $ xself `elem` (toListOf fv p)
                       checkProp p
                       forM_ nts $ \(str, nt) -> do
                           checkNameType nt
@@ -2547,8 +2551,8 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
               nt <- getNameType ne
               case nt^.val of
                 NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
-                    (((sx, x), (sy, y)), cases_) <- unbind bcases
-                    let cases = subst x (fst other) $ subst y (fst c) $ cases_
+                    (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
+                    let cases = subst x (fst other) $ subst y (fst c) $ subst xself (fst principal) $ cases_
                     assert "KDF case out of bounds" $ i < length cases                    
                     (ixs, pnts) <- unbind $ cases !! i
                     assert ("KDF case index arity mismatch") $ length ixs == length is_case
@@ -2672,7 +2676,7 @@ findKDFODHColl (a, _) (b, _) (c, _) = do
                 let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
                 ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd
                 let pd1 = pEq ikm (dhCombine (dhpk $ aeGet ne1) (aeGet ne2))
-                pd2 <- inKDFBody kdfBody salt info
+                pd2 <- inKDFBody kdfBody salt info ikm
                 res <- decideProp $ pNot $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
                 case res of
                   Just True -> findColl salt ikm info odhs

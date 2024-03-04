@@ -349,7 +349,7 @@ resolveNameType e = do
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
                   NT_KDF pos b -> do
-                      (((s, x), (s2, y)), cases) <- unbind b
+                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
                       cases' <- forM cases $ \bpnts -> do 
                           (is, (p, nts)) <- unbind bpnts
                           p' <- resolveProp p
@@ -357,7 +357,7 @@ resolveNameType e = do
                               nt' <- resolveNameType nt
                               return (str, nt')
                           return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y)) cases'
+                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
