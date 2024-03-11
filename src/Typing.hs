@@ -2605,6 +2605,15 @@ getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
             _ -> go_from_ty
       _ -> go_from_ty
 
+-- Resolve the AExpr and split it up into its concat components
+unconcat :: AExpr -> Check [AExpr]
+unconcat a = do
+    a' <- resolveANF a >>= normalizeAExpr
+    case a'^.val of
+     AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
+         liftM2 (++) (unconcat x) (unconcat y)
+     _ -> return [a']
+
 inferKDFODH :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> String -> ([Idx], [Idx]) -> KDFSelector -> Int -> [NameKind] -> Check (Maybe KDFInferResult) 
 inferKDFODH a (b, tb) c s ips i j nks = pushRoutine ("inferKDFODH") $ do
     pth <- curModName
@@ -2617,12 +2626,18 @@ inferKDFODH a (b, tb) c s ips i j nks = pushRoutine ("inferKDFODH") $ do
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     res <- do
         let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
-        beq <- decideProp $ pEq b real_ss
+        -- We ask if one of the unconcatted elements is equal to the specified
+        -- DH name
+        beq <- do 
+            bs <- unconcat b
+            let contains_real_ss = foldr pOr pFalse $ map (pEq real_ss) bs
+            decideProp $ contains_real_ss
         case beq of 
           Just True -> do
               b2 <- decideProp p
               b3 <- flowsTo (nameLbl ne1) advLbl
               b4 <- flowsTo (nameLbl ne2) advLbl
+              -- If it is, and if the DH name is a secret, then we are good
               if (b2 == Just True) then 
                     if (not b3) && (not b4) then
                         return $ Just $ KDFGood str $
@@ -2644,7 +2659,10 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
         --    (a, g^xy, c) not in ODH
         --    the DH computation is local (involves a module-local DH name)
         --    one of the x,y is secret
-        (fn, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH (fst a) b (fst c) 
+
+        bs <- unconcat b
+        (fn, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ 
+            foldr pOr pFalse $ map (\ikm -> mkSpanned $ PInODH (fst a) ikm (fst c)) bs
         case fn of
           Nothing -> return ()
           Just s -> logTypecheck $ owlpretty "notODH query: " <> owlpretty fn
