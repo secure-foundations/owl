@@ -291,45 +291,46 @@ pub mod itree {
     use vstd::{modes::*, prelude::*, seq::*, *};
 
     verus! {
-    #[is_variant]
-    pub enum ITree<A, #[verifier(maybe_negative)] Endpoint> {
-        Input  (FnSpec(Seq<u8>, Endpoint) -> ITree<A, Endpoint>),
+    #[verifier::reject_recursive_types(Endpoint)]
+    pub enum ITree<A, Endpoint> {
+        Input  (spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>),
         Output (Seq<u8>, Endpoint, Box<ITree<A, Endpoint>>),
-        Sample (usize, FnSpec(Seq<u8>) -> ITree<A, Endpoint>),
+        Sample (usize, spec_fn(Seq<u8>) -> ITree<A, Endpoint>),
         Ret    (A),
     }
 
     impl<A, Endpoint> ITree<A, Endpoint> {
         pub open spec fn is_input(&self) -> bool {
-            self.is_Input()
+            self is Input
         }
         pub open spec(checked) fn take_input(&self, i: Seq<u8>, ev: Endpoint) -> ITree<A,Endpoint>
-            recommends self.is_input()
+            recommends self is Input
         {
-            (self.get_Input_0())(i, ev)
+            (self->Input_0)(i, ev)
+
         }
         pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
-            self.is_Output() && self.get_Output_0() == o && self.get_Output_1() == ev
+            self matches ITree::Output(o, ev, _) // && self.get_Output_0() == o && self.get_Output_1() == ev
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o, ev| self.is_output(o, ev))
         {
-            *self.get_Output_2()
+            *(self->Output_2)
         }
         pub open spec fn is_sample(&self, n: usize) -> bool {
-            self.is_Sample() && self.get_Sample_0() == n
+            self matches ITree::Sample(n, _)
         }
         pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
         {
-            (self.get_Sample_1())(coins)
+            (self->Sample_1)(coins)
         }
         pub open spec(checked) fn results_in(&self, a: A) -> bool 
         {
-            self.is_Ret() && self.get_Ret_0() == a
+            self matches ITree::Ret(a) // && self.get_Ret_0() == a
         }
 
-        pub open spec fn bind<B>(&self, next: FnSpec(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
+        pub open spec fn bind<B>(&self, next: spec_fn(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
             decreases self
         {
             match self {
@@ -351,28 +352,28 @@ pub mod itree {
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Ret(x).bind(k)) == k(x)
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_input<A, B, Endpoint>(f : FnSpec(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_input<A, B, Endpoint>(f : spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Input(f).bind(k)) == ITree::Input(|x,e| f(x,e).bind(k))
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Output(x, e, f).bind(k)) == ITree::Output(x, e, Box::new((*f).bind(k)))
     { }
 
     #[verifier(external_body)]
     #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : FnSpec(Seq<u8>) -> ITree<A, Endpoint>, k : FnSpec(A) -> ITree<B, Endpoint>)
+    pub proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : spec_fn(Seq<u8>) -> ITree<A, Endpoint>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
@@ -447,7 +448,7 @@ pub mod itree {
     //     ensures  is_equal(x, y)
     // {}
 
-    // pub proof fn bind_assoc<A,B,C>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
+    // pub proof fn bind_assoc<A,B,C>(f: ITree<A, Endpoint>, g: spec_fn(A) -> ITree<B, Endpoint>, h: spec_fn(B) -> ITree<C, Endpoint>)
     //     ensures f.bind(g).bind(h) =~~= f.bind(|x| g(x).bind(h))
     //     decreases f
     // {
@@ -471,7 +472,7 @@ pub mod itree {
 
     #[verifier(external_body)]
     // #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: FnSpec(A) -> ITree<B, Endpoint>, h: FnSpec(B) -> ITree<C, Endpoint>)
+    pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: spec_fn(A) -> ITree<B, Endpoint>, h: spec_fn(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}
 
@@ -480,24 +481,24 @@ pub mod itree {
     ///// Handling subroutine calls //////////////////////
     //////////////////////////////////////////////////////
 
-    // Hack because I seem to be unable to return `FnSpec`s
+    // Hack because I seem to be unable to return `spec_fn`s
     #[allow(dead_code)]
-    type FnSpecAlias<A,B> = FnSpec(A) -> B;
+    type spec_fnAlias<A,B> = spec_fn(A) -> B;
 
 
-    pub open spec fn itree_conts_match<A,B>(k: FnSpec(A) -> ITree<B, Endpoint>, kt: FnSpec(A) -> ITreeToken<B, Endpoint>) -> bool
+    pub open spec fn itree_conts_match<A,B>(k: spec_fn(A) -> ITree<B, Endpoint>, kt: spec_fn(A) -> ITreeToken<B, Endpoint>) -> bool
     {
         forall |v: A| ((#[trigger] kt(v)).view() == k(v))
     }
 
     #[verifier(external_body)]
-    pub proof fn split_bind<A,B>(tracked t: ITreeToken<A, Endpoint>, s: ITree<B, Endpoint>) -> (tracked st_kt: (Tracked<ITreeToken<B, Endpoint>>, Tracked<FnSpecAlias<B, ITreeToken<A, Endpoint>>>))
+    pub proof fn split_bind<A,B>(tracked t: ITreeToken<A, Endpoint>, s: ITree<B, Endpoint>) -> (tracked st_kt: (Tracked<ITreeToken<B, Endpoint>>, Tracked<spec_fnAlias<B, ITreeToken<A, Endpoint>>>))
         requires exists |k| (t.view() == #[trigger] s.bind::<A>(k))
         ensures  forall |k| (t.view() == #[trigger] s.bind::<A>(k)) ==> ((st_kt.0).view().view() == s && itree_conts_match(k, (st_kt.1).view()))
     { unimplemented!() }
 
     #[verifier(external_body)]
-    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: FnSpecAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: Tracked<ITreeToken<A, Endpoint>>)
+    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: spec_fnAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: Tracked<ITreeToken<A, Endpoint>>)
         requires st.view().results_in(v),
         ensures  t.view() == kt(v)
     { unimplemented!() }

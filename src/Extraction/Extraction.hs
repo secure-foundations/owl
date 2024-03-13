@@ -285,15 +285,14 @@ extractStruct owlName owlFields = do
                         x:y:tl -> foldl (\acc v -> parens (acc <+> owlpretty "," <+> owlpretty v)) (parens (owlpretty x <> owlpretty "," <+> owlpretty y)) tl   
             let parserBody = 
                     owlpretty "reveal" <> parens (owlpretty "parse_" <> owlpretty specname) <> owlpretty ";" <> line <>
-                    owlpretty "let vec_arg = slice_to_vec(arg.as_slice());" <> line <>
                     -- owlpretty "assume(vec_arg.dview() == vec_arg.dview());" <> line <>
-                    owlpretty "let stream = parse_serialize::Stream { data : vec_arg, start : 0 };" <> line <>
+                    owlpretty "let stream = parse_serialize::Stream { data : arg.as_slice(), start : 0 };" <> line <>
                     owlpretty "if let Ok((_, _, parsed)) = parse_serialize::parse_" <> owlpretty (rustifyName owlName) <> owlpretty "(stream) {" <> line <>
                     owlpretty "let" <+> mkNestPattern (map fst rustFields') <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
                     -- (vsep . map (\(f,_) -> owlpretty "assume(" <> owlpretty f <+> owlpretty ".dview() ==" <+> owlpretty f <> owlpretty ".dview());") $ rustFields') <> line <>
                     owlpretty "Some" <> parens (owlpretty name <+> braces (
                         hsep . punctuate comma . map (\(f,_) -> 
-                            owlpretty f <+> owlpretty ":" <+> owlpretty "OwlBuf::from_vec" <> parens (owlpretty f)
+                            owlpretty f <+> owlpretty ":" <+> owlpretty "OwlBuf::from_slice" <> parens (owlpretty f)
                         ) $ rustFields'
                     )) <> line <>
                     owlpretty "} else { None }" 
@@ -310,21 +309,23 @@ extractStruct owlName owlFields = do
                     --     ) <> owlpretty ");" <> line <>
                     owlpretty "reveal" <> parens (owlpretty "serialize_" <> owlpretty specname <> owlpretty "_inner") <> owlpretty ";" <> line <>
                     owlpretty "if" <+> checkLenOverflow <+> braces (line <> 
-                        owlpretty "let stream = parse_serialize::Stream { data : vec_u8_of_len(" <> structLen <> owlpretty "), start : 0 };" <> line <>
+                        -- owlpretty "let stream = parse_serialize::Stream { data : vec_u8_of_len(" <> structLen <> owlpretty "), start : 0 };" <> line <>
+                        owlpretty "let mut obuf = vec_u8_of_len(" <> structLen <> owlpretty ");" <> line <>
                         owlpretty "let ser_result = parse_serialize::serialize_" <> owlpretty (rustifyName owlName) <> 
-                                owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "slice_to_vec(&arg." ++ f ++ ".as_slice())") rustFields' )) <> owlpretty ");" <> line <>
-                        owlpretty "if let Ok((mut serialized, n)) = ser_result {" <> line <>
-                        owlpretty "vec_truncate(&mut serialized.data, n); Some(serialized.data)" <> line <>
+                                owlpretty "(obuf.as_mut_slice(), 0," <+> parens (mkNestPattern (map (\(f,_) -> "&arg." ++ f ++ ".as_slice()") rustFields' )) <> owlpretty ");" <> line <>
+                        owlpretty "if let Ok((_new_start, num_written)) = ser_result {" <> line <>
+                        owlpretty "vec_truncate(&mut obuf, num_written); Some(obuf)" <> line <>
                         owlpretty "} else { None }" <> line 
                     ) <> owlpretty "else { None }"
             let parseEnsuresLenValid (f,_) = 
                     owlpretty "        res.is_Some() ==> res.get_Some_0()." <> owlpretty f <> owlpretty ".len_valid()," 
             let serRequiresLenValid (f,_) = 
                     owlpretty "arg." <> owlpretty f <> owlpretty ".len_valid()," 
+            debugPrint $ "using external_body for serializer to allow as_mut_slice call"
             return $
                 -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
                 (if isVest then owlpretty "" else owlpretty "#[verifier(external_body)]") <> line <>
-                owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> owlpretty "<'a>" <> parens (owlpretty "arg: OwlBuf<'a>") <+> 
+                owlpretty "pub exec fn" <+> owlpretty "parse_" <> owlpretty name <> owlpretty "<'a>" <> parens (owlpretty "arg: &'a OwlBuf<'a>") <+> 
                     owlpretty "->" <+> parens (owlpretty "res: Option<" <> owlpretty name <> owlpretty "<'a>" <> owlpretty ">") <> line <>
                     owlpretty "requires arg.len_valid()," <> line <>
                     owlpretty "ensures res.is_Some() ==>" <+> specParse <> owlpretty ".is_Some()," <> line <>
@@ -335,7 +336,7 @@ extractStruct owlName owlFields = do
                     (if isVest then parserBody else owlpretty "// can't autogenerate vest parser" <> line <> owlpretty "todo!()") <> line <>
                 rbrace <> line <> line <>
                 -- exec serializer
-                -- owlpretty "/* TODO under/overflow is annoying */ #[verifier(external_body)]" <> line <>
+                owlpretty "/* TODO work around `as_mut_slice` call */ #[verifier(external_body)]" <> line <>
                 (if isVest then 
                     owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                         owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
@@ -918,10 +919,10 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
             -- let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
             --                                  owlpretty "=" <+> rcNew <> parens (owlpretty "parseval." <> owlpretty (rustifyName f)) <> owlpretty ";"
             e <- do
-                owlBufArg <- case rtAe of
-                        VecU8 -> return $ owlpretty "OwlBuf::from_vec" <> parens aePrettied
-                        SliceU8 -> return $ owlpretty "OwlBuf::from_slice" <> parens aePrettied
-                        OwlBuf -> return $ aePrettied
+                owlBufArg <-  case rtAe of
+                        VecU8 -> return $ owlpretty "&OwlBuf::from_vec" <> parens aePrettied
+                        SliceU8 -> return $ owlpretty "&OwlBuf::from_slice" <> parens aePrettied
+                        OwlBuf -> return $ owlpretty "&" <> aePrettied
                         _ -> throwError $ TypeError "couldn't make OwlBuf for parse call"
                 return $ owlpretty "if let Some(parseval) = parse_" <> owlpretty (rustifyName t) <> parens owlBufArg <> owlpretty " {" <> line <>
                         vsep (map destructStruct patfields) <> line <> 

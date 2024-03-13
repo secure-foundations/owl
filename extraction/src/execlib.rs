@@ -78,7 +78,7 @@ impl<'x> OwlBuf<'x> {
         }
     }
 
-    pub fn as_slice(&self) -> (result: &[u8])
+    pub fn as_slice<'a>(&'a self) -> (result: &'a [u8])
         requires self.len_valid()
         ensures  result.dview() == self.dview()
     {
