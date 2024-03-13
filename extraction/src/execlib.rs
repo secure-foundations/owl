@@ -3,7 +3,6 @@ use std::rc::Rc;
 
 verus! {
 
-#[is_variant]
 pub enum OwlBuf<'a> {
     Borrowed(&'a [u8]),
     Owned(Rc<Vec<u8>>, usize, usize), // buffer, start, len

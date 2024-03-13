@@ -7,7 +7,6 @@ use vstd::prelude::*;
 verus! {
 
 #[derive(Clone, Copy)]
-#[is_variant]
 pub enum Mode {
     Aes128Gcm,
     Aes256Gcm,
