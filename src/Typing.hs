@@ -2551,37 +2551,52 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
     let (principal, other) = case kpos of
                               KDF_SaltPos -> (a, b)
                               KDF_IKMPos -> (b, a)
-    case extractNameFromType (snd principal) of 
-      Nothing -> return Nothing
-      Just ne -> do
-        wf <- isSubtype (snd principal) (tName ne)
-        case wf of
-          False -> return Nothing
-          True -> do 
-              nt <- getNameType ne
-              case nt^.val of
-                NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
-                    (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
-                    let cases = subst x (fst other) $ subst y (fst c) $ subst xself (fst principal) $ cases_
-                    assert "KDF case out of bounds" $ i < length cases                    
-                    (ixs, pnts) <- unbind $ cases !! i
-                    assert ("KDF case index arity mismatch") $ length ixs == length is_case
-                    let (p, nts) = substs (zip ixs is_case) $ pnts
-                    nks2 <- forM nts $ \(_, nt) -> getNameKind nt
-                    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
-                    assert "KDF row index out of bounds" $ j < length nks                    
-                    let (str, nt) = nts !! j
-                    bp <- decideProp p
-                    b2 <- not <$> flowsTo (nameLbl ne) advLbl
-                    if (bp == Just True) then
-                          if b2 then 
-                                return $ Just $ KDFGood str $ 
-                                    mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt   
-                          else do
-                              l_corr <- coveringLabelOf [snd a, snd b, snd c]
-                              return $ Just $ KDFCorrupt l_corr 
-                    else return Nothing
-                NT_KDF kpos' _ -> typeError $ "Unexpected key position: expected " ++ show (kpos') ++ " but got " ++ show kpos
+    principals <- case kpos of
+                       KDF_SaltPos -> return [principal]
+                       KDF_IKMPos -> do
+                           xs <- unconcat $ fst principal
+                           forM xs $ \x -> do
+                               t <- inferAExpr x
+                               return (x, t)
+    go kpos other principals c (i, is_case) j nks
+        where
+            go kpos other [] c (i, is_case) j nks = return Nothing
+            go kpos other ((xp, tp):principals) c (i, is_case) j nks = do
+                res1 <- case extractNameFromType tp of
+                          Nothing -> return Nothing
+                          Just ne -> do
+                              wf <- isSubtype tp (tName ne)
+                              case wf of
+                                False -> return Nothing
+                                True -> do 
+                                    nt <- getNameType ne
+                                    case nt^.val of
+                                      NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
+                                          (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
+                                          let cases = subst x (fst other) $ subst y (fst c) $ subst xself xp $ cases_
+                                          assert "KDF case out of bounds" $ i < length cases                    
+                                          (ixs, pnts) <- unbind $ cases !! i
+                                          assert ("KDF case index arity mismatch") $ length ixs == length is_case
+                                          let (p, nts) = substs (zip ixs is_case) $ pnts
+                                          nks2 <- forM nts $ \(_, nt) -> getNameKind nt
+                                          assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+                                          assert "KDF row index out of bounds" $ j < length nks                    
+                                          let (str, nt) = nts !! j
+                                          bp <- decideProp p
+                                          b2 <- not <$> flowsTo (nameLbl ne) advLbl
+                                          if (bp == Just True) then
+                                                if b2 then 
+                                                      return $ Just $ KDFGood str $ 
+                                                          mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt   
+                                                else do
+                                                    l_corr <- coveringLabelOf [snd a, snd b, snd c]
+                                                    return $ Just $ KDFCorrupt l_corr 
+                                          else return Nothing
+                                      _ -> return Nothing
+                case res1 of
+                  Nothing -> go kpos other principals c (i, is_case) j nks
+                  Just (KDFCorrupt _) -> go kpos other principals c (i, is_case) j nks
+                  Just v -> return $ Just v
 
 -- Try to infer a valid local DH computation (pk, sk) from input
 -- (local = sk name is local to the module)
@@ -2841,7 +2856,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                               Nothing ->  go os'
               go oann1
           res2 <- local (set tcScope $ TcGhost False) $ do
-              let go os =
+              let go lax os = do -- lax means if we are actually out of options
                       case os of
                         [] -> do
                             r <- inferKDFODHOOB a b c
@@ -2854,8 +2869,9 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                   False -> do
                                       -- TODO: take into account more nuanced DH
                                       -- reasoning here
-                                      coll <- findKDFODHColl a b c 
-                                      typeError $ "KDF malformed but collided with: " ++ show (owlpretty coll) 
+                                      if lax then return Nothing else do
+                                          coll <- findKDFODHColl a b c 
+                                          typeError $ "KDF malformed but collided with: " ++ show (owlpretty coll) 
                         e:os' -> do
                             r <- case e of
                                    Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
@@ -2863,13 +2879,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                             case r of
                               -- If we get corrupt, try the next one
                               Just (KDFCorrupt lbl) -> do
-                                  r <- go os'
+                                  r <- go True os'
                                   case r of
                                     Nothing -> return $ Just (Just e, KDFCorrupt lbl)
                                     Just v2 -> return $ Just v2
                               Just v -> return $ Just (Just e, v)
-                              Nothing -> go os'
-              go oann2
+                              Nothing -> go lax os'
+              go False oann2
           res <- case (res1, res2) of
                    (Nothing, Just (e, v)) -> return $ Just v
                    (Just (i, v), Nothing) -> return $ Just v

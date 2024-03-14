@@ -7,8 +7,6 @@ name skR : DH @ receiver
 name skE : DH @ sender
 name skS : DH @ sender
 
-corr [skE] /\ [skS] ==> [channel_secret]
-corr [skR] ==> [channel_secret]
 
 counter send_counter @ sender
 counter recv_counter @ receiver
@@ -53,26 +51,43 @@ func lbl_ikm(lbl, ikm) =
 func lbl_info(len, lbl, info) = 
     len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
 
-func dh_secret_kdf_ikm() = lbl_ikm(secret_string(), psk())
-
 func base_nonce_kdf_info() = lbl_info(|enckey|, base_nonce_string(), key_schedule_context())
 
 func key_kdf_info() = lbl_info(|enckey|, key_string(), key_schedule_context())
 
+func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
+
+nametype psk_t = dualkdf {salt info self.
+    (info == base_nonce_kdf_info()) -> public nonce |counter|,
+    (info == key_kdf_info()) -> 
+     strict st_aead Data<[channel_secret] /\ adv, |adv|>
+                              aad x. true
+                              nonce send_counter
+                              pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
+                                dh_secret_kdf_ikm(self), base_nonce_kdf_info()))
+}
+
+name psk : psk_t @ sender, receiver
+
+corr [skE] /\ [skS] /\ [psk] ==> [channel_secret]
+corr [skR] /\ [psk] ==> [channel_secret]
+
+
 nametype shared_secret_t = 
     kdf {ikm info self. 
-        (ikm == dh_secret_kdf_ikm())
+        (ikm == dh_secret_kdf_ikm(get(psk)))
         /\
         (info == base_nonce_kdf_info())
         -> public nonce |counter|,
 
-        (ikm == dh_secret_kdf_ikm())
+        (ikm == dh_secret_kdf_ikm(get(psk)))
         /\
         (info == key_kdf_info())
         -> strict st_aead Data<[channel_secret] /\ adv, |adv|>
                           aad x. true
                           nonce send_counter
-                          pattern i. xor(i, gkdf<nonce |counter|;0>(self, dh_secret_kdf_ikm(), base_nonce_kdf_info()))
+                          pattern i. xor(i, gkdf<nonce |counter|;0>(self,
+                          dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
     }
 
 odh ss : skR, skS -> { salt info. 
@@ -90,9 +105,10 @@ def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ 
     corr_case skS in
     corr_case skE in
     let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x, lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(), kem_ctxt)) in 
-    let base_nonce = kdf<0;;nonce |counter|;0>(shared_secret,
-    dh_secret_kdf_ikm(), base_nonce_kdf_info()) in 
-    let sk = kdf<1;;enckey;0>(shared_secret, dh_secret_kdf_ikm(),
+    corr_case psk in 
+    let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
+    dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
+    let sk = kdf<1;1;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)),
     key_kdf_info()) in 
     output dhpk(get(skE)); 
     let c = st_aead_enc<send_counter, pattern i. xor(i, base_nonce)>(sk, x, 0x)

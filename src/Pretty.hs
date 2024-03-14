@@ -348,6 +348,10 @@ instance  OwlPretty CryptOp where
     owlpretty (CEncStAEAD p (idx1, idx2) _) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
     owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
 
+instance (OwlPretty a, OwlPretty b) => OwlPretty (Either a b) where
+    owlpretty (Left a) = owlpretty "Left" <+> owlpretty a
+    owlpretty (Right a) = owlpretty "Right" <+> owlpretty a
+
 instance  OwlPretty ExprX where 
     owlpretty (ECrypt cop as) = 
         owlpretty cop <> (tupled (map owlpretty as))
