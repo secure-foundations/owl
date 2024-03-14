@@ -18,7 +18,7 @@ struct init_sent_state<i,n,m> {
     c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
     static_ss : (x:Ghost{x == dh_combine(dhpk(get(S_init<@n>)),
     get(S_resp<@m>))}),
-    h4 : (x:Data<adv>{exists c:bv,ts:bv. x == crh(honest_H4_pre<session i, pid
+    h4 : (x:Data<adv> ||crh|| {exists c:bv,ts:bv. x == crh(honest_H4_pre<session i, pid
     n,pid m>(c, ts))}),
     c3 : if init_safe<i,n,m>[] then
         SecName(KDF<kdfkey||enckey;0;C3<@n,m>>(c2, static_ss, 0x))

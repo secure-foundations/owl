@@ -421,7 +421,7 @@ extractExpr (CLetGhost xk) = do
     let (x, k) = unsafeUnbind xk
     x' <- extractVar x
     k' <- extractExpr k
-    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> owlpretty "()" <+> owlpretty "in" <> line <> k'
+    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens (owlpretty "ret" <> parens (owlpretty "spec_unit()")) <+> owlpretty "in" <> line <> k'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
@@ -435,6 +435,7 @@ specExtractArg (v, t) = do
 
 extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
+    -- debugPrint . show . owlpretty $ concreteBody
     lname <- flattenPath lpath
     specArgs <- mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $

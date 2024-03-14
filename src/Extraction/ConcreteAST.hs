@@ -138,7 +138,9 @@ concretify e =
             e1' <- concretify e1
             let (x, k) = unsafeUnbind xk
             k' <- concretify k
-            return $ CLet e1' oanf (bind x k')
+            case e1' of
+                CSkip -> return k'
+                _ -> return $ CLet e1' oanf (bind x k')
         EBlock e _ -> do
             c <- concretify e
             return $ CBlock c

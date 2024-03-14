@@ -275,6 +275,12 @@ pub open spec fn length(x: Seq<u8>) -> usize
     x.len() as usize
 }
 
+// The ITree macro below parses () as a paren-delimited itree expression, so we use this hack to generate unit values
+pub open spec fn spec_unit() -> () 
+{
+    ()
+}
+
 pub open spec fn spec_ghost_unit() -> Ghost<()>
 {
     Ghost(())
@@ -695,6 +701,9 @@ pub mod itree {
             owl_spec!($mut_state, $mut_type, $($e)* )
                 .bind( |tmp : (_, $mut_type)| { let ($var, $mut_state) = tmp; owl_spec!($mut_state, $mut_type, $($next)*) })
         }};
+        ($mut_state:ident, $mut_type:ident, $($tt:tt)*) => {
+            compile_error!(concat!($("`", stringify!($tt), "`, "),*))
+        };
         ($($tt:tt)*) => {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }

@@ -1087,13 +1087,20 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                     <> owlpretty ", *mut_state"
             let requireLensValid = mapMaybe (\(s,t) -> case t of
                     ADT _ -> Just $ owlpretty s <> owlpretty ".len_valid()"
+                    OwlBuf -> Just $ owlpretty s <> owlpretty ".len_valid()"
                     _ -> Nothing) owlArgs
+            let ensureLensValid = case rt of
+                    ADT _ -> owlpretty "res.is_Ok() ==> res.get_Ok_0().0.len_valid()"
+                    OwlBuf -> owlpretty "res.is_Ok() ==> res.get_Ok_0().0.len_valid()"
+                    _ -> owlpretty ""
             let defReqEns =
                     owlpretty "requires" <+> (vsep . punctuate comma) 
                         (owlpretty "itree.view() ==" <+> owlpretty owlName <> owlpretty "_spec" <> 
                             tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs)
                         : requireLensValid) <> line <>
-                    owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in" <> parens viewRes <> line 
+                    owlpretty "ensures" <+> (vsep . punctuate comma) 
+                        (owlpretty "res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in" <> parens viewRes <> line 
+                        : [ensureLensValid]) <> line
             return $ 
                 owlpretty "#[verifier::spinoff_prover]" <> line <> 
                 owlpretty "pub fn" <+> owlpretty name <> parens argsPrettied <+> rtPrettied <> line <> defReqEns
