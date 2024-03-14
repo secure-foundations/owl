@@ -688,6 +688,16 @@ tyFlowsTo t l =
                 return False
             Just b -> return b
 
+-- A more precise version of tyFlowsTo, taking into account concats
+isValueDerivable :: AExpr -> Check Bool
+isValueDerivable a = do
+    xs <- unconcat a
+    ts <- mapM inferAExpr xs
+    bs <- mapM (\t -> tyFlowsTo t advLbl) ts
+    return $ foldr (&&) True bs
+
+
+
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
 isSubtype t1 t2 = do
@@ -2838,10 +2848,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                             case r of
                               Just KDFAdv -> return $ Just (Nothing, KDFAdv)
                               Nothing -> do
-                                pub <- tyFlowsTo (snd b) advLbl
+                                pub <- isValueDerivable (fst b)
                                 case pub of 
                                   True -> return Nothing
                                   False -> do
+                                      -- TODO: take into account more nuanced DH
+                                      -- reasoning here
                                       coll <- findKDFODHColl a b c 
                                       typeError $ "KDF malformed but collided with: " ++ show (owlpretty coll) 
                         e:os' -> do
@@ -2849,6 +2861,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                    Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
                                    Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j nks 
                             case r of
+                              -- If we get corrupt, try the next one
+                              Just (KDFCorrupt lbl) -> do
+                                  r <- go os'
+                                  case r of
+                                    Nothing -> return $ Just (Just e, KDFCorrupt lbl)
+                                    Just v2 -> return $ Just v2
                               Just v -> return $ Just (Just e, v)
                               Nothing -> go os'
               go oann2

@@ -1,0 +1,103 @@
+locality sender
+locality receiver
+
+name channel_secret : nonce
+
+name skR : DH @ receiver
+name skE : DH @ sender
+name skS : DH @ sender
+
+corr [skE] /\ [skS] ==> [channel_secret]
+corr [skR] ==> [channel_secret]
+
+counter send_counter @ sender
+counter recv_counter @ receiver
+
+/*
+secret = Extract(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk))
+key = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "key", key_sched_context), Nk)
+base_nonce = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_sched_context), Nk)
+exporter = same but "exp"; we will leave it off for now
+
+kdf(x, y, z) = Expand(Extract(x, y), z; length)
+
+key_schedule_context is a pure function of "info"; so we will leave this as a
+constant as well
+
+we will need extra machinery for psk to be valid in concat position;
+let's leave it off for now as well
+
+key = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "key", key_schedule_context);
+    Nk
+
+base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_schedule_context);
+    Nk
+)
+*/
+
+func hpke_v1() = 0x48504b452d7631
+func suite_id() = 0x1234 // dummy for now
+func psk() = 0x0000 // dummy for now
+func secret_string() = 0x736563726574
+func shared_secret_string() = 0x7368617265645f736563726574
+func key_string() = 0x6b6579
+func base_nonce_string() = 0x626173655f6e6f6e6365
+func key_schedule_context() = 0x0000 // dummy for now
+func eae_prk() = 0x6561655f70726b
+
+func lbl_ikm(lbl, ikm) = 
+    hpke_v1() ++ suite_id() ++ lbl ++ ikm
+
+func lbl_info(len, lbl, info) = 
+    len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
+
+func dh_secret_kdf_ikm() = lbl_ikm(secret_string(), psk())
+
+func base_nonce_kdf_info() = lbl_info(|enckey|, base_nonce_string(), key_schedule_context())
+
+func key_kdf_info() = lbl_info(|enckey|, key_string(), key_schedule_context())
+
+nametype shared_secret_t = 
+    kdf {ikm info self. 
+        (ikm == dh_secret_kdf_ikm())
+        /\
+        (info == base_nonce_kdf_info())
+        -> public nonce |counter|,
+
+        (ikm == dh_secret_kdf_ikm())
+        /\
+        (info == key_kdf_info())
+        -> strict st_aead Data<[channel_secret] /\ adv, |adv|>
+                          aad x. true
+                          nonce send_counter
+                          pattern i. xor(i, gkdf<nonce |counter|;0>(self, dh_secret_kdf_ikm(), base_nonce_kdf_info()))
+    }
+
+odh ss : skR, skS -> { salt info. 
+    True -> strict shared_secret_t
+} 
+
+odh se : skR, skE -> {salt info.
+    True -> strict shared_secret_t
+}
+
+def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
+    let dh = dh_combine(pkR, get(skS)) ++ dh_combine(pkR, get(skE)) in
+    let kem_ctxt = dhpk(get(skE)) ++ dhpk(pkR) ++ dhpk(get(skS)) in
+    corr_case skR in
+    corr_case skS in
+    corr_case skE in
+    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x, lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(), kem_ctxt)) in 
+    let base_nonce = kdf<0;;nonce |counter|;0>(shared_secret,
+    dh_secret_kdf_ikm(), base_nonce_kdf_info()) in 
+    let sk = kdf<1;;enckey;0>(shared_secret, dh_secret_kdf_ikm(),
+    key_kdf_info()) in 
+    output dhpk(get(skE)); 
+    let c = st_aead_enc<send_counter, pattern i. xor(i, base_nonce)>(sk, x, 0x)
+    in 
+    output c
+
+    
+
