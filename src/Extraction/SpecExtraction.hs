@@ -132,7 +132,7 @@ extractEnum owlName owlCases = do
                             Just t -> Just <$> (rustifySpecTy . doConcretifyTy) t
                             Nothing -> return Nothing
                         return (n, t')) owlCases
-    let enumDef = owlpretty "#[is_variant]" <> line <> owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
+    let enumDef = owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty (specName n) <> parens (owlpretty t)) $ cases
                     ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
     parseSerializeDefs <- genParserSerializer name
@@ -462,7 +462,7 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
 
 mkSpecEndpoint :: [String] -> OwlDoc
 mkSpecEndpoint lnames =
-    owlpretty "#[is_variant]" <> line <> owlpretty "#[derive(Copy, Clone)]" <> line <>
+    owlpretty "#[derive(Copy, Clone)]" <> line <>
     owlpretty "pub enum Endpoint" <+> braces (line <>
         (vsep . punctuate comma . map (\s -> owlpretty "Loc_" <> owlpretty s) $ lnames)
     <> line)

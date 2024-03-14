@@ -209,13 +209,14 @@ extractStruct owlName owlFields = do
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
     vestFmt <- if isVest then genVestFormat name layoutFields else return $ owlpretty ""
     viewImpl <- genViewImpl owlName rustFieldsConcrete
+    allLensValid <- genAllLensValid owlName rustFieldsConcrete
     parsleyWrappers <- genParsleyWrappers owlName rustFieldsConcrete' isVest
     structFuncs <- mkStructFuncs owlName rustFields
     adtFuncs %= M.union structFuncs
     typeLayouts %= M.insert name layout
     structs %= M.insert name (map liftMaybe rustFields)
     structSpec <- Spec.extractStruct owlName owlFields isVest
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], structSpec, vestFmt)
+    return $ (vsep $ [typeDef, viewImpl, allLensValid, parsleyWrappers], structSpec, vestFmt)
     where
         liftMaybe (s,t) = case t of Nothing -> Nothing ; Just t -> Just (s,t)
 
@@ -254,6 +255,18 @@ extractStruct owlName owlFields = do
                         <> line)
                     <> line)
                 <> line)
+
+        genAllLensValid owlName rustFields = do
+            let name = rustifyName owlName
+            let genField (f, t) = case t of
+                        OwlBuf -> Just $ owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".len_valid()"
+                        ADT _ -> Just $ owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".len_valid()"
+                        _ -> Nothing 
+            return $ owlpretty "impl" <+> owlpretty name <> owlpretty "<'_>" <+> braces (
+                    owlpretty "pub open spec fn len_valid(&self) -> bool" <+> braces (line <>
+                        (encloseSep (owlpretty "") (owlpretty "") (owlpretty "&&") . mapMaybe genField $ rustFields)
+                    )
+                )
 
         genVestFormat name layoutFields = do
             let genField (f, l) = owlpretty "  " <> vestLayoutOf f l <> comma
@@ -317,10 +330,6 @@ extractStruct owlName owlFields = do
                         owlpretty "vec_truncate(&mut obuf, num_written); Some(obuf)" <> line <>
                         owlpretty "} else { None }" <> line 
                     ) <> owlpretty "else { None }"
-            let parseEnsuresLenValid (f,_) = 
-                    owlpretty "        res matches Some(x) ==> x." <> owlpretty f <> owlpretty ".len_valid()," 
-            let serRequiresLenValid (f,_) = 
-                    owlpretty "arg." <> owlpretty f <> owlpretty ".len_valid()," 
             debugPrint $ "using external_body for serializer to allow as_mut_slice call"
             return $
                 -- owlpretty "/* TODO should be provable once parsley integrated */ #[verifier(external_body)]" <> line <>
@@ -331,7 +340,7 @@ extractStruct owlName owlFields = do
                     owlpretty "ensures res is Some ==>" <+> specParse <> owlpretty " is Some," <> line <>
                     owlpretty "        res is None ==>" <+> specParse <> owlpretty " is None," <> line <>
                     owlpretty "        res matches Some(x) ==> x.dview() == " <> specParse <> owlpretty "->Some_0," <> line <>
-                    vsep (map parseEnsuresLenValid rustFields') <> line <>
+                    owlpretty "        res matches Some(x) ==> x.len_valid()," <>
                 lbrace <> line <>
                     (if isVest then parserBody else owlpretty "// can't autogenerate vest parser" <> line <> owlpretty "todo!()") <> line <>
                 rbrace <> line <> line <>
@@ -340,8 +349,7 @@ extractStruct owlName owlFields = do
                 (if isVest then 
                     owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "arg: &" <> owlpretty name) <+> 
                         owlpretty "->" <+> parens (owlpretty "res: Option<Vec<u8>>") <> line <>
-                        owlpretty "requires" <+>
-                        vsep (map serRequiresLenValid rustFields') <> line <>
+                        owlpretty "requires arg.len_valid()" <+>
                         owlpretty "ensures res is Some ==>" <+> specSerializeInner <> owlpretty " is Some," <> line <>
                         owlpretty "        res is None ==>" <+> specSerializeInner <> owlpretty " is None," <> line <>
                         owlpretty "        res matches Some(x) ==> x.dview() == " <> specSerializeInner <> owlpretty "->Some_0" <> 
@@ -352,8 +360,7 @@ extractStruct owlName owlFields = do
                 (if isVest then owlpretty "" else owlpretty "#[verifier(external_body)]") <> line <>
                 owlpretty "pub exec fn" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "arg: &" <> owlpretty name) <+>
                     owlpretty "->" <+> parens (owlpretty "res: Vec<u8>") <> line <>
-                    owlpretty "requires" <+>
-                    vsep (map serRequiresLenValid rustFields') <> line <>
+                    owlpretty "requires arg.len_valid()" <+>
                     owlpretty "ensures res.dview() ==" <+> specSerialize <> line <>
                 lbrace <> line <>
                     (if isVest then 
@@ -891,11 +898,15 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
     let pats' = map fst pats
     fs <- lookupStruct . rustifyName $ t
     let patfields = mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just b -> Just (a,b)) . zip pats' $ fs
+    let ghostFields = mapMaybe (\(a, bopt) -> case bopt of Nothing -> Just a; Just b -> Nothing) . zip pats' $ fs
+    let makeGhosts = vsep $ map (\v -> owlpretty "let " <+> owlpretty (rustifyName . show $ v) <+> owlpretty "= ghost_unit();") ghostFields
     let wrappedRt t = case t of
             VecU8 -> OwlBuf
             SliceU8 -> OwlBuf
             _ -> t
-    let binds' = M.fromList (map (\(v, (_,r)) -> (rustifyName . show $ v, (wrappedRt r, Nothing))) patfields) `M.union` binds
+    let patbinds = M.fromList (map (\(v, (_,r)) -> (rustifyName . show $ v, (wrappedRt r, Nothing))) patfields)
+    let ghostbinds = M.fromList (map (\v -> (rustifyName . show $ v, (VerusGhost, Nothing))) ghostFields)
+    let binds' = patbinds `M.union` ghostbinds `M.union` binds
     (rtAe, preAe, aePrettied) <- extractAExpr binds $ ae^.val
     (_, rt, preK, kPrettied) <- extractExpr inK loc binds' k
     let destructStruct (v, (f, t)) = 
@@ -914,7 +925,7 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
                     owlpretty "let parseval = " <+> aePrettied <> owlpretty ";" <> line <>
                         vsep (map destructStruct patfields) <> line <> 
                         kPrettied 
-            return (binds, rt, preAe <> preK, e)
+            return (binds, rt, preAe <> preK, makeGhosts <> line <> e)
         (_, Just badk) -> do
             (_, _, _, badkPrettied) <- extractExpr inK loc binds badk
             -- let destructStruct (v, (f, _)) = owlpretty "let" <+> owlpretty (rustifyName . show $ v) <+> 
@@ -929,7 +940,7 @@ extractExpr inK loc binds (CParse ae owlT@(CTConst p) badkopt bindpat) = do
                         vsep (map destructStruct patfields) <> line <> 
                         kPrettied <> line <> 
                     owlpretty "} else {" <> line <> badkPrettied <> line <> owlpretty "}"
-            return (binds, rt, preAe <> preK, e)
+            return (binds, rt, preAe <> preK, makeGhosts <> line <> e)
         _ -> do throwError $ TypeError $ 
                     "Mismatched types for parse expr: want to parse as" ++ show owlT ++ " but arg inferred to have type " ++ show rtAe
 extractExpr inK loc binds (CLetGhost xk) = do
