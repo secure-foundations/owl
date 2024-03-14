@@ -211,7 +211,7 @@ extractStruct owlName owlFields = do
         _ -> throwError $ ErrSomethingFailed "layoutStruct returned a non-struct layout"
     vestFmt <- if isVest then genVestFormat name layoutFields else return $ owlpretty ""
     viewImpl <- genViewImpl owlName rustFieldsConcrete
-    allLensValid <- genAllLensValid owlName rustFieldsConcrete
+    allLensValid <- genAllLensValid owlName rustFieldsConcrete'
     parsleyWrappers <- genParsleyWrappers owlName rustFieldsConcrete' isVest
     structFuncs <- mkStructFuncs owlName rustFields
     adtFuncs %= M.union structFuncs
@@ -261,15 +261,15 @@ extractStruct owlName owlFields = do
                     <> line)
                 <> line)
 
-        genAllLensValid owlName rustFields = do
+        genAllLensValid owlName rustFields' = do
             let name = rustifyName owlName
             let genField (f, t) = case t of
-                        OwlBuf -> Just $ owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".len_valid()"
-                        ADT _ -> Just $ owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".len_valid()"
+                        OwlBuf -> Just $ owlpretty "self." <> owlpretty f <> owlpretty ".len_valid()"
+                        ADT _ -> Just $ owlpretty "self." <> owlpretty f <> owlpretty ".len_valid()"
                         _ -> Nothing 
             return $ owlpretty "impl" <+> owlpretty name <> owlpretty "<'_>" <+> braces (
                     owlpretty "pub open spec fn len_valid(&self) -> bool" <+> braces (line <>
-                        (encloseSep (owlpretty "") (owlpretty "") (owlpretty "&&") . mapMaybe genField $ rustFields)
+                        (encloseSep (owlpretty "") (owlpretty "") (owlpretty "&&") . mapMaybe genField $ rustFields')
                     )
                 )
 
@@ -398,13 +398,14 @@ extractEnum owlName owlCases' = do
         _ -> throwError $ ErrSomethingFailed "layoutEnum returned a non enum layout :("
     vestFmt <- genVestFormat name layoutCases
     viewImpl <- genViewImpl owlName rustCases
+    allLensValid <- genAllLensValid owlName rustCases'
     let parsleyWrappers = genParsleyWrappers owlName rustCases'
     enumFuncs <- mkEnumFuncs owlName owlCases
     adtFuncs %= M.union enumFuncs
     typeLayouts %= M.insert name layout
     enums %= M.insert (S.fromList (map fst owlCases')) (owlName, rustCases)
     enumSpec <- Spec.extractEnum owlName owlCases'
-    return $ (vsep $ [typeDef, viewImpl, parsleyWrappers], enumSpec, vestFmt)
+    return $ (vsep $ [typeDef, viewImpl, allLensValid, parsleyWrappers], enumSpec, vestFmt)
     where
         mkEnumFuncs owlName owlCases = return $
             M.fromList $
@@ -434,6 +435,20 @@ extractEnum owlName owlCases' = do
                         <> line)
                     <> line)
                 <> line)
+
+        genAllLensValid owlName rustCases' = do
+            let name = rustifyName owlName
+            let genCase (f, t) = case t of
+                        Just OwlBuf -> Just $ owlpretty (rustifyName f) <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
+                        Just (ADT _) -> Just $ owlpretty (rustifyName f) <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
+                        _ -> Nothing 
+            return $ owlpretty "impl" <+> owlpretty name <> owlpretty "<'_>" <+> braces (
+                    owlpretty "pub open spec fn len_valid(&self) -> bool" <+> braces (line <>
+                        owlpretty "match self" <+> braces (line <>
+                            (vsep . punctuate comma . mapMaybe genCase . M.assocs $ rustCases')
+                        <> line)
+                    )
+                )
 
         genVestFormat name layoutCases = do
             debugPrint $ "unimplemented: genVestFormat for enum " ++ name
@@ -1070,8 +1085,14 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
                         Option _ -> owlpretty "dview_option(res.get_Ok_0().0)"
                         _ -> owlpretty "res.get_Ok_0().0.dview()")
                     <> owlpretty ", *mut_state"
+            let requireLensValid = mapMaybe (\(s,t) -> case t of
+                    ADT _ -> Just $ owlpretty s <> owlpretty ".len_valid()"
+                    _ -> Nothing) owlArgs
             let defReqEns =
-                    owlpretty "requires itree.view() ==" <+> owlpretty owlName <> owlpretty "_spec" <> tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs) <> line <>
+                    owlpretty "requires" <+> (vsep . punctuate comma) 
+                        (owlpretty "itree.view() ==" <+> owlpretty owlName <> owlpretty "_spec" <> 
+                            tupled (owlpretty "*self" : owlpretty "*old(mut_state)" : map (\(s,t) -> owlpretty $ viewVar t s) owlArgs)
+                        : requireLensValid) <> line <>
                     owlpretty "ensures  res.is_Ok() ==> (res.get_Ok_0().1).view().view().results_in" <> parens viewRes <> line 
             return $ 
                 owlpretty "#[verifier::spinoff_prover]" <> line <> 
