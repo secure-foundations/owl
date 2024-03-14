@@ -58,7 +58,10 @@ extractStruct owlName owlFields isVest = do
         genConstructor owlName fields owlFieldsConcrete = do
             let printConstructor args = owlpretty owlName <> tupled (mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just _ -> Just a) $ zip args owlFieldsConcrete)
             specAdtFuncs %= M.insert owlName printConstructor
-            let args = parens . hsep . punctuate comma . map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty ": Seq<u8>") $ fields
+            let specArgTy t = case t of
+                    SpecBool -> owlpretty "bool"
+                    _ -> owlpretty "Seq<u8>"
+            let args = parens . hsep . punctuate comma . map (\(n,t) -> owlpretty "arg_" <> owlpretty n <> owlpretty ":" <> specArgTy t) $ fields
             let body = owlpretty "serialize_" <> owlpretty (specName owlName) <>
                     parens (owlpretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> owlpretty (specName n) <> owlpretty ": arg_" <> owlpretty n) $ fields))
             return $

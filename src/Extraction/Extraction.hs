@@ -95,7 +95,9 @@ layoutCTy u (CTConst p) = do
     case u of
         UnboundedAllowed -> return l
         UnboundedDisallowed -> if isNestable l then return l else throwError $ CantLayoutType (CTConst p)
-layoutCTy u CTBool = return $ LBytes 1 -- bools are one byte 0 or 1
+layoutCTy u CTBool = do
+    debugPrint "using builtin_bool enum layout for boolean"
+    return $ LEnum "builtin_bool" $ M.fromList [("True", (1, Nothing)), ("False", (0, Nothing))]
 layoutCTy u CTUnit = return $ LBytes 0
 layoutCTy u (CTName n) = lookupNameLayout n
 layoutCTy u (CTVK n) = do
@@ -247,11 +249,14 @@ extractStruct owlName owlFields = do
         genViewImpl owlName rustFields = do
             let name = rustifyName owlName
             let specname = specName owlName
+            let printAsSeq t = case t of
+                    Bool -> owlpretty ""
+                    _ -> owlpretty ".as_seq()" 
             return $ owlpretty "impl DView for" <+> owlpretty name <> owlpretty "<'_>" <> braces (line <>
                     owlpretty "type V =" <+> owlpretty specname <> owlpretty ";" <> line <>
                     owlpretty "open spec fn dview(&self) ->" <+> owlpretty specname <> braces (line <>
                         owlpretty specname <> braces (line <>
-                            vsep (map (\(f,_) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".dview().as_seq(),") rustFields)
+                            vsep (map (\(f,t) -> owlpretty (specName f) <+> owlpretty ":" <+> owlpretty "self." <> owlpretty (rustifyName f) <> owlpretty ".dview()" <> printAsSeq t <> comma) rustFields)
                         <> line)
                     <> line)
                 <> line)
