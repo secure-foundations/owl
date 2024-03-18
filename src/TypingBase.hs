@@ -1137,18 +1137,25 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
-obtainTyCases :: Ty -> String -> Check (ResolvedPath, [(String, Maybe Ty)])
-obtainTyCases t err = 
-    case t^.val of
+tryObtainTyCases :: Ty -> Check (Maybe (ResolvedPath, [(String, Maybe Ty)]))
+tryObtainTyCases t = 
+    case (stripRefinements t)^.val of
       TConst s@(PRes (PDot pth _)) ps -> do
           td <- getTyDef s
           case td of
             EnumDef b -> do
                 vs <- extractEnum ps (show s) b
-                return (pth, vs)
-            _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
-      TOption t0 -> return (PTop, [("None", Nothing), ("Some", Just t0)])
-      _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
+                return $ Just (pth, vs)
+            _ -> return Nothing
+      TOption t0 -> return $ Just (PTop, [("None", Nothing), ("Some", Just t0)])
+      _ -> return Nothing
+
+obtainTyCases :: Ty -> String -> Check (ResolvedPath, [(String, Maybe Ty)])
+obtainTyCases t err = do
+    o <- tryObtainTyCases t
+    case o of
+      Just res -> return res
+      Nothing -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
 
 
 extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])

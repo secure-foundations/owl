@@ -269,11 +269,9 @@ initDetFuncs = withNormalizedTys $ [
           ([], [(x, t1), (y, t2)]) ->
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
-                    b <- decideProp $ pEq (aeGet n) (aeGet m)
-                    l <- if isJust b then return zeroLbl else (coveringLabelOf $ map snd args)
-                    return $ TRefined (mkSpanned $ TBool l) ".res" $ bind (s2n ".res") $
-                        pImpl (pEq (aeVar ".res") (aeApp (topLevelPath "true") [] []))
-                              (pEq (aeGet n) (aeGet m))
+                        return $ TRefined (mkSpanned $ TBool zeroLbl) ".res" $ bind (s2n ".res") $
+                            pImpl (pEq (aeVar ".res") (aeApp (topLevelPath "true") [] []))
+                                  (pEq (aeGet n) (aeGet m))
                 (TName n, m) -> do
                   nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
@@ -294,6 +292,31 @@ initDetFuncs = withNormalizedTys $ [
           _ -> typeError $ "Wrong parameters to checknonce"
     ))
     ]
+
+casePropTy :: Prop -> (Bool -> Check Ty) -> Check Ty
+casePropTy p k = do
+    x <- freshVar
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    t1 <- stripTy (s2n x) t1_
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    t2 <- stripTy (s2n x) t2_
+    return $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+casePropTyUnspanned :: Prop -> (Bool -> Check TyX) -> Check TyX
+casePropTyUnspanned p k = do
+    x <- freshVar
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    t1 <- stripTy (s2n x) $ mkSpanned t1_
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    t2 <- stripTy (s2n x) $ mkSpanned t2_
+    return $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+byCasesProp :: Prop -> (Bool -> Check Bool) -> Check Bool
+byCasesProp p k = do
+    x <- freshVar
+    b1 <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    b2 <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    return $ b1 && b2
 
 mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
 mkStructType pth tv args ps b = do
@@ -583,6 +606,7 @@ isSubtype' t1 t2 = do
         case (t1^.val, t2^.val) of
           (t1', t2') | t1' `aeq` t2' -> return True
           (_, TGhost) -> return True
+          (TAdmit, _) -> return True
           _ | isSingleton t2 -> do 
               (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
               return b 
@@ -590,19 +614,12 @@ isSubtype' t1 t2 = do
               r <- decideProp p
               case r of
                 Just b -> isSubtype' (if b then t1' else t2') t2
-                Nothing -> do
-                  b1 <- isSubtype' t1' t2
-                  b2 <- isSubtype' t2' t2
-                  return $ b1 && b2
+                Nothing -> byCasesProp p $ \b -> isSubtype' (if b then t1' else t2') t2
           (_, TCase p t1' t2') -> do
               r <- decideProp p
               case r of
                 Just b -> isSubtype' t1 (if b then t1' else t2')
-                Nothing -> do
-                  b1 <- isSubtype' t1 t1'
-                  b2 <- isSubtype' t1 t2'
-                  return $ b1 && b2
-          (TAdmit, _) -> return True
+                Nothing -> byCasesProp p $ \b -> isSubtype' t1 (if b then t1' else t2')
           (TOption t1, TOption t2) -> isSubtype' t1 t2
           (_, TRefined t _ p) -> do
               b1 <- isSubtype' t1 t
@@ -683,9 +700,7 @@ tyFlowsTo t l =
           l1 <- coveringLabel t
           ob <- tryFlowsTo l1 l
           case ob of
-            Nothing -> do
-                logTypecheck $ owlpretty "Warning: tyFlowsTo inconclusive on " <> owlpretty t <> owlpretty ", " <> owlpretty l
-                return False
+            Nothing -> return False
             Just b -> return b
 
 -- A more precise version of tyFlowsTo, taking into account concats
@@ -1781,6 +1796,20 @@ ensureNonGhost = do
     s <- view tcScope
     assert "Cannot be in ghost here" $ not $ isGhost s 
 
+openTy :: Ty -> (Ty -> Check Ty) -> Check Ty
+openTy t k = 
+    case t^.val of
+      TCase p t1 t2 -> casePropTy p (\b -> openTy (if b then t1 else t2) k)
+      TRefined t0 s kref -> openTy t0 $ \t0' -> k $ Spanned (t^.spanOf) $ TRefined t0' s kref
+      _ -> k t
+
+openArgs :: [(AExpr, Ty)] -> ([(AExpr, Ty)] -> Check Ty) -> Check Ty
+openArgs [] k = k []
+openArgs ((a, t) : args) k = 
+    openTy t $ \t' -> 
+        openArgs args $ \args' -> 
+            k ((a, t') : args')
+
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set expectedTy ot) $ do 
@@ -1790,14 +1819,16 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
               t <- inferAExpr a
               t' <- normalizeTy t
               return (a, t')
-          getOutTy ot =<< checkCryptoOp (CLemma lem) args
+          openArgs args $ \args' -> 
+              getOutTy ot =<< checkCryptoOp (CLemma lem) args'
       ECrypt cop aes -> do
           args <- forM aes $ \a -> do
               t <- inferAExpr a
               t' <- normalizeTy t
               withSpan (a^.spanOf) $ ensureNonGhostTy t'
               return (a, t')
-          getOutTy ot =<< checkCryptoOp cop args
+          openArgs args $ \args' -> 
+            getOutTy ot =<< checkCryptoOp cop args'
       (EInput sx xsk) -> do
           ensureNonGhost
           ((x, s), k) <- unbind xsk
@@ -1814,10 +1845,11 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           case ep of
             Nothing -> return ()
             Just ep -> checkEndpoint ep
-          t' <- inferAExpr a
-          l_t <- coveringLabel t'
-          flowCheck l_t advLbl
-          getOutTy ot tUnit
+          t0' <- inferAExpr a
+          openTy t0' $ \t' -> do 
+              l_t <- coveringLabel t'
+              flowCheck l_t advLbl
+              getOutTy ot tUnit
       (EAssert p) -> do
           local (set tcScope $ TcGhost False) $ checkProp p
           (fn, b) <- local (set tcScope $ TcGhost False) $ SMT.smtTypingQuery "assert" $ SMT.symAssert p
@@ -2222,85 +2254,86 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 assertSubtype tk_otherwise tk
                 return tk
       (ECase e1 otk cases) -> do
-          -- TODO: we need to check that, if we have an annotation, in the good case, we simply subtype
-          -- into the validated ty, but we still return the true type
           t <- checkExpr Nothing e1
           e1_a <- case e1^.val of
                     ERet a -> return a
                     _ -> typeError "Expected AExpr for case after ANF"
           t <- stripRefinements <$> normalizeTy t
-          (wfCase, tcases, ok) <- case otk of
-            Just (tAnn, k) -> do
-                checkTy tAnn
-                tAnn' <- normalizeTy tAnn
-                b <- isSubtype t tAnn'
-                if b then do
-                         tc <- withSpan (e1^.spanOf) $ obtainTyCases t ""
-                         return (b, tc, Just k)
-                     else do
-                         tc <- withSpan (e1^.spanOf) $ obtainTyCases tAnn' ""
-                         return (b, tc, Just k)
-            Nothing -> do
-                tc <- withSpan (e1^.spanOf) $ obtainTyCases t ". Try adding an annotation to the case statement."
-                return (True, tc, Nothing)
-          lt <- coveringLabel t
-          when (not wfCase) $ do
-              flowCheck lt advLbl
-          assert ("Duplicate case") $ uniq (map fst cases)
-          assert ("Cases must not be nonempty") $ length cases > 0
-          assert ("Cases are not exhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst $ snd tcases))
-          branch_ts <- forM cases $ \(c, ocase) -> do
-              let enumPathPre = fst tcases
-              let (Just otcase) = lookup c $ snd tcases
-              case (otcase, ocase) of
-                (Nothing, Left ek) -> do
+          retT <- case ot of
+                    Just t -> return t
+                    Nothing -> typeError $ "case must have expected return type"
+          ((enumPath, tcases), tEnum, hasOtherwise) <- case otk of
+                      Just (tAnn, k) -> do
+                          checkTy tAnn
+                          tAnn' <- normalizeTy tAnn
+                          _ <- checkExpr (Just retT) k
+                          tc <- obtainTyCases tAnn' ""
+                          return (tc, tAnn', True)
+                      Nothing -> do
+                          tc <- obtainTyCases t ". Try adding an annotation to the case statement." 
+                          return (tc, t, False)
+          assert ("Duplicate case found in case statement") $ uniq $ map fst cases
+          assert ("Case split inexhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases)) 
+          let caseNameArities = S.fromList $ map (\(s, ot) -> (s, isJust ot)) tcases
+          ensureTyCanBeCased t hasOtherwise
+          forM_ cases $ \(c, cse) -> do 
+              let (Just otcase) = lookup c tcases
+              case (otcase, cse) of
+                (Nothing, Left ek) -> 
                     case c of
-                      "None" -> checkExpr ot ek
-                      "Some" -> checkExpr ot ek
-                      _ -> do
+                      "None" -> checkExpr (Just retT) ek >>= \_ -> return ()
+                      "Some" -> checkExpr (Just retT) ek >>= \_ -> return ()
+                      _ -> do 
                           x <- freshVar
-                          t <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]))] $ checkExpr ot ek
-                          stripTy (s2n x) t
-                (Just t1, Right (s, xk)) -> do
-                    (x, k) <- unbind xk
-                    -- Generate type of bound case variable. Note that if this is a parsing `case` statement,
-                    -- we need to generate a type that incorporates the length information obtained from parsing.
-                    -- For enums, the payload is allowed to have an unknown length, since it can be parsed with a
-                    -- `tail` combinator.
-                    xt <- if wfCase then return t1 else do
-                        t' <- getValidatedTy lt t1
-                        return $ case t' of
-                            Nothing -> tData lt lt
-                            Just t' -> t'
-                    -- Hack since we currently do not interpret option types the
-                    -- same as enums
+                          _ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]))] $ checkExpr (Just retT) ek
+                          return ()
+                (Just t1, Right (xs, bnd)) -> do
+                    (x, k) <- unbind bnd
+                    xt <- computeEnumDataType tEnum t t1 caseNameArities c
                     let xt_refined = case c of
                                        "Some" -> xt
                                        "None" -> xt
-                                       _ -> tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPathPre $ c ++ "?") [] [e1_a]
-                    tout <- withVars [(x, (s, Nothing, xt_refined))] $ checkExpr ot k
-                    case ot of
-                      Just _ -> return tout
-                      Nothing -> stripTy x tout
+                                       _ -> tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]
+                    _ <- withVars [(x, (xs, Nothing, xt_refined))] $ checkExpr (Just retT) k
+                    return ()
                 _ -> do
                     let ar1 = case otcase of
                                   Nothing -> 0
                                   Just _ -> 1
-                    let ar2 = case ocase of
+                    let ar2 = case cse of
                                   Left _ -> 0
                                   Right _ -> 1
                     typeError $ "Mismatch on branch case" ++ c ++ ": expected arity " ++ show ar1 ++ ", got " ++ show ar2
-          branch_ts' <- case ok of
-                          Nothing -> return branch_ts
-                          Just k -> do 
-                              t <- checkExpr ot k
-                              return (t : branch_ts)
-          case ot of
-            Just tout -> return tout
-            Nothing -> do -- Need to synthesize type here. Take the first one
-                let t = head branch_ts'
-                forM_ (tail branch_ts) $ \t' -> assertSubtype t' t
-                return t
+          normalizeTy retT
+
+ensureTyCanBeCased :: Ty -> Bool -> Check ()
+ensureTyCanBeCased t hasOtherwise = 
+    when (not hasOtherwise) $ do 
+        l <- coveringLabel t
+        flowCheck l advLbl
+
+computeEnumDataType :: Ty -> Ty -> Ty -> S.Set (String, Bool) -> String -> Check Ty
+computeEnumDataType tEnum -- Type of overall enum
+                    t -- Type of argument
+                    t1 -- Type of parsed argument (worst case)
+                    caseNameArities 
+                    c = do -- Enum case name
+    case (stripRefinements t)^.val of
+      TCase p ta tb -> casePropTy p $ \b -> computeEnumDataType tEnum (if b then ta else tb) t1 caseNameArities c
+      _ -> do
+          otcs <- tryObtainTyCases t 
+          case otcs of
+            Just (_, tcs) -> do
+                assert ("Casing on wrong enum") $ caseNameArities == S.fromList (map (\(x, ot) -> (x, isJust ot)) tcs) 
+                case lookup c tcs of
+                  Just (Just to) -> return to
+                  _ -> typeError "unreachable"
+            Nothing -> do
+                ot <- getValidatedTy advLbl t1
+                case ot of
+                  Just to -> return to
+                  Nothing -> return $ tData advLbl advLbl
+
 
 ghostifyTy :: AExpr -> Ty -> Check Ty
 ghostifyTy a t = do
@@ -2435,17 +2468,17 @@ doADec t1 t args = do
           nt <-  local (set tcScope $ TcGhost False) $ getNameType k
           case nt^.val of
             NT_Enc t' -> do
-                b2 <- flowsTo (nameLbl k) advLbl
                 b <- tyFlowsTo t advLbl -- Public ciphertext
-                if ((not b2) && b) then do
-                    -- Honest
-                    return $ mkSpanned $ TOption t'
-                else if (b && b2) then do
-                    return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec"
-                else do
-                    l_corr <- coveringLabelOf [t1, t]
-                    -- Corrupt
-                    return $ tDataAnn l_corr l_corr "Corrupt adec"
+                casePropTy (pFlow (nameLbl k) advLbl) $ \b2 -> 
+                    if ((not b2) && b) then do
+                        -- Honest
+                        return $ mkSpanned $ TOption t'
+                    else if (b && b2) then do
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec"
+                    else do
+                        l_corr <- coveringLabelOf [t1, t]
+                        -- Corrupt
+                        return $ tDataAnn l_corr l_corr "Corrupt adec"
             _ -> typeError $ show $  ErrWrongNameType k "encryption key" nt
       _ -> do
           b1 <- tyFlowsTo t1 advLbl
