@@ -177,19 +177,21 @@ name seckeyCnew : pkekey ClientPKResponse @ client
 
 // set_option ":rlimit" "120000"
 
+corr [kC] ==> [SK] // TODO remove
+
 // for now: temporary copy of stages 2 and 3 pasted below with K instead of kC (only difference)
 def client_kerberos (ak: if sec(kC) then Name(AK) else Data<adv>, tgt :
 Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     : Unit = 
-    corr_case AK in
-    corr_case kC in
+    // corr_case AK in
+    // corr_case kC in
     let m = aenc(ak, ClientRequest()) in
     let p = client_to_ticketserver_msg(tgt, m) in
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
     parse i' as ticketserver_msg(service_ticket, c) in {  
-        case adec(ak, c) {
+        case adec(ak, c) as Option Data<adv> {
             | None => ()
             | Some res =>
                 case res as AKEnum {
@@ -202,6 +204,7 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
                         input _ in () 
                     otherwise => ()
                 }
+            otherwise => ()
         }
     } 
     otherwise ()
@@ -209,15 +212,15 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
 def client_kerberos_tmpcopy (ak: if sec(K) then Name(AK) else Data<adv>, tgt :
 Data<adv>, username : Data<adv>) @ client
     : Unit = 
-    corr_case AK in
-    corr_case K in
+    // corr_case AK in
+    // corr_case K in
     let m = aenc(ak, ClientRequest()) in
     let p = client_to_ticketserver_msg(tgt, m) in
     let _ = output p to endpoint(ticketserver) in
 
     input i' in 
     parse i' as ticketserver_msg(service_ticket, c) in { 
-        case adec(ak, c) {
+        case adec(ak, c) as Option Data<adv> {
             | None => ()
             | Some res =>
                 case res as AKEnum {
@@ -230,11 +233,13 @@ Data<adv>, username : Data<adv>) @ client
                         input _ in () 
                     otherwise => ()
                 }
+            otherwise => ()
         }
     }
     otherwise ()
 
 
+/*
 
 def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ client
     requires ([sigkeyA] <= [sigkeyCA]) /\ ([K] <= [sigkeyCA]) /\ ([K] <= [sigkeyA]) /\ (! ([sigkeyA] <= [K]))
@@ -256,29 +261,30 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
     input msg in
 
     // use pke key seckeyC to decrypt msg
-    corr_case seckeyCnew in
+    // corr_case seckeyCnew in
     case pkdec(get(seckeyCnew), msg) {
         | None => ()
         | Some p' => 
             union_case p = p' in 
             parse p as ClientPKResponse(certA, vka, k, ksig) in { 
              // certA = signature of verkeyA signed by sigkeyCA
-             corr_case sigkeyCA in
+             // corr_case sigkeyCA in
                  case vrfy(vkCA, certA, vka) {// get verkeyA = vk(sigkeyA)
                     | Some res =>
                         case res {
                           | ClientCert _ => ()
                           | AuthCert vkA => 
                             // now use verkeyA to verify signed_k
-                            corr_case sigkeyA in
+                            // corr_case sigkeyA in
                             case vrfy(vkA, k, ksig) { // get K, sign(sigkeyA, k)
                                 | Some k =>
                                     // finally, decrypt AK using k
-                                    corr_case K in
-                                    case adec(k, enc_ak) { 
+                                    // corr_case K in
+                                    case adec(k, enc_ak)  as Data<adv> { 
                                         | Some ak =>
                                             call client_kerberos_tmpcopy(ak, tgt, username)
                                         | None => ()
+                                        otherwise => ()
                                     }
                                 | None => ()
                             }
@@ -289,6 +295,7 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
             otherwise ()
     }
                  
+     */
     
 
 def client_main () @ client
@@ -301,11 +308,12 @@ def client_main () @ client
     input i in 
 
     parse i as authserver_msg(tgt, c) in {
-        corr_case kC in
-        case adec(get(kC), c) {
+        // corr_case kC in
+        case adec(get(kC), c) as Option Data<adv> {
             | None => ()
             | Some ak =>
                 call client_kerberos(ak, tgt, username)
+            otherwise => ()
         }
     } otherwise ()
 
@@ -333,21 +341,23 @@ def ticketserver_main () @ ticketserver
     // i = (AK)_kT, (ClientRequest)_AK 
     input i in 
     
-    corr_case kT in
+    // corr_case kT in
     parse i as client_to_ticketserver_msg(c, t) in {
-    case adec(get(kT), c) {
+    case adec(get(kT), c) as Option Data<adv> {
          | None => ()
          | Some ak =>
          
-             corr_case AK in
-             case adec(ak, t) {
+             // corr_case AK in
+             case adec(ak, t) as Option Data<adv> {
                  | Some ClientRequest =>
                      let st = aenc(get(kS), get(SK)) in
                      let m = aenc(ak, TicketResponse(get(SK))) in
                      let p = ticketserver_msg(st, m) in
                      let _ = output p to endpoint(client) in ()
                  | None => ()
+                 otherwise => ()
              }
+        otherwise => ()
     }
     }
     otherwise ()
@@ -359,22 +369,26 @@ def service_main () @ service
     // i = (SK)_kS, ("client")_SK
     input i in
     
-    corr_case kS in
+    // corr_case kS in
     parse i as client_to_service_msg(c1, c2) in {
-    case adec(get(kS), c1) {
+    case adec(get(kS), c1) as Option Data<adv> {
          | None => ()
          | Some sk =>
-             corr_case SK in
-             case adec(sk, c2) {
+             // corr_case SK in
+             case adec(sk, c2) as Option Data<adv> {
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
                          let _ = output 0 to endpoint(client) in ()
                      else ()
+                 otherwise => ()
              }
+          otherwise => ()
     }
     } 
     otherwise ()
+    
+    /*
 
 def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC : encpk(seckeyCnew)) @ authserver
     requires    ([K] <= [sigkeyC]) /\
@@ -389,13 +403,13 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
              | ClientCert certC =>
              
                  // check that certC is valid for vkC
-                corr_case sigkeyCA in
+                // corr_case sigkeyCA in
                  case vrfy(vkCA, certC, vkc) { 
                      | None => ()
                      | Some vkC =>
                      
                          // use verkeyC to verify the username
-                         corr_case sigkeyC in
+                         // corr_case sigkeyC in
                          case vrfy(vkC, signed_un, un) {
                              | None => ()
                              | Some username =>
@@ -435,6 +449,7 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
         }
     }
     otherwise ()
+    */
 
 
 // not really needed, just to satisfy extraction

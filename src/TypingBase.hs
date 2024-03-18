@@ -185,6 +185,7 @@ data Env = Env {
     _curDef :: Maybe String,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
+    _inSMT :: Bool,
     _curSpan :: Position
 }
 
@@ -952,7 +953,11 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
         ts <- mapM inferAExpr args
         (ar, k) <- getFuncInfo f
         assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
-        mkSpanned <$> k params (zip args ts)
+        insmt <- view inSMT
+        if insmt then mkSpanned <$> k params (zip args ts)
+                else
+                    openArgs (zip args ts) $ \args' -> 
+                        mkSpanned <$> k params args'
       (AEHex s) -> do
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
@@ -1537,6 +1542,194 @@ instance OwlPretty DefSpec where
         -- in
         -- abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
 
+casePropTy :: Prop -> (Bool -> Check Ty) -> Check Ty
+casePropTy p k = do
+    x <- freshVar
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    t1 <- stripTy (s2n x) t1_
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    t2 <- stripTy (s2n x) t2_
+    return $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+casePropTyUnspanned :: Prop -> (Bool -> Check TyX) -> Check TyX
+casePropTyUnspanned p k = do
+    x <- freshVar
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    t1 <- stripTy (s2n x) $ mkSpanned t1_
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    t2 <- stripTy (s2n x) $ mkSpanned t2_
+    return $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+stripTy :: DataVar -> Ty -> Check Ty
+stripTy x t =
+    case t^.val of
+      TData l1 l2 s -> do
+          l1' <- stripLabel x l1
+          l2' <- stripLabel x l2
+          return $ Spanned (t^.spanOf) $ TData l1' l2' s
+      TDataWithLength l1 ae -> do
+          l' <- stripLabel x l1
+          if x `elem` getAExprDataVars ae then return $ tData l' l' else return $ tDataWithLength l' ae
+      TRefined t1 s yp -> do
+          (y, p) <- unbind yp
+          t' <- stripTy x t1
+          p' <- stripProp x p
+          return $ mkSpanned $ TRefined t' s (bind y p')
+      TOption t -> do
+          t' <- stripTy x t
+          return $ mkSpanned $ TOption t'
+      TCase p t1 t2 -> do
+          withSpan (t^.spanOf) $ 
+              assert ("stripTy failed on TCase: free variable " ++ show x ++ " should not appear in proposition of " ++ show (owlpretty t)) $ 
+                (not $ x `elem` getPropDataVars p)
+          t1' <- stripTy x t1
+          t2' <- stripTy x t2
+          return $ mkSpanned $ TCase p t1' t2'
+      TConst s ps -> do
+          forM_ ps $ \p ->
+              case p of
+                ParamAExpr a ->
+                    if x `elem` getAExprDataVars a then typeError "Hard case for TConst" else return ()
+                ParamLbl l ->
+                    if x `elem` getLabelDataVars l then typeError "Hard case for TConst" else return ()
+                ParamTy t ->
+                    if x `elem` getTyDataVars t then typeError "Hard case for TConst" else return ()
+                _ -> return ()
+          return t
+      TBool l -> do
+          l' <- stripLabel x l
+          return $ mkSpanned $ TBool l'
+      TGhost -> return t 
+      TUnion t1 t2 -> do
+          t1' <- stripTy x t1
+          t2' <- stripTy x t2
+          return $ mkSpanned $ TUnion t1' t2'
+      TUnit -> return t
+      TName n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TName n'
+      TVK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TVK n'
+      TDH_PK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TDH_PK n'
+      TEnc_PK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TEnc_PK n'
+      TSS n m -> do
+          n' <- stripNameExp x n
+          m' <- stripNameExp x m
+          return $ mkSpanned $ TSS n' m'
+      TAdmit -> return t
+      TExistsIdx s it -> do
+          (i, t) <- unbind it
+          t' <- stripTy x t
+          return $ mkSpanned $ TExistsIdx s $ bind i t
+      THexConst a -> return t
 
 
+stripNameExp :: DataVar -> NameExp -> Check NameExp
+stripNameExp x e = 
+    case e^.val of
+      NameConst _ _ as -> do
+          as' <- mapM resolveANF as
+          if x `elem` (concat $ map getAExprDataVars as') then
+            typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else
+            return e 
+      KDFName a b c nks j nt -> do
+          a' <- resolveANF a
+          b' <- resolveANF b
+          c' <- resolveANF c
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
+             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt
+      
+stripLabel :: DataVar -> Label -> Check Label
+stripLabel x l = return l
 
+getAExprDataVars :: AExpr -> [DataVar]
+getAExprDataVars a = toListOf fv a
+
+getPropDataVars :: Prop -> [DataVar]
+getPropDataVars p = toListOf fv p
+
+getLabelDataVars :: Label -> [DataVar]
+getLabelDataVars p = toListOf fv p
+
+getTyDataVars :: Ty -> [DataVar]
+getTyDataVars p = toListOf fv p
+
+getTyIdxVars :: Ty -> [IdxVar]
+getTyIdxVars p = toListOf fv p
+
+
+-- get strongest type that doesn't mention x
+-- t <= stripTy x t
+-- p ==> stripProp x p 
+-- l <= stripLabel x l
+
+-- Find strongest p' such that p ==> p', and x \notin p'.
+-- Always succeeds.
+stripProp :: DataVar -> Prop -> Check Prop
+stripProp x p =
+    case p^.val of
+      PTrue -> return p
+      PFalse -> return p
+      PAnd p1 p2 -> do
+          p1' <- stripProp x p1
+          p2' <- stripProp x p2
+          return $ mkSpanned $ PAnd p1' p2'
+      POr p1 p2 -> do
+          p1' <- stripProp x p1
+          p2' <- stripProp x p2
+          return $ mkSpanned $ POr p1' p2'
+      PNot p' -> do
+          -- If x in p, replace the clause with true
+          if x `elem` getPropDataVars p' then return pTrue else return p
+      PEq a1 a2 ->
+          -- if x in either side, replace clause with true
+          if (x `elem` getAExprDataVars a1) || (x `elem` getAExprDataVars a2) then return pTrue else return p
+      PEqIdx _ _ -> return p
+      PImpl p1 p2 -> do
+          if x `elem` getPropDataVars p1 then return pTrue else do
+              p2' <- stripProp x p2
+              return $ pImpl p1 p2'
+      PFlow l1 l2 -> do
+          if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
+      PQuantIdx q sx ip -> do
+          (i, p') <- unbind ip
+          p'' <- stripProp x p'
+          return $ mkSpanned $ PQuantIdx q sx (bind i p'')
+      PQuantBV q sx xp -> do
+          (y, p) <- unbind xp               
+          p' <- stripProp x p
+          return $ mkSpanned $ PQuantBV q sx (bind y p')
+      PHappened s _ xs -> do
+          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PLetIn a yp -> 
+          if x `elem` (getAExprDataVars a) then return pTrue else do
+            (y, p') <- unbind yp
+            p'' <- stripProp x p'
+            return $ mkSpanned $ PLetIn a (bind y p'')
+      PApp a is xs -> do
+          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PAADOf ne y -> do
+          ne' <- stripNameExp x ne
+          if x `elem` getAExprDataVars y then return pTrue else return p
+
+
+openTy :: Ty -> (Ty -> Check Ty) -> Check Ty
+openTy t k = 
+    case t^.val of
+      TCase p t1 t2 -> casePropTy p (\b -> openTy (if b then t1 else t2) k)
+      TRefined t0 s kref -> openTy t0 $ \t0' -> k $ Spanned (t^.spanOf) $ TRefined t0' s kref
+      _ -> k t
+
+openArgs :: [(AExpr, Ty)] -> ([(AExpr, Ty)] -> Check Ty) -> Check Ty
+openArgs [] k = k []
+openArgs ((a, t) : args) k = 
+    openTy t $ \t' -> 
+        openArgs args $ \args' -> 
+            k ((a, t') : args')
