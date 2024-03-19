@@ -48,6 +48,8 @@ pub fn owl_output<A>(
         t.view() == old(t).view().give_output(),
 {
     // todo!()
+    // dbg!(x.len());
+    // dbg!(obuf.len());
     // let len = std::cmp::min(x.len(), obuf.len());
     // dbg!(len);
     obuf[..x.len()].copy_from_slice(x);
@@ -1094,6 +1096,15 @@ pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>
             arg.owl__transp_tag.len() + arg.owl__transp_receiver.len()
                 + arg.owl__transp_counter.len() + arg.owl__transp_packet.len(),
         );
+        // dbg!(hex::encode(arg.owl__transp_tag.as_slice()));
+        // dbg!(hex::encode(arg.owl__transp_receiver.as_slice()));
+        // dbg!(hex::encode(arg.owl__transp_counter.as_slice()));
+        // dbg!(hex::encode(arg.owl__transp_packet.as_slice()));
+        // dbg!(arg.owl__transp_tag.len());
+        // dbg!(arg.owl__transp_receiver.len());
+        // dbg!(arg.owl__transp_counter.len());
+        // dbg!(arg.owl__transp_packet.len());
+        // dbg!(obuf.len());
         let ser_result = parse_serialize::serialize_owl_transp(
             obuf.as_mut_slice(),
             0,
@@ -1109,6 +1120,7 @@ pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>
             vec_truncate(&mut obuf, num_written);
             Some(obuf)
         } else {
+            dbg!(ser_result);
             None
         }
     } else {

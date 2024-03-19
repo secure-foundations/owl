@@ -374,13 +374,15 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
         // *nonce == *old(nonce) + 1,
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(nonce_size(), 0u8);
+    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    let nonce_as_bytes = nonce.to_le_bytes().to_vec();
+    let iv_len = iv.len();
+    iv[(iv_len - nonce_as_bytes.len())..].copy_from_slice(&nonce_as_bytes[..]);
     let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
-        Ok(mut c) => {
-            let mut v = iv.to_owned();
-            v.append(&mut c);
-            v
+        Ok(c) => {
+            // let mut v = iv.to_owned();
+            // v.append(&mut c);
+            c
         },
         Err(_e) => {
             // dbg!(e);
@@ -428,9 +430,13 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
+    // match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
+    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    let iv_len = iv.len();
+    iv[(iv_len - nonce.len())..].copy_from_slice(&nonce[..]);
+    match owl_aead::decrypt_combined(cipher(), k, c, &iv[..], aad) {
         Ok(p) => Some(p),
-        Err(_e) => {
+        Err(e) => {
             // dbg!(e);
             None
         }
@@ -463,8 +469,9 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
 pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
     ensures res.dview() == counter_as_bytes(x.dview())
 {
+    // Specific to Wireguard
     let mut v = x.to_le_bytes().to_vec();
-    v.resize(nonce_size(), 0u8);
+    // v.resize(nonce_size(), 0u8);
     v
 }
 

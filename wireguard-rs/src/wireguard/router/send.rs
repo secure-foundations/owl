@@ -135,8 +135,8 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 state.owl_N_init_send = job.counter as usize;
 
                 let mut transp_keys = owl_wireguard::owl_transp_keys_init {
-                    owl_tki_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
-                    owl_tki_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(job.keypair.send.id.to_le_bytes().to_vec()),
+                    owl_tki_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(job.keypair.send.id.to_le_bytes().to_vec()),
+                    owl_tki_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
                     owl_tki_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.send.key[..]),
                     owl_tki_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.recv.key[..]),
                 };
@@ -165,8 +165,8 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 state.owl_N_resp_send = job.counter as usize;
 
                 let mut transp_keys = owl_wireguard::owl_transp_keys_resp {
-                    owl_tkr_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(job.keypair.send.id.to_le_bytes().to_vec()),
-                    owl_tkr_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
+                    owl_tkr_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
+                    owl_tkr_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(job.keypair.send.id.to_le_bytes().to_vec()),
                     owl_tkr_recvd: true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message
                     owl_tkr_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.recv.key[..]),
                     owl_tkr_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.send.key[..]),

@@ -112,7 +112,7 @@ pub fn gen_rand_key_iv(mode: Mode) -> Vec<u8> {
     gen_rand_bytes(key_size(mode) + nonce_size(mode))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 pub enum Error {
     InvalidInit,
     InvalidAlgorithm,
@@ -192,7 +192,8 @@ pub fn encrypt_combined(
         let key = LessSafeKey::new(
             UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
         );
-        let nonce = RingAeadNonce::assume_unique_for_key(iv.try_into().unwrap());
+        let tmp = iv.try_into().unwrap();
+        let nonce = RingAeadNonce::assume_unique_for_key(tmp);
         let aad_ring = Aad::from(aad);
         let mut ctxt = msg.to_vec();
 
