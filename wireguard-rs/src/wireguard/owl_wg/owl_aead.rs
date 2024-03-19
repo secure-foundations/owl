@@ -12,7 +12,6 @@ const USE_BORINGSSL: bool = true;
 verus! {
 
 #[derive(Clone, Copy)]
-#[is_variant]
 pub enum Mode {
     Aes128Gcm,
     Aes256Gcm,
@@ -113,7 +112,7 @@ pub fn gen_rand_key_iv(mode: Mode) -> Vec<u8> {
     gen_rand_bytes(key_size(mode) + nonce_size(mode))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Error {
     InvalidInit,
     InvalidAlgorithm,
