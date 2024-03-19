@@ -131,13 +131,13 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                     }
                     RouterDeviceType::OwlInitiator => {
                         let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
-                            owl_S_init: Arc::new(vec![]),
-                            owl_E_init: Arc::new(vec![]),
-                            pk_owl_S_resp: Arc::new(vec![]),
-                            pk_owl_S_init: Arc::new(vec![]),
-                            pk_owl_E_resp: Arc::new(vec![]),
-                            pk_owl_E_init: Arc::new(vec![]),
-                            salt: Arc::new(vec![]),
+                            owl_S_init: vec![],
+                            owl_E_init: vec![],
+                            pk_owl_S_resp: vec![],
+                            pk_owl_S_init: vec![],
+                            pk_owl_E_resp: vec![],
+                            pk_owl_E_init: vec![],
+                            salt: vec![],
                             device: None
                         };
                         let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
@@ -145,19 +145,21 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                             return false;
                         } 
         
-                        let mut transp_keys = owl_wireguard::owl_transp_keys {
-                            owl__transp_keys_initiator: vec![],
-                            owl__transp_keys_responder: msg.1[4..8].to_vec(),
-                            owl__transp_keys_T_init_send: job.state.keypair.send.key[..].to_vec(),
-                            owl__transp_keys_T_resp_send: job.state.keypair.recv.key[..].to_vec(),
+                        let mut transp_keys = owl_wireguard::owl_transp_keys_init {
+                            owl_tki_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
+                            owl_tki_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&msg.1[4..8]),
+                            owl_tki_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.send.key[..]),
+                            owl_tki_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.recv.key[..]),
                         };
         
-                        let res = cfg.owl_transp_recv_init_wrapper(&mut state, transp_keys, Arc::new(msg.1.clone()));
+                        // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
+                        let ctxt = msg.1.to_vec();
+                        let res = cfg.owl_transp_recv_init_wrapper(&mut state, transp_keys, &ctxt[..]);
                         
                         match res {
                             Some(ptxt) => {
                                 let msg_len = msg.1.len();
-                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt[..]);
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.as_slice());
                                 
                                 // check crypto-key router
                                 msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])
@@ -167,13 +169,13 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                     },
                     RouterDeviceType::OwlResponder => {
                         let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
-                            owl_S_resp: Arc::new(vec![]),
-                            owl_E_resp: Arc::new(vec![]),
-                            pk_owl_S_resp: Arc::new(vec![]),
-                            pk_owl_S_init: Arc::new(vec![]),
-                            pk_owl_E_resp: Arc::new(vec![]),
-                            pk_owl_E_init: Arc::new(vec![]),
-                            salt: Arc::new(vec![]),
+                            owl_S_resp: vec![],
+                            owl_E_resp: vec![],
+                            pk_owl_S_resp: vec![],
+                            pk_owl_S_init: vec![],
+                            pk_owl_E_resp: vec![],
+                            pk_owl_E_init: vec![],
+                            salt: vec![],
                             device: None
                         };
                         let mut state = owl_wireguard::state_Responder::init_state_Responder();
@@ -181,19 +183,22 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                             return false;
                         } 
         
-                        let mut transp_keys = owl_wireguard::owl_transp_keys {
-                            owl__transp_keys_initiator: msg.1[4..8].to_vec(),
-                            owl__transp_keys_responder: vec![],
-                            owl__transp_keys_T_init_send: job.state.keypair.recv.key[..].to_vec(),
-                            owl__transp_keys_T_resp_send: job.state.keypair.send.key[..].to_vec(),
+                        let mut transp_keys = owl_wireguard::owl_transp_keys_resp {
+                            owl_tkr_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(msg.1[4..8].to_vec()),
+                            owl_tkr_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
+                            owl_tkr_recvd: true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message
+                            owl_tkr_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.recv.key[..]),
+                            owl_tkr_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.send.key[..]),
                         };
-        
-                        let res = cfg.owl_transp_recv_resp_wrapper(&mut state, transp_keys, Arc::new(msg.1.clone()));
+
+                        // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
+                        let ctxt = msg.1.to_vec();
+                        let res = cfg.owl_transp_recv_resp_wrapper(&mut state, transp_keys, &ctxt[..]);
                         
                         match res {
                             Some(ptxt) => {
                                 let msg_len = msg.1.len();
-                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt[..]);
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.as_slice());
                                 
                                 // check crypto-key router
                                 msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])

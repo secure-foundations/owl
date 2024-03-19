@@ -1406,7 +1406,6 @@ impl state_Initiator {
 }
 
 pub struct cfg_Initiator<O> {
-    pub listener: TcpListener,
     pub owl_S_init: Vec<u8>,
     pub owl_E_init: Vec<u8>,
     pub pk_owl_S_resp: Vec<u8>,
@@ -1418,6 +1417,25 @@ pub struct cfg_Initiator<O> {
 }
 
 impl<O> cfg_Initiator<O> {    
+    pub exec fn owl_transp_send_init_wrapper(
+        &self,         
+        mut_state: &mut state_Initiator,
+        owl_transp_keys_val: owl_transp_keys_init,
+        owl_plaintext: &[u8],
+        obuf: &mut [u8]
+    ) -> () {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_init_send(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
 
 
     #[verifier::spinoff_prover]
@@ -1512,15 +1530,34 @@ impl<O> cfg_Initiator<O> {
         Ok(res_inner)
     }
 
+    pub exec fn owl_transp_recv_init_wrapper<'a>(
+        &self,         
+        mut_state: &mut state_Initiator,
+        owl_tki: owl_transp_keys_init,
+        ibuf: &'a [u8],
+    ) -> (Option<OwlBuf<'a>>) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_init_recv(Tracked(call_token), mut_state, owl_tki, ibuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
-    pub fn owl_init_recv(
+    pub fn owl_init_recv<'a> (
         &self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_tki82859: owl_transp_keys_init,
-        ibuf: &[u8],
+        ibuf: &'a [u8],
     ) -> (res: Result<
-        (Option<OwlBuf>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
+        (Option<OwlBuf<'a>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
@@ -1626,8 +1663,8 @@ impl<O> cfg_Initiator<O> {
     {
         let tracked mut itree = itree;
         let res_inner = {
-            let t = crate::wireguard::handshake::timestamp::now().as_slice();
-            (OwlBuf::from_slice(t), Tracked(itree))
+            let t = crate::wireguard::handshake::timestamp::now().to_vec();
+            (OwlBuf::from_vec(t), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -1653,7 +1690,7 @@ impl<O> cfg_Initiator<O> {
         let tracked mut itree = itree;
         let res_inner = {
             let v = self.device.as_ref().unwrap().get_singleton_id();
-            (OwlBuf::from_slice(v.to_le_bytes().as_slice()), Tracked(itree))
+            (OwlBuf::from_vec(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok(res_inner)
     }
@@ -1673,7 +1710,6 @@ impl state_Responder {
 }
 
 pub struct cfg_Responder<O> {
-    pub listener: TcpListener,
     pub owl_S_resp: Vec<u8>,
     pub owl_E_resp: Vec<u8>,
     pub pk_owl_S_resp: Vec<u8>,
@@ -1685,6 +1721,26 @@ pub struct cfg_Responder<O> {
 }
 
 impl<O> cfg_Responder<O> {
+    pub exec fn owl_transp_send_resp_wrapper(
+        &self,         
+        mut_state: &mut state_Responder,
+        owl_transp_keys_val: owl_transp_keys_resp,
+        owl_plaintext: &[u8],
+        obuf: &mut [u8]
+    ) -> Option<()> {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_resp_send(Tracked(call_token), mut_state, owl_transp_keys_val, owl_plaintext, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_resp_send(
         &self,
@@ -1798,16 +1854,35 @@ impl<O> cfg_Responder<O> {
         Ok(res_inner)
     }
 
+    pub exec fn owl_transp_recv_resp_wrapper<'a>(
+        &self,         
+        mut_state: &mut state_Responder,
+        owl_transp_keys_val: owl_transp_keys_resp<'a>,
+        ibuf: &'a [u8],
+    ) -> Option<OwlBuf<'a>> {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_recv_resp_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) =
+            self.owl_resp_recv(Tracked(call_token), mut_state, owl_transp_keys_val, ibuf).unwrap();
+        res.map(move |resp_result| resp_result.owl_rr_msg)
+    }    
+
     #[verifier::spinoff_prover]
-    pub fn owl_resp_recv(
+    pub fn owl_resp_recv<'a>(
         &self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
-        owl_tki116116: owl_transp_keys_resp,
-        ibuf: &[u8]
+        owl_tki116116: owl_transp_keys_resp<'a>,
+        ibuf: &'a [u8]
     ) -> (res: Result<
         (
-            Option<owl_resp_transp_recv_result>,
+            Option<owl_resp_transp_recv_result<'a>>,
             Tracked<ITreeToken<(Option<Seq<u8>>, state_Responder), Endpoint>>,
         ),
         OwlError,

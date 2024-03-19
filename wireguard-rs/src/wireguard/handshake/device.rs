@@ -102,13 +102,13 @@ impl<O> Device<O> {
         let eph_sk = StaticSecret::new(&mut OsRng);
 
         let cfg = owl_wireguard::cfg_Initiator {
-            owl_S_init: Arc::new(vec![]),
-            owl_E_init: Arc::new(eph_sk.to_bytes().to_vec()),
-            pk_owl_S_resp: Arc::new(vec![]),
-            pk_owl_S_init: Arc::new(vec![]),
-            pk_owl_E_resp: Arc::new(vec![]),
-            pk_owl_E_init: Arc::new(vec![]),
-            salt: Arc::new(vec![]),
+            owl_S_init: vec![],
+            owl_E_init: eph_sk.to_bytes().to_vec(),
+            pk_owl_S_resp: vec![],
+            pk_owl_S_init: vec![],
+            pk_owl_E_resp: vec![],
+            pk_owl_E_init: vec![],
+            salt: vec![],
             device: Some(inner),
         };
         let state = owl_wireguard::state_Initiator::init_state_Initiator();
@@ -126,13 +126,13 @@ impl<O> Device<O> {
         let eph_sk = StaticSecret::new(&mut OsRng);
 
         let cfg = owl_wireguard::cfg_Responder {
-            owl_S_resp: Arc::new(vec![]),
-            owl_E_resp: Arc::new(eph_sk.to_bytes().to_vec()),
-            pk_owl_S_resp: Arc::new(vec![]),
-            pk_owl_S_init: Arc::new(vec![]),
-            pk_owl_E_resp: Arc::new(vec![]),
-            pk_owl_E_init: Arc::new(vec![]),
-            salt: Arc::new(vec![]),
+            owl_S_resp: vec![],
+            owl_E_resp: eph_sk.to_bytes().to_vec(),
+            pk_owl_S_resp: vec![],
+            pk_owl_S_init: vec![],
+            pk_owl_E_resp: vec![],
+            pk_owl_E_init: vec![],
+            salt: vec![],
             device: Some(inner)
         };
         let state = owl_wireguard::state_Responder::init_state_Responder();
@@ -151,10 +151,10 @@ impl<O> Device<O> {
         match self {
             Device::NoOwl(_) => {},
             Device::Initiator(i) => {
-                i.cfg.owl_S_init = Arc::new(sk.clone().unwrap().to_bytes().to_vec());
+                i.cfg.owl_S_init = sk.clone().unwrap().to_bytes().to_vec();
             },
             Device::Responder(r) => {
-                r.cfg.owl_S_resp = Arc::new(sk.clone().unwrap().to_bytes().to_vec());
+                r.cfg.owl_S_resp = sk.clone().unwrap().to_bytes().to_vec();
             },
         }
         
@@ -476,50 +476,55 @@ impl<O> Device<O> {
 
                 // create noise part of initation
                 match self {
-                    Device::NoOwl(_) => {
+                    // Device::NoOwl(_) => {
+                    _ => {
+                        match self {
+                            Device::NoOwl(_) => {},
+                            _ => { println!("using no-owl handshake in begin"); }
+                        };
                         noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
                         // add macs to initation
                         peer.macs
                             .lock()
                             .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
-                    Device::Initiator(i) => {
-                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                        // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
-                        // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
-                        let static_static = peer.ss;
+                    // Device::Initiator(i) => {
+                    //     let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                    //     // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
+                    //     // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
+                    //     let static_static = peer.ss;
 
-                        let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(
-                            &mut dummy_state, 
-                            Arc::new(pk.as_bytes().to_vec()), 
-                            Arc::new(keyst.pk.as_bytes().to_vec()),
-                            Arc::new(static_static.as_bytes().to_vec()), 
-                            &mut msg.as_bytes_mut()
-                        );
+                    //     let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(
+                    //         &mut dummy_state, 
+                    //         Arc::new(pk.as_bytes().to_vec()), 
+                    //         Arc::new(keyst.pk.as_bytes().to_vec()),
+                    //         Arc::new(static_static.as_bytes().to_vec()), 
+                    //         &mut msg.as_bytes_mut()
+                    //     );
                         
-                        let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
-                        let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
-                        let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                    //     let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
+                    //     let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
+                    //     let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
 
-                        // save state
-                        *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
-                            hs: hs.into(),
-                            ck: ck.into(),
-                            eph_sk: e_init_as_array.into(),
-                            local,
-                        };
+                    //     // save state
+                    //     *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
+                    //         hs: hs.into(),
+                    //         ck: ck.into(),
+                    //         eph_sk: e_init_as_array.into(),
+                    //         local,
+                    //     };
 
 
-                        // println!("msg1 = {} : {} bytes", hex::encode(&msg.as_bytes()[..]), msg.as_bytes().len());
+                    //     // println!("msg1 = {} : {} bytes", hex::encode(&msg.as_bytes()[..]), msg.as_bytes().len());
 
-                        // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
-                        // peer.macs
-                        //     .lock()
-                        //     .generate(msg.noise.as_bytes(), &mut msg.macs);
-                    },
-                    Device::Responder(_) => {
-                        panic!("Responder cannot initiate handshake");
-                    },
+                    //     // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
+                    //     // peer.macs
+                    //     //     .lock()
+                    //     //     .generate(msg.noise.as_bytes(), &mut msg.macs);
+                    // },
+                    // Device::Responder(_) => {
+                    //     panic!("Responder cannot initiate handshake");
+                    // },
                 }
 
                 // dbg!(hex::encode(&msg.noise.as_bytes()));
@@ -559,7 +564,12 @@ impl<O> Device<O> {
         match LittleEndian::read_u32(msg) {
             TYPE_INITIATION => {
                 match self {
-                    Device::NoOwl(_) => {
+                    // Device::NoOwl(_) => {
+                    _ => {
+                        match self {
+                            Device::NoOwl(_) => {},
+                            _ => { println!("using no-owl handshake for TYPE_INITIATION"); }
+                        };
                         // parse message
                         let msg = Initiation::parse(msg)?;
 
@@ -615,55 +625,60 @@ impl<O> Device<O> {
                             Some(keys),
                         ))
                     },
-                    Device::Initiator(_) => {
-                        panic!("Initiator cannot receive initiation")
-                    },
-                    Device::Responder(r) => {
-                        let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
-                        let msg1_val = r.cfg.owl_receive_msg1_wrapper(
-                            &mut dummy_state,
-                            Arc::new(keyst.pk.as_bytes().to_vec()),
-                            msg
-                        );
+                    // Device::Initiator(_) => {
+                    //     panic!("Initiator cannot receive initiation")
+                    // },
+                    // Device::Responder(r) => {
+                    //     let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
+                    //     let msg1_val = r.cfg.owl_receive_msg1_wrapper(
+                    //         &mut dummy_state,
+                    //         Arc::new(keyst.pk.as_bytes().to_vec()),
+                    //         msg
+                    //     );
 
-                        let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
+                    //     let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
 
-                        let pk: [u8; 32] = (&msg1_val.owl__responder_msg1_sender_pk[..]).try_into().unwrap();
-                        let pk = PublicKey::from(pk);
-                        let peer = self.inner().lookup_pk(&pk)?;
+                    //     let pk: [u8; 32] = (&msg1_val.owl__responder_msg1_sender_pk[..]).try_into().unwrap();
+                    //     let pk = PublicKey::from(pk);
+                    //     let peer = self.inner().lookup_pk(&pk)?;
 
-                        // allocate new index for response
-                        let local = self.inner().allocate(rng, &pk);
+                    //     // allocate new index for response
+                    //     let local = self.inner().allocate(rng, &pk);
 
-                        // allocate buffer for response
-                        let mut resp = Response::default();
+                    //     // allocate buffer for response
+                    //     let mut resp = Response::default();
 
-                        let transp_keys = r.cfg.owl_generate_msg2_wrapper(&mut dummy_state, msg1_val, &mut resp.as_bytes_mut());
+                    //     let transp_keys = r.cfg.owl_generate_msg2_wrapper(&mut dummy_state, msg1_val, &mut resp.as_bytes_mut());
 
-                        Ok((
-                            Some(&peer.opaque),
-                            Some(resp.as_bytes().to_owned()),
-                            Some(KeyPair {
-                                birth: Instant::now(),
-                                initiator: false,
-                                send: Key {
-                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_initiator.try_into().unwrap()),
-                                    key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
-                                },
-                                recv: Key {
-                                    id: local,
-                                    key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
-                                },
-                            }),
-                        ))
+                    //     Ok((
+                    //         Some(&peer.opaque),
+                    //         Some(resp.as_bytes().to_owned()),
+                    //         Some(KeyPair {
+                    //             birth: Instant::now(),
+                    //             initiator: false,
+                    //             send: Key {
+                    //                 id: u32::from_le_bytes(transp_keys.owl__transp_keys_initiator.try_into().unwrap()),
+                    //                 key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
+                    //             },
+                    //             recv: Key {
+                    //                 id: local,
+                    //                 key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
+                    //             },
+                    //         }),
+                    //     ))
 
 
-                    },
+                    // },
                 }
             }
             TYPE_RESPONSE => {
                 match self {
-                    Device::NoOwl(_) => {
+                    // Device::NoOwl(_) => {
+                    _ => {
+                        match self {
+                            Device::NoOwl(_) => {},
+                            _ => { println!("using no-owl handshake for TYPE_RESPONSE"); }
+                        };
                         let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
 
                         // check mac1 field
@@ -693,56 +708,56 @@ impl<O> Device<O> {
                         // consume inner playload
                         noise::consume_response(self, keyst, &msg.noise)
                     },
-                    Device::Initiator(i) => {
-                        let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
-                        let (hs, ck, local) = match *peer.state.lock() {
-                            crate::wireguard::handshake::peer::State::InitiationSent {
-                                hs,
-                                ck,
-                                local,
-                                eph_sk: _,
-                            } => Ok((hs, ck, local)),
-                            _ => Err(HandshakeError::InvalidState),
-                        }?;
+                    // Device::Initiator(i) => {
+                    //     let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
+                    //     let (hs, ck, local) = match *peer.state.lock() {
+                    //         crate::wireguard::handshake::peer::State::InitiationSent {
+                    //             hs,
+                    //             ck,
+                    //             local,
+                    //             eph_sk: _,
+                    //         } => Ok((hs, ck, local)),
+                    //         _ => Err(HandshakeError::InvalidState),
+                    //     }?;
 
-                        // dbg!(hex::encode(e_init_as_array));
-                        let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
-                            owl__initiator_msg1_H4: hs.to_vec(),
-                            owl__initiator_msg1_C3: ck.to_vec(),
-                        };
-                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                        let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
+                    //     // dbg!(hex::encode(e_init_as_array));
+                    //     let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
+                    //         owl__initiator_msg1_H4: hs.to_vec(),
+                    //         owl__initiator_msg1_C3: ck.to_vec(),
+                    //     };
+                    //     let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                    //     let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
 
 
-                        // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
-                        // noise::consume_response(self, keyst, &msg.noise)
-                        assert!(transp_keys.is_some());
+                    //     // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
+                    //     // noise::consume_response(self, keyst, &msg.noise)
+                    //     assert!(transp_keys.is_some());
 
-                        let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
+                    //     let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
                         
-                        // return confirmed key-pair
-                        let birth = Instant::now();
-                        Ok((
-                            Some(&peer.opaque),
-                            None,
-                            Some(KeyPair {
-                                birth,
-                                initiator: true,
-                                send: Key {
-                                    id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
-                                    key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
-                                },
-                                recv: Key {
-                                    id: local,
-                                    key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
-                                },
-                            }),
-                        ))
+                    //     // return confirmed key-pair
+                    //     let birth = Instant::now();
+                    //     Ok((
+                    //         Some(&peer.opaque),
+                    //         None,
+                    //         Some(KeyPair {
+                    //             birth,
+                    //             initiator: true,
+                    //             send: Key {
+                    //                 id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
+                    //                 key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
+                    //             },
+                    //             recv: Key {
+                    //                 id: local,
+                    //                 key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
+                    //             },
+                    //         }),
+                    //     ))
 
-                    },
-                    Device::Responder(_) => {
-                        panic!("Responder cannot receive response");
-                    },
+                    // },
+                    // Device::Responder(_) => {
+                    //     panic!("Responder cannot receive response");
+                    // },
                 }
             }
             TYPE_COOKIE_REPLY => {
