@@ -386,7 +386,6 @@ resolveTy e = do
                       p' <- resolvePath (e^.spanOf) PTTy p
                       return $ TConst p' fs'
                   TBool l -> TBool <$> resolveLabel l
-                  TUnion t1 t2 -> liftM2 TUnion (resolveTy t1) (resolveTy t2)
                   TUnit -> return TUnit
                   TName ne -> TName <$> resolveNameExp ne
                   TVK ne -> TVK <$> resolveNameExp ne
@@ -802,6 +801,10 @@ resolveProp p =
           (x, p') <- unbind xp
           p'' <- resolveProp p'
           return $ Spanned (p^.spanOf) $ PQuantBV q sx $ bind x p''
+      PHonestPKEnc ne a -> do
+          ne' <- resolveNameExp ne
+          a' <- resolveAExpr a
+          return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
 
 
                                             

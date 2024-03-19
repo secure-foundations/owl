@@ -175,9 +175,8 @@ name seckeyCnew : pkekey ClientPKResponse @ client
 // TODO: need support for multiple input keys in at the type-level so we can pass in kC or K
 //       depending on the version of the protocol we're running.
 
-// set_option ":rlimit" "120000"
+set_option ":rlimit" "120000"
 
-corr [kC] ==> [SK] // TODO remove
 
 // for now: temporary copy of stages 2 and 3 pasted below with K instead of kC (only difference)
 def client_kerberos (ak: if sec(kC) then Name(AK) else Data<adv>, tgt :
@@ -188,7 +187,6 @@ Data<adv> |cipherlen(|enckey|)|, username : Data<adv> ||nonce||) @ client
     let m = aenc(ak, ClientRequest()) in
     let p = client_to_ticketserver_msg(tgt, m) in
     let _ = output p to endpoint(ticketserver) in
-
     input i' in 
     parse i' as ticketserver_msg(service_ticket, c) in {  
         case adec(ak, c) as Option Data<adv> {
@@ -239,8 +237,6 @@ Data<adv>, username : Data<adv>) @ client
     otherwise ()
 
 
-/*
-
 def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ client
     requires ([sigkeyA] <= [sigkeyCA]) /\ ([K] <= [sigkeyCA]) /\ ([K] <= [sigkeyA]) /\ (! ([sigkeyA] <= [K]))
     : Unit =
@@ -262,41 +258,42 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
 
     // use pke key seckeyC to decrypt msg
     // corr_case seckeyCnew in
-    case pkdec(get(seckeyCnew), msg) {
+    case pkdec(get(seckeyCnew), msg) as Option Data<adv> {
         | None => ()
         | Some p' => 
-            union_case p = p' in 
             parse p as ClientPKResponse(certA, vka, k, ksig) in { 
              // certA = signature of verkeyA signed by sigkeyCA
              // corr_case sigkeyCA in
-                 case vrfy(vkCA, certA, vka) {// get verkeyA = vk(sigkeyA)
+                 case vrfy(vkCA, certA, vka) as Option Data<adv> {// get verkeyA = vk(sigkeyA)
                     | Some res =>
-                        case res {
+                        case res as CertAuthMsgs {
                           | ClientCert _ => ()
                           | AuthCert vkA => 
                             // now use verkeyA to verify signed_k
                             // corr_case sigkeyA in
-                            case vrfy(vkA, k, ksig) { // get K, sign(sigkeyA, k)
+                            case vrfy(vkA, k, ksig) as Option Data<adv> { // get K, sign(sigkeyA, k)
                                 | Some k =>
                                     // finally, decrypt AK using k
                                     // corr_case K in
-                                    case adec(k, enc_ak)  as Data<adv> { 
+                                    case adec(k, enc_ak)  as Option Data<adv> { 
                                         | Some ak =>
-                                            call client_kerberos_tmpcopy(ak, tgt, username)
+                                        call client_kerberos_tmpcopy(ak, tgt, username) 
                                         | None => ()
                                         otherwise => ()
                                     }
                                 | None => ()
+                                otherwise => ()
                             }
+                          otherwise => ()
                         }
                     | None => ()
+                    otherwise => ()
                  }
             }
             otherwise ()
+        otherwise => ()
     }
                  
-     */
-    
 
 def client_main () @ client
     : Unit =
@@ -387,8 +384,6 @@ def service_main () @ service
     }
     } 
     otherwise ()
-    
-    /*
 
 def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC : encpk(seckeyCnew)) @ authserver
     requires    ([K] <= [sigkeyC]) /\
@@ -404,13 +399,13 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
              
                  // check that certC is valid for vkC
                 // corr_case sigkeyCA in
-                 case vrfy(vkCA, certC, vkc) { 
+                 case vrfy(vkCA, certC, vkc) as Option Data<adv> { 
                      | None => ()
                      | Some vkC =>
                      
                          // use verkeyC to verify the username
                          // corr_case sigkeyC in
-                         case vrfy(vkC, signed_un, un) {
+                         case vrfy(vkC, signed_un, un) as Option Data<adv> {
                              | None => ()
                              | Some username =>
                              
@@ -436,20 +431,21 @@ def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC
                                         let field2 : vk(sigkeyA) = get_vk(sigkeyA) in 
                                         let field3 : Name(K) = get(K) in 
                                         // let field4 : Data<adv>||signature|| = signed_k in 
-                                        let field4 = signed_k in 
+                                        let field4 : Data<[K]> ||signature|| = signed_k in 
                                         let str : ClientPKResponse = ClientPKResponse(field1, field2, field3, field4) in 
                                         let msg = pkenc(pkC, str) in
                                         output msg to endpoint(client); ()
                                     else ()
                                  else ()
+                              otherwise => ()
                          }
+                    otherwise => ()
                  }
               | AuthCert x => ()
               otherwise => ()
         }
     }
     otherwise ()
-    */
 
 
 // not really needed, just to satisfy extraction

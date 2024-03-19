@@ -779,6 +779,10 @@ interpretProp p = do
           case q of
             Forall -> return $ sForall [(SAtom iname, indexSort)] v trig $ "forall_" ++ iname 
             Exists -> return $ sExists [(SAtom iname, indexSort)] v trig $ "exists_" ++ iname
+      (PHonestPKEnc ne a) -> do
+          vn <- getSymName ne
+          a' <- interpretAExp a
+          return $ SApp $ [SAtom "HonestPKEnc", vn, a']
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1

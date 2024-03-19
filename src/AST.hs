@@ -194,6 +194,7 @@ data PropX =
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr
+    | PHonestPKEnc NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
 data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
@@ -264,7 +265,6 @@ data TyX =
     | TCase Prop Ty Ty
     | TConst (Path) [FuncParam] -- Application of type definition (eg, struct or enum)
     | TBool Label
-    | TUnion Ty Ty
     | TUnit
     | TName NameExp -- Singleton type
     | TVK NameExp -- Singleton type

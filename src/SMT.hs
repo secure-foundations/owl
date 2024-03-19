@@ -358,10 +358,6 @@ smtTy xv t =
           return $ xv `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
       TUnit -> return $ xv `sHasType` (SAtom "Unit")
       TAdmit -> return $ sTrue
-      TUnion t1 t2 -> do
-          vt1 <- smtTy xv t1
-          vt2 <- smtTy xv t2
-          return $ vt1 `sOr` vt2
       TCase p t1 t2 -> do
           vp <- interpretProp p
           vt1 <- smtTy xv t1

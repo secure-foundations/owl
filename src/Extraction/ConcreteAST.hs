@@ -67,14 +67,6 @@ concretifyTy t =
         _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TCase failed"
     TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
-    TUnion t t' -> do
-      ct <- concretifyTy t
-      ct' <- concretifyTy t'
-      case (ct, ct') of
-        (cct, CTData) -> return cct
-        (CTData, cct') -> return cct'
-        _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TUnion failed"
-      -- return $ CTUnion ct ct'
     TUnit -> return CTUnit
     TName n -> return $ CTName n
     TVK n -> return $ CTVK n
@@ -132,10 +124,6 @@ concretify e =
         EBlock e _ -> do
             c <- concretify e
             return $ CBlock c
-        EUnionCase a s xk -> do
-            (x, k) <- unbind xk
-            k' <- concretify k
-            return $ subst x a k'
         EUnpack a _ ixk -> do
             ((i, x), k) <- unbind ixk
             k' <- concretify k

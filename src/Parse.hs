@@ -192,15 +192,6 @@ parseTyTerm =
         t <- parseTy
         return $ TOption t)
     <|>
-    (parseSpanned $ do 
-        reserved "Union"
-        symbol "<"
-        t1 <- parseTy
-        symbol ","
-        t2 <- parseTy
-        symbol ">"
-        return $ TUnion t1 t2)
-    <|>
     (parseSpanned $ do
         reserved "Unit"
         return $ TUnit)
@@ -524,6 +515,17 @@ parsePropTerm =
             symbol ")"
             return $ PInODH s ikm info
             )
+        <|>
+        (parseSpanned $ do
+            reserved "honest_pk_enc"
+            symbol "<"
+            ne <- parseNameExp
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ")"
+            return $ PHonestPKEnc ne a
+        )
         <|>
         (parseSpanned $ try $ do
             p <- parsePath

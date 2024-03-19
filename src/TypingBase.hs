@@ -154,7 +154,8 @@ instance Subst ResolvedPath ModBody
 
 data MemoEntry = MemoEntry { 
     _memoInferAExpr :: IORef (M.Map (AlphaOrd AExpr) Ty),
-    _memoNormalizeTy :: IORef (M.Map (AlphaOrd Ty) Ty)
+    _memoNormalizeTy :: IORef (M.Map (AlphaOrd Ty) Ty),
+    _memoNormalizeProp :: IORef (M.Map (AlphaOrd Prop) Prop)
 }
 
 data Env = Env { 
@@ -182,6 +183,7 @@ data Env = Env {
     _debugLogDepth :: IORef Int,
     _typeErrorHook :: (forall a. String -> Check a),
     _checkNameTypeHook :: (NameType -> Check ()),
+    _normalizeTyHook :: Ty -> Check Ty,
     _curDef :: Maybe String,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
@@ -419,6 +421,10 @@ withVars :: (MonadIO m, MonadReader Env m) => [(DataVar, (Ignore String, (Maybe 
 withVars assocs k = do
     local (over tyContext $ addVars assocs) $ withNewMemo $ k
 
+pushPathCondition :: Prop -> Check a -> Check a
+pushPathCondition p k =
+    local (over pathCondition $ (p:)) $ withNewMemo $ k
+
 withIndices :: (MonadIO m, MonadReader Env m) => [(IdxVar, (Ignore String, IdxType))] -> m a -> m a
 withIndices assocs k = do
     local (over inScopeIndices $ \a -> assocs ++ a) $ withNewMemo $ k
@@ -447,7 +453,8 @@ mkMemoEntry :: IO MemoEntry
 mkMemoEntry = do 
     r <- newIORef M.empty
     r2 <- newIORef M.empty
-    return $ MemoEntry r r2
+    r3 <- newIORef M.empty
+    return $ MemoEntry r r2 r3
 
 withNewMemo :: (MonadIO m, MonadReader Env m) => m a -> m a
 withNewMemo k = do
@@ -791,6 +798,13 @@ popLogTypecheckScope = do
     r <- view $ typeCheckLogDepth
     n <- liftIO $ readIORef r
     liftIO $ writeIORef r (n-1)
+
+withPushLog :: Check a -> Check a
+withPushLog k = do
+    pushLogTypecheckScope
+    r <- k
+    popLogTypecheckScope
+    return r
 
 logTypecheck :: OwlDoc -> Check ()
 logTypecheck s = do
@@ -1232,10 +1246,6 @@ coveringLabel' t =
       (TDH_PK n) -> return $ advLbl
       (TEnc_PK n) -> return $ advLbl
       (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m)
-      (TUnion t1 t2) -> do
-          l1 <- coveringLabel' t1
-          l2 <- coveringLabel' t2
-          return $ joinLbl l1 l2
       (TConst s ps) -> do
           td <- getTyDef  s
           case td of
@@ -1545,20 +1555,41 @@ instance OwlPretty DefSpec where
 casePropTy :: Prop -> (Bool -> Check Ty) -> Check Ty
 casePropTy p k = do
     x <- freshVar
-    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ k True
     t1 <- stripTy (s2n x) t1_
-    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
     t2 <- stripTy (s2n x) t2_
-    return $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+    ntyHook <- view normalizeTyHook
+    ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+casePropTyList :: Prop -> (Bool -> Check [Ty]) -> Check [Ty]
+casePropTyList p k = do
+    x <- freshVar
+    t1s_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ k True
+    t1s <- mapM (stripTy (s2n x)) t1s_
+    t2s_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
+    t2s <- mapM (stripTy (s2n x)) t2s_
+    assert ("casePropTyList: got unequal length lists") $ length t1s == length t2s
+    ntyHook <- view normalizeTyHook
+    mapM ntyHook $ if t1s `aeq` t2s then t1s else (map (\(t1, t2) -> mkSpanned $ TCase p t1 t2) (zip t1s t2s)) 
+
 
 casePropTyUnspanned :: Prop -> (Bool -> Check TyX) -> Check TyX
 casePropTyUnspanned p k = do
     x <- freshVar
-    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ k True
+    logTypecheck $ owlpretty "CasePropTy: " <> owlpretty p
+    pushLogTypecheckScope
+    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $  k True
     t1 <- stripTy (s2n x) $ mkSpanned t1_
-    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ k False
+    popLogTypecheckScope
+    logTypecheck $ owlpretty "CasePropTy: " <> owlpretty (pNot p)
+    pushLogTypecheckScope
+    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
     t2 <- stripTy (s2n x) $ mkSpanned t2_
-    return $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+    popLogTypecheckScope
+    ntyHook <- view normalizeTyHook
+    t3 <- ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+    return $ t3^.val
 
 stripTy :: DataVar -> Ty -> Check Ty
 stripTy x t =
@@ -1600,10 +1631,6 @@ stripTy x t =
           l' <- stripLabel x l
           return $ mkSpanned $ TBool l'
       TGhost -> return t 
-      TUnion t1 t2 -> do
-          t1' <- stripTy x t1
-          t2' <- stripTy x t2
-          return $ mkSpanned $ TUnion t1' t2'
       TUnit -> return t
       TName n -> do
           n' <- stripNameExp x n

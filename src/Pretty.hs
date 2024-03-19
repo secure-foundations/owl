@@ -160,8 +160,6 @@ instance  OwlPretty TyX where
             (TExistsIdx _ it) -> 
                 let (i, t) = owlprettyBind it in
                 owlpretty "exists" <+> i <> owlpretty "." <+> t
-            (TUnion t1 t2) ->
-                owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
             (THexConst a) ->
                 owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
 
@@ -236,6 +234,7 @@ instance  OwlPretty PropX where
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ intersperse (owlpretty ", ") $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
+    owlpretty (PHonestPKEnc ne a) = owlpretty "honest_pk_enc" <> angles (owlpretty ne) <> tupled [owlpretty a]
     owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of

@@ -320,6 +320,8 @@
 )))
 
 
+(declare-fun HonestPKEnc (Name Bits) Bool) ; Abstract predcate for if the PK
+; encryption is honest or adversarial
 
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
