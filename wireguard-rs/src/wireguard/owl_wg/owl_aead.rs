@@ -195,7 +195,8 @@ pub fn encrypt_combined(
         let tmp = iv.try_into().unwrap();
         let nonce = RingAeadNonce::assume_unique_for_key(tmp);
         let aad_ring = Aad::from(aad);
-        let mut ctxt = msg.to_vec();
+        let mut ctxt = Vec::with_capacity(msg.len() + tag_size(alg)); //msg.to_vec();
+        ctxt.extend_from_slice(msg);
 
         key.seal_in_place_append_tag(nonce, aad_ring, &mut ctxt).unwrap();
         Ok(ctxt)
