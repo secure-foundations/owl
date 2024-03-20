@@ -140,12 +140,17 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                     owl_tki_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.send.key[..]),
                     owl_tki_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.keypair.recv.key[..]),
                 };
-
+                // unsafe {
                 // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
                 let plaintext = msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec();
 
-                let succeeded = cfg.owl_transp_send_init_wrapper(&mut state, transp_keys, &plaintext, &mut msg);
+                // Convert the message array to a borrow, unsafely
+                // let plaintext =
+                //     &*(&msg[SIZE_TAG..(msg.len() - SIZE_TAG)] as *const [u8] as *mut [u8]);
+                
 
+                let succeeded = cfg.owl_transp_send_init_wrapper(&mut state, transp_keys, &plaintext, &mut msg);
+                // }
                 // let succeeded = cfg.owl_transp_send_init_inplace(&mut state, transp_keys, &mut msg);
 
                 // assert!(succeeded.is_some());

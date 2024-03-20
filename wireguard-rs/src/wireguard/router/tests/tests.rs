@@ -696,18 +696,19 @@ fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
 
 #[cfg(test)]
 fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: RouterDeviceType, do_routines: bool) {
-    use std::sync::atomic::AtomicBool;
-
-    use crate::wireguard::{router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay}, owl_wg::owl_wireguard};
+    use crate::wireguard::router::queue::ParallelJob;
 
     const NUM_PACKETS: usize = 1000;
 
-    const MAX_SIZE_BODY: usize = 1 << 15;
+    // const MAX_SIZE_BODY: usize = 1 << 15;
 
     // inner payload of IPv4 packet is 1440 bytes
-    const BYTES_PER_PACKET: usize = 100;
+    const BYTES_PER_PACKET: usize = 300;
 
-    let mut confirm_packet_size = SIZE_KEEPALIVE;
+    #[cfg(feature = "memory_profile")]
+    let heap_profiler_guard = heappy::HeapProfilerGuard::new(1).unwrap();
+
+    let confirm_packet_size = SIZE_KEEPALIVE;
 
     // create device
     let ((bind_reader1, bind_writer1), (bind_reader2, bind_writer2)) =
@@ -861,6 +862,16 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
             // }
         }
     });
+
+    #[cfg(feature = "memory_profile")]
+    {
+        let report = heap_profiler_guard.report();
+
+        let filename = "/tmp/mem.pb";
+        println!("Writing to {}", filename);
+        let mut file = std::fs::File::create(filename).unwrap();
+        report.write_pprof(&mut file).unwrap();
+    }
 }
 
 #[bench]
