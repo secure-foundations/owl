@@ -375,8 +375,9 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
         // *nonce == *old(nonce) + 1,
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
-    let nonce_as_bytes = nonce.to_le_bytes().to_vec();
+    assert_eq!(owl_aead::nonce_size(cipher()), 12);
+    let mut iv = [0u8; 12];
+    let nonce_as_bytes = nonce.to_le_bytes();
     let iv_len = iv.len();
     iv[(iv_len - nonce_as_bytes.len())..].copy_from_slice(&nonce_as_bytes[..]);
     let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
