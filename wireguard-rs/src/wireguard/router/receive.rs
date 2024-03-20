@@ -145,7 +145,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                             return false;
                         } 
         
-                        let mut transp_keys = owl_wireguard::owl_transp_keys_init {
+                        let transp_keys = owl_wireguard::owl_transp_keys_init {
                             owl_tki_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
                             owl_tki_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&msg.1[4..8]),
                             owl_tki_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.send.key[..]),
@@ -183,7 +183,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                             return false;
                         } 
         
-                        let mut transp_keys = owl_wireguard::owl_transp_keys_resp {
+                        let transp_keys = owl_wireguard::owl_transp_keys_resp {
                             owl_tkr_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(msg.1[4..8].to_vec()),
                             owl_tkr_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
                             owl_tkr_recvd: true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message

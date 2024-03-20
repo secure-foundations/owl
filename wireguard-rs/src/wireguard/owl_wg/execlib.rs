@@ -215,19 +215,20 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     ensures res.dview() == Seq::new(n as nat, |i| e)
 {
-    let mut v = vec_new();
-    let mut i = 0;
-    proof { assert_seqs_equal!(v.dview(), Seq::new(0, |i| e)); }
-    while i < n
-        invariant
-            i <= n,
-            v.dview() == Seq::new(i as nat, |j| e)
-    {
-        vec_push(&mut v, e);
-        i = i + 1;
-        proof { assert_seqs_equal!(v.dview(), Seq::new(i as nat, |j| e)); }
-    }
-    v
+    // let mut v = vec_new();
+    // let mut i = 0;
+    // proof { assert_seqs_equal!(v.dview(), Seq::new(0, |i| e)); }
+    // while i < n
+    //     invariant
+    //         i <= n,
+    //         v.dview() == Seq::new(i as nat, |j| e)
+    // {
+    //     vec_push(&mut v, e);
+    //     i = i + 1;
+    //     proof { assert_seqs_equal!(v.dview(), Seq::new(i as nat, |j| e)); }
+    // }
+    // v
+    vec![e;n]
 }
 
 pub exec fn vec_u8_of_len(n: usize) -> (res: Vec<u8>)
