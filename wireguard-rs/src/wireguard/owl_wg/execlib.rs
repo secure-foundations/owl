@@ -467,11 +467,11 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
+pub exec fn owl_counter_as_bytes(x: &usize) -> (res: [u8; 8])
     ensures res.dview() == counter_as_bytes(x.dview())
 {
     // Specific to Wireguard
-    let mut v = x.to_le_bytes().to_vec();
+    let mut v = x.to_le_bytes();
     // v.resize(nonce_size(), 0u8);
     v
 }

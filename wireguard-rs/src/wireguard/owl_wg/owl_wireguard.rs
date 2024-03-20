@@ -1483,7 +1483,7 @@ impl<O> cfg_Initiator<O> {
             let owl_init_send1 = parseval.owl_tki_k_init_send;
             let owl_resp_send = parseval.owl_tki_k_resp_send;
             let temp_owl__x7 = { owl_counter_as_bytes(&(mut_state.owl_N_init_send)) };
-            let owl__x7 = OwlBuf::from_vec(temp_owl__x7);
+            let owl__x7 = OwlBuf::from_slice(&temp_owl__x7);
             let temp_owl__x13 = { OwlBuf::another_ref(&owl_init_send1) };
             let owl__x13 = temp_owl__x13;
             let temp_owl__x15 = { owl_msg92528 };
@@ -1798,7 +1798,7 @@ impl<O> cfg_Responder<O> {
             if owl__x136 {
                 {
                     let temp_owl__x99 = { owl_counter_as_bytes(&(mut_state.owl_N_resp_send)) };
-                    let owl__x99 = OwlBuf::from_vec(temp_owl__x99);
+                    let owl__x99 = OwlBuf::from_slice(&temp_owl__x99);
                     let temp_owl__x105 = { OwlBuf::another_ref(&owl_resp_send79) };
                     let owl__x105 = temp_owl__x105;
                     let temp_owl__x107 = { owl_msg162687 };
