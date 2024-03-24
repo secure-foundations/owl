@@ -534,9 +534,6 @@ resolveAExpr a =
       AEGetVK ne -> do
           ne' <- resolveNameExp ne
           return $ Spanned (a^.spanOf) $ AEGetVK ne'
-      AEPackIdx i a -> do
-          a' <- resolveAExpr a
-          return $ Spanned (a^.spanOf) $ AEPackIdx i a'
       AELenConst _ -> return a
       AEInt _ -> return a
       AEKDF a2 b c nks j -> do
@@ -642,6 +639,9 @@ resolveExpr e =
           k' <- resolveExpr k
           op' <- traverse resolveProp op
           return $ Spanned (e^.spanOf) $ EForallIdx s (bind x (op', k'))
+      EPackIdx i a -> do
+          a' <- resolveExpr a
+          return $ Spanned (a^.spanOf) $ EPackIdx i a'
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1

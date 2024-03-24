@@ -260,7 +260,6 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
         return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
-    extractAExpr' (AEPackIdx s a) = extractAExpr a
     extractAExpr' (AEKDF _ _ _ _ _) = throwError $ GhostInExec "AEKDF"
     --extractAExpr' (AEPreimage p _ _) = do
     --    p' <- flattenPath p

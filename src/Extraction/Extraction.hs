@@ -630,7 +630,6 @@ extractAExpr binds (AEGetEncPK nameExp) = do
 extractAExpr binds (AEGetVK nameExp) = do
     fnameExp <- flattenNameExp nameExp
     return (Rc VecU8, owlpretty "", rcClone <> parens (owlpretty "&self.pk_" <> owlpretty fnameExp))
-extractAExpr binds (AEPackIdx idx ae) = extractAExpr binds (ae^.val)
 extractAExpr binds (AELenConst s) = do
     lcs <- use lenConsts
     case lcs M.!? (rustifyName s) of

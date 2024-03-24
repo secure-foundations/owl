@@ -37,14 +37,14 @@ def init_stage1<i@n,m>
     let C1 = kdf<;;kdfkey;0>(C0, e_init, 0x) in 
     let H2 = crh(H1 ++ e_init) in
     let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(E_init<i@n>)) in
-    corr_case S_resp<@m> in
-    corr_case E_init<i@n> in
+    // corr_case S_resp<@m> in
+    // corr_case E_init<i@n> in
     let C2 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
     let k0 = kdf<;odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
     let msg1_static // : Data<adv> |cipherlen(|group|)|
         = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, dhpk_S_init, H2) in 
     let H3 = crh(H2 ++ msg1_static) in
-    corr_case S_init<@n> in 
+    // corr_case S_init<@n> in 
     let c3 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 0>(C2, ss_S_resp_S_init, 0x) in 
     let k1 = kdf<0;odh L2<@n,m>[0]; kdfkey || enckey; 1>(C2, ss_S_resp_S_init, 0x) in 
     let timestamp = call timestamp_i<@n>() in
@@ -63,12 +63,41 @@ def init_stage1<i@n,m>
     output msg1_output; // to endpoint(Responder<m>) in // TODO: does it make sense to index the responder?
     init_sent_state<session i, pid n, pid m>(C2, ss_S_resp_S_init, h4, c3)
 
+def case_msg2_ephemeral<i@n,m>(x : (z:Data<adv> {is_group_elem(z)})) @ Initiator<n> : 
+    exists m2. exists j. exists m_s. 
+        if is_e_resp[x] then 
+            if m =idx m2 then
+                dhpk(E_resp<j@m>)
+            else
+                dhpk(E_resp<j@m2>)
+            else if is_s_resp[x] then dhpk(S_resp<@m_s>) else
+                (z:Data<adv> | |group| | {is_group_elem(x) /\ x == z})
+    =
+    pcase is_e_resp[x]  in
+            choose_idx m2 | exists j:idx. x == dhpk(get(E_resp<j@m2>)) in 
+            choose_idx j | x == dhpk(get(E_resp<j@m2>)) in 
+        pcase (m =idx m2) when (x == dhpk(get(E_resp<j@m2>))) in 
+        pcase is_s_resp[x]
+            when !is_e_resp[x]
+        in 
+            choose_idx m_s | x == dhpk(get(S_resp<@m_s>)) in 
+        let y : 
+         if is_e_resp[x] then 
+            if m =idx m2 then
+                dhpk(E_resp<j@m>)
+            else
+                dhpk(E_resp<j@m2>)
+            else if is_s_resp[x] then dhpk(S_resp<@m_s>) else
+                (z:Data<adv> | |group| | {is_group_elem(x) /\ x == z})
+        = x in
+        pack<m2>(pack<j>(pack<m_s>(y)))
+
+
 def init_stage2<i@n,m>
     (st : init_sent_state<session i, pid n, pid m>)
     @
     Initiator<n> : Option transp_keys_init<session i, pid n, pid m> = 
-    set_option ":rlimit" "1000000" in 
-    pcase init_safe<i, n, m>[] in 
+    set_option ":rlimit" "7000000" in 
     parse st as init_sent_state<session i, pid n, pid m>(c2, static_ss, h4, c3)
     in 
     input i in
@@ -78,21 +107,18 @@ def init_stage2<i@n,m>
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in 
         let e_init = get(E_init<i@n>) in 
-        pcase is_e_resp[msg2_ephemeral]  in
-            choose_idx m2 | exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
-            choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in 
-        pcase is_s_resp[msg2_ephemeral]
-            when !is_e_resp[msg2_ephemeral]
-        in 
-            choose_idx m3 | msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
-        pcase (m =idx m2) when (msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in 
-        corr_case E_resp<j@m2> when (msg2_ephemeral == dhpk(get(E_resp<j@m2>)) /\ m !=idx m2) in 
+        let msg2_eph = call case_msg2_ephemeral<i@n,m>(msg2_ephemeral) in 
+        unpack m2, x = msg2_eph in 
+        unpack j, x = x in 
+        unpack m3, x = x in 
+        unpack m_s, msg2_ephemeral = x in 
+        // corr_case E_resp<j@m2> when (msg2_ephemeral == dhpk(get(E_resp<j@m2>)) /\ m !=idx m2) in 
         let c4 = kdf<0,1;;kdfkey;0>(c3, msg2_ephemeral, 0x) in 
         let ghost c4_ghost = gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x) in 
         let h5 = crh(h4 ++ msg2_ephemeral) in                      
         let ss = dh_combine(msg2_ephemeral, e_init) in 
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
-        corr_case E_resp<j@m> in 
+        // corr_case E_resp<j@m> in 
         kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c1<session i, pid n>());
         kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c4<session
         i, session j, pid n, pid n, pid m2>());
@@ -105,21 +131,20 @@ def init_stage2<i@n,m>
                 honest_c3<session i', pid n, pid n_pk, pid m2>());
             kdf_inj_lemma(gkdf<kdfkey;0>(c3, msg2_ephemeral, 0x), honest_c4<session
                 i', session j, pid n, pid n_pk, pid m2>());
-            assert (m !=idx m2 ==> c4 != honest_c4<session i', session j, pid n, pid n_pk, pid
+            assert ((m !=idx m2 ==> c4 != honest_c4<session i', session j, pid n, pid n_pk, pid
                     m2>())
+                    /\
+                    (!is_e_resp[msg2_ephemeral] ==>
+                        c4 != honest_c4<session i', session j, pid n, pid n_pk,
+                        pid m2>()
+                    ))
         };
-        assert (m !=idx m2 ==>
-            ! exists n_pk:idx.
-                exists i:idx.
-                    c4 == honest_c4<session i, session j, pid n, pid n_pk, pid
-                    m2>()
-        );
-        corr_case E_init<i@n> in 
-        let c5 = kdf<0; odh L4<i,j@n,m>[0]; kdfkey; 0>(c4, ss, 0x) in                                     
+        let c5 = kdf<0; odh L4<i,j@n,m>[0], odh
+        L4<i,j@n,m2>[0]; kdfkey; 0>(c4, ss, 0x) in                                     
+
         let ghost c5_ghost = gkdf<kdfkey;0>(c4_ghost, ss, 0x) in 
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
 
-        corr_case S_resp<@m3> when msg2_ephemeral == dhpk(get(S_resp<@m3>)) in 
         forall i':idx {
             assert (dh_combine(dhpk(get(S_init<@n>)), get(S_resp<@m>)) != dhpk(get(E_init<i'@n>)));
             kdf_inj_lemma(c5_ghost, honest_c2<session i', pid n, pid m3>());
@@ -157,7 +182,7 @@ def init_stage2<i@n,m>
                     c5 == honest_c5<session i, session j, pid n_eph, pid n, pid
                     m2>()
         );
-        corr_case S_init<@n> in 
+        // corr_case S_init<@n> in 
         let c6 = kdf<0; odh L5<j@n,m>[0]; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x
         ) in 

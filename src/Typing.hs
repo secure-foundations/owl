@@ -66,7 +66,7 @@ emptyEnv f = do
     rs <- newIORef []
     memo <- mkMemoEntry 
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy Nothing [] False False def
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -134,6 +134,9 @@ withNormalizedTys mp =
 
 mkRefined :: Ty -> (AExpr -> Prop) -> TyX              
 mkRefined t p = TRefined t ".res" $ bind (s2n ".res") $ p $ aeVar ".res"
+
+tPubGroupElem :: Ty
+tPubGroupElem = tRefined (tData advLbl advLbl) ".res" $ pEq (builtinFunc "is_group_elem" [aeVar ".res"]) (builtinFunc "true" [])
 
 initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
@@ -255,7 +258,10 @@ initDetFuncs = withNormalizedTys $ [
               nt_n <-  local (set tcScope $ TcGhost False) $ getNameType n
               nt_m <-  local (set tcScope $ TcGhost False) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
-                (NT_DH, NT_DH) -> return $ TSS n m
+                (NT_DH, NT_DH) -> 
+                        return $ TCase (pFlow (nameLbl n) advLbl) tPubGroupElem 
+                                                                  (mkSpanned $ TCase (pFlow (nameLbl m) advLbl) tPubGroupElem
+                                                                                                                (mkSpanned $ TSS n m))
                 _ -> trivialTypeOf $ map snd args
           ([], _) -> trivialTypeOf $ map snd args
           ([ParamName n, ParamName m], [(x, t1), (_, t2)]) -> do 
@@ -299,16 +305,6 @@ initDetFuncs = withNormalizedTys $ [
     ]
 
 
-byCasesProp :: Prop -> (Bool -> Check Bool) -> Check Bool
-byCasesProp p k = do
-    x <- freshVar
-    b1 <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ 
-        pushPathCondition p $ 
-            k True
-    b2 <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ 
-        pushPathCondition (pNot p) $ 
-            k False
-    return $ b1 && b2
 
 mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
 mkStructType pth tv args ps b = do
@@ -421,10 +417,11 @@ aelem x ys = any (aeq x) ys
 normalizeProp :: Prop -> Check Prop
 normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
     pc <- view pathCondition
-    if p `aelem` pc then return (mkSpanned PTrue) else do
-        p' <- go p
-        res <- if p' `aeq` p then return p' else normalizeProp p'
-        return res
+    if p `aelem` pc then return (mkSpanned PTrue) else 
+        if (pNot p) `aelem` pc then return (mkSpanned PFalse) else do
+            p' <- go p
+            res <- if p' `aeq` p then return p' else normalizeProp p'
+            return res
     where 
             go p = case p^.val of
                      PTrue -> return p
@@ -490,7 +487,29 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PFlow a b -> do
                          a' <- normLabel a
                          b' <- normLabel b
-                         if a' `aeq` b' then return pTrue else return (Spanned (p^.spanOf) $ PFlow a' b')
+                         case (a'^.val, b'^.val) of
+                           (LZero, _) -> return pTrue
+                           _ | a' `aeq` b' -> return pTrue 
+                           _ -> return (Spanned (p^.spanOf) $ PFlow a' b')
+                     PHappened s ps as -> do
+                         as' <- mapM (\a -> resolveANF a >>= normalizeAExpr) as
+                         return $ Spanned (p^.spanOf) $ PHappened s ps as'
+                     PApp s ps as -> do 
+                         as' <- mapM (\a -> resolveANF a >>= normalizeAExpr) as
+                         return $ Spanned (p^.spanOf) $ PApp s ps as'
+                     PAADOf ne a -> do
+                         ne' <- normalizeNameExp ne
+                         a' <- resolveANF a >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PAADOf ne' a'
+                     PInODH a1 a2 a3 -> do 
+                         a1' <- resolveANF a1 >>= normalizeAExpr
+                         a2' <- resolveANF a2 >>= normalizeAExpr
+                         a3' <- resolveANF a3 >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PInODH a1' a2' a3'
+                     PHonestPKEnc ne a -> do
+                         ne' <- normalizeNameExp ne
+                         a' <- resolveANF a >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
                      _ -> return p
 
 
@@ -578,10 +597,8 @@ normalizeTy = withMemoize (memoNormalizeTy) $ \t0 ->
                              return $ Spanned (t0^.spanOf) $ TConst s (ps')
              (TExistsIdx s xt) -> do
                  (x, t) <- unbind xt
-                 if x `elem` getTyIdxVars t then do
-                     t' <- withIndices [(x, (ignore s, IdxGhost))] $ normalizeTy t
-                     return $ Spanned (t0^.spanOf) $ TExistsIdx s $ bind x t'
-                 else normalizeTy t
+                 t' <- withIndices [(x, (ignore s, IdxGhost))] $ normalizeTy t
+                 return $ Spanned (t0^.spanOf) $ TExistsIdx s $ bind x t'
              TAdmit -> return t0
              THexConst a -> return t0
 
@@ -694,7 +711,8 @@ isSingleton t =
       _ -> False
 
 tyFlowsTo :: Ty -> Label -> Check Bool
-tyFlowsTo t l = 
+tyFlowsTo t0 l = do
+    t <- normalizeTy t0
     case t^.val of
       TRefined t0 s xp -> do
           x <- freshVar
@@ -724,8 +742,9 @@ isValueDerivable a = do
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
 isSubtype t1 t2 = do
-    b <- isSubtype' t1 t2
-    return b
+    t1' <- normalizeTy t1
+    t2' <- normalizeTy t2
+    isSubtype' t1' t2'
 
 
 
@@ -1170,7 +1189,6 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
       AEGetVK n -> do
           b <- nameExpIsLocal n
           assert "Random oracle decl must only involve local names" b
-      AEPackIdx _ a -> ensureOnlyLocalNames a
       AELenConst _ -> return ()
       AEInt _ -> return ()
 
@@ -1600,9 +1618,13 @@ tryFlowsTo l1' l2' = do
 
 decideProp :: Prop -> Check (Maybe Bool)
 decideProp p = do
-    tyc <- view tyContext
-    (fn, r) <- SMT.symDecideProp p
-    return r
+    p' <- normalizeProp p
+    case p'^.val of
+      PTrue -> return $ Just True
+      PFalse -> return $ Just False
+      _ -> do 
+        (fn, r) <- SMT.symDecideProp p'
+        return r
 
 flowCheck :: Label -> Label -> Check ()
 flowCheck l1 l2 = laxAssertion $ do
@@ -1808,25 +1830,19 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 if y `elem` toListOf fv to then stripTy y to else return to
       (EUnpack a (si, sx) ixk) -> do
           t0 <- inferAExpr a
-          openTy t0 $ \t -> do 
-              ((i, x), e_) <- unbind ixk
-              let e = subst i (mkIVar (s2n si)) e_ 
-              getOutTy ot =<< case (stripRefinements t)^.val of
+          ((i, x), e_) <- unbind ixk
+          let e = subst i (mkIVar (s2n si)) e_
+          tyOfX <- openTy t0 $ \t -> do
+              case (stripRefinements t)^.val of
                 TExistsIdx _ jt' -> do
                     (j, t') <- unbind jt'
-                    let tx = tRefined (subst j (mkIVar $ s2n si) t') ".res" (pEq (aeVar ".res") a) 
-                    to <- withIndices [(s2n si, (ignore si, IdxGhost))] $ do 
-                        withVars [(x, (ignore $ sx, Nothing, tx))] $ checkExpr ot e
-                    to' <- stripTy x to
-                    if (s2n si) `elem` getTyIdxVars to' then
-                        return (tExistsIdx si (bind i to'))
-                    else return to'
-                _ -> do
-                    t' <- withIndices [(s2n si, (ignore si, IdxGhost))] $ withVars [(x, (ignore sx, Nothing, t))] $ checkExpr ot e
-                    to' <- stripTy x t'
-                    if (s2n si) `elem` getTyIdxVars to' then
-                        return (tExistsIdx si (bind i to'))
-                    else return to'
+                    return $ tRefined (subst j (mkIVar $ s2n si) t') ".res" (pEq (aeVar ".res") a)
+                _ -> return t
+          to <- withIndices [(s2n si, (ignore si, IdxGhost))] $ do
+              withVars [(x, (ignore $ sx, Nothing, tyOfX))] $ do
+                  checkExpr ot e
+          to' <- stripTy x to
+          return $ if (s2n si) `elem` getTyIdxVars to' then (tExistsIdx si (bind i to')) else to'
       (ETLookup pth@(PRes (PDot p n)) a) -> do
           md <- openModule p
           case lookup n (md^.tableEnv) of 
@@ -1891,6 +1907,15 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 let happenedProp = pHappened f (is1, is2) args
                 getOutTy ot $ (tRefined retTy ".res" happenedProp)
             _ -> typeError $ "Unreachable"
+      EPackIdx j@(IVar _ _ xj) e1 -> do
+          _ <- local (set tcScope $ TcGhost False) $ inferIdx j
+          t1 <- checkExpr Nothing e1
+          case ot of
+            Just retT@(Spanned _ (TExistsIdx si it)) -> do
+                (i, t) <- unbind it
+                b <- isSubtype t1 (subst i j t)
+                if b then return retT else (getOutTy ot $ mkSpanned $ TExistsIdx si $ bind xj t1)
+            _ -> getOutTy ot $ mkSpanned $ TExistsIdx (show j) $ bind xj t1
       (EIf a e1 e2) -> do
           t <- inferAExpr a
           lt <- coveringLabel t
@@ -1927,7 +1952,8 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             _ -> typeError $ "Guard body must return an option: " ++ show (owlpretty t1)
       (ERet a) -> do
           t <- inferAExpr a
-          getOutTy ot $ tRefined t ".res" (pEq (aeVar ".res") a)
+          tres <- normalizeTy $ tRefined t ".res" (pEq (aeVar ".res") a)
+          getOutTy ot tres 
       EFalseElim e op -> do
           doFalseElim <- case op of
                            Nothing -> return True
@@ -2002,9 +2028,6 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                _ <- local (set tcScope $ TcGhost False) $ checkProp pcond
                                (_, b) <- SMT.smtTypingQuery "case split condition" $ SMT.symAssert pcond
                                return b 
-          retT <- case ot of
-                    Just t -> return t
-                    Nothing -> typeError $ "pcase must have expected return type"
           let (doFalse, doTrue) = case attr of
                                     Nothing -> (True, True)
                                     Just False -> (True, False)
@@ -2013,26 +2036,26 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             False -> checkExpr ot k
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
-              x <- freshVar
-              when doTrue $ do
-                  _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
-                      logTypecheck $ owlpretty "Case split: " <> owlpretty p
-                      pushLogTypecheckScope
-                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                      r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                      popLogTypecheckScope
-                  return ()
-              when doFalse $ do 
-                  _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
-                      logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
-                      pushLogTypecheckScope
-                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                      r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                      popLogTypecheckScope
-                  return ()
-              return retT
+              x <- fresh $ s2n "%caseProp"
+              tTrue <- case doTrue of
+                         True -> 
+                             withVars [(x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
+                                  logTypecheck $ owlpretty "Case split: " <> owlpretty p
+                                  withPushLog $ do 
+                                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                                      if b then return tAdmit else checkExpr ot k
+                         False -> return tAdmit
+              tFalse <- case doFalse of
+                         True -> 
+                             withVars [(x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
+                                  logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
+                                  withPushLog $ do 
+                                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                                      if b then return tAdmit else checkExpr ot k
+                         False -> return tAdmit
+              tMerge <- normalizeTy $ mkSpanned $ TCase p tTrue tFalse
+              getOutTy ot tMerge
       EParse a t ok bk -> do
-          -- TODO: have this respect TIf as in parsing enum
           retT <- case ot of
                     Just t -> return t
                     Nothing -> typeError $ "parse must have expected return type"
@@ -2104,9 +2127,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
 
 ensureTyCanBeCased :: Ty -> Bool -> Check ()
 ensureTyCanBeCased t hasOtherwise = 
-    when (not hasOtherwise) $ do 
-        l <- coveringLabel t
-        flowCheck l advLbl
+    when hasOtherwise $ do 
+        analyzeTyByCases t $ \t0 -> do 
+            l <- coveringLabel t0
+            flowCheck l advLbl
 
 computeStructBindings :: Ty -> Ty -> [(String, Ty)] -> Bool -> Check [Ty]
 computeStructBindings targ tann sinfo hasOtherwise = 
@@ -2553,7 +2577,7 @@ inferKDFODHOOB a (b, tb) c = pushRoutine  "inferKDFODHOOB" $ do
           return Nothing
 
 
-findKDFODHColl :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe String)
+findKDFODHColl :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check (Maybe (Either String String))
 findKDFODHColl (a, _) (b, _) (c, _) = do
     cur_odh <- view $ curMod . odh
     findColl a b c cur_odh
@@ -2568,7 +2592,8 @@ findKDFODHColl (a, _) (b, _) (c, _) = do
                 res <- decideProp $ pNot $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
                 case res of
                   Just True -> findColl salt ikm info odhs
-                  _ -> return $ Just s
+                  Just False -> return $ Just $ Left s
+                  Nothing -> return $ Just $ Right s
 
 nameKindLength :: NameKind -> AExpr
 nameKindLength nk =
@@ -2687,82 +2712,92 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let [a, b, c] = args
           cpub <- tyFlowsTo (snd c) advLbl
           assert ("Third argument to KDF must flow to adv") cpub
-          res1 <- local (set tcScope $ TcGhost False) $ do
-              let go os = 
-                      case os of
-                        [] -> do
-                            pub <- tyFlowsTo (snd a) advLbl
-                            assert ("No KDF hints worked for first argument; salt must then flow to adv") pub
-                            return Nothing
-                        i:os' -> do
-                            r <- local (set tcScope $ TcGhost False) $ inferKDF KDF_SaltPos a b c i j nks
-                            case r of
-                              Just v -> return $ Just (i, v)
-                              Nothing ->  go os'
-              go oann1
-          res2 <- local (set tcScope $ TcGhost False) $ do
-              let go lax os = do -- lax means if we are actually out of options
-                      case os of
-                        [] -> do
-                            r <- inferKDFODHOOB a b c
-                            case r of
-                              Just KDFAdv -> return $ Just (Nothing, KDFAdv)
-                              Nothing -> do
-                                pub <- isValueDerivable (fst b)
-                                case pub of 
-                                  True -> return Nothing
-                                  False -> do
-                                      -- TODO: take into account more nuanced DH
-                                      -- reasoning here
-                                      if lax then return Nothing else do
-                                          coll <- findKDFODHColl a b c 
-                                          typeError $ "KDF malformed but collided with: " ++ show (owlpretty coll) 
-                        e:os' -> do
-                            r <- case e of
-                                   Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
-                                   Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j nks 
-                            case r of
-                              -- If we get corrupt, try the next one
-                              Just (KDFCorrupt lbl) -> do
-                                  r <- go True os'
-                                  case r of
-                                    Nothing -> return $ Just (Just e, KDFCorrupt lbl)
-                                    Just v2 -> return $ Just v2
-                              Just v -> return $ Just (Just e, v)
-                              Nothing -> go lax os'
-              go False oann2
-          res <- case (res1, res2) of
-                   (Nothing, Just (e, v)) -> return $ Just v
-                   (Just (i, v), Nothing) -> return $ Just v
-                   (Nothing, Nothing) -> return Nothing
-                   (Just (i, v1), Just (e, v2)) -> do
-                       v <- pushRoutine "KDF.unify" $ local (set tcScope $ TcGhost False) $ unifyKDFInferResult i e v1 v2
-                       return $ Just v
-          assert ("Name kind index out of bounds") $ j < length nks
-          let outLen = nameKindLength $ nks !! j
-          kdfProp <- do
-              a' <- resolveANF (fst a)
-              b' <- resolveANF (fst b)
-              c' <- resolveANF (fst c)
-              return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
-          let kdfRefinement t = tRefined t ".res" $ 
-                pAnd
-                    (pEq (aeLength (aeVar ".res")) outLen)
-                    kdfProp
-          kdfRefinement <$> case res of 
-            Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
-            Just KDFAdv -> return $ tData advLbl advLbl
-            Just (KDFGood strictness ne) -> pushRoutine "KDF.good" $ do 
-              let flowAx = case strictness of
-                             KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
-                             KDFPub -> pFlow (nameLbl ne) advLbl 
-                             KDFUnstrict -> pTrue
-              lenConst <- local (set tcScope $ TcGhost False) $ lenConstOfUniformName ne
-              return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                  pAnd flowAx $ 
-                      pEq (aeLength (aeVar ".res")) lenConst
-            Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
-                return $ tDataAnn l_corr zeroLbl "corrupt KDF"
+          kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j
+          resTy <- manyCasePropTy kdfCaseSplits $ do 
+              falseCase <- doAssertFalse
+              case falseCase of
+                True -> return tAdmit
+                False -> do 
+                    res1 <- local (set tcScope $ TcGhost False) $ do
+                        let go os = 
+                                case os of
+                                  [] -> do
+                                      pub <- tyFlowsTo (snd a) advLbl
+                                      assert ("No KDF hints worked for first argument; salt must then flow to adv") pub
+                                      return Nothing
+                                  i:os' -> do
+                                      r <- local (set tcScope $ TcGhost False) $ inferKDF KDF_SaltPos a b c i j nks
+                                      case r of
+                                        Just v -> return $ Just (i, v)
+                                        Nothing ->  go os'
+                        go oann1
+                    res2 <- local (set tcScope $ TcGhost False) $ do
+                        let go lax os = do -- lax means if we are actually out of options
+                                case os of
+                                  [] -> do
+                                      r <- inferKDFODHOOB a b c
+                                      case r of
+                                        Just KDFAdv -> return $ Just (Nothing, KDFAdv)
+                                        Nothing -> do
+                                          pub <- isValueDerivable (fst b)
+                                          case pub of 
+                                            True -> return Nothing
+                                            False -> do
+                                                -- TODO: take into account more nuanced DH
+                                                -- reasoning here
+                                                if lax then return Nothing else do
+                                                    coll <- findKDFODHColl a b c 
+                                                    case coll of
+                                                      Nothing -> typeError $ "KDF malformed; should be unreachable"
+                                                      Just (Left s) -> typeError $ "KDF malformed but collided with: " ++ s
+                                                      Just (Right s) -> typeError $ "KDF malformed; and could not prove disjointness from " ++ s
+                                  e:os' -> do
+                                      r <- case e of
+                                             Left i -> local (set tcScope $ TcGhost False) $ inferKDF KDF_IKMPos a b c i j nks
+                                             Right (s, ps, i) -> local (set tcScope $ TcGhost False) $ inferKDFODH a b c s ps i j nks 
+                                      case r of
+                                        -- If we get corrupt, try the next one
+                                        Just (KDFCorrupt lbl) -> do
+                                            r <- go True os'
+                                            case r of
+                                              Nothing -> return $ Just (Just e, KDFCorrupt lbl)
+                                              Just v2 -> return $ Just v2
+                                        Just v -> return $ Just (Just e, v)
+                                        Nothing -> go lax os'
+                        go False oann2
+                    res <- case (res1, res2) of
+                             (Nothing, Just (e, v)) -> return $ Just v
+                             (Just (i, v), Nothing) -> return $ Just v
+                             (Nothing, Nothing) -> return Nothing
+                             (Just (i, v1), Just (e, v2)) -> do
+                                 v <- pushRoutine "KDF.unify" $ local (set tcScope $ TcGhost False) $ unifyKDFInferResult i e v1 v2
+                                 return $ Just v
+                    assert ("Name kind index out of bounds") $ j < length nks
+                    let outLen = nameKindLength $ nks !! j
+                    kdfProp <- do
+                        a' <- resolveANF (fst a)
+                        b' <- resolveANF (fst b)
+                        c' <- resolveANF (fst c)
+                        return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
+                    let kdfRefinement t = tRefined t ".res" $ 
+                          pAnd
+                              (pEq (aeLength (aeVar ".res")) outLen)
+                              kdfProp
+                    kdfRefinement <$> case res of 
+                      Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
+                      Just KDFAdv -> return $ tData advLbl advLbl
+                      Just (KDFGood strictness ne) -> pushRoutine "KDF.good" $ do 
+                        let flowAx = case strictness of
+                                       KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                       KDFPub -> pFlow (nameLbl ne) advLbl 
+                                       KDFUnstrict -> pTrue
+                        lenConst <- local (set tcScope $ TcGhost False) $ lenConstOfUniformName ne
+                        return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                            pAnd flowAx $ 
+                                pEq (aeLength (aeVar ".res")) lenConst
+                      Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
+                          return $ tDataAnn l_corr zeroLbl "corrupt KDF"
+          normalizeTy resTy
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
@@ -2952,6 +2987,43 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                  return $ mkSpanned $ (TData l_corr l_corr $ ignore $ Just "corrupt vrfy") 
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
+findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]
+findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
+    names1 <- do
+        t <- inferAExpr a
+        case (stripRefinements t)^.val of
+          TName n -> return [n]
+          TSS n m -> return [n, m]
+          _ -> return []
+    names2 <- do
+        bs <- unconcat b
+        ts <- mapM inferAExpr bs
+        ps <- forM (zip bs ts) $ \(x, t) ->
+            case (stripRefinements t)^.val of
+              TName n -> return [n]
+              _ -> do
+                  o <- getLocalDHComputation x
+                  case o of
+                    Nothing -> return []
+                    Just (_, n) -> return [n]
+        return $ concat ps
+    names3 <- forM oann2 $ \o -> do
+        case o of
+          Left _ -> return []
+          Right (s, ips, i) -> do
+            pth <- curModName
+            (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips a c i j
+            return [ne1, ne2] 
+    return $ map (\n -> pFlow (nameLbl n) advLbl) $ aundup $ names1 ++ names2 ++ (concat names3)
+
+aundup :: Alpha a => [a] -> [a]
+aundup [] = []
+aundup (x:xs) = if x `aelem` xs then aundup xs else x : aundup xs
+
+manyCasePropTy :: [Prop] -> Check Ty -> Check Ty
+manyCasePropTy [] k = k
+manyCasePropTy (p:ps) k = casePropTy p $ \_ -> manyCasePropTy ps k
+
 ---- Entry point ----
 
 typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
@@ -3110,8 +3182,10 @@ typeError' msg = do
                 return $ if b then [E.Note "Inconsistent type context detected. Try using false_elim?"] else []
     tyc <- case ite of
              True -> removeAnfVars <$> view tyContext
-             False ->
-                local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
+             False -> do
+                f <- view $ envFlags . fLocalTypeError
+                (if (not f) then local (set pathCondition []) else id) $ 
+                    local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
     e <- ask

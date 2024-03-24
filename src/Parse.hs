@@ -1381,6 +1381,17 @@ parseExprTerm =
         e2 <- parseExpr
         return $ EIf t e1 e2)
     <|>
+    (parseSpanned $ do 
+        reserved "pack"
+        symbol "<"
+        i <- parseIdx
+        symbol ">"
+        symbol "("
+        a <- parseExpr
+        symbol ")"
+        return $ EPackIdx i a
+        )
+    <|>
     (parseSpanned $ do
         reserved "forall"
         bs <- parseQuantBinders
@@ -1921,17 +1932,6 @@ parseAExprTerm =
         ne <- parseNameExp
         symbol ")"
         return $ AEGetVK ne
-        )
-    <|>
-    (parseSpanned $ do 
-        reserved "pack"
-        symbol "<"
-        i <- parseIdx
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ")"
-        return $ AEPackIdx i a
         )
     <|>
     (try $ parseSpanned $ do

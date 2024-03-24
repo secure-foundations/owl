@@ -47,9 +47,7 @@ def resp_recv<j@n,m>(
         guard eq(from, init) in 
         pcase resp_clean<j,n_pk,n,m>[eph] in 
         pcase n =idx n_pk in 
-        case st_aead_dec(init_send, pkt, 0x, ctr) as Option 
-        (Data<adv /\
-        [channel_secret_init_send<@n,m>], |adv|>)
+        case st_aead_dec(init_send, pkt, 0x, ctr) as Option Data<adv>
         {
             | Some x =>
                 false_elim in 

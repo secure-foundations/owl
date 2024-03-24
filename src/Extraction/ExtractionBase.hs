@@ -637,9 +637,6 @@ resolveANF binds a = do
         AEGet _ -> return a
         AEGetEncPK _ -> return a
         AEGetVK _ -> return a
-        AEPackIdx i a2 -> do
-            a2' <- resolveANF binds a2
-            return $ mkSpanned $ AEPackIdx i a2'
         AELenConst _ -> return a
         AEInt _ -> return a
         AEKDF _ _ _ _ _ -> return a

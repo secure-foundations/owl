@@ -184,6 +184,8 @@ data Env = Env {
     _typeErrorHook :: (forall a. String -> Check a),
     _checkNameTypeHook :: (NameType -> Check ()),
     _normalizeTyHook :: Ty -> Check Ty,
+    _normalizePropHook :: Prop -> Check Prop,
+    _decidePropHook :: Prop -> Check (Maybe Bool),
     _curDef :: Maybe String,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
@@ -897,9 +899,6 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
           c' <- normalizeAExpr c
           return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
       AELenConst _ -> return ae
-      AEPackIdx i a -> do
-          a' <- normalizeAExpr a
-          return $ Spanned (ae^.spanOf) $ AEPackIdx i a'
       AEGetVK ne -> do
           ne' <- normalizeNameExp ne
           return $ Spanned (ae^.spanOf) $ AEGetVK ne'
@@ -964,7 +963,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           Nothing -> do
               local (set inTypeError True) $ typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
-        ts <- mapM inferAExpr args
+        ts <- local (set expectedTy Nothing) $ mapM inferAExpr args
         (ar, k) <- getFuncInfo f
         assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
         insmt <- view inSMT
@@ -977,16 +976,12 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AEKDF a b c nks j) -> do
-          _ <- mapM inferAExpr [a, b, c]
+          _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b, c]
           assert ("name kind index out of bounds") $ j < length nks
           return $ tGhost
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` lengthConstants 
           return $ tData zeroLbl zeroLbl
-      (AEPackIdx idx@(IVar _ s i) a) -> do
-            _ <- local (set tcScope (TcGhost False)) $ inferIdx idx
-            t <- inferAExpr a
-            return $ mkSpanned $ TExistsIdx (unignore s) $ bind i t 
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
@@ -1053,7 +1048,7 @@ resolveANF a = do
           case lookup x tC of
             Nothing -> do
                 tC <- view tyContext
-                typeError $ "Unknown var: " ++ show x
+                typeError $ "Unknown var: " ++ show x ++ ", " ++ unignore s
             Just (_, ianf, _) -> 
                 case ianf of 
                   Nothing -> return a
@@ -1068,9 +1063,6 @@ resolveANF a = do
       AEGet _ -> return a
       AEGetEncPK _ -> return a
       AEGetVK _ -> return a
-      AEPackIdx i a2 -> do
-          a2' <- resolveANF a2
-          return $ mkSpanned $ AEPackIdx i a2'
       AELenConst _ -> return a
       AEInt _ -> return a
       AEKDF a b c nks j -> do
@@ -1086,7 +1078,6 @@ isConstant a =
       AEHex _ -> True
       AEInt _ -> True
       AELenConst _ -> True
-      AEPackIdx _ a -> isConstant a
       _ -> False
 
 
@@ -1552,43 +1543,42 @@ instance OwlPretty DefSpec where
         -- in
         -- abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
 
+
+caseProp :: (Prop -> a -> a -> Check a) -> Prop -> (Bool -> Check a) -> Check a
+caseProp merge p' k = do
+    nph <- view normalizePropHook
+    p <- nph p'
+    dph <- view decidePropHook
+    ob <- dph p
+    case ob of
+      Just True -> k True
+      Just False -> k False
+      Nothing -> do 
+        x <- fresh $ s2n "%caseProp"
+        t1 <- withVars [(x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ do
+            logTypecheck $ owlpretty "Case split: " <> owlpretty p
+            k True
+        t2 <- withVars [(x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ do
+            logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
+            k False
+        merge p t1 t2
+
+
 casePropTy :: Prop -> (Bool -> Check Ty) -> Check Ty
-casePropTy p k = do
-    x <- freshVar
-    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ k True
-    t1 <- stripTy (s2n x) t1_
-    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
-    t2 <- stripTy (s2n x) t2_
+casePropTy = caseProp $ \p t1 t2 -> do
     ntyHook <- view normalizeTyHook
     ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
 
 casePropTyList :: Prop -> (Bool -> Check [Ty]) -> Check [Ty]
-casePropTyList p k = do
-    x <- freshVar
-    t1s_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ k True
-    t1s <- mapM (stripTy (s2n x)) t1s_
-    t2s_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
-    t2s <- mapM (stripTy (s2n x)) t2s_
+casePropTyList = caseProp $ \p t1s t2s -> do
     assert ("casePropTyList: got unequal length lists") $ length t1s == length t2s
     ntyHook <- view normalizeTyHook
     mapM ntyHook $ if t1s `aeq` t2s then t1s else (map (\(t1, t2) -> mkSpanned $ TCase p t1 t2) (zip t1s t2s)) 
 
-
 casePropTyUnspanned :: Prop -> (Bool -> Check TyX) -> Check TyX
-casePropTyUnspanned p k = do
-    x <- freshVar
-    logTypecheck $ owlpretty "CasePropTy: " <> owlpretty p
-    pushLogTypecheckScope
-    t1_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $  k True
-    t1 <- stripTy (s2n x) $ mkSpanned t1_
-    popLogTypecheckScope
-    logTypecheck $ owlpretty "CasePropTy: " <> owlpretty (pNot p)
-    pushLogTypecheckScope
-    t2_ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ k False
-    t2 <- stripTy (s2n x) $ mkSpanned t2_
-    popLogTypecheckScope
+casePropTyUnspanned = caseProp $ \p t1 t2 -> do
     ntyHook <- view normalizeTyHook
-    t3 <- ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+    t3 <- ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1 else TCase p (mkSpanned t1) (mkSpanned t2)
     return $ t3^.val
 
 stripTy :: DataVar -> Ty -> Check Ty
@@ -1746,6 +1736,8 @@ stripProp x p =
           ne' <- stripNameExp x ne
           if x `elem` getAExprDataVars y then return pTrue else return p
 
+byCasesProp :: Prop -> (Bool -> Check Bool) -> Check Bool
+byCasesProp = caseProp $ \_ b1 b2 -> return $ b1 && b2
 
 openTy :: Ty -> (Ty -> Check Ty) -> Check Ty
 openTy t k = 
@@ -1753,6 +1745,14 @@ openTy t k =
       TCase p t1 t2 -> casePropTy p (\b -> openTy (if b then t1 else t2) k)
       TRefined t0 s kref -> openTy t0 $ \t0' -> k $ Spanned (t^.spanOf) $ TRefined t0' s kref
       _ -> k t
+
+analyzeTyByCases :: Ty -> (Ty -> Check ()) -> Check ()
+analyzeTyByCases t k = 
+    case t^.val of
+      TCase p t1 t2 -> caseProp (\_ _ _ -> return ()) p (\b -> analyzeTyByCases (if b then t1 else t2) k)
+      TRefined t0 _ _ -> analyzeTyByCases t0 k
+      _ -> k t
+
 
 openArgs :: [(AExpr, Ty)] -> ([(AExpr, Ty)] -> Check Ty) -> Check Ty
 openArgs [] k = k []

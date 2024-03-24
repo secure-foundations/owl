@@ -117,7 +117,6 @@ data AExprX =
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
-    | AEPackIdx Idx AExpr
     | AELenConst String
     | AEInt Int
     | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
@@ -411,6 +410,7 @@ data ExprX =
     | EIf AExpr Expr Expr
     | EForallBV String (Bind DataVar (Maybe Prop, Expr))
     | EForallIdx String (Bind IdxVar (Maybe Prop, Expr))
+    | EPackIdx Idx Expr
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])

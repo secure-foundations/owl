@@ -73,8 +73,8 @@ instance  OwlPretty NameExpX where
                             <>
                             owlpretty ";"
                             <>
-                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-                            owlpretty nt
+                            (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            -- owlpretty nt
                             <> owlpretty ">"
                             <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 
@@ -321,7 +321,6 @@ instance  OwlPretty AExprX where
     owlpretty (AEGet ne) = owlpretty "get" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetEncPK ne) = owlpretty "get_encpk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetVK ne) = owlpretty "get_vk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
-    owlpretty (AEPackIdx s a) = owlpretty "pack" <> owlpretty "<" <> owlpretty s <> owlpretty ">(" <> owlpretty a <> owlpretty ")"
 
 instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaConstant) = owlpretty "is_constant_lemma"
@@ -424,6 +423,7 @@ instance  OwlPretty ExprX where
         in
         owlpretty "parse" <+> owlpretty a <+> owlpretty (map fst xs) <+> owlpretty "as" <+> owlpretty t <+> owlpretty "in"
         <+> owlpretty k <+> o
+    owlpretty (EPackIdx i e) = owlpretty "pack" <> angles (owlpretty i) <> tupled [owlpretty e]
     owlpretty _ = owlpretty "UNIMP: owlpretty"
 
 instance  OwlPretty DebugCommand where

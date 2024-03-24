@@ -545,7 +545,6 @@ interpretAExp ae' = do
           symNameExp ne
       AEGetEncPK ne -> interpretAExp $ aeApp (topLevelPath  "enc_pk") [] [mkSpanned $ AEGet ne]
       AEGetVK ne -> interpretAExp $ aeApp (topLevelPath  "vk") [] [mkSpanned $ AEGet ne]
-      AEPackIdx i a -> interpretAExp a
 
 sName :: String -> [SExp] -> Sym SExp
 sName n ivs = do

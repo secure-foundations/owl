@@ -48,13 +48,6 @@ anfAExpr a =
       AELenConst _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEInt _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEKDF _ _ _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
-      AEPackIdx i a' -> do
-          e1 <- anfAExpr a'
-          x <- fresh $ s2n ".x"
-          return $ 
-            Spanned (a^.spanOf) $ ELet e1 Nothing (Just a) (show x) (bind x $ 
-            Spanned (a^.spanOf) $ ERet $ Spanned (a^.spanOf) $ 
-                AEPackIdx i (Spanned (a^.spanOf) $ AEVar (ignore $ show x) x))
       AEApp f ps args -> anfAExprList (a^.spanOf) args $ \xs -> 
         Spanned (a^.spanOf) $ ERet $ Spanned (a^.spanOf) $ AEApp f ps xs
 
@@ -121,6 +114,9 @@ anf e =
       EChooseBV s p ixe -> do
           ixe' <- anfBind ixe
           return $ Spanned (e^.spanOf) $ EChooseBV s p ixe'
+      EPackIdx i e1 -> do
+          e1' <- anf e1
+          elet e1' Nothing Nothing Nothing $ \x -> return $ Spanned (e^.spanOf) $ EPackIdx i (Spanned (e1^.spanOf) $ ERet $ aevar (e1^.spanOf) x)
       EIf a e1 e2 -> do
           e1' <- anf e1
           e2' <- anf e2
@@ -162,7 +158,7 @@ anf e =
           a' <- anfAExpr a
           ok' <- traverse anf ok 
           bk' <- anfBind bk
-          elet a' Nothing Nothing Nothing $ \x -> return $ Spanned (e^.spanOf) $ EParse (aevar (a^.spanOf) x) t ok' bk'
+          elet a' Nothing (Just a) Nothing $ \x -> return $ Spanned (e^.spanOf) $ EParse (aevar (a^.spanOf) x) t ok' bk'
       ECase e1 otk cases -> do
           e1' <- anf e1
           cases' <- forM cases $ \(s, o) ->

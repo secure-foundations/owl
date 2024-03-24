@@ -363,7 +363,11 @@ smtTy xv t =
           vt1 <- smtTy xv t1
           vt2 <- smtTy xv t2
           return $ (sImpl vp vt1) `sAnd2` (sImpl (sNot vp) vt2)
-      TExistsIdx _ _ -> return $ sTrue -- Opaque to SMT
+      TExistsIdx _ bt -> do
+          (i, t0) <- liftCheck $ unbind bt
+          s <- withSMTIndices [(i, IdxGhost)] $ smtTy xv t0
+          let iname = cleanSMTIdent $ show i
+          return $ sExists [(SAtom iname, indexSort)] s [] $ "TExists_" ++ iname
       TConst s@(PRes (PDot pth _)) ps -> do
           td <- liftCheck $ getTyDef  s
           case td of
