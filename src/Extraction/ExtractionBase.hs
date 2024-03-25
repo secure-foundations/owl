@@ -31,14 +31,15 @@ import CmdArgs
 import ConcreteAST
 import System.IO
 import qualified TypingBase as TB
+import qualified SMTBase as SMT
 
-newtype ExtractionMonad a = ExtractionMonad (ReaderT TB.Env (StateT Env (ExceptT ExtractionError IO)) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader TB.Env)
+newtype ExtractionMonad a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT Env (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
 
-runExtractionMonad :: TB.Env -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
 runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
 
-liftCheck :: TB.Check a -> ExtractionMonad a
+liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad a
 liftCheck c = do
     e <- ask
     o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e

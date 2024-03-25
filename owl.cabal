@@ -26,11 +26,13 @@ executable owl
                        prettyprinter,
                        prettyprinter-ansi-terminal,
                        lens,
+                       text,
                        mtl,
                        optparse-applicative,
                        filepath,
                        Unique,
                        process,
+                       process-extras,
                        ordered-containers,
                        directory,
                        unbound-generics,
@@ -42,3 +44,37 @@ executable owl
                        bytestring,
                        time
 
+
+executable owlprof
+  hs-source-dirs:      src, src/Extraction, src/Pass
+  ghc-options:         
+    -Wunused-top-binds
+    -fprof-auto-top
+    -g
+    -rtsopts
+  main-is:             Main.hs
+  default-language:    Haskell2010
+  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, Extraction, ANFPass, PathResolution, ModuleFlattening, ExtractionBase, SpecExtraction, Pretty
+  build-depends:       base >= 4.7 && < 5,
+                       parsec,
+                       containers,
+                       prettyprinter,
+                       prettyprinter-ansi-terminal,
+                       lens,
+                       text,
+                       mtl,
+                       optparse-applicative,
+                       filepath,
+                       Unique,
+                       process,
+                       process-extras,
+                       ordered-containers,
+                       directory,
+                       unbound-generics,
+                       dir-traverse,
+                       diagnose == 2.4.0,
+                       data-default,
+                       hashable,
+                       cereal,
+                       bytestring,
+                       time

@@ -101,7 +101,7 @@ parseNameExp =
         symbol ","
         c <- parseAExpr
         symbol ")"
-        return $ KDFName a b c nks (read j) nt
+        return $ KDFName a b c nks (read j) nt (ignore False)
     )
     <|>
     (parseSpanned $ do

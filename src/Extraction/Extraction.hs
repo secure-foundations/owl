@@ -30,6 +30,7 @@ import Data.Typeable (Typeable)
 import AST
 import CmdArgs
 import qualified ANFPass as ANF
+import qualified SMTBase as SMT
 import ConcreteAST
 import System.IO
 import qualified Text.Parsec as P
@@ -1459,5 +1460,5 @@ extractModBody mb = do
       , vestFile
       )
 
-extract :: Flags -> TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
+extract :: Flags -> TB.Env SMT.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extractModBody modbody

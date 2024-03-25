@@ -48,6 +48,8 @@ import Parse
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 
+type Check = Check' SMT.SolverEnv
+
 emptyModBody :: IsModuleType -> ModBody
 emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
 
@@ -57,7 +59,7 @@ doAssertFalse = do
        return b
 
 -- extend with new parts of Env -- ok
-emptyEnv :: Flags -> IO Env
+emptyEnv :: Flags -> IO (Env SMT.SolverEnv)
 emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
@@ -610,7 +612,7 @@ normalizeLabel l = do
 
 -- Subtype checking, assuming the types are normalized
 
-isSubtype' t1 t2 = do
+isSubtype' = withMemoize (memoisSubtype') $ \(t1, t2) -> do 
     res <- withPushLog $ do
       x <- freshVar
       falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
@@ -626,18 +628,18 @@ isSubtype' t1 t2 = do
                 (fn, r) <- SMT.symDecideProp p'
                 case r of
                   Just b -> do
-                      isSubtype' (if b then t1' else t2') t2
-                  Nothing -> byCasesProp p' $ \b -> isSubtype' (if b then t1' else t2') t2
+                      isSubtype' (if b then t1' else t2', t2)
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' (if b then t1' else t2', t2)
             (_, TCase p t1' t2') -> do
                 p' <- normalizeProp p
                 (fn, r) <- SMT.symDecideProp p'
                 case r of
                   Just b -> do
-                      isSubtype' t1 (if b then t1' else t2')
-                  Nothing -> byCasesProp p' $ \b -> isSubtype' t1 (if b then t1' else t2')
-            (TOption t1, TOption t2) -> isSubtype' t1 t2
+                      isSubtype' (t1, if b then t1' else t2')
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' (t1, if b then t1' else t2')
+            (TOption t1, TOption t2) -> isSubtype' (t1, t2)
             (_, TRefined t _ p) -> do
-                b1 <- isSubtype' t1 t
+                b1 <- isSubtype' (t1, t)
                 (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
                 return $ b1 && b2
             (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
@@ -645,10 +647,10 @@ isSubtype' t1 t2 = do
                 (xi, t1) <- unbind xt1
                 (xi', t2) <- unbind xt2
                 withIndices [(xi, (ignore s1, IdxGhost))] $ 
-                    isSubtype' t1 (subst xi' (mkIVar xi) t2)
+                    isSubtype' (t1, (subst xi' (mkIVar xi) t2))
             (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
             (TUnit,  _) -> do
-              isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
+              isSubtype' ((tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))), t2)
             (TBool l1, TBool l2) -> do
                 ob <- tryFlowsTo l1 l2
                 case ob of
@@ -675,7 +677,7 @@ isSubtype' t1 t2 = do
                   _ -> return False
             (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
             (t, TDataWithLength l a) -> do
-                b1 <- isSubtype' t1 (tData l l)
+                b1 <- isSubtype' (t1, (tData l l))
                 (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
                 return $ b1 && b
             (t, TData l1 l2 _) -> do
@@ -693,7 +695,7 @@ isSubtype' t1 t2 = do
                           (s2n xlem, (ignore $ xlem, Nothing, tLemma p))
                          ] $
                     pushPathCondition p $ 
-                        isSubtype' t t2
+                        isSubtype' (t, t2)
             _ -> do
                 return False
     pc <- view pathCondition
@@ -713,6 +715,9 @@ isSingleton t =
 tyFlowsTo :: Ty -> Label -> Check Bool
 tyFlowsTo t0 l = do
     t <- normalizeTy t0
+    tyFlowsTo' (t, l)
+
+tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) -> 
     case t^.val of
       TRefined t0 s xp -> do
           x <- freshVar
@@ -744,7 +749,7 @@ isSubtype :: Ty -> Ty -> Check Bool
 isSubtype t1 t2 = do
     t1' <- normalizeTy t1
     t2' <- normalizeTy t2
-    isSubtype' t1' t2'
+    isSubtype' (t1', t2')
 
 
 
@@ -1612,7 +1617,9 @@ tryFlowsTo :: Label -> Label -> Check (Maybe Bool)
 tryFlowsTo l1' l2' = do
     l1 <- normalizeLabel l1'
     l2 <- normalizeLabel l2'
-    tyc <- view tyContext
+    tryFlowsTo' (l1, l2)
+
+tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2
     return b
 
@@ -2078,7 +2085,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           e1_a <- case e1^.val of
                     ERet a -> return a
                     _ -> typeError "Expected AExpr for case after ANF"
-          t <- stripRefinements <$> return t
+          t <- stripRefinements <$> normalizeTy t
           retT <- case ot of
                     Just t -> return t
                     Nothing -> typeError $ "case must have expected return type"
@@ -2129,8 +2136,12 @@ ensureTyCanBeCased :: Ty -> Bool -> Check ()
 ensureTyCanBeCased t hasOtherwise = 
     when hasOtherwise $ do 
         analyzeTyByCases t $ \t0 -> do 
-            l <- coveringLabel t0
-            flowCheck l advLbl
+            otcs <- tryObtainTyCases t0 
+            case otcs of
+              Just _ -> return () -- t0 is a case-able enum or option
+              Nothing -> do -- overapproximate
+                l <- coveringLabel t0
+                flowCheck l advLbl
 
 computeStructBindings :: Ty -> Ty -> [(String, Ty)] -> Bool -> Check [Ty]
 computeStructBindings targ tann sinfo hasOtherwise = 
@@ -2454,9 +2465,9 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                           bp <- decideProp p
                                           b2 <- not <$> flowsTo (nameLbl ne) advLbl
                                           if (bp == Just True) then
-                                                if b2 then 
+                                                if b2 then do
                                                       return $ Just $ KDFGood str $ 
-                                                          mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt   
+                                                          mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt (ignore $ True)   
                                                 else do
                                                     l_corr <- coveringLabelOf [snd a, snd b, snd c]
                                                     return $ Just $ KDFCorrupt l_corr 
@@ -2533,9 +2544,9 @@ inferKDFODH a (b, tb) c s ips i j nks = pushRoutine ("inferKDFODH") $ do
               b4 <- flowsTo (nameLbl ne2) advLbl
               -- If it is, and if the DH name is a secret, then we are good
               if (b2 == Just True) then 
-                    if (not b3) && (not b4) then
-                        return $ Just $ KDFGood str $
-                            mkSpanned $ KDFName (fst a) b (fst c) nks2 j nt 
+                    if (not b3) && (not b4) then do
+                          return $ Just $ KDFGood str $
+                              mkSpanned $ KDFName (fst a) b (fst c) nks2 j nt (ignore $ True)
                     else do
                         l_corr <- coveringLabelOf [snd a, snd c]
                         return $ Just $ KDFCorrupt (joinLbl advLbl l_corr) 
@@ -2791,7 +2802,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                        KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                                        KDFPub -> pFlow (nameLbl ne) advLbl 
                                        KDFUnstrict -> pTrue
-                        lenConst <- local (set tcScope $ TcGhost False) $ lenConstOfUniformName ne
+                        let lenConst = mkSpanned $ AELenConst "kdfkey"
                         return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                             pAnd flowAx $ 
                                 pEq (aeLength (aeVar ".res")) lenConst
@@ -3026,7 +3037,7 @@ manyCasePropTy (p:ps) k = casePropTy p $ \_ -> manyCasePropTy ps k
 
 ---- Entry point ----
 
-typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
+typeCheckDecls :: Flags -> [Decl] -> IO (Either (Env SMT.SolverEnv) (Env SMT.SolverEnv))
 typeCheckDecls f ds = do
     e <- emptyEnv f
     r <- PR.runResolve f $ PR.resolveDecls ds

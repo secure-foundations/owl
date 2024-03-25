@@ -12,6 +12,7 @@ import TypingBase
 import Control.Monad
 import Control.Monad.Reader
 import Unbound.Generics.LocallyNameless
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import Data.List (sort)
@@ -70,9 +71,9 @@ nameDefFlows n nt = do
                           nks <- liftCheck $ mapM (\(_, nt) -> getNameKind nt) nts
                           let ne = case pos of 
                                      KDF_SaltPos -> 
-                                         mkSpanned $ KDFName (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) nks j nt
+                                         mkSpanned $ KDFName (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) nks j nt (ignore True)
                                      KDF_IKMPos -> 
-                                         mkSpanned $ KDFName (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) nks j nt
+                                         mkSpanned $ KDFName (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) nks j nt (ignore True)
                           nameDefFlows ne nt
                       ctr <- getFreshCtr
                       vp <- interpretProp p
@@ -93,7 +94,7 @@ smtLabelSetup = do
     forM_ fas $ \(l1, l2) -> do
         v1 <- symLabel l1
         v2 <- symLabel l2
-        emitComment $ "Flow decl: " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2)
+        emitComment $ T.pack $ "Flow decl: " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2)
         emitAssertion $ sFlows v1 v2
     
     -- Constraints on the adv

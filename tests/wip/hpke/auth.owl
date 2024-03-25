@@ -101,11 +101,7 @@ odh se : skR, skE -> {salt info.
 def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
     let dh = dh_combine(pkR, get(skS)) ++ dh_combine(pkR, get(skE)) in
     let kem_ctxt = dhpk(get(skE)) ++ dhpk(pkR) ++ dhpk(get(skS)) in
-    corr_case skR in
-    corr_case skS in
-    corr_case skE in
     let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x, lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(), kem_ctxt)) in 
-    corr_case psk in 
     let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
     dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
     let sk = kdf<1;1;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)),

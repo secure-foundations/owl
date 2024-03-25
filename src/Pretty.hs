@@ -10,6 +10,8 @@ import Unbound.Generics.LocallyNameless.Name
 import Unbound.Generics.LocallyNameless.Unsafe
 import Prettyprinter.Render.Terminal
 import Data.List
+import qualified Data.Text as T
+import qualified Prettyprinter.Render.Text as T
 
 type OwlDoc = Doc AnsiStyle
 
@@ -63,7 +65,7 @@ owlprettyKDFSelector (i, []) = owlpretty i
 owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName a b c nks j nt) = 
+    owlpretty (KDFName a b c nks j nt _) = 
         Prettyprinter.group $ 
         owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
                             <>
@@ -462,3 +464,5 @@ instance  OwlPretty ModuleExpX where
     owlpretty (ModuleVar p) = owlpretty p
     owlpretty x = owlpretty $ show x
 
+optext :: OwlPretty a => a -> T.Text
+optext x = T.renderStrict $ layoutPretty defaultLayoutOptions $ owlpretty x
