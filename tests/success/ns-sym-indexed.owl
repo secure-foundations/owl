@@ -163,7 +163,8 @@ def Bob_main<i> () @ Bob
             unpack j, kAB' = kAB in
             corr_case KAB<j> in 
 
-            let encm = aenc(kAB', pack<i>(nonceB<idx i>(get(NB<i>)))) in
+            let m = pack<i>(nonceB<idx i>(get(NB<i>))) in 
+            let encm = aenc(kAB', m) in 
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in

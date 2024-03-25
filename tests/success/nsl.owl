@@ -14,8 +14,11 @@ enum nsl_alice_message {
     | Msg3 nsl_alice_msg3
 }
 
+name skB : pkekey nsl_alice_message @ bob
+
 struct nsl_bob_message { 
-    _nbA : Union<Data<adv>, Name(nA)>,
+    _nb_cipher : Ghost,
+    _nbA : if honest_pk_enc<skB>(_nb_cipher) then Name(nA) else Data<adv>, 
     _nbB : Name(nB) 
 }
 
@@ -30,7 +33,6 @@ enum nsl_result_maybe {
 }
 
 name skA : pkekey nsl_bob_message @ alice
-name skB : pkekey nsl_alice_message @ bob
 
 def alice_main () @ alice : if sec(nA) /\ sec(nB) then
 nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  = 
@@ -43,10 +45,8 @@ nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  =
     corr_case nB in
     case pkdec(get(skA), i) { 
         | None => NRNone()
-        | Some c =>
-            union_case x = c in 
-            parse x as nsl_bob_message(nA_, nB') in
-            union_case nA' = nA_ in            
+        | Some x =>
+            parse x as nsl_bob_message(c_orig, nA', nB') in
             if checknonce(get(nA), nA') then 
                 false_elim in 
                 let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
@@ -69,19 +69,17 @@ def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<a
     corr_case nB in
     case pkdec(get(skB), i) {
     | None => NRNone()
-    | Some payload' =>
-        union_case payload = payload' in 
+    | Some payload =>
         case payload as nsl_alice_message {
         | Msg1 nA' =>  
             if eq(length(nA'), |nonce|) then 
-                let p = nsl_bob_message(nA', get(nB)) in 
+                let p = nsl_bob_message(i, nA', get(nB)) in 
                 let c = pkenc(pkA, p) in
                 output c to endpoint(alice);
                 input i' in
                 case pkdec(get(skB), i') { 
                     | None => NRNone()
-                    | Some payload2' =>
-                        union_case payload2 = payload2' in 
+                    | Some payload2 =>
                         case payload2 as nsl_alice_message {
                             | Msg1 _ => NRNone()
                             | Msg3 p => 

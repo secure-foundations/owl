@@ -41,7 +41,8 @@ def bob<i> () @ bob
     case adec(get(shared_key), i) {
      | Some k => 
         let msg : x:Name(x<i>){happened(bob<i>())} = get(x<i>) in 
-        let c = aenc(k, pack<i>(msg)) in
+        let msg = pack<i>(msg) in 
+        let c = aenc(k, msg) in
         output c
      | None => ()
     }

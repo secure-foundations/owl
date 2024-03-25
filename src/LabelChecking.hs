@@ -27,6 +27,25 @@ sFlows x y = SApp [SAtom "Flows", x, y]
 sJoin :: SExp -> SExp -> SExp
 sJoin x y = SApp [SAtom "Join", x, y]
 
+removeGhost :: Label -> Check Label
+removeGhost l = 
+    case l^.val of
+      LGhost -> return zeroLbl
+      LJoin l1 l2 -> liftM2 (\a b -> Spanned (l^.spanOf) (LJoin a b)) (removeGhost l1) (removeGhost l2)
+      LConst _ -> return l
+      LRangeIdx il -> do
+          (i, l2) <- unbind il
+          l2' <- removeGhost l2
+          return $ Spanned (l^.spanOf) $ LRangeIdx $ bind i l2'
+      LRangeVar il -> do
+          (i, l2) <- unbind il
+          l2' <- removeGhost l2
+          return $ Spanned (l^.spanOf) $ LRangeVar $ bind i l2'
+      LName _ -> return l
+      LAdv -> return l
+      LZero -> return l
+      LTop -> return l
+
 nameDefFlows :: NameExp -> NameType -> Sym SExp
 nameDefFlows n nt = do
     case nt^.val of 
@@ -34,27 +53,27 @@ nameDefFlows n nt = do
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do
-          l <- liftCheck $ coveringLabel' t
+          l <- liftCheck $ coveringLabel' t >>= removeGhost
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
       NT_StAEAD t _ _ _ -> do
-          l <- liftCheck $ coveringLabel' t
+          l <- liftCheck $ coveringLabel' t >>= removeGhost
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
       NT_PKE t -> do
-          l <- liftCheck $ coveringLabel' t
+          l <- liftCheck $ coveringLabel' t  >>= removeGhost
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
       NT_Sig t -> do
-          l <- liftCheck $ coveringLabel' t
+          l <- liftCheck $ coveringLabel' t >>= removeGhost
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
       NT_MAC t -> do
-          l <- liftCheck $ coveringLabel' t
+          l <- liftCheck $ coveringLabel' t >>= removeGhost
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln

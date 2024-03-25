@@ -1223,61 +1223,61 @@ withTypeErrorHook f k = do
     local (\e -> e { _typeErrorHook = f }) k 
                                         
 
-checkNoTopLbl :: Label -> Check ()
-checkNoTopLbl l = 
+checkNoTopLbl :: Bool -> Label -> Check ()
+checkNoTopLbl allowGhost l = 
     case l^.val of
       LTop -> typeError $ "Top label not allowed here"
       LJoin l1 l2 -> do
-          checkNoTopLbl l1
-          checkNoTopLbl l2
+          checkNoTopLbl allowGhost l1
+          checkNoTopLbl allowGhost l2
       LRangeIdx il -> do
           (i, l) <- unbind il
-          withIndices [(i, (ignore $ show i, IdxGhost))] $ checkNoTopLbl l
+          withIndices [(i, (ignore $ show i, IdxGhost))] $ checkNoTopLbl allowGhost l
       LRangeVar il -> do
           (x, l) <- unbind il
-          checkNoTopLbl l
-      LGhost -> typeError $ "Ghost label not allowed here"
+          checkNoTopLbl allowGhost l
+      LGhost -> if allowGhost then return () else typeError $ "Ghost label not allowed here"
       _ -> return ()
 
 
-checkNoTopTy :: Ty -> Check ()
-checkNoTopTy t = 
+checkNoTopTy :: Bool -> Ty -> Check ()
+checkNoTopTy allowGhost t = 
     case t^.val of
       TData l1 l2 _ -> do
-          checkNoTopLbl l1
-          checkNoTopLbl l2
-      TDataWithLength l _ -> checkNoTopLbl l
-      TRefined t _ _ -> checkNoTopTy t
-      TOption t -> checkNoTopTy t
+          checkNoTopLbl allowGhost l1
+          checkNoTopLbl allowGhost l2
+      TDataWithLength l _ -> checkNoTopLbl allowGhost l
+      TRefined t _ _ -> checkNoTopTy allowGhost t
+      TOption t -> checkNoTopTy allowGhost t
       TCase _ t1 t2 -> do
-          checkNoTopTy t1
-          checkNoTopTy t2
-      TBool l -> checkNoTopLbl l
-      TGhost -> typeError $ "Ghost type not allowed here"
+          checkNoTopTy allowGhost t1
+          checkNoTopTy allowGhost t2
+      TBool l -> checkNoTopLbl allowGhost l
+      TGhost -> if allowGhost then return () else typeError $ "Ghost type not allowed here"
       TAdmit -> typeError $ "Admit type not allowed here"
       TExistsIdx s it -> do
           (i, t) <- unbind it
-          withIndices [(i, (ignore s, IdxGhost))] $ checkNoTopTy t
+          withIndices [(i, (ignore s, IdxGhost))] $ checkNoTopTy allowGhost t
       TConst s ps -> do
           td <- getTyDef s
           forM_ ps checkParam
           forM_ ps $ \p -> 
               case p of
-                ParamLbl l -> checkNoTopLbl l
-                ParamTy t -> checkNoTopTy t
+                ParamLbl l -> checkNoTopLbl allowGhost l
+                ParamTy t -> checkNoTopTy allowGhost t
                 _ -> return ()
           case td of
             TyAbstract -> return ()
-            TyAbbrev t1 -> checkNoTopTy t1
+            TyAbbrev t1 -> checkNoTopTy allowGhost t1
             StructDef ib -> do
                 (is, xs) <- unbind ib
                 _ <- withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
                     withDepBind xs $ \args _ -> do 
-                        forM_ args $ \(_, _, t) -> checkNoTopTy t
+                        forM_ args $ \(_, _, t) -> checkNoTopTy True t
                 return ()
             EnumDef b -> do
                 ed <- extractEnum ps (show s) b
-                forM_ ed $ \(_, ot) -> traverse checkNoTopTy ot
+                forM_ ed $ \(_, ot) -> traverse (checkNoTopTy allowGhost) ot
       _ -> return ()      
           
 
@@ -1289,7 +1289,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
       NT_DH -> return ()
       NT_Sig t -> do
           checkTy t
-          checkNoTopTy t
+          checkNoTopTy False t
       NT_Nonce l -> do
           assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
           return ()
@@ -1315,13 +1315,13 @@ checkNameType nt = withSpan (nt^.spanOf) $
           return ()
       NT_Enc t -> do
         checkTy t
-        checkNoTopTy t
+        checkNoTopTy False t
         checkTyPubLen t
       NT_App p ps -> do
           resolveNameTypeApp p ps >>= checkNameType
       NT_StAEAD t xaad p ypat -> do
           checkTy t
-          checkNoTopTy t
+          checkNoTopTy False t
           checkTyPubLen t
           (x, aad) <- unbind xaad
           withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp aad
@@ -1337,11 +1337,11 @@ checkNameType nt = withSpan (nt^.spanOf) $
           checkCounter p
       NT_PKE t -> do
           checkTy t
-          checkNoTopTy t
+          checkNoTopTy False t
           checkTyPubLen t
       NT_MAC t -> do
           checkTy t
-          checkNoTopTy t
+          checkNoTopTy False t
 
 
 
@@ -1446,61 +1446,64 @@ checkTy t = withSpan (t^.spanOf) $
 
 tyLenLbl :: Ty -> Check Label
 tyLenLbl t =
-    case t^.val of
-      TName _ -> return zeroLbl
-      TVK _ -> return zeroLbl
-      TDH_PK _ -> return zeroLbl
-      TEnc_PK _ -> return zeroLbl
-      TSS _ _ -> return zeroLbl
-      TUnit -> return zeroLbl
-      TBool _ -> return zeroLbl
-      TGhost -> return ghostLbl
-      TData _ l _ -> return l
-      TDataWithLength _ a -> do
-          t <- inferAExpr a
-          coveringLabel t
-      TRefined t' _ _ -> tyLenLbl t'
-      TOption t' -> do
-          l' <- tyLenLbl t'
-          return $ joinLbl advLbl l'
-      TConst s ps -> do
-          td <- getTyDef s
-          case td of
-            TyAbstract -> return advLbl
-            TyAbbrev t -> tyLenLbl t
-            StructDef b -> do
-                (is, xs) <- unbind b
-                idxs <- getStructParams ps
-                assert ("Wrong index arity for struct " ++ show (owlpretty s)) $ length is == length idxs
-                local (set tcScope $ TcGhost False) $ go $ substs (zip is idxs) xs
-                    where
-                        go (DPDone _) = return zeroLbl
-                        go (DPVar t sx xk) = do
-                            l1 <- tyLenLbl t
-                            (x, k) <- unbind xk
-                            l2_ <- withVars [(x, (ignore sx, Nothing, t))] $ go k
-                            let l2 = if x `elem` toListOf fv l2_ then (mkSpanned $ LRangeVar $ bind x l2_) else l2_
-                            return $ joinLbl l1 l2
-            EnumDef b -> do
-                bdy <- extractEnum ps (show s) b
-                ls <- forM bdy $ \(_, ot) ->
-                    case ot of
-                      Just t' -> tyLenLbl t'
-                      Nothing -> return zeroLbl
-                return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
-      (TCase _ t1 t2) -> do
-          case t^.val of
-            TCase p _ _ -> do
-                l1 <- tyLenLbl t1
-                l2 <- tyLenLbl t2
-                return $ joinLbl l1 l2    
-            _ -> tyLenLbl t
-      (TExistsIdx s it) -> do
-          (i, t) <- unbind it
-          l <- withIndices [(i, (ignore s, IdxGhost))] $ tyLenLbl t
-          return $ mkSpanned $ LRangeIdx $ bind i l
-      TAdmit -> return zeroLbl
-      THexConst a -> return zeroLbl
+    go False t
+        where
+            go inStruct t = 
+                case t^.val of
+                  TName _ -> return zeroLbl
+                  TVK _ -> return zeroLbl
+                  TDH_PK _ -> return zeroLbl
+                  TEnc_PK _ -> return zeroLbl
+                  TSS _ _ -> return zeroLbl
+                  TUnit -> return zeroLbl
+                  TBool _ -> return zeroLbl
+                  TGhost -> return $ if inStruct then zeroLbl else ghostLbl
+                  TData _ l _ -> return l
+                  TDataWithLength _ a -> do
+                      t <- inferAExpr a
+                      coveringLabel t
+                  TRefined t' _ _ -> go inStruct t'
+                  TOption t' -> do
+                      l' <- go inStruct t'
+                      return $ joinLbl advLbl l'
+                  TConst s ps -> do
+                      td <- getTyDef s
+                      case td of
+                        TyAbstract -> return advLbl
+                        TyAbbrev t -> go inStruct t
+                        StructDef b -> do
+                            (is, xs) <- unbind b
+                            idxs <- getStructParams ps
+                            assert ("Wrong index arity for struct " ++ show (owlpretty s)) $ length is == length idxs
+                            local (set tcScope $ TcGhost False) $ go2 $ substs (zip is idxs) xs
+                                where
+                                    go2 (DPDone _) = return zeroLbl
+                                    go2 (DPVar t sx xk) = do
+                                        l1 <- go True t
+                                        (x, k) <- unbind xk
+                                        l2_ <- withVars [(x, (ignore sx, Nothing, t))] $ go2 k
+                                        let l2 = if x `elem` toListOf fv l2_ then (mkSpanned $ LRangeVar $ bind x l2_) else l2_
+                                        return $ joinLbl l1 l2
+                        EnumDef b -> do
+                            bdy <- extractEnum ps (show s) b
+                            ls <- forM bdy $ \(_, ot) ->
+                                case ot of
+                                  Just t' -> go inStruct t'
+                                  Nothing -> return zeroLbl
+                            return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
+                  (TCase _ t1 t2) -> do
+                      case t^.val of
+                        TCase p _ _ -> do
+                            l1 <- go inStruct t1
+                            l2 <- go inStruct t2
+                            return $ joinLbl l1 l2    
+                        _ -> go inStruct t
+                  (TExistsIdx s it) -> do
+                      (i, t) <- unbind it
+                      l <- withIndices [(i, (ignore s, IdxGhost))] $ go inStruct t
+                      return $ mkSpanned $ LRangeIdx $ bind i l
+                  TAdmit -> return zeroLbl
+                  THexConst a -> return zeroLbl
 
 
 
@@ -1685,7 +1688,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       ECrypt cop aes -> do
           args <- forM aes $ \a -> do
               t <- inferAExpr a
-              withSpan (a^.spanOf) $ ensureNonGhostTy t
+              withSpan (a^.spanOf) $ checkNoTopTy False t
               return (a, t)
           openArgs args $ \args' -> 
             getOutTy ot =<< checkCryptoOp cop args'
@@ -2131,6 +2134,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                   Right _ -> 1
                     typeError $ "Mismatch on branch case" ++ c ++ ": expected arity " ++ show ar1 ++ ", got " ++ show ar2
           normalizeTy retT
+      _ -> error $ "Unhandled expr: " ++ show e
 
 ensureTyCanBeCased :: Ty -> Bool -> Check ()
 ensureTyCanBeCased t hasOtherwise = 

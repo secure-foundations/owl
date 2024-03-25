@@ -9,5 +9,6 @@ def alice<i> () @ A
              /\ (/\_i [nA<i>] <= adv)
 : Unit = 
     let nA = get(nA<i>) in 
-    let t = mac(get(k), pack<i>(nA)) in 
+    let m = pack<i>(nA) in 
+    let t = mac(get(k), m) in 
     output concat(nA, t)

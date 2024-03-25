@@ -404,7 +404,6 @@ data ExprX =
     | ELet Expr (Maybe Ty) (Maybe AExpr) String (Bind DataVar Expr) 
     | ELetGhost AExpr String (Bind DataVar Expr)
     | EBlock Expr Bool -- Boundary for scoping; introduced by { }. The bool is if it is a proof block, or regular
-    | EUnionCase AExpr String (Bind DataVar Expr)
     | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
     | EChooseBV String (Bind DataVar Prop) (Bind DataVar Expr)
     | EChooseIdx String (Bind IdxVar Prop) (Bind IdxVar Expr)                                         

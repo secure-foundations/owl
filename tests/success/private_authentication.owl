@@ -44,7 +44,6 @@ def A_main<i> () @ A
     input inp in
     corr_case pkA in
     let m' = pkdec(get(pkA), inp) in
-    union_case m = m' in 
     ()
 
 
@@ -56,8 +55,7 @@ def B_main<j> () @ B
     input inp in
     case pkdec(privKey, inp) {
         | None => ()
-        | Some mm => 
-            union_case m = mm in
+        | Some m => 
             unpack i, m' = m in
             
             parse m' as m1<idx i>(n0', _, m1_pkA_e) in 

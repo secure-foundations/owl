@@ -100,10 +100,6 @@ anf e =
       EBlock k b -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ EBlock k' b
-      EUnionCase a s xk -> do
-          xk' <- anfBind xk
-          ea <- anfAExpr a
-          elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EUnionCase (aevar (a^.spanOf) y) s xk'
       EUnpack a s ixe -> do
           ixe' <- anfBind ixe
           ea <- anfAExpr a

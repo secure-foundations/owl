@@ -23,5 +23,4 @@ def alice_main() @ alice : Unit =
         otherwise => ()
         }
     | None => ()
-    };
-    ()
+    }

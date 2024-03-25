@@ -944,25 +944,6 @@ withMemoize lns k x = do
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
           return v
 
-ensureNonGhostLbl l = do
-    case l^.val of
-      LGhost -> typeError $ "Ghost value not allowed here"
-      LJoin l1 l2 -> do
-          ensureNonGhostLbl l1
-          ensureNonGhostLbl l2
-      LRangeIdx il -> do
-          let (i, l) = unsafeUnbind il
-          ensureNonGhostLbl l
-      LRangeVar xl -> do
-          let (x, l) = unsafeUnbind xl
-          ensureNonGhostLbl l
-      _ -> return ()
-
-ensureNonGhostTy :: Ty -> Check' senv ()
-ensureNonGhostTy t = do
-    l <- coveringLabel' t
-    ensureNonGhostLbl l
-
 lengthConstants :: [String]
 lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
 

@@ -376,9 +376,6 @@ instance  OwlPretty ExprX where
                         Just a -> owlpretty "anf_let[" <> owlpretty a <> owlpretty "]"
         in
         owlpretty "let" <+> owlpretty sx <+> tann <+> owlpretty "=" <+> owlpretty "(" <> owlpretty e1 <> owlpretty ")" <+> owlpretty "in" <> line <> k
-    owlpretty (EUnionCase a _ xk) = 
-        let (x, k) = owlprettyBind xk in
-        owlpretty "union_case" <+> x <+> owlpretty "=" <> owlpretty a <+>  owlpretty "in" <+> k
     owlpretty (EUnpack a s k) = owlpretty "unpack a .... TODO"
     owlpretty (EIf t e1 e2) = 
         owlpretty "if" <+> owlpretty t <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2

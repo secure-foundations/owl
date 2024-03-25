@@ -607,11 +607,6 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ ELet e1' ot' anf s (bind x k')
-      EUnionCase a s xk -> do
-          a' <- resolveAExpr a
-          (x, k) <- unbind xk
-          k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EUnionCase a' s (bind x k')
       EUnpack a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk

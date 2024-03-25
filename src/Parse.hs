@@ -1294,16 +1294,6 @@ parseExprTerm =
         return $ ESetOption s1 s2 e
     )
     <|>
-    (parseSpanned $ do
-        reserved "union_case"
-        x <- identifier
-        reservedOp "="
-        a <- parseAExpr
-        reserved "in"
-        e <- parseExpr
-        return $ EUnionCase a x $ bind (s2n x) e
-    )
-    <|>
     (do
         p <- getPosition
         reserved "let"
