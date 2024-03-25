@@ -696,14 +696,16 @@ fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
 
 #[cfg(test)]
 fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: RouterDeviceType, do_routines: bool) {
-    use crate::wireguard::router::queue::ParallelJob;
+    use std::sync::atomic::AtomicBool;
 
+    use crate::wireguard::router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay};
+    
     const NUM_PACKETS: usize = 1000;
 
     // const MAX_SIZE_BODY: usize = 1 << 15;
 
     // inner payload of IPv4 packet is 1440 bytes
-    const BYTES_PER_PACKET: usize = 300;
+    const BYTES_PER_PACKET: usize = 1440;
 
     #[cfg(feature = "memory_profile")]
     let heap_profiler_guard = heappy::HeapProfilerGuard::new(1).unwrap();
@@ -841,25 +843,25 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
                 // };
             }
 
-            // let new_msg = send_job.get_buffer();
+            let new_msg = send_job.get_buffer();
     
-            // let decryption_state = DecryptionState {
-            //     keypair: Arc::new(dummy_keypair(true)),
-            //     confirmed: AtomicBool::new(true),
-            //     protector: spin::Mutex::new(AntiReplay::new()),
-            //     peer: peer2.peer.clone(),
-            // };
+            let decryption_state = DecryptionState {
+                keypair: Arc::new(dummy_keypair(true)),
+                confirmed: AtomicBool::new(true),
+                protector: spin::Mutex::new(AntiReplay::new()),
+                peer: peer2.peer.clone(),
+            };
     
-            // let recv_job = super::super::receive::ReceiveJob::new(
-            //     new_msg,
-            //     Arc::new(decryption_state),
-            //     dummy::UnitEndpoint {},
-            //     dev2_type
-            // );
+            let recv_job = super::super::receive::ReceiveJob::new(
+                new_msg,
+                Arc::new(decryption_state),
+                dummy::UnitEndpoint {},
+                dev2_type
+            );
         
-            // if do_routines { 
-            //     recv_job.parallel_work();
-            // }
+            if do_routines { 
+                recv_job.parallel_work();
+            }
         }
     });
 
