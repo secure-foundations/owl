@@ -1091,7 +1091,10 @@ checkDecl d cont = withSpan (d^.spanOf) $
                       return s
                   return snames
           let snames = unsafeMapDepBind snames_ id 
+          ufuncs <- view $ curMod . userFuncs
           let projs = map (\s -> (s, StructProjector n s)) snames 
+          forM_ snames $ \sname -> 
+              assert (show $ owlpretty sname <+> owlpretty "already defined") $ not $ member sname ufuncs
           local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
                   addTyDef n (StructDef ixs) $ 
