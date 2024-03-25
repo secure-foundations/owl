@@ -5,9 +5,12 @@ import subprocess
 from prettytable import PrettyTable
 
 #### CONFIGURATION ####
-BASELINE = "bench_send_recv_baseline"
-NO_OWL = "bench_send_recv_no_owl"
-OWL = "bench_send_recv_owl"
+BASELINE = "setup"
+BASELINE_PAT = "bench_send_recv_baseline"
+NO_OWL = "baseline"
+NO_OWL_PAT = "bench_send_recv_no_owl"
+OWL = "owl"
+OWL_PAT = "bench_send_recv_owl"
 
 ## We need `-Z unstable-options` to get json output. `cargo bench` already requires nightly compiler
 BASE_COMMAND = "cargo bench"
@@ -38,7 +41,7 @@ def process_cargo_bench_output(obj_list):
         del obj['type']
 
     structured = {}
-    for (name, bench_name) in [("baseline", BASELINE), ("no_owl", NO_OWL), ("owl", OWL)]:
+    for (name, bench_name) in [(BASELINE, BASELINE_PAT), (NO_OWL, NO_OWL_PAT), (OWL, OWL_PAT)]:
         objs = [obj for obj in bench_raw if bench_name in obj['name']]
         assert(len(objs) == 1)
         structured[name] = {'median': objs[0]['median'], 'deviation': objs[0]['deviation']}
@@ -47,23 +50,23 @@ def process_cargo_bench_output(obj_list):
 
 def prettyData(data):
     for bench in data.keys():
-        data[bench]['no_baseline'] = "N/A"
+        data[bench]['no_setup'] = "N/A"
         data[bench]['slowdown'] = "N/A"
 
-    for bench in ["no_owl", "owl"]:
-        data[bench]['no_baseline'] = data[bench]['median'] - data['baseline']['median']
+    for bench in [NO_OWL, OWL]:
+        data[bench]['no_setup'] = data[bench]['median'] - data[BASELINE]['median']
 
-    data['owl']['slowdown'] = (data['owl']['no_baseline']/data['no_owl']['no_baseline']) - 1
+    data[OWL]['slowdown'] = (data[OWL]['no_setup']/data[NO_OWL]['no_setup']) - 1
 
     # print data as a table
     table = PrettyTable()
-    table.field_names = ["Benchmark", "ns/iter", "± ns/iter", "without baseline", "relative slowdown"]
+    table.field_names = ["Benchmark", "ns/iter", "± ns/iter", "without setup", "relative slowdown"]
     for name, values in data.items():
         table.add_row([
-            name, 
+            name,
             f"{values['median']:,}", 
             f"{values['deviation']:,}", 
-            f"{values['no_baseline']:,}" if values['no_baseline'] != "N/A" else values['no_baseline'], 
+            f"{values['no_setup']:,}" if values['no_setup'] != "N/A" else values['no_setup'], 
             f"{values['slowdown']:.3%}" if values['slowdown'] != "N/A" else values['slowdown']
         ])
     
