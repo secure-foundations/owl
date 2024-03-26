@@ -91,6 +91,11 @@ trivialTypeOf ts = do
     l <- coveringLabelOf ts
     return $ TData l l (ignore Nothing)
 
+trivialTypeOfAnn :: String -> [Ty] -> Check TyX
+trivialTypeOfAnn s ts = do
+    l <- coveringLabelOf ts
+    return $ TData l l (ignore $ Just s)
+
 trivialTypeOfWithLength :: [Ty] -> AExpr -> Check TyX
 trivialTypeOfWithLength ts ae = do
     t <- trivialTypeOf ts
@@ -612,7 +617,27 @@ normalizeLabel l = do
 
 -- Subtype checking, assuming the types are normalized
 
-isSubtype' = withMemoize (memoisSubtype') $ \(t1, t2) -> do 
+
+tUnitSimpl = 
+    (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] [])))
+
+tDataWithLengthSimpl :: Label -> AExpr -> Check (Maybe Ty)
+tDataWithLengthSimpl l a = do
+    t <- inferAExpr a
+    llen <- coveringLabel t
+    llenPub <- tryFlowsTo llen advLbl
+    case llenPub of
+      Just True -> return $ Just $ tRefined (tData l advLbl) "_x" $ pEq (aeLength (aeVar "_x")) a
+      _ -> return Nothing
+
+mkRefineds :: Ty -> [(String, Bind DataVar Prop)] -> Ty
+mkRefineds t [] = t
+mkRefineds t ((s,p):ps) = mkSpanned $ TRefined (mkRefineds t ps) s p
+
+checkSubRefinement t1 r1 t2 r2 = snd <$> (SMT.smtTypingQuery "" $ SMT.subTypeCheck (mkRefineds t1 r1) (mkRefineds t2 r2))
+
+isSubtype' :: Ty -> [(String, Bind DataVar Prop)] -> Ty -> [(String, Bind DataVar Prop)] -> Check Bool
+isSubtype' t1 r1 t2 r2 = do
     res <- withPushLog $ do
       x <- freshVar
       falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
@@ -628,37 +653,36 @@ isSubtype' = withMemoize (memoisSubtype') $ \(t1, t2) -> do
                 (fn, r) <- SMT.symDecideProp p'
                 case r of
                   Just b -> do
-                      isSubtype' (if b then t1' else t2', t2)
-                  Nothing -> byCasesProp p' $ \b -> isSubtype' (if b then t1' else t2', t2)
+                      isSubtype' (if b then t1' else t2') r1 t2 r2
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' (if b then t1' else t2') r1 t2 r2
             (_, TCase p t1' t2') -> do
                 p' <- normalizeProp p
                 (fn, r) <- SMT.symDecideProp p'
                 case r of
                   Just b -> do
-                      isSubtype' (t1, if b then t1' else t2')
-                  Nothing -> byCasesProp p' $ \b -> isSubtype' (t1, if b then t1' else t2')
-            (TOption t1, TOption t2) -> isSubtype' (t1, t2)
-            (_, TRefined t _ p) -> do
-                b1 <- isSubtype' (t1, t)
-                (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
-                return $ b1 && b2
-            (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
+                      isSubtype' t1 r1 (if b then t1' else t2') r2
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' t1 r1 (if b then t1' else t2') r2
+            (TOption t1, TOption t2) -> isSubtype' t1 r1 t2 r2
+            (_, TRefined t s p) -> isSubtype' t1 r1 t ((s,p):r2)
+            (TRefined t s p, _) -> isSubtype' t ((s,p):r1) t2 r2
             (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
                 (xi, t1) <- unbind xt1
                 (xi', t2) <- unbind xt2
                 withIndices [(xi, (ignore s1, IdxGhost))] $ 
-                    isSubtype' (t1, (subst xi' (mkIVar xi) t2))
-            (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
-            (TUnit,  _) -> do
-              isSubtype' ((tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))), t2)
+                    isSubtype' t1 r1 (subst xi' (mkIVar xi) t2) r2
+            (_, TUnit) -> isSubtype' t1 r1 tUnitSimpl r2
+            (TUnit,  _) -> isSubtype' tUnitSimpl r1 t2 r2
             (TBool l1, TBool l2) -> do
                 ob <- tryFlowsTo l1 l2
                 case ob of
                   Nothing -> return False
                   Just b -> return b
-            _ | isSingleton t2 -> do 
-                (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
-                return b 
+            (_, TName (Spanned _ (KDFName a2 b2 c2 nks2 j2 nt2 _))) ->
+                case (stripRefinements t1)^.val of
+                  TName (Spanned _ (KDFName a1 b1 c1 nks1 j1 nt1 _)) | (nks1 == nks2 && j1 == j2) 
+                      -> subKDFName a1 b1 c1 nt1 a2 b2 c2 nt2
+                  _ -> return False
+            _ | isSingleton t2 -> return True
             (TConst x ps1, TConst y ps2) -> do
                 x' <- normalizePath x
                 y' <- normalizePath y
@@ -675,11 +699,17 @@ isSubtype' = withMemoize (memoisSubtype') $ \(t1, t2) -> do
                       (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
                       return b
                   _ -> return False
-            (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
-            (t, TDataWithLength l a) -> do
-                b1 <- isSubtype' (t1, (tData l l))
-                (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
-                return $ b1 && b
+            (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True
+            (TDataWithLength l a, _) -> do
+                ot1' <- tDataWithLengthSimpl l a
+                case ot1' of
+                  Nothing -> return False
+                  Just t1' -> isSubtype' t1' r1 t2 r2
+            (_, TDataWithLength l a) -> do
+                ot2' <- tDataWithLengthSimpl l a
+                case ot2' of
+                  Nothing -> return False
+                  Just t2' -> isSubtype' t1 r1 t2' r2
             (t, TData l1 l2 _) -> do
               l2' <- tyLenLbl t1
               b1 <- tyFlowsTo t1 l1 
@@ -687,24 +717,92 @@ isSubtype' = withMemoize (memoisSubtype') $ \(t1, t2) -> do
               case ob2 of
                 Nothing -> return False
                 Just b2 -> return $ b1 && b2
-            (TRefined t s xp, _) -> do
-                xlem <- freshVar
-                (x1, p) <- unbind xp
-                withVars [
-                          (x1, (ignore $ show x1, Nothing, tGhost)),
-                          (s2n xlem, (ignore $ xlem, Nothing, tLemma p))
-                         ] $
-                    pushPathCondition p $ 
-                        isSubtype' (t, t2)
             _ -> do
                 return False
-    pc <- view pathCondition
+    let t2Leaf = isSubtypeLeaf t2 
+    if res then if t2Leaf then checkSubRefinement t1 r1 t2 r2 else return True else return False
+
+isSubtypeLeaf t = 
+    case t^.val of
+      TData _ _ _ -> True
+      TGhost -> True
+      TConst _ _ -> True
+      TBool _ -> True
+      TUnit -> True
+      TName _ -> True
+      TVK _ -> True
+      TDH_PK _ -> True
+      TEnc_PK _ -> True
+      TSS _ _ -> True
+      TAdmit -> True
+      THexConst _ -> True
+      _ -> False 
+
+subKDFName a1 b1 c1 nt1 a2 b2 c2 nt2 = do
+    argsEq <- decideProp $ (pEq a1 a2) `pAnd` (pEq b1 b2) `pAnd` (pEq c1 c2)
+    ntSub <- subNameType nt1 nt2
+    return $ (argsEq == Just True) && ntSub
+
+allM :: Monad m => [a] -> (a -> m Bool) -> m Bool
+allM [] f = return True
+allM (x:xs) f = do
+    b <- f x
+    if b then allM xs f else return False
+
+subNameType :: NameType -> NameType -> Check Bool
+subNameType nt1 nt2 = do
+    res <- withPushLog $ case (nt1^.val, nt2^.val) of
+             (NT_DH, NT_DH) -> return True
+             (NT_Sig t1, NT_Sig t2) -> isSubtype t1 t2
+             (NT_Nonce s1, NT_Nonce s2) -> return $ s1 == s2
+             (NT_Enc t1, NT_Enc t2) -> isSubtype t1 t2
+             (NT_StAEAD t1 xp1 pth1 xpat1, NT_StAEAD t2 xp2 pth2 xpat2) -> do
+                 b1 <- isSubtype t1 t2
+                 (x, p1) <- unbind xp1
+                 (x', p2_) <- unbind xp2
+                 let p2 = subst x' (aeVar' x) p2_
+                 b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
+                 b3 <- return $ pth1 `aeq` pth2
+                 (z, pat1) <- unbind xpat1
+                 (w, pat2) <- unbind xpat2
+                 b4 <- withVars [(z, (ignore $ show z, Nothing, tGhost))] $ decideProp $ pat1 `pEq` (subst w (aeVar' z) pat2)
+                 return $ b1 && (b2 == Just True) && b3 && (b4 == Just True)
+             (NT_KDF pos1 body1, NT_KDF pos2 body2) -> do
+                 (((sx, x), (sy, y), (sz, z)), bnds) <- unbind body1
+                 (((sx', x'), (sy', y'), (sz', z')), bnds') <- unbind body2
+                 withVars [(x, (ignore sx, Nothing, tGhost)), (y, (ignore sy, Nothing, tGhost)), (z, (ignore sz, Nothing, tGhost))] $ 
+                     if pos1 == pos2 && length bnds == length bnds' then go bnds (substs [(x', aeVar' x), (y', aeVar' y), (z', aeVar' z)] bnds') else return False
+                     where
+                         go :: [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                               [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                               Check Bool
+                         go [] [] = return True
+                         go (b1:xs) (b2:ys) = do
+                             (is1, rest1) <- unbind b1
+                             (is2, rest2_) <- unbind b2
+                             bhere <- if length is1 == length is2 then do
+                                 let rest2 = substs (map (\(i1, i2) -> (i2, mkIVar i1)) (zip is1 is2)) rest2_
+                                 withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is1) $ do
+                                     b1 <- decideProp $ pImpl (fst rest1) (fst rest2)
+                                     if (b1 == Just True) then do 
+                                         allM (zip (snd rest1) (snd rest2)) $ \(nt1, nt2) -> 
+                                             if (fst nt1 == fst nt2) then subNameType (snd nt1) (snd nt2) else return False
+                                     else return False
+                                 else return False
+                             if bhere then go xs ys else return False
+             _ -> return False                                
     return res
+
+                                                         
+
 
 isSingleton :: Ty -> Bool
 isSingleton t = 
     case t^.val of
-      TName _ -> True
+      TName ne -> 
+          case ne^.val of
+            KDFName _ _ _ _ _ _ _ -> False
+            NameConst _ _ _ -> True
       TVK _ -> True
       TDH_PK _ -> True
       TEnc_PK _ -> True
@@ -746,10 +844,12 @@ isValueDerivable a = do
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
-isSubtype t1 t2 = do
-    t1' <- normalizeTy t1
-    t2' <- normalizeTy t2
-    isSubtype' (t1', t2')
+isSubtype t1 t2 = go (t1, t2)
+    where
+        go = withMemoize (memoisSubtype') $ \(t1, t2) -> do 
+            t1' <- normalizeTy t1
+            t2' <- normalizeTy t2
+            isSubtype' t1' [] t2' []
 
 
 
@@ -2651,7 +2751,7 @@ kdfInjLemma x y =
           return $ pAnd p1 p2
       _ -> return pTrue
 
-patternPublicAndEquivalent :: Bind DataVar AExpr -> Bind DataVar AExpr -> Check Bool
+patternPublicAndEquivalent :: Bind DataVar AExpr -> Bind DataVar AExpr -> Check (Bool, Bool)
 patternPublicAndEquivalent pat1 pat2 = do
     (x, pat) <- unbind pat1
     (y, pat') <- unbind pat2
@@ -2661,8 +2761,8 @@ patternPublicAndEquivalent pat1 pat2 = do
         b1 <- tyFlowsTo t advLbl
         if b1 then do
               (_, b2) <- SMT.smtTypingQuery "pattern equivalence check" $ SMT.symAssert $ pEq pat (subst y (aeVar' x) pat')
-              return b2
-        else return False
+              return (True, b2)
+        else return (False, False)
 
 
 
@@ -2833,7 +2933,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       return $ tRefined t ".res" $ pEq (aeLength (aeVar ".res")) 
                         (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
           withCorrectLength $ case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Nothing -> mkSpanned <$> trivialTypeOfAnn "Invalid key" (map snd args)
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -2846,10 +2946,16 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
                           pImpl (pNot $ pFlow (nameLbl k) advLbl)
                                 (subst xa (aeVar ".res") aadp)
-                      b3 <- patternPublicAndEquivalent xpat ypat'
-                      if b1 && b2 && b3 then return $ tData advLbl advLbl 
-                                  else mkSpanned <$> trivialTypeOf (map snd args)
-                  _ -> mkSpanned <$> trivialTypeOf (map snd args)
+                      (b3, b4) <- patternPublicAndEquivalent xpat ypat'
+                      if b1 && b2 && b3 && b4 then return $ tData advLbl advLbl 
+                                  else do
+                                      let err_msg = case (b1, b2, b3, b4) of
+                                                      (False, _, _, _) -> "Invalid message type"
+                                                      (_, False, _, _) -> "Invalid AAD"
+                                                      (_, _, False, _) -> "Nonce pattern not public"
+                                                      (_, _, _, False) -> "Invalid nonce pattern"
+                                      mkSpanned <$> trivialTypeOfAnn err_msg (map snd args)
+                  _ -> mkSpanned <$> trivialTypeOfAnn "Name type invalid for key" (map snd args)
       CDecStAEAD -> do
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (xnonce, tnonce)] = args

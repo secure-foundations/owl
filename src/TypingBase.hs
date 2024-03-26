@@ -676,15 +676,18 @@ normalizeNameType nt = pushRoutine "normalizeNameType" $
     case nt^.val of
       NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
       NT_KDF pos bcases -> do
-          (p, cases) <- unbind bcases
-          cases' <- forM cases $ \bcase -> do 
-              (is, (p, nts)) <- unbind bcase
-              withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-                  nts' <- forM nts $ \(str, nt) -> do
-                      nt' <- normalizeNameType nt
-                      return (str, nt')
-                  return $ bind is (p, nts')
-          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind p cases')
+          (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
+          cases' <- withVars 
+            [(x, (ignore sx, Nothing, tGhost)), 
+             (y, (ignore sy, Nothing, tGhost)), 
+             (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
+                (is, (p, nts)) <- unbind bcase
+                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    nts' <- forM nts $ \(str, nt) -> do
+                        nt' <- normalizeNameType nt
+                        return (str, nt')
+                    return $ bind is (p, nts')
+          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
       _ -> return nt
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
@@ -1324,7 +1327,8 @@ normalizeNameExp ne =
           a' <- resolveANF a >>= normalizeAExpr 
           b' <- resolveANF b >>= normalizeAExpr 
           c' <- resolveANF c >>= normalizeAExpr 
-          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt ib
+          nt' <- normalizeNameType nt
+          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 -- Traversing modules to collect global info
 
@@ -1549,10 +1553,10 @@ caseProp merge p' k = do
       Just False -> k False
       Nothing -> do 
         x <- fresh $ s2n "%caseProp"
-        t1 <- withVars [(x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ do
+        t1 <- withPushLog $ withVars [(x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ do
             logTypecheck $ owlpretty "Case split: " <> owlpretty p
             k True
-        t2 <- withVars [(x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ do
+        t2 <- withPushLog $ withVars [(x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ do
             logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
             k False
         merge p t1 t2
