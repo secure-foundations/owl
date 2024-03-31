@@ -44,8 +44,8 @@ func base_nonce_string() = 0x626173655f6e6f6e6365 // "base_nonce"
 func export_string() = 0x657870 // "exp"
 func info_hash_string() = 0x696e666f5f68617368 // "info_hash"
 func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
-func crh_labeled_extract(salt, lbl, ikm) = 
-    crh(salt ++ (hpke_v1() ++ suite_id() ++ lbl ++ ikm)) // crh here = hmac. TODO support 2-place crh
+func crh_labeled_extract_0salt(lbl, ikm) = 
+    crh(hpke_v1() ++ suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
 
 func psk_id
     arity 0
@@ -55,8 +55,8 @@ func info
 
 func mode() = 0x03 // auth_psk
 func key_schedule_context() = 
-    mode() ++ crh_labeled_extract(0x, info_hash_string(), info()) ++
-    crh_labeled_extract(0x, psk_id_hash_string(), psk_id())
+    mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
+    crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
 
 func eae_prk() = 0x6561655f70726b
 
