@@ -14,6 +14,7 @@ data Flags = Flags {
     _fExtract :: Bool,
     _fExtractHarness :: Bool,
     _fDebugExtraction :: Bool,
+    _fExtractBufOpt :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
@@ -46,6 +47,8 @@ parseArgs =
             help "Do not generate a testing harness for the extracted code" )
       <*> switch
           ( long "debug-extraction" <> long "dbgext" <> help "Debug extraction" )
+      <*> switch
+          ( long "optimize-buffers" <> long "bufopt" <> help "Optimize buffer usage for extraction where possible" )
       <*>
           switch
           ( long "test" <> help "Do tests")

@@ -1,15 +1,10 @@
-// use p256::{
-//     ecdh::diffie_hellman,
-//     pkcs8::{DecodePublicKey, EncodePublicKey},
-//     PublicKey, SecretKey,
-// };
 use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
 use vstd::prelude::*;
 
 verus! {
 
 #[verifier(external_body)]
-pub fn gen_ecdh_key_pair() -> (_: (Vec<u8>, Vec<u8>)) {
+pub fn gen_ecdh_key_pair() -> (Vec<u8>, Vec<u8>) {
     let mut rng = rand::thread_rng();
     let secret = StaticSecret::new(&mut rng);
     let public = PublicKey::from(&secret);

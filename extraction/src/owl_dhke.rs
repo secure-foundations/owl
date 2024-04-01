@@ -6,7 +6,7 @@ verus! {
 #[verifier(external_body)]
 pub fn gen_ecdh_key_pair() -> (Vec<u8>, Vec<u8>) {
     let mut rng = rand::thread_rng();
-    let secret = StaticSecret::new(&mut rng);
+    let secret = StaticSecret::random_from_rng(&mut rng);
     let public = PublicKey::from(&secret);
     let sk_bytes = secret.to_bytes().to_vec();
     let pk_bytes = public.to_bytes().to_vec();

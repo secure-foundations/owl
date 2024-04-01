@@ -47,18 +47,20 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
-data RustTy = VecU8 | Bool | Number | String | Unit | ADT String | Option RustTy | Rc RustTy | VerusGhost
+data RustTy = VecU8 | SliceU8 | OwlBuf | Bool | Number | String | Unit | ADT String | Option RustTy | Borrow RustTy | VerusGhost
     deriving (Show, Eq, Generic, Typeable)
 
 instance OwlPretty RustTy where
   owlpretty VecU8 = owlpretty "Vec<u8>"
+  owlpretty SliceU8 = owlpretty "&[u8]"
   owlpretty Bool = owlpretty "bool"
   owlpretty Number = owlpretty "usize" --should just work
   owlpretty String = owlpretty "String"
   owlpretty Unit = owlpretty "()"
   owlpretty (ADT s) = owlpretty s
   owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
-  owlpretty (Rc r) = owlpretty "Arc" <> angles (owlpretty r)
+  owlpretty OwlBuf = owlpretty "OwlBuf"
+  owlpretty (Borrow r) = owlpretty "&" <> owlpretty r
   owlpretty VerusGhost = owlpretty "Ghost<()>"
  
 data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy | SpecGhost
@@ -82,7 +84,7 @@ data Env = Env {
     _aeadCipherMode :: AEADCipherMode,
     _hmacMode :: HMACMode,
     _owlUserFuncs :: [(String, TB.UserFunc)],
-    _funcs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
+    _funcs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
     _specFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
     _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
     _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
@@ -351,78 +353,84 @@ initTypeLayouts :: M.Map String Layout
 initTypeLayouts = M.map LBytes initLenConsts
 
 -- Confirm: we call `serialize` when we need to treat an ADT as a sequence of bytes for a crypto op
+-- TODO make the serializing more efficient
 printOwlArg :: (RustTy, String) -> String
-printOwlArg (Rc VecU8, s) = "vec_as_slice(&(*" ++ s ++ "))"
+printOwlArg (OwlBuf, s) = "(" ++ s ++ ").as_slice()"
+printOwlArg (SliceU8, s) = s
 printOwlArg (VecU8, s) = "vec_as_slice(&" ++ s ++ ")"
 printOwlArg (ADT name, s) = "vec_as_slice(&(serialize_" ++ name ++ "(&" ++ s ++ ")))"
-printOwlArg (Rc (ADT name), s) = "vec_as_slice(&(serialize_" ++ name ++ "(&(*" ++ s ++ "))))"
+-- printOwlArg (Rc (ADT name), s) = "vec_as_slice(&(serialize_" ++ name ++ "(&(*" ++ s ++ "))))"
 printOwlArg (_, s) = s
 
 printOwlOp :: String -> [(RustTy, String)] -> String
 printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
 
 
-initFuncs :: M.Map String ([(RustTy, String)] -> ExtractionMonad (RustTy, String))
+initFuncs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String))
 initFuncs = 
     let eqChecker = (\args -> case args of
-                                [(Bool, x), (Bool, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Number, x), (Number, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(String, x), (String, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Unit, x), (Unit, y)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(ADT _,x), (ADT _,y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)")
-                                [(Rc VecU8, x), (Rc VecU8, y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(VecU8, x), (VecU8, y)] -> return $ (Bool, "vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)")
+                                [(Bool, x, _), (Bool, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(Number, x, _), (Number, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(String, x, _), (String, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                [(Unit, x, _), (Unit, y, _)] -> return $ (Bool, x ++ " == " ++ y)
+                                -- [(ADT _,x), (ADT _,y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)")
+                                -- [(Rc VecU8, x), (Rc VecU8, y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
+                                [(VecU8, x, _), (VecU8, y, _)] -> return $ (Bool, "vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
+                                [(SliceU8, x, _), (SliceU8, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ", &" ++ y ++ ")")
+                                [(OwlBuf, x, _), (OwlBuf, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ".as_slice() , &" ++ y ++ ".as_slice())")
                                 _ -> throwError $ TypeError $ "got wrong args for eq"
                         ) 
     in M.fromList [
             ("eq", eqChecker),
             ("checknonce", eqChecker),
             ("dhpk", (\args -> case args of
-                    [x] -> do return $ (Rc VecU8, printOwlOp "owl_dhpk" [x])
+                    [(t, x, _)] -> do return $ (VecU8, printOwlOp "owl_dhpk" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
             )),
             ("dh_combine", (\args -> case args of
-                    [pk, sk] -> do return $ (Rc VecU8, printOwlOp "owl_dh_combine" [pk, sk]) 
+                    [(pkt, pk, _), (skt, sk, _)] -> do return $ (VecU8, printOwlOp "owl_dh_combine" [(pkt, pk), (skt, sk)]) 
                     _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
             )),
             ("unit", (\_ -> return (Unit, "()"))),
             ("true", (\_ -> return (Bool, "true"))),
             ("false", (\_ -> return (Bool, "false"))),
             ("Some", (\args -> case args of
-                    [(t,x)] -> return $ (Option t, "Some(" ++ x ++ ")")
+                    [(t,x, _)] -> return $ (Option t, "Some(" ++ x ++ ")")
                     _ -> throwError $ TypeError $ "got wrong number of args for Some"
             )),
             ("None", (\_ -> return (Option Unit, "None"))), -- dummy
             ("length", (\args -> case args of
-                    [(Rc VecU8,x)] -> return $ (Number, "vec_length(&(*" ++ x ++ "))")
-                    [(_,x)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
+                    -- [(Rc VecU8,x)] -> return $ (Number, "vec_length(&(*" ++ x ++ "))")
+                    [(VecU8,x, _)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
+                    [(SliceU8,x, _)] -> return $ (Number, "slice_len(&" ++ x ++ ")")
+                    [(OwlBuf,x, _)] -> return $ (Number, "" ++ x ++ ".len()")
                     _ -> throwError $ TypeError $ "got wrong number of args for length"
             )),
             ("zero", (\_ -> return (Number, "0"))),
             ("plus", (\args -> case args of
-                    [(Number, x), (Number, y)] -> return $ (Number, x ++ " + " ++ y)
+                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " + " ++ y)
                     _ -> throwError $ TypeError $ "got wrong number of args for plus"
             )),
             ("mult", (\args -> case args of
-                    [(Number, x), (Number, y)] -> return $ (Number, x ++ " * " ++ y)
+                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " * " ++ y)
                     _ -> throwError $ TypeError $ "got wrong number of args for mult"
             )),
             ("cipherlen", (\args -> case args of
-                    [(_,x)] -> do
+                    [(_,x, _)] -> do
                         tsz <- useAeadTagSize
                         return $ (Number, x ++ " + " ++ show tsz)
                     _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
             )),
             ("is_group_elem", (\args -> case args of
-                    [x] -> return $ (Bool, printOwlOp "owl_is_group_elem" [x])
+                    [(t,x,_)] -> return $ (Bool, printOwlOp "owl_is_group_elem" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for is_group_elem"
             )),
             ("concat", (\args -> case args of
-                    [x, y] -> return $ (VecU8, printOwlOp "owl_concat" [x, y])
+                    [(tx,x,_), (ty,y,_)] -> return $ (VecU8, printOwlOp "owl_concat" [(tx, x), (ty, y)])
                     _ -> throwError $ TypeError $ "got wrong number of args for concat"
             )),
             ("crh", (\args -> case args of
-                    [x] -> return $ (Rc VecU8, printOwlOp "owl_crh" [x])
+                    [(t,x,_)] -> return $ (VecU8, printOwlOp "owl_crh" [(t,x)])
                     _ -> throwError $ TypeError $ "got wrong number of args for crh"
             )),
             -- ("xor", (VecU8, \args -> case args of
@@ -431,11 +439,11 @@ initFuncs =
             --     _ -> throwError $ TypeError $ "got wrong args for xor"
             -- )),
             ("andb", (\args -> case args of
-                [(Bool,x), (Bool,y)] -> return $ (Bool, x ++ " && " ++ y)
+                [(Bool,x, _), (Bool,y, _)] -> return $ (Bool, x ++ " && " ++ y)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
             )),
             ("notb", (\args -> case args of
-                [(Bool,x)] -> return $ (Bool, "! " ++ x)
+                [(Bool,x, _)] -> return $ (Bool, "! " ++ x)
                 _ -> throwError $ TypeError $ "got wrong args for andb"
             ))
         ] 
@@ -460,28 +468,21 @@ lookupTyLayout n = do
 
 lookupNameLayout :: NameExp -> ExtractionMonad Layout
 lookupNameLayout n = do
-    n' <- flattenNameExp n
+    n' <- case n ^. val of 
+        NameConst _ _ _  -> flattenNameExp n
+        KDFName _ _ _ nks i _ _ -> do
+            let nk = nks !! i
+            return $ rustifyName . show . owlpretty $ nk
     o <- lookupTyLayout' n'
     case o of
         Just l -> return l
         Nothing -> do
-            case n ^. val of
-                --NameConst _ p (Just (_, i)) -> do
-                --    owlName <- flattenPath p
-                --    os <- use oracles
-                --    case os M.!? owlName of
-                --        Just (_, sliceMap) -> do
-                --            case sliceMap M.!? i of
-                --                Just (_, _, l) -> return l
-                --                Nothing -> throwError $ UndefinedSymbol n'
-                --        Nothing -> throwError $ UndefinedSymbol n'
-                _ -> do
-                    ls <- use typeLayouts
-                    debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
-                    throwError $ UndefinedSymbol n'
+            ls <- use typeLayouts
+            debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
+            throwError $ UndefinedSymbol n'
 
 
-lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String)] -> ExtractionMonad (RustTy, String)))
+lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)))
 lookupFunc fpath = do
     fs <- use funcs
     f <- tailPath fpath
@@ -520,6 +521,9 @@ flattenNameExp n = case n ^. val of
   NameConst _ s _ -> do
       p <- flattenPath s
       return $ rustifyName p
+--   KDFName _ _ -> do
+--       p <- flattenPath (n ^. val)
+--       return $ rustifyName p
   -- _ -> throwError $ UnsupportedNameExp n
 
 
@@ -531,42 +535,44 @@ rustifyArgTy (CTConst p) = do
     n <- flattenPath p
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
-        LBytes _ -> Rc VecU8
-        LUnboundedBytes -> Rc VecU8
+        LBytes _ -> VecU8
+        LUnboundedBytes -> VecU8
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyArgTy CTBool = return Bool
 rustifyArgTy CTUnit = return Unit
 rustifyArgTy CTGhost = return VerusGhost
-rustifyArgTy _ = return $ Rc VecU8
+rustifyArgTy _ = return $ SliceU8
 
 rustifyRetTy :: CTy -> ExtractionMonad RustTy
 rustifyRetTy (CTOption ct) = do
-    rt <- rustifyArgTy ct
+    rt <- rustifyRetTy ct
     return $ Option rt
 rustifyRetTy (CTConst p) = do
     n <- flattenPath p
     l <- lookupTyLayout . rustifyName $ n
     return $ case l of
-        LBytes _ -> Rc VecU8
-        LUnboundedBytes -> Rc VecU8
+        LBytes _ -> OwlBuf
+        LUnboundedBytes -> OwlBuf
         LStruct s _ -> ADT s
         LEnum s _ -> ADT s
 rustifyRetTy CTBool = return Bool
 rustifyRetTy CTUnit = return Unit
 rustifyRetTy CTGhost = return VerusGhost
-rustifyRetTy _ = return $ Rc VecU8
+rustifyRetTy _ = return $ OwlBuf
 
 -- For computing data structure members
 specDataTyOf :: RustTy -> SpecTy
 specDataTyOf VecU8 = SpecSeqU8
+specDataTyOf SliceU8 = SpecSeqU8
+specDataTyOf OwlBuf = SpecSeqU8
 specDataTyOf Bool = SpecBool
 specDataTyOf Number = SpecNumber
 specDataTyOf String = SpecString
 specDataTyOf Unit = SpecUnit
 specDataTyOf (ADT s) = SpecADT (specName . unrustifyName $ s)
 specDataTyOf (Option rt) = SpecOption (specDataTyOf rt)
-specDataTyOf (Rc rt) = specDataTyOf rt
+specDataTyOf (Borrow rt) = specDataTyOf rt
 specDataTyOf VerusGhost = SpecGhost
 
 rustifySpecDataTy :: CTy -> ExtractionMonad SpecTy
@@ -577,7 +583,7 @@ rustifySpecDataTy ct = do
 specTyOf :: RustTy -> SpecTy
 specTyOf (ADT s) = SpecSeqU8 -- in itree specs, everything is maintained as Seq<u8>
 specTyOf (Option rt) = SpecOption (specTyOf rt)
-specTyOf (Rc rt) = specTyOf rt
+specTyOf (Borrow rt) = specTyOf rt
 specTyOf r = specDataTyOf r
 
 rustifySpecTy :: CTy -> ExtractionMonad SpecTy
@@ -585,11 +591,11 @@ rustifySpecTy ct = do
     rt <- rustifyArgTy ct
     return $ specTyOf rt
 
-rcClone :: OwlDoc
-rcClone = owlpretty "arc_clone"
+-- rcClone :: OwlDoc
+-- rcClone = owlpretty "arc_clone"
 
-rcNew :: OwlDoc
-rcNew = owlpretty "arc_new"
+-- rcNew :: OwlDoc
+-- rcNew = owlpretty "arc_new"
 
 getCurRetTy :: ExtractionMonad String
 getCurRetTy = do
@@ -600,13 +606,15 @@ getCurRetTy = do
 
 viewVar :: RustTy -> String -> String
 viewVar VecU8 s = s ++ ".dview()"
+viewVar SliceU8 s = s ++ ".dview()"
+viewVar OwlBuf s = s ++ ".dview()"
 viewVar Bool s = s
 viewVar Number s = s
 viewVar String s = s
 viewVar Unit s = s
 viewVar (ADT _) s = s ++ ".dview()" -- TODO nesting?
 viewVar (Option rt) s = s ++ ".dview()"
-viewVar (Rc rt) s = viewVar rt s
+viewVar (Borrow rt) s = viewVar rt s
 viewVar VerusGhost s = s
 
 hexStringToByteList :: String -> ExtractionMonad OwlDoc
@@ -692,3 +700,19 @@ makeKdfSliceMap nks = do
             return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
         ) (["0"], M.empty) (zip [0..] nks)
     return (totLen, sliceMap)
+
+
+canBeVest :: Layout -> Bool
+canBeVest (LStruct _ fs) = go True . map snd $ fs
+    where 
+        go acc [] = acc
+        go acc [LUnboundedBytes] = acc
+        go acc (LBytes _ : t) = go acc t
+        go acc (LHexConst _ : t) = go acc t
+        go _ _ = False
+canBeVest _ = False
+
+bufOpt :: ExtractionMonad Bool
+bufOpt = do
+    fs <- use flags
+    return $ fs ^. fExtractBufOpt

@@ -698,16 +698,19 @@ fn bench_bidirectional_4_owl_initiator_owl_responder(b: &mut Bencher) {
 fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: RouterDeviceType, do_routines: bool) {
     use std::sync::atomic::AtomicBool;
 
-    use crate::wireguard::{router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay}, owl_wg::owl_wireguard};
-
+    use crate::wireguard::router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay};
+    
     const NUM_PACKETS: usize = 1000;
 
-    const MAX_SIZE_BODY: usize = 1 << 15;
+    // const MAX_SIZE_BODY: usize = 1 << 15;
 
     // inner payload of IPv4 packet is 1440 bytes
-    const BYTES_PER_PACKET: usize = 100;
+    const BYTES_PER_PACKET: usize = 1440;
 
-    let mut confirm_packet_size = SIZE_KEEPALIVE;
+    #[cfg(feature = "memory_profile")]
+    let heap_profiler_guard = heappy::HeapProfilerGuard::new(1).unwrap();
+
+    let confirm_packet_size = SIZE_KEEPALIVE;
 
     // create device
     let ((bind_reader1, bind_writer1), (bind_reader2, bind_writer2)) =
@@ -840,27 +843,37 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
                 // };
             }
 
-            // let new_msg = send_job.get_buffer();
+            let new_msg = send_job.get_buffer();
     
-            // let decryption_state = DecryptionState {
-            //     keypair: Arc::new(dummy_keypair(true)),
-            //     confirmed: AtomicBool::new(true),
-            //     protector: spin::Mutex::new(AntiReplay::new()),
-            //     peer: peer2.peer.clone(),
-            // };
+            let decryption_state = DecryptionState {
+                keypair: Arc::new(dummy_keypair(true)),
+                confirmed: AtomicBool::new(true),
+                protector: spin::Mutex::new(AntiReplay::new()),
+                peer: peer2.peer.clone(),
+            };
     
-            // let recv_job = super::super::receive::ReceiveJob::new(
-            //     new_msg,
-            //     Arc::new(decryption_state),
-            //     dummy::UnitEndpoint {},
-            //     dev2_type
-            // );
+            let recv_job = super::super::receive::ReceiveJob::new(
+                new_msg,
+                Arc::new(decryption_state),
+                dummy::UnitEndpoint {},
+                dev2_type
+            );
         
-            // if do_routines { 
-            //     recv_job.parallel_work();
-            // }
+            if do_routines { 
+                recv_job.parallel_work();
+            }
         }
     });
+
+    #[cfg(feature = "memory_profile")]
+    {
+        let report = heap_profiler_guard.report();
+
+        let filename = "/tmp/mem.pb";
+        println!("Writing to {}", filename);
+        let mut file = std::fs::File::create(filename).unwrap();
+        report.write_pprof(&mut file).unwrap();
+    }
 }
 
 #[bench]

@@ -14,7 +14,7 @@ verus! {
 pub const PRIVATE_KEY_BITS: usize = 2048;
 
 #[verifier(external_body)]
-pub fn gen_rand_keys() -> (_:(Vec<u8>, Vec<u8>)) {
+pub fn gen_rand_keys() -> (Vec<u8>, Vec<u8>) {
     unimplemented!()
     // let mut rng = rand::thread_rng();
     // let privkey = RsaPrivateKey::new(&mut rng, PRIVATE_KEY_BITS).unwrap();
