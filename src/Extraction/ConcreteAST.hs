@@ -26,41 +26,58 @@ import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
 import AST
 
+data FLen = 
+    FLConst Int
+    | FLNamed String
+    deriving (Show, Eq, Generic, Typeable)
 
 data FormatTy =
     FUnit
     | FBool
     | FInt
-    | FBuf (Maybe Int) -- TODO: maybe we want a data type for built-in length consts, instead of Int
+    | FBuf (Maybe FLen) -- TODO: maybe we want a data type for built-in length consts, instead of Int
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String (M.Map String (Maybe FormatTy))  -- name, cases
     deriving (Show, Eq, Generic, Typeable)
 
+data Typed v t = Typed {
+    _tvar :: v,
+    _tty :: t
+} deriving (Generic, Typeable)
+
+instance (Show v, Show t) => Show (Typed v t) where
+    show (Typed v t) = "(" ++ show v ++ " : " ++ show t ++ ")"
+
+makeLenses ''Typed
+
 type CDataVar t = Name (CAExpr t)
 
-data CAExpr t = 
+data CAExpr' t = 
     CAVar (Ignore String) (CDataVar t)
     -- TODO should the type be the variable's type, or the desired type for the func call?
-    | CAApp String [(CAExpr t, t)] -- args are (expr, type) pairs; 
+    | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
+    | CAGet String
     | CAInt Int
     | CAHexConst String
     deriving (Show, Generic, Typeable)
 
-data CExpr t = 
+type CAExpr t = Typed (CAExpr' t) t
+
+data CExpr' t = 
     CSkip
     | CRet (CAExpr t)
     | CInput (Bind (CDataVar t, EndpointVar) (CExpr t))
     | COutput AExpr (Maybe Endpoint)
-    | CLet (CExpr t) t (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, type annotation, ANF annotation, bind (var, cont)
+    | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)
     -- Only a regular case statement, not the parsing version
     | CCase (CAExpr t) t [(String, Either (CExpr t) (Bind (CDataVar t, t) (CExpr t)))] -- need to introduce the type into the bind (?)
-    | CCall String [(CAExpr t, t)]
+    | CCall String [CAExpr t]
     -- In concretification, we should compile `ECase` exprs that parse an enum into a 
     -- CParse node containing a regular `CCase`. The list of binds should have one element
-    | CParse (CAExpr t) (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String, t)] (CExpr t))
+    | CParse (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String)] (CExpr t))
     | CTLookup String (CAExpr t)
     | CTWrite String (CAExpr t) (CAExpr t)
     -- Crypto calls should be compiled to `CRet (CAApp ...)` during concretization
@@ -68,7 +85,86 @@ data CExpr t =
     | CGetCtr String 
     | CIncCtr String 
     deriving (Show, Generic, Typeable)    
+
+type CExpr t = Typed (CExpr' t) t
+
+
+
+--------------------------------------------------------------------------------
+-- LocallyNameless
+
+-- TODO: check these
+
+instance (Alpha v, Alpha t) => Alpha (Typed v t)
+instance (Subst b a, Subst b t) => Subst b (Typed a t)
+
+instance (Alpha t, Typeable t) => Alpha (CAExpr' t)
+instance (Alpha t, Typeable t) => Alpha (CExpr' t)
+
+
+--------------------------------------------------------------------------------
+-- Pretty
+
+instance OwlPretty FLen where
+    owlpretty (FLConst i) = owlpretty i
+    owlpretty (FLNamed s) = owlpretty s
     
+instance OwlPretty FormatTy where
+    owlpretty FUnit = owlpretty "unit"
+    owlpretty FBool = owlpretty "bool"
+    owlpretty FInt = owlpretty "int"
+    owlpretty (FBuf Nothing) = owlpretty "buf[]"
+    owlpretty (FBuf (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
+    owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
+    owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
+    owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
+
+instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
+    owlpretty (Typed v t) = parens (owlpretty v <+> owlpretty ":" <+> owlpretty t)
+
+instance OwlPretty t => OwlPretty (CAExpr' t) where
+    owlpretty (CAVar _ v) = owlpretty v
+    owlpretty (CAApp f as) = owlpretty f <> tupled (map owlpretty as)
+    owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
+    owlpretty (CAInt i) = owlpretty i
+    owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
+
+instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
+    owlpretty CSkip = owlpretty "skip"
+    owlpretty (CRet a) = owlpretty "ret" <+> owlpretty a
+    owlpretty (CInput xsk) = 
+        let (x, sk) = owlprettyBind xsk in
+        owlpretty "input" <+> x <> pretty ";" <+> sk
+    owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
+       Nothing -> owlpretty ""
+       Just s -> owlpretty "to" <+> owlpretty s)
+    owlpretty (CLet e oanf xk) =
+        let (x, k) = owlprettyBind xk in
+        owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
+    owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
+    owlpretty (CIf a e1 e2) =
+        owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> braces (owlpretty e1) <+> owlpretty "else" <+> braces (owlpretty e2)
+    owlpretty (CCase a t xs) =
+        let pcases =
+                map (\(c, o) ->
+                    case o of
+                      Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
+                      Right xe -> let (x, e) = owlprettyBind xe in 
+                        owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
+                    ) xs in
+        owlpretty "case" <+> owlpretty a <> line <> vsep pcases
+    owlpretty (CCall f as) =
+        let args = map owlpretty as in
+        owlpretty f <> tupled args
+    owlpretty (CParse ae t ok bindpat) =
+        let (pats, k) = owlprettyBind bindpat in
+        owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
+    owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
+    owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
+    owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
+    owlpretty (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
+
+
 
 {- 
 --------------------------------------------------------------------------------
