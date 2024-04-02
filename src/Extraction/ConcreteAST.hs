@@ -24,8 +24,54 @@ import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
-
 import AST
+
+
+data FormatTy =
+    FUnit
+    | FBool
+    | FInt
+    | FBuf (Maybe Int) -- TODO: maybe we want a data type for built-in length consts, instead of Int
+    | FOption FormatTy
+    | FStruct String [(String, FormatTy)]           -- name, fields
+    | FEnum String (M.Map String (Maybe FormatTy))  -- name, cases
+    deriving (Show, Eq, Generic, Typeable)
+
+type CDataVar t = Name (CAExpr t)
+
+data CAExpr t = 
+    CAVar (Ignore String) (CDataVar t)
+    -- TODO should the type be the variable's type, or the desired type for the func call?
+    | CAApp String [(CAExpr t, t)] -- args are (expr, type) pairs; 
+    | CAInt Int
+    | CAHexConst String
+    deriving (Show, Generic, Typeable)
+
+data CExpr t = 
+    CSkip
+    | CRet (CAExpr t)
+    | CInput (Bind (CDataVar t, EndpointVar) (CExpr t))
+    | COutput AExpr (Maybe Endpoint)
+    | CLet (CExpr t) t (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, type annotation, ANF annotation, bind (var, cont)
+    | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
+    | CIf (CAExpr t) (CExpr t) (CExpr t)
+    -- Only a regular case statement, not the parsing version
+    | CCase (CAExpr t) t [(String, Either (CExpr t) (Bind (CDataVar t, t) (CExpr t)))] -- need to introduce the type into the bind (?)
+    | CCall String [(CAExpr t, t)]
+    -- In concretification, we should compile `ECase` exprs that parse an enum into a 
+    -- CParse node containing a regular `CCase`. The list of binds should have one element
+    | CParse (CAExpr t) (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String, t)] (CExpr t))
+    | CTLookup String (CAExpr t)
+    | CTWrite String (CAExpr t) (CAExpr t)
+    -- Crypto calls should be compiled to `CRet (CAApp ...)` during concretization
+    -- | CCrypt CryptOp [AExpr]
+    | CGetCtr String 
+    | CIncCtr String 
+    deriving (Show, Generic, Typeable)    
+    
+
+{- 
+--------------------------------------------------------------------------------
 
 data CTy =
     CTData
@@ -46,6 +92,29 @@ data CTy =
 
 instance Alpha CTy
 instance Subst AExpr CTy
+
+-- data CExpr =
+--     CSkip
+--     | CInput (Bind (DataVar, EndpointVar) CExpr)
+--     | COutput AExpr (Maybe Endpoint)
+--     | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
+--     | CLetGhost (Bind DataVar CExpr)
+--     | CBlock CExpr -- Boundary for scoping; introduced by { }
+--     | CIf AExpr CExpr CExpr
+--     | CRet AExpr
+--     | CCall Path ([Idx], [Idx]) [AExpr]
+--     | CParse AExpr CTy (Maybe CExpr) (Bind [(DataVar, Ignore String)] CExpr)
+--     | CCase AExpr (Maybe (CTy, CExpr)) [(String, Either CExpr (Bind DataVar CExpr))]
+--     | CTLookup Path AExpr
+--     | CTWrite Path AExpr AExpr
+--     | CCrypt CryptOp [AExpr]
+--     | CGetCtr Path ([Idx], [Idx])
+--     | CIncCtr Path ([Idx], [Idx])
+--     deriving (Show, Generic, Typeable)
+
+instance Alpha (CExpr t)
+instance Subst AExpr (CExpr t)
+
 
 compatTys :: CTy -> CTy -> Bool
 compatTys (CTName n1) (CTName n2) =
@@ -92,29 +161,9 @@ concretifyTy t =
 doConcretifyTy :: Ty -> CTy
 doConcretifyTy = runFreshM . concretifyTy
 
-data CExpr =
-    CSkip
-    | CInput (Bind (DataVar, EndpointVar) CExpr)
-    | COutput AExpr (Maybe Endpoint)
-    | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
-    | CLetGhost (Bind DataVar CExpr)
-    | CBlock CExpr -- Boundary for scoping; introduced by { }
-    | CIf AExpr CExpr CExpr
-    | CRet AExpr
-    | CCall Path ([Idx], [Idx]) [AExpr]
-    | CParse AExpr CTy (Maybe CExpr) (Bind [(DataVar, Ignore String)] CExpr)
-    | CCase AExpr (Maybe (CTy, CExpr)) [(String, Either CExpr (Bind DataVar CExpr))]
-    | CTLookup Path AExpr
-    | CTWrite Path AExpr AExpr
-    | CCrypt CryptOp [AExpr]
-    | CGetCtr Path ([Idx], [Idx])
-    | CIncCtr Path ([Idx], [Idx])
-    deriving (Show, Generic, Typeable)
 
-instance Alpha CExpr
-instance Subst AExpr CExpr
 
-concretify :: Fresh m => Expr -> m CExpr
+concretify :: Fresh m => Expr -> m (CExpr t)
 concretify e =
     case e^.val of
         EInput _ xse -> do
@@ -209,7 +258,7 @@ concretify e =
         ECorrCaseNameOf _ _ k -> concretify k
         -- _ -> error $ "Concretify on " ++ show (owlpretty e)
 
-doConcretify :: Expr -> CExpr
+doConcretify :: Expr -> (CExpr t)
 doConcretify = runFreshM . concretify
 
 instance OwlPretty CTy where
@@ -241,7 +290,7 @@ instance OwlPretty CTy where
     -- owlpretty (CTUnion t1 t2) =
     --     owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 
-instance OwlPretty CExpr where
+instance OwlPretty (CExpr t) where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CInput xsk) = 
         let (x, sk) = owlprettyBind xsk in
@@ -272,12 +321,11 @@ instance OwlPretty CExpr where
         owlpretty "case" <+> owlpretty a <> line <> vsep pcases
     owlpretty (CTLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
     owlpretty (CTWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
-    owlpretty (CCrypt cop as) = owlpretty cop <> tupled (map owlpretty as)
     owlpretty (CIncCtr p idxs) = owlpretty "inc_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CGetCtr p idxs) = owlpretty "get_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CParse ae t ok bindpat) = 
         let (pats, k) = owlprettyBind bindpat in
         owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> parens pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
-    owlpretty (CLetGhost xk) =
-        let (x, k) = owlprettyBind xk in
-        owlpretty "letghost" <+> x <+> owlpretty "in" <> line <> k
+
+
+-}
