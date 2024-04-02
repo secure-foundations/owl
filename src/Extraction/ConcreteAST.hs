@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -25,6 +24,7 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
 import AST
+import Rust
 
 data FLen = 
     FLConst Int
@@ -88,7 +88,28 @@ data CExpr' t =
 
 type CExpr t = Typed (CExpr' t) t
 
+data CDef t = CDef {
+    _defName :: String,
+    _defArgs :: [(CDataVar t, t)],
+    _defRTy :: t,
+    _defBody :: CExpr t
+} deriving (Show, Generic, Typeable)
 
+makeLenses ''CDef
+
+data CStruct t = CStruct {
+    _structName :: String,
+    _structFields :: [(String, t)]
+} deriving (Show, Generic, Typeable)
+
+makeLenses ''CStruct
+
+data CEnum t = CEnum {
+    _enumName :: String,
+    _enumCases :: M.Map String (Maybe t)
+} deriving (Show, Generic, Typeable)
+
+makeLenses ''CEnum
 
 --------------------------------------------------------------------------------
 -- LocallyNameless
