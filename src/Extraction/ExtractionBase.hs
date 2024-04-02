@@ -31,14 +31,15 @@ import CmdArgs
 import ConcreteAST
 import System.IO
 import qualified TypingBase as TB
+import qualified SMTBase as SMT
 
-newtype ExtractionMonad a = ExtractionMonad (ReaderT TB.Env (StateT Env (ExceptT ExtractionError IO)) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader TB.Env)
+newtype ExtractionMonad a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT Env (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
 
-runExtractionMonad :: TB.Env -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
 runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
 
-liftCheck :: TB.Check a -> ExtractionMonad a
+liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad a
 liftCheck c = do
     e <- ask
     o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e
@@ -469,7 +470,7 @@ lookupNameLayout :: NameExp -> ExtractionMonad Layout
 lookupNameLayout n = do
     n' <- case n ^. val of 
         NameConst _ _ _  -> flattenNameExp n
-        KDFName _ _ _ nks i _ -> do
+        KDFName _ _ _ nks i _ _ -> do
             let nk = nks !! i
             return $ rustifyName . show . owlpretty $ nk
     o <- lookupTyLayout' n'
@@ -645,9 +646,6 @@ resolveANF binds a = do
         AEGet _ -> return a
         AEGetEncPK _ -> return a
         AEGetVK _ -> return a
-        AEPackIdx i a2 -> do
-            a2' <- resolveANF binds a2
-            return $ mkSpanned $ AEPackIdx i a2'
         AELenConst _ -> return a
         AEInt _ -> return a
         AEKDF _ _ _ _ _ -> return a
@@ -694,9 +692,10 @@ makeKdfSliceMap nks = do
                 NK_MAC -> do
                     l <- useHmacKeySize
                     return ("mackey", l)
-                NK_Nonce -> do
+                NK_Nonce nl -> do
+                    when (nl /= "nonce") $ throwError $ ErrSomethingFailed "custom nonce lengths unsupported"
                     l <- useAeadNonceSize
-                    return ("nonce", l)
+                    return (nl, l)
                 _ -> throwError $ UnsupportedOracleReturnType (show nk)
             return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
         ) (["0"], M.empty) (zip [0..] nks)

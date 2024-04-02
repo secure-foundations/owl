@@ -82,8 +82,7 @@ module Kerberos_PKINIT(P : Params) : Kerberos_Stage1(P) = {
         corr_case seckeyCnew in
         case pkdec(get(seckeyCnew), msg) {
             | None => None<ty:client_stage1_t>()
-            | Some p' => 
-                union_case p = p' in 
+            | Some p => 
                 parse p as ClientPKResponse(certA, vka, k, ksig) in  
                 // certA = signature of verkeyA signed by sigkeyCA
                 corr_case sigkeyCA in

@@ -146,7 +146,8 @@ def Alice_main<i> (
     corr_case KA in
 
     unpack j, _ = () in
-    let encm:Data<adv> | cipherlen((4 * |nonce|) + |tag|) | = aenc(kA, pack<i>(pack<j>(mA1<idx i, idx j>(kA_message_1<idx i>(nA, M, A, B))))) in
+    let m = pack<i>(pack<j>(mA1<idx i, idx j>(kA_message_1<idx i>(nA, M, A, B)))) in
+    let encm:Data<adv> | cipherlen((4 * |nonce|) + |tag|) | = aenc(kA, m) in 
 
     let _ = output msg1_AtoB(M, A, B, mA1_enc(encm)) to endpoint(Bob) in
 
@@ -214,7 +215,8 @@ def Bob_main<i> (
             // let v'':encd_kA_message = mA1_enc(v') in
 
             // let temp:kB_message_1<idx i> = kB_message_1<idx i>(nB, M', A', B) in // adding the annotation gets rid of the length...
-            let encm = aenc(kB, pack<i>(pack<j>(mB1<idx i, idx j>(kB_message_1<idx i>(nB, M', A', B))))) in
+            let m = pack<i>(pack<j>(mB1<idx i, idx j>(kB_message_1<idx i>(nB, M', A', B)))) in
+            let encm = aenc(kB, m) in 
             
             let _ = output msg2_BToS(M', A', B, v') to endpoint(AS) in
             let _ = output mB1_enc(encm) to endpoint(AS) in
@@ -303,10 +305,12 @@ def AS_main<i> () @ AS
 
                                                 parse msg1A as kA_message_1<idx j1>(nA1', _, _, _) in 
                                                 parse msg1B as kB_message_1<idx j3>(nB1', _, _, _) in 
-                                                let encmA = aenc(kA,
-                                                pack<j1>(pack<i>(mA2<idx j1, idx i>(kA_message_2<idx j1, idx i>(nA1', kab))))) in
-                                                let encmB = aenc(kB,
-                                                pack<j3>(pack<i>(mB2<idx j3, idx i>(kB_message_2<idx j3, idx i>(nB1', kab))))) in
+                                                let m = pack<j1>(pack<i>(mA2<idx j1, idx i>(kA_message_2<idx j1, idx i>(nA1', kab)))) in
+                                                let encmA = aenc(kA, m) in 
+
+                                                let m = pack<j3>(pack<i>(mB2<idx j3, idx i>(kB_message_2<idx j3, idx i>(nB1', kab)))) in
+                                                let encmB = aenc(kB, m) in 
+                                                
                                                 let _ = output msg3_StoB(M, encmA, encmB) to endpoint(Bob)
                                                 in ()
                                                 otherwise ()

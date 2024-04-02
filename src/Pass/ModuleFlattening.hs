@@ -99,7 +99,7 @@ flattenModules p0 md = do
     let res = sconcat $ md' :| mbs
     return (sbts, res)
 
-doFlattening :: Env -> IO ModBody
+doFlattening :: Env senv -> IO ModBody
 doFlattening e = do 
     (x, y) <- runFreshMT $ flattenModules PTop (e^.curMod) 
     return $ substs x y

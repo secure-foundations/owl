@@ -92,8 +92,7 @@ def PFA_FW (gb : Ghost, k11:
     pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
     pcase (corr(a) \/ corr(b)) in
     input inp in // from PDIS (actual non-KE)
-    corr_case nameOf(k11) in 
-    case adec(k11, inp) {
+    case adec(k11, inp) as Option sign_request_response {
         | None => ()
         | Some m' =>
             case m' as sign_request_response {
@@ -104,6 +103,7 @@ def PFA_FW (gb : Ghost, k11:
                 let _ = output msg_to_send_PDIS to endpoint(PDIS) in ()
             otherwise => ()
             }
+        otherwise => ()
     }
     
 
@@ -138,15 +138,12 @@ def PDIS_actual(gb : Ghost,
                 
                 // request PFA to sign
                 let request = _req(0x01) in // TODO: 0x01 is the hash
-                pcase (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
-                pcase (corr(a) \/ corr(b)) in
                 let enc_request = aenc(k11, request) in
                 let _ = output enc_request to endpoint(PFA) in
 
                 // get its input
                 input inp2 in
-                corr_case nameOf(k11) in
-                case adec(k11, inp2) {
+                case adec(k11, inp2) as Option sign_request_response {
                     | None => ()
                     | Some m' =>
                         case m' as sign_request_response {
@@ -158,6 +155,7 @@ def PDIS_actual(gb : Ghost,
                                 ()
                             otherwise => ()
                         }
+                    otherwise => ()
                 }                
             }                
                 

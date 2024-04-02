@@ -60,8 +60,10 @@ def resp_recv<j@n,m>(
                     transp_keys_resp<session j, pid n_pk, pid n, pid
                     m>(init, resp, eph, c7, true, init_send, resp_send)
                  in
-                Some(pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
-                m>(st', x)))
+                let ret = 
+                pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
+                m>(st', x)) in 
+                Some(ret)
             | None => None()
             // otherwise => None()
         }

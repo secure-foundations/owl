@@ -10,6 +10,8 @@ import Unbound.Generics.LocallyNameless.Name
 import Unbound.Generics.LocallyNameless.Unsafe
 import Prettyprinter.Render.Terminal
 import Data.List
+import qualified Data.Text as T
+import qualified Prettyprinter.Render.Text as T
 
 type OwlDoc = Doc AnsiStyle
 
@@ -63,7 +65,7 @@ owlprettyKDFSelector (i, []) = owlpretty i
 owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName a b c nks j nt) = 
+    owlpretty (KDFName a b c nks j nt _) = 
         Prettyprinter.group $ 
         owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
                             <>
@@ -73,8 +75,8 @@ instance  OwlPretty NameExpX where
                             <>
                             owlpretty ";"
                             <>
-                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-                            owlpretty nt
+                            (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            -- owlpretty nt
                             <> owlpretty ">"
                             <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 
@@ -160,8 +162,6 @@ instance  OwlPretty TyX where
             (TExistsIdx _ it) -> 
                 let (i, t) = owlprettyBind it in
                 owlpretty "exists" <+> i <> owlpretty "." <+> t
-            (TUnion t1 t2) ->
-                owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
             (THexConst a) ->
                 owlpretty "Const(" <> owlpretty "0x" <> owlpretty a <> owlpretty ")"
 
@@ -192,7 +192,10 @@ instance OwlPretty NameKind where
                       NK_PKE -> "pkekey"
                       NK_Sig -> "sigkey"
                       NK_MAC -> "mackey"
-                      NK_Nonce -> "nonce"
+                      NK_Nonce len -> 
+                          case len of
+                            "nonce" -> "nonce"
+                            _ -> "nonce |" ++ len ++ "|"
 
 newtype NameKindRow = NameKindRow [NameKind]
 instance OwlPretty NameKindRow where
@@ -233,6 +236,7 @@ instance  OwlPretty PropX where
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ intersperse (owlpretty ", ") $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
+    owlpretty (PHonestPKEnc ne a) = owlpretty "honest_pk_enc" <> angles (owlpretty ne) <> tupled [owlpretty a]
     owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -257,7 +261,7 @@ owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map
 
 instance  OwlPretty NameTypeX where
     owlpretty (NT_KDF kpos cases) = 
-        let (((sx, _), (sy, _)), c) = unsafeUnbind cases in 
+        let (((sx, _), (sy, _), (sself, _)), c) = unsafeUnbind cases in 
         let pcases = map (\b ->
                             let (is, (p, nts)) = unsafeUnbind b in 
                             owlprettyIdxBinds1 is <> owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
@@ -267,13 +271,16 @@ instance  OwlPretty NameTypeX where
                    KDF_SaltPos -> owlpretty "KDF"
                    KDF_IKMPos -> owlpretty "DualKDF"
         in
-        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
+        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
-    owlpretty (NT_StAEAD ty xaad p) = 
+    owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in
+        let (y, ppat) = owlprettyBind pat in 
         owlpretty "st_aead" <+> owlpretty ty <+> 
             nest 4 (owlpretty "aad" <> x <> owlpretty "." <> aad <> line 
-                    <> owlpretty "nonce" <+> owlpretty p)
+                    <> owlpretty "nonce" <+> owlpretty p <> line <>
+                    owlpretty "pat" <> y <> ppat
+                        )
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
     owlpretty (NT_App p is) = 
         owlpretty p <> owlprettyIdxParams is 
@@ -281,7 +288,10 @@ instance  OwlPretty NameTypeX where
     owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
     -- owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"
     owlpretty NT_DH = owlpretty "DH"
-    owlpretty NT_Nonce = owlpretty "nonce"
+    owlpretty (NT_Nonce l) = 
+        case l of
+          "nonce" -> owlpretty "nonce"
+          _ -> owlpretty $ "nonce |" ++ l ++ "|"
 
 
 instance  OwlPretty AExprX where
@@ -313,7 +323,6 @@ instance  OwlPretty AExprX where
     owlpretty (AEGet ne) = owlpretty "get" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetEncPK ne) = owlpretty "get_encpk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetVK ne) = owlpretty "get_vk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
-    owlpretty (AEPackIdx s a) = owlpretty "pack" <> owlpretty "<" <> owlpretty s <> owlpretty ">(" <> owlpretty a <> owlpretty ")"
 
 instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaConstant) = owlpretty "is_constant_lemma"
@@ -336,8 +345,12 @@ instance  OwlPretty CryptOp where
     owlpretty CSign = owlpretty "sign"
     owlpretty CSigVrfy = owlpretty "vrfy"
     owlpretty (CKDF _ _ _ _) = owlpretty "kdf"
-    owlpretty (CEncStAEAD p (idx1, idx2)) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
+    owlpretty (CEncStAEAD p (idx1, idx2) _) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
     owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
+
+instance (OwlPretty a, OwlPretty b) => OwlPretty (Either a b) where
+    owlpretty (Left a) = owlpretty "Left" <+> owlpretty a
+    owlpretty (Right a) = owlpretty "Right" <+> owlpretty a
 
 instance  OwlPretty ExprX where 
     owlpretty (ECrypt cop as) = 
@@ -363,9 +376,6 @@ instance  OwlPretty ExprX where
                         Just a -> owlpretty "anf_let[" <> owlpretty a <> owlpretty "]"
         in
         owlpretty "let" <+> owlpretty sx <+> tann <+> owlpretty "=" <+> owlpretty "(" <> owlpretty e1 <> owlpretty ")" <+> owlpretty "in" <> line <> k
-    owlpretty (EUnionCase a _ xk) = 
-        let (x, k) = owlprettyBind xk in
-        owlpretty "union_case" <+> x <+> owlpretty "=" <> owlpretty a <+>  owlpretty "in" <+> k
     owlpretty (EUnpack a s k) = owlpretty "unpack a .... TODO"
     owlpretty (EIf t e1 e2) = 
         owlpretty "if" <+> owlpretty t <+> owlpretty "then" <+> owlpretty e1 <+> owlpretty "else" <+> owlpretty e2
@@ -412,6 +422,7 @@ instance  OwlPretty ExprX where
         in
         owlpretty "parse" <+> owlpretty a <+> owlpretty (map fst xs) <+> owlpretty "as" <+> owlpretty t <+> owlpretty "in"
         <+> owlpretty k <+> o
+    owlpretty (EPackIdx i e) = owlpretty "pack" <> angles (owlpretty i) <> tupled [owlpretty e]
     owlpretty _ = owlpretty "UNIMP: owlpretty"
 
 instance  OwlPretty DebugCommand where
@@ -450,3 +461,5 @@ instance  OwlPretty ModuleExpX where
     owlpretty (ModuleVar p) = owlpretty p
     owlpretty x = owlpretty $ show x
 
+optext :: OwlPretty a => a -> T.Text
+optext x = T.renderStrict $ layoutPretty defaultLayoutOptions $ owlpretty x

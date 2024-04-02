@@ -30,6 +30,7 @@ import Data.Typeable (Typeable)
 import AST
 import CmdArgs
 import qualified ANFPass as ANF
+import qualified SMTBase as SMT
 import ConcreteAST
 import System.IO
 import qualified Text.Parsec as P
@@ -574,7 +575,8 @@ extractCryptOp binds op owlArgs = do
             let encOp = owlpretty $ printOwlOp "owl_enc" [k, x, (VecU8, "coins")]
             return (VecU8, owlpretty "", genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option $ VecU8, owlpretty "", owlpretty $ printOwlOp "owl_dec" [k, x])
-        (CEncStAEAD np _, [k, x, aad]) -> do 
+        (CEncStAEAD np _ xpat, [k, x, aad]) -> do             
+            error "TODO: fix extraction for pattern"
             n <- flattenPath np
             let encOp = owlpretty $ printOwlOp "owl_enc_st_aead" [k, x, (Number, "&mut mut_state." ++ rustifyName n), aad]
             let unwrapped = 
@@ -703,7 +705,6 @@ extractAExpr binds (AEGetEncPK nameExp) = do
 extractAExpr binds (AEGetVK nameExp) = do
     fnameExp <- flattenNameExp nameExp
     return (SliceU8, owlpretty "", owlpretty "vec_as_slice" <> parens (owlpretty "&self.pk_" <> owlpretty fnameExp))
-extractAExpr binds (AEPackIdx idx ae) = extractAExpr binds (ae^.val)
 extractAExpr binds (AELenConst s) = do
     lcs <- use lenConsts
     case lcs M.!? (rustifyName s) of
@@ -1119,7 +1120,10 @@ extractDef owlName loc owlArgs owlRetTy owlBody isMain = do
 
 nameInit :: String -> NameType -> ExtractionMonad OwlDoc
 nameInit s nt = case nt^.val of
-    NT_Nonce -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
+    NT_Nonce l -> 
+        case l of
+          "nonce" -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_nonce(cipher());"
+          _ -> throwError $ ErrSomethingFailed "Currently unsupported: custom nonce lengths"
     NT_Enc _ -> return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
     NT_StAEAD {} -> 
                 return $ owlpretty "let" <+> owlpretty (rustifyName s) <+> owlpretty "=" <+> owlpretty "owl_aead::gen_rand_key(cipher());"
@@ -1264,7 +1268,10 @@ preprocessModBody mb = do
                         return nt
                     _ -> return nt
                 nameLen <- case nt ^. val of
-                    NT_Nonce -> do useAeadNonceSize
+                    NT_Nonce l -> 
+                        case l of
+                          "nonce" -> useAeadNonceSize
+                          _ -> throwError $ ErrSomethingFailed "Custom nonce lengths unsupported"
                     NT_Enc _ -> do useAeadKeySize
                     NT_StAEAD {} -> do useAeadKeySize
                     NT_MAC _ -> do useHmacKeySize
@@ -1609,5 +1616,5 @@ extractModBody mb = do
       , vestFile
       )
 
-extract :: Flags -> TB.Env -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
+extract :: Flags -> TB.Env SMT.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extractModBody modbody

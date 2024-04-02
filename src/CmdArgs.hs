@@ -19,6 +19,7 @@ data Flags = Flags {
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
     _fFilePath :: String, 
+    _fLocalTypeError :: Bool,
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
     _fFileContents :: String
@@ -58,6 +59,9 @@ parseArgs =
           switch
           ( long "skip-ro-disj" <> help "Skip RO disjointness queries" )
       <*> Options.Applicative.argument (str) (value "" <> metavar "FILE")
+      <*>
+          switch
+          ( long "local-errors" <> help "Localize type errors to path condition" )
       <*>
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )

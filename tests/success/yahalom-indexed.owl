@@ -214,8 +214,10 @@ def AS_main<i> () @ AS
                             | mB1 msg1 =>
                                 parse msg1 as kB_message_1<idx i1>(A', nA', nB') in {
                                         // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
-                                        let encmA = aenc(kA, pack<i>(kA_message<idx i>(B', kAB, nA', nB'))) in
-                                        let encmB = aenc(kB, pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB'))))) in
+                                        let m = pack<i>(kA_message<idx i>(B', kAB, nA', nB')) in
+                                        let encmA = aenc(kA, m) in
+                                        let m = pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB')))) in 
+                                        let encmB = aenc(kB, m) in 
                                         let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
                                         ()
                                 }

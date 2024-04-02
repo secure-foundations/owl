@@ -50,7 +50,7 @@ instance Subst AExpr CTy
 compatTys :: CTy -> CTy -> Bool
 compatTys (CTName n1) (CTName n2) =
     case (n1 ^. val, n2 ^. val) of
-        (KDFName _ _ _ nks1 i1 _, KDFName _ _ _ nks2 i2 _) ->
+        (KDFName _ _ _ nks1 i1 _ _, KDFName _ _ _ nks2 i2 _ _) ->
             (nks1 !! i1) `aeq` (nks2 !! i2)
         _ -> n1 `aeq` n2
 compatTys (CTDH_PK _) (CTDH_PK _) = True
@@ -77,14 +77,6 @@ concretifyTy t =
             error $ "concretifyTy on TCase failed: " ++ show (owlpretty ct) ++ ", " ++ show (owlpretty ct')
     TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
-    TUnion t t' -> do
-      ct <- concretifyTy t
-      ct' <- concretifyTy t'
-      case (ct, ct') of
-        (cct, CTData) -> return cct
-        (CTData, cct') -> return cct'
-        _ -> if ct `compatTys` ct' then return ct else error "concretifyTy on TUnion failed"
-      -- return $ CTUnion ct ct'
     TUnit -> return CTUnit
     TName n -> return $ CTName n
     TVK n -> return $ CTVK n
@@ -144,10 +136,6 @@ concretify e =
         EBlock e _ -> do
             c <- concretify e
             return $ CBlock c
-        EUnionCase a s xk -> do
-            (x, k) <- unbind xk
-            k' <- concretify k
-            return $ subst x a k'
         EUnpack a _ ixk -> do
             ((i, x), k) <- unbind ixk
             k' <- concretify k
@@ -204,6 +192,7 @@ concretify e =
                     return $ Just (t', k')
             return $ CLet a' Nothing (bind avar $ CCase (mkSpanned $ AEVar (ignore $ show avar) avar) otk' cases')
         EPCase _ _ _ k -> concretify k
+        EPackIdx _ k -> concretify k
         EFalseElim e _ -> concretify e
         ETLookup n a -> return $ CTLookup n a
         ETWrite n a a2 -> return $ CTWrite n a a2

@@ -29,7 +29,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -101,7 +101,7 @@ parseNameExp =
         symbol ","
         c <- parseAExpr
         symbol ")"
-        return $ KDFName a b c nks (read j) nt
+        return $ KDFName a b c nks (read j) nt (ignore False)
     )
     <|>
     (parseSpanned $ do
@@ -191,15 +191,6 @@ parseTyTerm =
         reserved "Option"
         t <- parseTy
         return $ TOption t)
-    <|>
-    (parseSpanned $ do 
-        reserved "Union"
-        symbol "<"
-        t1 <- parseTy
-        symbol ","
-        t2 <- parseTy
-        symbol ">"
-        return $ TUnion t1 t2)
     <|>
     (parseSpanned $ do
         reserved "Unit"
@@ -291,6 +282,17 @@ parseTyTerm =
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
         return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
+    )
+    <|>
+    (do
+        p <- getPosition
+        reserved "PubName"
+        symbol "("
+        n <- parseNameExp
+        symbol ")"
+        p' <- getPosition
+        let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
+        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pFlow (nameLbl n) advLbl
     )
     <|>
     (parseSpanned $ do
@@ -525,6 +527,17 @@ parsePropTerm =
             return $ PInODH s ikm info
             )
         <|>
+        (parseSpanned $ do
+            reserved "honest_pk_enc"
+            symbol "<"
+            ne <- parseNameExp
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ")"
+            return $ PHonestPKEnc ne a
+        )
+        <|>
         (parseSpanned $ try $ do
             p <- parsePath
             is <- parseIdxParams1
@@ -609,7 +622,15 @@ parseNameType =
     <|>
     (parseSpanned $ do
         reserved "nonce"
-        return NT_Nonce)
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NT_Nonce len)
     <|>
     (parseSpanned $ do
         reserved "sigkey"
@@ -630,7 +651,16 @@ parseNameType =
         pr <- parseProp
         reserved "nonce"
         p <- parsePath
-        return $ NT_StAEAD t (bind (s2n x) pr) p 
+        opat <- optionMaybe $ do
+            reserved "pattern"
+            y <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n y) a
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ NT_StAEAD t (bind (s2n x) pr) p pat 
     )
     <|>
     (parseSpanned $ do
@@ -648,10 +678,14 @@ parseNameType =
         symbol "{"
         x <- identifier
         y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
         symbol "."
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y)) kdfCases)
+        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
     )
     <|>
     (parseSpanned $ do
@@ -814,10 +848,14 @@ parseDecls =
         symbol "{"
         x <- identifier
         y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
         symbol "."
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y)) kdfCases))
+        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
     )
     <|>
     (parseSpanned $ do
@@ -1267,16 +1305,6 @@ parseExprTerm =
         return $ ESetOption s1 s2 e
     )
     <|>
-    (parseSpanned $ do
-        reserved "union_case"
-        x <- identifier
-        reservedOp "="
-        a <- parseAExpr
-        reserved "in"
-        e <- parseExpr
-        return $ EUnionCase a x $ bind (s2n x) e
-    )
-    <|>
     (do
         p <- getPosition
         reserved "let"
@@ -1353,6 +1381,17 @@ parseExprTerm =
         reserved "else"
         e2 <- parseExpr
         return $ EIf t e1 e2)
+    <|>
+    (parseSpanned $ do 
+        reserved "pack"
+        symbol "<"
+        i <- parseIdx
+        symbol ">"
+        symbol "("
+        a <- parseExpr
+        symbol ")"
+        return $ EPackIdx i a
+        )
     <|>
     (parseSpanned $ do
         reserved "forall"
@@ -1584,11 +1623,23 @@ parseCryptOp =
         symbol "<"
         p <- parsePath
         inds <- parseIdxParams
+        opat <- optionMaybe $ do
+            symbol ","
+            reserved "pattern"
+            x <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n x) a
         symbol ">"
-        return $ CEncStAEAD p inds
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ CEncStAEAD p inds pat
     )
     <|>
-    (reserved "st_aead_dec" >> return CDecStAEAD)
+    (do
+        reserved "st_aead_dec" 
+        return $ CDecStAEAD)
     <|>
     (reserved "pkenc" >> return CPKEnc)
     <|>
@@ -1609,7 +1660,17 @@ parseNameKind =
     <|>
     (reserved "mackey" >> return NK_MAC)
     <|>
-    (reserved "nonce" >> return NK_Nonce)
+    (do
+        reserved "nonce" 
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NK_Nonce len)
 
 parseParam :: Parser FuncParam
 parseParam = 
@@ -1872,17 +1933,6 @@ parseAExprTerm =
         ne <- parseNameExp
         symbol ")"
         return $ AEGetVK ne
-        )
-    <|>
-    (parseSpanned $ do 
-        reserved "pack"
-        symbol "<"
-        i <- parseIdx
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ")"
-        return $ AEPackIdx i a
         )
     <|>
     (try $ parseSpanned $ do

@@ -32,7 +32,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh"]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor"]
 
 data PathType = 
     PTName
@@ -335,19 +335,21 @@ resolveNameType e = do
                       pth' <- resolvePath (e^.spanOf) PTNameType pth
                       return $ NT_App pth' is
                   NT_DH -> return t
-                  NT_Nonce -> return t
+                  NT_Nonce _ -> return t
                   NT_Sig t -> NT_Sig <$> resolveTy t
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
-                  NT_StAEAD t xpr p -> do
+                  NT_StAEAD t xpr p ypat -> do
                       t' <- resolveTy t
                       (x, pr) <- unbind xpr
                       pr' <- resolveProp pr
                       p' <- resolvePath (e^.spanOf) PTCounter p
-                      return $ NT_StAEAD t' (bind x pr') p' 
+                      (y, pat) <- unbind ypat
+                      pat' <- resolveAExpr pat
+                      return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
                   NT_KDF pos b -> do
-                      (((s, x), (s2, y)), cases) <- unbind b
+                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
                       cases' <- forM cases $ \bpnts -> do 
                           (is, (p, nts)) <- unbind bpnts
                           p' <- resolveProp p
@@ -355,7 +357,7 @@ resolveNameType e = do
                               nt' <- resolveNameType nt
                               return (str, nt')
                           return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y)) cases'
+                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -384,7 +386,6 @@ resolveTy e = do
                       p' <- resolvePath (e^.spanOf) PTTy p
                       return $ TConst p' fs'
                   TBool l -> TBool <$> resolveLabel l
-                  TUnion t1 t2 -> liftM2 TUnion (resolveTy t1) (resolveTy t2)
                   TUnit -> return TUnit
                   TName ne -> TName <$> resolveNameExp ne
                   TVK ne -> TVK <$> resolveNameExp ne
@@ -411,12 +412,12 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName a b c nks j nt -> do
+        KDFName a b c nks j nt ib -> do
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
             nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt'
+            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -533,9 +534,6 @@ resolveAExpr a =
       AEGetVK ne -> do
           ne' <- resolveNameExp ne
           return $ Spanned (a^.spanOf) $ AEGetVK ne'
-      AEPackIdx i a -> do
-          a' <- resolveAExpr a
-          return $ Spanned (a^.spanOf) $ AEPackIdx i a'
       AELenConst _ -> return a
       AEInt _ -> return a
       AEKDF a2 b c nks j -> do
@@ -564,10 +562,13 @@ resolveCryptOp pos cop =
           return $ CLemma l'
       CKDF x y nks i -> return cop
       CAEnc -> return CAEnc
-      CEncStAEAD p is -> do
+      CEncStAEAD p is xpat -> do
+          (x, pat) <- unbind xpat
+          pat' <- resolveAExpr pat
           p' <- resolvePath pos PTCounter p
-          return $ CEncStAEAD p' is
-      CDecStAEAD -> return CDecStAEAD
+          return $ CEncStAEAD p' is $ bind x pat'
+      CDecStAEAD -> do
+          return $ CDecStAEAD 
       CADec -> return CADec
       CPKDec -> return CPKDec
       CPKEnc -> return CPKEnc
@@ -606,11 +607,6 @@ resolveExpr e =
           (x, k) <- unbind xk
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ ELet e1' ot' anf s (bind x k')
-      EUnionCase a s xk -> do
-          a' <- resolveAExpr a
-          (x, k) <- unbind xk
-          k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EUnionCase a' s (bind x k')
       EUnpack a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
@@ -638,6 +634,9 @@ resolveExpr e =
           k' <- resolveExpr k
           op' <- traverse resolveProp op
           return $ Spanned (e^.spanOf) $ EForallIdx s (bind x (op', k'))
+      EPackIdx i a -> do
+          a' <- resolveExpr a
+          return $ Spanned (a^.spanOf) $ EPackIdx i a'
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
@@ -797,6 +796,10 @@ resolveProp p =
           (x, p') <- unbind xp
           p'' <- resolveProp p'
           return $ Spanned (p^.spanOf) $ PQuantBV q sx $ bind x p''
+      PHonestPKEnc ne a -> do
+          ne' <- resolveNameExp ne
+          a' <- resolveAExpr a
+          return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
 
 
                                             

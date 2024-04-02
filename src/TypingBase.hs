@@ -152,12 +152,19 @@ data ModBody = ModBody {
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
 
-data MemoEntry = MemoEntry { 
+data MemoEntry senv = MemoEntry { 
     _memoInferAExpr :: IORef (M.Map (AlphaOrd AExpr) Ty),
-    _memoNormalizeTy :: IORef (M.Map (AlphaOrd Ty) Ty)
+    _memoNormalizeTy :: IORef (M.Map (AlphaOrd Ty) Ty),
+    _memoNormalizeProp :: IORef (M.Map (AlphaOrd Prop) Prop),
+    _memoisSubtype' :: IORef (M.Map (AlphaOrd (Ty, Ty)) Bool),
+    _memotryFlowsTo' :: IORef (M.Map (AlphaOrd (Label, Label)) (Maybe Bool)),
+    _memoTyFlowsTo' :: IORef (M.Map (AlphaOrd (Ty, Label)) Bool),
+    _memoCoveringLabel' :: IORef (M.Map (AlphaOrd Ty) Label),
+    _memogetNameInfo :: IORef (M.Map (AlphaOrd NameExp) (Maybe (NameType, Maybe (ResolvedPath, [Locality])))),
+    _memoSolverEnv :: IORef (Maybe senv)
 }
 
-data Env = Env { 
+data Env senv = Env { 
     -- These below must only be modified by the trusted functions, since memoization
     -- depends on them
     _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
@@ -166,25 +173,29 @@ data Env = Env {
     _expectedTy :: Maybe Ty,
     ------
     _envFlags :: Flags,
-    _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX), 
+    _detFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check' senv TyX), 
     _tcScope :: TcScope,
     _endpointContext :: [EndpointVar],
     _openModules :: Map (Maybe (Name ResolvedPath)) ModBody, 
     _modContext :: Map (Name ResolvedPath) ModDef,
-    _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX),
+    _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check' senv (Int, [FuncParam] -> [(AExpr, Ty)] -> Check' senv TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
-    _memoStack :: [MemoEntry],
+    _memoStack :: [MemoEntry senv],
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int,
     _debugLogDepth :: IORef Int,
-    _typeErrorHook :: (forall a. String -> Check a),
-    _checkNameTypeHook :: (NameType -> Check ()),
+    _typeErrorHook :: (forall a. String -> Check' senv a),
+    _checkNameTypeHook :: (NameType -> Check' senv ()),
+    _normalizeTyHook :: Ty -> Check' senv Ty,
+    _normalizePropHook :: Prop -> Check' senv Prop,
+    _decidePropHook :: Prop -> Check' senv (Maybe Bool),
     _curDef :: Maybe String,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
+    _inSMT :: Bool,
     _curSpan :: Position
 }
 
@@ -255,8 +266,8 @@ instance OwlPretty (TypeError) where
 instance Show TypeError where
     show = show . owlpretty
 
-newtype Check a = Check { unCheck :: ReaderT Env (ExceptT Env IO) a }
-    deriving (Functor, Applicative, Monad, MonadReader Env, MonadIO)
+newtype Check' senv a = Check { unCheck :: ReaderT (Env senv) (ExceptT (Env senv) IO) a }
+    deriving (Functor, Applicative, Monad, MonadReader (Env senv), MonadIO)
 
 
 makeLenses ''DefSpec
@@ -267,7 +278,7 @@ makeLenses ''Env
 
 makeLenses ''ModBody
 
-modDefKind :: ModDef -> Check IsModuleType
+modDefKind :: ModDef -> Check' senv IsModuleType
 modDefKind (MBody xd) =
     let (_, d) = unsafeUnbind xd in return $ _isModuleType d
 modDefKind (MFun _ _ xd) = 
@@ -279,7 +290,7 @@ modDefKind (MAlias p) = do
 
 
 
-makeModDefConcrete :: ModDef -> Check ModDef
+makeModDefConcrete :: ModDef -> Check' senv ModDef
 makeModDefConcrete (MBody xd) = do
     (x, d) <- unbind xd
     return $ MBody $ bind x $ set isModuleType ModConcrete d
@@ -291,7 +302,7 @@ makeModDefConcrete (MAlias p) = do
     md <- getModDef p
     makeModDefConcrete md
 
-instance Fresh Check where
+instance Fresh (Check' senv) where
     fresh (Fn s _) = do
         r <- view freshCtr
         n <- liftIO $ readIORef r
@@ -299,7 +310,7 @@ instance Fresh Check where
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
 
-instance MonadFail Check where
+instance MonadFail (Check' senv) where
     fail s = error s
 
 removeAnfVars :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Map DataVar (Ignore String, (Maybe AExpr), Ty)
@@ -320,7 +331,7 @@ typeError x = do
     th <- view typeErrorHook
     th x
 
-writeSMTCache :: Check ()
+writeSMTCache :: Check' senv ()
 writeSMTCache = do
     cacheref <- view smtCache
     cache <- liftIO $ readIORef cacheref
@@ -328,7 +339,7 @@ writeSMTCache = do
     let hintsFile = filepath ++ ".smtcache"
     liftIO $ BS.writeFile hintsFile $ encode cache
 
-loadSMTCache :: Check ()
+loadSMTCache :: Check' senv ()
 loadSMTCache = do
     filepath <- view $ envFlags . fFilePath
     let hintsFile = filepath ++ ".smtcache"
@@ -347,7 +358,7 @@ loadSMTCache = do
                   liftIO $ putStrLn $ "Found smtcache file: " ++ hintsFile
                   liftIO $ writeIORef cacheref $ c
 
-timeCheck :: Float -> String -> Check a -> Check a
+timeCheck :: Float -> String -> Check' senv a -> Check' senv a
 timeCheck threshold s k = do
     t <- liftIO $ getCurrentTime
     res <- k
@@ -358,26 +369,26 @@ timeCheck threshold s k = do
 
 
 
-warn :: String -> Check ()
+warn :: String -> Check' senv ()
 warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
 
---instance (Monad m, MonadIO m, MonadReader Env m) => Fresh m where
+--instance (Monad m, MonadIO m, MonadReader (Env senv) m) => Fresh m where
 
-freshVar :: Check String
+freshVar :: Check' senv String
 freshVar = do
     r <- view freshCtr
     i <- liftIO $ readIORef r
     liftIO $ writeIORef r (i + 1)
     return $ ".x" ++ show i
 
-freshIdx :: Check String
+freshIdx :: Check' senv String
 freshIdx = do
     r <- view freshCtr
     i <- liftIO $ readIORef r
     liftIO $ writeIORef r (i + 1)
     return $ ".i" ++ show i
 
-freshLbl :: Check String
+freshLbl :: Check' senv String
 freshLbl = do
     r <- view freshCtr
     i <- liftIO $ readIORef r
@@ -397,28 +408,32 @@ joinLbl l1 l2 =
 addVars :: [(DataVar, (Ignore String, (Maybe AExpr), Ty))] -> Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Map DataVar (Ignore String, (Maybe AExpr), Ty)
 addVars xs g = g ++ xs 
     
-assert :: String -> Bool -> Check ()
+assert :: String -> Bool -> Check' senv ()
 assert m b = do
     if b then return () else typeError m 
 
-laxAssertion :: Check () -> Check ()
+laxAssertion :: Check' senv () -> Check' senv ()
 laxAssertion k = do
     b1 <- view $ envFlags . fLax
     onlyCheck <- view $ envFlags . fOnlyCheck
     cd <- view curDef
     let b2 = case onlyCheck of
-               Just s -> (cd /= Just s) -- Only lax if onlyCheck is Just s, and we are not in method s
+               Just s -> (cd /= Just s) -- Only lax if onlyCheck' senv is Just s, and we are not in method s
                Nothing -> False
     if b1 || b2 then return () else k
 
 -- withVars xs k = add xs to the typing environment, continue as k with extended
 -- envrionment
 
-withVars :: (MonadIO m, MonadReader Env m) => [(DataVar, (Ignore String, (Maybe AExpr), Ty))] -> m a -> m a
+withVars :: (MonadIO m, MonadReader (Env senv) m) => [(DataVar, (Ignore String, (Maybe AExpr), Ty))] -> m a -> m a
 withVars assocs k = do
     local (over tyContext $ addVars assocs) $ withNewMemo $ k
 
-withIndices :: (MonadIO m, MonadReader Env m) => [(IdxVar, (Ignore String, IdxType))] -> m a -> m a
+pushPathCondition :: Prop -> Check' senv a -> Check' senv a
+pushPathCondition p k =
+    local (over pathCondition $ (p:)) $ withNewMemo $ k
+
+withIndices :: (MonadIO m, MonadReader (Env senv) m) => [(IdxVar, (Ignore String, IdxType))] -> m a -> m a
 withIndices assocs k = do
     local (over inScopeIndices $ \a -> assocs ++ a) $ withNewMemo $ k
 
@@ -436,38 +451,45 @@ unsafeLookup x = lens gt st
                  Nothing -> error $ "INTERNAL ERROR: Unknown key: " ++ show x
         st m b = insert x b m
 
-curMod :: Lens' Env ModBody
+curMod :: Lens' (Env senv) ModBody
 curMod = openModules . unsafeHead . _2
 
-curMemo :: Lens' Env MemoEntry
+curMemo :: Lens' (Env senv) (MemoEntry senv)
 curMemo = memoStack . unsafeHead
 
-mkMemoEntry :: IO MemoEntry
+mkMemoEntry :: IO (MemoEntry senv)
 mkMemoEntry = do 
     r <- newIORef M.empty
     r2 <- newIORef M.empty
-    return $ MemoEntry r r2
+    r3 <- newIORef M.empty
+    r4 <- newIORef M.empty
+    r5 <- newIORef M.empty
+    r6 <- newIORef M.empty
+    r7 <- newIORef M.empty
+    r8 <- newIORef M.empty
+    r9 <- newIORef Nothing
+    return $ MemoEntry r r2 r3 r4 r5 r6 r7 r8 r9
 
-withNewMemo :: (MonadIO m, MonadReader Env m) => m a -> m a
+withNewMemo :: (MonadIO m, MonadReader (Env senv) m) => m a -> m a
 withNewMemo k = do
     memos <- view memoStack
     memo' <- liftIO $ mkMemoEntry 
     local (over memoStack (memo':)) k
 
-curModName :: Check ResolvedPath
+curModName :: Check' senv ResolvedPath
 curModName = do
     (k, _) <- head <$> view openModules
     case k of
       Nothing -> return PTop
       Just pv -> return $ PPathVar OpenPathVar pv
 
-withSpan :: (Ignore Position) -> Check a -> Check a
+withSpan :: (Ignore Position) -> Check' senv a -> Check' senv a
 withSpan x k = do
         res <- local (set curSpan (unignore x)) k
         return res
 
 
-inferIdx :: Idx -> Check IdxType
+inferIdx :: Idx -> Check' senv IdxType
 inferIdx (IVar pos iname i) = do
     let go k = 
             if unignore pos == def then k else withSpan pos k
@@ -482,12 +504,12 @@ inferIdx (IVar pos iname i) = do
                 _ -> return t
           Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) 
 
-checkIdx :: Idx -> Check ()
+checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
     _ <- inferIdx i
     return ()
 
-checkIdxSession :: Idx -> Check ()
+checkIdxSession :: Idx -> Check' senv ()
 checkIdxSession i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
@@ -495,7 +517,7 @@ checkIdxSession i@(IVar pos _ _) = do
        TcGhost _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or Session ID") $ it /= IdxPId
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
-checkIdxPId :: Idx -> Check ()
+checkIdxPId :: Idx -> Check' senv ()
 checkIdxPId i@(IVar pos _ _) = do
     it <- inferIdx i
     tc <- view tcScope
@@ -503,7 +525,7 @@ checkIdxPId i@(IVar pos _ _) = do
        TcGhost _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Ghost or PId") $ it /= IdxSession
        TcDef _ -> assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty "expected PId") $ it == IdxPId
 
-openModule :: ResolvedPath -> Check ModBody
+openModule :: ResolvedPath -> Check' senv ModBody
 openModule rp = do
     mb <- go rp
     tc <- view tcScope
@@ -512,7 +534,7 @@ openModule rp = do
       _ -> return ()
     return mb
     where
-        go :: ResolvedPath -> Check ModBody
+        go :: ResolvedPath -> Check' senv ModBody
         go PTop = view $ openModules . unsafeLookup Nothing
         go (PPathVar OpenPathVar v) = view $ openModules . unsafeLookup (Just v)
         go p0@(PPathVar (ClosedPathVar _) v) = do
@@ -540,11 +562,11 @@ stripRefinements t =
       TRefined t _ _ -> stripRefinements t
       _ -> t
 
-getModDef :: ResolvedPath -> Check ModDef
+getModDef :: ResolvedPath -> Check' senv ModDef
 getModDef rp = do
     go rp
     where
-        go :: ResolvedPath -> Check ModDef
+        go :: ResolvedPath -> Check' senv ModDef
         go PTop = typeError $ "Got top for getModDef"
         go (PPathVar OpenPathVar v) = typeError $ "Got opened module var for getModDef"
         go (PPathVar (ClosedPathVar _) v) = do
@@ -558,7 +580,7 @@ getModDef rp = do
               Just b -> return b
               Nothing -> typeError $ "Unknown module or functor: " ++ show rp
 
-checkCounterIsLocal :: Path -> ([Idx], [Idx]) -> Check ()
+checkCounterIsLocal :: Path -> ([Idx], [Idx]) -> Check' senv ()
 checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
     md <- openModule p
     case lookup s (md^.ctrEnv) of
@@ -578,16 +600,16 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-inKDFBody :: KDFBody -> AExpr -> AExpr -> Check Prop
-inKDFBody kdfBody salt info = do
-    (((sx, x), (sy, y)), cases') <- unbind kdfBody
-    let cases = subst x salt $ subst y info $ cases'
+inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
+inKDFBody kdfBody salt info self = do
+    (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
+    let cases = subst x salt $ subst y info $ subst z self $ cases'
     bs <- forM cases $ \bcase -> do
         (xs, (p, _)) <- unbind bcase
         return $ mkExistsIdx xs p
     return $ foldr pOr pFalse bs
 
-inODHProp :: AExpr -> AExpr -> AExpr -> Check Prop
+inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
 inODHProp salt ikm info = do
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
@@ -597,11 +619,11 @@ inODHProp salt ikm info = do
         let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
                                                           (mkSpanned $ AEGet ne2)
                                                )
-        pd2 <- inKDFBody kdfBody salt info
+        pd2 <- inKDFBody kdfBody salt info ikm
         return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
     return $ foldr pOr pFalse ps
 
---getROStrictness :: NameExp -> Check ROStrictness 
+--getROStrictness :: NameExp -> Check' senv ROStrictness 
 --getROStrictness ne = 
 --    case ne^.val of
 --      NameConst _ pth@(PRes (PDot p n)) _ -> do
@@ -616,7 +638,7 @@ inODHProp salt ikm info = do
 --      _ -> typeError $ "Not an RO name: " ++ show (owlpretty ne)
 
 
---getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check AExpr
+--getROPreimage :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv AExpr
 --getROPreimage pth@(PRes (PDot p n)) (is, ps) as = do
 --    md <- openModule p
 --    case lookup n (md^.nameDefs) of
@@ -632,7 +654,7 @@ inODHProp salt ikm info = do
 --                return $ substs (zip xs as) a
 --            _ -> typeError $ "Not an RO name: " ++ n
 --
---getROPrereq :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check Prop
+--getROPrereq :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv Prop
 --getROPrereq pth@(PRes (PDot p n)) (is, ps) as = do
 --    md <- openModule p
 --    case lookup n (md^.nameDefs) of
@@ -649,31 +671,34 @@ inODHProp salt ikm info = do
 --            _ -> typeError $ "Not an RO name: " ++ n
 
 -- Resolves all App nodes
-normalizeNameType :: NameType -> Check NameType
+normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
       NT_KDF pos bcases -> do
-          (p, cases) <- unbind bcases
-          cases' <- forM cases $ \bcase -> do 
-              (is, (p, nts)) <- unbind bcase
-              withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-                  nts' <- forM nts $ \(str, nt) -> do
-                      nt' <- normalizeNameType nt
-                      return (str, nt')
-                  return $ bind is (p, nts')
-          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind p cases')
+          (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
+          cases' <- withVars 
+            [(x, (ignore sx, Nothing, tGhost)), 
+             (y, (ignore sy, Nothing, tGhost)), 
+             (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
+                (is, (p, nts)) <- unbind bcase
+                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    nts' <- forM nts $ \(str, nt) -> do
+                        nt' <- normalizeNameType nt
+                        return (str, nt')
+                    return $ bind is (p, nts')
+          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
       _ -> return nt
 
-pushRoutine :: MonadReader Env m => String -> m a -> m a
+pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
 pushRoutine s k = do
     b <- view $ envFlags . fLogTypecheck
     if b then 
         local (over tcRoutineStack $ (s:)) k
     else k
 
-getNameInfo :: NameExp -> Check (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
-getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
+getNameInfo :: NameExp -> Check' senv (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
+getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
     res <- case ne^.val of 
              NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
                  md <- openModule p
@@ -698,10 +723,11 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName a b c nks j nt -> do
+             KDFName a b c nks j nt ib -> do
                  _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
-                 nth <- view checkNameTypeHook
-                 nth nt
+                 when (not $ unignore ib) $ do
+                     nth <- view checkNameTypeHook
+                     nth nt
                  assert ("Name kind row index out of scope") $ j < length nks
                  return $ Just (nt, Nothing)
     case res of
@@ -710,8 +736,10 @@ getNameInfo ne = pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
 getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
     mapM_ inferIdx is_case
@@ -722,9 +750,10 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           ((ixs, pxs), bdy) <- unbind bd
           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          (((sx, x), (sy, y)), cases) <- unbind kdfBody
+          let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
+          (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ cases !! i
+          let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
           (xs_case, pcases')  <- unbind bpcases
           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
           let (p, cases') = substs (zip xs_case is_case) pcases'
@@ -732,20 +761,20 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           return (ne1, ne2, p, cases')
 
 
-getNameKind :: NameType -> Check NameKind
+getNameKind :: NameType -> Check' senv NameKind
 getNameKind nt = 
     case nt^.val of
       NT_DH ->    return $ NK_DH
       NT_Sig _ -> return $ NK_Sig
-      NT_Nonce -> return $ NK_Nonce
+      NT_Nonce l -> return $ NK_Nonce l
       NT_Enc _ -> return $ NK_Enc
-      NT_StAEAD _ _ _ -> return $ NK_Enc
+      NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
       NT_KDF _ _ -> return $ NK_KDF
     
-resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> Check NameType
+resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) = do
     forM_ is checkIdxSession
     forM_ ps checkIdxPId
@@ -759,14 +788,14 @@ resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) = do
 resolveNameTypeApp pth _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
 
 
-getNameTypeOpt :: NameExp -> Check (Maybe NameType)
+getNameTypeOpt :: NameExp -> Check' senv (Maybe NameType)
 getNameTypeOpt ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
         Nothing -> return Nothing
         Just (nt, _) -> return $ Just nt
 
-getNameType :: NameExp -> Check NameType
+getNameType :: NameExp -> Check' senv NameType
 getNameType ne = do
     ntOpt <- getNameTypeOpt ne
     case ntOpt of
@@ -776,19 +805,26 @@ getNameType ne = do
 
 
 
-pushLogTypecheckScope :: Check ()
+pushLogTypecheckScope :: Check' senv ()
 pushLogTypecheckScope = do
     r <- view $ typeCheckLogDepth
     n <- liftIO $ readIORef r
     liftIO $ writeIORef r (n+1)
 
-popLogTypecheckScope :: Check ()
+popLogTypecheckScope :: Check' senv ()
 popLogTypecheckScope = do
     r <- view $ typeCheckLogDepth
     n <- liftIO $ readIORef r
     liftIO $ writeIORef r (n-1)
 
-logTypecheck :: OwlDoc -> Check ()
+withPushLog :: Check' senv a -> Check' senv a
+withPushLog k = do
+    pushLogTypecheckScope
+    r <- k
+    popLogTypecheckScope
+    return r
+
+logTypecheck :: OwlDoc -> Check' senv ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
@@ -803,7 +839,7 @@ logTypecheck s = do
           liftIO $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
       Nothing -> return ()
 
-getTyDef :: Path -> Check TyDef
+getTyDef :: Path -> Check' senv TyDef
 getTyDef (PRes (PDot p s)) = do
     md <- openModule p
     case lookup s (md ^. tyDefs) of
@@ -812,7 +848,7 @@ getTyDef (PRes (PDot p s)) = do
 
 -- AExpr's have unambiguous types, so can be inferred.
 
-getDefSpec :: Path -> Check (Bind ([IdxVar], [IdxVar]) DefSpec)
+getDefSpec :: Path -> Check' senv (Bind ([IdxVar], [IdxVar]) DefSpec)
 getDefSpec (PRes (PDot p s)) = do
     md <- openModule p
     case lookup s (md^.defs) of
@@ -820,7 +856,7 @@ getDefSpec (PRes (PDot p s)) = do
       Just (DefHeader _) -> typeError $ "Def is unspecified: " ++ s
       Just (Def r) -> return r
 
-getUserFunc :: Path -> Check (Maybe UserFunc)
+getUserFunc :: Path -> Check' senv (Maybe UserFunc)
 getUserFunc f@(PRes (PDot p s)) = do
     fs <- view detFuncs
     case (p, lookup s fs) of
@@ -829,7 +865,7 @@ getUserFunc f@(PRes (PDot p s)) = do
           md <- openModule p
           return $ lookup s (md ^. userFuncs) 
 
-getFuncInfo :: Path -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
+getFuncInfo :: Path -> Check' senv (Int, [FuncParam] -> [(AExpr, Ty)] -> Check' senv TyX)
 getFuncInfo f@(PRes (PDot p s)) = do
     fs <- view detFuncs
     case (p, lookup s fs) of
@@ -851,7 +887,7 @@ mkConcats (x:xs) =
 
 
 -- Find the corresponding len const associated to a name expression's name type
-lenConstOfUniformName :: NameExp -> Check AExpr 
+lenConstOfUniformName :: NameExp -> Check' senv AExpr 
 lenConstOfUniformName ne = do
     ntLclsOpt <- getNameInfo ne
     case ntLclsOpt of
@@ -859,15 +895,15 @@ lenConstOfUniformName ne = do
       Just (nt, _) -> go nt
     where
         go nt = case nt^.val of
-                    NT_Nonce -> return $ mkSpanned $ AELenConst "nonce"
+                    NT_Nonce l -> return $ mkSpanned $ AELenConst l
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                    NT_StAEAD _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                    NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps -> resolveNameTypeApp p ps >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
-normalizeAExpr :: AExpr -> Check AExpr
+normalizeAExpr :: AExpr -> Check' senv AExpr
 normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $ 
     case ae^.val of
       AEVar _ _ -> return ae
@@ -879,9 +915,6 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
           c' <- normalizeAExpr c
           return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
       AELenConst _ -> return ae
-      AEPackIdx i a -> do
-          a' <- normalizeAExpr a
-          return $ Spanned (ae^.spanOf) $ AEPackIdx i a'
       AEGetVK ne -> do
           ne' <- normalizeNameExp ne
           return $ Spanned (ae^.spanOf) $ AEGetVK ne'
@@ -903,7 +936,7 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
             Just (FunDef b) -> normalizeAExpr =<< extractFunDef b fs' aes'
             _ -> return $ Spanned (ae^.spanOf) $ AEApp pth fs' aes'
 
-withMemoize :: (Alpha a, OwlPretty a, OwlPretty b) => (Lens' MemoEntry (IORef (M.Map (AlphaOrd a) b))) -> (a -> Check b) -> a -> Check b
+withMemoize :: (Alpha a, OwlPretty a, OwlPretty b) => (Lens' (MemoEntry senv) (IORef (M.Map (AlphaOrd a) b))) -> (a -> Check' senv b) -> a -> Check' senv b
 withMemoize lns k x = do
     memo <- view $ curMemo . lns
     mp <- liftIO $ readIORef memo
@@ -914,26 +947,10 @@ withMemoize lns k x = do
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
           return v
 
-ensureNonGhostLbl l = do
-    case l^.val of
-      LGhost -> typeError $ "Ghost value not allowed here"
-      LJoin l1 l2 -> do
-          ensureNonGhostLbl l1
-          ensureNonGhostLbl l2
-      LRangeIdx il -> do
-          let (i, l) = unsafeUnbind il
-          ensureNonGhostLbl l
-      LRangeVar xl -> do
-          let (x, l) = unsafeUnbind xl
-          ensureNonGhostLbl l
-      _ -> return ()
+lengthConstants :: [String]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
 
-ensureNonGhostTy :: Ty -> Check ()
-ensureNonGhostTy t = do
-    l <- coveringLabel' t
-    ensureNonGhostLbl l
-
-inferAExpr :: AExpr -> Check Ty
+inferAExpr :: AExpr -> Check' senv Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
     case ae^.val of
       AEVar _ x -> do 
@@ -943,25 +960,25 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           Nothing -> do
               local (set inTypeError True) $ typeError $ show $ ErrUnknownVar x
       (AEApp f params args) -> do
-        ts <- mapM inferAExpr args
+        ts <- local (set expectedTy Nothing) $ mapM inferAExpr args
         (ar, k) <- getFuncInfo f
         assert (show $ owlpretty "Wrong arity for " <> owlpretty f) $ length ts == ar
-        mkSpanned <$> k params (zip args ts)
+        insmt <- view inSMT
+        if insmt then mkSpanned <$> k params (zip args ts)
+                else
+                    openArgs (zip args ts) $ \args' -> 
+                        mkSpanned <$> k params args'
       (AEHex s) -> do
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
       (AEKDF a b c nks j) -> do
-          _ <- mapM inferAExpr [a, b, c]
+          _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b, c]
           assert ("name kind index out of bounds") $ j < length nks
           return $ tGhost
       (AELenConst s) -> do
-          assert ("Unknown length constant: " ++ s) $ s `elem` ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+          assert ("Unknown length constant: " ++ s) $ s `elem` lengthConstants 
           return $ tData zeroLbl zeroLbl
-      (AEPackIdx idx@(IVar _ s i) a) -> do
-            _ <- local (set tcScope (TcGhost False)) $ inferIdx idx
-            t <- inferAExpr a
-            return $ mkSpanned $ TExistsIdx (unignore s) $ bind i t 
       (AEGet ne_) -> do
           ne <- normalizeNameExp ne_
           ts <- view tcScope
@@ -981,7 +998,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                 case ts of
                     TcDef curr_locality -> do
                         curr_locality' <- normLocality curr_locality
-                        assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
+                        if null ls' then 
+                                    typeError $ "Cannot call get on ghost name: " ++ show (owlpretty ne)
+                                    else 
+                                    assert (show $ owlpretty "Wrong locality for " <> owlpretty ne <> owlpretty ": Got " <> owlpretty curr_locality' <> owlpretty " but expected any of " <> owlpretty ls') $
                             any (aeq curr_locality') ls'
                         return $ tName ne
                     _ -> return $ tName ne
@@ -1017,7 +1037,7 @@ splitConcats a =
       AEApp f _ xs | f `aeq` topLevelPath "concat" -> concatMap splitConcats xs
       _ -> [a]
 
-resolveANF :: AExpr -> Check AExpr
+resolveANF :: AExpr -> Check' senv AExpr
 resolveANF a = do
     case a^.val of
       AEVar s x -> do 
@@ -1025,7 +1045,7 @@ resolveANF a = do
           case lookup x tC of
             Nothing -> do
                 tC <- view tyContext
-                typeError $ "Unknown var: " ++ show x
+                typeError $ "Unknown var: " ++ show x ++ ", " ++ unignore s
             Just (_, ianf, _) -> 
                 case ianf of 
                   Nothing -> return a
@@ -1040,9 +1060,6 @@ resolveANF a = do
       AEGet _ -> return a
       AEGetEncPK _ -> return a
       AEGetVK _ -> return a
-      AEPackIdx i a2 -> do
-          a2' <- resolveANF a2
-          return $ mkSpanned $ AEPackIdx i a2'
       AELenConst _ -> return a
       AEInt _ -> return a
       AEKDF a b c nks j -> do
@@ -1058,24 +1075,23 @@ isConstant a =
       AEHex _ -> True
       AEInt _ -> True
       AELenConst _ -> True
-      AEPackIdx _ a -> isConstant a
       _ -> False
 
 
-getEnumParams :: [FuncParam] -> Check ([Idx])
+getEnumParams :: [FuncParam] -> Check' senv ([Idx])
 getEnumParams ps = forM ps $ \p -> 
      case p of
        ParamIdx i _ -> return i
        _ -> typeError $ "Wrong param on enum: " ++ show p
 
-getStructParams :: [FuncParam] -> Check [Idx]
+getStructParams :: [FuncParam] -> Check' senv [Idx]
 getStructParams ps =
     forM ps $ \p -> do
         case p of
             ParamIdx i _ -> return i
             _ -> typeError $ "Wrong param on struct: " ++ show p
 
-getFunDefParams :: [FuncParam] -> Check ([Idx], [Idx])
+getFunDefParams :: [FuncParam] -> Check' senv ([Idx], [Idx])
 getFunDefParams [] = return ([], [])
 getFunDefParams (p:ps) =
     case p of
@@ -1097,7 +1113,7 @@ getFunDefParams (p:ps) =
             Just IdxGhost -> typeError $ "Index should be annotated with session or pid here"
       _ -> typeError $ "Function parameter must be an index"
 
-extractFunDef :: Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr -> [FuncParam] -> [AExpr] -> Check AExpr 
+extractFunDef :: Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr -> [FuncParam] -> [AExpr] -> Check' senv AExpr 
 extractFunDef b ps as = do
     (is, ps) <- getFunDefParams ps
     (((ixs, pxs), xs), a) <- unbind b
@@ -1105,19 +1121,19 @@ extractFunDef b ps as = do
     assert ("Wrong arity for fun def") $ length xs == length as
     return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs as) a
 
-extractAAD :: NameExp -> AExpr -> Check Prop
+extractAAD :: NameExp -> AExpr -> Check' senv Prop
 extractAAD ne a = do
     ni <- getNameInfo ne
     case ni of
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ -> do
+            NT_StAEAD _ yp _ _ -> do
                 (y, p) <- unbind yp
                 return $ subst y a p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
 
-extractPredicate :: Path -> [Idx] -> [AExpr] -> Check Prop
+extractPredicate :: Path -> [Idx] -> [AExpr] -> Check' senv Prop
 extractPredicate pth@(PRes (PDot p s)) is as = do  
     md <- openModule p
     case lookup s (md^.predicates) of
@@ -1128,21 +1144,28 @@ extractPredicate pth@(PRes (PDot p s)) is as = do
           assert ("Wrong arity for predicate " ++ show (owlpretty pth)) $ length xs == length as
           return $ substs (zip ixs is) $ substs (zip xs as) p
 
-obtainTyCases :: Ty -> String -> Check (ResolvedPath, [(String, Maybe Ty)])
-obtainTyCases t err = 
-    case t^.val of
+tryObtainTyCases :: Ty -> Check' senv (Maybe (ResolvedPath, [(String, Maybe Ty)]))
+tryObtainTyCases t = 
+    case (stripRefinements t)^.val of
       TConst s@(PRes (PDot pth _)) ps -> do
           td <- getTyDef s
           case td of
             EnumDef b -> do
                 vs <- extractEnum ps (show s) b
-                return (pth, vs)
-            _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
-      TOption t0 -> return (PTop, [("None", Nothing), ("Some", Just t0)])
-      _ -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
+                return $ Just (pth, vs)
+            _ -> return Nothing
+      TOption t0 -> return $ Just (PTop, [("None", Nothing), ("Some", Just t0)])
+      _ -> return Nothing
+
+obtainTyCases :: Ty -> String -> Check' senv (ResolvedPath, [(String, Maybe Ty)])
+obtainTyCases t err = do
+    o <- tryObtainTyCases t
+    case o of
+      Just res -> return res
+      Nothing -> typeError $ "Not an enum: " ++ show (owlpretty t) ++ err
 
 
-extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check ([(String, Maybe Ty)])
+extractEnum :: [FuncParam] -> String -> (Bind [IdxVar] [(String, Maybe Ty)]) -> Check' senv ([(String, Maybe Ty)])
 extractEnum ps s b = do
     idxs <- getEnumParams ps
     (is, bdy') <- unbind b
@@ -1150,7 +1173,7 @@ extractEnum ps s b = do
     let bdy = substs (zip is idxs) bdy'
     return bdy
 
-obtainStructInfoTopDown :: AExpr -> Ty -> Check [(String, Ty)]
+obtainStructInfoTopDown :: AExpr -> Ty -> Check' senv [(String, Ty)]
 obtainStructInfoTopDown a t =
     case t^.val of
       TConst s@(PRes (PDot pth _)) ps -> do 
@@ -1161,7 +1184,7 @@ obtainStructInfoTopDown a t =
       _ -> typeError $ "Not a struct: " ++ show (owlpretty t)
 
 -- Get types of fields from struct expression 
-extractStructTopDown :: [FuncParam] -> Path -> AExpr -> Bind [IdxVar] (DepBind ()) -> Check [(String, Ty)]
+extractStructTopDown :: [FuncParam] -> Path -> AExpr -> Bind [IdxVar] (DepBind ()) -> Check' senv [(String, Ty)]
 extractStructTopDown fps spath@(PRes (PDot pth s)) struct idp = do                                       
     (is, dp) <- unbind idp
     idxs <- getStructParams fps
@@ -1177,7 +1200,7 @@ extractStructTopDown fps spath@(PRes (PDot pth s)) struct idp = do
                 return $ (sx, t2) : res
 
 
-coveringLabelStruct :: [FuncParam] -> Path -> Bind [IdxVar] (DepBind ()) -> Check Label
+coveringLabelStruct :: [FuncParam] -> Path -> Bind [IdxVar] (DepBind ()) -> Check' senv Label
 coveringLabelStruct fps spath idp = do
     (is, dp) <- unbind idp
     idxs <- getStructParams fps
@@ -1193,8 +1216,8 @@ coveringLabelStruct fps spath idp = do
                 return $ joinLbl l1 l2 
 
 
-coveringLabel' :: Ty -> Check Label
-coveringLabel' t = 
+coveringLabel' :: Ty -> Check' senv Label
+coveringLabel' = withMemoize (memoCoveringLabel') $ \t ->  
     case t^.val of
       (TData l _ _) -> return l
       (TDataWithLength l a) -> do
@@ -1211,10 +1234,6 @@ coveringLabel' t =
       (TDH_PK n) -> return $ advLbl
       (TEnc_PK n) -> return $ advLbl
       (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m)
-      (TUnion t1 t2) -> do
-          l1 <- coveringLabel' t1
-          l2 <- coveringLabel' t2
-          return $ joinLbl l1 l2
       (TConst s ps) -> do
           td <- getTyDef  s
           case td of
@@ -1238,7 +1257,7 @@ coveringLabel' t =
           return $ joinLbl advLbl l1
       THexConst a -> return zeroLbl
 
-quantFree :: Prop -> Check Bool
+quantFree :: Prop -> Check' senv Bool
 quantFree p = 
     case p^.val of
       PQuantIdx _ _ _ -> return False
@@ -1274,11 +1293,11 @@ owlprettyTyContextANF e = vsep $ map (\(x, (s, oanf, t)) ->
 owlprettyIndices :: Map IdxVar (Ignore String, IdxType) -> OwlDoc
 owlprettyIndices m = vsep $ map (\(i, (s, it)) -> owlpretty "index" <+> owlpretty (unignore s) <> owlpretty ":" <+> owlpretty it) m
 
-owlprettyContext :: Env -> OwlDoc
+owlprettyContext :: Env senv -> OwlDoc
 owlprettyContext e =
     vsep [owlprettyIndices (e^.inScopeIndices), owlprettyTyContext (e^.tyContext)]
 
---isNameDefRO :: Path -> Check Bool
+--isNameDefRO :: Path -> Check' senv Bool
 --isNameDefRO (PRes (PDot p n)) = do 
 --    md <- openModule p
 --    case lookup n (md^.nameDefs) of
@@ -1288,7 +1307,7 @@ owlprettyContext e =
 --              RODef _ _ -> return True
 --              _ -> return False
 
-normalizeNameExp :: NameExp -> Check NameExp
+normalizeNameExp :: NameExp -> Check' senv NameExp
 normalizeNameExp ne = 
     case ne^.val of
       NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
@@ -1304,15 +1323,16 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName a b c nks j nt -> do
+      KDFName a b c nks j nt ib -> do
           a' <- resolveANF a >>= normalizeAExpr 
           b' <- resolveANF b >>= normalizeAExpr 
           c' <- resolveANF c >>= normalizeAExpr 
-          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt
+          nt' <- normalizeNameType nt
+          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 -- Traversing modules to collect global info
 
-collectEnvInfo :: (ModBody -> Map String a) -> Check (Map ResolvedPath a)
+collectEnvInfo :: (ModBody -> Map String a) -> Check' senv (Map ResolvedPath a)
 collectEnvInfo f = do
     cms <- view openModules
     res <- forM cms $ \(op, mb) -> do
@@ -1331,7 +1351,7 @@ collectEnvInfo f = do
               go f (PPathVar (ClosedPathVar $ ignore $ show x) x) (subst y p mb)
     return $ concat $ res ++ res'
         where
-            go :: (ModBody -> Map String a) -> ResolvedPath -> ModBody -> Check (Map ResolvedPath a)
+            go :: (ModBody -> Map String a) -> ResolvedPath -> ModBody -> Check' senv (Map ResolvedPath a)
             go f p mb = do 
                 let fs = map (\(s, f) -> (PDot p s, f)) (f mb)
                 fs' <- forM (mb^.modules) $ \(s, md) -> do
@@ -1344,7 +1364,7 @@ collectEnvInfo f = do
                 return $ fs ++ concat fs'
 
 -- Just concat the stuff together
-collectEnvAxioms :: (ModBody -> [a]) -> Check [a]
+collectEnvAxioms :: (ModBody -> [a]) -> Check' senv [a]
 collectEnvAxioms f = do
     cms <- view openModules
     res <- forM cms $ \(op, md) -> do
@@ -1375,23 +1395,23 @@ collectEnvAxioms f = do
                 return $ xs ++ concat ys
 
 
-collectNameDefs :: Check (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef))
+collectNameDefs :: Check' senv (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef))
 collectNameDefs = collectEnvInfo (_nameDefs)
 
-collectFlowAxioms :: Check ([(Label, Label)])
+collectFlowAxioms :: Check' senv ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 
-collectAdvCorrConstraints :: Check ([Bind ([IdxVar], [DataVar]) CorrConstraint])
+collectAdvCorrConstraints :: Check' senv ([Bind ([IdxVar], [DataVar]) CorrConstraint])
 collectAdvCorrConstraints = collectEnvAxioms (_advCorrConstraints)
 
-collectUserFuncs :: Check (Map ResolvedPath UserFunc)
+collectUserFuncs :: Check' senv (Map ResolvedPath UserFunc)
 collectUserFuncs = collectEnvInfo (_userFuncs)
 
-collectTyDefs :: Check (Map ResolvedPath TyDef)
+collectTyDefs :: Check' senv (Map ResolvedPath TyDef)
 collectTyDefs = collectEnvInfo _tyDefs
 
 
---collectROPreimages :: Check [(ResolvedPath, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
+--collectROPreimages :: Check' senv [(ResolvedPath, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
 --collectROPreimages = do
 --    xs <- collectNameDefs
 --    ps <- mapM go xs
@@ -1406,7 +1426,7 @@ collectTyDefs = collectEnvInfo _tyDefs
 --                  _ -> return []
 
 
---collectLocalROPreimages :: Check [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
+--collectLocalROPreimages :: Check' senv [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop))]
 --collectLocalROPreimages =  do
 --    xs <- view $ curMod . nameDefs
 --    ps <- mapM go xs
@@ -1426,7 +1446,7 @@ pathPrefix (PDot p _) = p
 pathPrefix _ = error "pathPrefix error" 
 
 -- Normalize and check locality
-normLocality :: Locality -> Check Locality
+normLocality :: Locality -> Check' senv Locality
 normLocality loc@(Locality (PRes (PDot p s)) xs) = do
     md <- openModule p
     case lookup s (md^.localities) of 
@@ -1441,7 +1461,7 @@ normLocality loc@(Locality (PRes (PDot p s)) xs) = do
 normLocality loc = typeError $ "bad case: " ++ show loc
 
 -- Normalize locality path, get arity
-normLocalityPath :: Path -> Check Int
+normLocalityPath :: Path -> Check' senv Int
 normLocalityPath (PRes loc@(PDot p s)) = do
     md <- openModule p
     case lookup s (md^.localities) of 
@@ -1449,7 +1469,7 @@ normLocalityPath (PRes loc@(PDot p s)) = do
       Just (Left ar) -> return ar
       Just (Right p) -> normLocalityPath (PRes p)
 
-normModulePath :: ResolvedPath -> Check ResolvedPath
+normModulePath :: ResolvedPath -> Check' senv ResolvedPath
 normModulePath PTop = return PTop
 normModulePath p@(PPathVar OpenPathVar _) = return p
 normModulePath p = do
@@ -1458,13 +1478,13 @@ normModulePath p = do
       MAlias p' -> normModulePath p'
       _ -> return p
 
-normResolvedPath :: ResolvedPath -> Check ResolvedPath
+normResolvedPath :: ResolvedPath -> Check' senv ResolvedPath
 normResolvedPath (PDot p' s) = do
     p'' <- normModulePath p'
     return $ PDot p'' s
 normResolvedPath p = normModulePath p
 
-normalizePath :: Path -> Check Path
+normalizePath :: Path -> Check' senv Path
 normalizePath (PRes p) = PRes <$> normResolvedPath p
 normalizePath _ = error "normalizePath: unresolved path"
 
@@ -1522,5 +1542,219 @@ instance OwlPretty DefSpec where
         -- abs <> owlpretty "@" <> loc <> owlpretty ":" <+> owlpretty args <> owlpretty "->" <> owlpretty retTy <+> owlpretty "=" <> line <> body'
 
 
+caseProp :: (Prop -> a -> a -> Check' senv a) -> Prop -> (Bool -> Check' senv a) -> Check' senv a
+caseProp merge p' k = do
+    nph <- view normalizePropHook
+    p <- nph p'
+    dph <- view decidePropHook
+    ob <- dph p
+    case ob of
+      Just True -> k True
+      Just False -> k False
+      Nothing -> do 
+        x <- fresh $ s2n "%caseProp"
+        t1 <- withPushLog $ withVars [(x, (ignore $ show x, Nothing, tLemma p))] $ pushPathCondition p $ do
+            logTypecheck $ owlpretty "Case split: " <> owlpretty p
+            k True
+        t2 <- withPushLog $ withVars [(x, (ignore $ show x, Nothing, tLemma $ pNot p))] $ pushPathCondition (pNot p) $ do
+            logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
+            k False
+        merge p t1 t2
 
 
+casePropTy :: Prop -> (Bool -> Check' senv Ty) -> Check' senv Ty
+casePropTy = caseProp $ \p t1 t2 -> do
+    ntyHook <- view normalizeTyHook
+    ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1^.val else TCase p t1 t2
+
+casePropTyList :: Prop -> (Bool -> Check' senv [Ty]) -> Check' senv [Ty]
+casePropTyList = caseProp $ \p t1s t2s -> do
+    assert ("casePropTyList: got unequal length lists") $ length t1s == length t2s
+    ntyHook <- view normalizeTyHook
+    mapM ntyHook $ if t1s `aeq` t2s then t1s else (map (\(t1, t2) -> mkSpanned $ TCase p t1 t2) (zip t1s t2s)) 
+
+casePropTyUnspanned :: Prop -> (Bool -> Check' senv TyX) -> Check' senv TyX
+casePropTyUnspanned = caseProp $ \p t1 t2 -> do
+    ntyHook <- view normalizeTyHook
+    t3 <- ntyHook $ mkSpanned $ if t1 `aeq` t2 then t1 else TCase p (mkSpanned t1) (mkSpanned t2)
+    return $ t3^.val
+
+stripTy :: DataVar -> Ty -> Check' senv Ty
+stripTy x t =
+    case t^.val of
+      TData l1 l2 s -> do
+          l1' <- stripLabel x l1
+          l2' <- stripLabel x l2
+          return $ Spanned (t^.spanOf) $ TData l1' l2' s
+      TDataWithLength l1 ae -> do
+          l' <- stripLabel x l1
+          if x `elem` getAExprDataVars ae then return $ tData l' l' else return $ tDataWithLength l' ae
+      TRefined t1 s yp -> do
+          (y, p) <- unbind yp
+          t' <- stripTy x t1
+          p' <- stripProp x p
+          return $ mkSpanned $ TRefined t' s (bind y p')
+      TOption t -> do
+          t' <- stripTy x t
+          return $ mkSpanned $ TOption t'
+      TCase p t1 t2 -> do
+          withSpan (t^.spanOf) $ 
+              assert ("stripTy failed on TCase: free variable " ++ show x ++ " should not appear in proposition of " ++ show (owlpretty t)) $ 
+                (not $ x `elem` getPropDataVars p)
+          t1' <- stripTy x t1
+          t2' <- stripTy x t2
+          return $ mkSpanned $ TCase p t1' t2'
+      TConst s ps -> do
+          forM_ ps $ \p ->
+              case p of
+                ParamAExpr a ->
+                    if x `elem` getAExprDataVars a then typeError "Hard case for TConst" else return ()
+                ParamLbl l ->
+                    if x `elem` getLabelDataVars l then typeError "Hard case for TConst" else return ()
+                ParamTy t ->
+                    if x `elem` getTyDataVars t then typeError "Hard case for TConst" else return ()
+                _ -> return ()
+          return t
+      TBool l -> do
+          l' <- stripLabel x l
+          return $ mkSpanned $ TBool l'
+      TGhost -> return t 
+      TUnit -> return t
+      TName n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TName n'
+      TVK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TVK n'
+      TDH_PK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TDH_PK n'
+      TEnc_PK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TEnc_PK n'
+      TSS n m -> do
+          n' <- stripNameExp x n
+          m' <- stripNameExp x m
+          return $ mkSpanned $ TSS n' m'
+      TAdmit -> return t
+      TExistsIdx s it -> do
+          (i, t) <- unbind it
+          t' <- stripTy x t
+          return $ mkSpanned $ TExistsIdx s $ bind i t
+      THexConst a -> return t
+
+
+stripNameExp :: DataVar -> NameExp -> Check' senv NameExp
+stripNameExp x e = 
+    case e^.val of
+      NameConst _ _ as -> do
+          as' <- mapM resolveANF as
+          if x `elem` (concat $ map getAExprDataVars as') then
+            typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else
+            return e 
+      KDFName a b c nks j nt ib -> do
+          a' <- resolveANF a
+          b' <- resolveANF b
+          c' <- resolveANF c
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
+             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt ib
+      
+stripLabel :: DataVar -> Label -> Check' senv Label
+stripLabel x l = return l
+
+getAExprDataVars :: AExpr -> [DataVar]
+getAExprDataVars a = toListOf fv a
+
+getPropDataVars :: Prop -> [DataVar]
+getPropDataVars p = toListOf fv p
+
+getLabelDataVars :: Label -> [DataVar]
+getLabelDataVars p = toListOf fv p
+
+getTyDataVars :: Ty -> [DataVar]
+getTyDataVars p = toListOf fv p
+
+getTyIdxVars :: Ty -> [IdxVar]
+getTyIdxVars p = toListOf fv p
+
+
+-- get strongest type that doesn't mention x
+-- t <= stripTy x t
+-- p ==> stripProp x p 
+-- l <= stripLabel x l
+
+-- Find strongest p' such that p ==> p', and x \notin p'.
+-- Always succeeds.
+stripProp :: DataVar -> Prop -> Check' senv Prop
+stripProp x p =
+    case p^.val of
+      PTrue -> return p
+      PFalse -> return p
+      PAnd p1 p2 -> do
+          p1' <- stripProp x p1
+          p2' <- stripProp x p2
+          return $ mkSpanned $ PAnd p1' p2'
+      POr p1 p2 -> do
+          p1' <- stripProp x p1
+          p2' <- stripProp x p2
+          return $ mkSpanned $ POr p1' p2'
+      PNot p' -> do
+          -- If x in p, replace the clause with true
+          if x `elem` getPropDataVars p' then return pTrue else return p
+      PEq a1 a2 ->
+          -- if x in either side, replace clause with true
+          if (x `elem` getAExprDataVars a1) || (x `elem` getAExprDataVars a2) then return pTrue else return p
+      PEqIdx _ _ -> return p
+      PImpl p1 p2 -> do
+          if x `elem` getPropDataVars p1 then return pTrue else do
+              p2' <- stripProp x p2
+              return $ pImpl p1 p2'
+      PFlow l1 l2 -> do
+          if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
+      PQuantIdx q sx ip -> do
+          (i, p') <- unbind ip
+          p'' <- stripProp x p'
+          return $ mkSpanned $ PQuantIdx q sx (bind i p'')
+      PQuantBV q sx xp -> do
+          (y, p) <- unbind xp               
+          p' <- stripProp x p
+          return $ mkSpanned $ PQuantBV q sx (bind y p')
+      PHappened s _ xs -> do
+          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PLetIn a yp -> 
+          if x `elem` (getAExprDataVars a) then return pTrue else do
+            (y, p') <- unbind yp
+            p'' <- stripProp x p'
+            return $ mkSpanned $ PLetIn a (bind y p'')
+      PApp a is xs -> do
+          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
+      PAADOf ne y -> do
+          ne' <- stripNameExp x ne
+          if x `elem` getAExprDataVars y then return pTrue else return p
+
+byCasesProp :: Prop -> (Bool -> Check' senv Bool) -> Check' senv Bool
+byCasesProp = caseProp $ \_ b1 b2 -> return $ b1 && b2
+
+openTy :: Ty -> (Ty -> Check' senv Ty) -> Check' senv Ty
+openTy t k = 
+    case t^.val of
+      TCase p t1 t2 -> casePropTy p (\b -> openTy (if b then t1 else t2) k)
+      TRefined t0 s kref -> openTy t0 $ \t0' -> k $ Spanned (t^.spanOf) $ TRefined t0' s kref
+      _ -> k t
+
+analyzeTyByCases :: Ty -> (Ty -> Check' senv ()) -> Check' senv ()
+analyzeTyByCases t k = 
+    case t^.val of
+      TCase p t1 t2 -> caseProp (\_ _ _ -> return ()) p (\b -> analyzeTyByCases (if b then t1 else t2) k)
+      TRefined t0 _ _ -> analyzeTyByCases t0 k
+      _ -> k t
+
+
+openArgs :: [(AExpr, Ty)] -> ([(AExpr, Ty)] -> Check' senv Ty) -> Check' senv Ty
+openArgs [] k = k []
+openArgs ((a, t) : args) k = 
+    openTy t $ \t' -> 
+        openArgs args $ \args' -> 
+            k ((a, t') : args')

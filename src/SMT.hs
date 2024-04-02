@@ -27,18 +27,34 @@ import LabelChecking
 import TypingBase
 import Pretty
 import SMTBase
+import Data.IORef
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
 
 smtSetup :: Sym ()
 smtSetup = do
-            emitComment $ "SMT SETUP for typing query"
+    p_solverEnv <- view $ curMemo . memoSolverEnv
+    smtenv <- liftIO $ readIORef p_solverEnv
+    case smtenv of
+      Just senv -> put senv
+      Nothing -> do
+            emitComment $ T.pack $ "SMT SETUP for typing query"
             setupSMTOptions
             setupAllFuncs 
             setupIndexEnv
             setupNameEnvRO
             smtLabelSetup 
             setupTyEnv 
+            thePrelude <- do
+                log <- use smtLog
+                prelude <- liftIO $ T.readFile "prelude.smt2"
+                return $ prelude <> T.pack "\n" <> renderSMTLog log
+            smtLog %= (\_ -> [])
+            smtPreludeSetup %= (\_ -> thePrelude)
+            senv <- get
+            liftIO $ writeIORef p_solverEnv $ Just senv
 
 smtTypingQuery s = fromSMT initSolverEnv s smtSetup
 
@@ -92,7 +108,7 @@ setupNameEnvRO = do
                             (ivs)
                             (SApp [SAtom "HasNameKind", sApp (sn : (map fst ivs)), nk])
                             [sApp (sn : (map fst ivs))] --  ++ (map fst xvs))]
-                            ("nameKind_" ++ show sn)
+                            ("nameKind_" ++ (T.unpack $ renderSExp sn))
 
                         let nameExp = mkSpanned $ NameConst (map (\x -> IVar (ignore def) (ignore $ show x) x) is, map (\x -> IVar (ignore def) (ignore $ show x) x) ps) (PRes pth) [] 
 
@@ -100,7 +116,7 @@ setupNameEnvRO = do
                         emitAssertion $ sForall (ivs)
                             lAxs
                             [sApp (sn : (map fst ivs))]
-                            ("nameDefFlows_" ++ show sn)
+                            ("nameDefFlows_" ++ (T.unpack $ renderSExp sn))
             -- Solvability
             --case oi of
             --  Nothing -> return () -- Not RO
@@ -128,7 +144,7 @@ mkCrossDisjointness fdfs = do
                 let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
                                                                              SApp [SAtom "ValueOf", v2]]]
                 let pat = (if length q1 > 0 then [v1] else []) ++ (if length q2 > 0 then [v2] else [])
-                emitAssertion $ sForall (q1 ++ q2) (sNot $ v1_eq_v2) pat $ "disj_" ++ show (sn1) ++ "_" ++ show (sn2) 
+                emitAssertion $ sForall (q1 ++ q2) (sNot $ v1_eq_v2) pat $ "disj_" ++ T.unpack (renderSExp sn1) ++ "_" ++ T.unpack (renderSExp sn2) 
                 --when (oi1 == Just 0 && oi2 == Just 0 && (not $ pth1 `aeq` pth2)) $ do 
                 --    (vpre1, vprereq1) <- withIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) ps1) $ do
                 --        withSMTVars xs1 $ do 
@@ -166,7 +182,7 @@ mkSelfDisjointness fdfs = do
                     emitAssertion $ sForall (q1 ++ q2)
                         (v1_eq_v2 `sImpl` q1_eq_q2)
                         [v1, v2]
-                        ("self_disj_" ++ show (sn))
+                        ("self_disj_" ++ T.unpack (renderSExp sn))
 
 
 
@@ -182,7 +198,7 @@ mkTy s t = do
                      Just x -> Just $ x ++ " : " ++ show (owlpretty t)
                   )
     c <- tyConstraints t x
-    emitComment $ "ty constraint for " ++ show x ++ ": " ++ show (owlpretty t)
+    emitComment $ T.pack "ty constraint for " <> (renderSExp x) <> T.pack ": " <> optext t
     emitAssertion c
     return x
 
@@ -263,7 +279,7 @@ lookupIndex x xs = go 0 xs
                            | otherwise = go (i + 1) ys
 
 builtInSMTFuncs :: [String]
-builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh"]
+builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor"]
 
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()
@@ -299,15 +315,15 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
-kdfPerm va vb vc start segment nt_ = do
-    nt <- liftCheck $ normalizeNameType nt_
-    permctr <- use kdfPermCounter
-    case M.lookup (AlphaOrd nt) permctr of
-      Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
-      Nothing -> do
-          nv <- getFreshCtr
-          kdfPermCounter %= M.insert (AlphaOrd nt) (SAtom $ show nv)
-          return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, (SAtom $ show nv)]
+-- kdfPerm va vb vc start segment nt_ = do
+--     nt <- liftCheck $ normalizeNameType nt_
+--     permctr <- use kdfPermCounter
+--     case M.lookup (AlphaOrd nt) permctr of
+--       Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
+--       Nothing -> do
+--           nv <- getFreshCtr
+--           kdfPermCounter %= M.insert (AlphaOrd nt) (SAtom $ show nv)
+--           return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, (SAtom $ show nv)]
 
 
 
@@ -332,10 +348,10 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             KDFName a b c nks j nt -> do 
+                             KDFName a b c nks j nt _ -> do 
                                  (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
-                                 p <- kdfPerm va vb vc start segment nt
-                                 return $ sAnd2 p $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                                 -- p <- kdfPerm va vb vc start segment nt
+                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do
@@ -358,16 +374,16 @@ smtTy xv t =
           return $ xv `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
       TUnit -> return $ xv `sHasType` (SAtom "Unit")
       TAdmit -> return $ sTrue
-      TUnion t1 t2 -> do
-          vt1 <- smtTy xv t1
-          vt2 <- smtTy xv t2
-          return $ vt1 `sOr` vt2
       TCase p t1 t2 -> do
           vp <- interpretProp p
           vt1 <- smtTy xv t1
           vt2 <- smtTy xv t2
           return $ (sImpl vp vt1) `sAnd2` (sImpl (sNot vp) vt2)
-      TExistsIdx _ _ -> return $ sTrue -- Opaque to SMT
+      TExistsIdx _ bt -> do
+          (i, t0) <- liftCheck $ unbind bt
+          s <- withSMTIndices [(i, IdxGhost)] $ smtTy xv t0
+          let iname = cleanSMTIdent $ show i
+          return $ sExists [(SAtom iname, indexSort)] s [] $ "TExists_" ++ iname
       TConst s@(PRes (PDot pth _)) ps -> do
           td <- liftCheck $ getTyDef  s
           case td of
@@ -448,8 +464,7 @@ subTypeCheck :: Ty -> Ty -> Sym ()
 subTypeCheck t1 t2 = pushRoutine ("subTypeCheck(" ++ show (tupled $ map owlpretty [t1, t2]) ++ ")") $ do
     v <- mkTy Nothing t1
     c <- tyConstraints t2 v
-
-    emitComment $ "Checking subtype " ++ show (owlpretty t1) ++ " <= " ++ show (owlpretty t2)
+    emitComment $ T.pack "Checking subtype " <> optext t1 <> T.pack " <= " <> optext t2
     emitToProve c
 
 sConcats :: [SExp] -> SExp
@@ -460,7 +475,7 @@ sConcats vs =
 symListUniq :: [AExpr] -> Sym ()
 symListUniq es = do
     vs <- mapM interpretAExp es
-    emitComment $ "Proving symListUniq with es = " ++ show (owlpretty es)
+    emitComment $ T.pack "Proving symListUniq with es = " <> optext es 
     emitToProve $ sDistinct vs
     return ()
 
@@ -477,13 +492,13 @@ symCheckEqTopLevel eghosts es = do
         varVals .= M.empty
         v_eghosts <- mapM interpretAExp eghosts
         varVals .= vE
-        emitComment $ "Checking if " ++ show (owlpretty es) ++ " equals ghost val " ++ show (owlpretty eghosts) 
+        emitComment $ T.pack "Checking if " <> optext es <> T.pack " equals ghost val " <> optext eghosts 
         emitToProve $ sAnd $ map (\(x, y) -> sEq x y) $ zip v_es v_eghosts 
 
 symAssert :: Prop -> Sym ()
 symAssert p = pushRoutine ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
     b <- interpretProp p
-    emitComment $ "Proving prop " ++ show (owlpretty p)
+    emitComment $ T.pack $ "Proving prop " ++ show (owlpretty p)
     emitToProve b
 
 disjointProps :: [Prop] -> Sym ()
@@ -503,12 +518,12 @@ symEqNameExp ne1 ne2 = do
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do
     let k1 = do {
-        emitComment $ "Trying to prove prop " ++ show (owlpretty p);
+        emitComment $ T.pack $ "Trying to prove prop " ++ show (owlpretty p);
         b <- interpretProp p;
         emitToProve b 
                 }
     let k2 = do {
-        emitComment $ "Trying to prove prop " ++ show (owlpretty $ pNot p);
+        emitComment $ T.pack $ "Trying to prove prop " ++ show (owlpretty $ pNot p);
         b <- interpretProp $ pNot p;
         emitToProve b 
                 }
@@ -519,13 +534,13 @@ initSolverEnv = initSolverEnv_ symLabel
 checkFlows :: Label -> Label -> Check (Maybe String, Maybe Bool)
 checkFlows l1 l2 = do
     let k1 = do {
-        emitComment $ "Trying to prove " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2);
+        emitComment $ T.pack $ "Trying to prove " ++ show (owlpretty l1) ++ " <= " ++ show (owlpretty l2);
         x <- symLabel l1;
         y <- symLabel l2;
         emitToProve $ SApp [SAtom "Flows", x, y]
                 }
     let k2 = do {
-        emitComment $ "Trying to prove " ++ show (owlpretty l1) ++ " !<= " ++ show (owlpretty l2);
+        emitComment $ T.pack $ "Trying to prove " ++ show (owlpretty l1) ++ " !<= " ++ show (owlpretty l2);
         x <- symLabel l1;
         y <- symLabel l2;
         emitToProve $ sNot $ SApp [SAtom "Flows", x, y]

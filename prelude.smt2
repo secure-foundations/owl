@@ -87,6 +87,7 @@
 )))
 
 
+
 (declare-fun eq (Bits Bits) Bits)
 (declare-fun TRUE () Bits)
 (declare-fun FALSE () Bits)
@@ -170,12 +171,18 @@
     :qid hastype_name
 )))
 
+(declare-const NonceLength Int)
+(assert (>= NonceLength 32))
 
 (declare-sort NameKind)
 (declare-fun NameKindLength (NameKind) Int)
 (declare-const Enckey NameKind)
-(declare-const Nonce NameKind)
-(assert (>= (NameKindLength Nonce) 32))
+(declare-fun Nonce (Int) NameKind)
+(assert (forall ((i Int)) (!
+    (= (NameKindLength (Nonce i)) i)
+    :pattern (Nonce i)
+    :qid nonce_length
+)))
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
@@ -283,12 +290,53 @@
     :qid dhpk_inj
  )))
 
+(declare-fun xor (Bits Bits) Bits) ; concat and truncate to smaller
+(assert (forall ((x Bits) (y Bits)) (!
+    (= TRUE (eq (xor x y) (xor y x)))
+    :pattern (xor x y)
+    :qid xor_comm
+)))
+
+(assert (forall ((x Bits) (y Bits) (z Bits)) (!
+    (=>
+        (and 
+            (= TRUE (eq (xor x y) (xor x z)))
+            (= (length x) (length y))
+            (= (length x) (length z)))
+        (= TRUE (eq y z)))
+    :pattern (eq (xor x y) (xor x z))
+    :qid xor_cancel_l
+)))
+
+(assert (forall ((x Bits) (y Bits) (z Bits)) (!
+    (=>
+        (and 
+            (= TRUE (eq (xor y x) (xor z x)))
+            (= (length x) (length y))
+            (= (length x) (length z)))
+        (= TRUE (eq y z)))
+    :pattern (eq (xor y x) (xor z x))
+    :qid xor_cancel_r
+)))
+
+
+(declare-fun HonestPKEnc (Name Bits) Bool) ; Abstract predcate for if the PK
+; encryption is honest or adversarial
 
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
 (declare-fun KDFName (Bits Bits Bits Int Int) Name)
+
+(assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
+    (=>
+        (and (>= j 0) (>= i 0))
+        (= (length (KDF x y z i j)) (I2B j)
+    ))
+    :pattern ((KDF x y z i j))
+    :qid kdf_length
+)))
 
 ; Abstract permission that the specified KDF hash has a certain name type
 ; (name type given by last argument counter)

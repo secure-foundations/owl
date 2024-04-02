@@ -1,0 +1,226 @@
+locality sender
+locality receiver
+
+name channel_secret : nonce
+
+name skR : DH @ receiver
+name skE : DH @ sender
+name skS : DH @ sender
+
+
+counter send_counter @ sender
+counter recv_counter @ receiver
+
+/*
+secret = Extract(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk))
+key = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "key", key_sched_context), Nk)
+base_nonce = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_sched_context), Nk)
+exporter = same but "exp"
+
+kdf(x, y, z) = Expand(Extract(x, y), z; length)
+
+key_schedule_context is a pure function of "info"; so we will leave this as a
+constant as well
+
+we will need extra machinery for psk to be valid in concat position;
+let's leave it off for now as well
+
+key = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "key", key_schedule_context);
+    Nk
+
+base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_schedule_context);
+    Nk
+)
+*/
+
+func hpke_v1() = 0x48504b452d7631
+func suite_id() = 0x1234 // dummy for now
+func secret_string() = 0x736563726574 // "secret"
+func shared_secret_string() = 0x7368617265645f736563726574 // "shared_secret"
+func key_string() = 0x6b6579 // "key"
+func base_nonce_string() = 0x626173655f6e6f6e6365 // "base_nonce"
+func export_string() = 0x657870 // "exp"
+func info_hash_string() = 0x696e666f5f68617368 // "info_hash"
+func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
+func crh_labeled_extract_0salt(lbl, ikm) = 
+    crh(hpke_v1() ++ suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
+
+func psk_id
+    arity 0
+
+func info
+    arity 0
+
+func mode() = 0x03 // auth_psk
+func key_schedule_context() = 
+    mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
+    crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
+
+func eae_prk() = 0x6561655f70726b
+
+func lbl_ikm(lbl, ikm) = 
+    hpke_v1() ++ suite_id() ++ lbl ++ ikm
+
+func lbl_info(len, lbl, info) = 
+    len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
+
+func base_nonce_kdf_info() = 
+    lbl_info(|enckey|, base_nonce_string(), key_schedule_context())
+
+func key_kdf_info() =                         
+    lbl_info(|enckey|, key_string(), key_schedule_context())
+
+func export_kdf_info() = 
+    lbl_info(|enckey|, export_string(), key_schedule_context())
+
+func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
+
+func AuthEncap_dh() =   
+    dh_combine(dhpk(get(skR)), get(skS))
+    ++
+    dh_combine(dhpk(get(skR)), get(skE))
+
+func AuthEncap_kem_context() =   
+    dhpk(get(skE)) 
+    ++
+    dhpk(get(skR)) 
+    ++
+    dhpk(get(skS)) 
+
+func AuthEncap_shared_secret() = 
+    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh()),
+                       lbl_info(|kdfkey|, shared_secret_string(),
+                       AuthEncap_kem_context()))
+
+
+nametype psk_t = dualkdf {salt info self.
+    info == base_nonce_kdf_info() -> public nonce |counter|,
+    info == key_kdf_info() -> 
+     strict st_aead Data<[channel_secret] /\ adv, |adv|>
+                              aad x. true
+                              nonce send_counter
+                              pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
+                                dh_secret_kdf_ikm(self),
+                                base_nonce_kdf_info())),
+    info == export_kdf_info() -> strict nonce
+
+}
+
+name psk : psk_t @ sender, receiver
+
+corr [skE] /\ [skS] /\ [psk] ==> [channel_secret]
+corr [skR] /\ [psk] ==> [channel_secret]
+corr [psk] ==> [channel_secret]
+
+
+nametype hpke_key_t = 
+    st_aead Data<[channel_secret] /\ adv, |adv|>
+        aad x. true
+        nonce send_counter
+        pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret(), 
+                                                dh_secret_kdf_ikm(get(psk)),
+                                                base_nonce_kdf_info()))
+
+
+nametype shared_secret_t = 
+    kdf {ikm info self. 
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == base_nonce_kdf_info()
+        -> public nonce |counter|,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == key_kdf_info()
+        -> strict st_aead Data<[channel_secret] /\ adv, |adv|>
+                          aad x. true
+                          nonce send_counter
+                          pattern i. xor(i, gkdf<nonce |counter|;0>(self,
+                          dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info())),
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == export_kdf_info()
+        -> strict nonce
+    }
+
+odh ss : skR, skS -> { salt info. 
+    True -> strict shared_secret_t
+} 
+
+odh se : skR, skE -> {salt info.
+    True -> strict shared_secret_t
+}
+
+
+
+
+struct AuthEncapResult {
+    aer_shared_secret : if sec(skR) /\ (sec(skS) \/ sec(skE)) then
+        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
+        lbl_ikm(eae_prk(), AuthEncap_dh()), 
+        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())))
+        else
+            (x:Data<adv> ||kdfkey|| {
+                x == AuthEncap_shared_secret()}),
+    aer_pke : dhpk(skE)
+
+}
+
+def AuthEncap(pkR : dhpk(skR)) @ sender : AuthEncapResult = 
+    let dh = dh_combine(pkR, get(skS)) ++ dh_combine(pkR, get(skE)) in 
+    let kem_context = dhpk(get(skE)) ++ pkR ++ dhpk(get(skS)) in
+    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x,
+    lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(),
+    kem_context)) in
+    let res :   if sec(skR) /\ (sec(skS) \/ sec(skE)) then
+        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
+        lbl_ikm(eae_prk(), AuthEncap_dh()), 
+        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())))
+        else
+            Data<adv> ||kdfkey||
+            = shared_secret in 
+
+    AuthEncapResult(shared_secret, dhpk(get(skE)))
+
+struct ContextS {
+        kssr_ss : (x:Ghost{x == AuthEncap_shared_secret()}),
+        kssr_base : if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
+            then PubName(KDF<nonce |counter|;0;nonce |counter|>(kssr_ss,
+            dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
+            else Data<adv>,
+        kssr_sk :
+        if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
+            then SecName(KDF<enckey;0;hpke_key_t>(kssr_ss,
+            dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
+            else Data<adv>,
+        kssr_export : 
+        if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
+            then SecName(KDF<nonce;0;nonce>(kssr_ss,
+            dh_secret_kdf_ikm(get(psk)), export_kdf_info()))
+            else Data<adv>
+}
+
+def KeyScheduleS(aer : AuthEncapResult) @ sender : ContextS = 
+    parse aer as AuthEncapResult(shared_secret, pkE) in 
+    let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
+    dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
+    let sk = kdf<1;1;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), key_kdf_info()) in 
+    let exp = kdf<2;2;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
+    ContextS(shared_secret, base_nonce, sk, exp)
+
+def Seal(ctxt : ContextS, x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Data<adv> = 
+    parse ctxt as ContextS(_, base, sk, _) in 
+    st_aead_enc<send_counter, pattern i. xor(i, base)>(sk, x, 0x) 
+
+
+
+def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
+    let aer = call AuthEncap(pkR) in
+    let context = call KeyScheduleS(aer) in 
+    let c = call Seal(context, x) in 
+    parse aer as AuthEncapResult(_, pk) in 
+    output (pk ++ c)
+

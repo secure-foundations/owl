@@ -73,8 +73,7 @@ def client_pkinit (certC : Data<adv> ||signature||) @ client
     corr_case seckeyCnew in
     case pkdec(get(seckeyCnew), msg) { 
         | None => ()
-        | Some p' => 
-            union_case p = p' in 
+        | Some p => 
             // p = {certA, verkeyA, [k]_sigkeyA, k}
             parse p as ClientPKResponse(certA, vka, k, ksig) in 
             // certA = signature of verkeyA signed by sigkeyCA

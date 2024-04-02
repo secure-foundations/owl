@@ -117,7 +117,6 @@ data AExprX =
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
-    | AEPackIdx Idx AExpr
     | AELenConst String
     | AEInt Int
     | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
@@ -131,7 +130,8 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName AExpr AExpr AExpr [NameKind] Int NameType
+    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+           -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
 
 
@@ -194,11 +194,11 @@ data PropX =
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr
+    | PHonestPKEnc NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce
+data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
-
 
 type Prop = Spanned PropX
 
@@ -242,9 +242,9 @@ data KDFPos = KDF_SaltPos | KDF_IKMPos
 data NameTypeX =
     NT_DH
     | NT_Sig Ty
-    | NT_Nonce
+    | NT_Nonce String 
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind DataVar Prop) Path 
+    | NT_StAEAD Ty (Bind DataVar Prop) Path (Bind DataVar AExpr) 
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx])
@@ -265,7 +265,6 @@ data TyX =
     | TCase Prop Ty Ty
     | TConst (Path) [FuncParam] -- Application of type definition (eg, struct or enum)
     | TBool Label
-    | TUnion Ty Ty
     | TUnit
     | TName NameExp -- Singleton type
     | TVK NameExp -- Singleton type
@@ -320,7 +319,7 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
-type KDFBody =  Bind ((String, DataVar), (String, DataVar)) 
+type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
         [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
 
 
@@ -405,13 +404,13 @@ data ExprX =
     | ELet Expr (Maybe Ty) (Maybe AExpr) String (Bind DataVar Expr) 
     | ELetGhost AExpr String (Bind DataVar Expr)
     | EBlock Expr Bool -- Boundary for scoping; introduced by { }. The bool is if it is a proof block, or regular
-    | EUnionCase AExpr String (Bind DataVar Expr)
     | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
     | EChooseBV String (Bind DataVar Prop) (Bind DataVar Expr)
     | EChooseIdx String (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
     | EForallBV String (Bind DataVar (Maybe Prop, Expr))
     | EForallIdx String (Bind IdxVar (Maybe Prop, Expr))
+    | EPackIdx Idx Expr
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
@@ -444,8 +443,8 @@ data CryptOp =
       | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
-      | CEncStAEAD Path ([Idx], [Idx])
-      | CDecStAEAD
+      | CEncStAEAD Path ([Idx], [Idx]) (Bind DataVar AExpr)
+      | CDecStAEAD 
       | CPKEnc
       | CPKDec
       | CMac

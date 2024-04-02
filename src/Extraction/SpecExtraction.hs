@@ -272,7 +272,6 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
         return $ parens (owlpretty "cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
-    extractAExpr' (AEPackIdx s a) = extractAExpr a
     extractAExpr' (AEKDF _ _ _ _ _) = throwError $ GhostInExec "AEKDF"
     --extractAExpr' (AEPreimage p _ _) = do
     --    p' <- flattenPath p
@@ -297,10 +296,12 @@ extractCryptOp op owlArgs = do
         -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
         (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
         (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        (CEncStAEAD np _, [k, x, aad]) -> do
+        (CEncStAEAD np _ xpat, [k, x, aad]) -> do
+            error "TODO: fix extraction for pattern"
             n <- flattenPath np
             return $ noSamp "enc_st_aead" [k, x, owlpretty (rustifyName n), aad]
-        (CDecStAEAD, [k, c, aad, n]) -> do return $ noSamp "dec_st_aead" [k, c, n, aad]
+        (CDecStAEAD, [k, c, aad, n]) -> do 
+            return $ noSamp "dec_st_aead" [k, c, n, aad]
         (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
         (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
         (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]

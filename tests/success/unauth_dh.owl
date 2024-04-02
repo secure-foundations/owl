@@ -47,7 +47,9 @@ def server_getkey() @ server : Option (exists j. server_getkey_result<session j>
         corr_case X<@j> in 
         corr_case Y in 
         let y = kdf<;odh L<@j>[0]; enckey; 0>(0x, ss, 0x) in 
-        Some(pack<j>(server_getkey_result<session j>(h, y)))
+        let res = pack<j>(server_getkey_result<session j>(h, y))
+        in
+        Some(res)
     }
     else None()
 
@@ -57,8 +59,7 @@ Unit =
     let u = call server_getkey() in  
     case u {
     | None => ()
-    | Some u_ => 
-        union_case x_ = u_ in 
+    | Some x_ => 
         unpack j, x = x_ in 
         parse x as server_getkey_result<session j>(h, k) in {
             input c in 
