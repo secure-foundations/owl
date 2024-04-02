@@ -47,6 +47,15 @@ data CTy =
 instance Alpha CTy
 instance Subst AExpr CTy
 
+compatTys :: CTy -> CTy -> Bool
+compatTys (CTName n1) (CTName n2) =
+    case (n1 ^. val, n2 ^. val) of
+        (KDFName _ _ _ nks1 i1 _ _, KDFName _ _ _ nks2 i2 _ _) ->
+            (nks1 !! i1) `aeq` (nks2 !! i2)
+        _ -> n1 `aeq` n2
+compatTys (CTDH_PK _) (CTDH_PK _) = True
+compatTys ct1 ct2 = ct1 `aeq` ct2
+
 -- For struct compilation, not general
 concretifyTy :: Fresh m => Ty -> m CTy
 concretifyTy t =
@@ -64,7 +73,8 @@ concretifyTy t =
       case (ct, ct') of
         (cct, CTData) -> return cct
         (CTData, cct') -> return cct'
-        _ -> if ct `aeq` ct' then return ct else error "concretifyTy on TCase failed"
+        _ -> if ct `compatTys` ct' then return ct else 
+            error $ "concretifyTy on TCase failed: " ++ show (owlpretty ct) ++ ", " ++ show (owlpretty ct')
     TConst s _ -> return $ CTConst s
     TBool _ -> return CTBool
     TUnit -> return CTUnit
@@ -120,7 +130,9 @@ concretify e =
             e1' <- concretify e1
             let (x, k) = unsafeUnbind xk
             k' <- concretify k
-            return $ CLet e1' oanf (bind x k')
+            case e1' of
+                CSkip -> return k'
+                _ -> return $ CLet e1' oanf (bind x k')
         EBlock e _ -> do
             c <- concretify e
             return $ CBlock c
@@ -149,7 +161,7 @@ concretify e =
         ERet a -> return $ CRet a
         EDebug _ -> return CSkip 
         EAssert _ -> return CSkip
-        EAssume _ -> error "Concretify on assume"
+        EAssume _ -> return CSkip -- error "Concretify on assume"
         EAdmit -> error "Concretify on admit"
         EForallBV _ _ -> return CSkip
         EForallIdx _ _ -> return CSkip
@@ -184,6 +196,7 @@ concretify e =
         EFalseElim e _ -> concretify e
         ETLookup n a -> return $ CTLookup n a
         ETWrite n a a2 -> return $ CTWrite n a a2
+        ECrypt (CLemma _) _ -> return CSkip -- lemma calls are ghost
         ECrypt op args -> return $ CCrypt op args
         EIncCtr p idxs -> return $ CIncCtr p idxs
         EGetCtr p idxs -> return $ CGetCtr p idxs

@@ -12,7 +12,6 @@ const USE_BORINGSSL: bool = true;
 verus! {
 
 #[derive(Clone, Copy)]
-#[is_variant]
 pub enum Mode {
     Aes128Gcm,
     Aes256Gcm,
@@ -113,7 +112,7 @@ pub fn gen_rand_key_iv(mode: Mode) -> Vec<u8> {
     gen_rand_bytes(key_size(mode) + nonce_size(mode))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Error {
     InvalidInit,
     InvalidAlgorithm,
@@ -193,9 +192,11 @@ pub fn encrypt_combined(
         let key = LessSafeKey::new(
             UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
         );
-        let nonce = RingAeadNonce::assume_unique_for_key(iv.try_into().unwrap());
+        let tmp = iv.try_into().unwrap();
+        let nonce = RingAeadNonce::assume_unique_for_key(tmp);
         let aad_ring = Aad::from(aad);
-        let mut ctxt = msg.to_vec();
+        let mut ctxt = Vec::with_capacity(msg.len() + tag_size(alg)); //msg.to_vec();
+        ctxt.extend_from_slice(msg);
 
         key.seal_in_place_append_tag(nonce, aad_ring, &mut ctxt).unwrap();
         Ok(ctxt)

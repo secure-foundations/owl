@@ -200,13 +200,13 @@ mod tests {
             use crate::wireguard::owl_wg::execlib::*;
             let tt0 = KDF1!(key, input);
             debug_assert_eq!(tt0[..], t0[..]);
-            let ttt0 = owl_extract_expand_to_len(32, key, input);
+            let ttt0 = owl_extract_expand_to_len(32, key, input, &[]);
             debug_assert_eq!(ttt0[..], t0[..]);
 
             let (tt0, tt1) = KDF2!(key, input);
             debug_assert_eq!(tt0[..], t0[..]);
             debug_assert_eq!(tt1[..], t1[..]);
-            let ttt = owl_extract_expand_to_len(64, key, input);
+            let ttt = owl_extract_expand_to_len(64, key, input, &[]);
             debug_assert_eq!(ttt[0..32], t0[..]);
             debug_assert_eq!(ttt[32..], t1[..]);
 
@@ -214,7 +214,7 @@ mod tests {
             debug_assert_eq!(tt0[..], t0[..]);
             debug_assert_eq!(tt1[..], t1[..]);
             debug_assert_eq!(tt2[..], t2[..]);
-            let ttt = owl_extract_expand_to_len(96, key, input);
+            let ttt = owl_extract_expand_to_len(96, key, input, &[]);
             debug_assert_eq!(ttt[0..32], t0[..]);
             debug_assert_eq!(ttt[32..64], t1[..]);
             debug_assert_eq!(ttt[64..], t2[..]);

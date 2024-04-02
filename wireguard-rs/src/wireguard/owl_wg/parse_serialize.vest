@@ -1,5 +1,3 @@
-
-
 owl_msg1 = {
   const owl__msg1_tag: [u8; 4] = [1, 0, 0, 0],
   owl__msg1_sender: [u8; 4],
@@ -27,23 +25,14 @@ owl_transp = {
   owl__transp_packet: Tail,
 }
 
-owl_initiator_msg1_val = {
-  owl__initiator_msg1_c3: [u8; 12],
-  owl__initiator_msg1_h4: Tail,
+owl_transp_keys_init = {
+  owl_tki_msg2_receiver: [u8; 4],
+  owl_tki_msg2_sender: [u8; 4],
+  owl_tki_k_init_send: [u8; 32],
+  owl_tki_k_resp_send: [u8; 32],
 }
 
-owl_transp_keys = {
-  owl__transp_keys_initiator: [u8; 4],
-  owl__transp_keys_responder: [u8; 4],
-  owl__transp_keys_t_init_send: [u8; 32],
-  owl__transp_keys_t_resp_send: [u8; 32],
-}
 
-owl_responder_msg1_val = {
-  owl__responder_msg1_c3: [u8; 12],
-  owl__responder_msg1_h4: [u8; 32],
-  owl__responder_msg1_ephemeral: [u8; 32],
-  owl__responder_msg1_sender_pk: [u8; 32],
-  owl__responder_msg1_sender: [u8; 4],
-}
+
+
 

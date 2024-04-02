@@ -33,7 +33,7 @@ pub const fn tag_size(mode: &Mode) -> usize {
 
 #[inline]
 pub open const spec fn spec_key_size(mode: Mode) -> usize {
-    32
+    64
 }
 
 /// Get the key size of the `Mode` in bytes.
@@ -41,12 +41,12 @@ pub open const spec fn spec_key_size(mode: Mode) -> usize {
 pub const fn key_size(mode: Mode) -> (u:usize)
     ensures u == spec_key_size(mode)
 {
-    32
+    64
 }
 
 #[inline]
 pub fn gen_rand_key(_mode: &Mode) -> Vec<u8> {
-    gen_rand_bytes(32)
+    gen_rand_bytes(64)
 }
 
 #[verifier(external_body)]
@@ -80,22 +80,6 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
     return result;
 }
 
-const SIZE_MAC: usize = 16;
-
-#[verifier(external_body)]
-pub fn mac(key: &[u8], data: &[u8]) -> Vec<u8> {
-    // dbg!(hex::encode(key));
-    // dbg!(hex::encode(data));
-    use blake2::VarBlake2s;
-    use blake2::digest::{Update, VariableOutput};
-    let mut tag = [0u8; SIZE_MAC];
-    let mut mac = VarBlake2s::new_keyed(key, SIZE_MAC);
-    mac.update(data);
-    mac.finalize_variable(|buf| tag.copy_from_slice(buf));
-    // dbg!(hex::encode(tag));
-    tag.into()
-}
-
 #[verifier(external_body)]
 pub fn verify(
     mode: Mode,
@@ -104,8 +88,7 @@ pub fn verify(
     value: &[u8],
     tag_length: Option<usize>,
 ) -> bool {
-    // let mac = hmac(mode, key, data, tag_length);
-    let mac = mac(key, data);
+    let mac = hmac(mode, key, data, tag_length);
     mac == value
 }
 
@@ -115,18 +98,6 @@ pub fn blake2s(input: &[u8]) -> (res: Vec<u8>) {
     let mut hsh = Blake2s::new();
     hsh.update(input);
     hsh.finalize().to_vec()
-}
-
-#[test]
-fn test_owl_blake2s() {
-    let input = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
-    let expected = [
-        0x60, 0xe2, 0x6d, 0xae, 0xf3, 0x27, 0xef, 0xc0, 0x2e, 0xc3, 0x35, 0xe2, 0xa0, 0x25, 0xd2, 0xd0,
-        0x16, 0xeb, 0x42, 0x06, 0xf8, 0x72, 0x77, 0xf5, 0x2d, 0x38, 0xd1, 0x98, 0x8b, 0x78, 0xcd, 0x36,
-    ];
-    dbg!(hex::encode(input));
-    let actual = blake2s(input);
-    assert_eq!(actual, expected);
 }
 
 } // verus!

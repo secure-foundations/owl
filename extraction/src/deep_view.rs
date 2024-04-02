@@ -200,7 +200,7 @@ verus! {
 
     impl<T: DView> DView for [T] {
         type V = Seq<T::V>;
-        spec fn dview(&self) -> Self::V;
+        open spec fn dview(&self) -> Self::V;
     }
 
     #[verifier(external_body)]
@@ -237,4 +237,41 @@ verus! {
         left.swap_with_slice(right)
     }
 
+    impl<T: DView> DView for &[T] {
+        type V = Seq<T::V>;
+        #[verifier::inline]
+        open spec fn dview(&self) -> Self::V {
+            (*self).dview()
+        }
+    }
+
+    #[verifier::external]
+    pub trait SliceAdditionalExecFns<T> {
+        fn set(&mut self, i: usize, value: T);
+        fn length(&self) -> usize;
+    }
+
+    impl<T: DView> SliceAdditionalExecFns<T> for [T] {
+
+        /// Replacement for `self[i] = value;` (which Verus does not support for technical reasons)
+        #[verifier::external_body]
+        fn set(&mut self, i: usize, value: T)
+            requires
+                i < old(self).dview().len(),
+            ensures
+                self.dview() == old(self).dview().update(i as int, value.dview()),
+        {
+            self[i] = value;
+        }
+
+        #[verifier::external_body]
+        fn length(&self) -> (length: usize)
+            ensures
+                length >= 0,
+                length == self.dview().len()
+        {
+            self.len()
+        }
+
+    }
 }

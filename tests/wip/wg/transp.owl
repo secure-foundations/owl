@@ -9,7 +9,8 @@ Initiator<n>
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, resp) in 
         pcase init_clean<i,n,m>[eph] in 
-        st_aead_dec(resp_send, pkt, 0x, ctr)
+        let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
+        p
     }
     otherwise None()
 
@@ -26,7 +27,7 @@ Initiator<n>
     let c = st_aead_enc<N_init_send<i@n>>(init_send, msg, 0x) in 
     let transp_tag = transp_tag_value() in 
     let o = transp(transp_tag, init, transp_counter, c) in 
-    output o
+    output o to endpoint(Responder<m>)
 
 struct resp_transp_recv_result<j,n_pk,n,m> {
     rr_st : transp_keys_resp<session j, pid n_pk, pid n, pid m>,
@@ -47,7 +48,9 @@ def resp_recv<j@n,m>(
         guard eq(from, init) in 
         pcase resp_clean<j,n_pk,n,m>[eph] in 
         pcase n =idx n_pk in 
-        case st_aead_dec(init_send, pkt, 0x, ctr) as Option Data<adv>
+        case st_aead_dec(init_send, pkt, 0x, ctr) // as Option 
+        // (Data<adv /\
+        // [channel_secret_init_send<@n,m>], |adv|>)
         {
             | Some x =>
                 false_elim in 
@@ -62,7 +65,7 @@ def resp_recv<j@n,m>(
                 m>(st', x)) in 
                 Some(ret)
             | None => None()
-            otherwise => None()
+            // otherwise => None()
         }
     }
     otherwise None()
@@ -92,6 +95,6 @@ Responder<m>
     let c = st_aead_enc<N_resp_send<j@m>>(resp_send, msg, 0x) in 
     let transp_tag = transp_tag_value() in 
     let o = transp(transp_tag, resp, transp_counter, c) in 
-    output o;
+    output o to endpoint(Initiator<n>);
     Some(())
     }

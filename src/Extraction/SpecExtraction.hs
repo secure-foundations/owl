@@ -41,8 +41,8 @@ import ExtractionBase
 
 
 
-extractStruct :: String -> [(String, Ty)] -> ExtractionMonad OwlDoc
-extractStruct owlName owlFields = do
+extractStruct :: String -> [(String, Ty)] -> Bool -> ExtractionMonad OwlDoc
+extractStruct owlName owlFields isVest = do
     let name = specName owlName
     let owlFieldsConcrete = map (\(n,t) -> case doConcretifyTy t of CTGhost -> Nothing; t' -> Just (n,t')) owlFields
     let owlFieldsNoGhost = catMaybes owlFieldsConcrete
@@ -58,7 +58,10 @@ extractStruct owlName owlFields = do
         genConstructor owlName fields owlFieldsConcrete = do
             let printConstructor args = owlpretty owlName <> tupled (mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just _ -> Just a) $ zip args owlFieldsConcrete)
             specAdtFuncs %= M.insert owlName printConstructor
-            let args = parens . hsep . punctuate comma . map (\(n,_) -> owlpretty "arg_" <> owlpretty n <> owlpretty ": Seq<u8>") $ fields
+            let specArgTy t = case t of
+                    SpecBool -> owlpretty "bool"
+                    _ -> owlpretty "Seq<u8>"
+            let args = parens . hsep . punctuate comma . map (\(n,t) -> owlpretty "arg_" <> owlpretty n <> owlpretty ":" <> specArgTy t) $ fields
             let body = owlpretty "serialize_" <> owlpretty (specName owlName) <>
                     parens (owlpretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> owlpretty (specName n) <> owlpretty ": arg_" <> owlpretty n) $ fields))
             return $
@@ -80,10 +83,12 @@ extractStruct owlName owlFields = do
                     owlpretty "let" <+> mkNestPattern (map (specName . fst) fields) <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
                     owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . specName . fst) $ fields)) <> line <>
                     owlpretty "} else { None }" 
-            let parser = owlpretty "#[verifier::opaque] pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
-                            owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
-                            parserBody <> line
-                        )
+            let parser = 
+                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <>
+                    owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
+                        owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
+                        (if isVest then parserBody else owlpretty "// can't autogenerate vest parser" <> line <> owlpretty "todo!()") <> line
+                    )
             let fieldLen f = owlpretty "x." <> owlpretty (specName f) <> owlpretty ".len()"
             let fieldLens = map (\(f,_) -> fieldLen f) fields
             let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> fieldLen f) 
@@ -97,15 +102,22 @@ extractStruct owlName owlFields = do
                         owlpretty "Some(seq_truncate(serialized.data, n))" <> line <>
                         owlpretty "} else { None }" <> line
                     ) <> owlpretty "else { None }"
-            let serializer = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
+            let serializer = 
+                    (if isVest then 
+                        owlpretty "#[verifier::opaque]" <> line <>
+                        owlpretty "pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
-                            serializerBody <> line
-                        )
-            let serializerWrapper = owlpretty "#[verifier::opaque] pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
+                            serializerBody <> line)
+                    else owlpretty "")
+            let serializerWrapper = 
+                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <> 
+                    owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
                             owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
-                            owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
-                            owlpretty "val" <> line <>
-                            owlpretty "} else { seq![] }" <> line
+                            (if isVest then 
+                                owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
+                                owlpretty "val" <> line <>
+                                owlpretty "} else { seq![] }" <> line
+                            else owlpretty "// can't autogenerate vest serializer" <> line <> owlpretty "todo!()")
                         )
             let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
                             owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
@@ -123,7 +135,7 @@ extractEnum owlName owlCases = do
                             Just t -> Just <$> (rustifySpecTy . doConcretifyTy) t
                             Nothing -> return Nothing
                         return (n, t')) owlCases
-    let enumDef = owlpretty "#[is_variant]" <> line <> owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
+    let enumDef = owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
                         vsep . punctuate comma . map (\(n, t) -> owlpretty (specName n) <> parens (owlpretty t)) $ cases
                     ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
     parseSerializeDefs <- genParserSerializer name
@@ -253,13 +265,13 @@ extractAExpr ae = extractAExpr' (ae ^. val) where
     extractAExpr' (AEInt i) = return $ owlpretty i
     extractAExpr' (AEGet ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg." <> owlpretty ne') <> owlpretty ".dview()"
+        return $ parens (owlpretty "cfg." <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEGetEncPK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
+        return $ parens (owlpretty "cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEGetVK ne) = do
         ne' <- flattenNameExp ne
-        return $ parens (owlpretty "*cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
+        return $ parens (owlpretty "cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
     extractAExpr' (AEKDF _ _ _ _ _) = throwError $ GhostInExec "AEKDF"
     --extractAExpr' (AEPreimage p _ _) = do
     --    p' <- flattenPath p
@@ -410,7 +422,7 @@ extractExpr (CLetGhost xk) = do
     let (x, k) = unsafeUnbind xk
     x' <- extractVar x
     k' <- extractExpr k
-    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> owlpretty "()" <+> owlpretty "in" <> line <> k'
+    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens (owlpretty "ret" <> parens (owlpretty "spec_unit()")) <+> owlpretty "in" <> line <> k'
 extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
 -- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
 -- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
@@ -424,6 +436,7 @@ specExtractArg (v, t) = do
 
 extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
 extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
+    -- debugPrint . show . owlpretty $ concreteBody
     lname <- flattenPath lpath
     specArgs <- mapM specExtractArg owlArgs
     let argsPrettied = hsep . punctuate comma $
@@ -454,7 +467,7 @@ extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
 
 mkSpecEndpoint :: [String] -> OwlDoc
 mkSpecEndpoint lnames =
-    owlpretty "#[is_variant]" <> line <> owlpretty "#[derive(Copy, Clone)]" <> line <>
+    owlpretty "#[derive(Copy, Clone)]" <> line <>
     owlpretty "pub enum Endpoint" <+> braces (line <>
         (vsep . punctuate comma . map (\s -> owlpretty "Loc_" <> owlpretty s) $ lnames)
     <> line)
