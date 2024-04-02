@@ -440,9 +440,10 @@ extractEnum owlName owlCases' = do
         genAllLensValid owlName rustCases' = do
             let name = rustifyName owlName
             let genCase (f, t) = case t of
-                        Just OwlBuf -> Just $ owlpretty (rustifyName f) <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
-                        Just (ADT _) -> Just $ owlpretty (rustifyName f) <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
-                        _ -> Nothing 
+                        Just OwlBuf -> Just $ owlpretty f <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
+                        Just (ADT _) -> Just $ owlpretty f <> parens (owlpretty "x") <+> owlpretty "=> x.len_valid()"
+                        Just _ -> Just $ owlpretty f <> parens (owlpretty "_") <+> owlpretty "=> true"
+                        Nothing -> Just $ owlpretty f <> parens (owlpretty "") <+> owlpretty "=> true"
             return $ owlpretty "impl" <+> owlpretty name <> owlpretty "<'_>" <+> braces (
                     owlpretty "pub open spec fn len_valid(&self) -> bool" <+> braces (line <>
                         owlpretty "match self" <+> braces (line <>
@@ -576,7 +577,7 @@ extractCryptOp binds op owlArgs = do
             return (VecU8, owlpretty "", genSample <+> encOp)
         (CADec, [k, x]) -> do return (Option $ VecU8, owlpretty "", owlpretty $ printOwlOp "owl_dec" [k, x])
         (CEncStAEAD np _ xpat, [k, x, aad]) -> do             
-            error "TODO: fix extraction for pattern"
+            throwError . ErrSomethingFailed $ "TODO: fix extraction for pattern"
             n <- flattenPath np
             let encOp = owlpretty $ printOwlOp "owl_enc_st_aead" [k, x, (Number, "&mut mut_state." ++ rustifyName n), aad]
             let unwrapped = 
