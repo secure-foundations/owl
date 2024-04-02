@@ -25,6 +25,7 @@ import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
 import AST
 import Rust
+import qualified TypingBase as TB
 
 data FLen = 
     FLConst Int
@@ -38,7 +39,7 @@ data FormatTy =
     | FBuf (Maybe FLen) -- TODO: maybe we want a data type for built-in length consts, instead of Int
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
-    | FEnum String (M.Map String (Maybe FormatTy))  -- name, cases
+    | FEnum String [(String, Maybe FormatTy)]  -- name, cases
     deriving (Show, Eq, Generic, Typeable)
 
 data Typed v t = Typed {
@@ -88,11 +89,12 @@ data CExpr' t =
 
 type CExpr t = Typed (CExpr' t) t
 
+data CDepBind t a = CDPDone a | CDPVar t String (Bind (CDataVar t) (CDepBind t a))
+    deriving (Show, Generic, Typeable)
+
 data CDef t = CDef {
     _defName :: String,
-    _defArgs :: [(CDataVar t, t)],
-    _defRTy :: t,
-    _defBody :: CExpr t
+    _defBody :: CDepBind t (t, CExpr t) -- retT, body
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CDef
@@ -111,10 +113,15 @@ data CEnum t = CEnum {
 
 makeLenses ''CEnum
 
+
 --------------------------------------------------------------------------------
 -- LocallyNameless
 
 -- TODO: check these
+--
+
+instance Alpha FLen
+instance Alpha FormatTy
 
 instance (Alpha v, Alpha t) => Alpha (Typed v t)
 instance (Subst b a, Subst b t) => Subst b (Typed a t)
@@ -122,6 +129,8 @@ instance (Subst b a, Subst b t) => Subst b (Typed a t)
 instance (Alpha t, Typeable t) => Alpha (CAExpr' t)
 instance (Alpha t, Typeable t) => Alpha (CExpr' t)
 
+instance (Typeable t, Alpha a, Alpha t) => Alpha (CDepBind t a)
+instance (Typeable t, Alpha a, Alpha t, Subst b a, Subst b t) => Subst b (CDepBind t a)
 
 --------------------------------------------------------------------------------
 -- Pretty

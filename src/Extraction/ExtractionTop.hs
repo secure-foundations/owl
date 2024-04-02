@@ -40,7 +40,7 @@ extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path)
 
 
 
-extract' :: TB.ModBody -> ExtractionMonad (OwlDoc, OwlDoc, OwlDoc)
+extract' :: TB.ModBody -> ExtractionMonad t (OwlDoc, OwlDoc, OwlDoc)
 extract' modbody = do
     {-
     TODOS:

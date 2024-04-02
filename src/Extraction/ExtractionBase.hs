@@ -28,18 +28,18 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
 import CmdArgs
-import ConcreteAST
 import System.IO
 import qualified TypingBase as TB
 import qualified SMTBase as SMT
+import ConcreteAST
 
-newtype ExtractionMonad a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT Env (ExceptT ExtractionError IO)) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
+newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
 
-runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env t -> ExtractionMonad t a -> IO (Either ExtractionError a)
 runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
 
-liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad a
+liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad t a
 liftCheck c = do
     e <- ask
     o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e
@@ -47,10 +47,11 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
       Right i -> return i
 
-data Env = Env {
+data Env t = Env {
         _flags :: Flags
     ,   _path :: String
     ,   _freshCtr :: Integer
+    ,   _varCtx :: M.Map (CDataVar t) t
 }
 
 
@@ -116,21 +117,21 @@ makeLenses ''Env
 printErr :: ExtractionError -> IO ()
 printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 
-debugPrint :: String -> ExtractionMonad ()
+debugPrint :: String -> ExtractionMonad t ()
 debugPrint = liftIO . putStrLn
 
-debugLog :: String -> ExtractionMonad ()
+debugLog :: String -> ExtractionMonad t ()
 debugLog s = do
     fs <- use flags
     when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
 
-instance Fresh ExtractionMonad where
+instance Fresh (ExtractionMonad t) where
     fresh (Fn s _) = do
         n <- use freshCtr
         freshCtr %= (+) 1
         return $ Fn s n
     fresh nm@(Bn {}) = return nm
 
-initEnv :: Flags -> String -> Env
-initEnv flags path = Env flags path 0
+initEnv :: Flags -> String -> Env t
+initEnv flags path = Env flags path 0 M.empty
 
