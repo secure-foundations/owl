@@ -116,6 +116,11 @@ data CEnum t = CEnum {
 
 makeLenses ''CEnum
 
+data CTyDef t =
+    CStructDef (CStruct t)
+    | CEnumDef (CEnum t)
+    deriving (Show, Generic, Typeable)
+
 
 --------------------------------------------------------------------------------
 -- LocallyNameless
