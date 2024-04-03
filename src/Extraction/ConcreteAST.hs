@@ -24,7 +24,7 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
 import AST
-import Rust
+import Verus
 import qualified TypingBase as TB
 
 data FLen = 

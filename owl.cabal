@@ -19,7 +19,7 @@ executable owl
     -Wunused-top-binds
   main-is:             Main.hs
   default-language:    Haskell2010
-  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, ANFPass, PathResolution, ModuleFlattening, Pretty, Rust, PrettyRust, ExtractionBase, ExtractionTop, Concretify, LowerImmut, GenRust
+  other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, ANFPass, PathResolution, ModuleFlattening, Pretty, Verus, PrettyVerus, ExtractionBase, ExtractionTop, Concretify, LowerImmut, GenVerus
   build-depends:       base >= 4.7 && < 5,
                        parsec,
                        containers,

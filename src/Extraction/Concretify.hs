@@ -26,7 +26,6 @@ import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
 import AST
-import Rust
 import ConcreteAST
 import ExtractionBase
 import qualified TypingBase as TB

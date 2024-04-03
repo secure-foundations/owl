@@ -6,7 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveGeneric #-}
-module GenRust where
+module GenVerus where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
@@ -25,27 +25,27 @@ import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
-import Rust
+import Verus
 import ConcreteAST
 import ExtractionBase
 
-type EM = ExtractionMonad RustTy
+type EM = ExtractionMonad VerusTy
 
 
 
-genRustDef :: CDef RustTy -> EM RustFunc
-genRustDef cdef = do
-    throwError $ ErrSomethingFailed "TODO: genRustDef"
+genVerusDef :: CDef VerusTy -> EM VerusFunc
+genVerusDef cdef = do
+    throwError $ ErrSomethingFailed "TODO: genVerusDef"
 
 
 
-genRustStruct :: CStruct RustTy -> EM RustStructDecl
-genRustStruct cstruct = do
-    throwError $ ErrSomethingFailed "TODO: genRustStruct"
+genVerusStruct :: CStruct VerusTy -> EM VerusStructDecl
+genVerusStruct cstruct = do
+    throwError $ ErrSomethingFailed "TODO: genVerusStruct"
 
 
 
 
-genRustEnum :: CEnum RustTy -> EM RustEnumDecl
-genRustEnum cenum = do
-    throwError $ ErrSomethingFailed "TODO: genRustEnum"
+genVerusEnum :: CEnum VerusTy -> EM VerusEnumDecl
+genVerusEnum cenum = do
+    throwError $ ErrSomethingFailed "TODO: genVerusEnum"

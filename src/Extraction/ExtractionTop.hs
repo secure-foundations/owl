@@ -31,12 +31,12 @@ import AST
 import CmdArgs
 import ConcreteAST
 import ExtractionBase
-import Rust
+import Verus
 import qualified SMTBase
 import qualified TypingBase as TB
 import qualified Concretify
 import qualified LowerImmut
-import qualified GenRust
+import qualified GenVerus
 
 
 type LocalityName = String
@@ -61,8 +61,8 @@ makeLenses ''ExtractionData
 
 type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
 type CFExtractionData = ExtractionData (CDef FormatTy) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (CDef RustTy) (CTyDef RustTy) NameData
-type RustExtractionData = ExtractionData () () () -- TODO
+type CRExtractionData = ExtractionData (CDef VerusTy) (CTyDef VerusTy) NameData
+type VerusExtractionData = ExtractionData () () () -- TODO
 
 extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (OwlDoc, OwlDoc, OwlDoc))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path) $ extract' modbody
@@ -75,8 +75,8 @@ extract' modbody = do
     1.  Split apart the modbody into its components (locality map, shared names, public keys, etc). This
         can reuse the preprocessing code from the bottom of Extraction.hs.old
     2.  concretify, which generates CDef FormatTy, CStruct FormatTy, CEnum FormatTy
-    3.  lower to Rust types, using either `immut` or `opt`, generating CDef RustTy, CStruct RustTy, CEnum RustTy
-    4.  emit Rust: RustAST types
+    3.  lower to Verus types, using either `immut` or `opt`, generating CDef VerusTy, CStruct VerusTy, CEnum VerusTy
+    4.  emit Verus: VerusAST types
     5.  just call owlpretty
     6.  Spec extraction (CDef FormatTy -> owl spec macro DSL (or just OwlDoc))
     7.  harness generation
@@ -84,14 +84,14 @@ extract' modbody = do
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
     specs <- specExtractPass concreteExtrData
-    rustTyExtrData <- do
+    verusTyExtrData <- do
         fs <- use flags
         if fs ^. fExtractBufOpt then 
             throwError $ ErrSomethingFailed "TODO: buffer-optimization for extraction"
         else lowerImmutPass concreteExtrData
-    (rustAst, extractedVest) <- genRustPass rustTyExtrData
-    extractedOwl <- owlprettyPass rustAst
-    (entryPoint, libHarness, callMain) <- mkEntryPoint rustTyExtrData
+    (verusAst, extractedVest) <- genVerusPass verusTyExtrData
+    extractedOwl <- owlprettyPass verusAst
+    (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- owlprettyFile "extraction/preamble.rs"
     lp <- owlprettyFile "extraction/lib_preamble.rs"
     -- userFuncs <- printCompiledUserFuncs
@@ -134,12 +134,12 @@ lowerImmutPass cfExtrData = do
     throwError $ ErrSomethingFailed "TODO lowerImmutPass"
 
 -- OwlDoc is the vest file
-genRustPass :: CRExtractionData -> ExtractionMonad t (RustExtractionData, OwlDoc)
-genRustPass crExtrData = do
-    throwError $ ErrSomethingFailed "TODO genRustPass"
+genVerusPass :: CRExtractionData -> ExtractionMonad t (VerusExtractionData, OwlDoc)
+genVerusPass crExtrData = do
+    throwError $ ErrSomethingFailed "TODO genVerusPass"
 
-owlprettyPass :: RustExtractionData -> ExtractionMonad t OwlDoc
-owlprettyPass rustExtrData = do
+owlprettyPass :: VerusExtractionData -> ExtractionMonad t OwlDoc
+owlprettyPass verusExtrData = do
     throwError $ ErrSomethingFailed "TODO owlprettyPass"
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t OwlDoc
@@ -147,7 +147,7 @@ specExtractPass cfExtrData = do
     throwError $ ErrSomethingFailed "TODO specExtractPass"
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (OwlDoc, OwlDoc, OwlDoc)
-mkEntryPoint rustExtrData = do
+mkEntryPoint verusExtrData = do
     fs <- use flags
     if fs ^. fExtractHarness then do
         throwError $ ErrSomethingFailed "TODO harness generation in mkEntryPoint"
