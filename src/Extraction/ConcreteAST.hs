@@ -60,7 +60,7 @@ data CAExpr' t =
     -- TODO should the type be the variable's type, or the desired type for the func call?
     | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
     | CAGet String
-    | CAInt Int
+    | CAInt (FLen)
     | CAHexConst String
     deriving (Show, Generic, Typeable)
 

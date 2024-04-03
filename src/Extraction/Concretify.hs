@@ -63,14 +63,41 @@ concretifyTy t =
       TExistsIdx _ it -> do
           (i, t) <- unbind it
           concretifyTy t -- TODO keep track of indices?
-      THexConst s -> error "unimp: maybe compute length for buffer?"
+      THexConst s -> return $ hexConstType s
+
+hexConstType :: String -> FormatTy
+hexConstType s = error "unimp"
 
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 = error "unimp"
 
+formatTyOfNameExp :: NameExp -> EM FormatTy
+formatTyOfNameExp ne = error "unimp"
+
+concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
+concretifyNameExpLoc n = error "unimp"
+
+concretifyPath :: Path -> EM String
+concretifyPath p = error "unimp"
+
+concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
+concreteTyOfApp p ps ts = error "unimp"
+
 concretifyAExpr :: AExpr -> EM (CAExpr FormatTy)
 concretifyAExpr a = 
     case a^.val of
+      AEGet n -> do
+          t <- formatTyOfNameExp n
+          s <- concretifyNameExpLoc n
+          return $ Typed t $ CAGet s
+      AELenConst s -> return $ Typed FInt $ CAInt $ FLNamed s
+      AEInt i ->  return $ Typed FInt $ CAInt $ FLConst i
+      AEHex s -> return $ Typed (hexConstType s) $ CAHexConst s
+      AEApp p ps aes -> do
+          vs <- mapM concretifyAExpr aes
+          s <- concretifyPath p
+          t <- concreteTyOfApp p ps (map _tty vs)
+          return $ Typed t $ CAApp s vs
       AEVar s x -> do
           ot <- lookupVar $ castName x
           case ot of
