@@ -114,6 +114,11 @@ instance OwlPretty ExtractionError where
 
 makeLenses ''Env
 
+lookupVar :: CDataVar t -> ExtractionMonad t (Maybe t)
+lookupVar x = do
+    s <- use varCtx
+    return $ M.lookup x s
+
 printErr :: ExtractionError -> IO ()
 printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 

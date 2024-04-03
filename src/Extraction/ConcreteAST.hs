@@ -44,8 +44,8 @@ data FormatTy =
     deriving (Show, Eq, Generic, Typeable)
 
 data Typed v t = Typed {
-    _tvar :: v,
-    _tty :: t
+    _tty :: t,
+    _tval :: v
 } deriving (Generic, Typeable)
 
 instance (Show v, Show t) => Show (Typed v t) where
