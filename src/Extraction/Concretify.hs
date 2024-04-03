@@ -83,6 +83,9 @@ concretifyPath p = error "unimp"
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
 concreteTyOfApp p ps ts = error "unimp"
 
+ghostUnit :: CAExpr FormatTy
+ghostUnit = error "unimp"
+
 concretifyAExpr :: AExpr -> EM (CAExpr FormatTy)
 concretifyAExpr a = 
     case a^.val of
@@ -93,6 +96,9 @@ concretifyAExpr a =
       AELenConst s -> return $ Typed FInt $ CAInt $ FLNamed s
       AEInt i ->  return $ Typed FInt $ CAInt $ FLConst i
       AEHex s -> return $ Typed (hexConstType s) $ CAHexConst s
+      AEKDF _ _ _ _ _ -> return ghostUnit
+      AEGetEncPK _ -> error "unimp"
+      AEGetVK _ -> error "unimp"
       AEApp p ps aes -> do
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
@@ -103,7 +109,6 @@ concretifyAExpr a =
           case ot of
             Nothing -> error "Unknown var"
             Just ct -> return $ Typed ct $ CAVar s $ castName x
-      _ -> error "unimp"
 
 
 concretifyExpr :: Expr -> EM (CExpr FormatTy)
