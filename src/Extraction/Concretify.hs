@@ -55,10 +55,10 @@ concretifyTy t =
       TConst ps _ -> error "unimp: need to look up"
       TBool _ -> return $ FBool
       TUnit -> return $ FUnit
-      TName ne -> error "unimp"
+      TName ne -> formatTyOfNameExp ne
       TVK ne -> error "unimp"
       TEnc_PK ne -> error "unimp"
-      TSS ne1 ne2 -> error "unimp"
+      TSS ne1 ne2 -> return $ FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here?
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
           (i, t) <- unbind it
@@ -72,13 +72,32 @@ unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 = error "unimp"
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
-formatTyOfNameExp ne = error "unimp"
+formatTyOfNameExp ne = do
+    nt <- liftCheck $ TB.getNameType ne 
+    nk <- liftCheck $ TB.getNameKind nt
+    return $ FBuf $ Just $ FLNamed $ 
+        case nk of
+          NK_KDF -> "kdfkey"
+          NK_DH -> "exponent"
+          NK_Enc -> "enckey"
+          NK_PKE -> "pkekey"
+          NK_Sig -> "sigkey"
+          NK_MAC -> "mackey"
+          NK_Nonce s -> s
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
 concretifyNameExpLoc n = error "unimp"
 
 concretifyPath :: Path -> EM String
-concretifyPath p = error "unimp"
+concretifyPath (PRes rp) = do
+    rp' <- liftCheck $ TB.normResolvedPath rp
+    return $ go rp'
+        where
+            go PTop = ""
+            go (PDot PTop y) = y
+            go (PDot x y) = go x ++ "_" ++ y
+            go _ = error "Unhandled case in concretifyPath"
+concretifyPath _ = error "Unhandled case in concretifyPath"
 
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
 concreteTyOfApp p ps ts = error "unimp"
@@ -88,8 +107,8 @@ ghostUnit :: CAExpr FormatTy
 ghostUnit = error "unimp"
 
 -- none()
-noneConcrete :: CAExpr FormatTy
-noneConcrete = error "unimp"
+noneConcrete :: FormatTy -> CAExpr FormatTy
+noneConcrete rett = Typed rett $ CAApp "None" [] 
 
 concretifyAExpr :: AExpr -> EM (CAExpr FormatTy)
 concretifyAExpr a = 
@@ -171,7 +190,7 @@ concretifyExpr e =
       EGuard a e -> do
           ca <- concretifyAExpr a 
           ce <- concretifyExpr e
-          return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet noneConcrete)
+          return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
       EGetCtr p _ -> do
           s <- concretifyPath p
           return $ Typed FInt $ CGetCtr s
@@ -207,7 +226,11 @@ concretifyExpr e =
           return $ Typed FUnit $ CTWrite s c1 c2
 
 typeOfTable :: Path -> EM FormatTy
-typeOfTable p = error "unimp"
+typeOfTable (PRes (PDot p n)) = do
+    md <- liftCheck $ TB.openModule p
+    case lookup n (TB._tableEnv md) of
+      Nothing -> error "table not found"
+      Just (t, _) -> concretifyTy t
 
 returnTyOfCall :: Path -> EM FormatTy
 returnTyOfCall p = error "unimp"
@@ -226,6 +249,7 @@ withVars xs k = do
 castName :: Name a -> Name b
 castName (Fn x y) = Fn x y
 castName (Bn x y) = Bn x y
+
 
 
 withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(CDataVar FormatTy, FormatTy)] -> a -> EM (Maybe b)) -> EM (Maybe (CDepBind FormatTy b))
