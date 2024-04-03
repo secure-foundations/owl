@@ -52,7 +52,30 @@ concretifyTy t =
           ct1 <- concretifyTy t1
           ct2 <- concretifyTy t2
           unifyFormatTy ct1 ct2
-      TConst ps _ -> error "unimp: need to look up"
+      TConst pth@(PRes (PDot p s)) _ -> do
+          pthName <- concretifyPath pth
+          md <- liftCheck $ TB.openModule p
+          case lookup s (TB._tyDefs md) of
+            Nothing -> error "Unknown type constant"
+            Just (TB.TyAbstract) -> error "Concretize on abstract def"
+            Just (TB.TyAbbrev t) -> concretifyTy t
+            Just (TB.EnumDef bnd) -> do
+                (_, ts) <- unbind bnd
+                cs <- forM ts $ \(s, ot) -> do
+                    cot <- traverse concretifyTy ot
+                    return (s, cot)
+                return $ FEnum pthName cs
+            Just (TB.StructDef bnd) -> do
+                (_, dp') <- unbind bnd
+                let go dp = case dp of
+                              DPDone _ -> return []
+                              DPVar t s xres -> do
+                                  c <- concretifyTy t
+                                  (_, k) <- unbind xres
+                                  ck <- go k
+                                  return $ (s, c) : ck
+                s <- go dp'
+                return $ FStruct pthName s
       TBool _ -> return $ FBool
       TUnit -> return $ FUnit
       TName ne -> formatTyOfNameExp ne
@@ -66,7 +89,7 @@ concretifyTy t =
       THexConst s -> return $ hexConstType s
 
 hexConstType :: String -> FormatTy
-hexConstType s = error "unimp"
+hexConstType s = FBuf $ Just $ FLConst $ length s `div` 2
 
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 = error "unimp"
@@ -104,7 +127,7 @@ concreteTyOfApp p ps ts = error "unimp"
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
-ghostUnit = error "unimp"
+ghostUnit = Typed FGhost $ CAApp "unit" []
 
 -- none()
 noneConcrete :: FormatTy -> CAExpr FormatTy
@@ -207,9 +230,9 @@ concretifyExpr e =
       ECall p _ aes -> do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
-          t <- returnTyOfCall p
+          t <- returnTyOfCall p cs
           return $ Typed t $ CCall s cs
-      EParse a t otherwiseCase xsk -> error "unimp"
+      EParse a t_target otherwiseCase xsk -> error "unimp"
       ECase e otherwiseCase xsk -> error "unimp"
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
@@ -232,8 +255,17 @@ typeOfTable (PRes (PDot p n)) = do
       Nothing -> error "table not found"
       Just (t, _) -> concretifyTy t
 
-returnTyOfCall :: Path -> EM FormatTy
-returnTyOfCall p = error "unimp"
+returnTyOfCall :: Path -> [CAExpr FormatTy] -> EM FormatTy
+returnTyOfCall p cs = do
+    bfdef <- liftCheck $ TB.getDefSpec p
+    ((bi1, bi2), dspec) <- unbind bfdef
+    let (TB.DefSpec _ _ db) = dspec
+    go db
+        where
+            go (DPDone (_, t, _)) = concretifyTy t
+            go (DPVar _ _ xk) = do
+                (_, k) <- unbind xk
+                go k
       
 concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
 concretifyCryptOp cop cs = error "unimp"
