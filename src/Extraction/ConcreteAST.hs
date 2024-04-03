@@ -60,6 +60,8 @@ data CAExpr' t =
     -- TODO should the type be the variable's type, or the desired type for the func call?
     | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
     | CAGet String
+    | CAGetEncPK String
+    | CAGetVK String
     | CAInt (FLen)
     | CAHexConst String
     deriving (Show, Generic, Typeable)
@@ -70,7 +72,7 @@ data CExpr' t =
     CSkip
     | CRet (CAExpr t)
     | CInput (Bind (CDataVar t, EndpointVar) (CExpr t))
-    | COutput AExpr (Maybe Endpoint)
+    | COutput (CAExpr t) (Maybe Endpoint)
     | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)

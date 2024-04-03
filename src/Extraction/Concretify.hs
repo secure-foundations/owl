@@ -83,8 +83,13 @@ concretifyPath p = error "unimp"
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
 concreteTyOfApp p ps ts = error "unimp"
 
+-- () in ghost
 ghostUnit :: CAExpr FormatTy
 ghostUnit = error "unimp"
+
+-- none()
+noneConcrete :: CAExpr FormatTy
+noneConcrete = error "unimp"
 
 concretifyAExpr :: AExpr -> EM (CAExpr FormatTy)
 concretifyAExpr a = 
@@ -97,8 +102,14 @@ concretifyAExpr a =
       AEInt i ->  return $ Typed FInt $ CAInt $ FLConst i
       AEHex s -> return $ Typed (hexConstType s) $ CAHexConst s
       AEKDF _ _ _ _ _ -> return ghostUnit
-      AEGetEncPK _ -> error "unimp"
-      AEGetVK _ -> error "unimp"
+      AEGetEncPK n -> do
+          let encPKFormatTy = error "unimp" 
+          s <- concretifyNameExpLoc n
+          return $ Typed encPKFormatTy $ CAGetEncPK s
+      AEGetVK n -> do
+          let vkFormatTy = error "unimp" 
+          s <- concretifyNameExpLoc n
+          return $ Typed vkFormatTy $ CAGetVK s
       AEApp p ps aes -> do
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
@@ -114,9 +125,95 @@ concretifyAExpr a =
 concretifyExpr :: Expr -> EM (CExpr FormatTy)
 concretifyExpr e =
     case e^.val of
+      EInput _ xk -> do
+          ((x, ep), k) <- unbind xk
+          k' <- withVars [(castName x, FBuf Nothing)] $ concretifyExpr k
+          return $ Typed (_tty k') $ CInput $ bind (castName x, ep) k'
+      EOutput a op -> do
+          c <- concretifyAExpr a
+          return $ Typed FUnit $ COutput c op
       ERet a -> do
         v <- concretifyAExpr a
         return $ Typed (_tty v) $ CRet v
+      ELet e1 _ oanf s xk -> do
+          c1 <- concretifyExpr e1
+          (x, k) <- unbind xk
+          k' <- withVars [(castName x, _tty c1)] $ concretifyExpr k
+          return $ Typed (_tty k') $ CLet c1 oanf $ bind (castName x) k'
+      ELetGhost _ s xk -> do
+          (x, k) <- unbind xk
+          k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
+          return $ Typed (_tty k') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k'
+      EBlock e b -> do
+          c <- concretifyExpr e
+          return $ Typed (_tty c) $ CBlock c
+      EUnpack a _ ixk -> do
+          c <- concretifyAExpr a
+          ((i, x), k) <- unbind ixk
+          k' <- withVars [(castName x, _tty c)] $ concretifyExpr k
+          return $ Typed (_tty k') $ CLet (Typed (_tty c) (CRet c)) Nothing $ bind (castName x) k'
+      EChooseBV _ _ xe -> do
+          (x, e) <- unbind xe
+          e' <- withVars [(castName x, FGhost)] $ concretifyExpr e
+          return $ Typed (_tty e') $ CLet (Typed FGhost $ CRet ghostUnit) Nothing $ bind (castName x) e'
+      EChooseIdx _ _ ie -> do
+          (i, e) <- unbind ie
+          concretifyExpr e
+      EIf a e1 e2 -> do
+          ca <- concretifyAExpr a
+          c1 <- concretifyExpr e1
+          c2 <- concretifyExpr e2
+          t <- unifyFormatTy (_tty c1) (_tty c2)
+          return $ Typed t $ CIf ca c1 c2
+      EForallBV _ _ -> return $ Typed FGhost $ CRet ghostUnit
+      EForallIdx _ _ -> return $ Typed FGhost $ CRet ghostUnit
+      EPackIdx _ e -> concretifyExpr e
+      EGuard a e -> do
+          ca <- concretifyAExpr a 
+          ce <- concretifyExpr e
+          return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet noneConcrete)
+      EGetCtr p _ -> do
+          s <- concretifyPath p
+          return $ Typed FInt $ CGetCtr s
+      EIncCtr p _ -> do
+          s <- concretifyPath p
+          return $ Typed FInt $ CGetCtr s
+      EDebug _ -> return $ Typed FGhost $ CRet ghostUnit
+      EAssert _ -> return $ Typed FGhost $ CRet ghostUnit
+      EAssume _ -> return $ Typed FGhost $ CRet ghostUnit
+      EAdmit -> return $ Typed FGhost $ CRet ghostUnit
+      ECrypt cop aes -> do
+          cs <- mapM concretifyAExpr aes
+          concretifyCryptOp cop cs
+      ECall p _ aes -> do
+          s <- concretifyPath p
+          cs <- mapM concretifyAExpr aes
+          t <- returnTyOfCall p
+          return $ Typed t $ CCall s cs
+      EParse a t otherwiseCase xsk -> error "unimp"
+      ECase e otherwiseCase xsk -> error "unimp"
+      EPCase _ _ _ e -> concretifyExpr e
+      ECorrCaseNameOf _ _ e -> concretifyExpr e
+      EFalseElim e _ -> concretifyExpr e
+      ETLookup p a -> do
+          c <- concretifyAExpr a
+          t <- typeOfTable p
+          s <- concretifyPath p
+          return $ Typed t $ CTLookup s c
+      ETWrite p a1 a2 -> do
+          c1 <- concretifyAExpr a1
+          c2 <- concretifyAExpr a2
+          s <- concretifyPath p
+          return $ Typed FUnit $ CTWrite s c1 c2
+
+typeOfTable :: Path -> EM FormatTy
+typeOfTable p = error "unimp"
+
+returnTyOfCall :: Path -> EM FormatTy
+returnTyOfCall p = error "unimp"
+      
+concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
+concretifyCryptOp cop cs = error "unimp"
 
 withVars :: [(CDataVar t, t)] -> ExtractionMonad t a -> ExtractionMonad t a
 withVars xs k = do
