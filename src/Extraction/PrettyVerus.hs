@@ -23,6 +23,7 @@ instance Pretty VerusTy where
     pretty (RTArray ty n) = pretty "[" <> pretty ty <> pretty ";" <+> pretty n <> pretty "]"
     pretty (RTTuple tys) = pretty "(" <> hsep (punctuate comma (fmap pretty tys)) <> pretty ")"
     pretty (RTOption ty) = pretty "Option" <> angles (pretty ty)
+    pretty (RTParam ty targs) = pretty ty <> angles (hsep (punctuate comma (fmap pretty targs)))
     pretty (RTNamed name) = pretty name
     pretty RTUnit = pretty "()"
     pretty RTBool = pretty "bool"
@@ -48,17 +49,53 @@ instance Pretty VerusExpr where
         pretty "}"
     pretty (RAssign name expr) = pretty name <+> pretty "=" <+> pretty expr <> semi <> line
     pretty (RCall (name, args)) = pretty name <> parens (hsep (punctuate comma (fmap pretty args)))
+    pretty (RDotCall (name, func, args)) = pretty name <> pretty "." <> pretty func <> parens (hsep (punctuate comma (fmap pretty args)))
+    pretty (RTupleIdx (name, idx)) = pretty name <> pretty "." <> pretty idx
     pretty (RVar name) = pretty name
     pretty (RBorrow (bk, expr)) = pretty bk <> pretty expr
     pretty (RDeref expr) = pretty "*" <> pretty expr
+    pretty (RInfixOp lhs op rhs) = pretty lhs <+> pretty op <+> pretty rhs
     pretty RUnit = pretty "()"
     pretty (RUsizeLit n) = pretty n <> pretty "usize"
+    pretty (RBoolLit b) = if b then pretty "true" else pretty "false"
+
+instance Pretty VerusSpecExpr where
+    pretty (VSIfThenElse cond thenBranch elseBranch) =
+        pretty "if" <+> pretty cond <+> pretty "{" <> line <> 
+            pretty thenBranch <> line <> 
+        pretty "}" <+> pretty "else" <+> pretty "{" <> line <>
+            pretty elseBranch <> line <>
+        pretty "}"
+    pretty (VSCall (name, args)) = pretty name <> parens (hsep (punctuate comma (fmap pretty args)))
+    pretty (VSDotCall (name, func, args)) = pretty name <> pretty "." <> pretty func <> parens (hsep (punctuate comma (fmap pretty args)))
+    pretty (VSTupleIdx (name, idx)) = pretty name <> pretty "." <> pretty idx
+    pretty (VSVar name) = pretty name
+    pretty (VSDeref expr) = pretty "*" <> pretty expr
+    pretty (VSInfixOp lhs op rhs) = pretty lhs <+> pretty op <+> pretty rhs
+    pretty VSUnit = pretty "()"
+    pretty (VSUsizeLit n) = pretty n <> pretty "usize"
+    pretty (VSBoolLit b) = if b then pretty "true" else pretty "false"
+    pretty (VSSpecImplies (lhs, rhs)) = pretty lhs <+> pretty "==>" <+> pretty rhs
+    pretty (VSSpecMatches (lhs, rhs)) = pretty lhs <+> pretty "matches" <+> pretty rhs
+    pretty (VSSpecArrow (lhs, rhs)) = pretty lhs <> pretty "->" <> pretty rhs
+
+
+instance Pretty VerusFuncMode where
+    pretty VOpenSpec = pretty "open spec"
+    pretty VClosedSpec = pretty "closed spec"
+    pretty VProof = pretty "proof"
+    pretty VExec = pretty "exec"
 
 instance Pretty VerusFunc where
-    pretty (VerusFunc name args retTy body) = 
-        pretty "fn" <+> pretty name <> 
+    pretty (VerusFunc name mode externalBody verifierOpaque args retTy req ens body) = 
+        (if externalBody then pretty "#[verifier(external_body)]" <> line else pretty "") <>
+        (if verifierOpaque then pretty "#[verifier::opaque]" <> line else pretty "") <>
+        pretty "pub" <+> pretty mode <+> pretty "fn" <+> pretty name <> 
         parens (hsep (punctuate comma (fmap (\(n, ty) -> pretty n <> colon <+> pretty ty) args)))
-        <+> pretty "->" <+> pretty retTy <+> pretty "{" <> line <>
+        <+> pretty "->" <+> pretty retTy <> line <> 
+            indent 4 (pretty "requires" <> line <> indent 4 (vsep . punctuate comma $ fmap pretty req) <> comma) <> line <>
+            indent 4 (pretty "ensures"  <> line <> indent 4 (vsep . punctuate comma $ fmap pretty ens) <> comma) <> line <>
+        pretty "{" <> line <>
             indent 4 (pretty body) <> line <>
         pretty "}"
 

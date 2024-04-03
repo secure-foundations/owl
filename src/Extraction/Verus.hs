@@ -23,31 +23,62 @@ data VerusTy =
     | RTTuple [VerusTy]
     | RTOption VerusTy
     | RTNamed VerusName -- named types, eg structs, enums, etc
+    | RTParam VerusName [VerusTy] -- general-purpose parameterized types (we special-case Option and Vec)
     | RTUnit
     | RTBool
     | RTU8
     | RTUsize
     deriving (Eq, Ord, Show)
 
-type VerusLet = (Bool, VerusName, Maybe VerusTy, VerusExpr)
+type VerusLet = (Bool, VerusName, Maybe VerusTy, VerusExpr) -- bool is true if mutable
 
 data VerusExpr =
-      RLet VerusLet VerusExpr -- bool is true if mutable
+      RLet VerusLet VerusExpr
     | RIfThenElse VerusExpr VerusExpr VerusExpr
     | RAssign VerusName VerusExpr
     | RCall (VerusName, [VerusExpr])
+    | RDotCall (VerusName, VerusName, [VerusExpr]) -- `RDotCall (v, f, args)` is `v.f(args)`
+    | RTupleIdx (VerusName, Int) -- `RTupleIdx (v, i)` is `v.i`, e.g. `v.0` for tuple dereference
     | RVar VerusName
     | RBorrow (BorrowKind, VerusExpr)
     | RDeref VerusExpr
+    | RInfixOp VerusExpr String VerusExpr 
     | RUnit
     | RUsizeLit Int
+    | RBoolLit Bool
     -- TODO: loops, structs, enums, pattern-matching
+    deriving (Eq, Ord, Show)
+
+data VerusFuncMode = VOpenSpec | VClosedSpec | VProof | VExec 
+    deriving (Eq, Ord, Show)
+
+-- For use in `requires` and `ensures`; we just use VerusExpr for bodies of spec fns
+data VerusSpecExpr =
+    --  VSLet VerusLet VerusSpecExpr -- bool is true if mutable
+      VSIfThenElse VerusSpecExpr VerusSpecExpr VerusSpecExpr
+    | VSCall (VerusName, [VerusSpecExpr])
+    | VSDotCall (VerusName, VerusName, [VerusSpecExpr]) -- `RDotCall (v, f, args)` is `v.f(args)`
+    | VSVar VerusName
+    | VSDeref VerusSpecExpr
+    | VSTupleIdx (VerusName, Int)
+    | VSInfixOp VerusSpecExpr String VerusSpecExpr 
+    | VSUnit
+    | VSUsizeLit Int
+    | VSBoolLit Bool
+    -- Special Verus syntax
+    | VSSpecImplies (VerusSpecExpr, VerusSpecExpr) -- `VSSpecImplies (e1, e2)` is `e1 ==> e2`
+    | VSSpecMatches (VerusSpecExpr, VerusSpecExpr) -- `VSSpecMatches (e1, e2)` is `e1 matches e2`
+    | VSSpecArrow (VerusSpecExpr, VerusName) -- `VSSpecArrow (e1, e2)` is `e1->e2`
     deriving (Eq, Ord, Show)
 
 data VerusFunc = VerusFunc {
     rfName :: VerusName,
+    rfMode :: VerusFuncMode,
+    rfExternalBody :: Bool, -- if true, add #[verifier(external_body)]
     rfArgs :: [(VerusName, VerusTy)],
     rfRetTy :: VerusTy,
+    rfRequires :: [VerusSpecExpr],
+    rfEnsures :: [VerusSpecExpr],
     rfBody :: VerusExpr
 } deriving (Eq, Ord, Show)
 makeLenses ''VerusFunc
@@ -94,3 +125,6 @@ asRef name (RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
     Just $ RBorrow (b, RVar name)
 asRef name t1 t2 = 
     Nothing
+
+rtResult :: VerusTy -> VerusTy -> VerusTy
+rtResult t e = RTParam "Result" [t, e]
