@@ -121,7 +121,6 @@ extract' modbody = do
       , extractedVest
       )
 
-
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
 preprocessModBody mb = do
     throwError $ ErrSomethingFailed "TODO preprocessModBody"

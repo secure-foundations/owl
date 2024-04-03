@@ -1,8 +1,10 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Rust where
 import Data.List
 import Data.Maybe
 import Control.Monad
 import Control.Monad.Trans
+import Control.Lens
 import Data.Map.Strict as M
 
 -- Loosely draws from MiniRust.ml in the KaRaMeL compiler
@@ -20,11 +22,11 @@ data RustTy =
     | RTArray RustTy Int -- TODO: a way to specify const expression ints here?
     | RTTuple [RustTy]
     | RTOption RustTy
+    | RTNamed RustName -- named types, eg structs, enums, etc
     | RTUnit
     | RTBool
     | RTU8
     | RTUsize
-    -- TODO: structs, enums
     deriving (Eq, Ord, Show)
 
 type RustLet = (Bool, RustName, Maybe RustTy, RustExpr)
@@ -48,6 +50,33 @@ data RustFunc = RustFunc {
     rfRetTy :: RustTy,
     rfBody :: RustExpr
 } deriving (Eq, Ord, Show)
+makeLenses ''RustFunc
+
+newtype RustTyDecl = RustTyDecl (RustName, RustTy)
+    deriving (Eq, Ord, Show)
+
+data RustTraitImpl = RustTraitImpl {
+    rtiTraitName :: RustName,
+    rtiForTy :: RustTy,
+    rtiTraitTys :: [RustTyDecl],
+    rtiTraitFuncs :: [RustFunc]
+} deriving (Eq, Ord, Show)
+
+data RustStructDecl = RustStructDecl {
+    rStructName :: RustName,
+    rStructFields :: [(RustName, RustTy)],
+    rStructImplBlock :: [RustFunc],
+    rStructTraitImpls :: [RustTraitImpl]
+} deriving (Eq, Ord, Show)
+makeLenses ''RustStructDecl
+
+data RustEnumDecl = RustEnumDecl {
+    rEnumName :: RustName,
+    rEnumVariants :: [(RustName, Maybe RustTy)],
+    rEnumImplBlock :: [RustFunc],
+    rEnumTraitImpls :: [RustTraitImpl]
+} deriving (Eq, Ord, Show)
+makeLenses ''RustEnumDecl
 
 -------------------------------------------------------------------
 -- Helper functions

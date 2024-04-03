@@ -140,3 +140,18 @@ instance Fresh (ExtractionMonad t) where
 initEnv :: Flags -> String -> Env t
 initEnv flags path = Env flags path 0 M.empty
 
+flattenResolvedPath :: ResolvedPath -> String
+flattenResolvedPath PTop = ""
+flattenResolvedPath (PDot PTop y) = y
+flattenResolvedPath (PDot x y) = flattenResolvedPath x ++ "_" ++ y
+flattenResolvedPath s = error $ "failed flattenResolvedPath on " ++ show s
+
+tailPath :: Path -> ExtractionMonad t String
+tailPath (PRes (PDot _ y)) = return y
+tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
+
+flattenPath :: Path -> ExtractionMonad t String
+flattenPath (PRes rp) = do
+    rp' <- liftCheck $ TB.normResolvedPath rp
+    return $ flattenResolvedPath rp'
+flattenPath p = error $ "bad path: " ++ show p
