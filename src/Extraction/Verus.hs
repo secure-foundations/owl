@@ -75,6 +75,7 @@ data VerusFunc = VerusFunc {
     rfName :: VerusName,
     rfMode :: VerusFuncMode,
     rfExternalBody :: Bool, -- if true, add #[verifier(external_body)]
+    rfVerifierOpaque :: Bool,
     rfArgs :: [(VerusName, VerusTy)],
     rfRetTy :: VerusTy,
     rfRequires :: [VerusSpecExpr],
