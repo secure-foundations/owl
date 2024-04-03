@@ -13,7 +13,10 @@ import Data.Map.Strict as M
 data BorrowKind = RMut | RShared
     deriving (Eq, Ord, Show)
 
-type VerusName = String
+type Lifetime = String
+
+data VerusName = VN String (Maybe Lifetime)
+    deriving (Eq, Ord, Show)
 
 data VerusTy = 
       RTRef BorrowKind VerusTy
@@ -127,5 +130,11 @@ asRef name (RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
 asRef name t1 t2 = 
     Nothing
 
+nl :: String -> VerusName
+nl s = VN s Nothing
+
+withLifetime :: String -> Lifetime -> VerusName
+withLifetime name lifetime = VN name (Just lifetime)
+
 rtResult :: VerusTy -> VerusTy -> VerusTy
-rtResult t e = RTParam "Result" [t, e]
+rtResult t e = RTParam (nl "Result") [t, e]

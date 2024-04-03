@@ -40,12 +40,21 @@ genVerusDef cdef = do
 
 
 genVerusStruct :: CStruct VerusTy -> EM VerusStructDecl
-genVerusStruct cstruct = do
+genVerusStruct (CStruct name fields) = do
+    debugLog $ "genVerusStruct: " ++ name
     throwError $ ErrSomethingFailed "TODO: genVerusStruct"
 
 
 
 
 genVerusEnum :: CEnum VerusTy -> EM VerusEnumDecl
-genVerusEnum cenum = do
+genVerusEnum (CEnum name cases) = do
+    debugLog $ "genVerusEnum: " ++ name
     throwError $ ErrSomethingFailed "TODO: genVerusEnum"
+
+
+-----------------------------------------------------------------------------
+-- Utility functions
+
+cmpName :: String -> VerusName
+cmpName owlName = VN ("owl_" ++ owlName) Nothing

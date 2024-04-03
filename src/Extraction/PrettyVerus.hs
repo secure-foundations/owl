@@ -15,6 +15,9 @@ instance Pretty BorrowKind where
     pretty RMut = pretty "&mut "
     pretty RShared = pretty "&"
 
+instance Pretty VerusName where
+    pretty (VN name Nothing) = pretty name
+    pretty (VN name (Just lt)) = pretty name <> angles (pretty "'" <> pretty lt)
 
 instance Pretty VerusTy where
     pretty (RTRef bk ty) = pretty bk <> pretty ty
@@ -36,7 +39,7 @@ prettyTyAnnot (Just ty) = colon <+> pretty ty
 
 instance Pretty VerusExpr where
     -- Special case for `let _ = ...;` where we omit the `let _ =`
-    pretty (RLet (False, "_", Nothing, expr) rest) = 
+    pretty (RLet (False, (VN "_" Nothing), Nothing, expr) rest) = 
         pretty expr <> semi <> line <> pretty rest
     pretty (RLet (lt, name, ty, expr) rest) = 
         pretty "let" <+> pretty (if lt then "mut " else "") <> pretty name <> prettyTyAnnot ty
