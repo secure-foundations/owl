@@ -35,6 +35,7 @@ data FLen =
 data FormatTy =
     FUnit
     | FBool
+    | FGhost  -- For erased variables
     | FInt
     | FBuf (Maybe FLen) -- TODO: maybe we want a data type for built-in length consts, instead of Int
     | FOption FormatTy
