@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Verus where
 import Data.List
 import Data.Maybe
@@ -6,26 +7,34 @@ import Control.Monad
 import Control.Monad.Trans
 import Control.Lens
 import Data.Map.Strict as M
+import Unbound.Generics.LocallyNameless
+import GHC.Generics (Generic)
+import Data.Typeable (Typeable)
 
 -- Loosely draws from MiniRust.ml in the KaRaMeL compiler
 -- https://github.com/FStarLang/karamel/blob/master/lib/MiniRust.ml
 
 data BorrowKind = RMut | RShared
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Generic, Typeable)
 
 newtype Lifetime = Lifetime String
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- data VerusName = VN String (Maybe Lifetime)
 --    deriving (Eq, Ord, Show)
 
 type VerusName = String
 
+data ConstUsize =
+    CUsizeLit Int
+    | CUsizeConst String
+    deriving (Eq, Ord, Show, Generic, Typeable)
+
 data VerusTy = 
       RTRef BorrowKind VerusTy
     | RTVec VerusTy
     | RTSlice VerusTy
-    | RTArray VerusTy Int -- TODO: a way to specify const expression ints here?
+    | RTArray VerusTy ConstUsize -- TODO: a way to specify const expression ints here?
     | RTTuple [VerusTy]
     | RTOption VerusTy
     | RTNamed VerusName -- named types, eg structs, enums, etc
@@ -36,7 +45,13 @@ data VerusTy =
     | RTBool
     | RTU8
     | RTUsize
-    deriving (Eq, Ord, Show)
+    | RTVerusGhost
+    deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance Alpha BorrowKind
+instance Alpha Lifetime
+instance Alpha ConstUsize
+instance Alpha VerusTy
 
 type VerusLet = (Bool, VerusName, Maybe VerusTy, VerusExpr) -- bool is true if mutable
 
@@ -141,11 +156,11 @@ asRef name (RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
 asRef name t1 t2 = 
     Nothing
 
-nl :: String -> VerusName
-nl s = VN s Nothing
+-- nl :: String -> VerusName
+-- nl s = VN s Nothing
 
-withLifetime :: String -> String -> VerusName
-withLifetime name lt = VN name $ Just (Lifetime lt)
+-- withLifetime :: String -> String -> VerusName
+-- withLifetime name lt = VN name $ Just (Lifetime lt)
 
-rtResult :: VerusTy -> VerusTy -> VerusTy
-rtResult t e = RTParam (nl "Result") [t, e]
+-- rtResult :: VerusTy -> VerusTy -> VerusTy
+-- rtResult t e = RTParam (nl "Result") [t, e]

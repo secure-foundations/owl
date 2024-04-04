@@ -159,6 +159,20 @@ flattenPath p = error $ "bad path: " ++ show p
 
 
 
+unbindCDepBind :: (Alpha a, Alpha t, Typeable t) => CDepBind t a -> ExtractionMonad tt ([(CDataVar t, String, t)], a)
+unbindCDepBind (CDPDone a) = return ([], a)
+unbindCDepBind (CDPVar t s xd) = do
+    (x, d) <- unbind xd 
+    (xs, a) <- unbindCDepBind d 
+    return ((x, s, t) : xs, a)
+
+bindCDepBind :: (Alpha a, Alpha t, Typeable t) => [(CDataVar t, String, t)] -> a -> ExtractionMonad tt (CDepBind t a)
+bindCDepBind [] a = return $ CDPDone a
+bindCDepBind ((x, s, t):xs) a = do
+    d <- bindCDepBind xs a
+    return $ CDPVar t s (bind x d)
+
+
 -- cmpName :: String -> VerusName
 -- cmpName owlName = VN ("owl_" ++ owlName) Nothing
 

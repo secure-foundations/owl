@@ -140,6 +140,11 @@ instance (Alpha t, Typeable t) => Alpha (CExpr' t)
 instance (Typeable t, Alpha a, Alpha t) => Alpha (CDepBind t a)
 instance (Typeable t, Alpha a, Alpha t, Subst b a, Subst b t) => Subst b (CDepBind t a)
 
+
+--------------------------------------------------------------------------------
+-- Helper funcs
+
+
 --------------------------------------------------------------------------------
 -- Pretty
 

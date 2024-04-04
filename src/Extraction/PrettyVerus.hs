@@ -31,6 +31,10 @@ prettyLtOfT (RTWithLifetime _ lt) = angles (pretty lt)
 prettyLtOfT (RTOwlBuf lt) = angles (pretty lt)
 prettyLtOfT _ = pretty ""
 
+instance Pretty ConstUsize where
+    pretty (CUsizeLit n) = pretty n
+    pretty (CUsizeConst n) = pretty n
+
 instance Pretty VerusTy where
     pretty (RTRef bk ty) = pretty bk <> pretty ty
     pretty (RTVec ty) = pretty "Vec" <> angles (pretty ty)
@@ -46,6 +50,7 @@ instance Pretty VerusTy where
     pretty RTBool = pretty "bool"
     pretty RTU8 = pretty "u8"
     pretty RTUsize = pretty "usize"
+    pretty RTVerusGhost = pretty "Ghost<()>"
 
 prettyTyAnnot :: Maybe VerusTy -> Doc ann
 prettyTyAnnot Nothing = pretty ""

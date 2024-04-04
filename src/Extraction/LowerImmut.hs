@@ -30,3 +30,45 @@ import Verus
 
 type EM = ExtractionMonad FormatTy
 
+
+lowerFLen :: FLen -> EM ConstUsize
+lowerFLen (FLConst n) = return $ CUsizeLit n
+lowerFLen (FLNamed n) = return $ CUsizeConst n -- TODO: make sure n is in the list of known len consts
+
+
+lowerArgTy :: FormatTy -> EM VerusTy
+lowerArgTy FUnit = return RTUnit
+lowerArgTy FBool = return RTBool
+lowerArgTy FInt = return RTUsize
+lowerArgTy (FBuf Nothing) = return vecU8
+lowerArgTy (FBuf (Just flen)) = arrayU8 <$> lowerFLen flen -- in return types, don't care abou
+lowerArgTy (FOption ft) = RTOption <$> lowerArgTy ft
+lowerArgTy (FStruct n _) = return $ RTNamed n
+lowerArgTy (FEnum n _) = return $ RTNamed n
+lowerArgTy FGhost = return $ RTVerusGhost
+
+
+lowerExpr :: CExpr FormatTy -> EM (CExpr VerusTy)
+lowerExpr _ = throwError $ ErrSomethingFailed "TODO"
+
+lowerArg :: (CDataVar FormatTy, String, FormatTy) -> EM (CDataVar VerusTy, String, VerusTy)
+lowerArg _ = throwError $ ErrSomethingFailed "TODO"
+
+lowerDef :: CDef FormatTy -> EM (CDef VerusTy)
+lowerDef (CDef name b) = do
+    (args, (retTy, body)) <- unbindCDepBind b
+    args' <- mapM lowerArg args
+    retTy' <- lowerArgTy retTy
+    body' <- lowerExpr body
+    b' <- bindCDepBind args' (retTy', body')
+    return $ CDef name b'
+
+
+--------------------------------------------------------------------------------
+-- Helper functions
+
+vecU8 :: VerusTy
+vecU8 = RTVec RTU8
+
+arrayU8 :: ConstUsize -> VerusTy
+arrayU8 n = RTArray RTU8 n
