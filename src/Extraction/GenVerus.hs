@@ -47,12 +47,14 @@ genVerusStruct (CStruct name fields) = do
     let lifetimeConst = "a"
     let verusFields = fmap (\(fname, fty) -> (cmpName fname, liftLifetime lifetimeConst fty)) fields
     let verusName = if needsLifetime then cmpNameLifetime name lifetimeConst else cmpName name
+    let specname = (nl $ specName name)
     allLensValid <- genAllLensValid verusFields
+    viewImpl <- genViewImpl verusName specname verusFields
     let sdecl = VerusStructDecl {
             rStructName = verusName,
             rStructFields = verusFields,
             rStructImplBlock = [allLensValid],
-            rStructTraitImpls = []
+            rStructTraitImpls = [viewImpl]
         }
     return $ (sdecl, pretty "")
     where 
@@ -61,8 +63,8 @@ genVerusStruct (CStruct name fields) = do
 
         genAllLensValid verusFields = do
             let genField (f, t) = case t of
-                    RTOwlBuf _ -> Just $ RDotCall (f, nl "len_valid", [])
-                    RTNamed (VN _ (Just (Lifetime lt))) -> Just $ RDotCall (f, nl "len_valid", [])
+                    RTOwlBuf _ -> Just $ RDotCall (RVar f) (nl "len_valid") []
+                    RTNamed (VN _ (Just (Lifetime lt))) -> Just $ RDotCall (RVar f) (nl "len_valid") []
                     _ -> Nothing
             let lensValidFields = mapMaybe genField verusFields
             let body = if null lensValidFields then RBoolLit True else foldl1 (\a b -> RInfixOp a "&&" b) lensValidFields
@@ -78,9 +80,32 @@ genVerusStruct (CStruct name fields) = do
                     rfBody = body
                 }
 
+        genViewImpl verusName specname verusFields = do
+            let viewField (f, t) = 
+                    let viewf = case t of
+                            RTBool -> RDotCall (RFieldSel (RVar (nl "self")) f) (nl "dview") []
+                            _ -> RDotCall (RDotCall (RFieldSel (RVar (nl "self")) f) (nl "dview") []) (nl "as_seq") []
+                    in (nl (specNameOf f), viewf)
+            let body = RStructLit specname $ map viewField verusFields
+            let viewDef = VerusFunc {
+                    rfName = nl "dview",
+                    rfMode = VOpenSpec,
+                    rfExternalBody = False,
+                    rfVerifierOpaque = False,
+                    rfArgs = [SelfArg RShared],
+                    rfRetTy = RTNamed verusName,
+                    rfRequires = [],
+                    rfEnsures = [],
+                    rfBody = body
+                }
+            let viewImpl = VerusTraitImpl {
+                    rtiTraitName = cmpName "DView",
+                    rtiForTy = RTNamed verusName,
+                    rtiTraitTys = [VerusTyDecl (nl "V", RTNamed specname)],
+                    rtiTraitFuncs = [viewDef]
+                }
+            return viewImpl
             
-
-
 
 
 genVerusEnum :: CEnum VerusTy -> EM (VerusEnumDecl, Doc ann)
@@ -91,9 +116,3 @@ genVerusEnum (CEnum name cases) = do
 
 -----------------------------------------------------------------------------
 -- Utility functions
-
-cmpName :: String -> VerusName
-cmpName owlName = VN ("owl_" ++ owlName) Nothing
-
-cmpNameLifetime :: String -> String -> VerusName
-cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt

@@ -36,6 +36,7 @@ import qualified TypingBase as TB
 import qualified Concretify
 import qualified LowerImmut
 import qualified GenVerus
+import qualified SpecExtraction
 
 
 type LocalityName = String

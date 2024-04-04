@@ -41,16 +41,17 @@ data VerusExpr =
       RLet VerusLet VerusExpr
     | RIfThenElse VerusExpr VerusExpr VerusExpr
     | RAssign VerusName VerusExpr
-    | RCall (VerusName, [VerusExpr])
-    | RDotCall (VerusName, VerusName, [VerusExpr]) -- `RDotCall (v, f, args)` is `v.f(args)`
-    | RTupleIdx (VerusName, Int) -- `RTupleIdx (v, i)` is `v.i`, e.g. `v.0` for tuple dereference
+    | RCall VerusName [VerusExpr]
+    | RDotCall VerusExpr VerusName [VerusExpr] -- `RDotCall (v, f, args)` is `v.f(args)`
+    | RFieldSel VerusExpr VerusName -- `RFieldSel (v, i)` is `v.i` for struct/tuple dereference
     | RVar VerusName
-    | RBorrow (BorrowKind, VerusExpr)
+    | RBorrow BorrowKind VerusExpr
     | RDeref VerusExpr
     | RInfixOp VerusExpr String VerusExpr 
     | RUnit
     | RUsizeLit Int
     | RBoolLit Bool
+    | RStructLit VerusName [(VerusName, VerusExpr)]
     -- TODO: loops, structs, enums, pattern-matching
     deriving (Eq, Ord, Show)
 
@@ -61,19 +62,24 @@ data VerusFuncMode = VOpenSpec | VClosedSpec | VProof | VExec
 data VerusSpecExpr =
     --  VSLet VerusLet VerusSpecExpr -- bool is true if mutable
       VSIfThenElse VerusSpecExpr VerusSpecExpr VerusSpecExpr
-    | VSCall (VerusName, [VerusSpecExpr])
-    | VSDotCall (VerusName, VerusName, [VerusSpecExpr]) -- `RDotCall (v, f, args)` is `v.f(args)`
+    | VSCall VerusName [VerusSpecExpr]
+    | VSDotCall VerusName VerusName [VerusSpecExpr] -- `RDotCall (v, f, args)` is `v.f(args)`
     | VSVar VerusName
     | VSDeref VerusSpecExpr
-    | VSTupleIdx (VerusName, Int)
+    | VSFieldSel VerusSpecExpr VerusName
     | VSInfixOp VerusSpecExpr String VerusSpecExpr 
     | VSUnit
     | VSUsizeLit Int
     | VSBoolLit Bool
     -- Special Verus syntax
-    | VSSpecImplies (VerusSpecExpr, VerusSpecExpr) -- `VSSpecImplies (e1, e2)` is `e1 ==> e2`
-    | VSSpecMatches (VerusSpecExpr, VerusSpecExpr) -- `VSSpecMatches (e1, e2)` is `e1 matches e2`
-    | VSSpecArrow (VerusSpecExpr, VerusName) -- `VSSpecArrow (e1, e2)` is `e1->e2`
+    | VSSpecImplies VerusSpecExpr VerusSpecExpr -- `VSSpecImplies (e1, e2)` is `e1 ==> e2`
+    | VSSpecMatches VerusSpecExpr VerusSpecExpr -- `VSSpecMatches (e1, e2)` is `e1 matches e2`
+    | VSSpecArrow VerusSpecExpr VerusName -- `VSSpecArrow (e1, e2)` is `e1->e2`
+    deriving (Eq, Ord, Show)
+
+data VerusArg =
+      SelfArg BorrowKind
+    | Arg VerusName VerusTy
     deriving (Eq, Ord, Show)
 
 data VerusFunc = VerusFunc {
@@ -81,7 +87,7 @@ data VerusFunc = VerusFunc {
     rfMode :: VerusFuncMode,
     rfExternalBody :: Bool, -- if true, add #[verifier(external_body)]
     rfVerifierOpaque :: Bool,
-    rfArgs :: [(VerusName, VerusTy)],
+    rfArgs :: [VerusArg],
     rfRetTy :: VerusTy,
     rfRequires :: [VerusSpecExpr],
     rfEnsures :: [VerusSpecExpr],
@@ -122,13 +128,13 @@ asRef :: VerusName -> VerusTy -> VerusTy -> Maybe VerusExpr
 asRef name t1 t2 | t1 == t2 = 
     Just $ RVar name
 asRef name t1 t2 | t2 == RTRef RShared t1 = 
-    Just $ RBorrow (RShared, RVar name)
+    Just $ RBorrow RShared (RVar name)
 asRef name t1 t2 | t2 == RTRef RMut t1 = 
-    Just $ RBorrow (RMut, RVar name)
+    Just $ RBorrow RMut (RVar name)
 asRef name (RTRef RMut t1) (RTRef RShared t2) | t1 == t2 = 
-    Just $ RBorrow (RShared, RVar name)
+    Just $ RBorrow RShared (RVar name)
 asRef name (RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 = 
-    Just $ RBorrow (b, RVar name)
+    Just $ RBorrow b (RVar name)
 asRef name t1 t2 = 
     Nothing
 

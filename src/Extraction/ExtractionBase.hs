@@ -32,6 +32,7 @@ import System.IO
 import qualified TypingBase as TB
 import qualified SMTBase as SMT
 import ConcreteAST
+import Verus
 
 newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
     deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
@@ -155,3 +156,18 @@ flattenPath (PRes rp) = do
     rp' <- liftCheck $ TB.normResolvedPath rp
     return $ flattenResolvedPath rp'
 flattenPath p = error $ "bad path: " ++ show p
+
+
+
+cmpName :: String -> VerusName
+cmpName owlName = VN ("owl_" ++ owlName) Nothing
+
+cmpNameLifetime :: String -> String -> VerusName
+cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
+
+specName :: String -> String
+specName owlName = owlName
+
+specNameOf :: VerusName -> String
+specNameOf (VN s _) = 
+    if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
