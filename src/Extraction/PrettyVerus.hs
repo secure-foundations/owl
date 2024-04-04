@@ -15,9 +15,21 @@ instance Pretty BorrowKind where
     pretty RMut = pretty "&mut "
     pretty RShared = pretty "&"
 
+instance Pretty Lifetime where
+    pretty lt = pretty "'" <> pretty lt
+
 instance Pretty VerusName where
     pretty (VN name Nothing) = pretty name
-    pretty (VN name (Just lt)) = pretty name <> angles (pretty "'" <> pretty lt)
+    pretty (VN name (Just lt)) = pretty name <> angles (pretty lt)
+
+prettyLtOf :: VerusName -> Doc ann
+prettyLtOf (VN _ Nothing) = pretty ""
+prettyLtOf (VN _ (Just lt)) = angles (pretty lt)
+
+prettyLtOfT :: VerusTy -> Doc ann
+prettyLtOfT (RTNamed (VN _ (Just lt))) = angles (pretty lt)
+prettyLtOfT (RTOwlBuf lt) = angles (pretty lt)
+prettyLtOfT _ = pretty ""
 
 instance Pretty VerusTy where
     pretty (RTRef bk ty) = pretty bk <> pretty ty
@@ -28,6 +40,8 @@ instance Pretty VerusTy where
     pretty (RTOption ty) = pretty "Option" <> angles (pretty ty)
     pretty (RTParam ty targs) = pretty ty <> angles (hsep (punctuate comma (fmap pretty targs)))
     pretty (RTNamed name) = pretty name
+    -- pretty (RTWithLifetime ty lt) = pretty ty <> angles (pretty lt)
+    pretty (RTOwlBuf lt) = pretty "OwlBuf" <> angles (pretty lt)
     pretty RTUnit = pretty "()"
     pretty RTBool = pretty "bool"
     pretty RTU8 = pretty "u8"
@@ -96,8 +110,8 @@ instance Pretty VerusFunc where
         pretty "pub" <+> pretty mode <+> pretty "fn" <+> pretty name <> 
         parens (hsep (punctuate comma (fmap (\(n, ty) -> pretty n <> colon <+> pretty ty) args)))
         <+> pretty "->" <+> pretty retTy <> line <> 
-            indent 4 (pretty "requires" <> line <> indent 4 (vsep . punctuate comma $ fmap pretty req) <> comma) <> line <>
-            indent 4 (pretty "ensures"  <> line <> indent 4 (vsep . punctuate comma $ fmap pretty ens) <> comma) <> line <>
+            if Data.List.null req then pretty "" else indent 4 (pretty "requires" <> line <> indent 4 (vsep . punctuate comma $ fmap pretty req) <> comma) <> line <>
+            if Data.List.null ens then pretty "" else indent 4 (pretty "ensures"  <> line <> indent 4 (vsep . punctuate comma $ fmap pretty ens) <> comma) <> line <>
         pretty "{" <> line <>
             indent 4 (pretty body) <> line <>
         pretty "}"
@@ -107,7 +121,7 @@ instance Pretty VerusTyDecl where
 
 instance Pretty VerusTraitImpl where
     pretty (VerusTraitImpl traitName forTy traitTys traitFuncs) = 
-        pretty "impl" <+> pretty traitName <+> pretty "for" <+> pretty forTy <+> pretty "{" <> line <>
+        pretty "impl" <> prettyLtOfT forTy <+> pretty traitName <+> pretty "for" <+> pretty forTy <+> pretty "{" <> line <>
             indent 4 (vsep (fmap pretty traitTys)) <> line <>
             indent 4 (vsep (fmap pretty traitFuncs)) <> line <>
         pretty "}"
@@ -117,7 +131,7 @@ instance Pretty VerusStructDecl where
         pretty "pub struct" <+> pretty name <+> pretty "{" <> line <>
             indent 4 (vsep (fmap (\(n, ty) -> pretty n <> colon <+> pretty ty <> comma) fields)) <> line <>
         pretty "}" <> line <> line <>
-        pretty "impl" <+> pretty name <+> pretty "{" <> line <>
+        pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
             indent 4 (vsep (fmap pretty implBlock)) <> line <>
         pretty "}" <> line <> line <>
         vsep (fmap pretty traitImpls)
@@ -127,7 +141,7 @@ instance Pretty VerusEnumDecl where
         pretty "pub enum" <+> pretty name <+> pretty "{" <> line <>
             indent 4 (vsep (fmap (\(n, ty) -> pretty n <> prettyTyAnnot ty <> comma) variants)) <> line <>
         pretty "}" <> line <> line <>
-        pretty "impl" <+> pretty name <+> pretty "{" <> line <>
+        pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
             indent 4 (vsep (fmap pretty implBlock)) <> line <>
         pretty "}" <> line <> line <>
         vsep (fmap pretty traitImpls)

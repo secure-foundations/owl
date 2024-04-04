@@ -13,7 +13,8 @@ import Data.Map.Strict as M
 data BorrowKind = RMut | RShared
     deriving (Eq, Ord, Show)
 
-type Lifetime = String
+newtype Lifetime = Lifetime String
+    deriving (Eq, Ord, Show)
 
 data VerusName = VN String (Maybe Lifetime)
     deriving (Eq, Ord, Show)
@@ -27,6 +28,7 @@ data VerusTy =
     | RTOption VerusTy
     | RTNamed VerusName -- named types, eg structs, enums, etc
     | RTParam VerusName [VerusTy] -- general-purpose parameterized types (we special-case Option and Vec)
+    | RTOwlBuf Lifetime
     | RTUnit
     | RTBool
     | RTU8
@@ -133,8 +135,8 @@ asRef name t1 t2 =
 nl :: String -> VerusName
 nl s = VN s Nothing
 
-withLifetime :: String -> Lifetime -> VerusName
-withLifetime name lifetime = VN name (Just lifetime)
+withLifetime :: String -> String -> VerusName
+withLifetime name lt = VN name $ Just (Lifetime lt)
 
 rtResult :: VerusTy -> VerusTy -> VerusTy
 rtResult t e = RTParam (nl "Result") [t, e]

@@ -39,15 +39,51 @@ genVerusDef cdef = do
 
 
 
-genVerusStruct :: CStruct VerusTy -> EM VerusStructDecl
+genVerusStruct :: CStruct VerusTy -> EM (VerusStructDecl, Doc ann)
 genVerusStruct (CStruct name fields) = do
     debugLog $ "genVerusStruct: " ++ name
-    throwError $ ErrSomethingFailed "TODO: genVerusStruct"
+    -- Lift all member fields to have the lifetime annotation of the whole struct
+    let needsLifetime = any ((\t -> case t of RTOwlBuf l -> True; RTNamed (VN _ (Just _)) -> True; _ -> False) . snd) fields
+    let lifetimeConst = "a"
+    let verusFields = fmap (\(fname, fty) -> (cmpName fname, liftLifetime lifetimeConst fty)) fields
+    let verusName = if needsLifetime then cmpNameLifetime name lifetimeConst else cmpName name
+    allLensValid <- genAllLensValid verusFields
+    let sdecl = VerusStructDecl {
+            rStructName = verusName,
+            rStructFields = verusFields,
+            rStructImplBlock = [allLensValid],
+            rStructTraitImpls = []
+        }
+    return $ (sdecl, pretty "")
+    where 
+        liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
+        liftLifetime _ ty = ty
+
+        genAllLensValid verusFields = do
+            let genField (f, t) = case t of
+                    RTOwlBuf _ -> Just $ RDotCall (f, nl "len_valid", [])
+                    RTNamed (VN _ (Just (Lifetime lt))) -> Just $ RDotCall (f, nl "len_valid", [])
+                    _ -> Nothing
+            let lensValidFields = mapMaybe genField verusFields
+            let body = if null lensValidFields then RBoolLit True else foldl1 (\a b -> RInfixOp a "&&" b) lensValidFields
+            return $ VerusFunc {
+                    rfName = nl "all_lens_valid",
+                    rfMode = VOpenSpec,
+                    rfExternalBody = False,
+                    rfVerifierOpaque = False,
+                    rfArgs = [],
+                    rfRetTy = RTBool,
+                    rfRequires = [],
+                    rfEnsures = [],
+                    rfBody = body
+                }
+
+            
 
 
 
 
-genVerusEnum :: CEnum VerusTy -> EM VerusEnumDecl
+genVerusEnum :: CEnum VerusTy -> EM (VerusEnumDecl, Doc ann)
 genVerusEnum (CEnum name cases) = do
     debugLog $ "genVerusEnum: " ++ name
     throwError $ ErrSomethingFailed "TODO: genVerusEnum"
@@ -58,3 +94,6 @@ genVerusEnum (CEnum name cases) = do
 
 cmpName :: String -> VerusName
 cmpName owlName = VN ("owl_" ++ owlName) Nothing
+
+cmpNameLifetime :: String -> String -> VerusName
+cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
