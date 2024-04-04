@@ -80,7 +80,7 @@ concretifyTy t =
       TName ne -> formatTyOfNameExp ne
       TVK ne -> error "unimp"
       TEnc_PK ne -> error "unimp"
-      TSS ne1 ne2 -> return $ FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here?
+      TSS ne1 ne2 -> return $ groupFormatTy
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
           (i, t) <- unbind it
@@ -90,8 +90,16 @@ concretifyTy t =
 hexConstType :: String -> FormatTy
 hexConstType s = FBuf $ Just $ FLConst $ length s `div` 2
 
+groupFormatTy :: FormatTy
+groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here? 
+
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
-unifyFormatTy t1 t2 = error "unimp"
+unifyFormatTy t1 t2 = 
+    case (t1, t2) of
+      _ | t1 `aeq` t2 -> return t1
+      (FBuf Nothing, _) -> return $ FBuf Nothing
+      (_, FBuf Nothing) -> return $ FBuf Nothing
+      _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
@@ -121,8 +129,55 @@ concretifyPath (PRes rp) = do
             go _ = error "Unhandled case in concretifyPath"
 concretifyPath _ = error "Unhandled case in concretifyPath"
 
+flenOfFormatTy :: FormatTy -> Maybe FLen
+flenOfFormatTy (FBuf o) = o
+flenOfFormatTy (FUnit) = Just $ FLConst 0
+flenOfFormatTy FGhost = Just $ FLConst 0
+flenOfFormatTy FInt = Just $ FLConst 32 -- todo?
+flenOfFormatTy _ = Nothing
+
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
-concreteTyOfApp p ps ts = error "unimp"
+concreteTyOfApp (PRes pth) = 
+    case pth of
+      PDot PTop "unit" -> \_ _ -> error "unimp"
+      PDot PTop "true" -> \_ _ -> error "unimp"
+      PDot PTop "false" -> \_ _ -> error "unimp"
+      PDot PTop "eq" -> \_ [x, y] -> error "unimp"
+      PDot PTop "Some" -> \_ [x] -> error "unimp"
+      PDot PTop "None" -> \_ [] -> error "unimp"
+      PDot PTop "andb" -> \_ [x, y] -> error "unimp"
+      PDot PTop "andp" -> \_ [x, y] -> error "unimp"
+      PDot PTop "notb" -> \_ [x, y] -> error "unimp"
+      PDot PTop "length" -> \_ [x] -> return $ FInt
+      PDot PTop "plus" -> \_ [x, y] -> error "unimp"
+      PDot PTop "crh" -> \_ [x] -> error "unimp"
+      PDot PTop "mult" -> \_ [x, y] -> error "unimp"
+      PDot PTop "zero" -> \_ [] -> error "unimp"
+      PDot PTop "is_group_elem" -> \_ [x] -> error "unimp"
+      PDot PTop "concat" -> \_ [x, y] -> do
+          case (flenOfFormatTy x, flenOfFormatTy y) of
+            (Nothing, _) -> return $ FBuf Nothing
+            (_, Nothing) -> return $ FBuf Nothing
+            (Just x, Just y) -> return $ FBuf $ Just $ FLPlus x y
+      PDot PTop "xor" -> \_ [x, y] -> do
+          t <- unifyFormatTy x y
+          case t of
+            FBuf (Just _) -> return t
+            _ -> throwError $ ErrSomethingFailed $ "cannot extract xor"
+      PDot PTop "cipherlen" -> \_ [x] -> error "unimp"
+      PDot PTop "pk_cipherlen" -> \_ [x] -> error "unimp"
+      PDot PTop "vk" -> \_ [x] -> error "unimp"
+      PDot PTop "dhpk" -> \_ [x] -> error "unimp"
+      PDot PTop "enc_pk" -> \_ [x] -> error "unimp"
+      PDot PTop "dh_combine" -> \_ [x, y] -> do
+          when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
+              throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
+          return groupFormatTy
+      PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
+      _ -> 
+          -- TODO: here, we need to look in the environment for struct
+          -- constructors, etc
+          error "unimp"
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -144,11 +199,11 @@ concretifyAExpr a =
       AEHex s -> return $ Typed (hexConstType s) $ CAHexConst s
       AEKDF _ _ _ _ _ -> return ghostUnit
       AEGetEncPK n -> do
-          let encPKFormatTy = error "unimp" 
+          encPKFormatTy <- concretifyTy $ mkSpanned $ TEnc_PK n
           s <- concretifyNameExpLoc n
           return $ Typed encPKFormatTy $ CAGetEncPK s
       AEGetVK n -> do
-          let vkFormatTy = error "unimp" 
+          vkFormatTy <- concretifyTy $ mkSpanned $ TVK n
           s <- concretifyNameExpLoc n
           return $ Typed vkFormatTy $ CAGetVK s
       AEApp p ps aes -> do

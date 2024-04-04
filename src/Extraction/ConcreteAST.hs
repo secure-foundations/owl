@@ -31,6 +31,7 @@ import qualified TypingBase as TB
 data FLen = 
     FLConst Int
     | FLNamed String
+    | FLPlus FLen FLen
     deriving (Show, Eq, Generic, Typeable)
 
 data FormatTy =
@@ -152,6 +153,7 @@ instance (Typeable t, Alpha a, Alpha t, Subst b a, Subst b t) => Subst b (CDepBi
 instance OwlPretty FLen where
     owlpretty (FLConst i) = owlpretty i
     owlpretty (FLNamed s) = owlpretty s
+    owlpretty (FLPlus x y) = owlpretty x <+> owlpretty "+" <+> owlpretty y
     
 instance OwlPretty FormatTy where
     owlpretty FUnit = owlpretty "unit"
