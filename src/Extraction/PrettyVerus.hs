@@ -18,16 +18,16 @@ instance Pretty BorrowKind where
 instance Pretty Lifetime where
     pretty lt = pretty "'" <> pretty lt
 
-instance Pretty VerusName where
-    pretty (VN name Nothing) = pretty name
-    pretty (VN name (Just lt)) = pretty name <> angles (pretty lt)
+-- instance Pretty VerusName where
+--     pretty (VN name Nothing) = pretty name
+--     pretty (VN name (Just lt)) = pretty name <> angles (pretty lt)
 
-prettyLtOf :: VerusName -> Doc ann
-prettyLtOf (VN _ Nothing) = pretty ""
-prettyLtOf (VN _ (Just lt)) = angles (pretty lt)
+-- prettyLtOf :: VerusName -> Doc ann
+-- prettyLtOf (VN _ Nothing) = pretty ""
+-- prettyLtOf (VN _ (Just lt)) = angles (pretty lt)
 
 prettyLtOfT :: VerusTy -> Doc ann
-prettyLtOfT (RTNamed (VN _ (Just lt))) = angles (pretty lt)
+prettyLtOfT (RTWithLifetime _ lt) = angles (pretty lt)
 prettyLtOfT (RTOwlBuf lt) = angles (pretty lt)
 prettyLtOfT _ = pretty ""
 
@@ -40,7 +40,7 @@ instance Pretty VerusTy where
     pretty (RTOption ty) = pretty "Option" <> angles (pretty ty)
     pretty (RTParam ty targs) = pretty ty <> angles (hsep (punctuate comma (fmap pretty targs)))
     pretty (RTNamed name) = pretty name
-    -- pretty (RTWithLifetime ty lt) = pretty ty <> angles (pretty lt)
+    pretty (RTWithLifetime ty lt) = pretty ty <> angles (pretty lt)
     pretty (RTOwlBuf lt) = pretty "OwlBuf" <> angles (pretty lt)
     pretty RTUnit = pretty "()"
     pretty RTBool = pretty "bool"
@@ -53,7 +53,7 @@ prettyTyAnnot (Just ty) = colon <+> pretty ty
 
 instance Pretty VerusExpr where
     -- Special case for `let _ = ...;` where we omit the `let _ =`
-    pretty (RLet (False, (VN "_" Nothing), Nothing, expr) rest) = 
+    pretty (RLet (False, "_", Nothing, expr) rest) = 
         pretty expr <> semi <> line <> pretty rest
     pretty (RLet (lt, name, ty, expr) rest) = 
         pretty "let" <+> pretty (if lt then "mut " else "") <> pretty name <> prettyTyAnnot ty
@@ -133,22 +133,22 @@ instance Pretty VerusTraitImpl where
             indent 4 (vsep (fmap pretty traitFuncs)) <> line <>
         pretty "}"
 
-instance Pretty VerusStructDecl where
-    pretty (VerusStructDecl name fields implBlock traitImpls) = 
-        pretty "pub struct" <+> pretty name <+> pretty "{" <> line <>
-            indent 4 (vsep (fmap (\(n, ty) -> pretty n <> colon <+> pretty ty <> comma) fields)) <> line <>
-        pretty "}" <> line <> line <>
-        pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
-            indent 4 (vsep (fmap pretty implBlock)) <> line <>
-        pretty "}" <> line <> line <>
-        vsep (fmap pretty traitImpls)
+-- instance Pretty VerusStructDecl where
+--     pretty (VerusStructDecl name fields implBlock traitImpls) = 
+--         pretty "pub struct" <+> pretty name <+> pretty "{" <> line <>
+--             indent 4 (vsep (fmap (\(n, ty) -> pretty n <> colon <+> pretty ty <> comma) fields)) <> line <>
+--         pretty "}" <> line <> line <>
+--         pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
+--             indent 4 (vsep (fmap pretty implBlock)) <> line <>
+--         pretty "}" <> line <> line <>
+--         vsep (fmap pretty traitImpls)
 
-instance Pretty VerusEnumDecl where
-    pretty (VerusEnumDecl name variants implBlock traitImpls) = 
-        pretty "pub enum" <+> pretty name <+> pretty "{" <> line <>
-            indent 4 (vsep (fmap (\(n, ty) -> pretty n <> prettyTyAnnot ty <> comma) variants)) <> line <>
-        pretty "}" <> line <> line <>
-        pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
-            indent 4 (vsep (fmap pretty implBlock)) <> line <>
-        pretty "}" <> line <> line <>
-        vsep (fmap pretty traitImpls)
+-- instance Pretty VerusEnumDecl where
+--     pretty (VerusEnumDecl name variants implBlock traitImpls) = 
+--         pretty "pub enum" <+> pretty name <+> pretty "{" <> line <>
+--             indent 4 (vsep (fmap (\(n, ty) -> pretty n <> prettyTyAnnot ty <> comma) variants)) <> line <>
+--         pretty "}" <> line <> line <>
+--         pretty "impl" <> prettyLtOf name <+> pretty name <+> pretty "{" <> line <>
+--             indent 4 (vsep (fmap pretty implBlock)) <> line <>
+--         pretty "}" <> line <> line <>
+--         vsep (fmap pretty traitImpls)

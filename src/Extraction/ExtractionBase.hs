@@ -159,15 +159,15 @@ flattenPath p = error $ "bad path: " ++ show p
 
 
 
-cmpName :: String -> VerusName
-cmpName owlName = VN ("owl_" ++ owlName) Nothing
+-- cmpName :: String -> VerusName
+-- cmpName owlName = VN ("owl_" ++ owlName) Nothing
 
-cmpNameLifetime :: String -> String -> VerusName
-cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
+-- cmpNameLifetime :: String -> String -> VerusName
+-- cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
 
-specName :: String -> String
-specName owlName = owlName
+-- specName :: String -> String
+-- specName owlName = owlName
 
-specNameOf :: VerusName -> String
-specNameOf (VN s _) = 
-    if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
+-- specNameOf :: VerusName -> String
+-- specNameOf (VN s _) = 
+--     if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s

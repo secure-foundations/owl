@@ -16,8 +16,10 @@ data BorrowKind = RMut | RShared
 newtype Lifetime = Lifetime String
     deriving (Eq, Ord, Show)
 
-data VerusName = VN String (Maybe Lifetime)
-    deriving (Eq, Ord, Show)
+-- data VerusName = VN String (Maybe Lifetime)
+--    deriving (Eq, Ord, Show)
+
+type VerusName = String
 
 data VerusTy = 
       RTRef BorrowKind VerusTy
@@ -28,6 +30,7 @@ data VerusTy =
     | RTOption VerusTy
     | RTNamed VerusName -- named types, eg structs, enums, etc
     | RTParam VerusName [VerusTy] -- general-purpose parameterized types (we special-case Option and Vec)
+    | RTWithLifetime VerusTy Lifetime
     | RTOwlBuf Lifetime
     | RTUnit
     | RTBool
