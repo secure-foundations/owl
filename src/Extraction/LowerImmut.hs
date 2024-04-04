@@ -52,7 +52,9 @@ lowerExpr :: CExpr FormatTy -> EM (CExpr VerusTy)
 lowerExpr _ = throwError $ ErrSomethingFailed "TODO"
 
 lowerArg :: (CDataVar FormatTy, String, FormatTy) -> EM (CDataVar VerusTy, String, VerusTy)
-lowerArg _ = throwError $ ErrSomethingFailed "TODO"
+lowerArg (n, s, t) = do
+    t' <- lowerArgTy t
+    return (castName n, s, t')
 
 lowerDef :: CDef FormatTy -> EM (CDef VerusTy)
 lowerDef (CDef name b) = do

@@ -277,10 +277,6 @@ withVars xs k = do
     varCtx .= s
     return res
 
-castName :: Name a -> Name b
-castName (Fn x y) = Fn x y
-castName (Bn x y) = Bn x y
-
 
 
 withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(CDataVar FormatTy, FormatTy)] -> a -> EM (Maybe b)) -> EM (Maybe (CDepBind FormatTy b))
