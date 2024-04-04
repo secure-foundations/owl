@@ -20,6 +20,7 @@ import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
 import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
+import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
@@ -208,7 +209,66 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
 
 
+---- traversals ----
 
+
+traverseTyped :: Applicative f => Typed v t -> (t -> f t2) -> (v -> f v2) -> f (Typed v2 t2)
+traverseTyped (Typed t v) ft fv = Typed <$> ft t <*> fv v
+
+castName :: Name a -> Name b
+castName (Fn x y) = Fn x y
+castName (Bn x y) = Bn x y
+
+-- Does not take into account bound names
+traverseCAExpr :: Applicative f => (t -> f t2) -> CAExpr t -> f (CAExpr t2)
+traverseCAExpr f a =
+    traverseTyped a f $ \c ->
+        case c of
+          CAVar s n -> pure $ CAVar s $ castName n
+          CAApp s xs -> CAApp s <$> traverse (traverseCAExpr f) xs
+          CAGet s -> pure $ CAGet s
+          CAGetEncPK s -> pure $ CAGetEncPK s
+          CAGetVK s -> pure $ CAGetVK s
+          CAInt i -> pure $ CAInt i
+          CAHexConst i -> pure $ CAHexConst i
+
+-- Does not take into account bound names
+traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)
+traverseCExpr f a =
+    traverseTyped a f $ \c ->
+        case c of
+          CSkip -> pure CSkip
+          CInput bk -> do
+              ((n, ep), k) <- unbind bk                         
+              CInput . bind (castName n, ep) <$> traverseCExpr f k
+          COutput e k -> COutput <$> traverseCAExpr f e <*> pure k
+          CLet e a bk -> do
+              (n, k) <- unbind bk
+              CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)
+          CBlock e -> CBlock <$> traverseCExpr f e
+          CIf x y z -> CIf <$> traverseCAExpr f x <*> traverseCExpr f y <*> traverseCExpr f z
+          CCall s xs -> CCall <$> pure s <*> traverse (traverseCAExpr f) xs
+          CGetCtr s -> pure $ CGetCtr s
+          CIncCtr s -> pure $ CIncCtr s
+          CParse x y z bw -> do
+              (xs, w) <- unbind bw
+              w' <- traverseCExpr f w
+              CParse <$> traverseCAExpr f x <*> f y <*> traverse (traverseCExpr f) z <*> 
+                  pure (bind (map (\(n, s) -> (castName n, s)) xs) w')
+          CTLookup s a -> CTLookup <$> pure s <*> traverseCAExpr f a
+          CTWrite s a b -> CTWrite <$> pure s <*> traverseCAExpr f a <*> traverseCAExpr f b
+          CCase x y zs -> do
+              zs' <- traverse (\(s, e) ->
+                  case e of
+                    Left a -> do
+                        a' <- traverseCExpr f a
+                        pure (s, Left a')
+                    Right b -> do
+                        ((n, t), e) <- unbind b
+                        t2 <- f t
+                        e' <- traverseCExpr f e
+                        pure (s, Right $ bind (castName n, t2) e')) zs
+              CCase <$> traverseCAExpr f x <*> f y <*> pure zs'
 {- 
 --------------------------------------------------------------------------------
 

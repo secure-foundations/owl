@@ -172,10 +172,6 @@ bindCDepBind ((x, s, t):xs) a = do
     d <- bindCDepBind xs a
     return $ CDPVar t s (bind x d)
 
-castName :: Name a -> Name b
-castName (Fn x y) = Fn x y
-castName (Bn x y) = Bn x y
-
 
 
 -- cmpName :: String -> VerusName
