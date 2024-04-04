@@ -49,7 +49,7 @@ lowerArgTy FGhost = return $ RTVerusGhost
 
 
 lowerExpr :: CExpr FormatTy -> EM (CExpr VerusTy)
-lowerExpr _ = throwError $ ErrSomethingFailed "TODO"
+lowerExpr e = traverseCExpr lowerArgTy e
 
 lowerArg :: (CDataVar FormatTy, String, FormatTy) -> EM (CDataVar VerusTy, String, VerusTy)
 lowerArg (n, s, t) = do
