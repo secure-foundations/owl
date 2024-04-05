@@ -6,6 +6,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module GenVerus where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -28,6 +30,8 @@ import ANFPass (isGhostTyAnn)
 import Verus
 import ConcreteAST
 import ExtractionBase
+--import Data.String.Interpolate (i, __i, iii)
+import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad VerusTy
 
@@ -36,85 +40,67 @@ type EM = ExtractionMonad VerusTy
 --- OLD: attempt at using AST types
 
 
--- genVerusDef :: CDef VerusTy -> EM VerusFunc
--- genVerusDef cdef = do
---     throwError $ ErrSomethingFailed "TODO: genVerusDef"
+genVerusDef :: CDef VerusTy -> EM VerusFunc
+genVerusDef cdef = do
+    throwError $ ErrSomethingFailed "TODO: genVerusDef"
 
 
 
--- genVerusStruct :: CStruct VerusTy -> EM (VerusStructDecl, Doc ann)
--- genVerusStruct (CStruct name fields) = do
---     debugLog $ "genVerusStruct: " ++ name
---     -- Lift all member fields to have the lifetime annotation of the whole struct
---     let needsLifetime = any ((\t -> case t of RTOwlBuf l -> True; RTNamed (VN _ (Just _)) -> True; _ -> False) . snd) fields
---     let lifetimeConst = "a"
---     let verusFields = fmap (\(fname, fty) -> (cmpName fname, liftLifetime lifetimeConst fty)) fields
---     let verusName = if needsLifetime then cmpNameLifetime name lifetimeConst else cmpName name
---     let specname = (nl $ specName name)
---     allLensValid <- genAllLensValid verusFields
---     viewImpl <- genViewImpl verusName specname verusFields
---     let sdecl = VerusStructDecl {
---             rStructName = verusName,
---             rStructFields = verusFields,
---             rStructImplBlock = [allLensValid],
---             rStructTraitImpls = [viewImpl]
---         }
---     return $ (sdecl, pretty "")
---     where 
---         liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
---         liftLifetime _ ty = ty
+genVerusStruct :: CStruct VerusTy -> EM (Doc ann, Doc ann)
+genVerusStruct (CStruct name fields) = do
+    debugLog $ "genVerusStruct: " ++ name
+    -- Lift all member fields to have the lifetime annotation of the whole struct
+    let needsLifetime = any ((\t -> case t of RTOwlBuf _ -> True; RTWithLifetime _ _ -> True; _ -> False) . snd) fields
+    let lifetimeConst = "a"
+    let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime lifetimeConst fty)) fields
+    let verusName = execName name
+    let specname = specName name
+    let structFields = vsep $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{fty}|]) verusFields
+    let structDef = [__di|
+    pub struct #{verusName}#{if needsLifetime then "<'a>" else ""} {
+        #{structFields}
+    } 
+    |]
+    allLensValid <- genAllLensValid verusName verusFields
+    viewImpl <- genViewImpl verusName specname verusFields
+    return $ (vsep [structDef, allLensValid, viewImpl], pretty "")
+    where 
+        liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
+        liftLifetime _ ty = ty
 
---         genAllLensValid verusFields = do
---             let genField (f, t) = case t of
---                     RTOwlBuf _ -> Just $ RDotCall (RVar f) (nl "len_valid") []
---                     RTNamed (VN _ (Just (Lifetime lt))) -> Just $ RDotCall (RVar f) (nl "len_valid") []
---                     _ -> Nothing
---             let lensValidFields = mapMaybe genField verusFields
---             let body = if null lensValidFields then RBoolLit True else foldl1 (\a b -> RInfixOp a "&&" b) lensValidFields
---             return $ VerusFunc {
---                     rfName = nl "all_lens_valid",
---                     rfMode = VOpenSpec,
---                     rfExternalBody = False,
---                     rfVerifierOpaque = False,
---                     rfArgs = [],
---                     rfRetTy = RTBool,
---                     rfRequires = [],
---                     rfEnsures = [],
---                     rfBody = body
---                 }
+        genAllLensValid :: String -> [(String, VerusName, VerusTy)] -> EM (Doc ann)
+        genAllLensValid verusName fields = do
+            let body = hsep . punctuate [di|&&|] . fmap (\(_,fname, _) -> [di|self.#{fname}.len_valid()|]) $ fields
+            return [__di|
+            impl #{verusName}<'_> {
+                pub open spec fn len_valid(&self) -> bool {
+                    #{body}
+                }
+            }
+            |]
 
---         genViewImpl verusName specname verusFields = do
---             let viewField (f, t) = 
---                     let viewf = case t of
---                             RTBool -> RDotCall (RFieldSel (RVar (nl "self")) f) (nl "dview") []
---                             _ -> RDotCall (RDotCall (RFieldSel (RVar (nl "self")) f) (nl "dview") []) (nl "as_seq") []
---                     in (nl (specNameOf f), viewf)
---             let body = RStructLit specname $ map viewField verusFields
---             let viewDef = VerusFunc {
---                     rfName = nl "dview",
---                     rfMode = VOpenSpec,
---                     rfExternalBody = False,
---                     rfVerifierOpaque = False,
---                     rfArgs = [SelfArg RShared],
---                     rfRetTy = RTNamed verusName,
---                     rfRequires = [],
---                     rfEnsures = [],
---                     rfBody = body
---                 }
---             let viewImpl = VerusTraitImpl {
---                     rtiTraitName = cmpName "DView",
---                     rtiForTy = RTNamed verusName,
---                     rtiTraitTys = [VerusTyDecl (nl "V", RTNamed specname)],
---                     rtiTraitFuncs = [viewDef]
---                 }
---             return viewImpl
-            
+        genViewImpl :: String -> String -> [(String, VerusName, VerusTy)] -> EM (Doc ann)
+        genViewImpl verusName specname fields = do
+            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{fname}: self.#{ename}.view()|]) $ fields
+            return [__di|
+            impl DView for #{verusName}<'_> {
+                type V = #{specname};
+                open spec fn view(&self) -> #{specname} {
+                    #{specname} { 
+                        #{body}
+                    }
+                }
+            }
+            |]
+        
+        -- genParsleyWrappers :: String -> [(String, VerusTy)] -> EM (Doc ann)
 
 
--- genVerusEnum :: CEnum VerusTy -> EM (VerusEnumDecl, Doc ann)
--- genVerusEnum (CEnum name cases) = do
---     debugLog $ "genVerusEnum: " ++ name
---     throwError $ ErrSomethingFailed "TODO: genVerusEnum"
+
+genVerusEnum :: CEnum VerusTy -> EM (VerusEnumDecl, Doc ann)
+genVerusEnum (CEnum name cases) = do
+    debugLog $ "genVerusEnum: " ++ name
+    throwError $ ErrSomethingFailed "TODO: genVerusEnum"
 
 
 -----------------------------------------------------------------------------

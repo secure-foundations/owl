@@ -174,14 +174,14 @@ bindCDepBind ((x, s, t):xs) a = do
 
 
 
--- cmpName :: String -> VerusName
--- cmpName owlName = VN ("owl_" ++ owlName) Nothing
+execName :: String -> VerusName
+execName owlName = "owl_" ++ owlName
 
 -- cmpNameLifetime :: String -> String -> VerusName
 -- cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
 
--- specName :: String -> String
--- specName owlName = owlName
+specName :: String -> VerusName
+specName owlName = owlName
 
 -- specNameOf :: VerusName -> String
 -- specNameOf (VN s _) = 

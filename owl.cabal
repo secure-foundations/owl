@@ -42,7 +42,9 @@ executable owl
                        hashable,
                        cereal,
                        bytestring,
-                       time
+                       time,
+                       string-interpolate,
+                       prettyprinter-interp
 
 
 -- executable owlprof
