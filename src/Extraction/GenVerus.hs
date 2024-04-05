@@ -96,7 +96,7 @@ genVerusStruct (CStruct name fields) = do
             return [__di|
             impl DView for #{verusName}#{lAnnot} {
                 type V = #{specname};
-                open spec fn view(&self) -> #{specname} {
+                open spec fn dview(&self) -> #{specname} {
                     #{specname} { 
                         #{body}
                     }
