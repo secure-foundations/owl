@@ -347,11 +347,11 @@ smtTy xv t =
       TOption t -> sMkEnumCond xv [tUnit, t]
       TName n -> do
           kdfRefinement <- case n^.val of
-                             NameConst _ _ _ -> return sTrue
                              KDFName a b c nks j nt _ -> do 
                                  (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
                                  -- p <- kdfPerm va vb vc start segment nt
                                  return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             _ -> return sTrue
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do
@@ -365,6 +365,10 @@ smtTy xv t =
       TEnc_PK n -> do
           vn <- symNameExp n
           encpk <- getTopLevelFunc ("enc_pk")
+          return $ xv `sEq` (SApp [encpk, vn])
+      TKEM_PK n -> do
+          vn <- symNameExp n
+          encpk <- getTopLevelFunc ("kem_pk")
           return $ xv `sEq` (SApp [encpk, vn])
       TSS n m -> do
           vn <- symNameExp n

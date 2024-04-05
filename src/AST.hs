@@ -130,6 +130,7 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
+    | KEMName NameExp Idx
     | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
            -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
@@ -195,9 +196,10 @@ data PropX =
     | PAADOf NameExp AExpr         
     | PInODH AExpr AExpr AExpr
     | PHonestPKEnc NameExp AExpr
+    | PHonestKEMEncaps NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
+data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_KEM | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
 
 type Prop = Spanned PropX
@@ -248,6 +250,7 @@ data NameTypeX =
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx])
+    | NT_KEM NameType
     | NT_KDF KDFPos 
         -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
         KDFBody
@@ -268,6 +271,7 @@ data TyX =
     | TUnit
     | TName NameExp -- Singleton type
     | TVK NameExp -- Singleton type
+    | TKEM_PK NameExp -- Singleton Type
     | TDH_PK NameExp -- Singleton type
     | TEnc_PK NameExp -- Singleton type
     | TSS NameExp NameExp -- Singleton type
@@ -430,6 +434,7 @@ data ExprX =
     | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
+    | EKEMEncaps AExpr (String, String) (Bind (DataVar, DataVar) Expr)
     deriving (Show, Generic, Typeable)
 
 type Expr = Spanned ExprX
@@ -442,6 +447,7 @@ data CryptOp =
            Int 
       | CLemma BuiltinLemma
       | CAEnc 
+      | CKEMDecaps
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx]) (Bind DataVar AExpr)
       | CDecStAEAD 

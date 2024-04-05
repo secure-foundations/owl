@@ -65,6 +65,7 @@ owlprettyKDFSelector (i, []) = owlpretty i
 owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
+    owlpretty (KEMName ne i) = owlpretty "KEMName<" <> owlpretty ne <> owlpretty ", " <> owlpretty i <> owlpretty ">"
     owlpretty (KDFName a b c nks j nt _) = 
         Prettyprinter.group $ 
         owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
@@ -154,6 +155,8 @@ instance  OwlPretty TyX where
                     owlpretty "vk(" <> owlpretty n <> owlpretty ")"
             (TDH_PK n) ->
                     owlpretty "dhpk(" <> owlpretty n <> owlpretty ")"
+            (TKEM_PK n) -> 
+                    owlpretty "kem_pk(" <> owlpretty n <> owlpretty ")"
             (TEnc_PK n) ->
                     owlpretty "encpk(" <> owlpretty n <> owlpretty ")"
             (TSS n m) ->
@@ -237,6 +240,7 @@ instance  OwlPretty PropX where
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
     owlpretty (PHonestPKEnc ne a) = owlpretty "honest_pk_enc" <> angles (owlpretty ne) <> tupled [owlpretty a]
+    owlpretty (PHonestKEMEncaps ne a) = owlpretty "honest_kem_encaps" <> angles (owlpretty ne) <> tupled [owlpretty a]
     owlpretty (PHappened s ixs xs) = 
         let pids = 
                 case ixs of
@@ -260,6 +264,7 @@ owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map
 
 
 instance  OwlPretty NameTypeX where
+    owlpretty (NT_KEM nt) = owlpretty "kemkey" <+> owlpretty nt
     owlpretty (NT_KDF kpos cases) = 
         let (((sx, _), (sy, _), (sself, _)), c) = unsafeUnbind cases in 
         let pcases = map (\b ->

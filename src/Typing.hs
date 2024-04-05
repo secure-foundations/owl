@@ -119,6 +119,12 @@ extractEncPKFromType t =
       TEnc_PK k -> Just k
       _ ->  Nothing
 
+extractKEMPKFromType :: Ty -> Maybe NameExp
+extractKEMPKFromType t =
+    case (stripRefinements t)^.val of
+      TKEM_PK k -> Just k
+      _ ->  Nothing
+
 extractVKFromType :: Ty -> Maybe NameExp
 extractVKFromType t =
     case (stripRefinements t)^.val of
@@ -257,6 +263,14 @@ initDetFuncs = withNormalizedTys $ [
               nt <-  local (set tcScope (TcGhost False)) $ getNameType n
               case nt^.val of
                 NT_PKE _ -> return $ TEnc_PK n
+                _ -> trivialTypeOf args
+          _ -> trivialTypeOf args,
+    mkSimpleFunc "kem_pk" 1 $ \args ->
+        case args of
+          [t] | Just n <- extractNameFromType t -> do
+              nt <-  local (set tcScope (TcGhost False)) $ getNameType n
+              case nt^.val of
+                NT_KEM _ -> return $ TKEM_PK n
                 _ -> trivialTypeOf args
           _ -> trivialTypeOf args,
     ("dh_combine", (2, \ps args ->
@@ -517,6 +531,10 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                          ne' <- normalizeNameExp ne
                          a' <- resolveANF a >>= normalizeAExpr
                          return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
+                     PHonestKEMEncaps ne a -> do
+                         ne' <- normalizeNameExp ne
+                         a' <- resolveANF a >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PHonestKEMEncaps ne' a'
                      _ -> return p
 
 
@@ -576,6 +594,9 @@ normalizeTy = withMemoize (memoNormalizeTy) $ \t0 ->
              (TEnc_PK n) -> do
                  n' <- normalizeNameExp n
                  return $ Spanned (t0^.spanOf) $ TEnc_PK n'
+             (TKEM_PK n) -> do
+                 n' <- normalizeNameExp n
+                 return $ Spanned (t0^.spanOf) $ TKEM_PK n'
              (TSS n m) -> do
                  n' <- normalizeNameExp n
                  m' <- normalizeNameExp m
@@ -733,6 +754,7 @@ isSubtypeLeaf t =
       TVK _ -> True
       TDH_PK _ -> True
       TEnc_PK _ -> True
+      TKEM_PK _ -> True
       TSS _ _ -> True
       TAdmit -> True
       THexConst _ -> True
@@ -806,6 +828,7 @@ isSingleton t =
       TVK _ -> True
       TDH_PK _ -> True
       TEnc_PK _ -> True
+      TKEM_PK _ -> True
       TSS _ _ -> True
       THexConst _ -> True
       _ -> False
@@ -1389,6 +1412,9 @@ checkNoTopTy allowGhost t =
 checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 
     case nt^.val of
+      NT_KEM nt -> do
+          checkNameType nt
+          nameTypeUniform nt
       NT_DH -> return ()
       NT_Sig t -> do
           checkTy t
@@ -1531,6 +1557,11 @@ checkTy t = withSpan (t^.spanOf) $
               case nt^.val of
                 NT_PKE _ -> return ()
                 _ -> typeError $ show $ ErrWrongNameType n "PKE" nt
+          (TKEM_PK n) -> do
+              nt <- getNameType n
+              case nt^.val of
+                NT_KEM _ -> return ()
+                _ -> typeError $ show $ ErrWrongNameType n "PKE" nt
           (TSS n m) -> do
               nt <- getNameType n
               nt' <- getNameType m
@@ -1557,6 +1588,7 @@ tyLenLbl t =
                   TVK _ -> return zeroLbl
                   TDH_PK _ -> return zeroLbl
                   TEnc_PK _ -> return zeroLbl
+                  TKEM_PK _ -> return zeroLbl
                   TSS _ _ -> return zeroLbl
                   TUnit -> return zeroLbl
                   TBool _ -> return zeroLbl
@@ -1640,6 +1672,13 @@ checkProp :: Prop -> Check ()
 checkProp p =
     local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ do
         case p^.val of
+          PHonestKEMEncaps ne a -> do
+              nt <- local (set tcScope $ TcGhost False) $  getNameType ne
+              case nt^.val of
+                NT_KEM _ -> do
+                    _ <- inferAExpr a
+                    return ()
+                _ -> typeError $ "Not a KEM key: " ++ show (owlpretty ne)
           PHonestPKEnc ne a -> do
               nt <- local (set tcScope $ TcGhost False) $  getNameType ne
               case nt^.val of
@@ -1971,6 +2010,23 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                       assert (show $ owlpretty "Wrong locality for table: got" <> owlpretty curr_loc <+> owlpretty "but expected" <+> owlpretty loc) $ curr_loc' `aeq` loc'
                       getOutTy ot $ mkSpanned $ TOption t
                   _ -> typeError $ "Weird case: should be in a def"
+      EKEMEncaps a (s1, s2) xk -> do
+          ta <- inferAExpr a                                                 
+          b <- tyFlowsTo ta advLbl
+          assert ("Cannot call KEM.Encaps on non-public expression") b
+          t <- inferAExpr a
+          keyType <- openTy t $ \t0 -> do
+              case extractKEMPKFromType t0 of
+                Nothing -> return $ tData advLbl advLbl
+                Just k -> do
+                    let n i = tRefined (tName $ mkSpanned $ KEMName k i) ".res" $ 
+                                pImpl (pFlow (nameLbl k) advLbl)
+                                      (pFlow (nameLbl $ mkSpanned $ KEMName k i) advLbl)
+                    return $ tExistsIdx "i" $ bind (s2n ".i") $ n (mkIVar $ s2n ".i")
+          let cipherType = tDataWithLength advLbl $ aeLenConst "kem_cipherlen"
+          ((x1, x2), k) <- unbind xk
+          t2 <- withVars [(x1, (ignore s1, Nothing, keyType)), (x2, (ignore s2, Nothing, cipherType))] $ checkExpr ot k
+          stripTy x1 t2 >>= \t2' -> stripTy x2 t2 >>= normalizeTy
       (ETWrite pth@(PRes (PDot p n)) a1 a2) -> do
           ensureNonGhost
           md <- openModule p
@@ -2374,6 +2430,7 @@ getValidatedTy albl t = local (set tcScope $ TcGhost False) $ do
         TVK _ -> return $ Just $ tDataWithLength albl (aeLenConst "vk")
         TDH_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
         TEnc_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "pke_pk")
+        TKEM_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "kem_pk")
         TSS _ _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
         TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
         TExistsIdx s ity -> do
@@ -2916,6 +2973,26 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
                           return $ tDataAnn l_corr zeroLbl "corrupt KDF"
           normalizeTy resTy
+      CKEMDecaps -> do
+          assert ("Wrong number of arguments to kem_decaps") $ length args == 2
+          let [(_, t1), (x, t2)] = args
+          case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> trivialTypeOf [t1, t2]
+            Just k -> do
+                nt <- local (set tcScope $ TcGhost False) $ getNameType k
+                case nt^.val of
+                  NT_KEM _ -> do
+                      b2 <- tyFlowsTo t2 advLbl 
+                      casePropTy (pFlow (nameLbl k) advLbl) $ \b1 -> 
+                          if b2 && (not b1) then 
+                              return $ mkSpanned $ TOption $ mkSpanned $ 
+                                    TCase (mkSpanned $ PHonestKEMEncaps k x)
+                                        (tExistsIdx "i" $ bind (s2n ".i") $ tName $ mkSpanned $ KEMName k (mkIVar $ s2n ".i"))
+                                        (tDataAnn advLbl advLbl "adversarial kem encaps")
+                          else if b2 && b1 then  
+                            return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt kem_decaps"
+                          else mkSpanned <$> trivialTypeOf [t1, t2]
+                  _ -> mkSpanned <$> trivialTypeOfAnn "wrong name type for kem_decaps" [t1, t2]
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args

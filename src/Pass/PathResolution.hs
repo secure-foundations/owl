@@ -32,7 +32,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor"]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "kem_pk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor"]
 
 data PathType = 
     PTName
@@ -335,6 +335,7 @@ resolveNameType e = do
                       pth' <- resolvePath (e^.spanOf) PTNameType pth
                       return $ NT_App pth' is
                   NT_DH -> return t
+                  NT_KEM nt -> NT_KEM <$> resolveNameType nt
                   NT_Nonce _ -> return t
                   NT_Sig t -> NT_Sig <$> resolveTy t
                   NT_Enc t -> NT_Enc <$> resolveTy t
@@ -391,6 +392,7 @@ resolveTy e = do
                   TVK ne -> TVK <$> resolveNameExp ne
                   TDH_PK ne -> TDH_PK <$> resolveNameExp ne
                   TEnc_PK ne -> TEnc_PK <$> resolveNameExp ne
+                  TKEM_PK ne -> TKEM_PK <$> resolveNameExp ne
                   TSS ne ne' -> liftM2 TSS (resolveNameExp ne) (resolveNameExp ne')
                   TAdmit -> return TAdmit
                   TExistsIdx s xt -> do
@@ -408,6 +410,9 @@ resolveTy e = do
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
+        KEMName ne2 i -> do
+            ne2' <- resolveNameExp ne2
+            return $ Spanned (ne^.spanOf) $ KEMName ne2' i
         NameConst s p as -> do
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
@@ -562,6 +567,7 @@ resolveCryptOp pos cop =
           return $ CLemma l'
       CKDF x y nks i -> return cop
       CAEnc -> return CAEnc
+      CKEMDecaps -> return cop
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat
           pat' <- resolveAExpr pat
@@ -713,6 +719,11 @@ resolveExpr e =
           a1' <- resolveAExpr a1
           a2' <- resolveAExpr a2
           return $ Spanned (e^.spanOf) $ ETWrite p' a1' a2'
+      EKEMEncaps a s be -> do
+          a' <- resolveAExpr a
+          (b, e2) <- unbind be
+          e2' <- resolveExpr e2
+          return $ Spanned (e^.spanOf) $ EKEMEncaps a' s (bind b e2')
 
 resolveDebugCommand :: DebugCommand -> Resolve DebugCommand
 resolveDebugCommand dc = 
@@ -800,6 +811,10 @@ resolveProp p =
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a
           return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
+      PHonestKEMEncaps ne a -> do
+          ne' <- resolveNameExp ne
+          a' <- resolveAExpr a
+          return $ Spanned (p^.spanOf) $ PHonestKEMEncaps ne' a'
 
 
                                             

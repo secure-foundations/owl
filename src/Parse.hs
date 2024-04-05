@@ -86,6 +86,16 @@ parseKDFSelector = do
 parseNameExp :: Parser NameExp
 parseNameExp = 
     (parseSpanned $ do
+        reserved "KEMName"
+        symbol "<"
+        ne <- parseNameExp
+        symbol ","
+        i <- parseIdx
+        symbol ">"
+        return $ KEMName ne i
+    )
+    <|>
+    (parseSpanned $ do
         reserved "KDF"
         symbol "<"
         nks <- parseNameKind `sepBy1` (symbol "||")
@@ -321,6 +331,11 @@ parseTyTerm =
                  n <- parseNameExp
                  symbol ")"
                  return $ TEnc_PK n
+          "kempk" -> do
+                 symbol "("
+                 n <- parseNameExp
+                 symbol ")"
+                 return $ TKEM_PK n
           "shared_secret" -> do
                  symbol "("
                  n <- parseNameExp
@@ -538,6 +553,17 @@ parsePropTerm =
             return $ PHonestPKEnc ne a
         )
         <|>
+        (parseSpanned $ do
+            reserved "honest_kem_encaps"
+            symbol "<"
+            ne <- parseNameExp
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ")"
+            return $ PHonestKEMEncaps ne a
+        )
+        <|>
         (parseSpanned $ try $ do
             p <- parsePath
             is <- parseIdxParams1
@@ -686,6 +712,12 @@ parseNameType =
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
         return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "kemkey"
+        nt <- parseNameType
+        return $ NT_KEM nt
     )
     <|>
     (parseSpanned $ do
@@ -1539,6 +1571,18 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
+        reserved "kem_encaps"
+        x <- identifier
+        symbol ","
+        y <- identifier
+        reserved "<-"
+        n <- parseAExpr
+        reserved "in"
+        e <- parseExpr
+        return $ EKEMEncaps n (x, y) $ bind (s2n x, s2n y) e
+    )
+    <|>
+    (parseSpanned $ do
         a <- parseAExpr
         return $ ERet a
         )
@@ -1618,6 +1662,8 @@ parseCryptOp =
     <|>
     (reserved "adec" >> return CADec)
     <|>
+    (reserved "kem_decaps" >> return CKEMDecaps)
+    <|>
     (do
         reserved "st_aead_enc"
         symbol "<"
@@ -1654,6 +1700,8 @@ parseCryptOp =
     (reserved "vrfy" >> return CSigVrfy)
 
 parseNameKind =
+    (reserved "kemkey" >> return NK_KEM)
+    <|>
     (reserved "kdfkey" >> return NK_KDF)
     <|>
     (reserved "enckey" >> return NK_Enc)

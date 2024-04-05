@@ -730,6 +730,17 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                      nth nt
                  assert ("Name kind row index out of scope") $ j < length nks
                  return $ Just (nt, Nothing)
+             KEMName ne i -> do
+                 inf <- getNameInfo ne
+                 checkIdx i
+                 case inf of
+                   Nothing -> typeError $ "Name for KEM cannot be abstract"
+                   Just (nt, _) -> do
+                       nt' <- normalizeNameType nt
+                       case nt'^.val of
+                         NT_KEM nt2 -> return $ Just (nt2, Nothing)
+                         _ -> typeError $ "Not a KEM Name: " ++ show (owlpretty nt')
+
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
@@ -948,7 +959,7 @@ withMemoize lns k x = do
           return v
 
 lengthConstants :: [String]
-lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group", "kem_cipherlen"]
 
 inferAExpr :: AExpr -> Check' senv Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
@@ -1233,6 +1244,7 @@ coveringLabel' = withMemoize (memoCoveringLabel') $ \t ->
       (TVK n) -> return $ advLbl
       (TDH_PK n) -> return $ advLbl
       (TEnc_PK n) -> return $ advLbl
+      (TKEM_PK n) -> return $ advLbl
       (TSS n m) -> return $ joinLbl (nameLbl n) (nameLbl m)
       (TConst s ps) -> do
           td <- getTyDef  s
@@ -1329,6 +1341,9 @@ normalizeNameExp ne =
           c' <- resolveANF c >>= normalizeAExpr 
           nt' <- normalizeNameType nt
           return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+      KEMName ne i -> do
+          ne' <- normalizeNameExp ne
+          return $ Spanned (ne^.spanOf) $ KEMName ne' i
 
 -- Traversing modules to collect global info
 
@@ -1632,6 +1647,9 @@ stripTy x t =
       TEnc_PK n -> do
           n' <- stripNameExp x n
           return $ mkSpanned $ TEnc_PK n'
+      TKEM_PK n -> do
+          n' <- stripNameExp x n
+          return $ mkSpanned $ TKEM_PK n'
       TSS n m -> do
           n' <- stripNameExp x n
           m' <- stripNameExp x m
@@ -1653,6 +1671,9 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
+      KEMName ne i -> do
+          ne2 <- stripNameExp x ne
+          return $ Spanned (e^.spanOf) $ KEMName ne2 i
       KDFName a b c nks j nt ib -> do
           a' <- resolveANF a
           b' <- resolveANF b
