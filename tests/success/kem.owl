@@ -1,0 +1,37 @@
+locality alice
+locality bob
+
+name n : nonce @ bob
+name sk : kemkey (enckey Name(n)) @ alice
+
+def bob_main(pk : kempk(sk)) @ bob : Unit = 
+    kem_encaps k, c <- pk in 
+    // k is the fresh key, c is the encapsulated key
+    // k : exists i. Name(KEMName<sk, i>)
+    // c : Data<adv> | kem_cipherlen |
+    output c;
+    unpack i, k = k in 
+    let c2 = aenc(k, get(n)) in 
+    output c2
+
+struct alice_result<i> {
+    _ar_c : Data<adv>,
+    _ar_res : if sec(sk) /\ honest_kem_encaps<sk>(_ar_c) /\ sec(KEMName<sk, i>) then Name(n) else Data<adv>
+}
+
+def alice_main() @ alice : Option (exists i. alice_result<idx i>) = 
+    input c in 
+    input c2 in 
+    case kem_decaps(get(sk), c) as Option Data<adv> {
+        | Some k => 
+            unpack i, k = k in 
+            case adec(k, c2) as Option Data<adv> {
+                | Some v => 
+                    let res = pack<i>(alice_result<idx i>(c,v)) in 
+                    Some(res)
+                | None => None()
+                otherwise => None()
+            }
+        | None => None()
+        otherwise => None()
+    }
