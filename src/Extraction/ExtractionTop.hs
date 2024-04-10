@@ -83,7 +83,7 @@ extract' modbody = do
     7.  harness generation
     -}
     owlExtrData <- preprocessModBody modbody
-    debugPrint $ show owlExtrData
+    -- debugPrint $ show owlExtrData
     concreteExtrData <- concretifyPass owlExtrData
     specs <- specExtractPass concreteExtrData
     verusTyExtrData <- do
