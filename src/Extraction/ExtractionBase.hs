@@ -45,7 +45,7 @@ liftCheck c = do
     e <- ask
     o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e
     case o of 
-      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
+      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "liftCheck error: "
       Right i -> return i
 
 data Env t = Env {
@@ -186,3 +186,15 @@ specName owlName = owlName
 -- specNameOf :: VerusName -> String
 -- specNameOf (VN s _) = 
 --     if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
+
+fLenOfNameTy :: NameType -> ExtractionMonad t FLen
+fLenOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    return $ FLNamed $ case nk of
+        NK_KDF -> "kdfkey"
+        NK_DH -> "exponent"
+        NK_Enc -> "enckey"
+        NK_PKE -> "pkekey"
+        NK_Sig -> "sigkey"
+        NK_MAC -> "mackey"
+        NK_Nonce s -> s

@@ -49,17 +49,18 @@ data LocalityData nameData defData = LocalityData {
     _defs :: [defData], 
     _tables :: [(String, Ty)], 
     _counters :: [String]
-}
+} deriving Show
 makeLenses ''LocalityData
 data ExtractionData defData tyData nameData = ExtractionData {
     _locMap :: M.Map LocalityName (LocalityData nameData defData),
-    _presharedNames :: [nameData],
+    _presharedNames :: [(nameData, [(LocalityName, Int)])],
     _pubKeys :: [nameData],
-    _tyDefs :: [tyData]
-}
+    _tyDefs :: [(String, tyData)]
+} deriving Show
 makeLenses ''ExtractionData
 
 type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
+type OwlLocalityData = LocalityData NameData OwlDefData
 type CFExtractionData = ExtractionData (CDef FormatTy) (CTyDef FormatTy) NameData
 type CRExtractionData = ExtractionData (CDef VerusTy) (CTyDef VerusTy) NameData
 type VerusExtractionData = ExtractionData () () () -- TODO
@@ -82,6 +83,7 @@ extract' modbody = do
     7.  harness generation
     -}
     owlExtrData <- preprocessModBody modbody
+    debugPrint $ show owlExtrData
     concreteExtrData <- concretifyPass owlExtrData
     specs <- specExtractPass concreteExtrData
     verusTyExtrData <- do
@@ -89,8 +91,7 @@ extract' modbody = do
         if fs ^. fExtractBufOpt then 
             throwError $ ErrSomethingFailed "TODO: buffer-optimization for extraction"
         else lowerImmutPass concreteExtrData
-    (verusAst, extractedVest) <- genVerusPass verusTyExtrData
-    extractedOwl <- prettyPass verusAst
+    (extractedOwl, extractedVest) <- genVerusPass verusTyExtrData
     (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
     lp <- prettyFile "extraction/lib_preamble.rs"
@@ -123,24 +124,126 @@ extract' modbody = do
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
 preprocessModBody mb = do
-    throwError $ ErrSomethingFailed "TODO preprocessModBody"
+    debugLog "Preprocessing"
+    let (locs, locAliases) = sortLocs $ mb ^. TB.localities
+    let lookupLoc = lookupLoc' locs locAliases
+    let locMap = M.map (\npids -> LocalityData npids [] [] [] [] []) locs
+    locMap <- foldM (sortTable lookupLoc) locMap (mb ^. TB.tableEnv)
+    locMap <- foldM (sortCtr lookupLoc) locMap (mb ^. TB.ctrEnv)
+    (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameDefs)
+    locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
+    let tydefs = mb ^. TB.tyDefs
+    debugLog "Finished preprocessing"
+    return $ ExtractionData locMap shared pubkeys tydefs
+    where
+        sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
+                                case locType of 
+                                    Left i -> (M.insert locName i locs, locAliases)
+                                    Right p -> (locs, M.insert locName (flattenResolvedPath p) locAliases)) 
+                             (M.empty, M.empty)
+
+        lookupLoc' :: M.Map LocalityName Int -> M.Map LocalityName LocalityName -> LocalityName -> ExtractionMonad t LocalityName
+        lookupLoc' locs locAliases l = do
+                case locs M.!? l of
+                    Just _ -> return l
+                    Nothing -> 
+                        case locAliases M.!? l of
+                            Just l' -> lookupLoc' locs locAliases l'
+                            Nothing -> throwError $ ErrSomethingFailed $ "couldn't lookup locality alias " ++ show l
+        
+        sortTable :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, (Ty, Locality)) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
+        sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
+            locName <- lookupLoc =<< flattenPath locP
+            let f = tables %~ (++) [(name, ty)] 
+            return $ M.adjust f locName locMap
+
+        sortCtr :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, Bind ([IdxVar], [IdxVar]) Locality) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
+        sortCtr lookupLoc locMap (name, b) = do
+            let ((sids, pids), Locality locP _) = unsafeUnbind b
+            when (length sids > 0) $ debugPrint $ "WARNING: ignoring sid indices on counter " ++ name
+            locName <- lookupLoc =<< flattenPath locP
+            let f = counters %~ (++) [name]
+            return $ M.adjust f locName locMap
+
+            -- case (sids, pids) of
+            --     ([], _) -> do
+                    -- ...
+                -- _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
+
+        resolveNameApp :: Path -> ExtractionMonad t (Bind ([IdxVar], [IdxVar]) NameType)
+        resolveNameApp p = do
+            s <- tailPath p
+            let ntds = mb ^. TB.nameTypeDefs
+            case lookup s ntds of
+                Just b -> return b
+                _ -> throwError $ ErrSomethingFailed $ "couldn't resolve name app " ++ show s
+
+        sortName :: (LocalityName -> ExtractionMonad t LocalityName) 
+                    -> (M.Map LocalityName OwlLocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+                    -> (String, (Bind ([IdxVar], [IdxVar]) TB.NameDef))
+                    -> ExtractionMonad t (M.Map LocalityName OwlLocalityData, [(NameData, [(LocalityName, Int)])], [NameData]) 
+        sortName lookupLoc (locMap, shared, pubkeys) (name, binds) = do
+            let ((sids, pids), nd) = unsafeUnbind binds
+            case nd of
+              TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
+              TB.BaseDef (nt, loc) -> do
+                nt <- case nt ^. val of
+                    NT_App p _ -> do
+                        b <- resolveNameApp p
+                        let (_, nt) = unsafeUnbind b
+                        return nt
+                    _ -> return nt
+                flen <- fLenOfNameTy nt
+                let nsids = length sids
+                let npids = length pids
+                when (nsids > 1) $ throwError $ DefWithTooManySids name
+                let gPub m lo = M.adjust (sharedNames %~ (++) [(name, flen, npids)]) lo m
+                let gPriv m lo = M.adjust (localNames %~ (++) [(name, flen, npids)]) lo m
+                locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
+                locNameCounts <- mapM (\(Locality lname lidxs) -> do
+                    plname <- flattenPath lname
+                    return (plname, length lidxs)) loc
+                case nt ^.val of
+                    -- public keys must be shared, so pub/priv key pairs are generated by the initializer
+                    NT_PKE _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, flen, npids), locNameCounts)], pubkeys ++ [(name, flen, npids)])
+                    NT_Sig _ ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, flen, npids), locNameCounts)], pubkeys ++ [(name, flen, npids)])
+                    NT_DH ->
+                        return (foldl gPub locMap locNames, shared ++ [((name, flen, npids), locNameCounts)], pubkeys ++ [(name, flen, npids)])
+                    _ -> if length loc /= 1 then
+                            -- name is shared among multiple localities
+                            return (foldl gPub locMap locNames, shared ++ [((name, flen, npids), locNameCounts)], pubkeys)
+                        else
+                            -- name is local and can be locally generated
+                            return (foldl gPriv locMap locNames, shared, pubkeys)
+              TB.AbbrevNameDef _ -> do
+                throwError $ ErrSomethingFailed "TODO sortName for AbbrevNameDef"
+
+        sortDef :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, TB.Def) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
+        sortDef _ m (_, TB.DefHeader _) = return m
+        sortDef lookupLoc m (owlName, def@(TB.Def idxs_defSpec)) = do
+                let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
+                when (length sids > 1) $ throwError $ DefWithTooManySids owlName
+                let loc@(Locality locP _) = defspec ^. TB.defLocality
+                locName <- lookupLoc =<< flattenPath locP
+                let f = defs %~ (++) [(owlName, def)]
+                return $ M.adjust f locName m
+
 
 concretifyPass :: OwlExtractionData -> ExtractionMonad t CFExtractionData
 concretifyPass owlExtrData = do
+    
     throwError $ ErrSomethingFailed "TODO concretifyPass"
 
 lowerImmutPass :: CFExtractionData -> ExtractionMonad t CRExtractionData
 lowerImmutPass cfExtrData = do
     throwError $ ErrSomethingFailed "TODO lowerImmutPass"
 
--- Doc ann is the vest file
-genVerusPass :: CRExtractionData -> ExtractionMonad t (VerusExtractionData, Doc ann)
+-- Directly generate strings; first ret val is the Verus code, second is the generated Vest code
+genVerusPass :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann)
 genVerusPass crExtrData = do
     throwError $ ErrSomethingFailed "TODO genVerusPass"
-
-prettyPass :: VerusExtractionData -> ExtractionMonad t (Doc ann)
-prettyPass verusExtrData = do
-    throwError $ ErrSomethingFailed "TODO prettyPass"
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
 specExtractPass cfExtrData = do
@@ -157,7 +260,6 @@ mkEntryPoint verusExtrData = do
             ,   pretty "fn main() { }" <> line
             ,   pretty "/* no library harness routines */"
         )
-    throwError $ ErrSomethingFailed "TODO mkEntryPoint"
 
 
 prettyFile :: String -> ExtractionMonad t (Doc ann)

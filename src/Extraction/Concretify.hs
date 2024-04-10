@@ -104,16 +104,8 @@ unifyFormatTy t1 t2 =
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
     nt <- liftCheck $ TB.getNameType ne 
-    nk <- liftCheck $ TB.getNameKind nt
-    return $ FBuf $ Just $ FLNamed $ 
-        case nk of
-          NK_KDF -> "kdfkey"
-          NK_DH -> "exponent"
-          NK_Enc -> "enckey"
-          NK_PKE -> "pkekey"
-          NK_Sig -> "sigkey"
-          NK_MAC -> "mackey"
-          NK_Nonce s -> s
+    fl <- fLenOfNameTy nt
+    return $ FBuf $ Just fl
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
 concretifyNameExpLoc n = error "unimp"
