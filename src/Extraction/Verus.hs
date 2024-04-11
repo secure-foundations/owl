@@ -28,6 +28,7 @@ type VerusName = String
 data ConstUsize =
     CUsizeLit Int
     | CUsizeConst String
+    | CUsizePlus ConstUsize ConstUsize
     deriving (Eq, Ord, Show, Generic, Typeable)
 
 data VerusTy = 

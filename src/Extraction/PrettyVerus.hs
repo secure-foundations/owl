@@ -34,6 +34,7 @@ prettyLtOfT _ = pretty ""
 instance Pretty ConstUsize where
     pretty (CUsizeLit n) = pretty n
     pretty (CUsizeConst n) = pretty n
+    pretty (CUsizePlus a b) = pretty a <+> pretty "+" <+> pretty b
 
 instance Pretty VerusTy where
     pretty (RTRef bk ty) = pretty bk <> pretty ty

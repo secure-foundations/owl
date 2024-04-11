@@ -154,7 +154,7 @@ preprocessModBody mb = do
         sortTable :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, (Ty, Locality)) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
         sortTable lookupLoc locMap (name, (ty, Locality locP _)) = do
             locName <- lookupLoc =<< flattenPath locP
-            let f = tables %~ (++) [(name, ty)] 
+            let f = tables %~ flip (++) [(name, ty)] 
             return $ M.adjust f locName locMap
 
         sortCtr :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, Bind ([IdxVar], [IdxVar]) Locality) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
@@ -162,7 +162,7 @@ preprocessModBody mb = do
             let ((sids, pids), Locality locP _) = unsafeUnbind b
             when (length sids > 0) $ debugPrint $ "WARNING: ignoring sid indices on counter " ++ name
             locName <- lookupLoc =<< flattenPath locP
-            let f = counters %~ (++) [name]
+            let f = counters %~ flip (++) [name]
             return $ M.adjust f locName locMap
 
             -- case (sids, pids) of
@@ -197,8 +197,8 @@ preprocessModBody mb = do
                 let nsids = length sids
                 let npids = length pids
                 when (nsids > 1) $ throwError $ DefWithTooManySids name
-                let gPub m lo = M.adjust (sharedNames %~ (++) [(name, flen, npids)]) lo m
-                let gPriv m lo = M.adjust (localNames %~ (++) [(name, flen, npids)]) lo m
+                let gPub m lo = M.adjust (sharedNames %~ flip (++) [(name, flen, npids)]) lo m
+                let gPriv m lo = M.adjust (localNames %~ flip (++) [(name, flen, npids)]) lo m
                 locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
                 locNameCounts <- mapM (\(Locality lname lidxs) -> do
                     plname <- flattenPath lname
@@ -227,7 +227,7 @@ preprocessModBody mb = do
                 when (length sids > 1) $ throwError $ DefWithTooManySids owlName
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc =<< flattenPath locP
-                let f = defs %~ (++) [(owlName, def)]
+                let f = defs %~ flip (++) [(owlName, def)]
                 return $ M.adjust f locName m
 
 

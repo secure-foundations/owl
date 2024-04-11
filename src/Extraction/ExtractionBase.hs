@@ -192,7 +192,7 @@ fLenOfNameTy nt = do
     nk <- liftCheck $ TB.getNameKind nt
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
-        NK_DH -> "exponent"
+        NK_DH -> "group"
         NK_Enc -> "enckey"
         NK_PKE -> "pkekey"
         NK_Sig -> "sigkey"

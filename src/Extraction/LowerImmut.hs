@@ -31,9 +31,15 @@ import Verus
 type EM = ExtractionMonad FormatTy
 
 
+lowerLenConst :: String -> EM String
+lowerLenConst s = return $ s ++ "_size()"
+
 lowerFLen :: FLen -> EM ConstUsize
 lowerFLen (FLConst n) = return $ CUsizeLit n
-lowerFLen (FLNamed n) = return $ CUsizeConst n -- TODO: make sure n is in the list of known len consts
+lowerFLen (FLNamed n) = do
+    n' <- lowerLenConst n
+    return $ CUsizeConst n'
+lowerFLen (FLPlus a b) = CUsizePlus <$> lowerFLen a <*> lowerFLen b
 
 
 lowerArgTy :: FormatTy -> EM VerusTy
@@ -41,7 +47,7 @@ lowerArgTy FUnit = return RTUnit
 lowerArgTy FBool = return RTBool
 lowerArgTy FInt = return RTUsize
 lowerArgTy (FBuf Nothing) = return vecU8
-lowerArgTy (FBuf (Just flen)) = arrayU8 <$> lowerFLen flen -- in return types, don't care abou
+lowerArgTy (FBuf (Just flen)) = arrayU8 <$> lowerFLen flen -- in return types, don't care about OwlBuf
 lowerArgTy (FOption ft) = RTOption <$> lowerArgTy ft
 lowerArgTy (FStruct n _) = return $ RTNamed n
 lowerArgTy (FEnum n _) = return $ RTNamed n
