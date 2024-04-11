@@ -271,6 +271,7 @@ traverseCExpr f a =
                         e' <- traverseCExpr f e
                         pure (s, Right $ bind (castName n, t2) e')) zs
               CCase <$> traverseCAExpr f x <*> f y <*> pure zs'
+          CRet e -> CRet <$> traverseCAExpr f e
 {- 
 --------------------------------------------------------------------------------
 
