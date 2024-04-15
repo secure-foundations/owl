@@ -34,7 +34,7 @@ import ExtractionBase
 --import Data.String.Interpolate (i, __i, iii)
 import Prettyprinter.Interpolate
 
-type EM = ExtractionMonad VerusTy
+type EM = ExtractionMonad FormatTy
 
 
 -----------------------------------------------------------------------------

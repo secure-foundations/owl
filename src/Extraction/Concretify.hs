@@ -108,7 +108,10 @@ formatTyOfNameExp ne = do
     return $ FBuf $ Just fl
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
-concretifyNameExpLoc n = error "unimp"
+concretifyNameExpLoc n = do
+    case n ^. val of
+        NameConst _ p _ -> flattenPath p
+        KDFName {} -> throwError $ UnsupportedNameExp n
 
 concretifyPath :: Path -> EM String
 concretifyPath (PRes rp) = do
@@ -293,6 +296,8 @@ concretifyExpr e =
           c2 <- concretifyAExpr a2
           s <- concretifyPath p
           return $ Typed FUnit $ CTWrite s c1 c2
+      ESetOption _ _ e -> concretifyExpr e
+      
 
 typeOfTable :: Path -> EM FormatTy
 typeOfTable (PRes (PDot p n)) = do
@@ -357,4 +362,25 @@ concretifyDef defName (TB.Def bd) = do
       Nothing -> return Nothing
       Just res -> return $ Just $ CDef defName res
     
+
+concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
+concretifyTyDef tname (TB.TyAbstract) = return Nothing
+concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
+concretifyTyDef tname (TB.EnumDef bnd) = do
+    (_, ts) <- unbind bnd
+    cs <- forM ts $ \(s, ot) -> do
+        cot <- traverse concretifyTy ot
+        return (s, cot)
+    return $ Just $ CEnumDef (CEnum tname (M.fromList cs))
+concretifyTyDef tname (TB.StructDef bnd) = do
+    (_, dp) <- unbind bnd
+    let go dp = case dp of
+                  DPDone _ -> return []
+                  DPVar t s xres -> do
+                      c <- concretifyTy t
+                      (_, k) <- unbind xres
+                      ck <- go k
+                      return $ (s, c) : ck
+    s <- go dp
+    return $ Just $ CStructDef (CStruct tname s)
 
