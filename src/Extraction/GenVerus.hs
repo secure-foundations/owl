@@ -34,11 +34,8 @@ import ExtractionBase
 --import Data.String.Interpolate (i, __i, iii)
 import Prettyprinter.Interpolate
 
-type EM = ExtractionMonad FormatTy
+type EM = ExtractionMonad VerusTy
 
-
------------------------------------------------------------------------------
---- OLD: attempt at using AST types
 
 
 genVerusDef :: CDef VerusTy -> EM VerusFunc
@@ -46,6 +43,11 @@ genVerusDef cdef = do
     throwError $ ErrSomethingFailed "TODO: genVerusDef"
 
 
+vestLayoutOf :: String -> VerusTy -> EM (Doc ann)
+vestLayoutOf name (RTArray RTU8 len) = do
+    lenConcrete <- concreteLength len
+    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name t = throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf" ++ show t
 
 genVerusStruct :: CStruct VerusTy -> EM (Doc ann, Doc ann)
 genVerusStruct (CStruct name fields) = do
@@ -58,20 +60,33 @@ genVerusStruct (CStruct name fields) = do
     let verusName = execName name
     let specname = specName name
     let structTy = if needsLifetime then RTWithLifetime (RTNamed verusName) (Lifetime lifetimeConst) else RTNamed verusName
-    let structFields = vsep $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{fty}|]) verusFields
+    let structFields = vsep . punctuate comma $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{pretty fty}|]) verusFields
     let structDef = [__di|
     pub struct #{verusName}#{lifetimeAnnot} {
         #{structFields}
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
+    vestFormat <- genVestFormat verusName verusFields
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFields lifetimeConst
-    return $ (vsep [structDef, allLensValid, viewImpl], pretty "")
+    return $ (vsep [structDef, allLensValid, viewImpl], vestFormat)
     where 
         liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
+
+        genVestFormat name layoutFields = do
+            let genField (_, f, l) = do 
+                    layout <- vestLayoutOf f l
+                    return [di|    #{layout},|]
+            fields <- mapM genField layoutFields
+            return [__di|
+            #{name} = {
+            #{vsep fields}
+            }
+            |]
+
 
         genAllLensValid :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genAllLensValid verusName fields lAnnot = do
@@ -174,10 +189,23 @@ genVerusStruct (CStruct name fields) = do
             return $ vsep [parse, ser]
 
 
-genVerusEnum :: CEnum VerusTy -> EM (VerusEnumDecl, Doc ann)
+genVerusEnum :: CEnum VerusTy -> EM (Doc ann, Doc ann)
 genVerusEnum (CEnum name cases) = do
     debugLog $ "genVerusEnum: " ++ name
-    throwError $ ErrSomethingFailed "TODO: genVerusEnum"
+    return $ ([di||], [di||])
+    -- throwError $ ErrSomethingFailed "TODO: genVerusEnum"
+
+
+genVerusTyDef :: CTyDef VerusTy -> EM (Doc ann, Doc ann)
+genVerusTyDef (CStructDef s) = genVerusStruct s
+genVerusTyDef (CEnumDef e) = genVerusEnum e
+
+
+genVerusTyDefs :: [(String, CTyDef VerusTy)] -> EM (Doc ann, Doc ann)
+genVerusTyDefs tydefs = do
+    debugLog "genVerusTyDefs"
+    (tyDefs, vestDefs) <- unzip <$> mapM (genVerusTyDef . snd) tydefs
+    return (vsep tyDefs, vsep vestDefs)
 
 
 -----------------------------------------------------------------------------
@@ -185,8 +213,20 @@ genVerusEnum (CEnum name cases) = do
 
 -- castType v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
-cast (v, t1) t2 = do
-    throwError $ ErrSomethingFailed "TODO: castType"
+cast (v, t1) t2 | t1 == t2 = return v
+cast (v, t1) t2 | t2 == RTRef RShared t1 =
+    return [di|&#{v}|]
+cast (v, t1) t2 | t2 == RTRef RMut t1 =
+    return [di|&mut #{v}|]    
+cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
+    return [di|&#{v}|]
+cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
+    return [di|&#{v}.as_slice()|]
+cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
+    return [di|&#{v}.as_slice()|]
+cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
+    return [di|#{v}.try_into()|]
+cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)

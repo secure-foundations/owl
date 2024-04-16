@@ -84,15 +84,16 @@ extract' modbody = do
     -}
     owlExtrData <- preprocessModBody modbody
     -- debugPrint $ show owlExtrData
-    -- let owlExtrData' = ExtractionData {
-    --         _locMap = M.empty,
-    --         _presharedNames = owlExtrData ^. presharedNames,
-    --         _pubKeys = owlExtrData ^. pubKeys,
-    --         _tyDefs = owlExtrData ^. tyDefs
-    --     }
-    concreteExtrData <- concretifyPass owlExtrData
+    let owlExtrData' = ExtractionData {
+            _locMap = M.empty,
+            _presharedNames = owlExtrData ^. presharedNames,
+            _pubKeys = owlExtrData ^. pubKeys,
+            _tyDefs = owlExtrData ^. tyDefs
+        }
+    concreteExtrData <- concretifyPass owlExtrData'
     -- debugPrint $ show concreteExtrData
-    specs <- specExtractPass concreteExtrData
+    -- specs <- specExtractPass concreteExtrData
+    specs <- return $ pretty ""
     verusTyExtrData <- do
         fs <- use flags
         if fs ^. fExtractBufOpt then 
@@ -282,7 +283,8 @@ lowerImmutPass cfExtrData = do
 -- Directly generate strings; first ret val is the Verus code, second is the generated Vest code
 genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
 genVerusPass crExtrData = do
-    throwError $ ErrSomethingFailed "TODO genVerusPass"
+    (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
+    return (tyDefs, vestDefs)
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
 specExtractPass cfExtrData = do

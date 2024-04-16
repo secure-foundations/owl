@@ -33,6 +33,7 @@ import qualified TypingBase as TB
 import qualified SMTBase as SMT
 import ConcreteAST
 import Verus
+import PrettyVerus
 
 newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
     deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
@@ -76,6 +77,7 @@ data ExtractionError =
     | PreimageInExec String
     | GhostInExec String
     | LiftedError ExtractionError
+    | CantCastType String String String
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -113,6 +115,8 @@ instance OwlPretty ExtractionError where
         owlpretty "Found a ghost value in exec code:" <+> owlpretty s
     owlpretty (LiftedError e) =
         owlpretty "Lifted error:" <+> owlpretty e
+    owlpretty (CantCastType v t1 t2) =
+        owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -218,3 +222,11 @@ fLenOfNameTy nt = do
         NK_Sig -> "sigkey"
         NK_MAC -> "mackey"
         NK_Nonce s -> s
+
+concreteLength :: ConstUsize -> ExtractionMonad t Int
+concreteLength (CUsizeLit i) = return i
+concreteLength (CUsizeConst s) = throwError $ ErrSomethingFailed "concreteLength: const expression ints not supported yet"
+concreteLength (CUsizePlus a b) = do
+    a' <- concreteLength a
+    b' <- concreteLength b
+    return $ a' + b'
