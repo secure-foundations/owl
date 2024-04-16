@@ -75,6 +75,7 @@ data ExtractionError =
     | OddLengthHexConst
     | PreimageInExec String
     | GhostInExec String
+    | LiftedError ExtractionError
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -110,10 +111,29 @@ instance OwlPretty ExtractionError where
         owlpretty "Found a call to `preimage`, which is not allowed in exec code:" <+> owlpretty s
     owlpretty (GhostInExec s) =
         owlpretty "Found a ghost value in exec code:" <+> owlpretty s
+    owlpretty (LiftedError e) =
+        owlpretty "Lifted error:" <+> owlpretty e
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
 makeLenses ''Env
+
+liftExtractionMonad :: ExtractionMonad t a -> ExtractionMonad t' a
+liftExtractionMonad m = do
+    tcEnv <- ask
+    env' <- get
+    let env = Env {
+            _flags = env' ^. flags,
+            _path = env' ^. path,
+            _freshCtr = env' ^. freshCtr,
+            _varCtx = M.empty
+        }
+    o <- liftIO $ runExtractionMonad tcEnv env m
+    case o of 
+        Left s -> throwError $ LiftedError s
+        Right i -> return i
+
+
 
 lookupVar :: CDataVar t -> ExtractionMonad t (Maybe t)
 lookupVar x = do

@@ -63,7 +63,7 @@ makeLenses ''ExtractionData
 type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
 type OwlLocalityData = LocalityData NameData OwlDefData
 type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef VerusTy) VNameData
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef VerusTy) VNameData
 
 extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann, Doc ann))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path) $ extract' modbody
@@ -84,15 +84,21 @@ extract' modbody = do
     -}
     owlExtrData <- preprocessModBody modbody
     -- debugPrint $ show owlExtrData
+    -- let owlExtrData' = ExtractionData {
+    --         _locMap = M.empty,
+    --         _presharedNames = owlExtrData ^. presharedNames,
+    --         _pubKeys = owlExtrData ^. pubKeys,
+    --         _tyDefs = owlExtrData ^. tyDefs
+    --     }
     concreteExtrData <- concretifyPass owlExtrData
-    debugPrint $ show concreteExtrData
+    -- debugPrint $ show concreteExtrData
     specs <- specExtractPass concreteExtrData
     verusTyExtrData <- do
         fs <- use flags
         if fs ^. fExtractBufOpt then 
             throwError $ ErrSomethingFailed "TODO: buffer-optimization for extraction"
         else lowerImmutPass concreteExtrData
-    (extractedOwl, extractedVest) <- genVerusPass verusTyExtrData
+    (extractedOwl, extractedVest) <- liftExtractionMonad $ genVerusPass verusTyExtrData
     (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
     lp <- prettyFile "extraction/lib_preamble.rs"
@@ -263,12 +269,18 @@ concretifyPass owlExtrData = do
         Concretify.concretifyTyDef
         owlExtrData
     
-lowerImmutPass :: CFExtractionData -> ExtractionMonad t CRExtractionData
+lowerImmutPass :: CFExtractionData -> ExtractionMonad FormatTy CRExtractionData
 lowerImmutPass cfExtrData = do
-    throwError $ ErrSomethingFailed "TODO lowerImmutPass"
+    traverseExtractionData
+        lowerDef
+        LowerImmut.lowerName
+        LowerImmut.lowerTyDef
+        cfExtrData
+    where lowerDef (Just d) = Just <$> LowerImmut.lowerDef d
+          lowerDef Nothing = return Nothing
 
 -- Directly generate strings; first ret val is the Verus code, second is the generated Vest code
-genVerusPass :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann)
+genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
 genVerusPass crExtrData = do
     throwError $ ErrSomethingFailed "TODO genVerusPass"
 

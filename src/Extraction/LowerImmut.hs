@@ -72,6 +72,32 @@ lowerDef (CDef name b) = do
     return $ CDef name b'
 
 
+lowerFieldTy :: FormatTy -> EM VerusTy
+lowerFieldTy = lowerArgTy -- for now, probably need to change it later
+
+lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef VerusTy))
+lowerTyDef _ (CStructDef (CStruct name fields)) = do
+    let lowerField (n, t) = do
+            t' <- lowerFieldTy t
+            return (n, t')
+    fields' <- mapM lowerField fields
+    return $ Just $ CStructDef $ CStruct name fields'
+lowerTyDef _ (CEnumDef (CEnum name cases)) = do
+    let lowerCase (n, t) = do
+            t' <- case t of
+                Just t -> Just <$> lowerFieldTy t
+                Nothing -> return Nothing
+            return (n, t')
+    cases' <- mapM lowerCase $ M.assocs cases
+    return $ Just $ CEnumDef $ CEnum name $ M.fromList cases'
+
+lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
+lowerName (n, l, i) = do
+    l' <- lowerFLen l
+    return (n, l', i)
+
+
+
 --------------------------------------------------------------------------------
 -- Helper functions
 
