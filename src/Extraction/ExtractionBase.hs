@@ -205,7 +205,7 @@ execName owlName = "owl_" ++ owlName
 -- cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
 
 specName :: String -> VerusName
-specName owlName = owlName
+specName owlName = "owlSpec_" ++ owlName
 
 -- specNameOf :: VerusName -> String
 -- specNameOf (VN s _) = 

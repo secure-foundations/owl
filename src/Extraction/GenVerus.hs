@@ -251,12 +251,12 @@ genVerusEnum (CEnum name cases) = do
             }
             |]
 
-        viewCase fname (ename, Just fty) = [di|#{ename}(v) => #{fname}(v.dview().as_seq())|]
-        viewCase fname (ename, Nothing) = [di|#{ename}() => #{fname}()|]
+        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{fname}(v.dview().as_seq())|]
+        viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{fname}()|]
 
         genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname cases lAnnot = do
-            let body = vsep . punctuate [di|,|] . M.elems . M.mapWithKey viewCase $ cases
+            let body = vsep . punctuate [di|,|] . M.elems . M.mapWithKey (viewCase specname) $ cases
             return [__di|
             impl DView for #{verusName}#{lAnnot} {
                 type V = #{specname};
