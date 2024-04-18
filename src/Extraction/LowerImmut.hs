@@ -10,6 +10,7 @@ module LowerImmut where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
+import Data.Char
 import Data.Maybe
 import Control.Monad
 import Control.Monad.Except
@@ -32,7 +33,7 @@ type EM = ExtractionMonad FormatTy
 
 
 lowerLenConst :: String -> EM String
-lowerLenConst s = return $ s ++ "_size()"
+lowerLenConst s = return $ map toUpper s ++ "_SIZE"
 
 lowerFLen :: FLen -> EM ConstUsize
 lowerFLen (FLConst n) = return $ CUsizeLit n

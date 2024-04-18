@@ -107,7 +107,7 @@ genVerusStruct (CStruct name fields) = do
 
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
-            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{fname}: self.#{ename}.view()|]) $ fields
+            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{fname}: self.#{ename}.dview()|]) $ fields
             return [__di|
             impl DView for #{verusName}#{lAnnot} {
                 type V = #{specname};
@@ -192,8 +192,150 @@ genVerusStruct (CStruct name fields) = do
 genVerusEnum :: CEnum VerusTy -> EM (Doc ann, Doc ann)
 genVerusEnum (CEnum name cases) = do
     debugLog $ "genVerusEnum: " ++ name
-    return $ ([di||], [di||])
-    -- throwError $ ErrSomethingFailed "TODO: genVerusEnum"
+    -- Lift all member fields to have the lifetime annotation of the whole struct
+    let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases
+    let lifetimeConst = "a"
+    let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
+    let verusCases = M.mapWithKey (\fname fty -> (execName fname, liftLifetime lifetimeConst fty)) cases
+    let verusName = execName name
+    let specname = specName name
+    let enumTy = if needsLifetime then RTWithLifetime (RTNamed verusName) (Lifetime lifetimeConst) else RTNamed verusName
+    let enumCases = vsep . punctuate comma . fmap (\(_, (fname, fty)) -> [di|#{fname}(#{pretty fty})|]) . M.assocs $ verusCases
+    let enumDef = [__di|
+    pub enum #{verusName}#{lifetimeAnnot} {
+        #{enumCases}
+    }
+    use crate::#{verusName}::*;
+    |]
+    let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
+    vestFormat <- genVestFormat verusName verusCases
+    allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
+    viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
+    -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
+    return $ (vsep [enumDef, allLensValid, viewImpl], vestFormat)
+    where 
+        liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
+        liftLifetime _ ty = ty
+
+        genVestFormat name layoutCases = do
+            debugLog $ "No vest format for enum: " ++ name
+            return [__di||]
+            -- let genField (_, (f, l)) = do 
+            --         layout <- vestLayoutOf f l
+            --         return [di|    #{layout},|]
+            -- fields <- mapM genField layoutCases
+            -- return [__di|
+            -- #{name} = {
+            -- #{vsep fields}
+            -- }
+            -- |]
+
+
+        genAllLensValid :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
+        genAllLensValid verusName cases lAnnot = do
+            let casesValids = M.map (\(fname, fty) -> 
+                        [di|#{fname}() => |] <>
+                        case fty of 
+                            Just (RTWithLifetime (RTNamed _) _) -> [di|self.#{fname}.len_valid()|]
+                            Just (RTOwlBuf _) -> [di|self.#{fname}.len_valid()|]
+                            _ -> [di|true|]
+                    ) cases
+            let body = vsep . punctuate comma $ M.elems casesValids
+            return [__di|
+            impl #{verusName}#{lAnnot} {
+                pub open spec fn len_valid(&self) -> bool {
+                    match self {
+                        #{body}
+                    }
+                }
+            }
+            |]
+
+        viewCase fname (ename, Just fty) = [di|#{ename}(v) => #{fname}(v.dview().as_seq())|]
+        viewCase fname (ename, Nothing) = [di|#{ename}() => #{fname}()|]
+
+        genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
+        genViewImpl verusName specname cases lAnnot = do
+            let body = vsep . punctuate [di|,|] . M.elems . M.mapWithKey viewCase $ cases
+            return [__di|
+            impl DView for #{verusName}#{lAnnot} {
+                type V = #{specname};
+                open spec fn dview(&self) -> #{specname} {
+                    match self { 
+                        #{body}
+                    }
+                }
+            }
+            |]
+        
+        -- genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, VerusTy)] -> String -> EM (Doc ann)
+        -- genParsleyWrappers verusName specname structTy fields lifetimeConst = do
+        --     let specParse = [di|parse_#{specname}|] 
+        --     let execParse = [di|parse_#{verusName}|]
+        --     let tupPatFields = tupled . fmap (\(_, fname, _) -> pretty fname) $ fields
+        --     let mkField fname fty = do
+        --             mkf <- (pretty fname, u8slice) `cast` fty
+        --             return [di|#{fname}: #{mkf}|]
+        --     mkStructFields <- tupled <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
+        --     let parse = [__di|
+        --     pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
+        --         // requires arg.len_valid()
+        --         ensures
+        --             res is Some ==> #{specParse}(arg.dview()) is Some,
+        --             res is None ==> #{specParse}(arg.dview()) is None,
+        --             res matches Some(x) ==> x.dview() == #{specParse}(arg.dview())->Some_0,
+        --             res matches Some(x) ==> x.len_valid(),
+        --     {
+        --         reveal(#{specParse});
+        --         let stream = parse_serialize::Stream { data: arg, start: 0 };
+        --         if let Ok((_, _, parsed)) = parse_serialize::parse_owl_t(stream) {
+        --             let #{tupPatFields} = parsed;
+        --             Some (#{verusName} { #{mkStructFields} })
+        --         } else {
+        --             None
+        --         }
+        --     }
+        --     |]
+        --     let specSer = [di|serialize_#{specname}|]
+        --     let execSer = [di|serialize_#{verusName}|]
+        --     let specSerInner = [di|serialize_#{specname}_inner|]
+        --     let execSerInner = [di|serialize_#{verusName}_inner|]
+        --     let lens = map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields
+        --     fieldsAsSlices <- tupled <$> mapM (\(_, fname, fty) -> (pretty fname, fty) `cast` u8slice) fields
+        --     let ser = [__di|
+        --     \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
+        --     pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+        --         requires arg.len_valid(),
+        --         ensures
+        --             res is Some ==> #{specSerInner}(arg.dview()) is Some,
+        --             res is None ==> #{specSerInner}(arg.dview()) is None,
+        --             res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
+        --     {
+        --         reveal(#{specSerInner});
+        --         if no_usize_overflows![ #{punctuate comma lens} ] {
+        --             let mut obuf = vec_u8_of_len(#{punctuate (pretty "+") lens});
+        --             let ser_result = parse_serialize::serialize_owl_t(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
+        --             if let OK((_new_start, num_written)) = ser_result {
+        --                 vec_truncate(&mut obuf, num_written);
+        --                 Some(obuf)
+        --             } else {
+        --                 None
+        --             }
+        --         } else {
+        --             None
+        --         }
+        --     }
+        --     pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+        --         requires arg.len_valid(),
+        --         ensures  res.dview() == #{specSer}(arg.dview())
+        --     {
+        --         reveal(#{specSer});
+        --         let res = #{execSerInner}(arg);
+        --         assume(res is Some);
+        --         res.unwrap();
+        --     }
+        --     |]
+        --     return $ vsep [parse, ser]
 
 
 genVerusTyDef :: CTyDef VerusTy -> EM (Doc ann, Doc ann)

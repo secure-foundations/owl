@@ -151,8 +151,8 @@ pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
-    recommends k.len() == crate::KEY_SIZE(),
-               coins.len() == crate::TAG_SIZE()
+    recommends k.len() == crate::ENCKEY_SIZE,
+               coins.len() == crate::TAG_SIZE
 {
     todo!()
 }
@@ -161,7 +161,7 @@ pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq
 {
     // match (k, c) {
     //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE() && coins.len() == crate::TAG_SIZE()) {
+            if (k.len() == crate::ENCKEY_SIZE && coins.len() == crate::TAG_SIZE) {
                 evercrypt_spec_of_enc(k, x, coins)
             } else {
                 seq![]
@@ -173,7 +173,7 @@ pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq
 
 #[verifier(external_body)]
 pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
-    recommends k.len() == crate::KEY_SIZE(),
+    recommends k.len() == crate::ENCKEY_SIZE,
 {
     todo!()
 }
@@ -182,7 +182,7 @@ pub open spec(checked) fn dec(k: Seq<u8>, c: Seq<u8>) -> (x: Option<Seq<u8>>)
 {
     // match (k, c) {
     //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE()) {
+            if (k.len() == crate::ENCKEY_SIZE) {
                 evercrypt_spec_of_dec(k, c)
             } else {
                 None

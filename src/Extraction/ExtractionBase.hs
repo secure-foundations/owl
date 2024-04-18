@@ -225,7 +225,15 @@ fLenOfNameTy nt = do
 
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
-concreteLength (CUsizeConst s) = throwError $ ErrSomethingFailed "concreteLength: const expression ints not supported yet"
+concreteLength (CUsizeConst s) = do
+    debugPrint $ "WARNING: using hardcoded concrete length for " ++ s
+    case s of
+        "KDFKEY_SIZE" -> return 32
+        "GROUP_SIZE"  -> return 32
+        "ENCKEY_SIZE" -> return 32
+        "MACKEY_SIZE" -> return 64
+        "NONCE_SIZE"  -> return 12
+        _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
 concreteLength (CUsizePlus a b) = do
     a' <- concreteLength a
     b' <- concreteLength b
