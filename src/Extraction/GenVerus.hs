@@ -38,9 +38,10 @@ type EM = ExtractionMonad VerusTy
 
 
 
-genVerusDef :: CDef VerusTy -> EM VerusFunc
+genVerusDef :: CDef VerusTy -> EM (Doc ann)
 genVerusDef cdef = do
-    throwError $ ErrSomethingFailed "TODO: genVerusDef"
+    debugLog $ "genVerusDef: " ++ show (cdef ^. defName)
+    return $ [di|/* TODO: genVerusDef #{cdef ^. defName} */|]
 
 
 vestLayoutOf :: String -> VerusTy -> EM (Doc ann)

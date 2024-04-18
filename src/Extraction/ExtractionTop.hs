@@ -84,13 +84,13 @@ extract' modbody = do
     -}
     owlExtrData <- preprocessModBody modbody
     -- debugPrint $ show owlExtrData
-    let owlExtrData' = ExtractionData {
-            _locMap = M.empty,
-            _presharedNames = owlExtrData ^. presharedNames,
-            _pubKeys = owlExtrData ^. pubKeys,
-            _tyDefs = owlExtrData ^. tyDefs
-        }
-    concreteExtrData <- concretifyPass owlExtrData'
+    -- let owlExtrData' = ExtractionData {
+    --         _locMap = M.empty,
+    --         _presharedNames = owlExtrData ^. presharedNames,
+    --         _pubKeys = owlExtrData ^. pubKeys,
+    --         _tyDefs = owlExtrData ^. tyDefs
+    --     }
+    concreteExtrData <- concretifyPass owlExtrData
     -- debugPrint $ show concreteExtrData
     -- specs <- specExtractPass concreteExtrData
     specs <- return $ pretty ""
@@ -264,6 +264,7 @@ traverseExtractionData traverseDef traverseName traverseTyDef extrData = do
 
 concretifyPass :: OwlExtractionData -> ExtractionMonad FormatTy CFExtractionData
 concretifyPass owlExtrData = do
+    debugLog "Concretifying"
     traverseExtractionData
         (uncurry Concretify.concretifyDef)
         return
@@ -272,6 +273,7 @@ concretifyPass owlExtrData = do
     
 lowerImmutPass :: CFExtractionData -> ExtractionMonad FormatTy CRExtractionData
 lowerImmutPass cfExtrData = do
+    debugLog "Lowering to Verus types: immutable translation"
     traverseExtractionData
         lowerDef
         LowerImmut.lowerName
@@ -283,6 +285,7 @@ lowerImmutPass cfExtrData = do
 -- Directly generate strings; first ret val is the Verus code, second is the generated Vest code
 genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
 genVerusPass crExtrData = do
+    debugLog "Generating Verus code"
     (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
     return (tyDefs, vestDefs)
 
@@ -292,6 +295,7 @@ specExtractPass cfExtrData = do
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
 mkEntryPoint verusExtrData = do
+    debugLog "Generating entry point"
     fs <- use flags
     if fs ^. fExtractHarness then do
         throwError $ ErrSomethingFailed "TODO harness generation in mkEntryPoint"
