@@ -16,7 +16,7 @@ instance Pretty BorrowKind where
     pretty RShared = pretty "&"
 
 instance Pretty Lifetime where
-    pretty lt = pretty "'" <> pretty lt
+    pretty (Lifetime lt) = pretty "\'" <> pretty lt
 
 -- instance Pretty VerusName where
 --     pretty (VN name Nothing) = pretty name

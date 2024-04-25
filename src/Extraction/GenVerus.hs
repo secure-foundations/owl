@@ -44,20 +44,30 @@ genVerusDef cdef = do
     return $ [di|/* TODO: genVerusDef #{cdef ^. defName} */|]
 
 
-vestLayoutOf :: String -> VerusTy -> EM (Doc ann)
-vestLayoutOf name (RTArray RTU8 len) = do
+vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
+vestLayoutOf name _ (RTArray RTU8 len) = do
     lenConcrete <- concreteLength len
     return [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name t = throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf" ++ show t
+vestLayoutOf name (Just len) (RTVec RTU8) = do
+    lenConcrete <- concreteLength len
+    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name (Just len) (RTOwlBuf (Lifetime _)) = do
+    lenConcrete <- concreteLength len
+    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name _ (RTVec RTU8) = return [di|#{name}: Tail|]
+vestLayoutOf name _ (RTOwlBuf (Lifetime _)) = return [di|#{name}: Tail|]
+vestLayoutOf name _ t = throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
 
-genVerusStruct :: CStruct VerusTy -> EM (Doc ann, Doc ann)
-genVerusStruct (CStruct name fields) = do
+genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusStruct (CStruct name fieldsFV) = do
     debugLog $ "genVerusStruct: " ++ name
+    let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any ((\t -> case t of RTOwlBuf _ -> True; RTWithLifetime _ _ -> True; _ -> False) . snd) fields
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime lifetimeConst fty)) fields
+    let verusFieldsFV = fmap (\(fname, (formatty, fty)) -> (fname, execName fname, formatty, liftLifetime lifetimeConst fty)) fieldsFV
     let verusName = execName name
     let specname = specName name
     let structTy = if needsLifetime then RTWithLifetime (RTNamed verusName) (Lifetime lifetimeConst) else RTNamed verusName
@@ -68,18 +78,18 @@ genVerusStruct (CStruct name fields) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- genVestFormat verusName verusFields
+    vestFormat <- genVestFormat verusName verusFieldsFV
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFields lifetimeConst
-    return $ (vsep [structDef, allLensValid, viewImpl], vestFormat)
+    return $ (vsep [structDef, allLensValid, viewImpl, parsleyWrappers], vestFormat)
     where 
         liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
 
         genVestFormat name layoutFields = do
-            let genField (_, f, l) = do 
-                    layout <- vestLayoutOf f l
+            let genField (_, f, format, l) = do 
+                    layout <- vestLayoutOf f format l
                     return [di|    #{layout},|]
             fields <- mapM genField layoutFields
             return [__di|
@@ -128,7 +138,7 @@ genVerusStruct (CStruct name fields) = do
             let mkField fname fty = do
                     mkf <- (pretty fname, u8slice) `cast` fty
                     return [di|#{fname}: #{mkf}|]
-            mkStructFields <- tupled <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
             let parse = [__di|
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
                 // requires arg.len_valid()
@@ -152,8 +162,8 @@ genVerusStruct (CStruct name fields) = do
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
-            let lens = map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields
-            fieldsAsSlices <- tupled <$> mapM (\(_, fname, fty) -> (pretty fname, fty) `cast` u8slice) fields
+            let lens = (map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields) ++ [pretty "0"]
+            fieldsAsSlices <- tupled <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
             let ser = [__di|
             \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
@@ -164,10 +174,10 @@ genVerusStruct (CStruct name fields) = do
                     res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
             {
                 reveal(#{specSerInner});
-                if no_usize_overflows![ #{punctuate comma lens} ] {
-                    let mut obuf = vec_u8_of_len(#{punctuate (pretty "+") lens});
+                if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let ser_result = parse_serialize::serialize_owl_t(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
-                    if let OK((_new_start, num_written)) = ser_result {
+                    if let Ok((_new_start, num_written)) = ser_result {
                         vec_truncate(&mut obuf, num_written);
                         Some(obuf)
                     } else {
@@ -184,15 +194,16 @@ genVerusStruct (CStruct name fields) = do
                 reveal(#{specSer});
                 let res = #{execSerInner}(arg);
                 assume(res is Some);
-                res.unwrap();
+                res.unwrap()
             }
             |]
             return $ vsep [parse, ser]
 
 
-genVerusEnum :: CEnum VerusTy -> EM (Doc ann, Doc ann)
-genVerusEnum (CEnum name cases) = do
+genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusEnum (CEnum name casesFV) = do
     debugLog $ "genVerusEnum: " ++ name
+    let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases
     let lifetimeConst = "a"
@@ -209,7 +220,7 @@ genVerusEnum (CEnum name cases) = do
     use crate::#{verusName}::*;
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- genVestFormat verusName verusCases
+    vestFormat <- genVestFormat verusName casesFV
     allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
     -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
@@ -339,12 +350,12 @@ genVerusEnum (CEnum name cases) = do
         --     return $ vsep [parse, ser]
 
 
-genVerusTyDef :: CTyDef VerusTy -> EM (Doc ann, Doc ann)
+genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusTyDef (CStructDef s) = genVerusStruct s
 genVerusTyDef (CEnumDef e) = genVerusEnum e
 
 
-genVerusTyDefs :: [(String, CTyDef VerusTy)] -> EM (Doc ann, Doc ann)
+genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann, Doc ann)
 genVerusTyDefs tydefs = do
     debugLog "genVerusTyDefs"
     (tyDefs, vestDefs) <- unzip <$> mapM (genVerusTyDef . snd) tydefs
@@ -369,6 +380,12 @@ cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
     return [di|#{v}.try_into()|]
+cast (v, RTRef _ (RTSlice RTU8)) (RTOwlBuf _) =
+    return [di|OwlBuf::from_slice(&#{v})|]
+cast (v, RTVec RTU8) (RTOwlBuf _) =
+    return [di|OwlBuf::from_vec(#{v})|]
+cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
+    return [di|#{v}.as_slice()|]
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy

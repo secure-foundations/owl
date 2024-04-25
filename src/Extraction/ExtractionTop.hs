@@ -63,7 +63,7 @@ makeLenses ''ExtractionData
 type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
 type OwlLocalityData = LocalityData NameData OwlDefData
 type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef VerusTy) VNameData
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData
 
 extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann, Doc ann))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path) $ extract' modbody
@@ -84,13 +84,13 @@ extract' modbody = do
     -}
     owlExtrData <- preprocessModBody modbody
     -- debugPrint $ show owlExtrData
-    -- let owlExtrData' = ExtractionData {
-    --         _locMap = M.empty,
-    --         _presharedNames = owlExtrData ^. presharedNames,
-    --         _pubKeys = owlExtrData ^. pubKeys,
-    --         _tyDefs = owlExtrData ^. tyDefs
-    --     }
-    concreteExtrData <- concretifyPass owlExtrData
+    let owlExtrData' = ExtractionData {
+            _locMap = M.empty,
+            _presharedNames = owlExtrData ^. presharedNames,
+            _pubKeys = owlExtrData ^. pubKeys,
+            _tyDefs = owlExtrData ^. tyDefs
+        }
+    concreteExtrData <- concretifyPass owlExtrData'
     -- debugPrint $ show concreteExtrData
     -- specs <- specExtractPass concreteExtrData
     specs <- return $ pretty ""

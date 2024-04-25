@@ -47,8 +47,8 @@ lowerArgTy :: FormatTy -> EM VerusTy
 lowerArgTy FUnit = return RTUnit
 lowerArgTy FBool = return RTBool
 lowerArgTy FInt = return RTUsize
-lowerArgTy (FBuf Nothing) = return vecU8
-lowerArgTy (FBuf (Just flen)) = arrayU8 <$> lowerFLen flen -- in return types, don't care about OwlBuf
+lowerArgTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
+lowerArgTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
 lowerArgTy (FOption ft) = RTOption <$> lowerArgTy ft
 lowerArgTy (FStruct n _) = return $ RTNamed n
 lowerArgTy (FEnum n _) = return $ RTNamed n
@@ -76,19 +76,28 @@ lowerDef (CDef name b) = do
 lowerFieldTy :: FormatTy -> EM VerusTy
 lowerFieldTy = lowerArgTy -- for now, probably need to change it later
 
-lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef VerusTy))
+
+maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
+maybeLenOf (FBuf (Just flen)) = Just <$> lowerFLen flen
+maybeLenOf _ = return Nothing
+
+lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
 lowerTyDef _ (CStructDef (CStruct name fields)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
-            return (n, t')
+            l <- maybeLenOf t
+            return (n, (l, t'))
     fields' <- mapM lowerField fields
     return $ Just $ CStructDef $ CStruct name fields'
 lowerTyDef _ (CEnumDef (CEnum name cases)) = do
     let lowerCase (n, t) = do
-            t' <- case t of
-                Just t -> Just <$> lowerFieldTy t
+            tt' <- case t of
+                Just t -> do
+                    t' <- lowerFieldTy t
+                    l <- maybeLenOf t
+                    return $ Just (l, t')
                 Nothing -> return Nothing
-            return (n, t')
+            return (n, tt')
     cases' <- mapM lowerCase $ M.assocs cases
     return $ Just $ CEnumDef $ CEnum name $ M.fromList cases'
 
