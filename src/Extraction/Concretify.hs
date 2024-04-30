@@ -176,11 +176,12 @@ concreteTyOfApp (PRes pth) =
               throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
           return groupFormatTy
       PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
-      _ -> 
-          -- TODO: here, we need to look in the environment for struct
-          -- constructors, etc
-          error "unimp"
-concreteTyOfApp _ = error "unimp"
+      p -> \_ _ -> do
+        -- TODO: here, we need to look in the environment for struct
+        -- constructors, etc
+        throwError $ UndefinedSymbol $ show . owlpretty $ p
+concreteTyOfApp _ = \_ _ -> do
+    throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -289,7 +290,16 @@ concretifyExpr e =
           cs <- mapM concretifyAExpr aes
           t <- returnTyOfCall p cs
           return $ Typed t $ CCall s cs
-      EParse a t_target otherwiseCase xsk -> error "unimp"
+      EParse a t_target otherwiseCase xsk -> do
+            a' <- concretifyAExpr a
+            t_target' <- concretifyTy t_target
+            otw' <- traverse concretifyExpr otherwiseCase
+            (xs, k) <- unbind xsk
+            let xs' = map (\(x, s) -> (castName x, s)) xs
+            -- need to look up in struct/enum context
+            xtys <- throwError $ ErrSomethingFailed "TODO: get format types of parsed vars"
+            k' <- withVars xtys $ concretifyExpr k
+            return $ Typed (k' ^. tty) $ CParse a' t_target' otw' $ bind xs' k'
       ECase e otherwiseCase xsk -> do
             e' <- concretifyExpr e
             casevalT <- case otherwiseCase of
