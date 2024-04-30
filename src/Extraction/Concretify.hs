@@ -290,7 +290,31 @@ concretifyExpr e =
           t <- returnTyOfCall p cs
           return $ Typed t $ CCall s cs
       EParse a t_target otherwiseCase xsk -> error "unimp"
-      ECase e otherwiseCase xsk -> error "unimp"
+      ECase e otherwiseCase xsk -> do
+            e' <- concretifyExpr e
+            casevalT <- case otherwiseCase of
+                Just (t, e) -> concretifyTy t
+                Nothing -> case e' ^. tty of
+                            FEnum _ _ -> return $ e' ^. tty
+                            FOption _ -> return $ e' ^. tty
+                            tt -> throwError $ TypeError $ "Expected enum or option type in ECase, got " ++ (show . owlpretty) tt
+            cases' <- forM xsk $ \(c, o) ->
+                case o of
+                    Left k -> do
+                        k' <- concretifyExpr k
+                        return (c, Left k')
+                    Right (_, xk) -> do
+                        (x, k) <- unbind xk
+                        let x' = castName x
+                        k' <- withVars [(x', _tty e')] $ concretifyExpr k
+                        return (c, Right $ bind x' k')
+            avar <- fresh $ s2n "caseval"
+            retTy <- throwError $ ErrSomethingFailed "TODO: ECase return type"
+            let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
+            parseAndCase <- case otherwiseCase of
+                Just _ -> throwError $ ErrSomethingFailed "TODO: ECase parsing"
+                Nothing -> return $ caseStmt
+            return $ Typed retTy $ CLet e' Nothing $ bind avar parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
       EFalseElim e _ -> concretifyExpr e
@@ -335,7 +359,7 @@ concretifyCryptOp CAEnc [k, x] = do
               _ -> FBuf Nothing
     return $ Typed t $ CRet $ Typed t $ CAApp "enc" [k, x]    
 concretifyCryptOp CADec [k, c] = do
-    let t = FBuf Nothing
+    let t = FOption $ FBuf Nothing
     return $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
 concretifyCryptOp (CEncStAEAD _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CEncStAEAD"
 concretifyCryptOp CDecStAEAD cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CDecStAEAD"

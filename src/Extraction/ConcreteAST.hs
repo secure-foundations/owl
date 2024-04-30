@@ -80,7 +80,7 @@ data CExpr' t =
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)
     -- Only a regular case statement, not the parsing version
-    | CCase (CAExpr t) t [(String, Either (CExpr t) (Bind (CDataVar t, t) (CExpr t)))] -- need to introduce the type into the bind (?)
+    | CCase (CAExpr t) [(String, Either (CExpr t) (Bind (CDataVar t) (CExpr t)))] -- need to introduce the type into the bind (?)
     | CCall String [CAExpr t]
     -- In concretification, we should compile `ECase` exprs that parse an enum into a 
     -- CParse node containing a regular `CCase`. The list of binds should have one element
@@ -191,7 +191,7 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
     owlpretty (CIf a e1 e2) =
         owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> braces (owlpretty e1) <+> owlpretty "else" <+> braces (owlpretty e2)
-    owlpretty (CCase a t xs) =
+    owlpretty (CCase a xs) =
         let pcases =
                 map (\(c, o) ->
                     case o of
@@ -260,18 +260,18 @@ traverseCExpr f a =
                   pure (bind (map (\(n, s) -> (castName n, s)) xs) w')
           CTLookup s a -> CTLookup <$> pure s <*> traverseCAExpr f a
           CTWrite s a b -> CTWrite <$> pure s <*> traverseCAExpr f a <*> traverseCAExpr f b
-          CCase x y zs -> do
+          CCase x zs -> do
               zs' <- traverse (\(s, e) ->
                   case e of
                     Left a -> do
                         a' <- traverseCExpr f a
                         pure (s, Left a')
                     Right b -> do
-                        ((n, t), e) <- unbind b
-                        t2 <- f t
+                        (n, e) <- unbind b
+                        -- t2 <- f t
                         e' <- traverseCExpr f e
-                        pure (s, Right $ bind (castName n, t2) e')) zs
-              CCase <$> traverseCAExpr f x <*> f y <*> pure zs'
+                        pure (s, Right $ bind (castName n) e')) zs
+              CCase <$> traverseCAExpr f x <*> pure zs'
           CRet e -> CRet <$> traverseCAExpr f e
 {- 
 --------------------------------------------------------------------------------
