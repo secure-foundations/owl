@@ -84,13 +84,13 @@ extract' modbody = do
     -}
     owlExtrData <- preprocessModBody modbody
     -- debugPrint $ show owlExtrData
-    let owlExtrData' = ExtractionData {
-            _locMap = M.empty,
-            _presharedNames = owlExtrData ^. presharedNames,
-            _pubKeys = owlExtrData ^. pubKeys,
-            _tyDefs = owlExtrData ^. tyDefs
-        }
-    concreteExtrData <- concretifyPass owlExtrData'
+    -- let owlExtrData' = ExtractionData {
+    --         _locMap = M.empty,
+    --         _presharedNames = owlExtrData ^. presharedNames,
+    --         _pubKeys = owlExtrData ^. pubKeys,
+    --         _tyDefs = owlExtrData ^. tyDefs
+    --     }
+    concreteExtrData <- concretifyPass owlExtrData
     -- debugPrint $ show concreteExtrData
     -- specs <- specExtractPass concreteExtrData
     specs <- return $ pretty ""

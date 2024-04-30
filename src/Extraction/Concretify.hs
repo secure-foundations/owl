@@ -134,21 +134,28 @@ flenOfFormatTy _ = Nothing
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
 concreteTyOfApp (PRes pth) = 
     case pth of
-      PDot PTop "unit" -> \_ _ -> error "unimp"
-      PDot PTop "true" -> \_ _ -> error "unimp"
-      PDot PTop "false" -> \_ _ -> error "unimp"
-      PDot PTop "eq" -> \_ [x, y] -> error "unimp"
-      PDot PTop "Some" -> \_ [x] -> error "unimp"
-      PDot PTop "None" -> \_ [] -> error "unimp"
-      PDot PTop "andb" -> \_ [x, y] -> error "unimp"
-      PDot PTop "andp" -> \_ [x, y] -> error "unimp"
-      PDot PTop "notb" -> \_ [x, y] -> error "unimp"
-      PDot PTop "length" -> \_ [x] -> return $ FInt
-      PDot PTop "plus" -> \_ [x, y] -> error "unimp"
-      PDot PTop "crh" -> \_ [x] -> error "unimp"
-      PDot PTop "mult" -> \_ [x, y] -> error "unimp"
-      PDot PTop "zero" -> \_ [] -> error "unimp"
-      PDot PTop "is_group_elem" -> \_ [x] -> error "unimp"
+      PDot PTop "unit" -> \_ _ -> return FUnit
+      PDot PTop "true" -> \_ _ -> return FBool
+      PDot PTop "false" -> \_ _ -> return FBool
+      PDot PTop "eq" -> \_ [x, y] -> do
+            unifyFormatTy x y
+            return FBool
+      PDot PTop "Some" -> \_ [x] -> return $ FOption x
+      PDot PTop "None" -> \params [] -> do
+            case params of
+                [ParamTy owlT] -> do
+                    t <- concretifyTy owlT
+                    return $ FOption t
+                _ -> throwError $ TypeError "Can't infer type of None"
+      PDot PTop "andb" -> \_ [x, y] -> return FBool
+      PDot PTop "andp" -> \_ [x, y] -> return FUnit
+      PDot PTop "notb" -> \_ [x, y] -> return FBool
+      PDot PTop "length" -> \_ [x] -> return FInt
+      PDot PTop "plus" -> \_ [x, y] -> return FInt
+      PDot PTop "crh" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "crh"
+      PDot PTop "mult" -> \_ [x, y] -> return FInt
+      PDot PTop "zero" -> \_ [] -> return FInt
+      PDot PTop "is_group_elem" -> \_ [x] -> return FBool
       PDot PTop "concat" -> \_ [x, y] -> do
           case (flenOfFormatTy x, flenOfFormatTy y) of
             (Nothing, _) -> return $ FBuf Nothing
@@ -159,11 +166,11 @@ concreteTyOfApp (PRes pth) =
           case t of
             FBuf (Just _) -> return t
             _ -> throwError $ ErrSomethingFailed $ "cannot extract xor"
-      PDot PTop "cipherlen" -> \_ [x] -> error "unimp"
+      PDot PTop "cipherlen" -> \_ [x] -> return FInt
       PDot PTop "pk_cipherlen" -> \_ [x] -> error "unimp"
-      PDot PTop "vk" -> \_ [x] -> error "unimp"
-      PDot PTop "dhpk" -> \_ [x] -> error "unimp"
-      PDot PTop "enc_pk" -> \_ [x] -> error "unimp"
+      PDot PTop "vk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "vk"
+      PDot PTop "dhpk" -> \_ [x] -> return groupFormatTy
+      PDot PTop "enc_pk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "enc_pk"
       PDot PTop "dh_combine" -> \_ [x, y] -> do
           when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
               throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
@@ -173,6 +180,7 @@ concreteTyOfApp (PRes pth) =
           -- TODO: here, we need to look in the environment for struct
           -- constructors, etc
           error "unimp"
+concreteTyOfApp _ = error "unimp"
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -319,7 +327,28 @@ returnTyOfCall p cs = do
                 go k
       
 concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
-concretifyCryptOp cop cs = error "unimp"
+concretifyCryptOp (CKDF _ _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CKDF"
+concretifyCryptOp (CLemma _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CLemma"
+concretifyCryptOp CAEnc [k, x] = do
+    let t = case x ^. tty of
+              FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
+              _ -> FBuf Nothing
+    return $ Typed t $ CRet $ Typed t $ CAApp "enc" [k, x]    
+concretifyCryptOp CADec [k, c] = do
+    let t = FBuf Nothing
+    return $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
+concretifyCryptOp (CEncStAEAD _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CEncStAEAD"
+concretifyCryptOp CDecStAEAD cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CDecStAEAD"
+concretifyCryptOp CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
+concretifyCryptOp CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
+concretifyCryptOp CMac cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMac"
+concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
+concretifyCryptOp CSign cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSign"
+concretifyCryptOp CSigVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSigVrfy"
+concretifyCryptOp cop cargs = throwError $ TypeError $ 
+    "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
+
+
 
 withVars :: [(CDataVar t, t)] -> ExtractionMonad t a -> ExtractionMonad t a
 withVars xs k = do

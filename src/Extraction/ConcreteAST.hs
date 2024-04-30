@@ -32,6 +32,7 @@ data FLen =
     FLConst Int
     | FLNamed String
     | FLPlus FLen FLen
+    | FLCipherlen FLen
     deriving (Show, Eq, Generic, Typeable)
 
 data FormatTy =
