@@ -309,12 +309,25 @@ concretifyExpr e =
                         k' <- withVars [(x', _tty e')] $ concretifyExpr k
                         return (c, Right $ bind x' k')
             avar <- fresh $ s2n "caseval"
-            retTy <- throwError $ ErrSomethingFailed "TODO: ECase return type"
+            -- Assume the typechecker already checked that all branches return compatible types,
+            -- so we just look at the first one to determine the return type
+            retTy <- case head cases' of
+                (_, Left k) -> return $ k ^. tty
+                (_, Right xk) -> do
+                    let (_, k) = unsafeUnbind xk
+                    return $ k ^. tty
             let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
-            parseAndCase <- case otherwiseCase of
-                Just _ -> throwError $ ErrSomethingFailed "TODO: ECase parsing"
-                Nothing -> return $ caseStmt
-            return $ Typed retTy $ CLet e' Nothing $ bind avar parseAndCase
+            (avar', parseAndCase) <- case otherwiseCase of
+                Just (t, otw) -> do
+                    let startT = e' ^. tty
+                    otw' <- concretifyExpr otw
+                    avar' <- fresh $ s2n "parseval"
+                    let p = Typed retTy $ 
+                            CParse (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                                bind [(avar', ignore "caseval")] caseStmt
+                    return (avar', p)
+                Nothing -> return (avar, caseStmt)
+            return $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
       EFalseElim e _ -> concretifyExpr e
