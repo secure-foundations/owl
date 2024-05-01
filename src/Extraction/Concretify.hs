@@ -178,10 +178,17 @@ concreteTyOfApp (PRes pth) =
               throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
           return groupFormatTy
       PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
-      p -> \_ _ -> do
-        -- TODO: here, we need to look in the environment for struct
-        -- constructors, etc
-        throwError $ UndefinedSymbol $ show . owlpretty $ p
+      PDot PTop p -> \_ args -> do
+        fs <- use funcs
+        case fs M.!? p of
+            Just (argTys, retTy) -> do
+                when (length argTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
+                forM_ (zip argTys args) $ \(t, a) -> do
+                    unifyFormatTy t a
+                return retTy
+            Nothing -> throwError $ UndefinedSymbol $ show . owlpretty $ p
+      _ -> \_ _ -> do
+        throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 concreteTyOfApp _ = \_ _ -> do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
@@ -298,8 +305,12 @@ concretifyExpr e =
             otw' <- traverse concretifyExpr otherwiseCase
             (xs, k) <- unbind xsk
             let xs' = map (\(x, s) -> (castName x, s)) xs
-            -- need to look up in struct/enum context
-            xtys <- throwError $ ErrSomethingFailed "TODO: get format types of parsed vars"
+            xtys <- case t_target' of
+                        FStruct _ fields -> return $ zip (map fst xs') (map snd fields)
+                        FEnum _ _ -> do
+                            when (length xs' /= 1) $ throwError $ TypeError "Expected exactly one argument to EParse for enum"
+                            return [(head xs' ^. _1, t_target')]
+                        _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
             pkind <- case a' ^. tty of
                         FBuf _ -> return PFromBuf
                         FStruct _ _ -> return PFromDatatype
@@ -467,4 +478,28 @@ concretifyTyDef tname (TB.StructDef bnd) = do
                       return $ (s, c) : ck
     s <- go dp
     return $ Just $ CStructDef (CStruct tname s)
+
+
+setupEnv :: [(String, TB.TyDef)] -> EM ()
+setupEnv [] = return ()
+setupEnv ((tname, td):tydefs) = do 
+    tdef <- concretifyTyDef tname td
+    case tdef of
+        Nothing -> return ()
+        Just (CEnumDef (CEnum _ cases)) -> do
+            -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
+            let mkCase (cname, cty) = do 
+                    let argTys = case cty of
+                            Just t -> [t]
+                            Nothing -> []
+                    let rty = FEnum tname $ M.assocs cases
+                    funcs %= M.insert cname (argTys, rty)
+            mapM_ mkCase (M.assocs cases)
+        Just (CStructDef (CStruct _ fields)) -> do
+            -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
+            let fieldTys = map snd fields
+            let rty = FStruct tname fields
+            funcs %= M.insert tname (fieldTys, rty)
+    setupEnv tydefs
+
 

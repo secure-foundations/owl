@@ -54,6 +54,7 @@ data Env t = Env {
     ,   _path :: String
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
+    ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
 }
 
 
@@ -130,7 +131,8 @@ liftExtractionMonad m = do
             _flags = env' ^. flags,
             _path = env' ^. path,
             _freshCtr = env' ^. freshCtr,
-            _varCtx = M.empty
+            _varCtx = M.empty,
+            _funcs = env' ^. funcs
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -163,7 +165,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> Env t
-initEnv flags path = Env flags path 0 M.empty
+initEnv flags path = Env flags path 0 M.empty M.empty
 
 flattenResolvedPath :: ResolvedPath -> String
 flattenResolvedPath PTop = ""
