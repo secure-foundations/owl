@@ -265,6 +265,7 @@ traverseExtractionData traverseDef traverseName traverseTyDef extrData = do
 concretifyPass :: OwlExtractionData -> ExtractionMonad FormatTy CFExtractionData
 concretifyPass owlExtrData = do
     debugLog "Concretifying"
+    Concretify.setupTyEnv $ owlExtrData ^. tyDefs
     traverseExtractionData
         (uncurry Concretify.concretifyDef)
         return

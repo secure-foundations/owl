@@ -75,11 +75,13 @@ concretifyTy t =
                                   return $ (s, c) : ck
                 s <- go dp'
                 return $ FStruct pthName s
+      TConst _ _ -> throwError $ TypeError "invalid constant type in concretifyTy"
       TBool _ -> return $ FBool
       TUnit -> return $ FUnit
       TName ne -> formatTyOfNameExp ne
       TVK ne -> error "unimp"
       TEnc_PK ne -> error "unimp"
+      TDH_PK ne -> error "unimp"
       TSS ne1 ne2 -> return $ groupFormatTy
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
@@ -298,8 +300,13 @@ concretifyExpr e =
             let xs' = map (\(x, s) -> (castName x, s)) xs
             -- need to look up in struct/enum context
             xtys <- throwError $ ErrSomethingFailed "TODO: get format types of parsed vars"
+            pkind <- case a' ^. tty of
+                        FBuf _ -> return PFromBuf
+                        FStruct _ _ -> return PFromDatatype
+                        FEnum _ _ -> return PFromDatatype
+                        _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
             k' <- withVars xtys $ concretifyExpr k
-            return $ Typed (k' ^. tty) $ CParse a' t_target' otw' $ bind xs' k'
+            return $ Typed (k' ^. tty) $ CParse pkind a' t_target' otw' $ bind xs' k'
       ECase e otherwiseCase xsk -> do
             e' <- concretifyExpr e
             casevalT <- case otherwiseCase of
@@ -332,8 +339,9 @@ concretifyExpr e =
                     let startT = e' ^. tty
                     otw' <- concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
+                    -- We are parsing as part of the case, so we need PFromBuf
                     let p = Typed retTy $ 
-                            CParse (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                            CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
                                 bind [(avar', ignore "caseval")] caseStmt
                     return (avar', p)
                 Nothing -> return (avar, caseStmt)

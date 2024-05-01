@@ -71,6 +71,9 @@ data CAExpr' t =
 
 type CAExpr t = Typed (CAExpr' t) t
 
+data ParseKind = PFromBuf | PFromDatatype
+    deriving (Show, Eq, Generic, Typeable)
+
 data CExpr' t = 
     CSkip
     | CRet (CAExpr t)
@@ -84,7 +87,7 @@ data CExpr' t =
     | CCall String [CAExpr t]
     -- In concretification, we should compile `ECase` exprs that parse an enum into a 
     -- CParse node containing a regular `CCase`. The list of binds should have one element
-    | CParse (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String)] (CExpr t))
+    | CParse ParseKind (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String)] (CExpr t))
     | CTLookup String (CAExpr t)
     | CTWrite String (CAExpr t) (CAExpr t)
     -- Crypto calls should be compiled to `CRet (CAApp ...)` during concretization
@@ -133,6 +136,7 @@ data CTyDef t =
 
 instance Alpha FLen
 instance Alpha FormatTy
+instance Alpha ParseKind
 
 instance (Alpha v, Alpha t) => Alpha (Typed v t)
 instance (Subst b a, Subst b t) => Subst b (Typed a t)
@@ -176,6 +180,10 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
 
+instance OwlPretty ParseKind where
+    owlpretty PFromBuf = owlpretty "FromBuf"
+    owlpretty PFromDatatype = owlpretty "FromDatatype"
+
 instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CRet a) = owlpretty "ret" <+> owlpretty a
@@ -203,9 +211,9 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (CCall f as) =
         let args = map owlpretty as in
         owlpretty f <> tupled args
-    owlpretty (CParse ae t ok bindpat) =
+    owlpretty (CParse pkind ae t ok bindpat) =
         let (pats, k) = owlprettyBind bindpat in
-        owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
+        owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
     owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
     owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
     owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
@@ -253,10 +261,10 @@ traverseCExpr f a =
           CCall s xs -> CCall <$> pure s <*> traverse (traverseCAExpr f) xs
           CGetCtr s -> pure $ CGetCtr s
           CIncCtr s -> pure $ CIncCtr s
-          CParse x y z bw -> do
+          CParse pkind x y z bw -> do
               (xs, w) <- unbind bw
               w' <- traverseCExpr f w
-              CParse <$> traverseCAExpr f x <*> f y <*> traverse (traverseCExpr f) z <*> 
+              CParse pkind <$> traverseCAExpr f x <*> f y <*> traverse (traverseCExpr f) z <*> 
                   pure (bind (map (\(n, s) -> (castName n, s)) xs) w')
           CTLookup s a -> CTLookup <$> pure s <*> traverseCAExpr f a
           CTWrite s a b -> CTWrite <$> pure s <*> traverseCAExpr f a <*> traverseCAExpr f b
