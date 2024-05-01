@@ -326,6 +326,15 @@ concretifyExpr e =
                             FEnum _ _ -> return $ e' ^. tty
                             FOption _ -> return $ e' ^. tty
                             tt -> throwError $ TypeError $ "Expected enum or option type in ECase, got " ++ (show . owlpretty) tt
+            let caseTyOf c = do
+                    case casevalT of
+                            FEnum _ cases -> do
+                                case lookup c cases of
+                                    Just (Just t) -> return t :: EM FormatTy
+                                    _ -> throwError $ TypeError $ "attempted to take case " ++ c ++ " of enum type" 
+                            FOption t -> do
+                                    if c == "Some" then return t else throwError $ TypeError $ "attempted to take case " ++ c ++ " of option type"
+                            _ -> throwError $ ErrSomethingFailed "bad caseTyOf"
             cases' <- forM xsk $ \(c, o) ->
                 case o of
                     Left k -> do
@@ -334,7 +343,8 @@ concretifyExpr e =
                     Right (_, xk) -> do
                         (x, k) <- unbind xk
                         let x' = castName x
-                        k' <- withVars [(x', _tty e')] $ concretifyExpr k
+                        caseTy <- caseTyOf c
+                        k' <- withVars [(x', caseTy)] $ concretifyExpr k
                         return (c, Right $ bind x' k')
             avar <- fresh $ s2n "caseval"
             -- Assume the typechecker already checked that all branches return compatible types,
@@ -452,6 +462,8 @@ concretifyDef defName (TB.Def bd) = do
           Nothing -> return Nothing
           Just e -> do
               ce <- concretifyExpr e
+              debugPrint . show . owlpretty $ defName
+              debugPrint . show . owlpretty $ ce
               return $ Just (cretT, ce)
     case ores of
       Nothing -> return Nothing

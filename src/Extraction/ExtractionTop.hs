@@ -92,8 +92,7 @@ extract' modbody = do
     --     }
     concreteExtrData <- concretifyPass owlExtrData
     -- debugPrint $ show concreteExtrData
-    -- specs <- specExtractPass concreteExtrData
-    specs <- return $ pretty ""
+    specs <- specExtractPass concreteExtrData
     verusTyExtrData <- do
         fs <- use flags
         if fs ^. fExtractBufOpt then 
@@ -292,7 +291,8 @@ genVerusPass crExtrData = do
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
 specExtractPass cfExtrData = do
-    throwError $ ErrSomethingFailed "TODO specExtractPass"
+    debugPrint $ "TODO specExtractPass"
+    return $ pretty "/* TODO spec extraction */"
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
 mkEntryPoint verusExtrData = do

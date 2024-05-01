@@ -159,6 +159,7 @@ instance OwlPretty FLen where
     owlpretty (FLConst i) = owlpretty i
     owlpretty (FLNamed s) = owlpretty s
     owlpretty (FLPlus x y) = owlpretty x <+> owlpretty "+" <+> owlpretty y
+    owlpretty (FLCipherlen x) = owlpretty "cipherlen" <> parens (owlpretty x)
     
 instance OwlPretty FormatTy where
     owlpretty FUnit = owlpretty "unit"
@@ -169,9 +170,13 @@ instance OwlPretty FormatTy where
     owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
     owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
+    owlpretty FGhost = owlpretty "ghost"
+
+flagShouldPrettyTypes :: Bool
+flagShouldPrettyTypes = True
 
 instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
-    owlpretty (Typed v t) = parens (owlpretty v <+> owlpretty ":" <+> owlpretty t)
+    owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
@@ -179,6 +184,7 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
+
 
 instance OwlPretty ParseKind where
     owlpretty PFromBuf = owlpretty "FromBuf"
