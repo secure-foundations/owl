@@ -37,11 +37,42 @@ import Prettyprinter.Interpolate
 type EM = ExtractionMonad VerusTy
 
 
+genVerusLocality :: (LocalityName, VerusLocalityData) -> EM (Doc ann)
+genVerusLocality (lname, ldata) = do
+    let stateName = pretty $ "state_" ++ lname
+    let cfgName = pretty $ "cfg_" ++ lname
+    return [__di|
+    pub struct #{stateName} {
+        // TODO: counters go here
+    }
+    impl #{stateName} {
+        \#[verifier::external_body]
+        pub fn init_#{stateName}() -> Self {
+            #{stateName} { 
+                // TODO: counter inits go here
+            }
+        }
+    }
+    pub struct #{cfgName} {
+        pub listener: TcpListener,
+        // TODO local names, shared names, public keys, salt, etc
+    }
+    impl #{cfgName} {
+        /* \#[verifier::external_body]
+        pub fn init_#{cfgName}() -> Self {
+            #{cfgName} { 
+                //TODO: listener    
+            }
+        } */
+    }
+    |]
+
 
 genVerusDef :: CDef VerusTy -> EM (Doc ann)
 genVerusDef cdef = do
     debugLog $ "genVerusDef: " ++ show (cdef ^. defName)
     return $ [di|/* TODO: genVerusDef #{cdef ^. defName} */|]
+
 
 
 vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)

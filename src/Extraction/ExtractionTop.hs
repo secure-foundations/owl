@@ -39,32 +39,6 @@ import qualified GenVerus
 import qualified SpecExtraction
 
 
-type LocalityName = String
-type NameData = (String, FLen, Int) -- name, type, number of processID indices
-type VNameData = (String, ConstUsize, Int)
-type OwlDefData = (String, TB.Def)
-data LocalityData nameData defData = LocalityData {
-    _nLocIdxs :: Int, 
-    _localNames :: [nameData], 
-    _sharedNames :: [nameData], 
-    _defs :: [defData], 
-    _tables :: [(String, Ty)], 
-    _counters :: [String]
-} deriving Show
-makeLenses ''LocalityData
-data ExtractionData defData tyData nameData = ExtractionData {
-    _locMap :: M.Map LocalityName (LocalityData nameData defData),
-    _presharedNames :: [(nameData, [LocalityName])],
-    _pubKeys :: [nameData],
-    _tyDefs :: [(String, tyData)]
-} deriving Show
-makeLenses ''ExtractionData
-
-type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
-type OwlLocalityData = LocalityData NameData OwlDefData
-type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData
-
 extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann, Doc ann))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path) $ extract' modbody
 
@@ -287,7 +261,9 @@ genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
 genVerusPass crExtrData = do
     debugLog "Generating Verus code"
     (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
-    return (tyDefs, vestDefs)
+    locDefs <- mapM GenVerus.genVerusLocality <$> M.assocs $ crExtrData ^. locMap
+    let verusDefs = vsep $ tyDefs : locDefs
+    return (verusDefs, vestDefs)
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
 specExtractPass cfExtrData = do

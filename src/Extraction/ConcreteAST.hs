@@ -173,7 +173,7 @@ instance OwlPretty FormatTy where
     owlpretty FGhost = owlpretty "ghost"
 
 flagShouldPrettyTypes :: Bool
-flagShouldPrettyTypes = True
+flagShouldPrettyTypes = False
 
 instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
     owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
