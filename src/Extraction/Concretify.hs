@@ -465,8 +465,8 @@ concretifyDef defName (TB.Def bd) = do
           Nothing -> return Nothing
           Just e -> do
               ce <- concretifyExpr e
-              debugPrint . show . owlpretty $ defName
-              debugPrint . show . owlpretty $ ce
+            --   debugPrint . show . owlpretty $ defName
+            --   debugPrint . show . owlpretty $ ce
               return $ Just (cretT, ce)
     case ores of
       Nothing -> return Nothing

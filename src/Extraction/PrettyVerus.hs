@@ -39,6 +39,7 @@ instance Pretty ConstUsize where
 instance Pretty VerusTy where
     pretty (RTRef bk ty) = pretty bk <> pretty ty
     pretty (RTVec ty) = pretty "Vec" <> angles (pretty ty)
+    pretty (RTSeq ty) = pretty "Seq" <> angles (pretty ty)
     pretty (RTSlice ty) = pretty "[" <> pretty ty <> pretty "]"
     pretty (RTArray ty n) = pretty "[" <> pretty ty <> pretty ";" <+> pretty n <> pretty "]"
     pretty (RTTuple tys) = pretty "(" <> hsep (punctuate comma (fmap pretty tys)) <> pretty ")"

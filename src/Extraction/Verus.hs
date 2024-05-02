@@ -34,6 +34,7 @@ data ConstUsize =
 data VerusTy = 
       RTRef BorrowKind VerusTy
     | RTVec VerusTy
+    | RTSeq VerusTy
     | RTSlice VerusTy
     | RTArray VerusTy ConstUsize -- TODO: a way to specify const expression ints here?
     | RTTuple [VerusTy]
@@ -156,6 +157,8 @@ asRef name (RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
     Just $ RBorrow b (RVar name)
 asRef name t1 t2 = 
     Nothing
+
+
 
 -- nl :: String -> VerusName
 -- nl s = VN s Nothing

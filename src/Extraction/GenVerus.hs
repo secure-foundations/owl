@@ -45,6 +45,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName True) $ ldata ^. sharedNames
     let (pkDecls, pkInits) = unzip . map (genVerusName True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
+    execFns <- mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
     pub struct #{stateName} {
         #{vsep . punctuate comma $ ctrDecls}
@@ -74,6 +75,8 @@ genVerusLocality pubkeys (lname, ldata) = do
                 #{vsep . punctuate comma $ localNameInits ++ sharedNameInits ++ pkInits}
             }
         }
+
+        #{vsep . punctuate (line <> line) $ execFns}
     }
     |]
 
@@ -99,10 +102,41 @@ genVerusName fromConfig (vname, vsize, _) =
 
 
 
-genVerusDef :: CDef VerusTy -> EM (Doc ann)
-genVerusDef cdef = do
-    debugLog $ "genVerusDef: " ++ show (cdef ^. defName)
-    return $ [di|/* TODO: genVerusDef #{cdef ^. defName} */|]
+genVerusExpr :: CExpr VerusTy -> EM (Doc ann)
+genVerusExpr e = do
+    return $ [di|/* TODO: genVerusExpr */|]
+
+
+genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
+genVerusDef lname cdef = do
+    let execname = execName $ cdef ^. defName
+    (owlArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
+    verusArgs <- mapM compileArg owlArgs
+    let specRt = specTyOf rty
+    let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
+    let itreeArg = [di|Tracked(itree): |] <> itreeTy
+    let args = hsep . punctuate comma $ [di|&self|] : itreeArg : verusArgs
+    let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
+    body <- genVerusExpr body
+    return [__di|
+    \#[verifier::spinoff_prover]
+    pub fn #{execname}(#{args}) -> #{retval} {
+        #{body}
+    }
+    |]
+    where
+        compileArg (cdvar, strname, ty) = do
+            return [di|#{pretty strname}: #{pretty ty}|]
+
+
+specTyOf :: VerusTy -> VerusTy
+specTyOf (RTVec t) = RTSeq (specTyOf t)
+specTyOf (RTOwlBuf _) = RTSeq RTU8
+specTyOf (RTRef _ (RTSlice t)) = RTSeq (specTyOf t)
+specTyOf (RTArray t _) = RTSeq (specTyOf t)
+specTyOf (RTOption t) = RTOption (specTyOf t)
+specTyOf (RTTuple ts) = RTTuple (fmap specTyOf ts)
+specTyOf t = t -- TODO: not true in general
 
 
 
