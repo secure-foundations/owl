@@ -37,35 +37,66 @@ import Prettyprinter.Interpolate
 type EM = ExtractionMonad VerusTy
 
 
-genVerusLocality :: (LocalityName, VerusLocalityData) -> EM (Doc ann)
-genVerusLocality (lname, ldata) = do
+genVerusLocality :: [VNameData] -> (LocalityName, VerusLocalityData) -> EM (Doc ann)
+genVerusLocality pubkeys (lname, ldata) = do
     let stateName = pretty $ "state_" ++ lname
     let cfgName = pretty $ "cfg_" ++ lname
+    let (localNameDecls, localNameInits) = unzip . map (genVerusName False) $ ldata ^. localNames
+    let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName True) $ ldata ^. sharedNames
+    let (pkDecls, pkInits) = unzip . map (genVerusName True) $ pubkeys
+    let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
     return [__di|
     pub struct #{stateName} {
-        // TODO: counters go here
+        #{vsep . punctuate comma $ ctrDecls}
     }
     impl #{stateName} {
         \#[verifier::external_body]
         pub fn init_#{stateName}() -> Self {
             #{stateName} { 
-                // TODO: counter inits go here
+                #{vsep . punctuate comma $ ctrInits}
             }
         }
     }
     pub struct #{cfgName} {
         pub listener: TcpListener,
-        // TODO local names, shared names, public keys, salt, etc
+        pub salt: Vec<u8>,
+        #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls},
     }
     impl #{cfgName} {
-        /* \#[verifier::external_body]
-        pub fn init_#{cfgName}() -> Self {
+        \#[verifier::external_body]
+        pub fn init_#{cfgName}(config_path: &StrSlice) -> Self {
+            let listener = TcpListener::bind(#{lname}_addr().into_rust_str()).unwrap();
+            let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
+            let config = deserialize_cfg_alice_config(&config_str);
             #{cfgName} { 
-                //TODO: listener    
+                listener,
+                salt: (config.salt),
+                #{vsep . punctuate comma $ localNameInits ++ sharedNameInits ++ pkInits}
             }
-        } */
+        }
     }
     |]
+
+-- ctr decl, ctr init
+genVerusCtr :: VerusName -> (Doc ann, Doc ann)
+genVerusCtr counterName =
+    let ctrDecl = [di|pub #{counterName} : u64|] in
+    let ctrInit = [di|#{counterName} : 0|] in
+    (ctrDecl, ctrInit)
+
+-- name decl, name initializer
+genVerusName :: Bool -> VNameData -> (Doc ann, Doc ann)
+genVerusName fromConfig (vname, vsize, _) = 
+    -- We ignore PID indices for now
+    -- debugLog $ "genVerusName: " ++ vname
+    let execname = execName vname in
+    let nameDecl = [di|pub #{execname} : Vec<u8>|] in
+    let nameInitBody = 
+            if fromConfig then [di|config.#{execname}|]
+            else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
+    let nameInit = [di|#{execname} : (#{nameInitBody})|] in
+    (nameDecl, nameInit)
+
 
 
 genVerusDef :: CDef VerusTy -> EM (Doc ann)

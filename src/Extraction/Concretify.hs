@@ -231,6 +231,9 @@ concretifyAExpr a =
             Just ct -> return $ Typed ct $ CAVar s $ castName x
 
 
+-- TODO: insert call to marshaling based on type analysis 
+-- (when data type used as input to crypto op, output, etc)
+
 concretifyExpr :: Expr -> EM (CExpr FormatTy)
 concretifyExpr e =
     case e^.val of
