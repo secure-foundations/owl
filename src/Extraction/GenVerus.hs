@@ -87,22 +87,59 @@ genVerusCtr counterName =
     let ctrInit = [di|#{counterName} : 0|] in
     (ctrDecl, ctrInit)
 
+nameTy :: VerusTy
+nameTy = vecU8
+
 -- name decl, name initializer
 genVerusName :: Bool -> VNameData -> (Doc ann, Doc ann)
 genVerusName fromConfig (vname, vsize, _) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
-    let nameDecl = [di|pub #{execname} : Vec<u8>|] in
+    let nameDecl = [di|pub #{execname} : #{pretty nameTy}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
     (nameDecl, nameInit)
 
+builtins :: M.Map String (String, [VerusTy], VerusTy)
+builtins = M.mapWithKey addExecName builtins' where
+    addExecName n (args, rty) = (execName n, args, rty)
+    builtins' = M.fromList [
+            ("enc", ([u8slice, u8slice, u8slice], vecU8))
+        ,   ("dec", ([u8slice, u8slice], RTOption vecU8))
+        ]
+
 genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
 genVerusCAExpr ae = do
-    throwError $ ErrSomethingFailed "TODO: genVerusCAExpr"
+    case ae ^. tval of
+        CAVar s v -> return $ pretty $ execName $ unignore s
+        CAApp f args -> do
+            case builtins M.!? f of
+                Just (fExecName, argDstTys, rSrcTy) -> do
+                    args' <- mapM genVerusCAExpr args
+                    let argtys = map (^. tty) args
+                    args'' <- zipWithM cast (zip args' argtys) argDstTys
+                    castRes <- cast ([di|val|], rSrcTy) (ae ^. tty)
+                    return [__di|
+                    {
+                        let val = #{fExecName}(#{hsep . punctuate comma $ args''});
+                        #{castRes}
+                    }
+                    |]
+                Nothing -> do
+                    args' <- mapM genVerusCAExpr args
+                    return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
+        CAGet n -> do
+            let rustN = execName n
+            castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
+            return [di|#{castN}|]
+        _ -> return [__di|
+        /*
+            TODO: genVerusCAExpr #{show ae}
+        */
+        |] 
 
 genVerusCExpr :: CExpr VerusTy -> EM (Doc ann)
 genVerusCExpr e = do
@@ -111,7 +148,40 @@ genVerusCExpr e = do
         CRet ae -> do
             ae' <- genVerusCAExpr ae
             return [di|#{ae'}|]
-        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCExpr " ++ show e
+        CLet e oanf xk -> do
+            let (x, k) = unsafeUnbind xk
+            let rustX = execName . show $ x
+            e' <- genVerusCExpr e
+            k' <- genVerusCExpr k
+            return [__di|
+            {
+                let #{rustX} = { #{e'} };
+                #{k'}
+            }
+            |]
+        CBlock ebody -> do
+            ebody' <- genVerusCExpr ebody
+            return [__di|
+            { 
+                #{ebody'} 
+            }
+            |]
+        CIf ae e1 e2 -> do
+            ae' <- genVerusCAExpr ae
+            e1' <- genVerusCExpr e1
+            e2' <- genVerusCExpr e2
+            return [__di|
+            if #{ae'} {
+                #{e1'}
+            } else {
+                #{e2'}
+            }
+            |]
+        _ -> return [__di|
+        /*
+            TODO: genVerusCExpr #{show e}
+        */
+        |] 
 
 
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
@@ -487,7 +557,7 @@ cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
     return [di|&#{v}.as_slice()|]
-cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
+cast (v, RTArray RTU8 _) u8slice =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
     return [di|#{v}.try_into()|]
@@ -502,6 +572,8 @@ cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
 
+vecU8 :: VerusTy
+vecU8 = RTVec RTU8
 
 specTyOf :: VerusTy -> VerusTy
 specTyOf (RTVec t) = RTSeq (specTyOf t)

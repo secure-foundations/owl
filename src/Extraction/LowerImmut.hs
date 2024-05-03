@@ -41,6 +41,9 @@ lowerFLen (FLNamed n) = do
     n' <- lowerLenConst n
     return $ CUsizeConst n'
 lowerFLen (FLPlus a b) = CUsizePlus <$> lowerFLen a <*> lowerFLen b
+-- lowerFLen (FLCipherlen a) = do 
+--     n' <- lowerFLen a
+--     return $ CUsizeConst $ "CIPHERLEN(" ++ show n' ++ ")"
 
 
 lowerArgTy :: FormatTy -> EM VerusTy

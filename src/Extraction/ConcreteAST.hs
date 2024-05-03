@@ -52,7 +52,7 @@ data Typed v t = Typed {
 } deriving (Generic, Typeable)
 
 instance (Show v, Show t) => Show (Typed v t) where
-    show (Typed v t) = "(" ++ show v ++ " : " ++ show t ++ ")"
+    show (Typed v t) = "(" ++ show t ++ ") : " ++ show v
 
 makeLenses ''Typed
 
