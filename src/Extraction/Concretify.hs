@@ -460,13 +460,14 @@ concretifyDef defName (TB.Def bd) = do
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
     ores <- withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
         when (not $ p `aeq` pTrue) $ throwError $ ErrSomethingFailed "Attempting to extract def with nontrivial prerequisite"
-        cretT <- concretifyTy retT
+        -- cretT <- concretifyTy retT
         case oexpr of
           Nothing -> return Nothing
           Just e -> do
               ce <- concretifyExpr e
-            --   debugPrint . show . owlpretty $ defName
-            --   debugPrint . show . owlpretty $ ce
+              let cretT = ce ^. tty
+              --   debugPrint . show . owlpretty $ defName
+              --   debugPrint . show . owlpretty $ ce
               return $ Just (cretT, ce)
     case ores of
       Nothing -> return Nothing

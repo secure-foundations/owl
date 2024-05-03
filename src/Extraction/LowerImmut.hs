@@ -50,8 +50,8 @@ lowerArgTy FInt = return RTUsize
 lowerArgTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
 lowerArgTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
 lowerArgTy (FOption ft) = RTOption <$> lowerArgTy ft
-lowerArgTy (FStruct n _) = return $ RTNamed n
-lowerArgTy (FEnum n _) = return $ RTNamed n
+lowerArgTy (FStruct n _) = return $ RTNamed $ execName n
+lowerArgTy (FEnum n _) = return $ RTNamed $ execName n
 lowerArgTy FGhost = return $ RTVerusGhost
 
 

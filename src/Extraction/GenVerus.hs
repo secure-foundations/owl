@@ -100,45 +100,60 @@ genVerusName fromConfig (vname, vsize, _) =
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
     (nameDecl, nameInit)
 
+genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
+genVerusCAExpr ae = do
+    throwError $ ErrSomethingFailed "TODO: genVerusCAExpr"
 
-
-genVerusExpr :: CExpr VerusTy -> EM (Doc ann)
-genVerusExpr e = do
-    return $ [di|/* TODO: genVerusExpr */|]
+genVerusCExpr :: CExpr VerusTy -> EM (Doc ann)
+genVerusCExpr e = do
+    case e ^. tval of
+        CSkip -> return [di|()|]
+        CRet ae -> do
+            ae' <- genVerusCAExpr ae
+            return [di|#{ae'}|]
+        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCExpr " ++ show e
 
 
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
+    let specname = cdef ^. defName ++ "_spec"
     (owlArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
     verusArgs <- mapM compileArg owlArgs
     let specRt = specTyOf rty
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
-    let args = hsep . punctuate comma $ [di|&self|] : itreeArg : verusArgs
+    let mutStateArg = [di|mut_state: &mut state_#{lname}|]
+    let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
-    body <- genVerusExpr body
+    specargs <- mapM viewArg owlArgs
+    body <- genVerusCExpr body
+    viewRes <- viewVar "(r.0)" rty
+    let ensuresLenValid = case rty of
+            RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
+            RTNamed _  -> [di|res matches Ok(r) ==> r.0.len_valid()|]
+            _ -> [di||]
     return [__di|
     \#[verifier::spinoff_prover]
-    pub fn #{execname}(#{args}) -> #{retval} {
-        #{body}
+    pub fn #{execname}(#{argdefs}) -> #{retval}
+        requires 
+            itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
+        ensures
+            res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *mut_state)),
+            #{ensuresLenValid}
+    {
+        let tracked mut itree = itree;
+        let res_inner = {
+            reveal(#{specname});
+            #{body}
+        };
+        Ok(res_inner)
     }
     |]
     where
         compileArg (cdvar, strname, ty) = do
             return [di|#{pretty strname}: #{pretty ty}|]
-
-
-specTyOf :: VerusTy -> VerusTy
-specTyOf (RTVec t) = RTSeq (specTyOf t)
-specTyOf (RTOwlBuf _) = RTSeq RTU8
-specTyOf (RTRef _ (RTSlice t)) = RTSeq (specTyOf t)
-specTyOf (RTArray t _) = RTSeq (specTyOf t)
-specTyOf (RTOption t) = RTOption (specTyOf t)
-specTyOf (RTTuple ts) = RTTuple (fmap specTyOf ts)
-specTyOf t = t -- TODO: not true in general
-
-
+        viewArg (cdvar, strname, ty) = viewVar strname ty
 
 vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
 vestLayoutOf name _ (RTArray RTU8 len) = do
@@ -486,3 +501,26 @@ cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show 
 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
+
+
+specTyOf :: VerusTy -> VerusTy
+specTyOf (RTVec t) = RTSeq (specTyOf t)
+specTyOf (RTOwlBuf _) = RTSeq RTU8
+specTyOf (RTRef _ (RTSlice t)) = RTSeq (specTyOf t)
+specTyOf (RTArray t _) = RTSeq (specTyOf t)
+specTyOf (RTOption t) = RTOption (specTyOf t)
+specTyOf (RTTuple ts) = RTTuple (fmap specTyOf ts)
+specTyOf t = t -- TODO: not true in general
+
+viewVar :: VerusName -> VerusTy -> EM (Doc ann)
+viewVar vname RTUnit = return [di|()|]
+viewVar vname (RTNamed _) = return [di|#{vname}.dview().as_seq()|]
+viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(dview_option(#{vname}))|]
+viewVar vname (RTOption _) = return [di|dview_option(#{vname})|]
+viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.dview()|]
+viewVar vname (RTVec RTU8) = return [di|#{vname}.dview()|]
+viewVar vname (RTArray RTU8 _) = return [di|#{vname}.dview()|]
+viewVar vname (RTOwlBuf _) = return [di|#{vname}.dview()|]
+viewVar vname RTBool = return [di|#{vname}|]
+viewVar vname RTUsize = return [di|#{vname}|]
+viewVar vname ty = throwError $ ErrSomethingFailed $ "TODO: viewVar " ++ vname ++ " " ++ show ty
