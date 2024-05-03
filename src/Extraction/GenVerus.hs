@@ -103,12 +103,31 @@ genVerusName fromConfig (vname, vsize, _) =
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
     (nameDecl, nameInit)
 
+-- These should be kept in one-to-one correspondence with execlib.rs
+-- TODO in the far future, somehow have these generated from the Rust code?
 builtins :: M.Map String (String, [VerusTy], VerusTy)
-builtins = M.mapWithKey addExecName builtins' where
+builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
     addExecName n (args, rty) = (execName n, args, rty)
     builtins' = M.fromList [
-            ("enc", ([u8slice, u8slice, u8slice], vecU8))
-        ,   ("dec", ([u8slice, u8slice], RTOption vecU8))
+          ("enc", ([u8slice, u8slice, u8slice], vecU8))
+        , ("dec", ([u8slice, u8slice], RTOption vecU8))
+        , ("sign", ([u8slice, u8slice], vecU8))
+        , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("dhpk", ([u8slice], vecU8))
+        , ("dh_combine", ([u8slice, u8slice], vecU8))
+        , ("mac", ([u8slice, u8slice], vecU8))
+        , ("mac_vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("pkenc", ([u8slice, u8slice], vecU8))
+        , ("pkdec", ([u8slice, u8slice], vecU8))
+        -- , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) -- special-cased
+        , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("is_group_elem", ([u8slice], RTBool))
+        , ("crh", ([u8slice], vecU8))
+        , ("bytes_as_counter", ([u8slice], RTUsize))
+        , ("counter_as_bytes", ([RTRef RShared RTUsize], vecU8))
+        ]
+    diffNameBuiltins = M.fromList [
+          ("kdf", ("extract_expand_to)len", [u8slice, u8slice, u8slice, u8slice], vecU8))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
@@ -129,6 +148,7 @@ genVerusCAExpr ae = do
                     }
                     |]
                 Nothing -> do
+                    -- TODO: Need a special case for enc_st_aead, which needs to early return
                     args' <- mapM genVerusCAExpr args
                     return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
         CAGet n -> do
