@@ -240,7 +240,7 @@ concretifyExpr e =
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
           k' <- withVars [(castName x, FBuf Nothing)] $ concretifyExpr k
-          return $ Typed (_tty k') $ CInput $ bind (castName x, ep) k'
+          return $ Typed (_tty k') $ CInput (FBuf Nothing) $ bind (castName x, ep) k'
       EOutput a op -> do
           c <- concretifyAExpr a
           return $ Typed FUnit $ COutput c op

@@ -31,6 +31,7 @@ import Verus
 import PrettyVerus
 import ConcreteAST
 import ExtractionBase
+import AST
 --import Data.String.Interpolate (i, __i, iii)
 import Prettyprinter.Interpolate
 
@@ -163,22 +164,48 @@ genVerusCAExpr ae = do
         |] 
 
 genVerusCExpr :: CExpr VerusTy -> EM (Doc ann)
-genVerusCExpr e = do
-    case e ^. tval of
+genVerusCExpr expr = do
+    case expr ^. tval of
         CSkip -> return [di|()|]
         CRet ae -> do
             ae' <- genVerusCAExpr ae
             return [di|#{ae'}|]
+        CInput t xek -> do
+            let ((x, ev), k) = unsafeUnbind xek
+            let rustX = execName . show $ x
+            let rustEv = if show ev == "_" then "_" else execName . show $ ev
+            k' <- genVerusCExpr k
+            castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
+            return [__di|
+            let (tmp_#{rustX}, #{rustEv}) = { owl_input(Tracked(&mut itree), &self.listener) };
+            let #{rustX} = #{castTmp};
+            #{k'}
+            |]
+        COutput ae dst -> do
+            dst' <- case dst of
+                Just (EndpointLocality (Locality lname _)) -> do
+                    plname <- flattenPath lname
+                    return [di|&#{plname}_addr()|]
+                Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
+                Nothing -> throwError OutputWithUnknownDestination 
+            myAddr <- do
+                lname <- use curLocality
+                case lname of
+                    Just lname -> return [di|&#{lname}_addr()|]
+                    Nothing -> throwError $ ErrSomethingFailed "bad self locality in output"
+            ae' <- genVerusCAExpr ae
+            aeCast <- (ae', ae ^. tty) `cast` u8slice
+            return [__di|
+            owl_output(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr});
+            |]
         CSample fl xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             let sz = lowerFLen fl
             k' <- genVerusCExpr k
             return [__di|
-            {
-                let #{rustX} = owl_sample(&mut itree, #{pretty sz});
-                #{k'}
-            }
+            let #{rustX} = owl_sample(Tracked(&mut itree), #{pretty sz});
+            #{k'}
             |]
         CLet e oanf xk -> do
             let (x, k) = unsafeUnbind xk
@@ -186,10 +213,8 @@ genVerusCExpr e = do
             e' <- genVerusCExpr e
             k' <- genVerusCExpr k
             return [__di|
-            {
-                let #{rustX} = { #{e'} };
-                #{k'}
-            }
+            let #{rustX} = { #{e'} };
+            #{k'}
             |]
         CBlock ebody -> do
             ebody' <- genVerusCExpr ebody
@@ -211,7 +236,7 @@ genVerusCExpr e = do
             |]
         _ -> return [__di|
         /*
-            TODO: genVerusCExpr #{show e}
+            TODO: genVerusCExpr #{show expr}
         */
         |] 
 
@@ -229,7 +254,9 @@ genVerusDef lname cdef = do
     let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
     specargs <- mapM viewArg owlArgs
+    curLocality .= Just lname
     body <- genVerusCExpr body
+    curLocality .= Nothing
     viewRes <- viewVar "(r.0)" rty
     let ensuresLenValid = case rty of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
@@ -599,6 +626,8 @@ cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
 cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
+cast (v, RTOption vecU8) (RTOption (RTOwlBuf _)) = 
+    return [di|OwlBuf::from_vec_option(#{v})|]
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy

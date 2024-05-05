@@ -77,7 +77,7 @@ data ParseKind = PFromBuf | PFromDatatype
 data CExpr' t = 
     CSkip
     | CRet (CAExpr t)
-    | CInput (Bind (CDataVar t, EndpointVar) (CExpr t))
+    | CInput t (Bind (CDataVar t, EndpointVar) (CExpr t)) -- keep track of received buf type
     | COutput (CAExpr t) (Maybe Endpoint)
     | CSample FLen (Bind (CDataVar t) (CExpr t))
     | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
@@ -194,7 +194,7 @@ instance OwlPretty ParseKind where
 instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CRet a) = owlpretty "ret" <+> owlpretty a
-    owlpretty (CInput xsk) = 
+    owlpretty (CInput t xsk) = 
         let (x, sk) = owlprettyBind xsk in
         owlpretty "input" <+> x <> pretty ";" <+> sk
     owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
@@ -259,9 +259,10 @@ traverseCExpr f a =
     traverseTyped a f $ \c ->
         case c of
           CSkip -> pure CSkip
-          CInput bk -> do
+          CInput t bk -> do
               ((n, ep), k) <- unbind bk                         
-              CInput . bind (castName n, ep) <$> traverseCExpr f k
+              t' <- f t
+              CInput t' . bind (castName n, ep) <$> traverseCExpr f k
           COutput e k -> COutput <$> traverseCAExpr f e <*> pure k
           CSample n xk -> do
                 (x, k) <- unbind xk
