@@ -133,7 +133,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
 genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
 genVerusCAExpr ae = do
     case ae ^. tval of
-        CAVar s v -> return $ pretty $ execName $ unignore s
+        CAVar s v -> return $ pretty $ execName $ show v
         CAApp f args -> do
             case builtins M.!? f of
                 Just (fExecName, argDstTys, rSrcTy) -> do
@@ -155,6 +155,7 @@ genVerusCAExpr ae = do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
             return [di|#{castN}|]
+        CAInt fl -> return $ pretty $ lowerFLen fl
         _ -> return [__di|
         /*
             TODO: genVerusCAExpr #{show ae}
@@ -168,6 +169,17 @@ genVerusCExpr e = do
         CRet ae -> do
             ae' <- genVerusCAExpr ae
             return [di|#{ae'}|]
+        CSample fl xk -> do
+            let (x, k) = unsafeUnbind xk
+            let rustX = execName . show $ x
+            let sz = lowerFLen fl
+            k' <- genVerusCExpr k
+            return [__di|
+            {
+                let #{rustX} = owl_sample(&mut itree, #{pretty sz});
+                #{k'}
+            }
+            |]
         CLet e oanf xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x

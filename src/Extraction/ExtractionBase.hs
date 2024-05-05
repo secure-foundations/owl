@@ -12,6 +12,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
+import Data.Char
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Reader
@@ -274,4 +275,22 @@ concreteLength (CUsizePlus a b) = do
     a' <- concreteLength a
     b' <- concreteLength b
     return $ a' + b'
+
+lowerLenConst :: String -> String
+lowerLenConst s = map toUpper s ++ "_SIZE"
+
+lowerFLen :: FLen -> ConstUsize
+lowerFLen (FLConst n) = CUsizeLit n
+lowerFLen (FLNamed n) = 
+    let n' = lowerLenConst n in
+    CUsizeConst n'
+lowerFLen (FLPlus a b) = 
+    let a' = lowerFLen a in
+    let b' = lowerFLen b in
+    CUsizePlus a' b'
+-- lowerFLen (FLCipherlen a) = do 
+--     n' <- lowerFLen a
+--     return $ CUsizeConst $ "CIPHERLEN(" ++ show n' ++ ")"
+
+
 

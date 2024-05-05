@@ -412,7 +412,11 @@ concretifyCryptOp CAEnc [k, x] = do
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
               _ -> FBuf Nothing
-    return $ Typed t $ CRet $ Typed t $ CAApp "enc" [k, x]    
+    coinsName <- fresh $ s2n "coins"
+    let sampFLen = FLNamed "nonce"
+    let coinsVar = Typed (FBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
+    let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
+    return $ Typed t $ CSample sampFLen $ bind coinsName doEnc
 concretifyCryptOp CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]

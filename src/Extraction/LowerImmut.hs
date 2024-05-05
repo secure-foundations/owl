@@ -31,21 +31,6 @@ import Verus
 
 type EM = ExtractionMonad FormatTy
 
-
-lowerLenConst :: String -> EM String
-lowerLenConst s = return $ map toUpper s ++ "_SIZE"
-
-lowerFLen :: FLen -> EM ConstUsize
-lowerFLen (FLConst n) = return $ CUsizeLit n
-lowerFLen (FLNamed n) = do
-    n' <- lowerLenConst n
-    return $ CUsizeConst n'
-lowerFLen (FLPlus a b) = CUsizePlus <$> lowerFLen a <*> lowerFLen b
--- lowerFLen (FLCipherlen a) = do 
---     n' <- lowerFLen a
---     return $ CUsizeConst $ "CIPHERLEN(" ++ show n' ++ ")"
-
-
 lowerArgTy :: FormatTy -> EM VerusTy
 lowerArgTy FUnit = return RTUnit
 lowerArgTy FBool = return RTBool
@@ -81,7 +66,7 @@ lowerFieldTy = lowerArgTy -- for now, probably need to change it later
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
-maybeLenOf (FBuf (Just flen)) = Just <$> lowerFLen flen
+maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
@@ -106,7 +91,7 @@ lowerTyDef _ (CEnumDef (CEnum name cases)) = do
 
 lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
 lowerName (n, l, i) = do
-    l' <- lowerFLen l
+    let l' = lowerFLen l
     return (n, l', i)
 
 
