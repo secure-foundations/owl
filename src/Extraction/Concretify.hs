@@ -343,19 +343,19 @@ concretifyExpr e =
                     Left k -> do
                         k' <- concretifyExpr k
                         return (c, Left k')
-                    Right (_, xk) -> do
-                        (x, k) <- unbind xk
+                    Right (_, xtk) -> do
+                        (x, k) <- unbind xtk
                         let x' = castName x
                         caseTy <- caseTyOf c
                         k' <- withVars [(x', caseTy)] $ concretifyExpr k
-                        return (c, Right $ bind x' k')
+                        return (c, Right $ bind x' (caseTy, k'))
             avar <- fresh $ s2n "caseval"
             -- Assume the typechecker already checked that all branches return compatible types,
             -- so we just look at the first one to determine the return type
             retTy <- case head cases' of
                 (_, Left k) -> return $ k ^. tty
-                (_, Right xk) -> do
-                    let (_, k) = unsafeUnbind xk
+                (_, Right xtk) -> do
+                    let (_, (_, k)) = unsafeUnbind xtk
                     return $ k ^. tty
             let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
             (avar', parseAndCase) <- case otherwiseCase of

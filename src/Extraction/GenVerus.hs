@@ -128,7 +128,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("counter_as_bytes", ([RTRef RShared RTUsize], vecU8))
         ]
     diffNameBuiltins = M.fromList [
-          ("kdf", ("extract_expand_to)len", [u8slice, u8slice, u8slice, u8slice], vecU8))
+          ("kdf", ("extract_expand_to_len", [u8slice, u8slice, u8slice, u8slice], vecU8))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
@@ -234,11 +234,48 @@ genVerusCExpr expr = do
                 #{e2'}
             }
             |]
-        _ -> return [__di|
-        /*
-            TODO: genVerusCExpr #{show expr}
-        */
-        |] 
+        CCase ae cases -> do
+            ae' <- genVerusCAExpr ae
+            aeTyPrefix <- case ae ^. tty of
+                RTNamed n -> return [di|#{execName n}::|]
+                RTOption _ -> return [di|Option::|]
+                t -> throwError $ UndefinedSymbol $ "attempt to case on type " ++ show t
+            let genCase (c, o) = do
+                    case o of
+                        Left k -> do
+                            k' <- genVerusCExpr k
+                            return [__di|
+                            #{aeTyPrefix}#{c}() => { 
+                                #{k'} 
+                            },
+                            |]
+                        Right xtk -> do
+                            let (x, (t, k)) = unsafeUnbind xtk
+                            let rustX = execName . show $ x
+                            -- We include this in case we decide during type-lowering to 
+                            -- represent the contained type differently in the enum and
+                            -- in the case body (e.g., if the enum contains an owned Vec
+                            -- but the case body should have an OwlBuf or something)
+                            castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
+                            k' <- genVerusCExpr k
+                            return [__di|
+                            #{aeTyPrefix}#{c}(tmp_#{rustX}) => {
+                                let #{rustX} = #{castTmp}; 
+                                #{k'} 
+                            },
+                            |]
+            cases' <- mapM genCase cases
+            return [__di|
+            match #{ae'} {
+                #{vsep cases'}
+            }
+            |]
+        _ -> do
+            return [__di|
+            /*
+                TODO: genVerusCExpr #{show expr}
+            */
+            |] 
 
 
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
@@ -616,7 +653,7 @@ cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
     return [di|&#{v}.as_slice()|]
-cast (v, RTArray RTU8 _) u8slice =
+cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
     return [di|#{v}.try_into()|]
@@ -626,8 +663,16 @@ cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
 cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
-cast (v, RTOption vecU8) (RTOption (RTOwlBuf _)) = 
+cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) = 
     return [di|OwlBuf::from_vec_option(#{v})|]
+cast (v, RTNamed t) (RTVec RTU8) = 
+    return [di|serialize_#{t}(&#{v})|]
+cast (v, RTNamed t) (RTRef RShared (RTSlice RTU8)) = do
+    c1 <- cast (v, RTNamed t) vecU8
+    cast (c1, vecU8) u8slice
+cast (v, RTNamed t) (RTOwlBuf l) = do
+    c1 <- cast (v, RTNamed t) vecU8
+    cast (c1, vecU8) (RTOwlBuf l)
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy
