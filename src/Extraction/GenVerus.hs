@@ -244,8 +244,11 @@ genVerusCExpr expr = do
                     case o of
                         Left k -> do
                             k' <- genVerusCExpr k
+                            let parens = case ae ^. tty of
+                                    RTOption _ -> ""
+                                    _ -> "()"
                             return [__di|
-                            #{aeTyPrefix}#{c}() => { 
+                            #{aeTyPrefix}#{c}#{parens} => { 
                                 #{k'} 
                             },
                             |]
@@ -356,10 +359,11 @@ genVerusStruct (CStruct name fieldsFV) = do
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
     vestFormat <- genVestFormat verusName verusFieldsFV
+    constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFields lifetimeConst
-    return $ (vsep [structDef, allLensValid, viewImpl, parsleyWrappers], vestFormat)
+    return $ (vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers], vestFormat)
     where 
         liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
@@ -375,6 +379,28 @@ genVerusStruct (CStruct name fieldsFV) = do
             }
             |]
 
+        genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
+        genConstructorShortcut verusName fields lAnnot = do
+            let body = vsep . punctuate comma . fmap (\(_, ename, _) -> [di|#{ename}: arg_#{ename}|]) $ fields
+            let args = hsep . punctuate comma . fmap (\(_, ename, fty) -> [di|arg_#{ename}: #{pretty fty}|]) $ fields
+            let reqs = vsep . punctuate comma . mapMaybe (
+                        \(_, ename, fty) -> case fty of
+                            RTOwlBuf _ -> Just [di|arg_#{ename}.len_valid()|]
+                            _ -> Nothing
+                    ) $ fields
+            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.dview() == arg_#{ename}.dview()|]) fields
+            let enss = vsep . punctuate comma $ [di|res.len_valid()|] : fieldEnss
+            return [__di|
+            // Allows us to use function call syntax to construct members of struct types, a la Owl,
+            // so we don't have to special-case struct constructors in the compiler
+            \#[inline]
+            pub fn #{verusName}#{lAnnot}(#{args}) -> (res: #{verusName}#{lAnnot})
+                requires #{reqs}
+                ensures  #{enss}
+            {
+                #{verusName} { #{body} }
+            }
+            |]
 
         genAllLensValid :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genAllLensValid verusName fields lAnnot = do

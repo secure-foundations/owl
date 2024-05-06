@@ -88,7 +88,7 @@ data CExpr' t =
     | CCall String [CAExpr t]
     -- In concretification, we should compile `ECase` exprs that parse an enum into a 
     -- CParse node containing a regular `CCase`. The list of binds should have one element
-    | CParse ParseKind (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String)] (CExpr t))
+    | CParse ParseKind (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String, t)] (CExpr t))
     | CTLookup String (CAExpr t)
     | CTWrite String (CAExpr t) (CAExpr t)
     -- Crypto calls should be compiled to `CRet (CAApp ...)` during concretization
@@ -222,7 +222,9 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
         let args = map owlpretty as in
         owlpretty f <> tupled args
     owlpretty (CParse pkind ae t ok bindpat) =
-        let (pats, k) = owlprettyBind bindpat in
+        let (pats', k') = unsafeUnbind bindpat in
+        let pats = map (\(n, _, _) -> owlpretty n) pats' in
+        let k = owlpretty k' in
         owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
     owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
     owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
@@ -276,10 +278,11 @@ traverseCExpr f a =
           CGetCtr s -> pure $ CGetCtr s
           CIncCtr s -> pure $ CIncCtr s
           CParse pkind x y z bw -> do
-              (xs, w) <- unbind bw
+              (xts, w) <- unbind bw
+              xts' <- mapM (\(n, s, t) -> do t' <- f t ; return (castName n, s, t')) xts
               w' <- traverseCExpr f w
               CParse pkind <$> traverseCAExpr f x <*> f y <*> traverse (traverseCExpr f) z <*> 
-                  pure (bind (map (\(n, s) -> (castName n, s)) xs) w')
+                  pure (bind xts' w')
           CTLookup s a -> CTLookup <$> pure s <*> traverseCAExpr f a
           CTWrite s a b -> CTWrite <$> pure s <*> traverseCAExpr f a <*> traverseCAExpr f b
           CCase x zs -> do

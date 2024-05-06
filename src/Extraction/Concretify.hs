@@ -33,13 +33,13 @@ import qualified TypingBase as TB
 type EM = ExtractionMonad FormatTy
 
 concretifyTy :: Ty -> EM FormatTy
-concretifyTy t = 
+concretifyTy t =
     case t^.val of
       TData _ _ _ -> return $ FBuf Nothing
       TDataWithLength _ a -> do
           a' <- liftCheck $ TB.resolveANF a
           case a'^.val of
-            AEInt i -> return $ FBuf $ Just $ FLConst i 
+            AEInt i -> return $ FBuf $ Just $ FLConst i
             AELenConst s -> return $ FBuf $ Just $ FLNamed s
             _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a')
       TGhost -> return $ FGhost
@@ -96,7 +96,7 @@ groupFormatTy :: FormatTy
 groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here? 
 
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
-unifyFormatTy t1 t2 = 
+unifyFormatTy t1 t2 =
     case (t1, t2) of
       _ | t1 `aeq` t2 -> return t1
       (FBuf Nothing, _) -> return $ FBuf Nothing
@@ -105,7 +105,7 @@ unifyFormatTy t1 t2 =
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
-    nt <- liftCheck $ TB.getNameType ne 
+    nt <- liftCheck $ TB.getNameType ne
     fl <- fLenOfNameTy nt
     return $ FBuf $ Just fl
 
@@ -134,7 +134,7 @@ flenOfFormatTy FInt = Just $ FLConst 32 -- todo?
 flenOfFormatTy _ = Nothing
 
 concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
-concreteTyOfApp (PRes pth) = 
+concreteTyOfApp (PRes pth) =
     case pth of
       PDot PTop "unit" -> \_ _ -> return FUnit
       PDot PTop "true" -> \_ _ -> return FBool
@@ -198,10 +198,10 @@ ghostUnit = Typed FGhost $ CAApp "unit" []
 
 -- none()
 noneConcrete :: FormatTy -> CAExpr FormatTy
-noneConcrete rett = Typed rett $ CAApp "None" [] 
+noneConcrete rett = Typed rett $ CAApp "None" []
 
 concretifyAExpr :: AExpr -> EM (CAExpr FormatTy)
-concretifyAExpr a = 
+concretifyAExpr a =
     case a^.val of
       AEGet n -> do
           t <- formatTyOfNameExp n
@@ -281,7 +281,7 @@ concretifyExpr e =
       EForallIdx _ _ -> return $ Typed FGhost $ CRet ghostUnit
       EPackIdx _ e -> concretifyExpr e
       EGuard a e -> do
-          ca <- concretifyAExpr a 
+          ca <- concretifyAExpr a
           ce <- concretifyExpr e
           return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
       EGetCtr p _ -> do
@@ -308,11 +308,11 @@ concretifyExpr e =
             otw' <- traverse concretifyExpr otherwiseCase
             (xs, k) <- unbind xsk
             let xs' = map (\(x, s) -> (castName x, s)) xs
-            xtys <- case t_target' of
-                        FStruct _ fields -> return $ zip (map fst xs') (map snd fields)
+            (xtys, xtys') <- case t_target' of
+                        FStruct _ fields -> return (zip (map fst xs') (map snd fields), zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd fields))
                         FEnum _ _ -> do
                             when (length xs' /= 1) $ throwError $ TypeError "Expected exactly one argument to EParse for enum"
-                            return [(head xs' ^. _1, t_target')]
+                            return ([(head xs' ^. _1, t_target')], [(head xs' ^. _1, head xs' ^. _2, t_target')])
                         _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
             pkind <- case a' ^. tty of
                         FBuf _ -> return PFromBuf
@@ -320,7 +320,7 @@ concretifyExpr e =
                         FEnum _ _ -> return PFromDatatype
                         _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
             k' <- withVars xtys $ concretifyExpr k
-            return $ Typed (k' ^. tty) $ CParse pkind a' t_target' otw' $ bind xs' k'
+            return $ Typed (k' ^. tty) $ CParse pkind a' t_target' otw' $ bind xtys' k'
       ECase e otherwiseCase xsk -> do
             e' <- concretifyExpr e
             casevalT <- case otherwiseCase of
@@ -334,7 +334,7 @@ concretifyExpr e =
                             FEnum _ cases -> do
                                 case lookup c cases of
                                     Just (Just t) -> return t :: EM FormatTy
-                                    _ -> throwError $ TypeError $ "attempted to take case " ++ c ++ " of enum type" 
+                                    _ -> throwError $ TypeError $ "attempted to take case " ++ c ++ " of enum type"
                             FOption t -> do
                                     if c == "Some" then return t else throwError $ TypeError $ "attempted to take case " ++ c ++ " of option type"
                             _ -> throwError $ ErrSomethingFailed "bad caseTyOf"
@@ -364,9 +364,9 @@ concretifyExpr e =
                     otw' <- concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
                     -- We are parsing as part of the case, so we need PFromBuf
-                    let p = Typed retTy $ 
+                    let p = Typed retTy $
                             CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
-                                bind [(avar', ignore "caseval")] caseStmt
+                                bind [(avar', ignore "caseval", casevalT)] caseStmt
                     return (avar', p)
                 Nothing -> return (avar, caseStmt)
             return $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
@@ -384,7 +384,7 @@ concretifyExpr e =
           s <- concretifyPath p
           return $ Typed FUnit $ CTWrite s c1 c2
       ESetOption _ _ e -> concretifyExpr e
-      
+
 
 typeOfTable :: Path -> EM FormatTy
 typeOfTable (PRes (PDot p n)) = do
@@ -404,7 +404,7 @@ returnTyOfCall p cs = do
             go (DPVar _ _ xk) = do
                 (_, k) <- unbind xk
                 go k
-      
+
 concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
 concretifyCryptOp (CKDF _ _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CKDF"
 concretifyCryptOp (CLemma _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CLemma"
@@ -428,7 +428,7 @@ concretifyCryptOp CMac cs = throwError $ ErrSomethingFailed "TODO: concretifyCry
 concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
 concretifyCryptOp CSign cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSign"
 concretifyCryptOp CSigVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSigVrfy"
-concretifyCryptOp cop cargs = throwError $ TypeError $ 
+concretifyCryptOp cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 
 
@@ -476,7 +476,7 @@ concretifyDef defName (TB.Def bd) = do
     case ores of
       Nothing -> return Nothing
       Just res -> return $ Just $ CDef defName res
-    
+
 
 concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing
@@ -502,13 +502,13 @@ concretifyTyDef tname (TB.StructDef bnd) = do
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
 setupEnv [] = return ()
-setupEnv ((tname, td):tydefs) = do 
+setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
     case tdef of
         Nothing -> return ()
         Just (CEnumDef (CEnum _ cases)) -> do
             -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
-            let mkCase (cname, cty) = do 
+            let mkCase (cname, cty) = do
                     let argTys = case cty of
                             Just t -> [t]
                             Nothing -> []
