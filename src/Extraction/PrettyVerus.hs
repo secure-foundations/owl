@@ -46,6 +46,8 @@ instance Pretty VerusTy where
     pretty (RTOption ty) = pretty "Option" <> angles (pretty ty)
     pretty (RTParam ty targs) = pretty ty <> angles (hsep (punctuate comma (fmap pretty targs)))
     pretty (RTNamed name) = pretty name
+    pretty (RTStruct name _) = pretty name
+    pretty (RTEnum name _) = pretty name
     pretty (RTWithLifetime ty lt) = pretty ty <> angles (pretty lt)
     pretty (RTOwlBuf lt) = pretty "OwlBuf" <> angles (pretty lt)
     pretty RTUnit = pretty "()"

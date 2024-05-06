@@ -38,8 +38,14 @@ lowerArgTy FInt = return RTUsize
 lowerArgTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
 lowerArgTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
 lowerArgTy (FOption ft) = RTOption <$> lowerArgTy ft
-lowerArgTy (FStruct n _) = return $ RTNamed $ execName n
-lowerArgTy (FEnum n _) = return $ RTNamed $ execName n
+lowerArgTy (FStruct fn ffs) = do
+    let rn = execName fn
+    rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerArgTy t) ffs
+    return $ RTStruct rn rfs
+lowerArgTy (FEnum n fcs) = do
+    let rn = execName n
+    rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerArgTy t) fcs
+    return $ RTEnum rn rcs
 lowerArgTy FGhost = return $ RTVerusGhost
 
 

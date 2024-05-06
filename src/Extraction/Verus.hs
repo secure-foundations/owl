@@ -40,6 +40,8 @@ data VerusTy =
     | RTTuple [VerusTy]
     | RTOption VerusTy
     | RTNamed VerusName -- named types, eg structs, enums, etc
+    | RTStruct VerusName [(VerusName, VerusTy)]
+    | RTEnum VerusName [(VerusName, Maybe VerusTy)]
     | RTParam VerusName [VerusTy] -- general-purpose parameterized types (we special-case Option and Vec)
     | RTWithLifetime VerusTy Lifetime
     | RTOwlBuf Lifetime

@@ -237,7 +237,7 @@ genVerusCExpr expr = do
         CCase ae cases -> do
             ae' <- genVerusCAExpr ae
             aeTyPrefix <- case ae ^. tty of
-                RTNamed n -> return [di|#{execName n}::|]
+                RTEnum n _ -> return [di|#{execName n}::|]
                 RTOption _ -> return [di|Option::|]
                 t -> throwError $ UndefinedSymbol $ "attempt to case on type " ++ show t
             let genCase (c, o) = do
@@ -273,6 +273,45 @@ genVerusCExpr expr = do
                 #{vsep cases'}
             }
             |]
+        CParse pkind ae t maybeOtw xtsk -> do
+            let (xts, k) = unsafeUnbind xtsk
+            let castRustXs = map (\(x, _, t) -> (execName . show $ x, t)) xts
+            (dstTyName, parsedTypeMembers) <- case t of
+                    RTStruct tn fts -> do
+                        let genField (f, ft) = do
+                                return ([di|parseval.#{f}|], ft)
+                        (,) tn <$> mapM genField fts
+                    RTEnum tn _ -> return (tn, [([di|parseval|], t)])
+                    _ -> throwError $ TypeError $ "Got bad destination type for parse: " ++ show t
+            when (length castRustXs /= length parsedTypeMembers) $ throwError $ TypeError "bad number of parsed type members"
+            let genSelector (fselector, fty) (dstVar, dstTy) = do
+                    castTmp <- (fselector, fty) `cast` dstTy
+                    return [__di|
+                    let #{dstVar} = #{castTmp};
+                    |]
+            selectors <- zipWithM genSelector parsedTypeMembers castRustXs
+            ae' <- genVerusCAExpr ae
+            k' <- genVerusCExpr k
+            case (pkind, maybeOtw) of
+                (PFromBuf, Just otw) -> do
+                    otw' <- genVerusCExpr otw
+                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
+                    return [__di|
+                    let parseval_tmp = #{ae'};
+                    if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}) {
+                        #{vsep selectors}
+                        #{k'}
+                    } else {
+                        #{otw'}
+                    }
+                    |]
+                (PFromDatatype, _) -> do
+                    return [__di|
+                    let parseval = #{ae'};
+                    #{vsep selectors}
+                    #{k'}
+                    |]
+                _ -> throwError $ TypeError "Tried to parse from buf without an otherwise case!"
         _ -> do
             return [__di|
             /*
@@ -300,7 +339,8 @@ genVerusDef lname cdef = do
     viewRes <- viewVar "(r.0)" rty
     let ensuresLenValid = case rty of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
-            RTNamed _  -> [di|res matches Ok(r) ==> r.0.len_valid()|]
+            RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
+            RTEnum _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             _ -> [di||]
     return [__di|
     \#[verifier::spinoff_prover]
@@ -348,9 +388,10 @@ genVerusStruct (CStruct name fieldsFV) = do
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime lifetimeConst fty)) fields
     let verusFieldsFV = fmap (\(fname, (formatty, fty)) -> (fname, execName fname, formatty, liftLifetime lifetimeConst fty)) fieldsFV
+    let verusFields' = fmap (\(_, ename, fty) -> (ename, fty)) verusFields
     let verusName = execName name
     let specname = specName name
-    let structTy = if needsLifetime then RTWithLifetime (RTNamed verusName) (Lifetime lifetimeConst) else RTNamed verusName
+    let structTy = if needsLifetime then RTWithLifetime (RTStruct verusName verusFields') (Lifetime lifetimeConst) else RTStruct verusName verusFields'
     let structFields = vsep . punctuate comma $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{pretty fty}|]) verusFields
     let structDef = [__di|
     pub struct #{verusName}#{lifetimeAnnot} {
@@ -406,7 +447,8 @@ genVerusStruct (CStruct name fieldsFV) = do
         genAllLensValid verusName fields lAnnot = do
             let fieldsValids = mapMaybe (\(_,fname, fty) -> 
                         case fty of 
-                            RTWithLifetime (RTNamed _) (_) -> Just [di|self.#{fname}.len_valid()|]
+                            RTWithLifetime (RTStruct _ _) _ -> Just [di|self.#{fname}.len_valid()|]
+                            RTWithLifetime (RTEnum _ _) _ -> Just [di|self.#{fname}.len_valid()|]
                             RTOwlBuf _ -> Just [di|self.#{fname}.len_valid()|]
                             _ -> Nothing
                     ) fields
@@ -514,7 +556,7 @@ genVerusEnum (CEnum name casesFV) = do
     let verusCases = M.mapWithKey (\fname fty -> (execName fname, liftLifetime lifetimeConst fty)) cases
     let verusName = execName name
     let specname = specName name
-    let enumTy = if needsLifetime then RTWithLifetime (RTNamed verusName) (Lifetime lifetimeConst) else RTNamed verusName
+    let enumTy = if needsLifetime then RTWithLifetime (RTEnum verusName (M.elems verusCases)) (Lifetime lifetimeConst) else RTEnum verusName (M.elems verusCases)
     let enumCases = vsep . punctuate comma . fmap (\(_, (fname, fty)) -> [di|#{fname}(#{pretty fty})|]) . M.assocs $ verusCases
     let enumDef = [__di|
     pub enum #{verusName}#{lifetimeAnnot} {
@@ -551,7 +593,8 @@ genVerusEnum (CEnum name casesFV) = do
             let casesValids = M.map (\(fname, fty) -> 
                         [di|#{fname}() => |] <>
                         case fty of 
-                            Just (RTWithLifetime (RTNamed _) _) -> [di|self.#{fname}.len_valid()|]
+                            Just (RTWithLifetime (RTStruct _ _) _) -> [di|self.#{fname}.len_valid()|]
+                            Just (RTWithLifetime (RTEnum _ _) _) -> [di|self.#{fname}.len_valid()|]
                             Just (RTOwlBuf _) -> [di|self.#{fname}.len_valid()|]
                             _ -> [di|true|]
                     ) cases
@@ -670,7 +713,6 @@ genVerusTyDefs tydefs = do
 
 -- castType v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
-cast (v, t1) t2 | t1 == t2 = return v
 cast (v, t1) t2 | t2 == RTRef RShared t1 =
     return [di|&#{v}|]
 cast (v, t1) t2 | t2 == RTRef RMut t1 =
@@ -691,14 +733,26 @@ cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
 cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) = 
     return [di|OwlBuf::from_vec_option(#{v})|]
-cast (v, RTNamed t) (RTVec RTU8) = 
+cast (v, RTStruct t fs) (RTVec RTU8) = 
     return [di|serialize_#{t}(&#{v})|]
-cast (v, RTNamed t) (RTRef RShared (RTSlice RTU8)) = do
-    c1 <- cast (v, RTNamed t) vecU8
+cast (v, RTStruct t fs) (RTRef RShared (RTSlice RTU8)) = do
+    c1 <- cast (v, RTStruct t fs) vecU8
     cast (c1, vecU8) u8slice
-cast (v, RTNamed t) (RTOwlBuf l) = do
-    c1 <- cast (v, RTNamed t) vecU8
+cast (v, RTStruct t fs) (RTOwlBuf l) = do
+    c1 <- cast (v, RTStruct t fs) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
+cast (v, RTEnum t cs) (RTVec RTU8) = 
+    return [di|serialize_#{t}(&#{v})|]
+cast (v, RTEnum t cs) (RTRef RShared (RTSlice RTU8)) = do
+    c1 <- cast (v, RTEnum t cs) vecU8
+    cast (c1, vecU8) u8slice
+cast (v, RTEnum t cs) (RTOwlBuf l) = do
+    c1 <- cast (v, RTEnum t cs) vecU8
+    cast (c1, vecU8) (RTOwlBuf l)
+-- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
+cast (v, RTOwlBuf _) (RTOwlBuf _) =
+    return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, t1) t2 | t1 == t2 = return v
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy
@@ -719,6 +773,8 @@ specTyOf t = t -- TODO: not true in general
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
 viewVar vname (RTNamed _) = return [di|#{vname}.dview().as_seq()|]
+viewVar vname (RTStruct _ _) = return [di|#{vname}.dview().as_seq()|]
+viewVar vname (RTEnum _ _) = return [di|#{vname}.dview().as_seq()|]
 viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(dview_option(#{vname}))|]
 viewVar vname (RTOption _) = return [di|dview_option(#{vname})|]
 viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.dview()|]
