@@ -37,6 +37,34 @@ import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad VerusTy
 
+genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
+genVerusEndpointDef lnames = do
+    let locNameOf s = [di|Loc_#{s}|]
+    let locEnum = [__di|
+    \#[derive(Clone,Copy)]
+    pub enum Endpoint {
+        #{vsep . punctuate comma . map locNameOf $ lnames}
+    }
+    |]
+    let endpointOfAddr = [__di|
+    \#[verifier(external_body)]
+    \#[verifier::opaque]
+    pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint {
+        unimplemented!() /* axiomatized */
+    }
+    |]
+    let mkLocAddr (lname, ipport) = [__di|
+    \#[verifier(external_body)]
+    pub const fn #{lname}_addr() -> (a: StrSlice<'static>) 
+        ensures endpoint_of_addr(a.view()) == Endpoint::#{locNameOf lname}
+    {
+        new_strlit("127.0.0.1:#{pretty ipport}")
+    }
+    |]
+    let locNameAddrs :: [(LocalityName, Int)] = zip lnames $ [9000 + x | x <- [1..]]
+    let locAddrDefs = map mkLocAddr locNameAddrs
+    return $ vsep $ locEnum : endpointOfAddr : locAddrDefs
+
 
 genVerusLocality :: [VNameData] -> (LocalityName, VerusLocalityData) -> EM (Doc ann)
 genVerusLocality pubkeys (lname, ldata) = do

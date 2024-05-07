@@ -45,27 +45,8 @@ extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path)
 
 extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann, Doc ann, Doc ann)
 extract' modbody = do
-    {-
-    TODOS:
-    1.  Split apart the modbody into its components (locality map, shared names, public keys, etc). This
-        can reuse the preprocessing code from the bottom of Extraction.hs.old
-    2.  concretify, which generates CDef FormatTy, CStruct FormatTy, CEnum FormatTy
-    3.  lower to Verus types, using either `immut` or `opt`, generating CDef VerusTy, CStruct VerusTy, CEnum VerusTy
-    4.  emit Verus: VerusAST types
-    5.  just call pretty
-    6.  Spec extraction (CDef FormatTy -> owl spec macro DSL (or just Doc ann))
-    7.  harness generation
-    -}
     owlExtrData <- preprocessModBody modbody
-    -- debugPrint $ show owlExtrData
-    -- let owlExtrData' = ExtractionData {
-    --         _locMap = M.empty,
-    --         _presharedNames = owlExtrData ^. presharedNames,
-    --         _pubKeys = owlExtrData ^. pubKeys,
-    --         _tyDefs = owlExtrData ^. tyDefs
-    --     }
     concreteExtrData <- concretifyPass owlExtrData
-    -- debugPrint $ show concreteExtrData
     specs <- specExtractPass concreteExtrData
     verusTyExtrData <- do
         fs <- use flags
@@ -259,9 +240,10 @@ lowerImmutPass cfExtrData = do
 genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
 genVerusPass crExtrData = do
     debugLog "Generating Verus code"
+    endpointDef <- GenVerus.genVerusEndpointDef <$> M.keys $ crExtrData ^. locMap
     (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
     locDefs <- mapM (GenVerus.genVerusLocality $ crExtrData ^. pubKeys) <$> M.assocs $ crExtrData ^. locMap
-    let verusDefs = vsep $ tyDefs : locDefs
+    let verusDefs = vsep $ endpointDef : tyDefs : locDefs
     return (verusDefs, vestDefs)
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
