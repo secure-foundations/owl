@@ -32,16 +32,28 @@ import qualified TypingBase as TB
 
 type EM = ExtractionMonad FormatTy
 
+resolveLengthAnnot :: AExpr -> EM FLen
+resolveLengthAnnot a = do
+    case a^.val of
+        AEInt i -> return $ FLConst i
+        AELenConst s -> return $ FLNamed s
+        AEApp p _ [ae] -> do
+            s <- concretifyPath p
+            if s == "cipherlen" then do
+                fl' <- resolveLengthAnnot ae
+                return $ FLCipherlen fl'
+            else do
+                throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
+        _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
+
+
 concretifyTy :: Ty -> EM FormatTy
-concretifyTy t =
+concretifyTy t = do
     case t^.val of
       TData _ _ _ -> return $ FBuf Nothing
       TDataWithLength _ a -> do
           a' <- liftCheck $ TB.resolveANF a
-          case a'^.val of
-            AEInt i -> return $ FBuf $ Just $ FLConst i
-            AELenConst s -> return $ FBuf $ Just $ FLNamed s
-            _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a')
+          FBuf . Just <$> resolveLengthAnnot a'
       TGhost -> return $ FGhost
       TRefined t0 _ _ -> concretifyTy t0
       TOption t0 -> do
@@ -235,7 +247,7 @@ concretifyAExpr a =
 -- (when data type used as input to crypto op, output, etc)
 
 concretifyExpr :: Expr -> EM (CExpr FormatTy)
-concretifyExpr e =
+concretifyExpr e = do
     case e^.val of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk

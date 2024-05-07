@@ -94,7 +94,7 @@ preprocessModBody mb = do
     locMap <- foldM (sortCtr lookupLoc) locMap (mb ^. TB.ctrEnv)
     (locMap, shared, pubkeys) <- foldM (sortName lookupLoc) (locMap, [], []) (mb ^. TB.nameDefs)
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
-    let tydefs = mb ^. TB.tyDefs
+    let tydefs = reverse $ mb ^. TB.tyDefs
     debugLog "Finished preprocessing"
     return $ ExtractionData locMap shared pubkeys tydefs
     where
@@ -248,7 +248,7 @@ genVerusPass crExtrData = do
 
 specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
 specExtractPass cfExtrData = do
-    debugPrint $ "TODO specExtractPass"
+    debugPrint $ "Generating Verus specs"
     return $ pretty "/* TODO spec extraction */"
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
