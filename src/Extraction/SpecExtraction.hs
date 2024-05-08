@@ -140,7 +140,62 @@ extractCStruct (CStruct n fs) = do
             |]
             return constructor
 
+
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
 extractCEnum (CEnum n cs) = do
-    return [di|/* TODO extractCEnum #{n} */|]
+    let rn = specName n
+    let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
+    let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
+    let enumDef = [__di|
+    pub enum #{rn} {
+        #{enumCases}
+    }
+    use crate::#{rn}::*;
+    |]
+    parseSerializeDefs <- genParserSerializer (execName n) rn rfs
+    constructors <- genConstructors n rn rfs
+    return $ vsep [enumDef, parseSerializeDefs, constructors]
+    where
+        genParserSerializer execname specname speccases = do
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                todo!()
+            }
+            |]
+            let serInner = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
+                todo!()
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                todo!()
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
+        genConstructors owlName specname speccases = do
+            vsep <$> mapM (genConstructor owlName specname) speccases
+
+        genConstructor owlName specname (caseName, Nothing) = do
+            return [__di|
+            pub open spec fn #{caseName}() -> Seq<u8> {
+                serialize_#{specname}(crate::#{specname}::#{caseName}())
+            }
+            |]
+        genConstructor owlName specname (caseName, Just caseTy) = do
+            return [__di|
+            pub open spec fn #{caseName}(x: #{pretty caseTy}) -> Seq<u8> {
+                serialize_#{specname}(crate::#{specname}::#{caseName}(x))
+            }
+            |]
