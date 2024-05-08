@@ -246,10 +246,11 @@ genVerusPass crExtrData = do
     let verusDefs = vsep $ endpointDef : tyDefs : locDefs
     return (verusDefs, vestDefs)
 
-specExtractPass :: CFExtractionData -> ExtractionMonad t (Doc ann)
+specExtractPass :: CFExtractionData -> ExtractionMonad FormatTy (Doc ann)
 specExtractPass cfExtrData = do
     debugPrint $ "Generating Verus specs"
-    return $ pretty "/* TODO spec extraction */"
+    tyDefs <- mapM (SpecExtraction.extractCTyDef . snd) $ cfExtrData ^. tyDefs
+    return $ vsep $ tyDefs
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
 mkEntryPoint verusExtrData = do

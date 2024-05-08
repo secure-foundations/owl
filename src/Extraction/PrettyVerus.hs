@@ -54,6 +54,7 @@ instance Pretty VerusTy where
     pretty RTBool = pretty "bool"
     pretty RTU8 = pretty "u8"
     pretty RTUsize = pretty "usize"
+    pretty RTVerusNat = pretty "nat"
     pretty RTVerusGhost = pretty "Ghost<()>"
 
 prettyTyAnnot :: Maybe VerusTy -> Doc ann

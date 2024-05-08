@@ -49,6 +49,7 @@ data VerusTy =
     | RTBool
     | RTU8
     | RTUsize
+    | RTVerusNat
     | RTVerusGhost
     deriving (Eq, Ord, Show, Generic, Typeable)
 
