@@ -236,16 +236,17 @@ bindCDepBind ((x, s, t):xs) a = do
     d <- bindCDepBind xs a
     return $ CDPVar t s (bind x d)
 
-
+replacePrimes :: String -> String
+replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
 execName :: String -> VerusName
-execName owlName = "owl_" ++ owlName
+execName owlName = "owl_" ++ replacePrimes owlName
 
 -- cmpNameLifetime :: String -> String -> VerusName
 -- cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
 
 specName :: String -> VerusName
-specName owlName = "owlSpec_" ++ owlName
+specName owlName = "owlSpec_" ++ replacePrimes owlName
 
 -- specNameOf :: VerusName -> String
 -- specNameOf (VN s _) = 

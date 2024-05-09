@@ -200,9 +200,93 @@ extractCEnum (CEnum n cs) = do
             }
             |]
 
+extractEndpoint :: Endpoint -> EM (Doc ann)
+extractEndpoint (Endpoint evar) = return . pretty . replacePrimes . show $ evar
+extractEndpoint (EndpointLocality (Locality s _)) = do
+    l <- flattenPath s
+    return $ pretty "Endpoint::Loc_" <> pretty l
+
+extractVar :: CDataVar FormatTy -> EM (Doc ann)
+extractVar n = do
+    case name2String n of
+        "_" -> pretty . show <$> fresh (string2Name "_unused")
+        s -> return . pretty . replacePrimes $ s
+
+
+extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
+extractCAExpr aexpr = do
+    case aexpr ^. tval of
+        CAVar s v -> extractVar v
+        CAApp f args -> do
+            args' <- mapM extractCAExpr args
+            return [__di|
+                #{pretty f}(#{hsep . punctuate comma $ args'})
+            |]
+        CAGet n -> do
+            let rustN = execName n
+            return [di|cfg.#{rustN}.dview()|]
+        _ -> return [__di|
+        /*
+            TODO: SpecExtraction.extractCAExpr #{show aexpr}
+        */
+        |]
 
 extractExpr :: CExpr FormatTy -> EM (Doc ann)
-extractExpr e = return [di|todo!() // TODO: SpecExtraction.extractExpr #{show e}|]
+extractExpr expr = do
+    case expr ^. tval of
+        CSkip -> return [di|ret(())|]
+        CRet ae -> do
+            ae' <- extractCAExpr ae
+            return [di|(ret(#{ae'}))|]
+        CInput _ xek -> do
+            let ((x, ev), k) = unsafeUnbind xek
+            x' <- extractVar x
+            let ev' = pretty . replacePrimes . show $ ev
+            k' <- extractExpr k
+            return [__di|
+            (input(#{x'},#{ev'})) in 
+            #{k'}
+            |]
+        COutput ae dst -> do
+            dst' <- case dst of
+                Just endp -> do
+                    endp' <- extractEndpoint endp
+                    return [di|(#{endp'})|]
+                Nothing -> throwError OutputWithUnknownDestination
+            ae' <- extractCAExpr ae
+            return [__di|
+            (output (#{ae'}) to #{dst'})
+            |]
+        CSample fl ck -> do
+            let sz = pretty $ lowerFLen fl
+            let (coins, k) = unsafeUnbind ck
+            coins' <- extractVar coins
+            case k ^. tval of
+                -- need special-case handling of CSample to insert the right itree syntax
+                -- TODO: we could change the itree macro to handle sample more similarly to 
+                -- input and output, but that would break backwards compatibility
+                CRet (Typed t (CAApp "enc" [key, msg, coins])) -> do
+                    key' <- extractCAExpr key
+                    msg' <- extractCAExpr msg
+                    return [__di|
+                    (sample(#{sz}, enc(#{key'}, #{msg'})))
+                    |]
+                _ -> throwError $ ErrSomethingFailed $ "Unsupported continuation after sample: " ++ show k
+        CLet (Typed t (COutput a l)) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            o <- extractExpr (Typed t (COutput a l))
+            k' <- extractExpr k
+            return $ o <+> pretty "in" <> line <> k'
+        CLet (Typed _ CSkip) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            extractExpr k
+        CLet e _ xk -> do
+            let (x, k) = unsafeUnbind xk
+            x' <- extractVar x
+            e' <- extractExpr e
+            k' <- extractExpr k
+            return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
+        _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 
 extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
