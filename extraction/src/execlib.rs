@@ -140,7 +140,6 @@ impl<'x> OwlBuf<'x> {
 }
 
 pub fn owl_unit() -> (res: ())
-    ensures res == ()
 { () }
 
 #[verifier(external_body)]
