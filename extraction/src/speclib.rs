@@ -357,29 +357,25 @@ pub mod itree {
     }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Ret(x).bind(k)) == k(x)
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_input<A, B, Endpoint>(f : spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_input<A, B, Endpoint>(f : spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Input(f).bind(k)) == ITree::Input(|x,e| f(x,e).bind(k))
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Output(x, e, f).bind(k)) == ITree::Output(x, e, Box::new((*f).bind(k)))
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : spec_fn(Seq<u8>) -> ITree<A, Endpoint>, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : spec_fn(Seq<u8>) -> ITree<A, Endpoint>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
