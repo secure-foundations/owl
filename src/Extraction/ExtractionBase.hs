@@ -198,6 +198,7 @@ type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
 type OwlLocalityData = LocalityData NameData OwlDefData
 type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
 type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData
+type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
 type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
 
 

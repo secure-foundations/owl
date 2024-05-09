@@ -199,3 +199,36 @@ extractCEnum (CEnum n cs) = do
                 serialize_#{specname}(crate::#{specname}::#{caseName}(x))
             }
             |]
+
+
+extractExpr :: CExpr FormatTy -> EM (Doc ann)
+extractExpr e = return [di|todo!() // TODO: SpecExtraction.extractExpr #{show e}|]
+
+
+extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
+extractDef locName (CDef defname b) = do
+    let specname = defname ++ "_spec"
+    (owlArgs, (retTy, body)) <- unbindCDepBind b
+    owlArgs' <- mapM extractArg owlArgs
+    let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
+    let specRetTy = specTyOf retTy
+    let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
+    body <- extractExpr body
+    return [__di|
+        \#[verifier::opaque]
+        pub open spec fn #{specname}(#{hsep . punctuate comma $ specArgs}) -> (res: #{itreeTy}) {
+            owl_spec!(
+                #{body}
+            )
+        }
+    |]
+    where
+        extractArg (cdvar, strname, ty) = do
+            let specty = specTyOf ty
+            return [di|#{pretty strname} : #{pretty specty}|]
+
+
+extractLoc :: (LocalityName, FormatLocalityData) -> EM (Doc ann)
+extractLoc (locname, locdata) = do
+    defs' <- mapM (extractDef locname) . catMaybes $ locdata ^. defs
+    return $ vsep defs'

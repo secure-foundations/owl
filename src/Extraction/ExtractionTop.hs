@@ -250,7 +250,8 @@ specExtractPass :: CFExtractionData -> ExtractionMonad FormatTy (Doc ann)
 specExtractPass cfExtrData = do
     debugPrint $ "Generating Verus specs"
     tyDefs <- mapM (SpecExtraction.extractCTyDef . snd) $ cfExtrData ^. tyDefs
-    return $ vsep $ tyDefs
+    defSpecs <- mapM SpecExtraction.extractLoc <$> M.assocs $ cfExtrData ^. locMap
+    return $ vsep $ tyDefs ++ defSpecs
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
 mkEntryPoint verusExtrData = do
@@ -261,8 +262,8 @@ mkEntryPoint verusExtrData = do
     else 
         return (
                 pretty "/* no entry point */"
-            ,   pretty "fn main() { }" <> line
             ,   pretty "/* no library harness routines */"
+            ,   pretty "fn main() { }" <> line
         )
 
 
