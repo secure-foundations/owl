@@ -50,6 +50,10 @@ specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n
 specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
 specTyOf FGhost = RTVerusGhost
 
+specTyOfSerialized :: FormatTy -> VerusTy
+specTyOfSerialized (FStruct fn ffs) = seqU8
+specTyOfSerialized (FEnum n fcs) = seqU8
+specTyOfSerialized f = specTyOf f 
 
 extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
 extractCTyDef (CStructDef s) = extractCStruct s
@@ -77,7 +81,7 @@ extractCStruct (CStruct n fs) = do
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
                 let stream = parse_serialize::SpecStream { data: x, start: 0 };
                 if let Ok((_,_,parsed)) = parse_serialize::spec_parse_#{execname}(stream) {
-                    let (#{fieldNames}) = parsed;
+                    let (#{fieldNamesCommaSep}) = parsed;
                     Some(#{specname} { #{fieldNamesCommaSep} })
                 } else {
                     None
@@ -191,13 +195,13 @@ extractCEnum (CEnum n cs) = do
         genConstructor owlName specname (caseName, Nothing) = do
             return [__di|
             pub open spec fn #{caseName}() -> Seq<u8> {
-                serialize_#{specname}(crate::#{specname}::#{caseName}())
+                serialize_#{specname}(crate::#{specname}::#{specName caseName}())
             }
             |]
         genConstructor owlName specname (caseName, Just caseTy) = do
             return [__di|
             pub open spec fn #{caseName}(x: #{pretty caseTy}) -> Seq<u8> {
-                serialize_#{specname}(crate::#{specname}::#{caseName}(x))
+                serialize_#{specname}(crate::#{specname}::#{specName caseName}(x))
             }
             |]
 
@@ -360,7 +364,8 @@ extractDef locName (CDef defname b) = do
     (owlArgs, (retTy, body)) <- unbindCDepBind b
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
-    let specRetTy = specTyOf retTy
+    -- NB: forces all data structures to be represented as Seq<u8> in spec
+    let specRetTy = specTyOfSerialized retTy
     let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
     body <- extractExpr body
     return [__di|

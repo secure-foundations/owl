@@ -357,7 +357,7 @@ genVerusDef lname cdef = do
     let specname = cdef ^. defName ++ "_spec"
     (owlArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
     verusArgs <- mapM compileArg owlArgs
-    let specRt = specTyOf rty
+    let specRt = specTyOfExecTySerialized rty
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
@@ -494,7 +494,7 @@ genVerusStruct (CStruct name fieldsFV) = do
 
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
-            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{fname}: self.#{ename}.dview()|]) $ fields
+            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{specName fname}: self.#{ename}.dview()|]) $ fields
             return [__di|
             impl DView for #{verusName}#{lAnnot} {
                 type V = #{specname};
@@ -622,12 +622,12 @@ genVerusEnum (CEnum name casesFV) = do
         genAllLensValid :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genAllLensValid verusName cases lAnnot = do
             let casesValids = M.map (\(fname, fty) -> 
-                        [di|#{fname}() => |] <>
                         case fty of 
-                            Just (RTWithLifetime (RTStruct _ _) _) -> [di|self.#{fname}.len_valid()|]
-                            Just (RTWithLifetime (RTEnum _ _) _) -> [di|self.#{fname}.len_valid()|]
-                            Just (RTOwlBuf _) -> [di|self.#{fname}.len_valid()|]
-                            _ -> [di|true|]
+                            Just (RTWithLifetime (RTStruct _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just (RTWithLifetime (RTEnum _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just (RTOwlBuf _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just _ -> [di|#{fname}(_) => true|]
+                            Nothing -> [di|#{fname}() => true|]
                     ) cases
             let body = vsep . punctuate comma $ M.elems casesValids
             return [__di|
@@ -640,8 +640,8 @@ genVerusEnum (CEnum name casesFV) = do
             }
             |]
 
-        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{fname}(v.dview().as_seq())|]
-        viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{fname}()|]
+        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.dview().as_seq())|]
+        viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{specName fname}()|]
 
         genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname cases lAnnot = do
@@ -792,14 +792,17 @@ u8slice = RTRef RShared (RTSlice RTU8)
 vecU8 :: VerusTy
 vecU8 = RTVec RTU8
 
-specTyOf :: VerusTy -> VerusTy
-specTyOf (RTVec t) = RTSeq (specTyOf t)
-specTyOf (RTOwlBuf _) = RTSeq RTU8
-specTyOf (RTRef _ (RTSlice t)) = RTSeq (specTyOf t)
-specTyOf (RTArray t _) = RTSeq (specTyOf t)
-specTyOf (RTOption t) = RTOption (specTyOf t)
-specTyOf (RTTuple ts) = RTTuple (fmap specTyOf ts)
-specTyOf t = t -- TODO: not true in general
+
+specTyOfExecTySerialized :: VerusTy -> VerusTy
+specTyOfExecTySerialized (RTVec t) = RTSeq (specTyOfExecTySerialized t)
+specTyOfExecTySerialized (RTOwlBuf _) = RTSeq RTU8
+specTyOfExecTySerialized (RTRef _ (RTSlice t)) = RTSeq (specTyOfExecTySerialized t)
+specTyOfExecTySerialized (RTArray t _) = RTSeq (specTyOfExecTySerialized t)
+specTyOfExecTySerialized (RTOption t) = RTOption (specTyOfExecTySerialized t)
+specTyOfExecTySerialized (RTTuple ts) = RTTuple (fmap specTyOfExecTySerialized ts)
+specTyOfExecTySerialized (RTStruct n fs) = RTSeq RTU8
+specTyOfExecTySerialized (RTEnum n cs) = RTSeq RTU8
+specTyOfExecTySerialized t = t -- TODO: not true in general
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
