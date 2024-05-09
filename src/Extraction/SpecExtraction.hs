@@ -218,10 +218,13 @@ extractCAExpr aexpr = do
     case aexpr ^. tval of
         CAVar s v -> extractVar v
         CAApp f args -> do
-            args' <- mapM extractCAExpr args
-            return [__di|
-                #{pretty f}(#{hsep . punctuate comma $ args'})
-            |]
+            case f of
+                "unit" -> return [di|()|]
+                _ -> do
+                    args' <- mapM extractCAExpr args
+                    return [__di|
+                        #{pretty f}(#{hsep . punctuate comma $ args'})
+                    |]
         CAGet n -> do
             let rustN = execName n
             return [di|cfg.#{rustN}.dview()|]
@@ -286,6 +289,67 @@ extractExpr expr = do
             e' <- extractExpr e
             k' <- extractExpr k
             return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
+        CBlock e -> extractExpr e
+        CIf a e1 e2 -> do
+            a' <- extractCAExpr a
+            e1' <- extractExpr e1
+            e2' <- extractExpr e2
+            return $ parens $
+                pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
+        CCase ae cases -> do
+            ae' <- extractCAExpr ae
+            let extractCase (c, o) = do
+                    case o of
+                        Left e -> do
+                            e' <- extractExpr e
+                            let parens = case ae ^. tty of
+                                    FOption _ -> ""
+                                    _ -> "()"
+                            return [__di|
+                            | #{pretty c}#{parens} => { 
+                            #{e'} 
+                            },
+                            |]
+                        Right xte -> do
+                            let (x, (_, e)) = unsafeUnbind xte
+                            x' <- extractVar x
+                            e' <- extractExpr e
+                            return [__di|
+                            | #{pretty c}(#{x'}) => {
+                            #{e'}
+                            },
+                            |]
+            cases' <- mapM extractCase cases
+            return [__di|
+            (case (#{ae'}) {
+            #{vsep cases'}
+            }
+            )
+            |]
+        CParse _ ae t maybeOtw xtsk -> do
+            let (xts, k) = unsafeUnbind xtsk
+            xs <- mapM (\(x,_,_) -> extractVar x) xts
+            (dstTyName, parsedTypeMembers) <- case t of
+                FStruct n fs -> do
+                    let dstTyName = specName n
+                    let parsedTypeMembers = map (specName . fst) fs
+                    return (dstTyName, parsedTypeMembers)
+                FEnum n cs -> throwError $ ErrSomethingFailed $ "TODO: spec enum parsing for " ++ show n
+                _ -> throwError $ TypeError $ "Unsupported spec parse type: " ++ show t
+            ae' <- extractCAExpr ae
+            k' <- extractExpr k
+            let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
+            (parseCall, badk) <- case maybeOtw of
+                Just otw -> do
+                    let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                    otw' <- extractExpr otw
+                    return (parseCall, [di|otherwise (#{otw'})|])
+                Nothing -> return (ae', [di||])
+            return $ parens [__di|
+            parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
+            #{k'}
+            } #{badk}
+            |]
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 
