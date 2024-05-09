@@ -3,7 +3,7 @@
 set -euo pipefail
 
 function usage() {
-    echo "Usage: ${0} [-n|--nofmt] <path-to-extraction-dir>"
+    echo "Usage: ${0} [-n] <path-to-extraction-dir>"
     echo "You must have verus and verusfmt in your path,"
     echo "and the VESTPATH environment variable set to the path"
     echo "to the crate root of the vest codegen repo."
@@ -14,9 +14,9 @@ format="true"
 ext_dir_path=""
 
 # Parse command line options
-while getopts "nofmt,n," opt; do
+while getopts "n" opt; do
     case ${opt} in
-        n | nofmt ) format="false" ;;
+        n) format="false" ;;
         \? ) usage ;;
         : ) usage ;;
     esac
