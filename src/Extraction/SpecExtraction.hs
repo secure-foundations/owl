@@ -145,6 +145,7 @@ extractCEnum :: CEnum FormatTy -> EM (Doc ann)
 extractCEnum (CEnum n cs) = do
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
+    let rfsOwlNames = map (\(n, t) -> (n, fmap specTyOf t)) $ M.assocs cs
     let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
     let enumDef = [__di|
     pub enum #{rn} {
@@ -153,7 +154,7 @@ extractCEnum (CEnum n cs) = do
     use crate::#{rn}::*;
     |]
     parseSerializeDefs <- genParserSerializer (execName n) rn rfs
-    constructors <- genConstructors n rn rfs
+    constructors <- genConstructors n rn rfsOwlNames
     return $ vsep [enumDef, parseSerializeDefs, constructors]
     where
         genParserSerializer execname specname speccases = do
@@ -365,7 +366,7 @@ extractDef locName (CDef defname b) = do
     return [__di|
         \#[verifier::opaque]
         pub open spec fn #{specname}(#{hsep . punctuate comma $ specArgs}) -> (res: #{itreeTy}) {
-            owl_spec!(
+            owl_spec!(mut_state, state_#{locName},
                 #{body}
             )
         }

@@ -93,6 +93,8 @@ genVerusLocality pubkeys (lname, ldata) = do
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls},
     }
     impl #{cfgName} {
+        // TODO: library routines for reading configs
+        /*
         \#[verifier::external_body]
         pub fn init_#{cfgName}(config_path: &StrSlice) -> Self {
             let listener = TcpListener::bind(#{lname}_addr().into_rust_str()).unwrap();
@@ -104,6 +106,7 @@ genVerusLocality pubkeys (lname, ldata) = do
                 #{vsep . punctuate comma $ localNameInits ++ sharedNameInits ++ pkInits}
             }
         }
+        */
 
         #{vsep . punctuate (line <> line) $ execFns}
     }
@@ -358,7 +361,7 @@ genVerusDef lname cdef = do
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
-    let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : verusArgs
+    let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : mutStateArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
     specargs <- mapM viewArg owlArgs
     curLocality .= Just lname
