@@ -145,7 +145,9 @@ verus! {
     #[verifier::external_body]
     pub fn vec_length<T: DView>(vec: &Vec<T>) -> (res: usize)
         ensures
-            res == spec_vec_len(vec)
+            res == spec_vec_len(vec),
+            res == vec.dview().len() as usize,
+            res <= usize::MAX as int
     {
         vec.len()
     }
