@@ -48,7 +48,6 @@ genVerusEndpointDef lnames = do
     |]
     let endpointOfAddr = [__di|
     \#[verifier(external_body)]
-    \#[verifier::opaque]
     pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint {
         unimplemented!() /* axiomatized */
     }
@@ -194,18 +193,24 @@ genVerusCAExpr ae = do
         */
         |] 
 
-genVerusCExpr :: CExpr VerusTy -> EM (Doc ann)
-genVerusCExpr expr = do
+
+-- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
+-- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
+genVerusCExpr :: Bool -> CExpr VerusTy -> EM (Doc ann)
+genVerusCExpr inK expr = do
     case expr ^. tval of
         CSkip -> return [di|()|]
         CRet ae -> do
             ae' <- genVerusCAExpr ae
-            return [di|#{ae'}|]
+            if inK then
+                return [di|(#{ae'}, Tracked(itree))|]
+            else 
+                return [di|#{ae'}|]
         CInput t xek -> do
             let ((x, ev), k) = unsafeUnbind xek
             let rustX = execName . show $ x
             let rustEv = if show ev == "_" then "_" else execName . show $ ev
-            k' <- genVerusCExpr k
+            k' <- genVerusCExpr inK k
             castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
             return [__di|
             let (tmp_#{rustX}, #{rustEv}) = { owl_input(Tracked(&mut itree), &self.listener) };
@@ -226,14 +231,16 @@ genVerusCExpr expr = do
                     Nothing -> throwError $ ErrSomethingFailed "bad self locality in output"
             ae' <- genVerusCAExpr ae
             aeCast <- (ae', ae ^. tty) `cast` u8slice
+            let retItree = if inK then [di|((), Tracked(itree))|] else [di||]
             return [__di|
-            owl_output(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr});
+            owl_output(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
+            #{retItree}
             |]
         CSample fl xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             let sz = lowerFLen fl
-            k' <- genVerusCExpr k
+            k' <- genVerusCExpr inK k
             return [__di|
             let #{rustX} = owl_sample(Tracked(&mut itree), #{pretty sz});
             #{k'}
@@ -241,14 +248,14 @@ genVerusCExpr expr = do
         CLet e oanf xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
-            e' <- genVerusCExpr e
-            k' <- genVerusCExpr k
+            e' <- genVerusCExpr False e
+            k' <- genVerusCExpr inK k
             return [__di|
             let #{rustX} = { #{e'} };
             #{k'}
             |]
         CBlock ebody -> do
-            ebody' <- genVerusCExpr ebody
+            ebody' <- genVerusCExpr inK ebody
             return [__di|
             { 
                 #{ebody'} 
@@ -256,8 +263,8 @@ genVerusCExpr expr = do
             |]
         CIf ae e1 e2 -> do
             ae' <- genVerusCAExpr ae
-            e1' <- genVerusCExpr e1
-            e2' <- genVerusCExpr e2
+            e1' <- genVerusCExpr inK e1
+            e2' <- genVerusCExpr inK e2
             return [__di|
             if #{ae'} {
                 #{e1'}
@@ -274,7 +281,7 @@ genVerusCExpr expr = do
             let genCase (c, o) = do
                     case o of
                         Left k -> do
-                            k' <- genVerusCExpr k
+                            k' <- genVerusCExpr inK k
                             let parens = case ae ^. tty of
                                     RTOption _ -> ""
                                     _ -> "()"
@@ -291,7 +298,7 @@ genVerusCExpr expr = do
                             -- in the case body (e.g., if the enum contains an owned Vec
                             -- but the case body should have an OwlBuf or something)
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
-                            k' <- genVerusCExpr k
+                            k' <- genVerusCExpr inK k
                             return [__di|
                             #{aeTyPrefix}#{c}(tmp_#{rustX}) => {
                                 let #{rustX} = #{castTmp}; 
@@ -322,10 +329,10 @@ genVerusCExpr expr = do
                     |]
             selectors <- zipWithM genSelector parsedTypeMembers castRustXs
             ae' <- genVerusCAExpr ae
-            k' <- genVerusCExpr k
+            k' <- genVerusCExpr inK k
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
-                    otw' <- genVerusCExpr otw
+                    otw' <- genVerusCExpr inK otw
                     castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
                     return [__di|
                     let parseval_tmp = #{ae'};
@@ -365,7 +372,7 @@ genVerusDef lname cdef = do
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
     specargs <- mapM viewArg owlArgs
     curLocality .= Just lname
-    body <- genVerusCExpr body
+    body <- genVerusCExpr True body
     curLocality .= Nothing
     viewRes <- viewVar "(r.0)" rty
     let ensuresLenValid = case rty of
