@@ -45,11 +45,8 @@ impl<'x> OwlBuf<'x> {
                 result.len_valid(),
     {
         reveal(OwlBuf::len_valid);
+        broadcast use axiom_spec_len;
         let len = vec_length(&v);
-        assert(len <= usize::MAX as int);
-        assert(len == v.dview().len() as usize);
-        assert(v.dview().len() <= usize::MAX as int);
-        assert(0 as int + len as int <= v.dview().len());
         proof { assert_seqs_equal!(v.dview(), v.dview().subrange(0int, len as int)); }
         OwlBuf::Owned(rc_new(v), 0, len)
     }

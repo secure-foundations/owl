@@ -380,6 +380,13 @@ pub mod itree {
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
 
+    pub broadcast group itree_axioms {
+        axiom_bind_ret,
+        axiom_bind_input,
+        axiom_bind_output,
+        axiom_bind_sample,
+    }
+
     //////////////////////////////////////////////////////
     ///// Proof for axiom_bind_assoc (TODO update) ///////
     //////////////////////////////////////////////////////
