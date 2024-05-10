@@ -391,6 +391,10 @@ genVerusDef lname cdef = do
     {
         let tracked mut itree = itree;
         let res_inner = {
+            broadcast use axiom_bind_ret;
+            broadcast use axiom_bind_input;
+            broadcast use axiom_bind_output;
+            broadcast use axiom_bind_sample;
             reveal(#{specname});
             #{body}
         };
