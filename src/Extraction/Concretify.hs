@@ -438,8 +438,15 @@ concretifyCryptOp CAEnc [k, x] = do
 concretifyCryptOp CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
-concretifyCryptOp (CEncStAEAD _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CEncStAEAD"
-concretifyCryptOp CDecStAEAD cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CDecStAEAD"
+concretifyCryptOp (CEncStAEAD np _ xpat) [k, x, aad] = do
+    nonce <- concretifyPath np
+    let t = case x ^. tty of
+              FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
+              _ -> FBuf Nothing
+    return $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+concretifyCryptOp CDecStAEAD [k, c, aad, nonce] = do
+    let t = FOption $ FBuf Nothing
+    return $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
 concretifyCryptOp CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
 concretifyCryptOp CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
 concretifyCryptOp CMac cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMac"

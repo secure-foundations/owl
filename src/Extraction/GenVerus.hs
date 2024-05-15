@@ -187,6 +187,10 @@ genVerusCAExpr ae = do
             castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
             return [di|#{castN}|]
         CAInt fl -> return $ pretty $ lowerFLen fl
+        CACounter ctrname -> do
+            let rustCtr = execName ctrname
+            castCtr <- cast ([di|mut_state.#{rustCtr}|], RTUsize) (ae ^. tty)
+            return [di|#{castCtr}|]
         _ -> return [__di|
         /*
             TODO: genVerusCAExpr #{show ae}

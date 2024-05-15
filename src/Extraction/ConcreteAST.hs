@@ -67,6 +67,7 @@ data CAExpr' t =
     | CAGetVK String
     | CAInt (FLen)
     | CAHexConst String
+    | CACounter String
     deriving (Show, Generic, Typeable)
 
 type CAExpr t = Typed (CAExpr' t) t
@@ -185,6 +186,7 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
+    owlpretty (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
 
 
 instance OwlPretty ParseKind where
@@ -254,6 +256,7 @@ traverseCAExpr f a =
           CAGetVK s -> pure $ CAGetVK s
           CAInt i -> pure $ CAInt i
           CAHexConst i -> pure $ CAHexConst i
+          CACounter s -> pure $ CACounter s
 
 -- Does not take into account bound names
 traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)
