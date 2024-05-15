@@ -117,9 +117,15 @@ unifyFormatTy t1 t2 =
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
-    nt <- liftCheck $ TB.getNameType ne
-    fl <- fLenOfNameTy nt
-    return $ FBuf $ Just fl
+    case ne ^. val of
+        NameConst _ _ _ -> do
+            nt <- liftCheck $ TB.getNameType ne
+            fl <- fLenOfNameTy nt
+            return $ FBuf $ Just fl
+        KDFName _ _ _ nks i _ _ -> do
+            let nk = nks !! i
+            FBuf . Just <$> fLenOfNameKind nk
+
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
 concretifyNameExpLoc n = do

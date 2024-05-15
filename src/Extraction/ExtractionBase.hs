@@ -252,9 +252,8 @@ specName owlName = "owlSpec_" ++ replacePrimes owlName
 -- specNameOf (VN s _) = 
 --     if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
 
-fLenOfNameTy :: NameType -> ExtractionMonad t FLen
-fLenOfNameTy nt = do
-    nk <- liftCheck $ TB.getNameKind nt
+fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
+fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
         NK_DH -> "group"
@@ -263,6 +262,11 @@ fLenOfNameTy nt = do
         NK_Sig -> "sigkey"
         NK_MAC -> "mackey"
         NK_Nonce s -> s
+
+fLenOfNameTy :: NameType -> ExtractionMonad t FLen
+fLenOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    fLenOfNameKind nk
 
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
