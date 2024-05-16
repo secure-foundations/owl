@@ -136,8 +136,9 @@ genVerusLocality pubkeys (lname, ldata) = do
 -- ctr decl, ctr init
 genVerusCtr :: VerusName -> (Doc ann, Doc ann)
 genVerusCtr counterName =
-    let ctrDecl = [di|pub #{counterName} : u64|] in
-    let ctrInit = [di|#{counterName} : 0|] in
+    let counterName' = execName counterName in
+    let ctrDecl = [di|pub #{counterName'} : usize|] in
+    let ctrInit = [di|#{counterName'} : 0|] in
     (ctrDecl, ctrInit)
 
 nameTy :: VerusTy
@@ -216,8 +217,21 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
-                        -- ("enc_st_aead", [k, x, nonce, aad]) -> do
-                        --     throwError $ ErrSomethingFailed "enc_st_aead not yet implemented"
+                        ("enc_st_aead", [k, x, nonce, aad]) -> do
+                            k' <- genVerusCAExpr k
+                            x' <- genVerusCAExpr x
+                            nonce' <- genVerusCAExpr nonce
+                            aad' <- genVerusCAExpr aad
+                            castK <- cast (k', k ^. tty) u8slice
+                            castX <- cast (x', x ^. tty) u8slice
+                            castNonce <- cast (nonce', nonce ^. tty) (RTRef RMut RTUsize)
+                            castAad <- cast (aad', aad ^. tty) u8slice
+                            return [__di|{ 
+                                match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                                    Ok(ctxt) => ctxt,
+                                    Err(e) => { return Err(e) },
+                                }                                
+                            }|]
                         ("true", []) -> return [di|true|]
                         ("false", []) -> return [di|false|]
                         ("Some", [x]) -> do
