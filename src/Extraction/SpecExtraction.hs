@@ -286,7 +286,7 @@ extractCAExpr aexpr = do
                 return $ pretty "empty_seq_u8()"
             else
                 return $ pretty "seq![" <> bytelist <> pretty "]"
-        CACounter ctrname -> return [di|#{ctrname}|]
+        CACounter ctrname -> return [di|#{execName ctrname}|]
         _ -> return [__di|
         /*
             TODO: SpecExtraction.extractCAExpr #{show aexpr}
