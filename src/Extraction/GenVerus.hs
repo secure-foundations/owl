@@ -43,7 +43,7 @@ genVerusUserFunc (CUserFunc name b) = do
     let execname = execName name
     let specname = name
     (args, (retTy, body)) <- unbindCDepBind b
-    
+
     let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
     let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
     let retval = [di|res: #{pretty retTy}|]
@@ -526,6 +526,13 @@ extraLt lt (RTStruct name fields) = if structNeedsLifetime name fields then lt e
 extraLt lt (RTEnum name cases) = if enumNeedsLifetime name cases then lt else pretty ""
 extraLt _ _ = pretty ""
 
+mkNestPattern :: [Doc ann] -> Doc ann
+mkNestPattern l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl   
+
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
     debugLog $ "genVerusStruct: " ++ name
@@ -627,7 +634,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
         genParsleyWrappers verusName specname structTy fields lifetimeConst = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
-            let tupPatFields = tupled . fmap (\(_, fname, _) -> pretty fname) $ fields
+            let tupPatFields = mkNestPattern . fmap (\(_, fname, _) -> pretty fname) $ fields
             let mkField fname fty = do
                     mkf <- (pretty fname, u8slice) `cast` fty
                     return [di|#{fname}: #{mkf}|]
@@ -656,7 +663,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
             let lens = (map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields) ++ [pretty "0"]
-            fieldsAsSlices <- tupled <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
+            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
             let ser = [__di|
             \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)

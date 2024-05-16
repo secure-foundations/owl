@@ -426,7 +426,7 @@ extractDef locName (CDef defname b) = do
     |]
     where
         extractArg (cdvar, strname, ty) = do
-            let specty = specTyOf ty
+            let specty = specTyOfSerialized ty
             return [di|#{pretty strname} : #{pretty specty}|]
 
 
@@ -451,5 +451,5 @@ extractUserFunc (CUserFunc name b) = do
     |]
     where
         extractArg (cdvar, strname, ty) = do
-            let specty = specTyOf ty
+            let specty = specTyOfSerialized ty
             return [di|#{pretty strname} : #{pretty specty}|]

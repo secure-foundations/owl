@@ -60,6 +60,14 @@ impl OwlSpecSerialize for bool {
     }
 }
 
+// hack
+impl DView for Ghost<()> {
+    type V = Ghost<()>;
+    open spec fn dview(&self) -> Ghost<()> {
+        Ghost(())
+    }
+}
+
 
 pub trait OwlSpecAsCtr {
     spec fn as_ctr(self) -> usize where Self: Sized;
