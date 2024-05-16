@@ -40,7 +40,7 @@ import qualified SpecExtraction
 
 
 extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann, Doc ann))
-extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path) $ extract' modbody
+extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extract' modbody
 
 
 extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann, Doc ann, Doc ann)
@@ -96,7 +96,9 @@ preprocessModBody mb = do
     locMap <- foldM (sortDef lookupLoc) locMap (mb ^. TB.defs)
     let tydefs = reverse $ mb ^. TB.tyDefs
     debugLog "Finished preprocessing"
-    return $ ExtractionData locMap shared pubkeys tydefs
+    -- User funcs get filled in during concretization, since we only want to extract 
+    -- user funcs that are used in concrete (non-ghost) code
+    return $ ExtractionData locMap shared pubkeys tydefs []
     where
         sortLocs = foldl' (\(locs, locAliases) (locName, locType) -> 
                                 case locType of 
@@ -193,8 +195,10 @@ traverseExtractionData ::
     (def -> ExtractionMonad t def') ->
     (name -> ExtractionMonad t name') ->
     (String -> ty -> ExtractionMonad t (Maybe ty')) ->
-    ExtractionData def ty name -> ExtractionMonad t (ExtractionData def' ty' name')
-traverseExtractionData traverseDef traverseName traverseTyDef extrData = do
+    (uf -> ExtractionMonad t uf') ->
+    ExtractionData def ty name uf -> ExtractionMonad t (ExtractionData def' ty' name' uf')
+traverseExtractionData traverseDef traverseName traverseTyDef traverseUF extrData = do
+    ufs' <- mapM traverseUF (extrData ^. userFuncs)
     locMap' <- M.traverseWithKey traverseLoc (extrData ^. locMap)
     preshared' <- mapM (\(nameData, locs) -> do
         nameData' <- traverseName nameData
@@ -206,7 +210,7 @@ traverseExtractionData traverseDef traverseName traverseTyDef extrData = do
                 Nothing -> return Nothing
                 Just ty' -> return $ Just (name, ty')
         ) (extrData ^. tyDefs)
-    return $ ExtractionData locMap' preshared' pubKeys' tyDefs'
+    return $ ExtractionData locMap' preshared' pubKeys' tyDefs' ufs'
     where
         traverseLoc lname locData = do
             localNames' <- mapM traverseName (locData ^. localNames)
@@ -219,11 +223,20 @@ concretifyPass :: OwlExtractionData -> ExtractionMonad FormatTy CFExtractionData
 concretifyPass owlExtrData = do
     debugLog "Concretifying"
     Concretify.setupEnv $ owlExtrData ^. tyDefs
-    traverseExtractionData
+    cfExtrData <- traverseExtractionData
         (uncurry Concretify.concretifyDef)
         return
         Concretify.concretifyTyDef
+        (uncurry Concretify.concretifyUserFunc) -- Dummy, doesn't actually get used here
         owlExtrData
+    concreteUserFuncs <- concretifyUserFuncs
+    return $ cfExtrData & userFuncs .~ concreteUserFuncs
+    where
+        -- Extract only the user funcs that need to be extracted
+        concretifyUserFuncs = do
+            oufs <- use owlUserFuncs 
+            let oufs' = mapMaybe (\(name, (uf, rtopt)) -> case rtopt of Just _ -> Just (name, uf) ; Nothing -> Nothing) oufs
+            mapM (uncurry Concretify.concretifyUserFunc) oufs'
     
 lowerImmutPass :: CFExtractionData -> ExtractionMonad FormatTy CRExtractionData
 lowerImmutPass cfExtrData = do
@@ -232,6 +245,7 @@ lowerImmutPass cfExtrData = do
         lowerDef
         LowerImmut.lowerName
         LowerImmut.lowerTyDef
+        LowerImmut.lowerUserFunc
         cfExtrData
     where lowerDef (Just d) = Just <$> LowerImmut.lowerDef d
           lowerDef Nothing = return Nothing

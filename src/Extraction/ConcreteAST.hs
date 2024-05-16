@@ -110,6 +110,12 @@ data CDef t = CDef {
 
 makeLenses ''CDef
 
+data CUserFunc t = CUserFunc {
+    _ufName :: String,
+    _ufBody :: CDepBind t (t, CAExpr t) -- retT, body
+} deriving (Show, Generic, Typeable)
+
+
 data CStruct t = CStruct {
     _structName :: String,
     _structFields :: [(String, t)]

@@ -56,7 +56,8 @@ data Env t = Env {
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
-    ,  _curLocality :: Maybe String
+    ,   _curLocality :: Maybe String
+    ,   _owlUserFuncs :: [(String, (TB.UserFunc, Maybe FormatTy))] -- (return type (Just if needs extraction))
 }
 
 
@@ -135,7 +136,8 @@ liftExtractionMonad m = do
             _freshCtr = env' ^. freshCtr,
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
-            _curLocality = env' ^. curLocality
+            _curLocality = env' ^. curLocality,
+            _owlUserFuncs = env' ^. owlUserFuncs
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -167,8 +169,11 @@ instance Fresh (ExtractionMonad t) where
         return $ Fn s n
     fresh nm@(Bn {}) = return nm
 
-initEnv :: Flags -> String -> Env t
-initEnv flags path = Env flags path 0 M.empty M.empty Nothing
+initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty Nothing (mkUFs owlUserFuncs)
+    where
+        mkUFs :: [(String, TB.UserFunc)] -> [(String, (TB.UserFunc, Maybe FormatTy))]
+        mkUFs = map (\(s, uf) -> (s, (uf, Nothing)))
 
 
 
@@ -186,18 +191,19 @@ data LocalityData nameData defData = LocalityData {
     _counters :: [String]
 } deriving Show
 makeLenses ''LocalityData
-data ExtractionData defData tyData nameData = ExtractionData {
+data ExtractionData defData tyData nameData userFuncData = ExtractionData {
     _locMap :: M.Map LocalityName (LocalityData nameData defData),
     _presharedNames :: [(nameData, [LocalityName])],
     _pubKeys :: [nameData],
-    _tyDefs :: [(String, tyData)]
+    _tyDefs :: [(String, tyData)],
+    _userFuncs :: [userFuncData]
 } deriving Show
 makeLenses ''ExtractionData
 
-type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
+type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData (String, TB.UserFunc)
 type OwlLocalityData = LocalityData NameData OwlDefData
-type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData
+type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData (CUserFunc FormatTy)
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData (CUserFunc VerusTy)
 type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
 type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
 

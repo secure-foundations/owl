@@ -113,6 +113,8 @@ unifyFormatTy t1 t2 =
       _ | t1 `aeq` t2 -> return t1
       (FBuf Nothing, _) -> return $ FBuf Nothing
       (_, FBuf Nothing) -> return $ FBuf Nothing
+      (FInt, FBuf (Just (FLNamed "counter"))) -> return $ FBuf $ Just $ FLNamed "counter"
+      (FBuf (Just (FLNamed "counter")), FInt) -> return $ FBuf $ Just $ FLNamed "counter"
       _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
@@ -204,7 +206,15 @@ concreteTyOfApp (PRes pth) =
                 forM_ (zip argTys args) $ \(t, a) -> do
                     unifyFormatTy t a
                 return retTy
-            Nothing -> throwError $ UndefinedSymbol $ show . owlpretty $ p
+            Nothing -> do
+                oufs <- use owlUserFuncs
+                case lookup p oufs of
+                    Just (ufdef, rtyOpt) -> do
+                        case rtyOpt of
+                            Just rty -> return rty
+                            Nothing -> rtyOfUserFunc p ufdef
+                    Nothing -> do
+                        throwError $ UndefinedSymbol $ show . owlpretty $ p
       _ -> \_ _ -> do
         throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 concreteTyOfApp _ = \_ _ -> do
@@ -254,6 +264,8 @@ concretifyAExpr a =
 
 concretifyExpr :: Expr -> EM (CExpr FormatTy)
 concretifyExpr e = do
+    -- debugPrint $ "Concretifying expr:"
+    -- debugPrint $ show $ owlpretty e
     case e^.val of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
@@ -485,6 +497,7 @@ withDepBind (DPVar t s xd) k = do
 concretifyDef :: String -> TB.Def -> EM (Maybe (CDef FormatTy))
 concretifyDef defName (TB.DefHeader _) = return Nothing
 concretifyDef defName (TB.Def bd) = do
+    -- debugPrint $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
     ores <- withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
@@ -501,6 +514,32 @@ concretifyDef defName (TB.Def bd) = do
     case ores of
       Nothing -> return Nothing
       Just res -> return $ Just $ CDef defName res
+
+
+userFuncArgTy :: FormatTy
+userFuncArgTy = FBuf Nothing
+
+concretifyUserFunc' :: String -> TB.UserFunc -> EM (CUserFunc FormatTy, FormatTy)
+concretifyUserFunc' ufName (TB.FunDef bd) = do
+    let ((_, args), body) = unsafeUnbind bd
+    let argstys = zip (map castName args) (repeat userFuncArgTy)
+    body' <- withVars argstys $ concretifyAExpr body
+    let rty = body' ^. tty
+    let bindArgs = map (\(a,t) -> (a, show a, t)) argstys
+    bd' <- bindCDepBind bindArgs (rty, body')
+    return $ (CUserFunc ufName bd', rty)
+concretifyUserFunc' ufName _ = do
+    throwError $ ErrSomethingFailed $ "Unsupported user function: " ++ ufName
+
+concretifyUserFunc :: String -> TB.UserFunc -> EM (CUserFunc FormatTy)
+concretifyUserFunc ufName uf = do
+    (uf', _) <- concretifyUserFunc' ufName uf
+    return uf'
+
+rtyOfUserFunc :: String -> TB.UserFunc -> EM FormatTy
+rtyOfUserFunc ufName uf = do
+    (_, rty) <- concretifyUserFunc' ufName uf
+    return rty
 
 
 concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))

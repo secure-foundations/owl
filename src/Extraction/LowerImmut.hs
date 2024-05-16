@@ -66,6 +66,15 @@ lowerDef (CDef name b) = do
     b' <- bindCDepBind args' (retTy', body')
     return $ CDef name b'
 
+lowerUserFunc :: CUserFunc FormatTy -> EM (CUserFunc VerusTy)
+lowerUserFunc (CUserFunc name b) = do
+    (args, (retTy, body)) <- unbindCDepBind b
+    args' <- mapM lowerArg args
+    retTy' <- lowerArgTy retTy
+    body' <- traverseCAExpr lowerArgTy body
+    b' <- bindCDepBind args' (retTy', body')
+    return $ CUserFunc name b'
+
 
 lowerFieldTy :: FormatTy -> EM VerusTy
 lowerFieldTy = lowerArgTy -- for now, probably need to change it later
