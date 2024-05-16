@@ -457,29 +457,27 @@ genVerusStruct (CStruct name fieldsFV) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- genVestFormat verusName verusFieldsFV
+    isVest <- and <$> mapM (\(_,f,format,l) -> isVest f format l) verusFieldsFV
+    vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFields lifetimeConst
+    parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFields lifetimeConst else return [di||]
     return $ (vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers], vestFormat)
     where 
         liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
 
         genVestFormat name layoutFields = do
-            isVestFields <- mapM (\(_,f,format,l) -> isVest f format l) layoutFields
-            if and isVestFields then do
-                let genField (_, f, format, l) = do 
-                        layout <- vestLayoutOf f format l
-                        return [di|    #{layout},|]
-                fields <- mapM genField layoutFields
-                return [__di|
-                #{name} = {
-                #{vsep fields}
-                }
-                |]
-            else return [di||]
+            let genField (_, f, format, l) = do 
+                    layout <- vestLayoutOf f format l
+                    return [di|    #{layout},|]
+            fields <- mapM genField layoutFields
+            return [__di|
+            #{name} = {
+            #{vsep fields}
+            }
+            |]
 
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
