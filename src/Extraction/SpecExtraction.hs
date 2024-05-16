@@ -252,6 +252,18 @@ extractCAExpr aexpr = do
         CAApp f args -> do
             case f of
                 "unit" -> return [di|()|]
+                "true" -> return [di|true|]
+                "false" -> return [di|false|]
+                "Some" -> do
+                    let [a] = args
+                    a' <- extractCAExpr a
+                    return [di|Option::Some(#{a'})|]
+                "None" -> return [di|Option::None|]
+                "eq" -> do
+                    let [a,b] = args
+                    a' <- extractCAExpr a
+                    b' <- extractCAExpr b
+                    return [di|#{a'} == #{b'}|]
                 _ -> do
                     args' <- mapM extractCAExpr args
                     return [__di|

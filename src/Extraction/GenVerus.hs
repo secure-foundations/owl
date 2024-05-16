@@ -467,12 +467,36 @@ vestLayoutOf' name len t = do
         Nothing -> throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
 
 
+tyNeedsLifetime :: VerusTy -> Bool
+tyNeedsLifetime (RTOwlBuf _) = True
+tyNeedsLifetime (RTWithLifetime _ _) = True
+tyNeedsLifetime (RTStruct n' fs') = structNeedsLifetime n' fs'
+tyNeedsLifetime (RTEnum n' cs') = enumNeedsLifetime n' cs'
+tyNeedsLifetime _ = False 
+
+structNeedsLifetime :: VerusName -> [(VerusName, VerusTy)] -> Bool
+structNeedsLifetime _ = any (tyNeedsLifetime . snd) 
+
+enumNeedsLifetime :: VerusName -> [(VerusName, Maybe VerusTy)] -> Bool
+enumNeedsLifetime name cases = 
+    let checkCase t = case t of 
+            Just t' -> tyNeedsLifetime t'
+            Nothing -> False 
+        in
+    any (checkCase . snd) cases
+
+
+extraLt :: Doc ann -> VerusTy -> Doc ann
+extraLt lt (RTStruct name fields) = if structNeedsLifetime name fields then lt else pretty ""
+extraLt lt (RTEnum name cases) = if enumNeedsLifetime name cases then lt else pretty ""
+extraLt _ _ = pretty ""
+
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
     debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
-    let needsLifetime = any ((\t -> case t of RTOwlBuf _ -> True; RTWithLifetime _ _ -> True; _ -> False) . snd) fields
+    let needsLifetime = any (tyNeedsLifetime . snd) fields
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime lifetimeConst fty)) fields
@@ -481,7 +505,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     let verusName = execName name
     let specname = specName name
     let structTy = if needsLifetime then RTWithLifetime (RTStruct verusName verusFields') (Lifetime lifetimeConst) else RTStruct verusName verusFields'
-    let structFields = vsep . punctuate comma $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{pretty fty}|]) verusFields
+    let structFields = vsep . punctuate comma $ fmap (\(_, fname, fty) -> [di|pub #{fname}: #{pretty fty}#{extraLt lifetimeAnnot fty}|]) verusFields
     let structDef = [__di|
     pub struct #{verusName}#{lifetimeAnnot} {
         #{structFields}
@@ -646,7 +670,8 @@ genVerusEnum (CEnum name casesFV isVest) = do
     let verusName = execName name
     let specname = specName name
     let enumTy = if needsLifetime then RTWithLifetime (RTEnum verusName (M.elems verusCases)) (Lifetime lifetimeConst) else RTEnum verusName (M.elems verusCases)
-    let enumCases = vsep . punctuate comma . fmap (\(_, (fname, fty)) -> [di|#{fname}(#{pretty fty})|]) . M.assocs $ verusCases
+    let extraLt' fty = case fty of Just fty' -> extraLt lifetimeAnnot fty'; Nothing -> pretty ""
+    let enumCases = vsep . punctuate comma . fmap (\(_, (fname, fty)) -> [di|#{fname}(#{pretty fty}#{extraLt' fty})|]) . M.assocs $ verusCases
     let enumDef = [__di|
     pub enum #{verusName}#{lifetimeAnnot} {
         #{enumCases}
