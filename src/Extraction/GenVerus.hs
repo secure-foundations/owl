@@ -179,9 +179,19 @@ genVerusCAExpr ae = do
                     }
                     |]
                 Nothing -> do
-                    -- TODO: Need a special case for enc_st_aead, which needs to early return
-                    args' <- mapM genVerusCAExpr args
-                    return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
+                    -- Special cases for things which aren't regular function calls in Rust
+                    case (f, args) of
+                        -- ("enc_st_aead", [k, x, nonce, aad]) -> do
+                        --     throwError $ ErrSomethingFailed "enc_st_aead not yet implemented"
+                        ("true", []) -> return [di|true|]
+                        ("false", []) -> return [di|false|]
+                        ("Some", [x]) -> do
+                            x' <- genVerusCAExpr x
+                            return [di|Some(#{x'})|]
+                        ("None", []) -> return [di|None|]
+                        _ -> do
+                            args' <- mapM genVerusCAExpr args
+                            return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
@@ -191,11 +201,15 @@ genVerusCAExpr ae = do
             let rustCtr = execName ctrname
             castCtr <- cast ([di|mut_state.#{rustCtr}|], RTUsize) (ae ^. tty)
             return [di|#{castCtr}|]
+        CAHexConst s -> do
+            s' <- hexStringToByteList s
+            castX <- ([di|x|], vecU8) `cast` (ae ^. tty)
+            return [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
         _ -> return [__di|
         /*
             TODO: genVerusCAExpr #{show ae}
         */
-        |] 
+        |]
 
 
 -- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
@@ -354,6 +368,10 @@ genVerusCExpr inK expr = do
                     #{k'}
                     |]
                 _ -> throwError $ TypeError "Tried to parse from buf without an otherwise case!"
+        CGetCtr ctrname -> do
+            let rustCtr = execName ctrname
+            castCtr <- ([di|mut_state.#{rustCtr}|], RTUsize) `cast` (expr ^. tty)
+            return [di|#{castCtr}|]
         _ -> do
             return [__di|
             /*
@@ -404,7 +422,7 @@ genVerusDef lname cdef = do
     |]
     where
         compileArg (cdvar, strname, ty) = do
-            return [di|#{pretty strname}: #{pretty ty}|]
+            return [di|#{pretty . execName . show $ cdvar}: #{pretty ty}|]
         viewArg (cdvar, strname, ty) = viewVar strname ty
 
 vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Maybe (Doc ann))

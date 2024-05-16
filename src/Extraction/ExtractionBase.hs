@@ -311,4 +311,9 @@ lowerFLen (FLCipherlen a) =
     CUsizePlus n' (CUsizeConst "TAG_SIZE")
 
 
-
+hexStringToByteList :: String -> ExtractionMonad t (Doc ann)
+hexStringToByteList [] = return $ pretty ""
+hexStringToByteList (h1 : h2 : t) = do
+    t' <- hexStringToByteList t
+    return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8," <+> t'
+hexStringToByteList _ = throwError OddLengthHexConst

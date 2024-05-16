@@ -233,6 +233,13 @@ extractCAExpr aexpr = do
         CAGet n -> do
             let rustN = execName n
             return [di|cfg.#{rustN}.dview()|]
+        (CAHexConst s) -> do
+            bytelist <- hexStringToByteList s
+            if null s then
+                return $ pretty "empty_seq_u8()"
+            else
+                return $ pretty "seq![" <> bytelist <> pretty "]"
+        CACounter ctrname -> return [di|#{ctrname}|]
         _ -> return [__di|
         /*
             TODO: SpecExtraction.extractCAExpr #{show aexpr}
@@ -355,6 +362,8 @@ extractExpr expr = do
             #{k'}
             } #{badk}
             |]
+        CGetCtr ctrname -> do
+            return $ parens $ pretty "ret" <> parens (pretty "counter_as_bytes" <> parens (pretty "mut_state." <> pretty (execName ctrname)))
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 
