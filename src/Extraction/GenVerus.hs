@@ -407,19 +407,34 @@ genVerusDef lname cdef = do
             return [di|#{pretty strname}: #{pretty ty}|]
         viewArg (cdvar, strname, ty) = viewVar strname ty
 
+vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Maybe (Doc ann))
+vestLayoutOf' name _ (RTArray RTU8 len) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf' name (Just len) (RTVec RTU8) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf' name (Just len) (RTOwlBuf (Lifetime _)) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf' name _ (RTVec RTU8) = return $ Just [di|#{name}: Tail|]
+vestLayoutOf' name _ (RTOwlBuf (Lifetime _)) = return $ Just [di|#{name}: Tail|]
+vestLayoutOf' name _ t = return Nothing
+
+isVest :: String -> Maybe ConstUsize -> VerusTy -> EM Bool
+isVest name len t = do
+    layout <- vestLayoutOf' name len t
+    case layout of
+        Just _ -> return True
+        Nothing -> return False
+
 vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
-vestLayoutOf name _ (RTArray RTU8 len) = do
-    lenConcrete <- concreteLength len
-    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTVec RTU8) = do
-    lenConcrete <- concreteLength len
-    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTOwlBuf (Lifetime _)) = do
-    lenConcrete <- concreteLength len
-    return [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name _ (RTVec RTU8) = return [di|#{name}: Tail|]
-vestLayoutOf name _ (RTOwlBuf (Lifetime _)) = return [di|#{name}: Tail|]
-vestLayoutOf name _ t = throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
+vestLayoutOf name len t = do
+    layout <- vestLayoutOf' name len t
+    case layout of
+        Just l -> return l
+        Nothing -> throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
+
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusStruct (CStruct name fieldsFV) = do
@@ -453,15 +468,18 @@ genVerusStruct (CStruct name fieldsFV) = do
         liftLifetime _ ty = ty
 
         genVestFormat name layoutFields = do
-            let genField (_, f, format, l) = do 
-                    layout <- vestLayoutOf f format l
-                    return [di|    #{layout},|]
-            fields <- mapM genField layoutFields
-            return [__di|
-            #{name} = {
-            #{vsep fields}
-            }
-            |]
+            isVestFields <- mapM (\(_,f,format,l) -> isVest f format l) layoutFields
+            if and isVestFields then do
+                let genField (_, f, format, l) = do 
+                        layout <- vestLayoutOf f format l
+                        return [di|    #{layout},|]
+                fields <- mapM genField layoutFields
+                return [__di|
+                #{name} = {
+                #{vsep fields}
+                }
+                |]
+            else return [di||]
 
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
