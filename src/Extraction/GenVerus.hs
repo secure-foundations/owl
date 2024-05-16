@@ -189,6 +189,25 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             return [di|Some(#{x'})|]
                         ("None", []) -> return [di|None|]
+                        ("eq", [x,y]) -> do
+                            x' <- genVerusCAExpr x
+                            y' <- genVerusCAExpr y
+                            let castXTo = cast (x', x ^. tty)
+                            let castYTo = cast (y', y ^. tty)
+                            case (x ^. tty, y ^. tty) of
+                                (RTVec RTU8, RTVec RTU8) -> do
+                                    x'' <- castXTo u8slice
+                                    y'' <- castYTo u8slice
+                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
+                                    x'' <- castXTo u8slice
+                                    y'' <- castYTo u8slice
+                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                (RTOwlBuf _, RTOwlBuf _) -> do
+                                    x'' <- castXTo u8slice
+                                    y'' <- castYTo u8slice
+                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                _ -> return [di|#{x'} == #{y'}|] -- might not always work
                         _ -> do
                             args' <- mapM genVerusCAExpr args
                             return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
@@ -423,7 +442,7 @@ genVerusDef lname cdef = do
     where
         compileArg (cdvar, strname, ty) = do
             return [di|#{pretty . execName . show $ cdvar}: #{pretty ty}|]
-        viewArg (cdvar, strname, ty) = viewVar strname ty
+        viewArg (cdvar, strname, ty) = viewVar (execName . show $ cdvar) ty
 
 vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Maybe (Doc ann))
 vestLayoutOf' name _ (RTArray RTU8 len) = do
@@ -572,7 +591,7 @@ genVerusStruct (CStruct name fieldsFV) = do
             {
                 reveal(#{specParse});
                 let stream = parse_serialize::Stream { data: arg, start: 0 };
-                if let Ok((_, _, parsed)) = parse_serialize::parse_owl_t(stream) {
+                if let Ok((_, _, parsed)) = parse_serialize::#{execParse}(stream) {
                     let #{tupPatFields} = parsed;
                     Some (#{verusName} { #{mkStructFields} })
                 } else {
@@ -598,7 +617,7 @@ genVerusStruct (CStruct name fieldsFV) = do
                 reveal(#{specSerInner});
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
-                    let ser_result = parse_serialize::serialize_owl_t(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
+                    let ser_result = parse_serialize::#{execSer}(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
                     if let Ok((_new_start, num_written)) = ser_result {
                         vec_truncate(&mut obuf, num_written);
                         Some(obuf)
