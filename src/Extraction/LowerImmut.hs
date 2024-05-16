@@ -49,22 +49,22 @@ lowerTy (FEnum n fcs) = do
 lowerTy FGhost = return $ RTVerusGhost
 
 
-lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
-lowerTyNoOwlBuf FUnit = return RTUnit
-lowerTyNoOwlBuf FBool = return RTBool
-lowerTyNoOwlBuf FInt = return RTUsize
-lowerTyNoOwlBuf (FBuf Nothing) = return $ RTVec RTU8
-lowerTyNoOwlBuf (FBuf (Just flen)) = return $ RTVec RTU8
-lowerTyNoOwlBuf (FOption ft) = RTOption <$> lowerTyNoOwlBuf ft
-lowerTyNoOwlBuf (FStruct fn ffs) = do
-    let rn = execName fn
-    rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTyNoOwlBuf t) ffs
-    return $ RTStruct rn rfs
-lowerTyNoOwlBuf (FEnum n fcs) = do
-    let rn = execName n
-    rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTyNoOwlBuf t) fcs
-    return $ RTEnum rn rcs
-lowerTyNoOwlBuf FGhost = return $ RTVerusGhost
+-- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
+-- lowerTyNoOwlBuf FUnit = return RTUnit
+-- lowerTyNoOwlBuf FBool = return RTBool
+-- lowerTyNoOwlBuf FInt = return RTUsize
+-- lowerTyNoOwlBuf (FBuf Nothing) = return $ RTVec RTU8
+-- lowerTyNoOwlBuf (FBuf (Just flen)) = return $ RTVec RTU8
+-- lowerTyNoOwlBuf (FOption ft) = RTOption <$> lowerTyNoOwlBuf ft
+-- lowerTyNoOwlBuf (FStruct fn ffs) = do
+--     let rn = execName fn
+--     rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTyNoOwlBuf t) ffs
+--     return $ RTStruct rn rfs
+-- lowerTyNoOwlBuf (FEnum n fcs) = do
+--     let rn = execName n
+--     rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTyNoOwlBuf t) fcs
+--     return $ RTEnum rn rcs
+-- lowerTyNoOwlBuf FGhost = return $ RTVerusGhost
 
 
 
@@ -90,8 +90,8 @@ lowerUserFunc :: CUserFunc FormatTy -> EM (CUserFunc VerusTy)
 lowerUserFunc (CUserFunc name b) = do
     (args, (retTy, body)) <- unbindCDepBind b
     args' <- mapM lowerArg args
-    retTy' <- lowerTyNoOwlBuf retTy
-    body' <- traverseCAExpr lowerTyNoOwlBuf body
+    retTy' <- lowerTy retTy
+    body' <- traverseCAExpr lowerTy body
     b' <- bindCDepBind args' (retTy', body')
     return $ CUserFunc name b'
 

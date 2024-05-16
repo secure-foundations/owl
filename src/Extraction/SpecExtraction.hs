@@ -282,11 +282,8 @@ extractCAExpr aexpr = do
         CAApp f args -> do
             case specBuiltins M.!? f of
                 Just (f, argDstTys, rSrcTy) -> do
-                    debugPrint f
-                    debugPrint $ show argDstTys
                     args' <- mapM extractCAExpr args
                     let argtys = map (^. tty) args
-                    debugPrint $ show argtys
                     args'' <- zipWithM specCast (zip args' argtys) argDstTys
                     return [di|#{f}(#{hsep . punctuate comma $ args''})|]
                 Nothing -> do

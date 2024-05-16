@@ -316,7 +316,7 @@ concretifyExpr e = do
           return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
       EGetCtr p _ -> do
           s <- concretifyPath p
-          return $ Typed FInt $ CGetCtr s
+          return $ Typed (FBuf $ Just $ FLNamed "counter") $ CGetCtr s
       EIncCtr p _ -> do
           s <- concretifyPath p
           return $ Typed FInt $ CGetCtr s

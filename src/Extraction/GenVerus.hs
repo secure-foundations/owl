@@ -43,13 +43,16 @@ genVerusUserFunc (CUserFunc name b) = do
     let execname = execName name
     let specname = name
     (args, (retTy, body)) <- unbindCDepBind b
-
     let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
     let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
-    let retval = [di|res: #{pretty retTy}|]
     body' <- genVerusCAExpr body
+    let needsLifetime = tyNeedsLifetime retTy
+    let lifetimeConst = "a"
+    let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
+    let retTy' = liftLifetime lifetimeConst retTy
+    let retval = [di|res: #{pretty retTy'}|]
     return [__di|
-    pub fn #{execname}(#{argdefs}) -> (#{retval})
+    pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
         ensures
             res.dview() == #{specname}(#{viewArgs})
     {
@@ -191,7 +194,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
         , ("bytes_as_counter", ([u8slice], RTUsize))
-        , ("counter_as_bytes", ([RTRef RShared RTUsize], vecU8))
+        , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
           ("kdf", ("extract_expand_to_len", [u8slice, u8slice, u8slice, u8slice], vecU8))
@@ -226,9 +229,10 @@ genVerusCAExpr ae = do
                             castX <- cast (x', x ^. tty) u8slice
                             castNonce <- cast (nonce', nonce ^. tty) (RTRef RMut RTUsize)
                             castAad <- cast (aad', aad ^. tty) u8slice
+                            castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
                             return [__di|{ 
                                 match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                                    Ok(ctxt) => ctxt,
+                                    Ok(ctxt) => { #{castRes} },
                                     Err(e) => { return Err(e) },
                                 }                                
                             }|]
@@ -438,7 +442,7 @@ genVerusCExpr inK expr = do
                 _ -> throwError $ TypeError "Tried to parse from buf without an otherwise case!"
         CGetCtr ctrname -> do
             let rustCtr = execName ctrname
-            castCtr <- ([di|mut_state.#{rustCtr}|], RTUsize) `cast` (expr ^. tty)
+            castCtr <- ([di|owl_counter_as_bytes(&mut_state.#{rustCtr})|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
             return [di|#{castCtr}|]
         _ -> do
             return [__di|
@@ -534,11 +538,13 @@ enumNeedsLifetime name cases =
         in
     any (checkCase . snd) cases
 
-
 extraLt :: Doc ann -> VerusTy -> Doc ann
 extraLt lt (RTStruct name fields) = if structNeedsLifetime name fields then lt else pretty ""
 extraLt lt (RTEnum name cases) = if enumNeedsLifetime name cases then lt else pretty ""
 extraLt _ _ = pretty ""
+
+liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
+liftLifetime _ ty = ty
 
 mkNestPattern :: [Doc ann] -> Doc ann
 mkNestPattern l = 
@@ -575,8 +581,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFields lifetimeConst else return [di||]
     return $ (vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers], vestFormat)
     where 
-        liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
-        liftLifetime _ ty = ty
 
         genVestFormat name layoutFields = do
             let genField (_, f, format, l) = do 
@@ -899,6 +903,8 @@ cast (v, RTRef _ (RTSlice RTU8)) (RTOwlBuf _) =
     return [di|OwlBuf::from_slice(&#{v})|]
 cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
+cast (v, RTArray RTU8 _) (RTOwlBuf _) =
+    return [di|OwlBuf::from_slice(&#{v})|]
 cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
 cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) = 

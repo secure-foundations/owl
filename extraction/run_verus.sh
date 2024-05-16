@@ -52,7 +52,7 @@ cargo build --lib
 popd
 
 echo "VERIFYING" 
-verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --multiple-errors=100 --rlimit=100 --no-lifetime $main_file 
+verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --multiple-errors=100 --rlimit=100 $main_file 
 
 echo "WARNING: currently using --no-lifetime for Verus"
 
