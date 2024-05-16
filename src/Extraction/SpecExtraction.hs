@@ -60,7 +60,7 @@ extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
 
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
-extractCStruct (CStruct n fs) = do
+extractCStruct (CStruct n fs isVest) = do
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, specTyOf t)) fs
     let structFields = vsep $ fmap (\(n, t) -> [di|pub #{n}: #{pretty t},|]) rfs
@@ -69,7 +69,9 @@ extractCStruct (CStruct n fs) = do
         #{structFields}
     }
     |]
-    parseSerializeDefs <- genParserSerializer (execName n) rn rfs
+    parseSerializeDefs <- if isVest then 
+                                genParserSerializer (execName n) rn rfs 
+                            else genParserSerializerNoVest (execName n) rn rfs
     constructor <- genConstructor n rn rfs
     return $ vsep [structDef, parseSerializeDefs, constructor]
     where
@@ -128,6 +130,31 @@ extractCStruct (CStruct n fs) = do
             |]
             return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
+        genParserSerializerNoVest execname specname specfields = do
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                // cant autogenerate vest parser
+                todo!()
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                // cant autogenerate vest serializer
+                todo!()
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, ser, implOwlSpecSer]
+
+
         genConstructor owlName specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
             let args = hsep . punctuate comma $ map (\(n,t) -> [di|arg_#{n}: #{pretty t}|]) specfields
@@ -146,7 +173,7 @@ extractCStruct (CStruct n fs) = do
 
 
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
-extractCEnum (CEnum n cs) = do
+extractCEnum (CEnum n cs isVest) = do
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
     let rfsOwlNames = map (\(n, t) -> (n, fmap specTyOf t)) $ M.assocs cs

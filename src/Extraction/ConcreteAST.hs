@@ -118,14 +118,16 @@ data CUserFunc t = CUserFunc {
 
 data CStruct t = CStruct {
     _structName :: String,
-    _structFields :: [(String, t)]
+    _structFields :: [(String, t)],
+    _structIsVest :: Bool
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CStruct
 
 data CEnum t = CEnum {
     _enumName :: String,
-    _enumCases :: M.Map String (Maybe t)
+    _enumCases :: M.Map String (Maybe t),
+    _enumIsVest :: Bool
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CEnum

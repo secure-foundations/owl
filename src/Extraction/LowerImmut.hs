@@ -85,14 +85,14 @@ maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
-lowerTyDef _ (CStructDef (CStruct name fields)) = do
+lowerTyDef _ (CStructDef (CStruct name fields isVest)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
             l <- maybeLenOf t
             return (n, (l, t'))
     fields' <- mapM lowerField fields
-    return $ Just $ CStructDef $ CStruct name fields'
-lowerTyDef _ (CEnumDef (CEnum name cases)) = do
+    return $ Just $ CStructDef $ CStruct name fields' isVest
+lowerTyDef _ (CEnumDef (CEnum name cases isVest)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
                 Just t -> do
@@ -102,7 +102,7 @@ lowerTyDef _ (CEnumDef (CEnum name cases)) = do
                 Nothing -> return Nothing
             return (n, tt')
     cases' <- mapM lowerCase $ M.assocs cases
-    return $ Just $ CEnumDef $ CEnum name $ M.fromList cases'
+    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest
 
 lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
 lowerName (n, l, i) = do

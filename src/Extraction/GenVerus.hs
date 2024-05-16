@@ -444,37 +444,31 @@ genVerusDef lname cdef = do
             return [di|#{pretty . execName . show $ cdvar}: #{pretty ty}|]
         viewArg (cdvar, strname, ty) = viewVar (execName . show $ cdvar) ty
 
-vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Maybe (Doc ann))
-vestLayoutOf' name _ (RTArray RTU8 len) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf' name (Just len) (RTVec RTU8) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf' name (Just len) (RTOwlBuf (Lifetime _)) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf' name _ (RTVec RTU8) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf' name _ (RTOwlBuf (Lifetime _)) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf' name _ t = return Nothing
 
-isVest :: String -> Maybe ConstUsize -> VerusTy -> EM Bool
-isVest name len t = do
-    layout <- vestLayoutOf' name len t
-    case layout of
-        Just _ -> return True
-        Nothing -> return False
+vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> ExtractionMonad t (Maybe (Doc ann))
+vestLayoutOf name _ (RTArray RTU8 len) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name (Just len) (RTVec RTU8) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name (Just len) (RTOwlBuf (Lifetime _)) = do
+    lenConcrete <- concreteLength len
+    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
+vestLayoutOf name _ (RTVec RTU8) = return $ Just [di|#{name}: Tail|]
+vestLayoutOf name _ (RTOwlBuf (Lifetime _)) = return $ Just [di|#{name}: Tail|]
+vestLayoutOf name _ t = return Nothing
 
-vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
-vestLayoutOf name len t = do
-    layout <- vestLayoutOf' name len t
+vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
+vestLayoutOf' name len t = do
+    layout <- vestLayoutOf name len t
     case layout of
         Just l -> return l
         Nothing -> throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
 
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
-genVerusStruct (CStruct name fieldsFV) = do
+genVerusStruct (CStruct name fieldsFV isVest) = do
     debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
@@ -494,7 +488,6 @@ genVerusStruct (CStruct name fieldsFV) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    isVest <- and <$> mapM (\(_,f,format,l) -> isVest f format l) verusFieldsFV
     vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
@@ -507,7 +500,7 @@ genVerusStruct (CStruct name fieldsFV) = do
 
         genVestFormat name layoutFields = do
             let genField (_, f, format, l) = do 
-                    layout <- vestLayoutOf f format l
+                    layout <- vestLayoutOf' f format l
                     return [di|    #{layout},|]
             fields <- mapM genField layoutFields
             return [__di|
@@ -642,7 +635,7 @@ genVerusStruct (CStruct name fieldsFV) = do
 
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
-genVerusEnum (CEnum name casesFV) = do
+genVerusEnum (CEnum name casesFV isVest) = do
     debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct

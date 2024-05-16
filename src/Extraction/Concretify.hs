@@ -542,6 +542,15 @@ rtyOfUserFunc ufName uf = do
     return rty
 
 
+typeIsVest :: FormatTy -> Bool
+typeIsVest (FStruct _ fs) = all (typeIsVest . snd) fs
+typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs -- TODO: add ordered choice combinator
+typeIsVest FGhost = False
+typeIsVest FBool = False
+typeIsVest (FOption t) = False
+typeIsVest _ = True
+
+
 concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing
 concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
@@ -550,8 +559,9 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
     cs <- forM ts $ \(s, ot) -> do
         cot <- traverse concretifyTy ot
         return (s, cot)
-    return $ Just $ CEnumDef (CEnum tname (M.fromList cs))
-concretifyTyDef tname (TB.StructDef bnd) = do
+    let isVest = all (maybe True typeIsVest . snd) cs
+    return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
+concretifyTyDef tname (TB.StructDef bnd) = do 
     (_, dp) <- unbind bnd
     let go dp = case dp of
                   DPDone _ -> return []
@@ -561,7 +571,8 @@ concretifyTyDef tname (TB.StructDef bnd) = do
                       ck <- go k
                       return $ (s, c) : ck
     s <- go dp
-    return $ Just $ CStructDef (CStruct tname s)
+    let isVest = all (typeIsVest . snd) s
+    return $ Just $ CStructDef (CStruct tname s isVest)
 
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
@@ -570,7 +581,7 @@ setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
     case tdef of
         Nothing -> return ()
-        Just (CEnumDef (CEnum _ cases)) -> do
+        Just (CEnumDef (CEnum _ cases _)) -> do
             -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
             let mkCase (cname, cty) = do
                     let argTys = case cty of
@@ -579,7 +590,7 @@ setupEnv ((tname, td):tydefs) = do
                     let rty = FEnum tname $ M.assocs cases
                     funcs %= M.insert cname (argTys, rty)
             mapM_ mkCase (M.assocs cases)
-        Just (CStructDef (CStruct _ fields)) -> do
+        Just (CStructDef (CStruct _ fields _)) -> do
             -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
             let fieldTys = map snd fields
             let rty = FStruct tname fields

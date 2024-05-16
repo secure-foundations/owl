@@ -7,6 +7,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE QuasiQuotes #-}
 module ExtractionBase where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -24,7 +25,7 @@ import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
-import Unbound.Generics.LocallyNameless.TH
+import Unbound.Generics.LocallyNameless.TH ()
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
@@ -35,6 +36,7 @@ import qualified SMTBase as SMT
 import ConcreteAST
 import Verus
 import PrettyVerus
+import Prettyprinter.Interpolate
 
 newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
     deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
