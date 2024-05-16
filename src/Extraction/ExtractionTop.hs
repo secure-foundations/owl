@@ -258,7 +258,7 @@ genVerusPass crExtrData = do
 
 specExtractPass :: CFExtractionData -> ExtractionMonad FormatTy (Doc ann)
 specExtractPass cfExtrData = do
-    debugPrint $ "Generating Verus specs"
+    debugLog $ "Generating Verus specs"
     tyDefs <- mapM (SpecExtraction.extractCTyDef . snd) $ cfExtrData ^. tyDefs
     defSpecs <- mapM SpecExtraction.extractLoc <$> M.assocs $ cfExtrData ^. locMap
     userFuncSpecs <- mapM SpecExtraction.extractUserFunc $ cfExtrData ^. userFuncs

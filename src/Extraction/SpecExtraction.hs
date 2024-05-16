@@ -169,12 +169,10 @@ extractCStruct (CStruct n fs isVest) = do
             let mkFields = hsep . punctuate comma $ map (\(n,_) -> [di|#{n}: arg_#{n}|]) specfields
             let constructor = [__di|
             // TODO: make sure the arg types line up
-            pub open spec fn #{owlName}(#{args}) -> Seq<u8> {
-                serialize_#{specname}(
-                    #{specname} { 
-                        #{mkFields} 
-                    }
-                )
+            pub open spec fn #{owlName}(#{args}) -> #{specname} {
+                #{specname} { 
+                    #{mkFields} 
+                }
             }
             |]
             return constructor
@@ -229,14 +227,14 @@ extractCEnum (CEnum n cs isVest) = do
 
         genConstructor owlName specname (caseName, Nothing) = do
             return [__di|
-            pub open spec fn #{caseName}() -> Seq<u8> {
-                serialize_#{specname}(crate::#{specname}::#{specName caseName}())
+            pub open spec fn #{caseName}() -> #{specname} {
+                crate::#{specname}::#{specName caseName}()
             }
             |]
         genConstructor owlName specname (caseName, Just caseTy) = do
             return [__di|
-            pub open spec fn #{caseName}(x: #{pretty caseTy}) -> Seq<u8> {
-                serialize_#{specname}(crate::#{specname}::#{specName caseName}(x))
+            pub open spec fn #{caseName}(x: #{pretty caseTy}) -> #{specname} {
+                crate::#{specname}::#{specName caseName}(x)
             }
             |]
 
@@ -252,31 +250,65 @@ extractVar n = do
         "_" -> pretty . show <$> fresh (string2Name "_unused")
         s -> return . pretty . replacePrimes $ s
 
+specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
+specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins where
+    addSpecName n (args, rty) = (n, args, rty)
+    builtins' = M.fromList [
+          ("enc", ([seqU8, seqU8, seqU8], seqU8))
+        , ("dec", ([seqU8, seqU8], RTOption seqU8))
+        , ("sign", ([seqU8, seqU8], seqU8))
+        , ("vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("dhpk", ([seqU8], seqU8))
+        , ("dh_combine", ([seqU8, seqU8], seqU8))
+        , ("mac", ([seqU8, seqU8], seqU8))
+        , ("mac_vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("pkenc", ([seqU8, seqU8], seqU8))
+        , ("pkdec", ([seqU8, seqU8], seqU8))
+        , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
+        , ("dec_st_aead", ([seqU8, seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("is_group_elem", ([seqU8], RTBool))
+        , ("crh", ([seqU8], seqU8))
+        , ("bytes_as_counter", ([seqU8], RTUsize))
+        , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
+        ]
+    diffNameBuiltins = M.fromList [
+          ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
+        ]
 
 extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
 extractCAExpr aexpr = do
     case aexpr ^. tval of
         CAVar s v -> extractVar v
         CAApp f args -> do
-            case f of
-                "unit" -> return [di|()|]
-                "true" -> return [di|true|]
-                "false" -> return [di|false|]
-                "Some" -> do
-                    let [a] = args
-                    a' <- extractCAExpr a
-                    return [di|Option::Some(#{a'})|]
-                "None" -> return [di|Option::None|]
-                "eq" -> do
-                    let [a,b] = args
-                    a' <- extractCAExpr a
-                    b' <- extractCAExpr b
-                    return [di|#{a'} == #{b'}|]
-                _ -> do
+            case specBuiltins M.!? f of
+                Just (f, argDstTys, rSrcTy) -> do
+                    debugPrint f
+                    debugPrint $ show argDstTys
                     args' <- mapM extractCAExpr args
-                    return [__di|
-                        #{pretty f}(#{hsep . punctuate comma $ args'})
-                    |]
+                    let argtys = map (^. tty) args
+                    debugPrint $ show argtys
+                    args'' <- zipWithM specCast (zip args' argtys) argDstTys
+                    return [di|#{f}(#{hsep . punctuate comma $ args''})|]
+                Nothing -> do
+                    case f of
+                        "unit" -> return [di|()|]
+                        "true" -> return [di|true|]
+                        "false" -> return [di|false|]
+                        "Some" -> do
+                            let [a] = args
+                            a' <- extractCAExpr a
+                            return [di|Option::Some(#{a'})|]
+                        "None" -> return [di|Option::None|]
+                        "eq" -> do
+                            let [a,b] = args
+                            a' <- extractCAExpr a
+                            b' <- extractCAExpr b
+                            return [di|#{a'} == #{b'}|]
+                        _ -> do
+                            args' <- mapM extractCAExpr args
+                            return [__di|
+                                #{pretty f}(#{hsep . punctuate comma $ args'})
+                            |]
         CAGet n -> do
             let rustN = execName n
             return [di|cfg.#{rustN}.dview()|]
@@ -329,9 +361,11 @@ extractExpr expr = do
                 -- input and output, but that would break backwards compatibility
                 CRet (Typed t (CAApp "enc" [key, msg, coins])) -> do
                     key' <- extractCAExpr key
+                    key'' <- specCast (key', key ^. tty) seqU8
                     msg' <- extractCAExpr msg
+                    msg'' <- specCast (msg', msg ^. tty) seqU8
                     return [__di|
-                    (sample(#{sz}, enc(#{key'}, #{msg'})))
+                    (sample(#{sz}, enc(#{key''}, #{msg''})))
                     |]
                 _ -> throwError $ ErrSomethingFailed $ "Unsupported continuation after sample: " ++ show k
         CLet (Typed t (COutput a l)) _ xk -> do
@@ -421,7 +455,7 @@ extractDef locName (CDef defname b) = do
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
     -- NB: forces all data structures to be represented as Seq<u8> in spec
-    let specRetTy = specTyOfSerialized retTy
+    let specRetTy = specTyOf retTy
     let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
     body <- extractExpr body
     return [__di|
@@ -434,7 +468,7 @@ extractDef locName (CDef defname b) = do
     |]
     where
         extractArg (cdvar, strname, ty) = do
-            let specty = specTyOfSerialized ty
+            let specty = specTyOf ty
             return [di|#{pretty strname} : #{pretty specty}|]
 
 
@@ -449,7 +483,7 @@ extractUserFunc (CUserFunc name b) = do
     let specname = name
     (args, (retTy, body)) <- unbindCDepBind b
     args' <- mapM extractArg args
-    let specRetTy = specTyOfSerialized retTy
+    let specRetTy = specTyOf retTy
     body <- extractCAExpr body
     return [__di|
         \#[verifier::opaque]
@@ -459,5 +493,13 @@ extractUserFunc (CUserFunc name b) = do
     |]
     where
         extractArg (cdvar, strname, ty) = do
-            let specty = specTyOfSerialized ty
+            let specty = specTyOf ty
             return [di|#{pretty strname} : #{pretty specty}|]
+
+
+specCast :: (Doc ann, FormatTy) -> VerusTy -> EM (Doc ann)
+specCast (x, FStruct t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|]
+specCast (x, FEnum t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|]
+specCast (x, FOption (FStruct _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
+specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
+specCast (x, _) _ = return [di|#{x}|]

@@ -779,7 +779,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
             }
             |]
 
-        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.dview().as_seq())|]
+        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.dview())|]
         viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{specName fname}()|]
 
         genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
@@ -932,6 +932,9 @@ vecU8 :: VerusTy
 vecU8 = RTVec RTU8
 
 
+
+snOfEn n = if "owl_" `isPrefixOf` n then "owlSpec_" ++ drop 4 n else n
+
 specTyOfExecTySerialized :: VerusTy -> VerusTy
 specTyOfExecTySerialized (RTVec t) = RTSeq (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTOwlBuf _) = RTSeq RTU8
@@ -939,15 +942,16 @@ specTyOfExecTySerialized (RTRef _ (RTSlice t)) = RTSeq (specTyOfExecTySerialized
 specTyOfExecTySerialized (RTArray t _) = RTSeq (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTOption t) = RTOption (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTTuple ts) = RTTuple (fmap specTyOfExecTySerialized ts)
-specTyOfExecTySerialized (RTStruct n fs) = RTSeq RTU8
-specTyOfExecTySerialized (RTEnum n cs) = RTSeq RTU8
+specTyOfExecTySerialized (RTStruct n fs) = RTStruct (snOfEn n) (fmap (\(f, t) -> (f, specTyOfExecTySerialized t)) fs)
+specTyOfExecTySerialized (RTEnum n cs) = RTEnum (snOfEn n) (fmap (\(c, mt) -> (c, fmap specTyOfExecTySerialized mt)) cs)
 specTyOfExecTySerialized t = t -- TODO: not true in general
+        
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
-viewVar vname (RTNamed _) = return [di|#{vname}.dview().as_seq()|]
-viewVar vname (RTStruct _ _) = return [di|#{vname}.dview().as_seq()|]
-viewVar vname (RTEnum _ _) = return [di|#{vname}.dview().as_seq()|]
+viewVar vname (RTNamed _) = return [di|#{vname}.dview()|]
+viewVar vname (RTStruct _ _) = return [di|#{vname}.dview()|]
+viewVar vname (RTEnum _ _) = return [di|#{vname}.dview()|]
 viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(dview_option(#{vname}))|]
 viewVar vname (RTOption _) = return [di|dview_option(#{vname})|]
 viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.dview()|]
