@@ -345,8 +345,9 @@ extractExpr expr = do
                     return [di|(#{endp'})|]
                 Nothing -> throwError OutputWithUnknownDestination
             ae' <- extractCAExpr ae
+            ae'' <- specCast (ae', ae ^. tty) seqU8
             return [__di|
-            (output (#{ae'}) to #{dst'})
+            (output (#{ae''}) to #{dst'})
             |]
         CSample fl ck -> do
             let sz = pretty $ lowerFLen fl
