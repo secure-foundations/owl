@@ -59,6 +59,13 @@ extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
 extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
 
+mkNestPattern :: [Doc ann] -> Doc ann
+mkNestPattern l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
+
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
     let rn = specName n
@@ -78,12 +85,13 @@ extractCStruct (CStruct n fs isVest) = do
         genParserSerializer execname specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
             let fieldNamesCommaSep = hsep . punctuate comma $ fieldNames
+            let fieldNamesNestPattern = mkNestPattern fieldNames
             let parse = [__di|
             \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
                 let stream = parse_serialize::SpecStream { data: x, start: 0 };
                 if let Ok((_,_,parsed)) = parse_serialize::spec_parse_#{execname}(stream) {
-                    let (#{fieldNamesCommaSep}) = parsed;
+                    let (#{fieldNamesNestPattern}) = parsed;
                     Some(#{specname} { #{fieldNamesCommaSep} })
                 } else {
                     None
@@ -100,7 +108,7 @@ extractCStruct (CStruct n fs isVest) = do
                         data: seq_u8_of_len(#{hsep . punctuate (pretty " + ") $ fieldLens}),
                         start: 0,
                     };
-                    if let Ok((serialized, n)) = parse_serialize::spec_serialize_#{execname}(stream, (#{tupled fieldSels})) 
+                    if let Ok((serialized, n)) = parse_serialize::spec_serialize_#{execname}(stream, (#{mkNestPattern fieldSels})) 
                     {
                         Some(seq_truncate(serialized.data, n))
                     } else {
