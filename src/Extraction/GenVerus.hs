@@ -37,6 +37,28 @@ import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad VerusTy
 
+
+genVerusUserFunc :: CUserFunc VerusTy -> EM (Doc ann)
+genVerusUserFunc (CUserFunc name b) = do
+    let execname = execName name
+    let specname = name
+    (args, (retTy, body)) <- unbindCDepBind b
+    
+    let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
+    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
+    let retval = [di|res: #{pretty retTy}|]
+    body' <- genVerusCAExpr body
+    return [__di|
+    pub fn #{execname}(#{argdefs}) -> (#{retval})
+        ensures
+            res.dview() == #{specname}(#{viewArgs})
+    {
+        reveal(#{specname});
+        #{body'}
+    }
+    |]
+
+
 genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
 genVerusEndpointDef lnames = do
     let locNameOf s = [di|Loc_#{s}|]
@@ -71,7 +93,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     let cfgName = pretty $ "cfg_" ++ lname
     let (localNameDecls, localNameInits) = unzip . map (genVerusName False) $ ldata ^. localNames
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName True) $ ldata ^. sharedNames
-    let (pkDecls, pkInits) = unzip . map (genVerusName True) $ pubkeys
+    let (pkDecls, pkInits) = unzip . map (genVerusPk True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
     execFns <- mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
@@ -127,6 +149,19 @@ genVerusName fromConfig (vname, vsize, _) =
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
+    let nameDecl = [di|pub #{execname} : #{pretty nameTy}|] in
+    let nameInitBody = 
+            if fromConfig then [di|config.#{execname}|]
+            else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
+    let nameInit = [di|#{execname} : (#{nameInitBody})|] in
+    (nameDecl, nameInit)
+
+-- name decl, name initializer
+genVerusPk :: Bool -> VNameData -> (Doc ann, Doc ann)
+genVerusPk fromConfig (vname, vsize, _) = 
+    -- We ignore PID indices for now
+    -- debugLog $ "genVerusName: " ++ vname
+    let execname = "pk_" ++ execName vname in
     let nameDecl = [di|pub #{execname} : #{pretty nameTy}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]

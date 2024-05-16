@@ -57,7 +57,6 @@ extract' modbody = do
     (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
     lp <- prettyFile "extraction/lib_preamble.rs"
-    -- userFuncs <- printCompiledUserFuncs
     return (
         p                       <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
@@ -69,10 +68,6 @@ extract' modbody = do
         pretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         extractedOwl            <> line <> line <> line <> line <>
-        pretty "// ------------------------------------" <> line <>
-        pretty "// ------ USER-DEFINED FUNCTIONS ------" <> line <>
-        pretty "// ------------------------------------" <> line <> line <>
-        -- userFuncs               <> line <> line <>
         pretty "// ------------------------------------" <> line <>
         pretty "// ------------ ENTRY POINT -----------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
@@ -234,7 +229,7 @@ concretifyPass owlExtrData = do
     where
         -- Extract only the user funcs that need to be extracted
         concretifyUserFuncs = do
-            oufs <- use owlUserFuncs 
+            oufs <- M.assocs <$> use owlUserFuncs 
             let oufs' = mapMaybe (\(name, (uf, rtopt)) -> case rtopt of Just _ -> Just (name, uf) ; Nothing -> Nothing) oufs
             mapM (uncurry Concretify.concretifyUserFunc) oufs'
     
@@ -257,7 +252,8 @@ genVerusPass crExtrData = do
     endpointDef <- GenVerus.genVerusEndpointDef <$> M.keys $ crExtrData ^. locMap
     (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
     locDefs <- mapM (GenVerus.genVerusLocality $ crExtrData ^. pubKeys) <$> M.assocs $ crExtrData ^. locMap
-    let verusDefs = vsep $ endpointDef : tyDefs : locDefs
+    userFuncDefs <- mapM GenVerus.genVerusUserFunc $ crExtrData ^. userFuncs
+    let verusDefs = vsep $ endpointDef : tyDefs : locDefs ++ userFuncDefs
     return (verusDefs, vestDefs)
 
 specExtractPass :: CFExtractionData -> ExtractionMonad FormatTy (Doc ann)
@@ -265,7 +261,8 @@ specExtractPass cfExtrData = do
     debugPrint $ "Generating Verus specs"
     tyDefs <- mapM (SpecExtraction.extractCTyDef . snd) $ cfExtrData ^. tyDefs
     defSpecs <- mapM SpecExtraction.extractLoc <$> M.assocs $ cfExtrData ^. locMap
-    return $ vsep $ tyDefs ++ defSpecs
+    userFuncSpecs <- mapM SpecExtraction.extractUserFunc $ cfExtrData ^. userFuncs
+    return $ vsep $ tyDefs ++ defSpecs ++ userFuncSpecs
 
 mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
 mkEntryPoint verusExtrData = do

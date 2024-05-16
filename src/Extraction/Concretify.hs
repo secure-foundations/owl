@@ -208,7 +208,7 @@ concreteTyOfApp (PRes pth) =
                 return retTy
             Nothing -> do
                 oufs <- use owlUserFuncs
-                case lookup p oufs of
+                case oufs M.!? p of
                     Just (ufdef, rtyOpt) -> do
                         case rtyOpt of
                             Just rty -> return rty
@@ -539,6 +539,8 @@ concretifyUserFunc ufName uf = do
 rtyOfUserFunc :: String -> TB.UserFunc -> EM FormatTy
 rtyOfUserFunc ufName uf = do
     (_, rty) <- concretifyUserFunc' ufName uf
+    oufs <- use owlUserFuncs
+    owlUserFuncs %= M.insert ufName (uf, Just rty)
     return rty
 
 

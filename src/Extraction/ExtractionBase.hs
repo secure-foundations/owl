@@ -59,7 +59,7 @@ data Env t = Env {
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _curLocality :: Maybe String
-    ,   _owlUserFuncs :: [(String, (TB.UserFunc, Maybe FormatTy))] -- (return type (Just if needs extraction))
+    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
 }
 
 
@@ -174,8 +174,8 @@ instance Fresh (ExtractionMonad t) where
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
 initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty Nothing (mkUFs owlUserFuncs)
     where
-        mkUFs :: [(String, TB.UserFunc)] -> [(String, (TB.UserFunc, Maybe FormatTy))]
-        mkUFs = map (\(s, uf) -> (s, (uf, Nothing)))
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
+        mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
 
 

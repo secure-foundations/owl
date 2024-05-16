@@ -434,3 +434,22 @@ extractLoc :: (LocalityName, FormatLocalityData) -> EM (Doc ann)
 extractLoc (locname, locdata) = do
     defs' <- mapM (extractDef locname) . catMaybes $ locdata ^. defs
     return $ vsep defs'
+
+
+extractUserFunc :: CUserFunc FormatTy -> EM (Doc ann)
+extractUserFunc (CUserFunc name b) = do
+    let specname = name
+    (args, (retTy, body)) <- unbindCDepBind b
+    args' <- mapM extractArg args
+    let specRetTy = specTyOfSerialized retTy
+    body <- extractCAExpr body
+    return [__di|
+        \#[verifier::opaque]
+        pub closed spec fn #{specname}(#{hsep . punctuate comma $ args'}) -> (res: #{pretty specRetTy}) {
+            #{body}
+        }
+    |]
+    where
+        extractArg (cdvar, strname, ty) = do
+            let specty = specTyOf ty
+            return [di|#{pretty strname} : #{pretty specty}|]
