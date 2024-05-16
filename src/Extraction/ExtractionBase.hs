@@ -277,14 +277,18 @@ fLenOfNameTy nt = do
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
 concreteLength (CUsizeConst s) = do
-    debugPrint $ "WARNING: using hardcoded concrete length for " ++ s
-    case s of
-        "KDFKEY_SIZE" -> return 32
-        "GROUP_SIZE"  -> return 32
-        "ENCKEY_SIZE" -> return 32
-        "MACKEY_SIZE" -> return 64
-        "NONCE_SIZE"  -> return 12
+    l <- case s of
+        "KDFKEY_SIZE"   -> return 32
+        "GROUP_SIZE"    -> return 32
+        "ENCKEY_SIZE"   -> return 32
+        "MACKEY_SIZE"   -> return 64
+        "NONCE_SIZE"    -> return 12
+        "TAG_SIZE"      -> return 16
+        "MACLEN_SIZE"   -> return 16
+        "COUNTER_SIZE"  -> return 8
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
+    debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
+    return l
 concreteLength (CUsizePlus a b) = do
     a' <- concreteLength a
     b' <- concreteLength b
@@ -302,9 +306,9 @@ lowerFLen (FLPlus a b) =
     let a' = lowerFLen a in
     let b' = lowerFLen b in
     CUsizePlus a' b'
--- lowerFLen (FLCipherlen a) = do 
---     n' <- lowerFLen a
---     return $ CUsizeConst $ "CIPHERLEN(" ++ show n' ++ ")"
+lowerFLen (FLCipherlen a) = 
+    let n' = lowerFLen a in
+    CUsizePlus n' (CUsizeConst "TAG_SIZE")
 
 
 
