@@ -66,6 +66,41 @@ counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
+func honest_c1<i@n_eph>() = 
+    gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n_eph>)), 0x)
+
+func honest_c2<i@n_eph,m_pk>() =
+    gkdf<kdfkey||enckey;0>(honest_c1<session i, pid n_eph>(),
+        dh_combine(dhpk(get(E_init<i@n_eph>)), get(S_resp<@m_pk>)), 0x)
+
+func honest_c3<i@n_eph, n_pk,m_pk>() = 
+    gkdf<kdfkey||enckey;0>(honest_c2<session i, pid n_eph, pid m_pk>(), 
+        dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m_pk>)),
+        0x
+    )
+
+
+func honest_c4<i,j@n_eph,n_pk,m_eph, m_pk>() = 
+    gkdf<kdfkey||nonce||enckey;0>(honest_c3<session i, pid n_eph, pid n_pk, pid m_pk>(),
+        dhpk(get(E_resp<j@m_eph>)),
+        0x
+    )
+
+func honest_c5<i,j@n_eph,n_pk,m_eph,m_pk>() = 
+    gkdf<kdfkey;0>(honest_c4<session i, session j, pid n_eph, pid n_pk, pid
+    m_eph, pid m_pk>(),
+        dh_combine(dhpk(get(E_init<i@n_eph>)), get(E_resp<j@m_eph>)),
+        0x
+    )
+
+func honest_c6<i,j@n_eph,n_pk,m_eph, m_pk>() = 
+    gkdf<kdfkey; 0>(honest_c5<session i, session j, pid n_eph, pid n_pk, pid
+    m_eph, pid m_pk>(),
+        dh_combine(dhpk(get(S_init<@n_pk>)), get(E_resp<j@m_eph>)),
+        0x
+    )
+
+
 nametype transp_key_init_send<@n,m> = 
             st_aead (Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>)
                 aad x. true
@@ -83,24 +118,6 @@ nametype C7<@n,m> = kdf {ikm info.
         strict transp_key_resp_send<@n,m>
 }
 
-nametype transp_key_init_send_corr = 
-      st_aead (x:Data<adv>{False})
-                        aad x. true
-                        nonce N_init_send
-
-nametype transp_key_resp_send_corr = 
-      st_aead (x:Data<adv>{False})
-                        aad x. true
-                        nonce N_resp_send
-    
-
-nametype C7_corr = kdf {ikm info.
-    True ->
-        strict transp_key_init_send_corr
-        ||
-        strict transp_key_resp_send_corr
-}
-
 counter aead_counter_msg2_C7<j@m> @ Responder<m>
 
 predicate valid_h6(h) = 
@@ -109,23 +126,23 @@ predicate valid_h6(h) =
         
 
 nametype C6_dual<@n, m> = dualkdf {salt info.
-    True -> strict C7<@n,m> || public nonce || 
+    (exists i:idx,j:idx. salt == honest_c6<session i, session j, pid n, pid n,
+    pid m, pid m>()) -> strict C7<@n,m> || public nonce || 
         strict st_aead (Data<adv> |0|)
            aad x. valid_h6[x] 
-           nonce aead_counter_msg2_C7
-}
-
-// name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
-
-nametype C6_corr = kdf {ikm info.
-    True -> strict C7_corr || public nonce ||
+           nonce aead_counter_msg2_C7,
+    (forall i:idx, j:idx. salt != honest_c6<session i, session j, pid n, pid n,
+    pid m, pid m>()) -> strict nonce |kdfkey| || public nonce ||  
         strict st_aead (Data<adv> |0|) // (x:(Data<adv> |0|){False})
-                       aad x. (exists m2:idx. valid_h6[x])
+                       aad x. true // (exists m2:idx. valid_h6[x])
                        nonce aead_counter_msg2_C7
+        
 }
+
+name psk<@n,m> : C6_dual<@n,m> @ Initiator<n>, Responder<m>
 
 nametype C6<@n, m> = kdf {ikm info.
-    ikm == 0x -> 
+    True -> 
         strict C7<@n,m> || public nonce || 
         strict st_aead (Data<adv> |0|)
            aad x. valid_h6[x] 
@@ -133,26 +150,15 @@ nametype C6<@n, m> = kdf {ikm info.
 }
 
 
-nametype C5_corr = kdf {ikm info.
-    True -> strict C6_corr
-}
-
 
 nametype C5<@n,m> = kdf {ikm info.
     True -> 
     strict C6<@n,m> 
 }
 
-func honest_c1<i@n_eph>() = 
-    gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n_eph>)), 0x)
-
-
-nametype C4_corr = kdf {ikm info.
-    True -> strict C5_corr
-}
-
 nametype C4<@n,m> = kdf {ikm info.
-    True -> strict C5<@n,m> 
+    (exists i:idx,j:idx. ikm == dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))) -> strict C5<@n,m>,
+    (forall i:idx, j:idx. ikm != dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))) -> strict nonce |kdfkey|
 }
 
 locality nobody
@@ -163,12 +169,9 @@ nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
                         
 
 nametype C3<@n,m> = kdf {ikm info.
-    True -> strict C4<@n,m> || strict useless_enc
-    // !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr<@n,m> || strict useless_enc
-}
-
-nametype C3_corr = kdf {ikm info.
-    True -> strict C4_corr || strict useless_enc
+    exists j:idx. ikm == dhpk(get(E_resp<j@m>)) -> strict C4<@n,m> || strict
+    useless_enc,
+    (forall j:idx. ikm != dhpk(get(E_resp<j@m>))) -> strict nonce |kdfkey| || strict useless_enc
 }
 
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
@@ -184,6 +187,7 @@ nametype C2<@n,m> = kdf {ikm info.
                            nonce aead_counter_msg1_C3
 }
 
+
 counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 odh L1<i@n,m> :
@@ -191,44 +195,12 @@ odh L1<i@n,m> :
         salt == honest_c1<session i, pid n>() -> 
             strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
                              aad x. true
-                             nonce aead_counter_msg1_C2
+                             nonce aead_counter_msg1_C2,
+        salt != honest_c1<session i, pid n>() ->
+            strict nonce |kdfkey| || strict st_aead (x:Data<adv>{false})
+                              aad x. true
+                              nonce aead_counter_msg1_C2
 }                                                            
-
-func honest_c2<i@n_eph,m>() =
-    gkdf<kdfkey||enckey;0>(honest_c1<session i, pid n_eph>(),
-        dh_combine(dhpk(get(E_init<i@n_eph>)), get(S_resp<@m>)), 0x)
-
-func honest_c3<i@n_eph, n_pk,m>() = 
-    gkdf<kdfkey||enckey;0>(honest_c2<session i, pid n_eph, pid m>(), 
-        dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)),
-        0x
-    )
-
-
-func honest_c4<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey||nonce||enckey;0>(honest_c3<session i, pid n_eph, pid n_pk, pid m>(),
-        dhpk(get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c5<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey;0>(honest_c4<session i, session j, pid n_eph, pid n_pk, pid m>(),
-        dh_combine(dhpk(get(E_init<i@n_eph>)), get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c6<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey; 0>(honest_c5<session i, session j, pid n_eph, pid n_pk, pid m>(),
-        dh_combine(dhpk(get(S_init<@n_pk>)), get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c7<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey||nonce||enckey; 0>(honest_c6<session i, session j, pid n_eph,
-    pid n_pk, pid m>(),
-        0x,
-        0x
-    )
 
 
 odh L2<@n,m> : 
@@ -237,49 +209,30 @@ odh L2<@n,m> :
                 strict C3<@n,m> || strict st_aead (Data<adv> |12|)
                            aad x. h3_pred[x]
                            nonce aead_counter_msg1_C3,
-        <n_eph>
-        n_eph !=idx n /\ 
-        (!exists i:idx. salt == honest_c2<session i, pid n, pid m>())
-        /\
-        (exists i:idx.
-            salt == honest_c2<session i, pid n_eph, pid m>())
+        <n2>
+            n2 !=idx n /\
+            (forall i:idx. salt != honest_c2<session i, pid n, pid m>()) /\
+            (exists i:idx. salt == honest_c2<session i, pid n2, pid m>())
             ->
-                strict C3_corr || strict st_aead (Data<adv> |12|)
-                                   aad x. h3_pred[x]
-                                   nonce aead_counter_msg1_C3
-        
+                strict nonce |kdfkey| || strict useless_enc
     }
 
 odh L4<i,j@n,m> :
     E_init<i@n>, E_resp<j@m> -> {salt info.
-        salt == honest_c4<session i, session j, pid n, pid n, pid m>()
+        salt == honest_c4<session i, session j, pid n, pid n, pid m, pid m>()
              -> strict C5<@n,m>,
-
-        <n_pk> n_pk !=idx n 
-        /\
-        salt != honest_c4<session i, session j, pid n, pid n, pid m>()
-        /\
-        (exists i:idx.
-            salt == honest_c4<session i, session j, pid n, pid
-            n_pk, pid m>())
-            -> strict C5_corr
+        salt != honest_c4<session i, session j, pid n, pid n, pid m, pid m>()
+            -> strict nonce |kdfkey|
 }
 
 odh L5<j@n,m> :
     S_init<@n>, E_resp<j@m> -> {salt info.
-        (exists i:idx. salt == honest_c5<session i, session j, pid n, pid n, pid m>())
+        (exists i:idx. salt == honest_c5<session i, session j, pid n, pid n, pid m, pid m>())
             -> 
             strict C6<@n,m>,
-
-        <n_eph> 
-        n_eph !=idx n /\
-        (! exists i:idx. salt == honest_c5<session i, session j, pid n, pid n, pid m>()) /\
-        (exists i:idx.
-            salt == honest_c5<session i, session j, pid n_eph,
-            pid n, pid m>()
-        ) ->
-            strict C6_corr
-
+        (forall i:idx. salt != honest_c5<session i, session j, pid n, pid n, pid
+        m, pid m>()) ->
+            strict nonce |kdfkey|
 }
 
 nametype C1<@n,m> = kdf {ikm info.
@@ -352,6 +305,9 @@ func dh(x, y) = dh_combine(dhpk(x), y)
 // Transport keys for initiator
 
 predicate init_clean<i,n,m>(eph) = 
+    sec(psk<@n,m>)
+    \/
+    (
     (sec(S_init<@n>) \/ sec(E_init<i@n>))
     /\
     (
@@ -359,7 +315,7 @@ predicate init_clean<i,n,m>(eph) =
     \/
     (exists j:idx. eph == dhpk(get(E_resp<j@m>)) /\
      sec(E_resp<j@m>)
-    ))
+    )))
 
 struct transp_keys_init<i,n,m> {
     tki_msg2_receiver : Data<adv> |4|,
@@ -379,6 +335,9 @@ struct transp_keys_init<i,n,m> {
 // (Pre-)Transport keys for initiator
 
 predicate resp_clean<j,n_pk,n_eph,m>(eph) = 
+    sec(psk<@n_pk, m>)
+    \/
+    (
     (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)))
     /\
     ((sec(S_resp<@m>) /\ sec(S_init<@n_pk>))
@@ -388,7 +347,7 @@ predicate resp_clean<j,n_pk,n_eph,m>(eph) =
      (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)) /\
          ((sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
           \/
-          (sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>)))))
+          (sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))))))
 
 struct transp_keys_resp<j,n_pk,n_eph,m> {
     tkr_msg2_receiver : Data<adv> |4|,
@@ -400,7 +359,7 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
         if n_pk =idx n_eph then 
               SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x))
         else
-            SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x))
+            SecName(KDF<enckey||enckey;0;nonce |enckey|>(tkr_c7, 0x, 0x))
         else
         Data<adv>, 
     tkr_k_resp_send : if resp_clean<j,n_pk,n_eph,m>[tkr_eph] then
@@ -408,6 +367,6 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
             SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7,
             0x, 0x))
         else
-            SecName(KDF<enckey||enckey;1;transp_key_resp_send_corr>(tkr_c7, 0x, 0x))
+            SecName(KDF<enckey||enckey;1;nonce |enckey|>(tkr_c7, 0x, 0x))
         else Data<adv> 
 }
