@@ -58,7 +58,6 @@ data Env t = Env {
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
-    ,   _curLocality :: Maybe String
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
 }
 
@@ -138,7 +137,6 @@ liftExtractionMonad m = do
             _freshCtr = env' ^. freshCtr,
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
-            _curLocality = env' ^. curLocality,
             _owlUserFuncs = env' ^. owlUserFuncs
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
@@ -172,7 +170,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty Nothing (mkUFs owlUserFuncs)
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs)
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l

@@ -51,10 +51,16 @@ genVerusUserFunc (CUserFunc name b) = do
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let retTy' = liftLifetime lifetimeConst retTy
     let retval = [di|res: #{pretty retTy'}|]
+    let ensuresLenValid = case retTy of
+            RTOwlBuf _ -> [di|res.len_valid()|]
+            RTStruct _ _ -> [di|res.len_valid()|]
+            RTEnum _ _ -> [di|res.len_valid()|]
+            _ -> [di||]
     return [__di|
     pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
         ensures
-            res.dview() == #{specname}(#{viewArgs})
+            res.dview() == #{specname}(#{viewArgs}),
+            #{ensuresLenValid}
     {
         reveal(#{specname});
         #{body'}
@@ -284,15 +290,24 @@ genVerusCAExpr ae = do
         |]
 
 
--- The first argument (inK) is true if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
--- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
-genVerusCExpr :: Bool -> CExpr VerusTy -> EM (Doc ann)
-genVerusCExpr inK expr = do
+-- Extra info needed just for `genVerusCExpr`
+data GenCExprInfo ann = GenCExprInfo { 
+    -- True if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
+    -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
+    inK :: Bool, 
+    -- The spec itree type of the current function, which is needed because Rust type inference cannot infer it
+    specItreeTy :: Doc ann,
+    curLocality :: LocalityName
+} deriving (Show)
+
+
+genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (Doc ann)
+genVerusCExpr info expr = do
     case expr ^. tval of
         CSkip -> return [di|()|]
         CRet ae -> do
             ae' <- genVerusCAExpr ae
-            if inK then
+            if inK info then
                 return [di|(#{ae'}, Tracked(itree))|]
             else 
                 return [di|#{ae'}|]
@@ -300,10 +315,11 @@ genVerusCExpr inK expr = do
             let ((x, ev), k) = unsafeUnbind xek
             let rustX = execName . show $ x
             let rustEv = if show ev == "_" then "_" else execName . show $ ev
-            k' <- genVerusCExpr inK k
+            let itreeTy = specItreeTy info
+            k' <- genVerusCExpr info k
             castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
             return [__di|
-            let (tmp_#{rustX}, #{rustEv}) = { owl_input(Tracked(&mut itree), &self.listener) };
+            let (tmp_#{rustX}, #{rustEv}) = { owl_input::<#{itreeTy}>(Tracked(&mut itree), &self.listener) };
             let #{rustX} = #{castTmp};
             #{k'}
             |]
@@ -314,38 +330,36 @@ genVerusCExpr inK expr = do
                     return [di|&#{plname}_addr()|]
                 Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
                 Nothing -> throwError OutputWithUnknownDestination 
-            myAddr <- do
-                lname <- use curLocality
-                case lname of
-                    Just lname -> return [di|&#{lname}_addr()|]
-                    Nothing -> throwError $ ErrSomethingFailed "bad self locality in output"
+            let myAddr = [di|&#{curLocality info}_addr()|]
             ae' <- genVerusCAExpr ae
             aeCast <- (ae', ae ^. tty) `cast` u8slice
-            let retItree = if inK then [di|((), Tracked(itree))|] else [di||]
+            let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
+            let itreeTy = specItreeTy info
             return [__di|
-            owl_output(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
+            owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
             #{retItree}
             |]
         CSample fl xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             let sz = lowerFLen fl
-            k' <- genVerusCExpr inK k
+            k' <- genVerusCExpr info k
+            let itreeTy = specItreeTy info
             return [__di|
-            let #{rustX} = owl_sample(Tracked(&mut itree), #{pretty sz});
+            let #{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
             #{k'}
             |]
         CLet e oanf xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
-            e' <- genVerusCExpr False e
-            k' <- genVerusCExpr inK k
+            e' <- genVerusCExpr (info { inK = False }) e
+            k' <- genVerusCExpr info k
             return [__di|
             let #{rustX} = { #{e'} };
             #{k'}
             |]
         CBlock ebody -> do
-            ebody' <- genVerusCExpr inK ebody
+            ebody' <- genVerusCExpr info ebody
             return [__di|
             { 
                 #{ebody'} 
@@ -353,8 +367,8 @@ genVerusCExpr inK expr = do
             |]
         CIf ae e1 e2 -> do
             ae' <- genVerusCAExpr ae
-            e1' <- genVerusCExpr inK e1
-            e2' <- genVerusCExpr inK e2
+            e1' <- genVerusCExpr info e1
+            e2' <- genVerusCExpr info e2
             return [__di|
             if #{ae'} {
                 #{e1'}
@@ -371,7 +385,7 @@ genVerusCExpr inK expr = do
             let genCase (c, o) = do
                     case o of
                         Left k -> do
-                            k' <- genVerusCExpr inK k
+                            k' <- genVerusCExpr info k
                             let parens = case ae ^. tty of
                                     RTOption _ -> ""
                                     _ -> "()"
@@ -388,7 +402,7 @@ genVerusCExpr inK expr = do
                             -- in the case body (e.g., if the enum contains an owned Vec
                             -- but the case body should have an OwlBuf or something)
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
-                            k' <- genVerusCExpr inK k
+                            k' <- genVerusCExpr info k
                             return [__di|
                             #{aeTyPrefix}#{c}(tmp_#{rustX}) => {
                                 let #{rustX} = #{castTmp}; 
@@ -419,10 +433,10 @@ genVerusCExpr inK expr = do
                     |]
             selectors <- zipWithM genSelector parsedTypeMembers castRustXs
             ae' <- genVerusCAExpr ae
-            k' <- genVerusCExpr inK k
+            k' <- genVerusCExpr info k
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
-                    otw' <- genVerusCExpr inK otw
+                    otw' <- genVerusCExpr info otw
                     castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
                     return [__di|
                     let parseval_tmp = #{ae'};
@@ -456,19 +470,24 @@ genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
     let specname = cdef ^. defName ++ "_spec"
-    (owlArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
-    verusArgs <- mapM compileArg owlArgs
+    (defArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
+    verusArgs <- mapM compileArg defArgs
     let specRt = specTyOfExecTySerialized rty
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
     let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : mutStateArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
-    specargs <- mapM viewArg owlArgs
-    curLocality .= Just lname
-    body <- genVerusCExpr True body
-    curLocality .= Nothing
+    specargs <- mapM viewArg defArgs
+    let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
+    body <- genVerusCExpr genInfo body
     viewRes <- viewVar "(r.0)" rty
+    let mkArgLenVald (arg, _, argty) = case argty of
+            RTOwlBuf _ -> [di|#{prettyArgName arg}.len_valid()|]
+            RTStruct _ _ -> [di|#{prettyArgName arg}.len_valid()|]
+            RTEnum _ _ -> [di|#{prettyArgName arg}.len_valid()|]
+            _ -> [di||]
+    let requiresLenValid = hsep . punctuate comma $ map mkArgLenVald defArgs 
     let ensuresLenValid = case rty of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
@@ -479,6 +498,7 @@ genVerusDef lname cdef = do
     pub fn #{execname}(#{argdefs}) -> #{retval}
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
+            #{requiresLenValid}
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *mut_state)),
             #{ensuresLenValid}
@@ -494,8 +514,9 @@ genVerusDef lname cdef = do
     |]
     where
         compileArg (cdvar, strname, ty) = do
-            return [di|#{pretty . execName . show $ cdvar}: #{pretty ty}|]
+            return [di|#{prettyArgName $ cdvar}: #{pretty ty}|]
         viewArg (cdvar, strname, ty) = viewVar (execName . show $ cdvar) ty
+        prettyArgName = pretty . execName . show
 
 
 vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> ExtractionMonad t (Maybe (Doc ann))
@@ -596,7 +617,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
             let body = vsep . punctuate comma . fmap (\(_, ename, _) -> [di|#{ename}: arg_#{ename}|]) $ fields
-            let args = hsep . punctuate comma . fmap (\(_, ename, fty) -> [di|arg_#{ename}: #{pretty fty}|]) $ fields
+            let args = hsep . punctuate comma . fmap (\(_, ename, fty) -> [di|arg_#{ename}: #{pretty fty}#{extraLt lAnnot fty}|]) $ fields
             let reqs = vsep . punctuate comma . mapMaybe (
                         \(_, ename, fty) -> case fty of
                             RTOwlBuf _ -> Just [di|arg_#{ename}.len_valid()|]
