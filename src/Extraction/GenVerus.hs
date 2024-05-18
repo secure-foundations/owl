@@ -515,6 +515,7 @@ addLifetime lt (RTRef RShared ty) = RTRef (RSharedWithLifetime lt) ty
 addLifetime lt (RTStruct s fs) = if structNeedsLifetime s fs then RTWithLifetime (RTStruct s fs) lt else RTStruct s fs
 addLifetime lt (RTEnum s cs) = if enumNeedsLifetime s cs then RTWithLifetime (RTEnum s cs) lt else RTEnum s cs
 addLifetime lt (RTOwlBuf _) = RTOwlBuf lt
+addLifetime lt (RTOption ty) = RTOption (addLifetime lt ty)
 addLifetime _ t = t 
 
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
@@ -527,34 +528,34 @@ genVerusDef lname cdef = do
     let lt = Lifetime "a"
     let ltArgs = map (\(n, s, t) -> (n, s, addLifetime lt t)) defArgs'
     let ltRty = addLifetime lt rty'
-    let (defArgs, rty, needsLt) = 
+    let (defArgsLt, rtyLt, needsLt) = 
             if ltArgs == defArgs' && ltRty == rty' then (defArgs', rty', False) else (ltArgs, ltRty, True)
-    verusArgs <- mapM compileArg defArgs
-    let specRt = specTyOfExecTySerialized rty
+    verusArgs <- mapM compileArg defArgsLt
+    let specRt = specTyOfExecTySerialized rty'
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
     let argdefs = hsep . punctuate comma $ [di|&#{if needsLt then pretty lt else pretty ""} self|] : itreeArg : mutStateArg : verusArgs
-    let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
-    specargs <- mapM viewArg defArgs
+    let retval = [di|(res: Result<(#{pretty rtyLt}, #{itreeTy}), OwlError>)|]    
+    specargs <- mapM viewArg defArgs'
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
     body <- genVerusCExpr genInfo body
-    castResInner <- cast ([di|res_inner|], body ^. eTy) rty
-    viewRes <- viewVar "(r.0)" rty
+    castResInner <- cast ([di|res_inner|], body ^. eTy) rty'
+    viewRes <- viewVar "(r.0)" rty'
     let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
             RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
             RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
             RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
             _ -> Nothing
-    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs
+    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs'
     let mkEnsuresLenValid rty'' = case rty'' of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTEnum _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTWithLifetime t _ -> mkEnsuresLenValid rty''
             _ -> [di||]
-    let ensuresLenValid = mkEnsuresLenValid rty
+    let ensuresLenValid = mkEnsuresLenValid rty'
     return [__di|
     \#[verifier::spinoff_prover]
     pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
@@ -1036,6 +1037,7 @@ specTyOfExecTySerialized (RTOption t) = RTOption (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTTuple ts) = RTTuple (fmap specTyOfExecTySerialized ts)
 specTyOfExecTySerialized (RTStruct n fs) = RTStruct (snOfEn n) (fmap (\(f, t) -> (f, specTyOfExecTySerialized t)) fs)
 specTyOfExecTySerialized (RTEnum n cs) = RTEnum (snOfEn n) (fmap (\(c, mt) -> (c, fmap specTyOfExecTySerialized mt)) cs)
+specTyOfExecTySerialized (RTWithLifetime t l) = specTyOfExecTySerialized t
 specTyOfExecTySerialized t = t -- TODO: not true in general
         
 
