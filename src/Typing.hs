@@ -2511,18 +2511,13 @@ proveDisjointContents x y = do
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
 
-data KDFInferResult = 
-    KDFAdv -- Public out-of-bounds KDF result, produced by PRF-ODH declassification
-    | KDFGood KDFStrictness NameExp -- Secret, good KDF result
-    | KDFGarbage NameExp -- Secret, garbage KDF result
-    | KDFCorrupt Label -- Good but public KDF result
+data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt Label 
     deriving (Show, Generic, Typeable)
 
 instance OwlPretty KDFInferResult where
     owlpretty KDFAdv = owlpretty "KDFAdv"
     owlpretty (KDFGood str ne) = owlpretty "KDFGood(" <> owlpretty ne <> owlpretty ")"
     owlpretty (KDFCorrupt l) = owlpretty "KDFCorrupt(" <> owlpretty l <> owlpretty ")"
-    owlpretty (KDFGarbage _) = owlpretty "KDFGarbage"
 
 instance Alpha KDFInferResult
 
@@ -2535,8 +2530,6 @@ unifyKDFInferResult _ _ (KDFCorrupt _) v = return v
 unifyKDFInferResult _ _ v (KDFCorrupt _) = return v
 unifyKDFInferResult _ _ (KDFAdv) v = return v
 unifyKDFInferResult _ _ v KDFAdv = return v
-unifyKDFInferResult _ _ (KDFGarbage _) v@(KDFGood _ _) = return v
-unifyKDFInferResult _ _ v@(KDFGood _ _) (KDFGarbage _) = return v
 unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
     ne <- normalizeNameExp ne_
     ne' <- normalizeNameExp ne_'
@@ -2573,24 +2566,11 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                            forM xs $ \x -> do
                                t <- inferAExpr x >>= normalizeTy
                                return (x, t)
-    results <- mapM (go kpos other c (i, is_case) j nks) principals
-    findBestResult results
+    go kpos other principals c (i, is_case) j nks
         where
-            findBestResult :: [Maybe KDFInferResult] -> Check (Maybe KDFInferResult)
-            findBestResult xs = do
-                let toInt o = 
-                        case o of
-                          Nothing -> 0
-                          Just (KDFCorrupt _) -> 1
-                          Just (KDFAdv) -> 2
-                          Just (KDFGarbage _) -> 3
-                          Just (KDFGood _ _) -> 4
-                let xs' = L.sortBy (\o1 o2 -> compare (toInt o1) (toInt o2)) xs
-                return $ case xs' of
-                           [] -> Nothing
-                           _ -> last xs'
-            go kpos other c (i, is_case) j nks (xp, tp) = do
-                case extractNameFromType tp of
+            go kpos other [] c (i, is_case) j nks = return Nothing
+            go kpos other ((xp, tp):principals) c (i, is_case) j nks = do
+                res1 <- case extractNameFromType tp of
                           Nothing -> do
                               return Nothing
                           Just ne -> do
@@ -2601,13 +2581,6 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                 True -> do 
                                     nt <- getNameType ne
                                     case nt^.val of
-                                      NT_Nonce "kdfkey" -> do
-                                          ne_sec <- not <$> flowsTo (nameLbl ne) advLbl
-                                          l_corr <- coveringLabelOf [snd a, snd b, snd c]
-                                          assert "KDF row index out of bounds" $ j < length nks                    
-                                          let nk = nks !! j
-                                          if ne_sec then return $ Just $ KDFGarbage $ mkSpanned $ KDFName (fst a) (fst b) (fst c) nks j (mkSpanned $ NT_Nonce $ nameKindLength nk) (ignore True) 
-                                                    else return $ Just $ KDFCorrupt l_corr
                                       NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
                                           (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
                                           let cases = subst x (fst other) $ subst y (fst c) $ subst xself xp $ cases_
@@ -2616,7 +2589,7 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                           assert ("KDF case index arity mismatch") $ length ixs == length is_case
                                           let (p, nts) = substs (zip ixs is_case) $ pnts
                                           nks2 <- forM nts $ \(_, nt) -> getNameKind nt
-                                          assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf (map nameKindLength nks) (map nameKindLength nks2)
+                                          assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
                                           assert "KDF row index out of bounds" $ j < length nks                    
                                           let (str, nt) = nts !! j
                                           bp <- decideProp p
@@ -2632,6 +2605,10 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                               return Nothing
                                       _ -> do
                                           return Nothing
+                case res1 of
+                  Nothing -> go kpos other principals c (i, is_case) j nks
+                  Just (KDFCorrupt _) -> go kpos other principals c (i, is_case) j nks
+                  Just v -> return $ Just v
 
 -- Try to infer a valid local DH computation (pk, sk) from input
 -- (local = sk name is local to the module)
@@ -2679,7 +2656,7 @@ inferKDFODH a (b, tb) c s ips i j nks = pushRoutine ("inferKDFODH") $ do
     pth <- curModName
     (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
     nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
-    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf (map nameKindLength nks) (map nameKindLength nks2)
+    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
     assert "KDF row index out of bounds" $ j < length nks                    
     let (str, nt) = str_nts !! j
     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
@@ -2761,9 +2738,9 @@ findKDFODHColl (a, _) (b, _) (c, _) = do
                   Just False -> return $ Just $ Left s
                   Nothing -> return $ Just $ Right s
 
-nameKindLength :: NameKind -> String
+nameKindLength :: NameKind -> AExpr
 nameKindLength nk =
-    case nk of
+    aeLenConst $ case nk of
                                NK_KDF -> "kdfkey"
                                NK_DH -> "dhkey"
                                NK_Enc -> "enckey"
@@ -2939,7 +2916,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                  v <- pushRoutine "KDF.unify" $ local (set tcScope $ TcGhost False) $ unifyKDFInferResult i e v1 v2
                                  return $ Just v
                     assert ("Name kind index out of bounds") $ j < length nks
-                    let outLen = aeLenConst $ nameKindLength $ nks !! j
+                    let outLen = nameKindLength $ nks !! j
                     kdfProp <- do
                         a' <- resolveANF (fst a)
                         b' <- resolveANF (fst b)
@@ -2952,16 +2929,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                     kdfRefinement <$> case res of 
                       Nothing -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c] 
                       Just KDFAdv -> return $ tData advLbl advLbl
-                      Just (KDFGarbage ne) -> do
-                          let strictnessAx = pNot $ pFlow (nameLbl ne) advLbl -- We assume secret garbage values are strict
-                          return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ strictnessAx
-
                       Just (KDFGood strictness ne) -> pushRoutine "KDF.good" $ do 
                         let flowAx = case strictness of
                                        KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                                        KDFPub -> pFlow (nameLbl ne) advLbl 
                                        KDFUnstrict -> pTrue
-                        return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ flowAx
+                        return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                            flowAx 
                       Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
                           return $ tDataAnn l_corr zeroLbl "corrupt KDF"
           normalizeTy resTy
