@@ -466,28 +466,44 @@ genVerusCExpr info expr = do
             |] 
 
 
+-- Add lifetimes to references, structs, enums, OwlBufs for args/return types
+addLifetime :: Lifetime -> VerusTy -> VerusTy
+addLifetime lt (RTRef RMut ty) = RTRef (RMutWithLifetime lt) ty
+addLifetime lt (RTRef RShared ty) = RTRef (RSharedWithLifetime lt) ty
+addLifetime lt (RTStruct s fs) = if structNeedsLifetime s fs then RTWithLifetime (RTStruct s fs) lt else RTStruct s fs
+addLifetime lt (RTEnum s cs) = if enumNeedsLifetime s cs then RTWithLifetime (RTEnum s cs) lt else RTEnum s cs
+addLifetime lt (RTOwlBuf _) = RTOwlBuf lt
+addLifetime _ t = t 
+
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
     let specname = cdef ^. defName ++ "_spec"
-    (defArgs, (rty, body)) <- unbindCDepBind $ cdef ^. defBody
+    (defArgs', (rty', body)) <- unbindCDepBind $ cdef ^. defBody
+    -- If any of the arguments or return type have a lifetime, we parameterize the whole function with lifetime 'a
+    -- and make all arguments and return types have that lifetime
+    let lt = Lifetime "a"
+    let ltArgs = map (\(n, s, t) -> (n, s, addLifetime lt t)) defArgs'
+    let ltRty = addLifetime lt rty'
+    let (defArgs, rty, needsLt) = 
+            if ltArgs == defArgs' && ltRty == rty' then (defArgs', rty', False) else (ltArgs, ltRty, True)
     verusArgs <- mapM compileArg defArgs
     let specRt = specTyOfExecTySerialized rty
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
-    let argdefs = hsep . punctuate comma $ [di|&self|] : itreeArg : mutStateArg : verusArgs
+    let argdefs = hsep . punctuate comma $ [di|&#{if needsLt then pretty lt else pretty ""} self|] : itreeArg : mutStateArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rty}, #{itreeTy}), OwlError>)|]    
     specargs <- mapM viewArg defArgs
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
     body <- genVerusCExpr genInfo body
     viewRes <- viewVar "(r.0)" rty
     let mkArgLenVald (arg, _, argty) = case argty of
-            RTOwlBuf _ -> [di|#{prettyArgName arg}.len_valid()|]
-            RTStruct _ _ -> [di|#{prettyArgName arg}.len_valid()|]
-            RTEnum _ _ -> [di|#{prettyArgName arg}.len_valid()|]
-            _ -> [di||]
-    let requiresLenValid = hsep . punctuate comma $ map mkArgLenVald defArgs 
+            RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            _ -> Nothing
+    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs 
     let ensuresLenValid = case rty of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
@@ -495,7 +511,7 @@ genVerusDef lname cdef = do
             _ -> [di||]
     return [__di|
     \#[verifier::spinoff_prover]
-    pub fn #{execname}(#{argdefs}) -> #{retval}
+    pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
             #{requiresLenValid}
@@ -987,4 +1003,5 @@ viewVar vname (RTArray RTU8 _) = return [di|#{vname}.dview()|]
 viewVar vname (RTOwlBuf _) = return [di|#{vname}.dview()|]
 viewVar vname RTBool = return [di|#{vname}|]
 viewVar vname RTUsize = return [di|#{vname}|]
-viewVar vname ty = throwError $ ErrSomethingFailed $ "TODO: viewVar " ++ vname ++ " " ++ show ty
+viewVar vname (RTWithLifetime t _) = viewVar vname t
+viewVar vname ty = throwError $ ErrSomethingFailed $ "TODO: viewVar: " ++ vname ++ ": " ++ show ty

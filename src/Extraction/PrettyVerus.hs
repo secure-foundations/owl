@@ -14,6 +14,8 @@ import Verus
 instance Pretty BorrowKind where
     pretty RMut = pretty "&mut "
     pretty RShared = pretty "&"
+    pretty (RMutWithLifetime lt) = pretty "&" <> pretty lt <+> pretty "mut "
+    pretty (RSharedWithLifetime lt) = pretty "&" <> pretty lt <> pretty " "
 
 instance Pretty Lifetime where
     pretty (Lifetime lt) = pretty "\'" <> pretty lt
