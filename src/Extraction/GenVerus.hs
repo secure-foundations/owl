@@ -37,6 +37,30 @@ import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad VerusTy
 
+{- 
+To avoid issues with "lifetime does not live long enough", we sometimes need to have inner subexpressions evaluated at the
+"top level" of the function, e.g.:
+```
+let x = { 
+    let arr: [u8; 8] = owl_counter_as_bytes(&mut_state.ctr_x);
+    OwlBuf::from_slice(&arr)
+};
+```
+This doesn't work since `arr` is dropped at the end of the inner block. Instead, we need to do:
+```
+let arr: [u8; 8] = owl_counter_as_bytes(&mut_state.ctr_x);
+let x = OwlBuf::from_slice(&arr);
+```
+The GenRustExpr structure allows us to do the `cast` operation at the top level, if necessary
+-}
+data GenRustExpr ann = GenRustExpr { 
+    -- The generated type for the expression
+    _eTy :: VerusTy,
+    -- The Rust code for evaluating the expression without the cast applied
+    _code :: Doc ann
+} 
+makeLenses ''GenRustExpr
+
 
 genVerusUserFunc :: CUserFunc VerusTy -> EM (Doc ann)
 genVerusUserFunc (CUserFunc name b) = do
@@ -46,6 +70,7 @@ genVerusUserFunc (CUserFunc name b) = do
     let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
     let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
     body' <- genVerusCAExpr body
+    body'' <- castGRE body' retTy
     let needsLifetime = tyNeedsLifetime retTy
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
@@ -63,7 +88,7 @@ genVerusUserFunc (CUserFunc name b) = do
             #{ensuresLenValid}
     {
         reveal(#{specname});
-        #{body'}
+        #{body''}
     }
     |]
 
@@ -199,30 +224,28 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
-        , ("bytes_as_counter", ([u8slice], RTUsize))
-        , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
+        -- , ("bytes_as_counter", ([u8slice], RTUsize))
+        -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
           ("kdf", ("extract_expand_to_len", [u8slice, u8slice, u8slice, u8slice], vecU8))
         ]
 
-genVerusCAExpr :: CAExpr VerusTy -> EM (Doc ann)
+genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCAExpr ae = do
     case ae ^. tval of
-        CAVar s v -> return $ pretty $ execName $ show v
+        CAVar s v -> return $ GenRustExpr { _code = pretty $ execName $ show v, _eTy = ae ^. tty }
         CAApp f args -> do
             case builtins M.!? f of
                 Just (fExecName, argDstTys, rSrcTy) -> do
                     args' <- mapM genVerusCAExpr args
-                    let argtys = map (^. tty) args
-                    args'' <- zipWithM cast (zip args' argtys) argDstTys
-                    castRes <- cast ([di|val|], rSrcTy) (ae ^. tty)
-                    return [__di|
-                    {
-                        let val = #{fExecName}(#{hsep . punctuate comma $ args''});
-                        #{castRes}
-                    }
-                    |]
+                    args'' <- zipWithM castGRE args' argDstTys
+                    -- castRes <- cast ([di|val|], rSrcTy) (ae ^. tty)
+                    
+                    -- Delay the cast to the "top level". We could do some analysis to figure out
+                    -- if we can actually do it now
+                    let code = [di|#{fExecName}(#{hsep . punctuate comma $ args''})|]
+                    return $ GenRustExpr { _code = code, _eTy = rSrcTy }
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
@@ -231,64 +254,65 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             nonce' <- genVerusCAExpr nonce
                             aad' <- genVerusCAExpr aad
-                            castK <- cast (k', k ^. tty) u8slice
-                            castX <- cast (x', x ^. tty) u8slice
-                            castNonce <- cast (nonce', nonce ^. tty) (RTRef RMut RTUsize)
-                            castAad <- cast (aad', aad ^. tty) u8slice
+                            castK <- castGRE k' u8slice
+                            castX <- castGRE x' u8slice
+                            castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                            castAad <- castGRE aad' u8slice
                             castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
-                            return [__di|{ 
+                            return $ GenRustExpr (ae ^. tty) $ [__di|{ 
                                 match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
                                     Ok(ctxt) => { #{castRes} },
                                     Err(e) => { return Err(e) },
                                 }                                
                             }|]
-                        ("true", []) -> return [di|true|]
-                        ("false", []) -> return [di|false|]
+                        ("true", []) -> return $ GenRustExpr RTBool [di|true|] 
+                        ("false", []) -> return $ GenRustExpr RTBool [di|false|] 
                         ("Some", [x]) -> do
                             x' <- genVerusCAExpr x
-                            return [di|Some(#{x'})|]
-                        ("None", []) -> return [di|None|]
+                            x'' <- castGRE x' (x ^. tty)
+                            return $ GenRustExpr (RTOption (x ^. tty)) [di|Some(#{x''})|] 
+                        ("None", []) -> return $ GenRustExpr (ae ^. tty) [di|None|]
                         ("eq", [x,y]) -> do
                             x' <- genVerusCAExpr x
                             y' <- genVerusCAExpr y
-                            let castXTo = cast (x', x ^. tty)
-                            let castYTo = cast (y', y ^. tty)
+                            let castXTo = castGRE x'
+                            let castYTo = castGRE y'
                             case (x ^. tty, y ^. tty) of
                                 (RTVec RTU8, RTVec RTU8) -> do
                                     x'' <- castXTo u8slice
                                     y'' <- castYTo u8slice
-                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
                                 (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
                                     x'' <- castXTo u8slice
                                     y'' <- castYTo u8slice
-                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
                                 (RTOwlBuf _, RTOwlBuf _) -> do
                                     x'' <- castXTo u8slice
                                     y'' <- castYTo u8slice
-                                    return [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                _ -> return [di|#{x'} == #{y'}|] -- might not always work
+                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                                _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
                         _ -> do
                             args' <- mapM genVerusCAExpr args
-                            return [di|#{execName f}(#{hsep . punctuate comma $ args'})|]
+                            return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma . map (^. code) $ args'})|]
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
-            return [di|#{castN}|]
-        CAInt fl -> return $ pretty $ lowerFLen fl
+            return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
+        CAInt fl -> return  $ GenRustExpr (ae ^. tty) $ pretty $ lowerFLen fl
         CACounter ctrname -> do
             let rustCtr = execName ctrname
             castCtr <- cast ([di|mut_state.#{rustCtr}|], RTUsize) (ae ^. tty)
-            return [di|#{castCtr}|]
+            return $ GenRustExpr (ae ^. tty) [di|#{castCtr}|]
         CAHexConst s -> do
             s' <- hexStringToByteList s
             castX <- ([di|x|], vecU8) `cast` (ae ^. tty)
-            return [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
-        _ -> return [__di|
+            return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
+        _ -> return  $ GenRustExpr (ae ^. tty) [__di|
         /*
             TODO: genVerusCAExpr #{show ae}
         */
         |]
-
+    
 
 -- Extra info needed just for `genVerusCExpr`
 data GenCExprInfo ann = GenCExprInfo { 
@@ -300,17 +324,18 @@ data GenCExprInfo ann = GenCExprInfo {
     curLocality :: LocalityName
 } deriving (Show)
 
-
-genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (Doc ann)
+genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
     case expr ^. tval of
-        CSkip -> return [di|()|]
+        CSkip -> return $ GenRustExpr RTUnit [di|()|]
         CRet ae -> do
             ae' <- genVerusCAExpr ae
-            if inK info then
-                return [di|(#{ae'}, Tracked(itree))|]
+            if inK info then do
+                -- On this side we cast as necessary
+                castRes <- castGRE ae' (expr ^. tty) 
+                return $ GenRustExpr (expr ^. tty) [di|(#{castRes}, Tracked(itree))|]
             else 
-                return [di|#{ae'}|]
+                return ae'
         CInput t xek -> do
             let ((x, ev), k) = unsafeUnbind xek
             let rustX = execName . show $ x
@@ -318,10 +343,10 @@ genVerusCExpr info expr = do
             let itreeTy = specItreeTy info
             k' <- genVerusCExpr info k
             castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
-            return [__di|
+            return $ GenRustExpr (k' ^. eTy) [__di|
             let (tmp_#{rustX}, #{rustEv}) = { owl_input::<#{itreeTy}>(Tracked(&mut itree), &self.listener) };
             let #{rustX} = #{castTmp};
-            #{k'}
+            #{k' ^. code}
             |]
         COutput ae dst -> do
             dst' <- case dst of
@@ -332,10 +357,10 @@ genVerusCExpr info expr = do
                 Nothing -> throwError OutputWithUnknownDestination 
             let myAddr = [di|&#{curLocality info}_addr()|]
             ae' <- genVerusCAExpr ae
-            aeCast <- (ae', ae ^. tty) `cast` u8slice
+            aeCast <- ae' `castGRE` u8slice
             let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
             let itreeTy = specItreeTy info
-            return [__di|
+            return $ GenRustExpr RTUnit [__di|
             owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
             #{retItree}
             |]
@@ -345,39 +370,54 @@ genVerusCExpr info expr = do
             let sz = lowerFLen fl
             k' <- genVerusCExpr info k
             let itreeTy = specItreeTy info
-            return [__di|
+            return $ GenRustExpr (k' ^. eTy) [__di|
             let #{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
-            #{k'}
+            #{k' ^. code}
             |]
         CLet e oanf xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             e' <- genVerusCExpr (info { inK = False }) e
             k' <- genVerusCExpr info k
-            return [__di|
-            let #{rustX} = { #{e'} };
-            #{k'}
-            |]
+            -- Cast here, if necessary
+            if e' ^. eTy /= e ^. tty then do
+                castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)
+                return $ GenRustExpr (k' ^. eTy) [__di|
+                let tmp_#{rustX} = { #{e' ^. code} };
+                let #{rustX} = #{castE'};
+                #{k' ^. code}
+                |]
+            else do
+                return $ GenRustExpr (k' ^. eTy) [__di|
+                let #{rustX} = { #{e' ^. code} };
+                #{k' ^. code}
+                |]
         CBlock ebody -> do
             ebody' <- genVerusCExpr info ebody
-            return [__di|
+            when (ebody' ^. eTy /= expr ^. tty) $ throwError $ TypeError "block has different type than expected"
+            return $ GenRustExpr (expr ^. tty) [__di|
             { 
-                #{ebody'} 
+                #{ebody' ^. code} 
             }
             |]
         CIf ae e1 e2 -> do
             ae' <- genVerusCAExpr ae
+            ae'' <- castGRE ae' RTBool
             e1' <- genVerusCExpr info e1
             e2' <- genVerusCExpr info e2
-            return [__di|
-            if #{ae'} {
-                #{e1'}
+            when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError "if true branch has different type than expected"
+            when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError "if false branch has different type than expected"
+            when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
+            return $ GenRustExpr (e1' ^. eTy) [__di|
+            if #{ae''} {
+                #{e1' ^. code}
             } else {
-                #{e2'}
+                #{e2' ^. code}
             }
             |]
         CCase ae cases -> do
             ae' <- genVerusCAExpr ae
+            ae'' <- castGRE ae' (ae ^. tty)
             aeTyPrefix <- case ae ^. tty of
                 RTEnum n _ -> return [di|#{execName n}::|]
                 RTOption _ -> return [di|Option::|]
@@ -389,9 +429,9 @@ genVerusCExpr info expr = do
                             let parens = case ae ^. tty of
                                     RTOption _ -> ""
                                     _ -> "()"
-                            return [__di|
+                            return $ GenRustExpr (k' ^. eTy) [__di|
                             #{aeTyPrefix}#{c}#{parens} => { 
-                                #{k'} 
+                                #{k' ^. code} 
                             },
                             |]
                         Right xtk -> do
@@ -403,16 +443,17 @@ genVerusCExpr info expr = do
                             -- but the case body should have an OwlBuf or something)
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
                             k' <- genVerusCExpr info k
-                            return [__di|
+                            return $ GenRustExpr (k' ^. eTy) [__di|
                             #{aeTyPrefix}#{c}(tmp_#{rustX}) => {
                                 let #{rustX} = #{castTmp}; 
-                                #{k'} 
+                                #{k' ^. code} 
                             },
                             |]
             cases' <- mapM genCase cases
-            return [__di|
-            match #{ae'} {
-                #{vsep cases'}
+            let casesCode = map (^. code) cases'
+            return $ GenRustExpr (head cases' ^. eTy) [__di|
+            match #{ae''} {
+                #{vsep casesCode}
             }
             |]
         CParse pkind ae t maybeOtw xtsk -> do
@@ -433,33 +474,34 @@ genVerusCExpr info expr = do
                     |]
             selectors <- zipWithM genSelector parsedTypeMembers castRustXs
             ae' <- genVerusCAExpr ae
+            ae'' <- castGRE ae' (ae ^. tty)
             k' <- genVerusCExpr info k
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
                     otw' <- genVerusCExpr info otw
                     castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
-                    return [__di|
-                    let parseval_tmp = #{ae'};
+                    return $ GenRustExpr (k' ^. eTy) [__di|
+                    let parseval_tmp = #{ae''};
                     if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}) {
                         #{vsep selectors}
-                        #{k'}
+                        #{k' ^. code}
                     } else {
-                        #{otw'}
+                        #{otw' ^. code}
                     }
                     |]
                 (PFromDatatype, _) -> do
-                    return [__di|
-                    let parseval = #{ae'};
+                    return $ GenRustExpr (k' ^. eTy) [__di|
+                    let parseval = #{ae''};
                     #{vsep selectors}
-                    #{k'}
+                    #{k' ^. code}
                     |]
                 _ -> throwError $ TypeError "Tried to parse from buf without an otherwise case!"
         CGetCtr ctrname -> do
             let rustCtr = execName ctrname
-            castCtr <- ([di|owl_counter_as_bytes(&mut_state.#{rustCtr})|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
-            return [di|#{castCtr}|]
+            -- castCtr <- ([di|#{tmpCtrName}|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
+            return $ GenRustExpr (RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) [di|owl_counter_as_bytes(&mut_state.#{rustCtr})|]
         _ -> do
-            return [__di|
+            return $ GenRustExpr (expr ^. tty) [__di|
             /*
                 TODO: genVerusCExpr #{show expr}
             */
@@ -497,6 +539,7 @@ genVerusDef lname cdef = do
     specargs <- mapM viewArg defArgs
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
     body <- genVerusCExpr genInfo body
+    castResInner <- cast ([di|res_inner|], body ^. eTy) rty
     viewRes <- viewVar "(r.0)" rty
     let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
@@ -526,9 +569,9 @@ genVerusDef lname cdef = do
         let res_inner = {
             broadcast use itree_axioms;
             reveal(#{specname});
-            #{body}
+            #{body ^. code}
         };
-        Ok(res_inner)
+        Ok(#{castResInner})
     }
     |]
     where
@@ -925,7 +968,10 @@ genVerusTyDefs tydefs = do
 -----------------------------------------------------------------------------
 -- Utility functions
 
--- castType v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
+castGRE :: GenRustExpr ann -> VerusTy -> EM (Doc ann)
+castGRE gre t2 = cast (gre ^. code, gre ^. eTy) t2
+
+-- cast v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
 cast (v, t1) t2 | t2 == RTRef RShared t1 =
     return [di|&#{v}|]
