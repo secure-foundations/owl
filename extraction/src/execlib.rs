@@ -465,7 +465,7 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_counter_as_bytes(x: &usize) -> (res: [u8; 8])
+pub exec fn owl_counter_as_bytes<'a>(x: &usize) -> (res: [u8; 8])
     ensures res.dview() == counter_as_bytes(x.dview())
 {
     let v = x.to_le_bytes();

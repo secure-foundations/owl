@@ -498,17 +498,20 @@ genVerusDef lname cdef = do
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
     body <- genVerusCExpr genInfo body
     viewRes <- viewVar "(r.0)" rty
-    let mkArgLenVald (arg, _, argty) = case argty of
+    let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
             RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
             RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
             _ -> Nothing
-    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs 
-    let ensuresLenValid = case rty of
+    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs
+    let mkEnsuresLenValid rty'' = case rty'' of
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTEnum _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
+            RTWithLifetime t _ -> mkEnsuresLenValid rty''
             _ -> [di||]
+    let ensuresLenValid = mkEnsuresLenValid rty
     return [__di|
     \#[verifier::spinoff_prover]
     pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
