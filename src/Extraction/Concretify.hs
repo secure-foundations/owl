@@ -168,7 +168,10 @@ concreteTyOfApp (PRes pth) =
                 [ParamTy owlT] -> do
                     t <- concretifyTy owlT
                     return $ FOption t
-                _ -> throwError $ TypeError "Can't infer type of None"
+                _ -> do
+                    -- This is probably fine, since some other branch should constrain the type
+                    debugPrint "Can't infer type of None, using dummy value"
+                    return $ FOption FUnit
       PDot PTop "andb" -> \_ [x, y] -> return FBool
       PDot PTop "andp" -> \_ [x, y] -> return FUnit
       PDot PTop "notb" -> \_ [x, y] -> return FBool
