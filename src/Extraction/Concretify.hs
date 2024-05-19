@@ -93,7 +93,7 @@ concretifyTy t = do
       TName ne -> formatTyOfNameExp ne
       TVK ne -> error "unimp"
       TEnc_PK ne -> error "unimp"
-      TDH_PK ne -> error "unimp"
+      TDH_PK ne -> return $ FBuf $ Just $ FLNamed "group"
       TSS ne1 ne2 -> return $ groupFormatTy
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
@@ -170,7 +170,7 @@ concreteTyOfApp (PRes pth) =
                     return $ FOption t
                 _ -> do
                     -- This is probably fine, since some other branch should constrain the type
-                    debugPrint "Can't infer type of None, using dummy value"
+                    debugPrint "WARNING: Can't infer type of None, using dummy type"
                     return $ FOption FUnit
       PDot PTop "andb" -> \_ [x, y] -> return FBool
       PDot PTop "andp" -> \_ [x, y] -> return FUnit
@@ -295,15 +295,17 @@ concretifyExpr e = do
       EUnpack a _ ixk -> do
           c <- concretifyAExpr a
           ((i, x), k) <- unbind ixk
-          k' <- withVars [(castName x, _tty c)] $ concretifyExpr k
-          return $ Typed (_tty k') $ CLet (Typed (_tty c) (CRet c)) Nothing $ bind (castName x) k'
+          TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ do
+            k' <- withVars [(castName x, _tty c)] $ concretifyExpr k
+            return $ Typed (_tty k') $ CLet (Typed (_tty c) (CRet c)) Nothing $ bind (castName x) k'
       EChooseBV _ _ xe -> do
           (x, e) <- unbind xe
           e' <- withVars [(castName x, FGhost)] $ concretifyExpr e
           return $ Typed (_tty e') $ CLet (Typed FGhost $ CRet ghostUnit) Nothing $ bind (castName x) e'
       EChooseIdx _ _ ie -> do
           (i, e) <- unbind ie
-          concretifyExpr e
+          TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ do
+            concretifyExpr e
       EIf a e1 e2 -> do
           ca <- concretifyAExpr a
           c1 <- concretifyExpr e1
@@ -503,17 +505,19 @@ concretifyDef defName (TB.Def bd) = do
     -- debugPrint $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
-    ores <- withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
-        when (not $ p `aeq` pTrue) $ throwError $ ErrSomethingFailed "Attempting to extract def with nontrivial prerequisite"
-        -- cretT <- concretifyTy retT
-        case oexpr of
-          Nothing -> return Nothing
-          Just e -> do
-              ce <- concretifyExpr e
-              let cretT = ce ^. tty
-              --   debugPrint . show . owlpretty $ defName
-              --   debugPrint . show . owlpretty $ ce
-              return $ Just (cretT, ce)
+    ores <- 
+        TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) sids ++ map (\i -> (i, (ignore $ show i, IdxPId))) pids) $ do
+        withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
+            when (not $ p `aeq` pTrue) $ throwError $ ErrSomethingFailed "Attempting to extract def with nontrivial prerequisite"
+            -- cretT <- concretifyTy retT
+            case oexpr of
+                Nothing -> return Nothing
+                Just e -> do
+                    ce <- concretifyExpr e
+                    let cretT = ce ^. tty
+                    --   debugPrint . show . owlpretty $ defName
+                    --   debugPrint . show . owlpretty $ ce
+                    return $ Just (cretT, ce)
     case ores of
       Nothing -> return Nothing
       Just res -> return $ Just $ CDef defName res
