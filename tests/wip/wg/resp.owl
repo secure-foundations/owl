@@ -10,7 +10,7 @@ predicate is_s_init(eph) =
 
 struct init_info<n, m> {
     init_info_ss : shared_secret(S_init<@n>, S_resp<@m>),
-    init_info_psk : Name(psk<@n,m>)
+    init_info_psk : PSKMode<idx n,idx m> 
 }
 
 def get_pk_info<@m>(pk : Data<adv>) @ Responder<m>
@@ -31,7 +31,7 @@ predicate resp_stage1_clean<j,n_pk, n_eph,m>(eph) =
 
 struct resp_received_state<j,n_pk, n_eph, m> {
     rrs_msg1_sender : Data<adv> |4|, 
-    rrs_psk : if n_eph =idx n_pk then Name(psk<@n_eph,m>) else Name(psk<@n_pk, m>), 
+    rrs_psk : PSKMode<idx n_pk, idx m>, 
     rrs_dhpk_S_init : if n_eph =idx n_pk then dhpk(S_init<@n_eph>) else
     dhpk(S_init<@n_pk>),
     rrs_msg1_ephemeral : (x:Data<adv>| |group| |{is_group_elem(x) /\
@@ -235,9 +235,19 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
     forall i:idx,j:idx. c6 != honest_c6<session i, session j, pid n3, pid
     n3, pid m>()
  );
- let c7 = kdf<0,1;0,1; kdfkey || nonce || enckey; 0>(c6, psk, 0x) in 
- let tau = kdf<0,1;0,1; kdfkey || nonce || enckey; 1>(c6, psk, 0x) in 
- let k0 = kdf<0,1;0,1; kdfkey || nonce || enckey; 2>(c6, psk, 0x) in 
+let psk_val : if HasPSK?(psk) then 
+    if n =idx n3 then 
+        Name(psk<@n,m>) 
+    else 
+        Name(psk<@n3, m>)
+    else Const(0x) = case psk {
+           | HasPSK v => v
+           | NoPSK => 0x
+} in
+pcase HasPSK?(psk) in 
+ let c7 = kdf<0,1;0,1; kdfkey || nonce || enckey; 0>(c6, psk_val, 0x) in 
+ let tau = kdf<0,1;0,1; kdfkey || nonce || enckey; 1>(c6, psk_val, 0x) in 
+ let k0 = kdf<0,1;0,1; kdfkey || nonce || enckey; 2>(c6, psk_val, 0x) in 
  let msg2_tag = msg2_tag_value() in 
  let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
  let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
@@ -259,7 +269,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
  pack<n>(
      pack<n3>(
      transp_keys_resp<session j, pid n3, pid n, pid
-     m>(msg2_receiver, msg2_sender, msg1_ephemeral, c7, false, tk1, tk2)))
+     m>(msg2_receiver, msg2_sender, HasPSK?(psk), msg1_ephemeral, c7, false, tk1, tk2)))
  in
  Some(ret)
 
