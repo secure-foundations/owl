@@ -251,7 +251,7 @@ extractVar n = do
         s -> return . pretty . replacePrimes $ s
 
 specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
-specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins where
+specBuiltins = M.mapWithKey addSpecName builtins' where
     addSpecName n (args, rty) = (n, args, rty)
     builtins' = M.fromList [
           ("enc", ([seqU8, seqU8, seqU8], seqU8))
@@ -270,10 +270,11 @@ specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins whe
         , ("crh", ([seqU8], seqU8))
         , ("bytes_as_counter", ([seqU8], RTUsize))
         , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
+        , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
         ]
-    diffNameBuiltins = M.fromList [
-          ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
-        ]
+    -- diffNameBuiltins = M.fromList [
+    --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
+    --     ]
 
 extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
 extractCAExpr aexpr = do
@@ -301,6 +302,12 @@ extractCAExpr aexpr = do
                             a' <- extractCAExpr a
                             b' <- extractCAExpr b
                             return [di|#{a'} == #{b'}|]
+                        "subrange" -> do
+                            let [buf,start,end] = args
+                            buf' <- extractCAExpr buf
+                            start' <- extractCAExpr start
+                            end' <- extractCAExpr end
+                            return [di|#{buf'}.subrange(#{start'}, #{end'})|]
                         _ -> do
                             args' <- mapM extractCAExpr args
                             return [__di|
@@ -316,6 +323,7 @@ extractCAExpr aexpr = do
             else
                 return $ pretty "seq![" <> bytelist <> pretty "]"
         CACounter ctrname -> return [di|#{execName ctrname}|]
+        CAInt flen -> return . pretty . lowerFLen $ flen
         _ -> return [__di|
         /*
             TODO: SpecExtraction.extractCAExpr #{show aexpr}
@@ -374,12 +382,19 @@ extractExpr expr = do
         CLet (Typed _ CSkip) _ xk -> do
             let (_, k) = unsafeUnbind xk
             extractExpr k
+        CLet (Typed _ (CRet (Typed _ (CAApp "unit" _)))) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            extractExpr k
         CLet e _ xk -> do
             let (x, k) = unsafeUnbind xk
-            x' <- extractVar x
-            e' <- extractExpr e
-            k' <- extractExpr k
-            return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
+            case (name2String x, e ^. tval) of
+                ("_", CRet (Typed _ (CAApp "unit" _))) -> do
+                    extractExpr k
+                (_, _) -> do
+                    x' <- extractVar x
+                    e' <- extractExpr e
+                    k' <- extractExpr k
+                    return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
         CBlock e -> extractExpr e
         CIf a e1 e2 -> do
             a' <- extractCAExpr a
@@ -417,30 +432,33 @@ extractExpr expr = do
             }
             )
             |]
-        CParse _ ae t maybeOtw xtsk -> do
+        CParse pkind ae t maybeOtw xtsk -> do
             let (xts, k) = unsafeUnbind xtsk
             xs <- mapM (\(x,_,_) -> extractVar x) xts
-            (dstTyName, parsedTypeMembers) <- case t of
+            ae' <- extractCAExpr ae
+            k' <- extractExpr k
+            case t of
                 FStruct n fs -> do
                     let dstTyName = specName n
                     let parsedTypeMembers = map (specName . fst) fs
-                    return (dstTyName, parsedTypeMembers)
+                    let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
+                    (parseCall, badk) <- case maybeOtw of
+                        Just otw -> do
+                            let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                            otw' <- extractExpr otw
+                            return (parseCall, [di|otherwise (#{otw'})|])
+                        Nothing -> return (ae', [di||])
+                    return $ parens [__di|
+                    parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
+                    #{k'}
+                    } #{badk}
+                    |]
                 FEnum n cs -> throwError $ ErrSomethingFailed $ "TODO: spec enum parsing for " ++ show n
+                FOption t' -> do
+                    let [x] = xs
+                    let PFromDatatype = pkind
+                    return $ pretty "let" <+> x <+> pretty "=" <+> parens [di|(ret(#{ae'}))|] <+> pretty "in" <> line <> k'
                 _ -> throwError $ TypeError $ "Unsupported spec parse type: " ++ show t
-            ae' <- extractCAExpr ae
-            k' <- extractExpr k
-            let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
-            (parseCall, badk) <- case maybeOtw of
-                Just otw -> do
-                    let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
-                    otw' <- extractExpr otw
-                    return (parseCall, [di|otherwise (#{otw'})|])
-                Nothing -> return (ae', [di||])
-            return $ parens [__di|
-            parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
-            #{k'}
-            } #{badk}
-            |]
         CGetCtr ctrname -> do
             return $ parens $ pretty "ret" <> parens (pretty "counter_as_bytes" <> parens (pretty "mut_state." <> pretty (execName ctrname)))
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
@@ -449,6 +467,7 @@ extractExpr expr = do
 extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
 extractDef locName (CDef defname b) = do
     let specname = defname ++ "_spec"
+    -- debugLog $ "Spec extracting def " ++ defname
     (owlArgs, (retTy, body)) <- unbindCDepBind b
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'

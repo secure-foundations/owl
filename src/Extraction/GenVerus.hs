@@ -228,7 +228,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
-          ("kdf", ("extract_expand_to_len", [u8slice, u8slice, u8slice, u8slice], vecU8))
+          ("kdf", ("owl_extract_expand_to_len", [RTUsize, u8slice, u8slice, u8slice], vecU8))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)
@@ -272,6 +272,20 @@ genVerusCAExpr ae = do
                             x'' <- castGRE x' (x ^. tty)
                             return $ GenRustExpr (RTOption (x ^. tty)) [di|Some(#{x''})|] 
                         ("None", []) -> return $ GenRustExpr (ae ^. tty) [di|None|]
+                        ("length", [x]) -> do
+                            x' <- genVerusCAExpr x
+                            -- x'' <- castGRE x' (x ^. tty)
+                            case x' ^. eTy of
+                                RTVec RTU8 -> return $ GenRustExpr RTUsize [di|vec_length(#{x' ^. code})|]
+                                RTRef _ (RTSlice RTU8) -> return $ GenRustExpr RTUsize [di|{ slice_len(#{x' ^. code}) }|]
+                                RTOwlBuf _ -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
+                                _ -> throwError $ ErrSomethingFailed $ "TODO: length for type: " ++ show (x' ^. eTy)
+                        ("andb", [x,y]) -> do
+                            x' <- genVerusCAExpr x
+                            y' <- genVerusCAExpr y
+                            x'' <- castGRE x' RTBool
+                            y'' <- castGRE y' RTBool
+                            return $ GenRustExpr RTBool [di|#{x''} && #{y''}|]
                         ("eq", [x,y]) -> do
                             x' <- genVerusCAExpr x
                             y' <- genVerusCAExpr y
@@ -291,6 +305,16 @@ genVerusCAExpr ae = do
                                     y'' <- castYTo u8slice
                                     return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
                                 _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
+                        ("subrange", [buf, start, end]) -> do
+                            buf' <- genVerusCAExpr buf
+                            start' <- genVerusCAExpr start
+                            end' <- genVerusCAExpr end
+                            castStart <- castGRE start' RTUsize
+                            castEnd <- castGRE end' RTUsize
+                            case buf' ^. eTy of
+                                RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ #{buf' ^. code}.subrange(#{castStart}, #{castEnd}) }|]
+                                RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
+                                t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         _ -> do
                             args' <- mapM genVerusCAExpr args
                             return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma . map (^. code) $ args'})|]
@@ -456,6 +480,11 @@ genVerusCExpr info expr = do
                 #{vsep casesCode}
             }
             |]
+        -- special case: comes from type annotation when matching on an option type
+        CParse PFromDatatype ae (RTOption t') _ xtsk -> do
+            let ([(x,s,t)], k) = unsafeUnbind xtsk
+            let xsk' = bind (castName x) k
+            genVerusCExpr info $ Typed (expr ^. tty) $ CLet (Typed (ae ^. tty) (CRet ae)) Nothing xsk'          
         CParse pkind ae t maybeOtw xtsk -> do
             let (xts, k) = unsafeUnbind xtsk
             let castRustXs = map (\(x, _, t) -> (execName . show $ x, t)) xts

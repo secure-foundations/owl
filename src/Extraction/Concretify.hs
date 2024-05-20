@@ -110,12 +110,12 @@ groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr her
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 =
     case (t1, t2) of
-      _ | t1 `aeq` t2 -> return t1
-      (FBuf Nothing, _) -> return $ FBuf Nothing
-      (_, FBuf Nothing) -> return $ FBuf Nothing
-      (FInt, FBuf (Just (FLNamed "counter"))) -> return $ FBuf $ Just $ FLNamed "counter"
-      (FBuf (Just (FLNamed "counter")), FInt) -> return $ FBuf $ Just $ FLNamed "counter"
-      _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
+        _ | t1 `aeq` t2 -> return t1
+        (FBuf Nothing, _) -> return $ FBuf Nothing
+        (_, FBuf Nothing) -> return $ FBuf Nothing
+        (FInt, FBuf (Just (FLNamed "counter"))) -> return $ FBuf $ Just $ FLNamed "counter"
+        (FBuf (Just (FLNamed "counter")), FInt) -> return $ FBuf $ Just $ FLNamed "counter"
+        _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
@@ -207,7 +207,10 @@ concreteTyOfApp (PRes pth) =
             Just (argTys, retTy) -> do
                 when (length argTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
                 forM_ (zip argTys args) $ \(t, a) -> do
-                    unifyFormatTy t a
+                    if t == FGhost || a == FGhost then return ()
+                    else do
+                        unifyFormatTy t a
+                        return ()
                 return retTy
             Nothing -> do
                 oufs <- use owlUserFuncs
@@ -222,6 +225,19 @@ concreteTyOfApp (PRes pth) =
         throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 concreteTyOfApp _ = \_ _ -> do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
+
+-- Special case: Owl lets us implicitly cast exec values into ghost, but we must make this
+-- explicit in the concrete AST
+ghostifyArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
+ghostifyArgs (PRes (PDot PTop p)) args = do
+    fs <- use funcs
+    case fs M.!? p of
+        Just (argTys, _) -> do
+            forM (zip argTys args) $ \(t, a) -> do
+                if t == FGhost then return ghostUnit
+                else return a
+        Nothing -> return args
+ghostifyArgs _ args = return args
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -254,7 +270,8 @@ concretifyAExpr a =
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
           t <- concreteTyOfApp p ps (map _tty vs)
-          return $ Typed t $ CAApp s vs
+          args <- ghostifyArgs p vs
+          return $ Typed t $ CAApp s args
       AEVar s x -> do
           ot <- lookupVar $ castName x
           case ot of
@@ -398,10 +415,15 @@ concretifyExpr e = do
                     let startT = e' ^. tty
                     otw' <- concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
-                    -- We are parsing as part of the case, so we need PFromBuf
+                    let fromBuf = case casevalT of
+                            -- Special case: sometimes, option types are given a type annotation, which 
+                            -- shows up in this case, but we are parsing authentically from an option type
+                            FOption _ -> PFromDatatype
+                            -- We are parsing as part of the case, so we need PFromBuf
+                            _ -> PFromBuf
                     let p = Typed retTy $
-                            CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
-                                bind [(avar', ignore "caseval", casevalT)] caseStmt
+                            CParse fromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                                bind [(avar, ignore "caseval", casevalT)] caseStmt
                     return (avar', p)
                 Nothing -> return (avar, caseStmt)
             return $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
@@ -441,8 +463,24 @@ returnTyOfCall p cs = do
                 go k
 
 concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
-concretifyCryptOp (CKDF _ _ _ _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CKDF"
-concretifyCryptOp (CLemma _) cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CLemma"
+concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
+    debugPrint "TODO: KDF memoization"
+    let nk = nks !! nkidx
+    kdfLen <- kdfLenOf nks
+    outLen <- fLenOfNameKind nk
+    let kdfTy = FBuf $ Just kdfLen
+    let outTy = FBuf $ Just outLen
+    startOffset <- offsetOf nks nkidx
+    endOffset <- offsetOf nks (nkidx + 1)
+    kdfVar <- fresh $ s2n "kdfval"
+    let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+    let doSlice = Typed outTy $ CRet $ Typed outTy $ 
+            CAApp "subrange" [Typed kdfTy $ CAVar (ignore "kdfval") kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
+    return $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
+    where
+        kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
+        offsetOf nks idx = kdfLenOf $ take idx nks
+concretifyCryptOp (CLemma _) cs = return $ Typed FGhost $ CRet ghostUnit
 concretifyCryptOp CAEnc [k, x] = do
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
@@ -466,13 +504,14 @@ concretifyCryptOp CDecStAEAD [k, c, aad, nonce] = do
     return $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
 concretifyCryptOp CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
 concretifyCryptOp CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
-concretifyCryptOp CMac cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMac"
+concretifyCryptOp CMac cs = do
+    let t = FBuf $ Just $ FLNamed "maclen"
+    return $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
 concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
 concretifyCryptOp CSign cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSign"
 concretifyCryptOp CSigVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSigVrfy"
 concretifyCryptOp cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
-
 
 
 withVars :: [(CDataVar t, t)] -> ExtractionMonad t a -> ExtractionMonad t a

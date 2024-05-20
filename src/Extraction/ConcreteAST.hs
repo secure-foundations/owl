@@ -235,7 +235,7 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
         let (pats', k') = unsafeUnbind bindpat in
         let pats = map (\(n, _, _) -> owlpretty n) pats' in
         let k = owlpretty k' in
-        owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
+        owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> tupled pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
     owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
     owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
     owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
