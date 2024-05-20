@@ -60,6 +60,14 @@ impl OwlSpecSerialize for bool {
     }
 }
 
+// hack
+impl DView for Ghost<()> {
+    type V = Ghost<()>;
+    open spec fn dview(&self) -> Ghost<()> {
+        Ghost(())
+    }
+}
+
 
 pub trait OwlSpecAsCtr {
     spec fn as_ctr(self) -> usize where Self: Sized;
@@ -148,48 +156,13 @@ pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
     a.add(b)
 }
 
-
 #[verifier(external_body)]
-pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
-    recommends k.len() == crate::ENCKEY_SIZE,
-               coins.len() == crate::TAG_SIZE
-{
-    todo!()
-}
-
 pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq<u8>)
-{
-    // match (k, c) {
-    //     (Some(k), Some(c)) =>
-            if (k.len() == crate::ENCKEY_SIZE && coins.len() == crate::TAG_SIZE) {
-                evercrypt_spec_of_enc(k, x, coins)
-            } else {
-                seq![]
-            }
-    //     _ => None
-    // }
-}
-
+{ unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
-    recommends k.len() == crate::ENCKEY_SIZE,
-{
-    todo!()
-}
-
 pub open spec(checked) fn dec(k: Seq<u8>, c: Seq<u8>) -> (x: Option<Seq<u8>>)
-{
-    // match (k, c) {
-    //     (Some(k), Some(c)) =>
-            if (k.len() == crate::ENCKEY_SIZE) {
-                evercrypt_spec_of_dec(k, c)
-            } else {
-                None
-            }
-    //     _ => None
-    // }
-}
+{ unimplemented!() }
 
 #[verifier(external_body)]
 pub closed spec(checked) fn sign(privkey: Seq<u8>, msg: Seq<u8>) -> (signature: Seq<u8>)

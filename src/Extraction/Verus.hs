@@ -14,7 +14,7 @@ import Data.Typeable (Typeable)
 -- Loosely draws from MiniRust.ml in the KaRaMeL compiler
 -- https://github.com/FStarLang/karamel/blob/master/lib/MiniRust.ml
 
-data BorrowKind = RMut | RShared
+data BorrowKind = RMut | RShared | RMutWithLifetime Lifetime | RSharedWithLifetime Lifetime
     deriving (Eq, Ord, Show, Generic, Typeable)
 
 newtype Lifetime = Lifetime String

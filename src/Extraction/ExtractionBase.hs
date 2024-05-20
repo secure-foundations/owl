@@ -7,6 +7,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE QuasiQuotes #-}
 module ExtractionBase where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -24,7 +25,7 @@ import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
-import Unbound.Generics.LocallyNameless.TH
+import Unbound.Generics.LocallyNameless.TH ()
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
@@ -35,6 +36,7 @@ import qualified SMTBase as SMT
 import ConcreteAST
 import Verus
 import PrettyVerus
+import Prettyprinter.Interpolate
 
 newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
     deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
@@ -56,7 +58,7 @@ data Env t = Env {
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
-    ,  _curLocality :: Maybe String
+    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
 }
 
 
@@ -135,7 +137,7 @@ liftExtractionMonad m = do
             _freshCtr = env' ^. freshCtr,
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
-            _curLocality = env' ^. curLocality
+            _owlUserFuncs = env' ^. owlUserFuncs
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -167,8 +169,11 @@ instance Fresh (ExtractionMonad t) where
         return $ Fn s n
     fresh nm@(Bn {}) = return nm
 
-initEnv :: Flags -> String -> Env t
-initEnv flags path = Env flags path 0 M.empty M.empty Nothing
+initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs)
+    where
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
+        mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
 
 
@@ -186,18 +191,19 @@ data LocalityData nameData defData = LocalityData {
     _counters :: [String]
 } deriving Show
 makeLenses ''LocalityData
-data ExtractionData defData tyData nameData = ExtractionData {
+data ExtractionData defData tyData nameData userFuncData = ExtractionData {
     _locMap :: M.Map LocalityName (LocalityData nameData defData),
     _presharedNames :: [(nameData, [LocalityName])],
     _pubKeys :: [nameData],
-    _tyDefs :: [(String, tyData)]
+    _tyDefs :: [(String, tyData)],
+    _userFuncs :: [userFuncData]
 } deriving Show
 makeLenses ''ExtractionData
 
-type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData
+type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData (String, TB.UserFunc)
 type OwlLocalityData = LocalityData NameData OwlDefData
-type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData
-type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData
+type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData (CUserFunc FormatTy)
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData (CUserFunc VerusTy)
 type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
 type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
 
@@ -271,14 +277,18 @@ fLenOfNameTy nt = do
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
 concreteLength (CUsizeConst s) = do
-    debugPrint $ "WARNING: using hardcoded concrete length for " ++ s
-    case s of
-        "KDFKEY_SIZE" -> return 32
-        "GROUP_SIZE"  -> return 32
-        "ENCKEY_SIZE" -> return 32
-        "MACKEY_SIZE" -> return 64
-        "NONCE_SIZE"  -> return 12
+    l <- case s of
+        "KDFKEY_SIZE"   -> return 32
+        "GROUP_SIZE"    -> return 32
+        "ENCKEY_SIZE"   -> return 32
+        "MACKEY_SIZE"   -> return 64
+        "NONCE_SIZE"    -> return 12
+        "TAG_SIZE"      -> return 16
+        "MACLEN_SIZE"   -> return 16
+        "COUNTER_SIZE"  -> return 8
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
+    debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
+    return l
 concreteLength (CUsizePlus a b) = do
     a' <- concreteLength a
     b' <- concreteLength b
@@ -296,9 +306,14 @@ lowerFLen (FLPlus a b) =
     let a' = lowerFLen a in
     let b' = lowerFLen b in
     CUsizePlus a' b'
--- lowerFLen (FLCipherlen a) = do 
---     n' <- lowerFLen a
---     return $ CUsizeConst $ "CIPHERLEN(" ++ show n' ++ ")"
+lowerFLen (FLCipherlen a) = 
+    let n' = lowerFLen a in
+    CUsizePlus n' (CUsizeConst "TAG_SIZE")
 
 
-
+hexStringToByteList :: String -> ExtractionMonad t (Doc ann)
+hexStringToByteList [] = return $ pretty ""
+hexStringToByteList (h1 : h2 : t) = do
+    t' <- hexStringToByteList t
+    return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8," <+> t'
+hexStringToByteList _ = throwError OddLengthHexConst

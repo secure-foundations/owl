@@ -12,7 +12,7 @@ Initiator<n>
         let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
         p
     }
-    otherwise None()
+    otherwise None<ty: Data<adv /\ [channel_secret_resp_send<@n,m>]>> ()
 
 def init_send<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>,
     msg : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>
@@ -64,11 +64,13 @@ def resp_recv<j@n,m>(
                 pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
                 m>(st', x)) in 
                 Some(ret)
-            | None => None()
+            | None => None<ty: (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>)>()
             // otherwise => None()
         }
     }
-    otherwise None()
+    otherwise None<ty: (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>)>()
                 
 
 
