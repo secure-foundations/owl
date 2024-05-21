@@ -461,6 +461,10 @@ extractExpr expr = do
                 _ -> throwError $ TypeError $ "Unsupported spec parse type: " ++ show t
         CGetCtr ctrname -> do
             return $ parens $ pretty "ret" <> parens (pretty "counter_as_bytes" <> parens (pretty "mut_state." <> pretty (execName ctrname)))
+        CCall f frty args -> do
+            args' <- mapM extractCAExpr args
+            let args'' = [di|cfg|] : [di|mut_state|] : args'
+            return [di|(call(#{f}_spec(#{tupled args''})))|]
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 
