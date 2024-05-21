@@ -278,14 +278,15 @@ concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
 concreteLength (CUsizeConst s) = do
     l <- case s of
-        "KDFKEY_SIZE"   -> return 32
-        "GROUP_SIZE"    -> return 32
-        "ENCKEY_SIZE"   -> return 32
-        "MACKEY_SIZE"   -> return 64
-        "NONCE_SIZE"    -> return 12
-        "TAG_SIZE"      -> return 16
-        "MACLEN_SIZE"   -> return 16
-        "COUNTER_SIZE"  -> return 8
+        "KDFKEY_SIZE"    -> return 32
+        "GROUP_SIZE"     -> return 32
+        "ENCKEY_SIZE"    -> return 32
+        "MACKEY_SIZE"    -> return 64
+        "NONCE_SIZE"     -> return 12
+        "TAG_SIZE"       -> return 16
+        "MACLEN_SIZE"    -> return 16
+        "COUNTER_SIZE"   -> return 8
+        "SIGNATURE_SIZE" -> return 64
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
     debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
     return l

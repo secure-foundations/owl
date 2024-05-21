@@ -91,7 +91,7 @@ concretifyTy t = do
       TBool _ -> return $ FBool
       TUnit -> return $ FUnit
       TName ne -> formatTyOfNameExp ne
-      TVK ne -> error "unimp"
+      TVK ne -> return $ FBuf $ Just $ FLNamed "vk"
       TEnc_PK ne -> error "unimp"
       TDH_PK ne -> return $ FBuf $ Just $ FLNamed "group"
       TSS ne1 ne2 -> return $ groupFormatTy
@@ -241,7 +241,7 @@ ghostifyArgs _ args = return args
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
-ghostUnit = Typed FGhost $ CAApp "unit" []
+ghostUnit = Typed FGhost $ CAApp "ghost_unit" []
 
 -- none()
 noneConcrete :: FormatTy -> CAExpr FormatTy
@@ -353,7 +353,7 @@ concretifyExpr e = do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
           t <- returnTyOfCall p cs
-          return $ Typed t $ CCall s cs
+          return $ Typed t $ CCall s t cs
       EParse a t_target otherwiseCase xsk -> do
             a' <- concretifyAExpr a
             t_target' <- concretifyTy t_target
@@ -508,8 +508,12 @@ concretifyCryptOp CMac cs = do
     let t = FBuf $ Just $ FLNamed "maclen"
     return $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
 concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
-concretifyCryptOp CSign cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSign"
-concretifyCryptOp CSigVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CSigVrfy"
+concretifyCryptOp CSign cs = do
+    let t = FBuf $ Just $ FLNamed "signature"
+    return $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
+concretifyCryptOp CSigVrfy cs = do
+    let t = FOption $ FBuf Nothing
+    return $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
 concretifyCryptOp cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 

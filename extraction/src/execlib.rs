@@ -138,10 +138,25 @@ impl<'x> OwlBuf<'x> {
             },
         }
     }
+
+    pub fn into_owned(self) -> (result: OwlBuf<'x>)
+        requires self.len_valid(),
+        ensures  result.dview() == self.dview(),
+                    result.len_valid(),
+    {
+        reveal(OwlBuf::len_valid);
+        match self {
+            OwlBuf::Borrowed(s) => OwlBuf::from_vec(s.to_vec()),
+            OwlBuf::Owned(v, start, len) => OwlBuf::Owned(v, start, len),
+        }
+    }
 }
 
 pub fn owl_unit() -> (res: ())
 { () }
+
+pub fn owl_ghost_unit() -> (res: Ghost<()>)
+{ Ghost(()) }
 
 #[verifier(external_body)]
 pub exec fn rc_new<T:DView>(t: T) -> (r: Rc<T>)

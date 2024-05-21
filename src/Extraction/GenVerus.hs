@@ -224,6 +224,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
+        , ("concat", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
@@ -320,8 +321,9 @@ genVerusCAExpr ae = do
                             return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma . map (^. code) $ args'})|]
         CAGet n -> do
             let rustN = execName n
-            castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
-            return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
+            castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
+            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
         CAInt fl -> return  $ GenRustExpr (ae ^. tty) $ pretty $ lowerFLen fl
         CACounter ctrname -> do
             let rustCtr = execName ctrname
@@ -529,6 +531,29 @@ genVerusCExpr info expr = do
             let rustCtr = execName ctrname
             -- castCtr <- ([di|#{tmpCtrName}|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
             return $ GenRustExpr (RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) [di|owl_counter_as_bytes(&mut_state.#{rustCtr})|]
+        CCall f frty args -> do
+            args' <- mapM genVerusCAExpr args
+            let callMacro = case expr ^. tty of
+                    RTOption _ -> "owl_call_ret_option!"
+                    RTUnit -> "owl_call_ret_unit!"
+                    _ -> "owl_call!"
+            argvars <- mapM (fresh . s2n . (++) "tmp_arg" . show) [1..length args]
+            let argzip = zip3 args' (map (^. tty) args) argvars
+            let genArg (arg, argty, argvar) = do
+                    castArg <- arg `castGRE` argty
+                    return [di|let #{argvar} = #{castArg};|]
+            genArgVars <- mapM genArg argzip
+            let execf = execName f
+            let specf = f ++ "_spec"
+            viewArgs <- mapM (\(_,argty,argvar) -> viewVar (show argvar) argty) argzip
+            let specArgs = [di|*self|] : [di|*mut_state|] : viewArgs
+            let specCall = [di|#{specf}(#{hsep . punctuate comma $ specArgs})|]
+            let execArgs = [di|*mut_state|] : map (pretty . show) argvars
+            let execCall = [di|self.#{execf}(#{hsep . punctuate comma $ execArgs})|]
+            return $ GenRustExpr frty [__di|
+            #{vsep genArgVars}
+            #{callMacro}(itree, *mut_state, #{specCall}, #{execCall})
+            |]
         _ -> do
             return $ GenRustExpr (expr ^. tty) [__di|
             /*
@@ -596,12 +621,12 @@ genVerusDef lname cdef = do
             #{ensuresLenValid}
     {
         let tracked mut itree = itree;
-        let res_inner = {
+        let (res_inner, Tracked(itree)) = {
             broadcast use itree_axioms;
             reveal(#{specname});
             #{body ^. code}
         };
-        Ok(#{castResInner})
+        Ok((#{castResInner}, Tracked(itree)))
     }
     |]
     where

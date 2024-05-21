@@ -86,7 +86,8 @@ data CExpr' t =
     | CIf (CAExpr t) (CExpr t) (CExpr t)
     -- Only a regular case statement, not the parsing version
     | CCase (CAExpr t) [(String, Either (CExpr t) (Bind (CDataVar t) (t, CExpr t)))] -- Binding contains type for the bound variable
-    | CCall String [CAExpr t]
+    -- Include the return type of the call
+    | CCall String t [CAExpr t]
     -- In concretification, we should compile `ECase` exprs that parse an enum into a 
     -- CParse node containing a regular `CCase`. The list of binds should have one element
     | CParse ParseKind (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String, t)] (CExpr t))
@@ -228,9 +229,9 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
                         owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
         owlpretty "case" <+> owlpretty a <> line <> vsep pcases
-    owlpretty (CCall f as) =
+    owlpretty (CCall f rty as) =
         let args = map owlpretty as in
-        owlpretty f <> tupled args
+        owlpretty f <> tupled args <+> owlpretty ":" <+> owlpretty rty
     owlpretty (CParse pkind ae t ok bindpat) =
         let (pats', k') = unsafeUnbind bindpat in
         let pats = map (\(n, _, _) -> owlpretty n) pats' in
@@ -285,7 +286,7 @@ traverseCExpr f a =
               CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)
           CBlock e -> CBlock <$> traverseCExpr f e
           CIf x y z -> CIf <$> traverseCAExpr f x <*> traverseCExpr f y <*> traverseCExpr f z
-          CCall s xs -> CCall <$> pure s <*> traverse (traverseCAExpr f) xs
+          CCall s t xs -> CCall <$> pure s <*> f t <*> traverse (traverseCAExpr f) xs
           CGetCtr s -> pure $ CGetCtr s
           CIncCtr s -> pure $ CIncCtr s
           CParse pkind x y z bw -> do
