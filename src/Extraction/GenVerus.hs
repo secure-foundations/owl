@@ -287,6 +287,9 @@ genVerusCAExpr ae = do
                             x'' <- castGRE x' RTBool
                             y'' <- castGRE y' RTBool
                             return $ GenRustExpr RTBool [di|#{x''} && #{y''}|]
+                        ("andp", [x,y]) -> do
+                            -- Propositional `and`, which we just compile to ghost unit
+                            return $ GenRustExpr RTVerusGhost [di|owl_ghost_unit()|]
                         ("eq", [x,y]) -> do
                             x' <- genVerusCAExpr x
                             y' <- genVerusCAExpr y
@@ -425,7 +428,7 @@ genVerusCExpr info expr = do
                 |]
         CBlock ebody -> do
             ebody' <- genVerusCExpr info ebody
-            when (ebody' ^. eTy /= expr ^. tty) $ throwError $ TypeError "block has different type than expected"
+            when (ebody' ^. eTy /= expr ^. tty) $ throwError $ TypeError $ "block has different type than expected: " ++ show (ebody' ^. eTy) ++ " vs " ++ show (expr ^. tty) 
             return $ GenRustExpr (expr ^. tty) [__di|
             { 
                 #{ebody' ^. code} 
@@ -620,7 +623,10 @@ genVerusDef lname cdef = do
             RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
             RTEnum _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
-            RTWithLifetime t _ -> mkEnsuresLenValid rty''
+            RTOption (RTOwlBuf _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
+            RTOption (RTStruct _ _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
+            RTOption (RTEnum _ _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
+            RTWithLifetime t _ -> mkEnsuresLenValid t
             _ -> [di||]
     let ensuresLenValid = mkEnsuresLenValid rty'
     return [__di|

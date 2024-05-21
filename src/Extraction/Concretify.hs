@@ -178,7 +178,7 @@ concreteTyOfApp (PRes pth) =
                     debugPrint "WARNING: Can't infer type of None, using dummy type"
                     return $ FOption FDummy
       PDot PTop "andb" -> \_ [x, y] -> return FBool
-      PDot PTop "andp" -> \_ [x, y] -> return FUnit
+      PDot PTop "andp" -> \_ [x, y] -> return FGhost
       PDot PTop "notb" -> \_ [x, y] -> return FBool
       PDot PTop "length" -> \_ [x] -> return FInt
       PDot PTop "plus" -> \_ [x, y] -> return FInt

@@ -290,6 +290,7 @@ extractCAExpr aexpr = do
                 Nothing -> do
                     case f of
                         "unit" -> return [di|()|]
+                        "andp" -> return [di|ghost_unit()|]
                         "true" -> return [di|true|]
                         "false" -> return [di|false|]
                         "Some" -> do
