@@ -478,7 +478,14 @@ extractDef locName (CDef defname b) = do
     -- NB: forces all data structures to be represented as Seq<u8> in spec
     let specRetTy = specTyOf retTy
     let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
-    body <- extractExpr body
+    (body, pureDef) <- case body of
+        Just body -> do
+            body' <- extractExpr body
+            return (body', [di||])
+        Nothing -> do
+            let p = pureDef defname owlArgs' specRetTy
+            let specArgVars = map (\(cdvar, strname, ty) -> pretty strname) owlArgs
+            return ([di|(ret(#{defname}_pure(#{hsep . punctuate comma $ specArgVars})))|], p)
     return [__di|
         \#[verifier::opaque]
         pub open spec fn #{specname}(#{hsep . punctuate comma $ specArgs}) -> (res: #{itreeTy}) {
@@ -486,12 +493,17 @@ extractDef locName (CDef defname b) = do
                 #{body}
             )
         }
+        #{pureDef}
     |]
     where
         extractArg (cdvar, strname, ty) = do
             let specty = specTyOf ty
             return [di|#{pretty strname} : #{pretty specty}|]
-
+        pureDef owlName specArgs specRt = 
+            line <>
+            pretty "#[verifier(external_body)] pub closed spec fn" <+> pretty owlName <> pretty "_pure" <> tupled specArgs <+> 
+            pretty "->" <+> pretty specRt <+> line <> 
+            braces (pretty "unimplemented!()" )
 
 extractLoc :: (LocalityName, FormatLocalityData) -> EM (Doc ann)
 extractLoc (locname, locdata) = do

@@ -82,7 +82,7 @@ lowerDef (CDef name b) = do
     (args, (retTy, body)) <- unbindCDepBind b
     args' <- mapM lowerArg args
     retTy' <- lowerTy retTy
-    body' <- lowerExpr body
+    body' <- traverse lowerExpr body
     b' <- bindCDepBind args' (retTy', body')
     return $ CDef name b'
 

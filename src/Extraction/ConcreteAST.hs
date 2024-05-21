@@ -106,7 +106,7 @@ data CDepBind t a = CDPDone a | CDPVar t String (Bind (CDataVar t) (CDepBind t a
 
 data CDef t = CDef {
     _defName :: String,
-    _defBody :: CDepBind t (t, CExpr t) -- retT, body
+    _defBody :: CDepBind t (t, Maybe (CExpr t)) -- retT, body
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CDef

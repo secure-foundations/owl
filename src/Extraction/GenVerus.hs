@@ -593,8 +593,12 @@ genVerusDef lname cdef = do
     let retval = [di|(res: Result<(#{pretty rtyLt}, #{itreeTy}), OwlError>)|]    
     specargs <- mapM viewArg defArgs'
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
-    body <- genVerusCExpr genInfo body
-    castResInner <- cast ([di|res_inner|], body ^. eTy) rty'
+    (attr, bodyCode, castResInner) <- case body of 
+        Just body -> do 
+            body' <- genVerusCExpr genInfo body
+            castResInner <- cast ([di|res_inner|], body' ^. eTy) rty'
+            return ([di||], body' ^. code, castResInner)
+        Nothing -> return ([di|\#[verifier::external_body]|], [di|/* TODO: implement #{execname} */|], [di|res_inner|])
     viewRes <- viewVar "(r.0)" rty'
     let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
@@ -611,6 +615,7 @@ genVerusDef lname cdef = do
             _ -> [di||]
     let ensuresLenValid = mkEnsuresLenValid rty'
     return [__di|
+    #{attr}
     \#[verifier::spinoff_prover]
     pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
         requires 
@@ -624,7 +629,7 @@ genVerusDef lname cdef = do
         let (res_inner, Tracked(itree)) = {
             broadcast use itree_axioms;
             reveal(#{specname});
-            #{body ^. code}
+            #{bodyCode}
         };
         Ok((#{castResInner}, Tracked(itree)))
     }

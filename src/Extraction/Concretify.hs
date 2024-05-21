@@ -554,16 +554,18 @@ concretifyDef defName (TB.Def bd) = do
             when (not $ p `aeq` pTrue) $ throwError $ ErrSomethingFailed "Attempting to extract def with nontrivial prerequisite"
             -- cretT <- concretifyTy retT
             case oexpr of
-                Nothing -> return Nothing
+                Nothing -> do
+                    cretT <- concretifyTy retT
+                    return $ Just (cretT, Nothing)
                 Just e -> do
                     ce <- concretifyExpr e
                     let cretT = ce ^. tty
                     --   debugPrint . show . owlpretty $ defName
                     --   debugPrint . show . owlpretty $ ce
-                    return $ Just (cretT, ce)
+                    return $ Just (cretT, Just ce)
     case ores of
-      Nothing -> return Nothing
-      Just res -> return $ Just $ CDef defName res
+        Nothing -> return Nothing
+        Just res -> return $ Just $ CDef defName res
 
 
 userFuncArgTy :: FormatTy
