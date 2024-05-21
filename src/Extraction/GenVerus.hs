@@ -1061,7 +1061,7 @@ cast (v, t1) t2 | t2 == RTRef RMut t1 =
 cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
-    return [di|&#{v}.as_slice()|]
+    return [di|vec_as_slice(&#{v})|]
 cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
