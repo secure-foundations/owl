@@ -47,7 +47,7 @@ lowerTy (FEnum n fcs) = do
     rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTy t) fcs
     return $ RTEnum rn rcs
 lowerTy FGhost = return $ RTVerusGhost
-
+lowerTy FDummy = return $ RTDummy
 
 -- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
 -- lowerTyNoOwlBuf FUnit = return RTUnit

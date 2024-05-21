@@ -110,11 +110,16 @@ groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr her
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 =
     case (t1, t2) of
-        _ | t1 `aeq` t2 -> return t1
+        _ | t1 `aeq` t2 -> return t1        
+        (FDummy, t2) -> return t2
+        (t1, FDummy) -> return t1
         (FBuf Nothing, _) -> return $ FBuf Nothing
         (_, FBuf Nothing) -> return $ FBuf Nothing
         (FInt, FBuf (Just (FLNamed "counter"))) -> return $ FBuf $ Just $ FLNamed "counter"
         (FBuf (Just (FLNamed "counter")), FInt) -> return $ FBuf $ Just $ FLNamed "counter"
+        (FOption t1', FOption t2') -> do
+            t <- unifyFormatTy t1' t2'
+            return $ FOption t
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
@@ -171,7 +176,7 @@ concreteTyOfApp (PRes pth) =
                 _ -> do
                     -- This is probably fine, since some other branch should constrain the type
                     debugPrint "WARNING: Can't infer type of None, using dummy type"
-                    return $ FOption FUnit
+                    return $ FOption FDummy
       PDot PTop "andb" -> \_ [x, y] -> return FBool
       PDot PTop "andp" -> \_ [x, y] -> return FUnit
       PDot PTop "notb" -> \_ [x, y] -> return FBool
@@ -404,11 +409,15 @@ concretifyExpr e = do
             avar <- fresh $ s2n "caseval"
             -- Assume the typechecker already checked that all branches return compatible types,
             -- so we just look at the first one to determine the return type
-            retTy <- case head cases' of
-                (_, Left k) -> return $ k ^. tty
-                (_, Right xtk) -> do
-                    let (_, (_, k)) = unsafeUnbind xtk
-                    return $ k ^. tty
+            let getCaseRt c = case c of
+                            (_, Left k) -> k ^. tty
+                            (_, Right xtk) -> 
+                                let (_, (_, k)) = unsafeUnbind xtk in
+                                k ^. tty
+            let unifyCaseRt acc c = do
+                    let ct = getCaseRt c
+                    unifyFormatTy acc ct
+            retTy <- foldM unifyCaseRt (getCaseRt . head $ cases') (tail cases')
             let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do

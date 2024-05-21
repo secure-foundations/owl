@@ -436,10 +436,11 @@ genVerusCExpr info expr = do
             ae'' <- castGRE ae' RTBool
             e1' <- genVerusCExpr info e1
             e2' <- genVerusCExpr info e2
-            when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError "if true branch has different type than expected"
+            when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError $ "if true branch has different type than expected: " ++ show (e1' ^. eTy) ++ " vs " ++ show (e1 ^. tty) 
             when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError "if false branch has different type than expected"
             when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
-            return $ GenRustExpr (e1' ^. eTy) [__di|
+            ety <- unifyVerusTys (e1' ^. eTy) (e2' ^. eTy)
+            return $ GenRustExpr ety [di|
             if #{ae''} {
                 #{e1' ^. code}
             } else {
@@ -482,7 +483,9 @@ genVerusCExpr info expr = do
                             |]
             cases' <- mapM genCase cases
             let casesCode = map (^. code) cases'
-            return $ GenRustExpr (head cases' ^. eTy) [__di|
+            let casesEtys = map (^. eTy) cases'
+            stmtEty <- foldM unifyVerusTys (head casesEtys) (tail casesEtys)
+            return $ GenRustExpr stmtEty [__di|
             match #{ae''} {
                 #{vsep casesCode}
             }
@@ -580,6 +583,7 @@ addLifetime _ t = t
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
+    debugPrint $ "genVerusDef: " ++ cdef ^. defName
     let specname = cdef ^. defName ++ "_spec"
     (defArgs', (rty', body)) <- unbindCDepBind $ cdef ^. defBody
     -- If any of the arguments or return type have a lifetime, we parameterize the whole function with lifetime 'a
@@ -703,7 +707,7 @@ mkNestPattern l =
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
-    debugLog $ "genVerusStruct: " ++ name
+    -- debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (tyNeedsLifetime . snd) fields
@@ -868,7 +872,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
 genVerusEnum (CEnum name casesFV isVest) = do
-    debugLog $ "genVerusEnum: " ++ name
+    -- debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases
@@ -1025,7 +1029,7 @@ genVerusTyDef (CEnumDef e) = genVerusEnum e
 
 genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann, Doc ann)
 genVerusTyDefs tydefs = do
-    debugLog "genVerusTyDefs"
+    -- debugLog "genVerusTyDefs"
     (tyDefs, vestDefs) <- unzip <$> mapM (genVerusTyDef . snd) tydefs
     return (vsep tyDefs, vsep vestDefs)
 
@@ -1079,6 +1083,8 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, RTDummy) t = return v
+cast (v, RTOption RTDummy) (RTOption t) = return v
 cast (v, t1) t2 | t1 == t2 = return v
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
@@ -1087,6 +1093,13 @@ u8slice = RTRef RShared (RTSlice RTU8)
 
 vecU8 :: VerusTy
 vecU8 = RTVec RTU8
+
+unifyVerusTys :: VerusTy -> VerusTy -> EM VerusTy
+unifyVerusTys t1 t2 | t1 == t2 = return t1
+unifyVerusTys RTDummy t2 = return t2
+unifyVerusTys t1 RTDummy = return t1
+unifyVerusTys (RTOption t1) (RTOption t2) = RTOption <$> unifyVerusTys t1 t2
+unifyVerusTys t1 t2 = throwError $ ErrSomethingFailed $ "can't unify types: " ++ (show . pretty $ t1) ++ " and " ++ (show . pretty $ t2)
 
 
 

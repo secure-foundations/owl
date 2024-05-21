@@ -51,6 +51,7 @@ data VerusTy =
     | RTUsize
     | RTVerusNat
     | RTVerusGhost
+    | RTDummy -- for cases when we don't know the type of something
     deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance Alpha BorrowKind

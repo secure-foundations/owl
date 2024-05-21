@@ -44,6 +44,7 @@ data FormatTy =
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
+    | FDummy -- for when we can't infer the type locally
     deriving (Show, Eq, Generic, Typeable)
 
 data Typed v t = Typed {
@@ -182,6 +183,7 @@ instance OwlPretty FormatTy where
     owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
     owlpretty FGhost = owlpretty "ghost"
+    owlpretty FDummy = owlpretty "dummy"
 
 flagShouldPrettyTypes :: Bool
 flagShouldPrettyTypes = True
