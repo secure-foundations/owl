@@ -264,7 +264,7 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
         , ("mac_vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
         , ("pkenc", ([seqU8, seqU8], seqU8))
         , ("pkdec", ([seqU8, seqU8], seqU8))
-        , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
+        -- , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
         , ("dec_st_aead", ([seqU8, seqU8, seqU8, seqU8], RTOption seqU8))
         , ("is_group_elem", ([seqU8], RTBool))
         , ("crh", ([seqU8], seqU8))
@@ -307,7 +307,18 @@ extractCAExpr aexpr = do
                             buf' <- extractCAExpr buf
                             start' <- extractCAExpr start
                             end' <- extractCAExpr end
-                            return [di|#{buf'}.subrange(#{start'}, #{end'})|]
+                            return [di|#{buf'}.subrange(#{start'} as usize, #{end'} as usize)|]
+                        "enc_st_aead" -> do
+                            let [key, msg, nonce, aad] = args
+                            let extAndCast x dstty = do
+                                    x' <- extractCAExpr x
+                                    x'' <- specCast (x', x ^. tty) dstty
+                                    return x''
+                            key' <- extAndCast key seqU8
+                            msg' <- extAndCast msg seqU8
+                            nonce' <- extractCAExpr nonce
+                            aad' <- extAndCast aad seqU8
+                            return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
                         _ -> do
                             args' <- mapM extractCAExpr args
                             return [__di|
@@ -464,7 +475,7 @@ extractExpr expr = do
         CCall f frty args -> do
             args' <- mapM extractCAExpr args
             let args'' = [di|cfg|] : [di|mut_state|] : args'
-            return [di|(call(#{f}_spec(#{tupled args''})))|]
+            return [di|(call(#{f}_spec(#{hsep . punctuate comma $ args''})))|]
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 
@@ -535,4 +546,5 @@ specCast (x, FStruct t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x}
 specCast (x, FEnum t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|]
 specCast (x, FOption (FStruct _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
 specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
+specCast (x, FInt) RTUsize = return [di|(#{x}) as usize|]
 specCast (x, _) _ = return [di|#{x}|]

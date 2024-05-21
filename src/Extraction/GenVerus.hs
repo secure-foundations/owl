@@ -405,17 +405,22 @@ genVerusCExpr info expr = do
             let rustX = execName . show $ x
             e' <- genVerusCExpr (info { inK = False }) e
             k' <- genVerusCExpr info k
+            let needsItreeLhs = case e of
+                    Typed _ (CCall _ _ _) -> True
+                    _ -> False
             -- Cast here, if necessary
             if e' ^. eTy /= e ^. tty then do
                 castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)
+                let lhs = if needsItreeLhs then [di|(tmp_#{rustX}, Tracked(itree))|] else [di|tmp_#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
-                let tmp_#{rustX} = { #{e' ^. code} };
+                let #{lhs} = { #{e' ^. code} };
                 let #{rustX} = #{castE'};
                 #{k' ^. code}
                 |]
             else do
+                let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
-                let #{rustX} = { #{e' ^. code} };
+                let #{lhs} = { #{e' ^. code} };
                 #{k' ^. code}
                 |]
         CBlock ebody -> do
@@ -548,7 +553,7 @@ genVerusCExpr info expr = do
             viewArgs <- mapM (\(_,argty,argvar) -> viewVar (show argvar) argty) argzip
             let specArgs = [di|*self|] : [di|*mut_state|] : viewArgs
             let specCall = [di|#{specf}(#{hsep . punctuate comma $ specArgs})|]
-            let execArgs = [di|*mut_state|] : map (pretty . show) argvars
+            let execArgs = [di|mut_state|] : map (pretty . show) argvars
             let execCall = [di|self.#{execf}(#{hsep . punctuate comma $ execArgs})|]
             return $ GenRustExpr frty [__di|
             #{vsep genArgVars}
@@ -598,7 +603,7 @@ genVerusDef lname cdef = do
             body' <- genVerusCExpr genInfo body
             castResInner <- cast ([di|res_inner|], body' ^. eTy) rty'
             return ([di||], body' ^. code, castResInner)
-        Nothing -> return ([di|\#[verifier::external_body]|], [di|/* TODO: implement #{execname} */|], [di|res_inner|])
+        Nothing -> return ([di|\#[verifier::external_body]|], [di|todo!(/* implement #{execname} by hand */)|], [di|res_inner|])
     viewRes <- viewVar "(r.0)" rty'
     let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
@@ -626,7 +631,7 @@ genVerusDef lname cdef = do
             #{ensuresLenValid}
     {
         let tracked mut itree = itree;
-        let (res_inner, Tracked(itree)) = {
+        let (res_inner, Tracked(itree)): (#{pretty rtyLt}, #{itreeTy}) = {
             broadcast use itree_axioms;
             reveal(#{specname});
             #{bodyCode}
