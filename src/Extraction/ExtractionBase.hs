@@ -59,6 +59,7 @@ data Env t = Env {
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
+    ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
 }
 
 
@@ -137,7 +138,8 @@ liftExtractionMonad m = do
             _freshCtr = env' ^. freshCtr,
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
-            _owlUserFuncs = env' ^. owlUserFuncs
+            _owlUserFuncs = env' ^. owlUserFuncs,
+            _memoKDF = []
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -170,7 +172,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs)
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) []
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
@@ -318,3 +320,16 @@ hexStringToByteList (h1 : h2 : t) = do
     t' <- hexStringToByteList t
     return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8," <+> t'
 hexStringToByteList _ = throwError OddLengthHexConst
+
+lookupNameKindAExprMap :: [(([NameKind], [AExpr]), a)] -> [NameKind] -> [AExpr] -> Maybe a
+lookupNameKindAExprMap [] nks args = Nothing
+lookupNameKindAExprMap (((lnks, largs), r) : tl) nks args =
+    if all (uncurry (==)) (zip nks lnks) && all (uncurry aeq) (zip args largs)
+    then Just r
+    else lookupNameKindAExprMap tl nks args
+
+
+lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad t (Maybe (CDataVar t, t))
+lookupKdfCall nks k = do
+    hcs <- use memoKDF
+    return $ lookupNameKindAExprMap hcs nks k

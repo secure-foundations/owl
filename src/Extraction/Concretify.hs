@@ -378,7 +378,8 @@ concretifyExpr e = do
       EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       ECrypt cop aes -> do
           cs <- mapM concretifyAExpr aes
-          concretifyCryptOp cop cs
+          -- resolvedArgs <- mapM resolveANF aes
+          concretifyCryptOp aes cop cs
       ECall p _ aes -> do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
@@ -479,7 +480,6 @@ concretifyExpr e = do
           return $ noLets $ Typed FUnit $ CTWrite s c1 c2
       ESetOption _ _ e -> concretifyExpr e
 
-
 typeOfTable :: Path -> EM FormatTy
 typeOfTable (PRes (PDot p n)) = do
     md <- liftCheck $ TB.openModule p
@@ -499,9 +499,8 @@ returnTyOfCall p cs = do
                 (_, k) <- unbind xk
                 go k
 
-concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
-concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
-    debugPrint "TODO: KDF memoization"
+concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
+concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     let nk = nks !! nkidx
     kdfLen <- kdfLenOf nks
     outLen <- fLenOfNameKind nk
@@ -509,17 +508,29 @@ concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     let outTy = FBuf $ Just outLen
     startOffset <- offsetOf nks nkidx
     endOffset <- offsetOf nks (nkidx + 1)
-    kdfVar <- fresh $ s2n "kdfval"
-    let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+    vtopt <- lookupKdfCall nks resolvedArgs
+    (kdfVar, lets) <- case vtopt of
+        Just (var, varty) -> do
+            -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
+            unifyFormatTy varty kdfTy
+            return (var, [])
+        Nothing -> do
+            kdfVar <- do
+                vn' <- fresh $ s2n "kdfval"
+                fresh $ s2n (show vn')
+            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+            let doKdfLetBinding = (kdfVar, Nothing, doKdf)
+            memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
+            return $ (kdfVar, [doKdfLetBinding])
     let doSlice = Typed outTy $ CRet $ Typed outTy $ 
             CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
-    let doKdfLetBinding = (kdfVar, Nothing, doKdf)
-    return $ withLets [doKdfLetBinding] doSlice
+    return $ withLets lets doSlice
+    -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
     where
         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
         offsetOf nks idx = kdfLenOf $ take idx nks
-concretifyCryptOp (CLemma _) cs = return $ noLets $ Typed FGhost $ CRet ghostUnit
-concretifyCryptOp CAEnc [k, x] = do
+concretifyCryptOp _ (CLemma _) cs = return $ noLets $ Typed FGhost $ CRet ghostUnit
+concretifyCryptOp _ CAEnc [k, x] = do
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
               _ -> FBuf Nothing
@@ -528,31 +539,31 @@ concretifyCryptOp CAEnc [k, x] = do
     let coinsVar = Typed (FBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
     let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
     return $ noLets $ Typed t $ CSample sampFLen $ bind coinsName doEnc
-concretifyCryptOp CADec [k, c] = do
+concretifyCryptOp _ CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
-concretifyCryptOp (CEncStAEAD np _ xpat) [k, x, aad] = do
+concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     nonce <- concretifyPath np
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
               _ -> FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
-concretifyCryptOp CDecStAEAD [k, c, aad, nonce] = do
+concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
-concretifyCryptOp CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
-concretifyCryptOp CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
-concretifyCryptOp CMac cs = do
+concretifyCryptOp _ CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
+concretifyCryptOp _ CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
+concretifyCryptOp _ CMac cs = do
     let t = FBuf $ Just $ FLNamed "maclen"
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
-concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
-concretifyCryptOp CSign cs = do
+concretifyCryptOp _ CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
+concretifyCryptOp _ CSign cs = do
     let t = FBuf $ Just $ FLNamed "signature"
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
-concretifyCryptOp CSigVrfy cs = do
+concretifyCryptOp _ CSigVrfy cs = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
-concretifyCryptOp cop cargs = throwError $ TypeError $
+concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 
 
