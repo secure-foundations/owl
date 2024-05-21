@@ -321,10 +321,16 @@ genVerusCAExpr ae = do
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         _ -> do
                             args' <- mapM genVerusCAExpr args
-                            return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma . map (^. code) $ args'})|]
+                            args'' <- zipWithM castGRE args' (map (^. tty) args)
+                            return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
+            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+        CAGetVK n -> do
+            let rustN = execName n
+            castN <- cast ([di|self.pk_#{rustN}|], nameTy) u8slice
             castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
         CAInt fl -> return  $ GenRustExpr (ae ^. tty) $ pretty $ lowerFLen fl

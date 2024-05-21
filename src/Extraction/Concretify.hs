@@ -202,8 +202,10 @@ concreteTyOfApp (PRes pth) =
       PDot PTop "dhpk" -> \_ [x] -> return groupFormatTy
       PDot PTop "enc_pk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "enc_pk"
       PDot PTop "dh_combine" -> \_ [x, y] -> do
-          when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
-              throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
+        -- We may not have this information at concretization time, but the typechecker tells us it is sound
+        -- to extract dh_combine, so we don't check it here
+        --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
+        --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
           return groupFormatTy
       PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
       PDot PTop p -> \_ args -> do
@@ -283,74 +285,97 @@ concretifyAExpr a =
             Nothing -> error "Unknown var"
             Just ct -> return $ Typed ct $ CAVar s $ castName x
 
+-- To enable CSE/memoization optimization, we allow concretifyExpr to
+-- return a list of let-bindings that should be inserted before the current
+-- expression being concretized. These get handled at `ELet`s.
+type CLetBinding = (CDataVar FormatTy, Maybe AExpr, CExpr FormatTy)
 
--- TODO: insert call to marshaling based on type analysis 
--- (when data type used as input to crypto op, output, etc)
+noLets :: a -> (a, [CLetBinding])
+noLets x = (x, [])
 
-concretifyExpr :: Expr -> EM (CExpr FormatTy)
+addLets :: [CLetBinding] -> (a, [CLetBinding]) -> (a, [CLetBinding])
+addLets lets (x, lets') = (x, lets ++ lets')
+
+withLets :: [CLetBinding] -> a -> (a, [CLetBinding])
+withLets lets x = (x, lets)
+
+exprFromLets :: [CLetBinding] -> CExpr FormatTy -> CExpr FormatTy
+exprFromLets lets e = foldr (\(x, oanf, e') acc -> Typed (acc ^. tty) $ CLet e' oanf $ bind x acc) e lets
+
+exprFromLets' :: (CExpr FormatTy, [CLetBinding]) -> CExpr FormatTy
+exprFromLets' = uncurry $ flip exprFromLets
+
+varsOfLets :: [CLetBinding] -> [(CDataVar FormatTy, FormatTy)]
+varsOfLets = map (\(x, _, e) -> (x, e ^. tty))
+
+concretifyExpr :: Expr -> EM (CExpr FormatTy, [CLetBinding])
 concretifyExpr e = do
     -- debugPrint $ "Concretifying expr:"
     -- debugPrint $ show $ owlpretty e
     case e^.val of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
-          k' <- withVars [(castName x, FBuf Nothing)] $ concretifyExpr k
-          return $ Typed (_tty k') $ CInput (FBuf Nothing) $ bind (castName x, ep) k'
+          (k', lets) <- withVars [(castName x, FBuf Nothing)] $ concretifyExpr k
+          return $ withLets lets $ Typed (_tty k') $ CInput (FBuf Nothing) $ bind (castName x, ep) k'
       EOutput a op -> do
           c <- concretifyAExpr a
-          return $ Typed FUnit $ COutput c op
+          return $ noLets $ Typed FUnit $ COutput c op
       ERet a -> do
         v <- concretifyAExpr a
-        return $ Typed (_tty v) $ CRet v
+        return $ noLets $ Typed (_tty v) $ CRet v
       ELet e1 _ oanf s xk -> do
-          c1 <- concretifyExpr e1
+          (c1, c1Lets) <- concretifyExpr e1
           (x, k) <- unbind xk
-          k' <- withVars [(castName x, _tty c1)] $ concretifyExpr k
-          return $ Typed (_tty k') $ CLet c1 oanf $ bind (castName x) k'
+          k' <- withVars ((castName x, _tty c1) : varsOfLets c1Lets) $ concretifyExpr k
+          let k'' = exprFromLets' k'
+          return $ noLets $ exprFromLets c1Lets $ Typed (_tty k'') $ CLet c1 oanf $ bind (castName x) k''
       ELetGhost _ s xk -> do
           (x, k) <- unbind xk
           k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
-          return $ Typed (_tty k') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k'
+          let k'' = exprFromLets' k'
+          return $ noLets $ Typed (_tty k'') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k''
       EBlock e b -> do
-          c <- concretifyExpr e
-          return $ Typed (_tty c) $ CBlock c
+          (c, clets) <- concretifyExpr e
+          return $ noLets $ exprFromLets clets $ Typed (_tty c) $ CBlock c
       EUnpack a _ ixk -> do
           c <- concretifyAExpr a
           ((i, x), k) <- unbind ixk
           TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ do
             k' <- withVars [(castName x, _tty c)] $ concretifyExpr k
-            return $ Typed (_tty k') $ CLet (Typed (_tty c) (CRet c)) Nothing $ bind (castName x) k'
+            let k'' = exprFromLets' k'
+            return $ noLets $ Typed (_tty k'') $ CLet (Typed (_tty c) (CRet c)) Nothing $ bind (castName x) k''
       EChooseBV _ _ xe -> do
           (x, e) <- unbind xe
           e' <- withVars [(castName x, FGhost)] $ concretifyExpr e
-          return $ Typed (_tty e') $ CLet (Typed FGhost $ CRet ghostUnit) Nothing $ bind (castName x) e'
+          let e'' = exprFromLets' e'
+          return $ noLets $ Typed (_tty e'') $ CLet (Typed FGhost $ CRet ghostUnit) Nothing $ bind (castName x) e''
       EChooseIdx _ _ ie -> do
           (i, e) <- unbind ie
           TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ do
             concretifyExpr e
       EIf a e1 e2 -> do
           ca <- concretifyAExpr a
-          c1 <- concretifyExpr e1
-          c2 <- concretifyExpr e2
+          c1 <- exprFromLets' <$> concretifyExpr e1
+          c2 <- exprFromLets' <$> concretifyExpr e2
           t <- unifyFormatTy (_tty c1) (_tty c2)
-          return $ Typed t $ CIf ca c1 c2
-      EForallBV _ _ -> return $ Typed FGhost $ CRet ghostUnit
-      EForallIdx _ _ -> return $ Typed FGhost $ CRet ghostUnit
+          return $ noLets $ Typed t $ CIf ca c1 c2
+      EForallBV _ _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      EForallIdx _ _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EPackIdx _ e -> concretifyExpr e
       EGuard a e -> do
           ca <- concretifyAExpr a
-          ce <- concretifyExpr e
-          return $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
+          ce <- exprFromLets' <$> concretifyExpr e
+          return $ noLets $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
       EGetCtr p _ -> do
           s <- concretifyPath p
-          return $ Typed (FBuf $ Just $ FLNamed "counter") $ CGetCtr s
+          return $ noLets $ Typed (FBuf $ Just $ FLNamed "counter") $ CGetCtr s
       EIncCtr p _ -> do
           s <- concretifyPath p
-          return $ Typed FInt $ CGetCtr s
-      EDebug _ -> return $ Typed FGhost $ CRet ghostUnit
-      EAssert _ -> return $ Typed FGhost $ CRet ghostUnit
-      EAssume _ -> return $ Typed FGhost $ CRet ghostUnit
-      EAdmit -> return $ Typed FGhost $ CRet ghostUnit
+          return $ noLets $ Typed FInt $ CIncCtr s
+      EDebug _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      EAssert _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       ECrypt cop aes -> do
           cs <- mapM concretifyAExpr aes
           concretifyCryptOp cop cs
@@ -358,11 +383,12 @@ concretifyExpr e = do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
           t <- returnTyOfCall p cs
-          return $ Typed t $ CCall s t cs
+          return $ noLets $ Typed t $ CCall s t cs
       EParse a t_target otherwiseCase xsk -> do
             a' <- concretifyAExpr a
             t_target' <- concretifyTy t_target
             otw' <- traverse concretifyExpr otherwiseCase
+            let otw'' = fmap exprFromLets' otw'
             (xs, k) <- unbind xsk
             let xs' = map (\(x, s) -> (castName x, s)) xs
             (xtys, xtys') <- case t_target' of
@@ -377,9 +403,10 @@ concretifyExpr e = do
                         FEnum _ _ -> return PFromDatatype
                         _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
             k' <- withVars xtys $ concretifyExpr k
-            return $ Typed (k' ^. tty) $ CParse pkind a' t_target' otw' $ bind xtys' k'
+            let k'' = exprFromLets' k'
+            return $ noLets $ Typed (k'' ^. tty) $ CParse pkind a' t_target' otw'' $ bind xtys' k''
       ECase e otherwiseCase xsk -> do
-            e' <- concretifyExpr e
+            e' <- exprFromLets' <$> concretifyExpr e
             casevalT <- case otherwiseCase of
                 Just (t, e) -> concretifyTy t
                 Nothing -> case e' ^. tty of
@@ -398,14 +425,15 @@ concretifyExpr e = do
             cases' <- forM xsk $ \(c, o) ->
                 case o of
                     Left k -> do
-                        k' <- concretifyExpr k
+                        k' <- exprFromLets' <$> concretifyExpr k
                         return (c, Left k')
                     Right (_, xtk) -> do
                         (x, k) <- unbind xtk
                         let x' = castName x
                         caseTy <- caseTyOf c
                         k' <- withVars [(x', caseTy)] $ concretifyExpr k
-                        return (c, Right $ bind x' (caseTy, k'))
+                        let k'' = exprFromLets' k'
+                        return (c, Right $ bind x' (caseTy, k''))
             avar <- fresh $ s2n "caseval"
             -- Assume the typechecker already checked that all branches return compatible types,
             -- so we just look at the first one to determine the return type
@@ -422,7 +450,7 @@ concretifyExpr e = do
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do
                     let startT = e' ^. tty
-                    otw' <- concretifyExpr otw
+                    otw' <- exprFromLets' <$> concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
                     let fromBuf = case casevalT of
                             -- Special case: sometimes, option types are given a type annotation, which 
@@ -435,7 +463,7 @@ concretifyExpr e = do
                                 bind [(avar, ignore "caseval", casevalT)] caseStmt
                     return (avar', p)
                 Nothing -> return (avar, caseStmt)
-            return $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
+            return $ noLets $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
       EFalseElim e _ -> concretifyExpr e
@@ -443,12 +471,12 @@ concretifyExpr e = do
           c <- concretifyAExpr a
           t <- typeOfTable p
           s <- concretifyPath p
-          return $ Typed t $ CTLookup s c
+          return $ noLets $ Typed t $ CTLookup s c
       ETWrite p a1 a2 -> do
           c1 <- concretifyAExpr a1
           c2 <- concretifyAExpr a2
           s <- concretifyPath p
-          return $ Typed FUnit $ CTWrite s c1 c2
+          return $ noLets $ Typed FUnit $ CTWrite s c1 c2
       ESetOption _ _ e -> concretifyExpr e
 
 
@@ -471,7 +499,7 @@ returnTyOfCall p cs = do
                 (_, k) <- unbind xk
                 go k
 
-concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy)
+concretifyCryptOp :: CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
 concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     debugPrint "TODO: KDF memoization"
     let nk = nks !! nkidx
@@ -485,11 +513,12 @@ concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
     let doSlice = Typed outTy $ CRet $ Typed outTy $ 
             CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
-    return $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
+    let doKdfLetBinding = (kdfVar, Nothing, doKdf)
+    return $ withLets [doKdfLetBinding] doSlice
     where
         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
         offsetOf nks idx = kdfLenOf $ take idx nks
-concretifyCryptOp (CLemma _) cs = return $ Typed FGhost $ CRet ghostUnit
+concretifyCryptOp (CLemma _) cs = return $ noLets $ Typed FGhost $ CRet ghostUnit
 concretifyCryptOp CAEnc [k, x] = do
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
@@ -498,31 +527,31 @@ concretifyCryptOp CAEnc [k, x] = do
     let sampFLen = FLNamed "nonce"
     let coinsVar = Typed (FBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
     let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
-    return $ Typed t $ CSample sampFLen $ bind coinsName doEnc
+    return $ noLets $ Typed t $ CSample sampFLen $ bind coinsName doEnc
 concretifyCryptOp CADec [k, c] = do
     let t = FOption $ FBuf Nothing
-    return $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
 concretifyCryptOp (CEncStAEAD np _ xpat) [k, x, aad] = do
     nonce <- concretifyPath np
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
               _ -> FBuf Nothing
-    return $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
 concretifyCryptOp CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
-    return $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
 concretifyCryptOp CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
 concretifyCryptOp CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
 concretifyCryptOp CMac cs = do
     let t = FBuf $ Just $ FLNamed "maclen"
-    return $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
 concretifyCryptOp CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
 concretifyCryptOp CSign cs = do
     let t = FBuf $ Just $ FLNamed "signature"
-    return $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
 concretifyCryptOp CSigVrfy cs = do
     let t = FOption $ FBuf Nothing
-    return $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
 concretifyCryptOp cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 
@@ -567,7 +596,7 @@ concretifyDef defName (TB.Def bd) = do
                     cretT <- concretifyTy retT
                     return $ Just (cretT, Nothing)
                 Just e -> do
-                    ce <- concretifyExpr e
+                    ce <- exprFromLets' <$> concretifyExpr e
                     let cretT = ce ^. tty
                     --   debugPrint . show . owlpretty $ defName
                     --   debugPrint . show . owlpretty $ ce
