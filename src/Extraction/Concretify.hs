@@ -484,7 +484,7 @@ concretifyCryptOp (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     kdfVar <- fresh $ s2n "kdfval"
     let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
     let doSlice = Typed outTy $ CRet $ Typed outTy $ 
-            CAApp "subrange" [Typed kdfTy $ CAVar (ignore "kdfval") kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
+            CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
     return $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
     where
         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks

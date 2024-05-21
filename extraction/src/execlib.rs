@@ -146,7 +146,7 @@ impl<'x> OwlBuf<'x> {
     {
         reveal(OwlBuf::len_valid);
         match self {
-            OwlBuf::Borrowed(s) => OwlBuf::from_vec(s.to_vec()),
+            OwlBuf::Borrowed(s) => OwlBuf::from_vec(slice_to_vec(s)),
             OwlBuf::Owned(v, start, len) => OwlBuf::Owned(v, start, len),
         }
     }

@@ -265,10 +265,10 @@ pub open spec fn ghost_unit() -> Ghost<()>
     Ghost(())
 }
 
-pub open spec fn owl_ghost_unit() -> Ghost<()>
-{
-    Ghost(())
-}
+// pub open spec fn owl_ghost_unit() -> Ghost<()>
+// {
+//     Ghost(())
+// }
 
 }
 

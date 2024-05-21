@@ -307,7 +307,7 @@ extractCAExpr aexpr = do
                             buf' <- extractCAExpr buf
                             start' <- extractCAExpr start
                             end' <- extractCAExpr end
-                            return [di|#{buf'}.subrange(#{start'} as usize, #{end'} as usize)|]
+                            return [di|Seq::subrange(#{buf'}, #{start'}, #{end'})|]
                         "enc_st_aead" -> do
                             let [key, msg, nonce, aad] = args
                             let extAndCast x dstty = do
