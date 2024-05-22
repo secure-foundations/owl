@@ -180,9 +180,10 @@ def init_stage2<i@n,m>
                 c6 != honest_c6<session i, session j, pid n, pid n, pid
                 m>()
         );
-        let psk : if HasPSK?(opsk) then Name(psk<@n,m>) else Const(0x) = case opsk {
+        let psk : if HasPSK?(opsk) then Name(psk<@n,m>) else ty_zeros_32 = 
+        case opsk {
                    | HasPSK v => v
-                   | NoPSK => 0x
+                   | NoPSK => zeros_32()
         } in
         pcase HasPSK?(opsk) in 
         let c7 = kdf<0;0,1;kdfkey || nonce || enckey; 0>(c6, psk, 0x) in 

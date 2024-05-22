@@ -246,9 +246,10 @@ let psk_val : if HasPSK?(psk) then
         Name(psk<@n,m>) 
     else 
         Name(psk<@n3, m>)
-    else Const(0x) = case psk {
+    else ty_zeros_32 = 
+case psk {
            | HasPSK v => v
-           | NoPSK => 0x
+           | NoPSK => zeros_32()
 } in
 pcase HasPSK?(psk) in 
  let c7 = kdf<0,1;0,1; kdfkey || nonce || enckey; 0>(c6, psk_val, 0x) in 

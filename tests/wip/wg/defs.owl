@@ -23,7 +23,7 @@ func mac1() = 0x6d6163312d2d2d2d
 
 func zeros_16() = 0x00000000000000000000000000000000
 func zeros_32() = 0x0000000000000000000000000000000000000000000000000000000000000000
-
+type ty_zeros_32 = Const(0x0000000000000000000000000000000000000000000000000000000000000000)
 
 locality Initiator : 1
 locality Responder : 1
@@ -168,7 +168,7 @@ nametype C6_corr = kdf {ikm info.
 }
 
 nametype C6<@n, m> = kdf {ikm info.
-    (ikm == 0x \/ ikm == get(psk<@n,m>)) -> 
+    (ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n,m>)) -> 
         strict C7<@n,m> || public nonce || 
         strict st_aead (Data<adv> |0|)
            aad x. valid_h6[x] 
