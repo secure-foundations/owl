@@ -319,6 +319,12 @@ genVerusCAExpr ae = do
                                 RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ #{buf' ^. code}.subrange(#{castStart}, #{castEnd}) }|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
+                        (f, [x]) | "?" `isSuffixOf` f -> do
+                            -- Special case for enum test functions
+                            let f' = init f ++ "_enumtest"
+                            x' <- genVerusCAExpr x
+                            x'' <- castGRE x' (RTRef RShared (x ^. tty))
+                            return $ GenRustExpr (ae ^. tty) [di|#{execName f'}(#{x''})|]
                         _ -> do
                             args' <- mapM genVerusCAExpr args
                             args'' <- zipWithM castGRE args' (map (^. tty) args)
@@ -459,9 +465,9 @@ genVerusCExpr info expr = do
         CCase ae cases -> do
             ae' <- genVerusCAExpr ae
             ae'' <- castGRE ae' (ae ^. tty)
-            aeTyPrefix <- case ae ^. tty of
-                RTEnum n _ -> return [di|#{execName n}::|]
-                RTOption _ -> return [di|Option::|]
+            (aeTyPrefix, translateCaseName) <- case ae ^. tty of
+                RTEnum n _ -> return ([di|#{n}::|], execName)
+                RTOption _ -> return ([di|Option::|], id)
                 t -> throwError $ UndefinedSymbol $ "attempt to case on type " ++ show t
             let genCase (c, o) = do
                     case o of
@@ -471,7 +477,7 @@ genVerusCExpr info expr = do
                                     RTOption _ -> ""
                                     _ -> "()"
                             return $ GenRustExpr (k' ^. eTy) [__di|
-                            #{aeTyPrefix}#{c}#{parens} => { 
+                            #{aeTyPrefix}#{translateCaseName c}#{parens} => { 
                                 #{k' ^. code} 
                             },
                             |]
@@ -485,7 +491,7 @@ genVerusCExpr info expr = do
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
                             k' <- genVerusCExpr info k
                             return $ GenRustExpr (k' ^. eTy) [__di|
-                            #{aeTyPrefix}#{c}(tmp_#{rustX}) => {
+                            #{aeTyPrefix}#{translateCaseName c}(tmp_#{rustX}) => {
                                 let #{rustX} = #{castTmp}; 
                                 #{k' ^. code} 
                             },
@@ -764,6 +770,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let reqs = vsep . punctuate comma . mapMaybe (
                         \(_, ename, fty) -> case fty of
                             RTOwlBuf _ -> Just [di|arg_#{ename}.len_valid()|]
+                            RTStruct _ _ -> Just [di|arg_#{ename}.len_valid()|]
+                            RTEnum _ _ -> Just [di|arg_#{ename}.len_valid()|]
                             _ -> Nothing
                     ) $ fields
             let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.dview() == arg_#{ename}.dview()|]) fields
@@ -786,6 +794,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                         case fty of 
                             RTWithLifetime (RTStruct _ _) _ -> Just [di|self.#{fname}.len_valid()|]
                             RTWithLifetime (RTEnum _ _) _ -> Just [di|self.#{fname}.len_valid()|]
+                            (RTStruct _ _) -> Just [di|self.#{fname}.len_valid()|]
+                            (RTEnum _ _) -> Just [di|self.#{fname}.len_valid()|]
                             RTOwlBuf _ -> Just [di|self.#{fname}.len_valid()|]
                             _ -> Nothing
                     ) fields
@@ -907,7 +917,8 @@ genVerusEnum (CEnum name casesFV isVest) = do
     allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
     -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
-    return $ (vsep [enumDef, allLensValid, viewImpl], vestFormat)
+    enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
+    return $ (vsep [enumDef, allLensValid, viewImpl, enumTests], vestFormat)
     where 
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
@@ -932,6 +943,8 @@ genVerusEnum (CEnum name casesFV isVest) = do
                         case fty of 
                             Just (RTWithLifetime (RTStruct _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just (RTWithLifetime (RTEnum _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just (RTStruct _ _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just (RTEnum _ _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just (RTOwlBuf _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just _ -> [di|#{fname}(_) => true|]
                             Nothing -> [di|#{fname}() => true|]
@@ -964,6 +977,27 @@ genVerusEnum (CEnum name casesFV isVest) = do
             }
             |]
         
+        mkEnumTests :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
+        mkEnumTests verusName specname cases lAnnot = do
+            tests <- mapM mkEnumTest (M.assocs cases)
+            return $ vsep tests
+            where
+                mkEnumTest (cname, (fname, topt)) = do
+                    let var = case topt of 
+                            Just _ -> [di|_|]
+                            Nothing -> [di||]
+                    return [__di|
+                    \#[inline]
+                    pub fn #{fname}_enumtest(x: &#{verusName}#{lAnnot}) -> (res:bool)
+                        ensures res == #{cname}_enumtest(x.dview())
+                    {
+                        match x {
+                            #{verusName}::#{fname}(#{var}) => true,
+                            _ => false,
+                        }
+                    }
+                    |]
+
         -- genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, VerusTy)] -> String -> EM (Doc ann)
         -- genParsleyWrappers verusName specname structTy fields lifetimeConst = do
         --     let specParse = [di|parse_#{specname}|] 

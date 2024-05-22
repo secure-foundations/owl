@@ -192,7 +192,8 @@ extractCEnum (CEnum n cs isVest) = do
     |]
     parseSerializeDefs <- genParserSerializer (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
-    return $ vsep [enumDef, parseSerializeDefs, constructors]
+    enumTests <- genEnumTests n rn rfsOwlNames
+    return $ vsep [enumDef, parseSerializeDefs, constructors, enumTests]
     where
         genParserSerializer execname specname speccases = do
             let parse = [__di|
@@ -237,6 +238,24 @@ extractCEnum (CEnum n cs isVest) = do
                 crate::#{specname}::#{specName caseName}(x)
             }
             |]
+        
+        genEnumTests owlName specname speccases = do
+            tests <- mapM mkEnumTest speccases
+            return $ vsep tests
+            where
+                mkEnumTest (caseName, topt) = do
+                    let var = case topt of
+                            Just t -> [di|_|]
+                            Nothing -> [di||]
+                    return [__di|
+                    pub open spec fn #{caseName}_enumtest(x: #{specname}) -> bool {
+                        match x {
+                            #{specname}::#{specName caseName}(#{var}) => true,
+                            _ => false,
+                        }
+                    }
+                    |]
+
 
 extractEndpoint :: Endpoint -> EM (Doc ann)
 extractEndpoint (Endpoint evar) = return . pretty . replacePrimes . show $ evar
@@ -320,6 +339,13 @@ extractCAExpr aexpr = do
                             nonce' <- extractCAExpr nonce
                             aad' <- extAndCast aad seqU8
                             return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
+                        _ | "?" `isSuffixOf` f -> do
+                            -- Special case for enum test functions
+                            let f' = init f ++ "_enumtest"
+                            args' <- mapM extractCAExpr args
+                            return [__di|
+                            #{pretty f'}(#{hsep . punctuate comma $ args'})
+                            |]
                         _ -> do
                             args' <- mapM extractCAExpr args
                             return [__di|
@@ -419,6 +445,10 @@ extractExpr expr = do
                 pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
         CCase ae cases -> do
             ae' <- extractCAExpr ae
+            translateCaseName <- case ae ^. tty of
+                    FEnum n _ -> return specName
+                    FOption _ -> return id
+                    _ -> throwError $ TypeError "Unsupported spec case type"
             let extractCase (c, o) = do
                     case o of
                         Left e -> do
@@ -427,7 +457,7 @@ extractExpr expr = do
                                     FOption _ -> ""
                                     _ -> "()"
                             return [__di|
-                            | #{pretty c}#{parens} => { 
+                            | #{translateCaseName c}#{parens} => { 
                             #{e'} 
                             },
                             |]
@@ -436,7 +466,7 @@ extractExpr expr = do
                             x' <- extractVar x
                             e' <- extractExpr e
                             return [__di|
-                            | #{pretty c}(#{x'}) => {
+                            | #{translateCaseName c}(#{x'}) => {
                             #{e'}
                             },
                             |]

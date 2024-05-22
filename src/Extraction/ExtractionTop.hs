@@ -224,7 +224,7 @@ concretifyPass owlExtrData = do
         Concretify.concretifyTyDef
         (uncurry Concretify.concretifyUserFunc) -- Dummy, doesn't actually get used here
         owlExtrData
-    concreteUserFuncs <- concretifyUserFuncs
+    concreteUserFuncs <- catMaybes <$> concretifyUserFuncs
     return $ cfExtrData & userFuncs .~ concreteUserFuncs
     where
         -- Extract only the user funcs that need to be extracted

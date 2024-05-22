@@ -651,7 +651,7 @@ concretifyDef defName (TB.Def bd) = do
 userFuncArgTy :: FormatTy
 userFuncArgTy = FBuf Nothing
 
-concretifyUserFunc' :: String -> TB.UserFunc -> EM (CUserFunc FormatTy, FormatTy)
+concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do
     let ((_, args), body) = unsafeUnbind bd
     let argstys = zip (map castName args) (repeat userFuncArgTy)
@@ -659,11 +659,13 @@ concretifyUserFunc' ufName (TB.FunDef bd) = do
     let rty = body' ^. tty
     let bindArgs = map (\(a,t) -> (a, show a, t)) argstys
     bd' <- bindCDepBind bindArgs (rty, body')
-    return $ (CUserFunc ufName bd', rty)
+    return $ (Just $ CUserFunc ufName bd', rty)
+concretifyUserFunc' ufName (TB.EnumTest caseName enumName) = do
+    return (Nothing, FBool)
 concretifyUserFunc' ufName _ = do
     throwError $ ErrSomethingFailed $ "Unsupported user function: " ++ ufName
 
-concretifyUserFunc :: String -> TB.UserFunc -> EM (CUserFunc FormatTy)
+concretifyUserFunc :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy))
 concretifyUserFunc ufName uf = do
     (uf', _) <- concretifyUserFunc' ufName uf
     return uf'
