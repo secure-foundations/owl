@@ -49,6 +49,7 @@ resolveLengthAnnot a = do
 
 concretifyTy :: Ty -> EM FormatTy
 concretifyTy t = do
+    -- debugPrint $ "Concretifying type:" ++ show (owlpretty t)
     case t^.val of
       TData _ _ _ -> return $ FBuf Nothing
       TDataWithLength _ a -> do
@@ -71,22 +72,24 @@ concretifyTy t = do
             Just (TB.TyAbstract) -> error "Concretize on abstract def"
             Just (TB.TyAbbrev t) -> concretifyTy t
             Just (TB.EnumDef bnd) -> do
-                (_, ts) <- unbind bnd
-                cs <- forM ts $ \(s, ot) -> do
-                    cot <- traverse concretifyTy ot
-                    return (s, cot)
-                return $ FEnum pthName cs
+                (idxs, ts) <- unbind bnd
+                TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
+                    cs <- forM ts $ \(s, ot) -> do
+                        cot <- traverse concretifyTy ot
+                        return (s, cot)
+                    return $ FEnum pthName cs
             Just (TB.StructDef bnd) -> do
-                (_, dp') <- unbind bnd
-                let go dp = case dp of
-                              DPDone _ -> return []
-                              DPVar t s xres -> do
-                                  c <- concretifyTy t
-                                  (_, k) <- unbind xres
-                                  ck <- go k
-                                  return $ (s, c) : ck
-                s <- go dp'
-                return $ FStruct pthName s
+                (idxs, dp') <- unbind bnd
+                TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
+                    let go dp = case dp of
+                                DPDone _ -> return []
+                                DPVar t s xres -> do
+                                    c <- concretifyTy t
+                                    (_, k) <- unbind xres
+                                    ck <- go k
+                                    return $ (s, c) : ck
+                    s <- go dp'
+                    return $ FStruct pthName s
       TConst _ _ -> throwError $ TypeError "invalid constant type in concretifyTy"
       TBool _ -> return $ FBool
       TUnit -> return $ FUnit
@@ -111,6 +114,9 @@ unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 =
     case (t1, t2) of
         _ | t1 `aeq` t2 -> return t1        
+        (FBuf (Just l1), FBuf (Just l2)) -> do
+            l <- unifyFLen l1 l2
+            return $ FBuf $ Just l
         (FDummy, t2) -> return t2
         (t1, FDummy) -> return t1
         (FBuf Nothing, _) -> return $ FBuf Nothing
@@ -121,6 +127,30 @@ unifyFormatTy t1 t2 =
             t <- unifyFormatTy t1' t2'
             return $ FOption t
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
+
+unifyFLen :: FLen -> FLen -> EM FLen
+unifyFLen l1 l2 =
+    case (l1, l2) of
+        (FLConst i1, FLConst i2) | i1 == i2 -> return $ FLConst i1
+        (FLNamed s1, FLNamed s2) | s1 == s2 -> return $ FLNamed s1
+        (FLPlus l1' l2', FLPlus l1'' l2'') -> do
+            l1''' <- unifyFLen l1' l1''
+            l2''' <- unifyFLen l2' l2''
+            return $ FLPlus l1''' l2'''
+        (FLCipherlen l1', FLCipherlen l2') -> do
+            l <- unifyFLen l1' l2'
+            return $ FLCipherlen l
+        (FLConst _, FLNamed _) -> do
+            cl1 <- concreteLength $ lowerFLen l1
+            cl2 <- concreteLength $ lowerFLen l2
+            if cl1 == cl2 then return l2
+            else throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
+        (FLNamed _, FLConst _) -> do
+            cl1 <- concreteLength $ lowerFLen l1
+            cl2 <- concreteLength $ lowerFLen l2
+            if cl1 == cl2 then return l1
+            else throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
+        _ -> throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
@@ -479,6 +509,7 @@ concretifyExpr e = do
           s <- concretifyPath p
           return $ noLets $ Typed FUnit $ CTWrite s c1 c2
       ESetOption _ _ e -> concretifyExpr e
+      EOpenTyOf _ e -> concretifyExpr e
 
 typeOfTable :: Path -> EM FormatTy
 typeOfTable (PRes (PDot p n)) = do
@@ -594,7 +625,7 @@ withDepBind (DPVar t s xd) k = do
 concretifyDef :: String -> TB.Def -> EM (Maybe (CDef FormatTy))
 concretifyDef defName (TB.DefHeader _) = return Nothing
 concretifyDef defName (TB.Def bd) = do
-    -- debugPrint $ "Concretifying def: " ++ defName
+    debugPrint $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
     ores <- 
@@ -658,24 +689,28 @@ concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing
 concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
 concretifyTyDef tname (TB.EnumDef bnd) = do
-    (_, ts) <- unbind bnd
-    cs <- forM ts $ \(s, ot) -> do
-        cot <- traverse concretifyTy ot
-        return (s, cot)
-    let isVest = all (maybe True typeIsVest . snd) cs
-    return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
+    -- debugPrint $ "Concretifying enum: " ++ tname
+    (idxs, ts) <- unbind bnd
+    TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
+        cs <- forM ts $ \(s, ot) -> do
+            cot <- traverse concretifyTy ot
+            return (s, cot)
+        let isVest = all (maybe True typeIsVest . snd) cs
+        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
 concretifyTyDef tname (TB.StructDef bnd) = do 
-    (_, dp) <- unbind bnd
-    let go dp = case dp of
-                  DPDone _ -> return []
-                  DPVar t s xres -> do
-                      c <- concretifyTy t
-                      (_, k) <- unbind xres
-                      ck <- go k
-                      return $ (s, c) : ck
-    s <- go dp
-    let isVest = all (typeIsVest . snd) s
-    return $ Just $ CStructDef (CStruct tname s isVest)
+    -- debugPrint $ "Concretifying struct: " ++ tname
+    (idxs, dp) <- unbind bnd
+    TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
+        let go dp = case dp of
+                    DPDone _ -> return []
+                    DPVar t s xres -> do
+                        c <- concretifyTy t
+                        (_, k) <- unbind xres
+                        ck <- go k
+                        return $ (s, c) : ck
+        s <- go dp
+        let isVest = all (typeIsVest . snd) s
+        return $ Just $ CStructDef (CStruct tname s isVest)
 
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
