@@ -49,11 +49,9 @@ func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
 func crh_labeled_extract_0salt(lbl, ikm) = 
     crh(hpke_v1() ++ suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
 
-func psk_id
-    arity 0
+func psk_id() = (0x)
 
-func info
-    arity 0
+func info() = (0x)
 
 func mode() = 0x03 // auth_psk
 func key_schedule_context() = 
