@@ -170,5 +170,3 @@ odh ss : skR, skS -> { salt info.
 odh se : skR, skE -> {salt info.
     info == lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context()) -> strict shared_secret_t
 }
-
-
