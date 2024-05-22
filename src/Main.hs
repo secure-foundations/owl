@@ -18,7 +18,7 @@ import System.Exit
 import Text.Printf
 import ModuleFlattening
 import Test
-import qualified Extraction as E
+import qualified ExtractionTop as ET
 import qualified ExtractionBase as EB
 import Control.Lens
 import Control.Monad ( when ) 
@@ -57,7 +57,7 @@ main = do
                               let libfn = "extraction/src/lib.rs"
                               let vestfn = "extraction/src/parse_serialize.vest"
                               modBody <- doFlattening tcEnv
-                              res <- E.extract args tcEnv (takeDirectory fn) modBody
+                              res <- ET.extract args tcEnv (takeDirectory fn) modBody
                               case res of
                                 Left err -> EB.printErr err >> exitFailure
                                 Right (rust_code, lib_code, vest_file) -> do

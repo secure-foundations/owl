@@ -427,6 +427,7 @@ data ExprX =
         -- The (Ignore String) part is the name for the var
     | EPCase Prop (Maybe Prop) (Maybe Bool) Expr
     | ECorrCaseNameOf AExpr (Maybe Prop) Expr
+    | EOpenTyOf AExpr Expr
     | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr

@@ -33,20 +33,34 @@ pub use std::time::Instant;
 // pub use crate::parse_serialize::View as _;
 
 verus! {
-pub open const spec fn CIPHER() -> owl_aead::Mode { crate::owl_aead::Mode::Chacha20Poly1305 }
-pub const fn cipher() -> (r:owl_aead::Mode) ensures r == CIPHER() { crate::owl_aead::Mode::Chacha20Poly1305 }
-pub open const spec fn KEY_SIZE() -> usize { owl_aead::spec_key_size(CIPHER()) }
-pub const fn key_size() -> (r:usize) ensures r == KEY_SIZE() { owl_aead::key_size(cipher()) }
-pub open const spec fn TAG_SIZE() -> usize { owl_aead::spec_tag_size(CIPHER()) }
-pub const fn tag_size() -> (r:usize) ensures r == TAG_SIZE() { owl_aead::tag_size(cipher()) }
-pub open const spec fn NONCE_SIZE() -> usize { owl_aead::spec_nonce_size(CIPHER()) }
-pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE() { owl_aead::nonce_size(cipher()) }
-pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sha512 }
-pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
-pub open const spec fn MACKEY_SIZE() -> usize { owl_hmac::spec_key_size(HMAC_MODE()) }
-pub const fn mackey_size() -> (r:usize) ensures r == MACKEY_SIZE() { owl_hmac::key_size(hmac_mode()) }
-pub open const spec fn KDFKEY_SIZE() -> usize { owl_hkdf::spec_kdfkey_size() }
-pub const fn kdfkey_size() -> (r:usize) ensures r == KDFKEY_SIZE() { owl_hkdf::kdfkey_size() }
+pub spec const SPEC_CIPHER: owl_aead::Mode = crate::owl_aead::Mode::Chacha20Poly1305;
+pub spec const SPEC_ENCKEY_SIZE: usize = owl_aead::spec_key_size(CIPHER);
+pub spec const SPEC_TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);
+pub spec const SPEC_NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);
+pub spec const SPEC_HMAC_MODE: owl_hmac::Mode = crate::owl_hmac::Mode::Sha512;
+pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
+pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
+    
+#[verifier::when_used_as_spec(SPEC_CIPHER)]
+pub exec const CIPHER: owl_aead::Mode ensures CIPHER == SPEC_CIPHER { crate::owl_aead::Mode::Chacha20Poly1305 }
+
+#[verifier::when_used_as_spec(SPEC_ENCKEY_SIZE)]
+pub exec const ENCKEY_SIZE: usize ensures ENCKEY_SIZE == SPEC_ENCKEY_SIZE { owl_aead::key_size(CIPHER) }
+
+#[verifier::when_used_as_spec(SPEC_TAG_SIZE)]
+pub exec const TAG_SIZE: usize ensures TAG_SIZE == SPEC_TAG_SIZE { owl_aead::tag_size(CIPHER) }
+
+#[verifier::when_used_as_spec(SPEC_NONCE_SIZE)]
+pub exec const NONCE_SIZE: usize ensures NONCE_SIZE == SPEC_NONCE_SIZE { owl_aead::nonce_size(CIPHER) }
+
+#[verifier::when_used_as_spec(SPEC_HMAC_MODE)]
+pub exec const HMAC_MODE: owl_hmac::Mode ensures HMAC_MODE == SPEC_HMAC_MODE { crate::owl_hmac::Mode::Sha512 }
+
+#[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]
+pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { owl_hmac::key_size(HMAC_MODE) }
+
+#[verifier::when_used_as_spec(SPEC_KDFKEY_SIZE)]
+pub exec const KDFKEY_SIZE: usize ensures KDFKEY_SIZE == SPEC_KDFKEY_SIZE { owl_hkdf::kdfkey_size() }
 
 #[verifier(external_type_specification)]
 #[verifier(external_body)]
@@ -93,12 +107,6 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
 #[verifier(external_body)]
 pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
-}
-
-pub fn ghost_unit() -> (res: Ghost<()>)
-    ensures res == Ghost(())
-{
-    Ghost(())
 }
 
 } // verus!

@@ -144,17 +144,19 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         if (msg.1.len() < 16) {
                             return false;
                         } 
-        
-                        let transp_keys = owl_wireguard::owl_transp_keys_init {
-                            owl_tki_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
-                            owl_tki_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&msg.1[4..8]),
-                            owl_tki_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.send.key[..]),
-                            owl_tki_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.recv.key[..]),
-                        };
+
+                        let msg2_sender = msg.1[4..8].to_vec();
         
                         // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
                         let ctxt = msg.1.to_vec();
-                        let res = cfg.owl_transp_recv_init_wrapper(&mut state, transp_keys, &ctxt[..]);
+                        let res = cfg.owl_transp_recv_init_wrapper(
+                            &mut state, 
+                            &ctxt[..],
+                            &[].as_slice(),
+                            msg2_sender.as_slice(),
+                            &job.state.keypair.send.key[..],
+                            &job.state.keypair.recv.key[..],
+                        );
                         
                         match res {
                             Some(ptxt) => {
@@ -182,18 +184,20 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         if (msg.1.len() < 16) {
                             return false;
                         } 
-        
-                        let transp_keys = owl_wireguard::owl_transp_keys_resp {
-                            owl_tkr_msg2_receiver: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(msg.1[4..8].to_vec()),
-                            owl_tkr_msg2_sender: crate::wireguard::owl_wg::execlib::OwlBuf::from_vec(vec![]),
-                            owl_tkr_recvd: true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message
-                            owl_tkr_k_init_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.recv.key[..]),
-                            owl_tkr_k_resp_send: crate::wireguard::owl_wg::execlib::OwlBuf::from_slice(&job.state.keypair.send.key[..]),
-                        };
+
+                        let msg2_receiver = msg.1[4..8].to_vec();
 
                         // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
                         let ctxt = msg.1.to_vec();
-                        let res = cfg.owl_transp_recv_resp_wrapper(&mut state, transp_keys, &ctxt[..]);
+                        let res = cfg.owl_transp_recv_resp_wrapper(
+                            &mut state, 
+                            &ctxt[..],
+                            msg2_receiver.as_slice(),
+                            &[].as_slice(),
+                            true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message, //
+                            &job.state.keypair.recv.key[..],
+                            &job.state.keypair.send.key[..],
+                        );
                         
                         match res {
                             Some(ptxt) => {

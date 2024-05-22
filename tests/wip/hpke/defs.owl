@@ -94,6 +94,23 @@ func AuthEncap_shared_secret() =
                        lbl_info(|kdfkey|, shared_secret_string(),
                        AuthEncap_kem_context()))
 
+func AuthDecap_dh(eph) = 
+    dh_combine(dhpk(get(skR)), get(skS))
+    ++
+    dh_combine(eph, get(skR))
+
+func AuthDecap_kem_context(eph) =   
+    eph
+    ++
+    dhpk(get(skR)) 
+    ++
+    dhpk(get(skS)) 
+
+func AuthDecap_shared_secret(eph) = 
+    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthDecap_dh(eph)),
+                       lbl_info(|kdfkey|, shared_secret_string(),
+                       AuthDecap_kem_context(eph)))
+
 
 nametype psk_t = dualkdf {salt info self.
     info == base_nonce_kdf_info() -> public nonce |counter|,
@@ -147,80 +164,11 @@ nametype shared_secret_t =
     }
 
 odh ss : skR, skS -> { salt info. 
-    True -> strict shared_secret_t
+    info == lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context()) -> strict shared_secret_t
 } 
 
 odh se : skR, skE -> {salt info.
-    True -> strict shared_secret_t
+    info == lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context()) -> strict shared_secret_t
 }
 
-
-
-
-struct AuthEncapResult {
-    aer_shared_secret : if sec(skR) /\ (sec(skS) \/ sec(skE)) then
-        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
-        lbl_ikm(eae_prk(), AuthEncap_dh()), 
-        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())))
-        else
-            (x:Data<adv> ||kdfkey|| {
-                x == AuthEncap_shared_secret()}),
-    aer_pke : dhpk(skE)
-
-}
-
-def AuthEncap(pkR : dhpk(skR)) @ sender : AuthEncapResult = 
-    let dh = dh_combine(pkR, get(skS)) ++ dh_combine(pkR, get(skE)) in 
-    let kem_context = dhpk(get(skE)) ++ pkR ++ dhpk(get(skS)) in
-    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x,
-    lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(),
-    kem_context)) in
-    let res :   if sec(skR) /\ (sec(skS) \/ sec(skE)) then
-        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
-        lbl_ikm(eae_prk(), AuthEncap_dh()), 
-        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())))
-        else
-            Data<adv> ||kdfkey||
-            = shared_secret in 
-
-    AuthEncapResult(shared_secret, dhpk(get(skE)))
-
-struct ContextS {
-        kssr_ss : (x:Ghost{x == AuthEncap_shared_secret()}),
-        kssr_base : if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then PubName(KDF<nonce |counter|;0;nonce |counter|>(kssr_ss,
-            dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
-            else Data<adv>,
-        kssr_sk :
-        if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then SecName(KDF<enckey;0;hpke_key_t>(kssr_ss,
-            dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
-            else Data<adv>,
-        kssr_export : 
-        if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then SecName(KDF<nonce;0;nonce>(kssr_ss,
-            dh_secret_kdf_ikm(get(psk)), export_kdf_info()))
-            else Data<adv>
-}
-
-def KeyScheduleS(aer : AuthEncapResult) @ sender : ContextS = 
-    parse aer as AuthEncapResult(shared_secret, pkE) in 
-    let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
-    dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
-    let sk = kdf<1;1;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), key_kdf_info()) in 
-    let exp = kdf<2;2;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
-    ContextS(shared_secret, base_nonce, sk, exp)
-
-def Seal(ctxt : ContextS, x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Data<adv> = 
-    parse ctxt as ContextS(_, base, sk, _) in 
-    st_aead_enc<send_counter, pattern i. xor(i, base)>(sk, x, 0x) 
-
-
-
-def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
-    let aer = call AuthEncap(pkR) in
-    let context = call KeyScheduleS(aer) in 
-    let c = call Seal(context, x) in 
-    parse aer as AuthEncapResult(_, pk) in 
-    output (pk ++ c)
 

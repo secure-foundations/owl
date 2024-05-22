@@ -45,6 +45,7 @@ impl<'x> OwlBuf<'x> {
                 result.len_valid(),
     {
         reveal(OwlBuf::len_valid);
+        broadcast use axiom_spec_len;
         let len = vec_length(&v);
         proof { assert_seqs_equal!(v.dview(), v.dview().subrange(0int, len as int)); }
         OwlBuf::Owned(rc_new(v), 0, len)
@@ -137,7 +138,25 @@ impl<'x> OwlBuf<'x> {
             },
         }
     }
+
+    pub fn into_owned(self) -> (result: OwlBuf<'x>)
+        requires self.len_valid(),
+        ensures  result.dview() == self.dview(),
+                    result.len_valid(),
+    {
+        reveal(OwlBuf::len_valid);
+        match self {
+            OwlBuf::Borrowed(s) => OwlBuf::from_vec(slice_to_vec(s)),
+            OwlBuf::Owned(v, start, len) => OwlBuf::Owned(v, start, len),
+        }
+    }
 }
+
+pub fn owl_unit() -> (res: ())
+{ () }
+
+pub fn owl_ghost_unit() -> (res: Ghost<()>)
+{ Ghost(()) }
 
 #[verifier(external_body)]
 pub exec fn rc_new<T:DView>(t: T) -> (r: Rc<T>)
@@ -262,7 +281,7 @@ pub exec fn owl_enc(k: &[u8], msg: &[u8], iv: &[u8]) -> (ctxt: Vec<u8>)
     //     ((k.dview().len() == crate::KEY_SIZE && msg.dview().len() == crate::TAG_SIZE) ==> ctxt.dview() == enc(k.dview(), msg.dview(), iv.dview())),
     //    !((k.dview().len() == crate::KEY_SIZE && msg.dview().len() == crate::TAG_SIZE) ==> ctxt.dview() == seq![]),
 {
-    match owl_aead::encrypt_combined(cipher(), k, msg, iv, &[]) {
+    match owl_aead::encrypt_combined(CIPHER, k, msg, iv, &[]) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
@@ -284,7 +303,7 @@ pub exec fn owl_dec(k: &[u8], c: &[u8]) -> (x: Option<Vec<u8>>)
         // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], &c[..nonce_size()], &[]) {
+    match owl_aead::decrypt_combined(CIPHER, k, &c[NONCE_SIZE..], &c[..NONCE_SIZE], &[]) {
         Ok(p) => Some(p),
         Err(_e) => {
             // dbg!(e);
@@ -339,14 +358,14 @@ pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8], info:
 pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Vec<u8>)
     ensures mac_val.dview() == mac(mackey.dview(), msg.dview())
 {
-    owl_hmac::hmac(hmac_mode(), mackey, msg, None)
+    owl_hmac::hmac(HMAC_MODE, mackey, msg, None)
 }
 
 #[verifier(external_body)]
 pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8]) -> (x: Option<Vec<u8>>)
     ensures dview_option(x) == mac_vrfy(mackey.dview(), msg.dview(), mac.dview())
 {
-    if owl_hmac::verify(hmac_mode(), mackey, msg, mac, None) {
+    if owl_hmac::verify(HMAC_MODE, mackey, msg, mac, None) {
         Some(msg.to_vec())
     } else {
         None
@@ -376,8 +395,8 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
 {
     if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
     let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(nonce_size(), 0u8);
-    let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
+    iv.resize(NONCE_SIZE, 0u8);
+    let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
         Ok(mut c) => {
             let mut v = iv.to_owned();
             v.append(&mut c);
@@ -403,8 +422,8 @@ pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[
     todo!()
     // if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
     // let mut iv = nonce.to_le_bytes().to_vec();
-    // iv.resize(nonce_size(), 0u8);
-    // let res = match owl_aead::encrypt_combined(cipher(), k, msg, &iv[..], aad) {
+    // iv.resize(NONCE_SIZE, 0u8);
+    // let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
     //     Ok(mut c) => {
     //         let mut v = iv.to_owned();
     //         v.append(&mut c);
@@ -429,7 +448,7 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // dec(k.dview(), c.dview()).is_None() ==> x.is_None(),
         // k.dview().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
+    match owl_aead::decrypt_combined(CIPHER, k, &c[NONCE_SIZE..], nonce, aad) {
         Ok(p) => Some(p),
         Err(_e) => {
             // dbg!(e);
@@ -461,11 +480,10 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_counter_as_bytes(x: &usize) -> (res: Vec<u8>)
+pub exec fn owl_counter_as_bytes<'a>(x: &usize) -> (res: [u8; 8])
     ensures res.dview() == counter_as_bytes(x.dview())
 {
-    let mut v = x.to_le_bytes().to_vec();
-    v.resize(nonce_size(), 0u8);
+    let v = x.to_le_bytes();
     v
 }
 

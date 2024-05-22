@@ -145,7 +145,8 @@ verus! {
     #[verifier::external_body]
     pub fn vec_length<T: DView>(vec: &Vec<T>) -> (res: usize)
         ensures
-            res == spec_vec_len(vec)
+            res == spec_vec_len(vec),
+
     {
         vec.len()
     }
@@ -191,8 +192,7 @@ verus! {
     pub open spec fn spec_vec_len<T: DView>(v: &Vec<T>) -> usize;
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_spec_len<T: DView>(v: &Vec<T>)
+    pub broadcast proof fn axiom_spec_len<T: DView>(v: &Vec<T>)
         ensures
             #[trigger] spec_vec_len(v) == v.dview().len()
     {}

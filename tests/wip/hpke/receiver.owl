@@ -1,0 +1,27 @@
+include "defs.owl"
+
+struct AuthDecapResult {
+    adr_eph : (x:Ghost{is_group_elem(x)}), 
+    adr_shared_secret : if adr_eph == dhpk(get(skE)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE))) then
+        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
+        lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
+        lbl_info(|kdfkey|, shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        else
+            (x:Data<adv> ||kdfkey|| {
+                x == AuthDecap_shared_secret(adr_eph)})
+}
+
+def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option AuthDecapResult = 
+    guard is_group_elem(eph) in         
+    let dh = dh_combine(pkS, get(skR)) ++ dh_combine(eph, get(skR)) in
+    let kem_context = eph ++ dhpk(get(skR)) ++ pkS in
+    pcase (eph == dhpk(get(skE))) in 
+    pcase (eph == dhpk(get(skS))) when (eph != dhpk(get(skE))) in 
+    corr_case skS in
+    corr_case skR in
+    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x,
+        lbl_ikm(eae_prk(), dh), 
+        lbl_info(|kdfkey|, shared_secret_string(), kem_context)) in
+    Some(AuthDecapResult(eph, shared_secret))
+    
+

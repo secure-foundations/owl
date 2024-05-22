@@ -140,6 +140,9 @@ impl<'x> OwlBuf<'x> {
     }
 }
 
+pub fn owl_unit() -> (res: ())
+{ () }
+
 #[verifier(external_body)]
 pub exec fn rc_new<T:DView>(t: T) -> (r: Rc<T>)
     ensures r.dview() == t.dview()

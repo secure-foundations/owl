@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -21,11 +20,300 @@ import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
 import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
+import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import ANFPass (isGhostTyAnn)
-
 import AST
+import Verus
+import qualified TypingBase as TB
+
+data FLen = 
+    FLConst Int
+    | FLNamed String
+    | FLPlus FLen FLen
+    | FLCipherlen FLen
+    deriving (Show, Eq, Generic, Typeable)
+
+data FormatTy =
+    FUnit
+    | FBool
+    | FGhost  -- For erased variables
+    | FInt
+    | FBuf (Maybe FLen) -- TODO: maybe we want a data type for built-in length consts, instead of Int
+    | FOption FormatTy
+    | FStruct String [(String, FormatTy)]           -- name, fields
+    | FEnum String [(String, Maybe FormatTy)]  -- name, cases
+    | FDummy -- for when we can't infer the type locally
+    deriving (Show, Eq, Generic, Typeable)
+
+data Typed v t = Typed {
+    _tty :: t,
+    _tval :: v
+} deriving (Generic, Typeable)
+
+instance (Show v, Show t) => Show (Typed v t) where
+    show (Typed v t) = "(" ++ show t ++ ") : " ++ show v
+
+makeLenses ''Typed
+
+type CDataVar t = Name (CAExpr t)
+
+data CAExpr' t = 
+    CAVar (Ignore String) (CDataVar t)
+    -- TODO should the type be the variable's type, or the desired type for the func call?
+    | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
+    | CAGet String
+    | CAGetEncPK String
+    | CAGetVK String
+    | CAInt (FLen)
+    | CAHexConst String
+    | CACounter String
+    deriving (Show, Generic, Typeable)
+
+type CAExpr t = Typed (CAExpr' t) t
+
+data ParseKind = PFromBuf | PFromDatatype
+    deriving (Show, Eq, Generic, Typeable)
+
+data CExpr' t = 
+    CSkip
+    | CRet (CAExpr t)
+    | CInput t (Bind (CDataVar t, EndpointVar) (CExpr t)) -- keep track of received buf type
+    | COutput (CAExpr t) (Maybe Endpoint)
+    | CSample FLen (Bind (CDataVar t) (CExpr t))
+    | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
+    | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
+    | CIf (CAExpr t) (CExpr t) (CExpr t)
+    -- Only a regular case statement, not the parsing version
+    | CCase (CAExpr t) [(String, Either (CExpr t) (Bind (CDataVar t) (t, CExpr t)))] -- Binding contains type for the bound variable
+    -- Include the return type of the call
+    | CCall String t [CAExpr t]
+    -- In concretification, we should compile `ECase` exprs that parse an enum into a 
+    -- CParse node containing a regular `CCase`. The list of binds should have one element
+    | CParse ParseKind (CAExpr t) t (Maybe (CExpr t)) (Bind [(CDataVar t, Ignore String, t)] (CExpr t))
+    | CTLookup String (CAExpr t)
+    | CTWrite String (CAExpr t) (CAExpr t)
+    -- Crypto calls should be compiled to `CRet (CAApp ...)` during concretization
+    -- | CCrypt CryptOp [AExpr]
+    | CGetCtr String 
+    | CIncCtr String 
+    deriving (Show, Generic, Typeable)    
+
+type CExpr t = Typed (CExpr' t) t
+
+data CDepBind t a = CDPDone a | CDPVar t String (Bind (CDataVar t) (CDepBind t a))
+    deriving (Show, Generic, Typeable)
+
+data CDef t = CDef {
+    _defName :: String,
+    _defBody :: CDepBind t (t, Maybe (CExpr t)) -- retT, body
+} deriving (Show, Generic, Typeable)
+
+makeLenses ''CDef
+
+data CUserFunc t = CUserFunc {
+    _ufName :: String,
+    _ufBody :: CDepBind t (t, CAExpr t) -- retT, body
+} deriving (Show, Generic, Typeable)
+
+
+data CStruct t = CStruct {
+    _structName :: String,
+    _structFields :: [(String, t)],
+    _structIsVest :: Bool
+} deriving (Show, Generic, Typeable)
+
+makeLenses ''CStruct
+
+data CEnum t = CEnum {
+    _enumName :: String,
+    _enumCases :: M.Map String (Maybe t),
+    _enumIsVest :: Bool
+} deriving (Show, Generic, Typeable)
+
+makeLenses ''CEnum
+
+data CTyDef t =
+    CStructDef (CStruct t)
+    | CEnumDef (CEnum t)
+    deriving (Show, Generic, Typeable)
+
+
+--------------------------------------------------------------------------------
+-- LocallyNameless
+
+-- TODO: check these
+--
+
+instance Alpha FLen
+instance Alpha FormatTy
+instance Alpha ParseKind
+
+instance (Alpha v, Alpha t) => Alpha (Typed v t)
+instance (Subst b a, Subst b t) => Subst b (Typed a t)
+
+instance (Alpha t, Typeable t) => Alpha (CAExpr' t)
+instance (Alpha t, Typeable t) => Alpha (CExpr' t)
+
+instance (Typeable t, Alpha a, Alpha t) => Alpha (CDepBind t a)
+instance (Typeable t, Alpha a, Alpha t, Subst b a, Subst b t) => Subst b (CDepBind t a)
+
+
+--------------------------------------------------------------------------------
+-- Helper funcs
+
+
+--------------------------------------------------------------------------------
+-- Pretty
+
+instance OwlPretty FLen where
+    owlpretty (FLConst i) = owlpretty i
+    owlpretty (FLNamed s) = owlpretty s
+    owlpretty (FLPlus x y) = owlpretty x <+> owlpretty "+" <+> owlpretty y
+    owlpretty (FLCipherlen x) = owlpretty "cipherlen" <> parens (owlpretty x)
+    
+instance OwlPretty FormatTy where
+    owlpretty FUnit = owlpretty "unit"
+    owlpretty FBool = owlpretty "bool"
+    owlpretty FInt = owlpretty "int"
+    owlpretty (FBuf Nothing) = owlpretty "buf[]"
+    owlpretty (FBuf (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
+    owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
+    owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
+    owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
+    owlpretty FGhost = owlpretty "ghost"
+    owlpretty FDummy = owlpretty "dummy"
+
+flagShouldPrettyTypes :: Bool
+flagShouldPrettyTypes = True
+
+instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
+    owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
+
+instance OwlPretty t => OwlPretty (CAExpr' t) where
+    owlpretty (CAVar _ v) = owlpretty v
+    owlpretty (CAApp f as) = owlpretty f <> tupled (map owlpretty as)
+    owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
+    owlpretty (CAInt i) = owlpretty i
+    owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
+    owlpretty (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
+
+
+instance OwlPretty ParseKind where
+    owlpretty PFromBuf = owlpretty "FromBuf"
+    owlpretty PFromDatatype = owlpretty "FromDatatype"
+
+instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
+    owlpretty CSkip = owlpretty "skip"
+    owlpretty (CRet a) = owlpretty "ret" <+> owlpretty a
+    owlpretty (CInput t xsk) = 
+        let (x, sk) = owlprettyBind xsk in
+        owlpretty "input" <+> x <> pretty ";" <+> sk
+    owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
+       Nothing -> owlpretty ""
+       Just s -> owlpretty "to" <+> owlpretty s)
+    owlpretty (CSample n xk) = 
+        let (x, k) = owlprettyBind xk in
+        owlpretty "sample" <> brackets (owlpretty n) <+> x <+> owlpretty "in" <+> k
+    owlpretty (CLet e oanf xk) =
+        let (x, k) = owlprettyBind xk in
+        owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
+    owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
+    owlpretty (CIf a e1 e2) =
+        owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> braces (owlpretty e1) <+> owlpretty "else" <+> braces (owlpretty e2)
+    owlpretty (CCase a xs) =
+        let pcases =
+                map (\(c, o) ->
+                    case o of
+                      Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
+                      Right xe -> let (x, e) = owlprettyBind xe in 
+                        owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
+                    ) xs in
+        owlpretty "case" <+> owlpretty a <> line <> vsep pcases
+    owlpretty (CCall f rty as) =
+        let args = map owlpretty as in
+        owlpretty f <> tupled args <+> owlpretty ":" <+> owlpretty rty
+    owlpretty (CParse pkind ae t ok bindpat) =
+        let (pats', k') = unsafeUnbind bindpat in
+        let pats = map (\(n, _, _) -> owlpretty n) pats' in
+        let k = owlpretty k' in
+        owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> tupled pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
+    owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
+    owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
+    owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
+    owlpretty (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
+
+
+---- traversals ----
+
+
+traverseTyped :: Applicative f => Typed v t -> (t -> f t2) -> (v -> f v2) -> f (Typed v2 t2)
+traverseTyped (Typed t v) ft fv = Typed <$> ft t <*> fv v
+
+castName :: Name a -> Name b
+castName (Fn x y) = Fn x y
+castName (Bn x y) = Bn x y
+
+-- Does not take into account bound names
+traverseCAExpr :: Applicative f => (t -> f t2) -> CAExpr t -> f (CAExpr t2)
+traverseCAExpr f a =
+    traverseTyped a f $ \c ->
+        case c of
+          CAVar s n -> pure $ CAVar s $ castName n
+          CAApp s xs -> CAApp s <$> traverse (traverseCAExpr f) xs
+          CAGet s -> pure $ CAGet s
+          CAGetEncPK s -> pure $ CAGetEncPK s
+          CAGetVK s -> pure $ CAGetVK s
+          CAInt i -> pure $ CAInt i
+          CAHexConst i -> pure $ CAHexConst i
+          CACounter s -> pure $ CACounter s
+
+-- Does not take into account bound names
+traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)
+traverseCExpr f a =
+    traverseTyped a f $ \c ->
+        case c of
+          CSkip -> pure CSkip
+          CInput t bk -> do
+              ((n, ep), k) <- unbind bk                         
+              t' <- f t
+              CInput t' . bind (castName n, ep) <$> traverseCExpr f k
+          COutput e k -> COutput <$> traverseCAExpr f e <*> pure k
+          CSample n xk -> do
+                (x, k) <- unbind xk
+                CSample n . bind (castName x) <$> traverseCExpr f k
+          CLet e a bk -> do
+              (n, k) <- unbind bk
+              CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)
+          CBlock e -> CBlock <$> traverseCExpr f e
+          CIf x y z -> CIf <$> traverseCAExpr f x <*> traverseCExpr f y <*> traverseCExpr f z
+          CCall s t xs -> CCall <$> pure s <*> f t <*> traverse (traverseCAExpr f) xs
+          CGetCtr s -> pure $ CGetCtr s
+          CIncCtr s -> pure $ CIncCtr s
+          CParse pkind x y z bw -> do
+              (xts, w) <- unbind bw
+              xts' <- mapM (\(n, s, t) -> do t' <- f t ; return (castName n, s, t')) xts
+              w' <- traverseCExpr f w
+              CParse pkind <$> traverseCAExpr f x <*> f y <*> traverse (traverseCExpr f) z <*> 
+                  pure (bind xts' w')
+          CTLookup s a -> CTLookup <$> pure s <*> traverseCAExpr f a
+          CTWrite s a b -> CTWrite <$> pure s <*> traverseCAExpr f a <*> traverseCAExpr f b
+          CCase x zs -> do
+              zs' <- traverse (\(s, e) ->
+                  case e of
+                    Left a -> do
+                        a' <- traverseCExpr f a
+                        pure (s, Left a')
+                    Right b -> do
+                        (n, (t, e)) <- unbind b
+                        t2 <- f t
+                        e' <- traverseCExpr f e
+                        pure (s, Right $ bind (castName n) (t2, e'))) zs
+              CCase <$> traverseCAExpr f x <*> pure zs'
+          CRet e -> CRet <$> traverseCAExpr f e
+{- 
+--------------------------------------------------------------------------------
 
 data CTy =
     CTData
@@ -46,6 +334,29 @@ data CTy =
 
 instance Alpha CTy
 instance Subst AExpr CTy
+
+-- data CExpr =
+--     CSkip
+--     | CInput (Bind (DataVar, EndpointVar) CExpr)
+--     | COutput AExpr (Maybe Endpoint)
+--     | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
+--     | CLetGhost (Bind DataVar CExpr)
+--     | CBlock CExpr -- Boundary for scoping; introduced by { }
+--     | CIf AExpr CExpr CExpr
+--     | CRet AExpr
+--     | CCall Path ([Idx], [Idx]) [AExpr]
+--     | CParse AExpr CTy (Maybe CExpr) (Bind [(DataVar, Ignore String)] CExpr)
+--     | CCase AExpr (Maybe (CTy, CExpr)) [(String, Either CExpr (Bind DataVar CExpr))]
+--     | CTLookup Path AExpr
+--     | CTWrite Path AExpr AExpr
+--     | CCrypt CryptOp [AExpr]
+--     | CGetCtr Path ([Idx], [Idx])
+--     | CIncCtr Path ([Idx], [Idx])
+--     deriving (Show, Generic, Typeable)
+
+instance Alpha (CExpr t)
+instance Subst AExpr (CExpr t)
+
 
 compatTys :: CTy -> CTy -> Bool
 compatTys (CTName n1) (CTName n2) =
@@ -92,29 +403,9 @@ concretifyTy t =
 doConcretifyTy :: Ty -> CTy
 doConcretifyTy = runFreshM . concretifyTy
 
-data CExpr =
-    CSkip
-    | CInput (Bind (DataVar, EndpointVar) CExpr)
-    | COutput AExpr (Maybe Endpoint)
-    | CLet CExpr (Maybe AExpr) (Bind DataVar CExpr)
-    | CLetGhost (Bind DataVar CExpr)
-    | CBlock CExpr -- Boundary for scoping; introduced by { }
-    | CIf AExpr CExpr CExpr
-    | CRet AExpr
-    | CCall Path ([Idx], [Idx]) [AExpr]
-    | CParse AExpr CTy (Maybe CExpr) (Bind [(DataVar, Ignore String)] CExpr)
-    | CCase AExpr (Maybe (CTy, CExpr)) [(String, Either CExpr (Bind DataVar CExpr))]
-    | CTLookup Path AExpr
-    | CTWrite Path AExpr AExpr
-    | CCrypt CryptOp [AExpr]
-    | CGetCtr Path ([Idx], [Idx])
-    | CIncCtr Path ([Idx], [Idx])
-    deriving (Show, Generic, Typeable)
 
-instance Alpha CExpr
-instance Subst AExpr CExpr
 
-concretify :: Fresh m => Expr -> m CExpr
+concretify :: Fresh m => Expr -> m (CExpr t)
 concretify e =
     case e^.val of
         EInput _ xse -> do
@@ -209,7 +500,7 @@ concretify e =
         ECorrCaseNameOf _ _ k -> concretify k
         -- _ -> error $ "Concretify on " ++ show (owlpretty e)
 
-doConcretify :: Expr -> CExpr
+doConcretify :: Expr -> (CExpr t)
 doConcretify = runFreshM . concretify
 
 instance OwlPretty CTy where
@@ -241,7 +532,7 @@ instance OwlPretty CTy where
     -- owlpretty (CTUnion t1 t2) =
     --     owlpretty "Union<" <> owlpretty t1 <> owlpretty "," <> owlpretty t2 <> owlpretty ">"
 
-instance OwlPretty CExpr where
+instance OwlPretty (CExpr t) where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CInput xsk) = 
         let (x, sk) = owlprettyBind xsk in
@@ -272,12 +563,11 @@ instance OwlPretty CExpr where
         owlpretty "case" <+> owlpretty a <> line <> vsep pcases
     owlpretty (CTLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
     owlpretty (CTWrite n a a') = owlpretty "write" <> tupled [owlpretty a, owlpretty a']
-    owlpretty (CCrypt cop as) = owlpretty cop <> tupled (map owlpretty as)
     owlpretty (CIncCtr p idxs) = owlpretty "inc_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CGetCtr p idxs) = owlpretty "get_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CParse ae t ok bindpat) = 
         let (pats, k) = owlprettyBind bindpat in
         owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> parens pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
-    owlpretty (CLetGhost xk) =
-        let (x, k) = owlprettyBind xk in
-        owlpretty "letghost" <+> x <+> owlpretty "in" <> line <> k
+
+
+-}
