@@ -4,11 +4,11 @@ def init_recv<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>) @
 Initiator<n>
     : Option Data<adv /\ [channel_secret_resp_send<@n,m>]> = 
     input i in 
-    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, eph, c7, init_send,
+    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, haspsk, eph, c7, init_send,
     resp_send) in 
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, resp) in 
-        pcase init_clean<i,n,m>[eph] in 
+        pcase init_clean<i,n,m>[haspsk, eph] in 
         let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
         p
     }
@@ -20,9 +20,9 @@ def init_send<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>,
 Initiator<n>
     : Unit
     =
-    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, eph, c7, init_send,
+    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, haspsk, eph, c7, init_send,
     resp_send) in 
-    pcase init_clean<i,n,m>[eph] in 
+    pcase init_clean<i,n,m>[haspsk, eph] in 
     let transp_counter = get_counter N_init_send<i@n> in
     let c = st_aead_enc<N_init_send<i@n>>(init_send, msg, 0x) in 
     let transp_tag = transp_tag_value() in 
@@ -42,11 +42,11 @@ def resp_recv<j@n,m>(
     input i in 
     unpack n_pk, tki' = tki in
     parse tki' as transp_keys_resp<session j, pid n_pk, pid n, pid m>(init,
-    resp, eph, c7, _, init_send,
+    resp, haspsk, eph, c7, _, init_send,
     resp_send) in 
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, init) in 
-        pcase resp_clean<j,n_pk,n,m>[eph] in 
+        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in 
         pcase n =idx n_pk in 
         case st_aead_dec(init_send, pkt, 0x, ctr) // as Option 
         // (Data<adv /\
@@ -58,7 +58,7 @@ def resp_recv<j@n,m>(
                 n,
                 pid m> =
                     transp_keys_resp<session j, pid n_pk, pid n, pid
-                    m>(init, resp, eph, c7, true, init_send, resp_send)
+                    m>(init, resp, haspsk, eph, c7, true, init_send, resp_send)
                  in
                 let ret = 
                 pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
@@ -84,11 +84,11 @@ Responder<m>
   unpack npk, tki_ = tki in 
 
     parse tki_ as transp_keys_resp<session j, pid npk, pid n, pid m>(init, resp,
-    eph, c7, b, init_send,
+    haspsk, eph, c7, b, init_send,
     resp_send) in 
     guard b in {
-    pcase resp_clean<j,npk,n,m>[eph] in 
-    assert (resp_clean<j,npk,n,m>[eph] ==> n =idx npk);
+    pcase resp_clean<j,npk,n,m>[haspsk, eph] in 
+    assert (resp_clean<j,npk,n,m>[haspsk, eph] ==> n =idx npk);
     // N.B.: Below is required
     assume (exists i:idx. eph == dhpk(get(E_init<i@npk>)));
     assume (n =idx npk);

@@ -421,14 +421,32 @@ interpUserFunc pth md (UninterpUserFunc f ar) = do
 aelem :: Alpha a => a -> [a] -> Bool
 aelem x ys = any (aeq x) ys
 
+tryResolvePropFromPathCondition :: Prop -> Check (Maybe Bool)
+tryResolvePropFromPathCondition p = do
+    pc <- view pathCondition
+    if p `aelem` pc then return (Just True) else
+        if (pNot p) `aelem` pc then return (Just False) else
+        case p^.val of
+          PEq a1 a2 -> do
+              if (mkSpanned $ PEq a2 a1) `aelem` pc then return (Just True) else 
+                  if (pNot $ mkSpanned $ PEq a2 a1) `aelem` pc then return (Just False) else 
+                      return Nothing
+          PEqIdx i1 i2 -> do 
+              if (mkSpanned $ PEqIdx i2 i1) `aelem` pc then return (Just True) else 
+                  if (pNot $ mkSpanned $ PEqIdx i2 i1) `aelem` pc then return (Just False) else 
+                      return Nothing
+          _ -> return Nothing
+
+
 normalizeProp :: Prop -> Check Prop
 normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
-    pc <- view pathCondition
-    if p `aelem` pc then return (mkSpanned PTrue) else 
-        if (pNot p) `aelem` pc then return (mkSpanned PFalse) else do
-            p' <- go p
-            res <- if p' `aeq` p then return p' else normalizeProp p'
-            return res
+    ob <- tryResolvePropFromPathCondition p
+    case ob of
+      Just True -> return $ mkSpanned PTrue
+      Just False -> return $ mkSpanned PFalse
+      Nothing -> do
+          p' <- go p
+          if p' `aeq` p then return p' else normalizeProp p'
     where 
             go p = case p^.val of
                      PTrue -> return p
@@ -2128,6 +2146,9 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                            Just req -> pImpl req p'
                 getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p2
             _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
+      EOpenTyOf a k -> do
+          t <- inferAExpr a >>= normalizeTy
+          openTy t $ \_ -> checkExpr ot k
       (ECorrCaseNameOf a op k) -> do
           t <- inferAExpr a
           case extractNameFromType t of
@@ -2543,18 +2564,20 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                        KDF_IKMPos -> do
                            xs <- unconcat $ fst principal
                            forM xs $ \x -> do
-                               t <- inferAExpr x
+                               t <- inferAExpr x >>= normalizeTy
                                return (x, t)
     go kpos other principals c (i, is_case) j nks
         where
             go kpos other [] c (i, is_case) j nks = return Nothing
             go kpos other ((xp, tp):principals) c (i, is_case) j nks = do
                 res1 <- case extractNameFromType tp of
-                          Nothing -> return Nothing
+                          Nothing -> do
+                              return Nothing
                           Just ne -> do
                               wf <- isSubtype tp (tName ne)
                               case wf of
-                                False -> return Nothing
+                                False -> do
+                                    return Nothing
                                 True -> do 
                                     nt <- getNameType ne
                                     case nt^.val of
@@ -2578,8 +2601,10 @@ inferKDF kpos a b c (i, is_case) j nks = pushRoutine ("inferKDF") $ do
                                                 else do
                                                     l_corr <- coveringLabelOf [snd a, snd b, snd c]
                                                     return $ Just $ KDFCorrupt l_corr 
-                                          else return Nothing
-                                      _ -> return Nothing
+                                          else do
+                                              return Nothing
+                                      _ -> do
+                                          return Nothing
                 case res1 of
                   Nothing -> go kpos other principals c (i, is_case) j nks
                   Just (KDFCorrupt _) -> go kpos other principals c (i, is_case) j nks
@@ -2909,10 +2934,8 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                        KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                                        KDFPub -> pFlow (nameLbl ne) advLbl 
                                        KDFUnstrict -> pTrue
-                        let lenConst = mkSpanned $ AELenConst "kdfkey"
                         return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                            pAnd flowAx $ 
-                                pEq (aeLength (aeVar ".res")) lenConst
+                            flowAx 
                       Just (KDFCorrupt l_corr) -> pushRoutine "KDF.corrupt" $ do 
                           return $ tDataAnn l_corr zeroLbl "corrupt KDF"
           normalizeTy resTy
@@ -3121,10 +3144,11 @@ findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
           _ -> return []
     names2 <- do
         bs <- unconcat b
-        ts <- mapM inferAExpr bs
+        ts <- mapM (inferAExpr >=> normalizeTy) bs
         ps <- forM (zip bs ts) $ \(x, t) ->
             case (stripRefinements t)^.val of
               TName n -> return [n]
+              TSS n m -> return [n, m]
               _ -> do
                   o <- getLocalDHComputation x
                   case o of
@@ -3312,13 +3336,13 @@ typeError' msg = do
                     local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
+    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
     e <- ask
     E.printDiagnostic S.stdout True True 4 E.defaultStyle diag 
     pc <- view pathCondition
     case pc of
       [] -> return ()
       _ -> liftIO $ putDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
-    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line
     writeSMTCache
     -- Uncomment for debugging
     -- rs <- view tcRoutineStack
