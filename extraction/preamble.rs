@@ -15,9 +15,8 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub mod deep_view;
 pub use crate::deep_view::{*};
-pub mod parse_serialize;
+pub use parsley::*;
 
 pub use extraction_lib::*;
 pub use std::collections::HashMap;
@@ -30,7 +29,6 @@ pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;
 pub use std::time::Instant;
-// pub use crate::parse_serialize::View as _;
 
 verus! {
 pub spec const SPEC_CIPHER: owl_aead::Mode = crate::owl_aead::Mode::Chacha20Poly1305;

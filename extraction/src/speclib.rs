@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
 pub use vstd::{modes::*, prelude::*, seq::*, *};
-pub use crate::DView;
+// pub use crate::View;
 
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////// CRYPTO ETC LIBRARY ///////////////////////////////////////
@@ -12,7 +12,7 @@ verus! {
 pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
 {
     (v.is_None() && s.is_None()) ||
-    (v.is_Some() && s.is_Some() && v.get_Some_0().dview() == s.get_Some_0())
+    (v.is_Some() && s.is_Some() && v.get_Some_0().view() == s.get_Some_0())
 }
 
 pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
@@ -23,13 +23,6 @@ pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
     }
 }
 
-pub open spec fn dview_option<T: DView>(v: Option<T>) -> Option<T::V>
-{
-    match v {
-        Option::Some(x) => Option::Some(x.dview()),
-        Option::None    => Option::None
-    }
-}
 
 pub open spec fn option_as_seq<T: OwlSpecSerialize>(v: Option<T>) -> Option<Seq<u8>>
 {
@@ -60,13 +53,13 @@ impl OwlSpecSerialize for bool {
     }
 }
 
-// hack
-impl DView for Ghost<()> {
-    type V = Ghost<()>;
-    open spec fn dview(&self) -> Ghost<()> {
-        Ghost(())
-    }
-}
+// // hack
+// impl View for Ghost<()> {
+//     type V = Ghost<()>;
+//     open spec fn view(&self) -> Ghost<()> {
+//         Ghost(())
+//     }
+// }
 
 
 pub trait OwlSpecAsCtr {
@@ -501,7 +494,7 @@ pub mod itree {
     macro_rules! owl_call {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.dview().as_seq(), $($tail)*)
+                owl_call_internal!(res, res.view().as_seq(), $($tail)*)
             }
         };
     }
@@ -511,7 +504,7 @@ pub mod itree {
     macro_rules! owl_call_ret_unit {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.dview(), $($tail)*)
+                owl_call_internal!(res, res.view(), $($tail)*)
             }
         };
     }
@@ -522,7 +515,7 @@ pub mod itree {
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, dview_option(res), $($tail)*)
+                owl_call_internal!(res, view_option(res), $($tail)*)
             }
         };
     }
