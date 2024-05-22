@@ -44,11 +44,11 @@ if [ $format = "true" ]; then
     verusfmt $main_file
 fi
 
-echo ""
-echo "VEST CODEGEN" 
-pushd $VESTPATH
-cargo run -- $vest_file
-popd
+# echo ""
+# echo "VEST CODEGEN" 
+# pushd $VESTPATH
+# cargo run -- $vest_file
+# popd
 
 echo ""
 echo "COMPILING LIB FILE" 

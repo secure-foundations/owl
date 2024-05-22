@@ -31,3 +31,4 @@ x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
 builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
+parsley = { path = "/usr0/home/prataps/src/parsley/parsley" }
