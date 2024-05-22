@@ -126,6 +126,8 @@ unifyFormatTy t1 t2 =
         (FOption t1', FOption t2') -> do
             t <- unifyFormatTy t1' t2'
             return $ FOption t
+        (FStruct n1 fs1, FStruct n2 fs2) | n1 == n2 -> return t1
+        (FEnum n1 fs1, FEnum n2 fs2) | n1 == n2 -> return t1
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 unifyFLen :: FLen -> FLen -> EM FLen
@@ -662,8 +664,8 @@ concretifyUserFunc' ufName (TB.FunDef bd) = do
     return $ (Just $ CUserFunc ufName bd', rty)
 concretifyUserFunc' ufName (TB.EnumTest caseName enumName) = do
     return (Nothing, FBool)
-concretifyUserFunc' ufName _ = do
-    throwError $ ErrSomethingFailed $ "Unsupported user function: " ++ ufName
+concretifyUserFunc' ufName uf = do
+    throwError $ ErrSomethingFailed $ "Unsupported user function: " ++ ufName ++ ": " ++ show (owlpretty uf)
 
 concretifyUserFunc :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy))
 concretifyUserFunc ufName uf = do
