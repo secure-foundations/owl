@@ -331,9 +331,10 @@ resolveNameType e = do
         where
             go t =
                 case t of
-                  NT_App pth is -> do
+                  NT_App pth is as -> do
                       pth' <- resolvePath (e^.spanOf) PTNameType pth
-                      return $ NT_App pth' is
+                      as' <- mapM resolveAExpr as
+                      return $ NT_App pth' is as'
                   NT_DH -> return t
                   NT_Nonce _ -> return t
                   NT_Sig t -> NT_Sig <$> resolveTy t

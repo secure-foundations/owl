@@ -1231,9 +1231,10 @@ checkDecl d cont = withSpan (d^.spanOf) $
       DeclNameType s bnt -> do
           tds <- view $ curMod . nameTypeDefs
           assert ("Duplicate name type name: " ++ s) $ not $ member s tds
-          ((is, ps), nt) <- unbind bnt
+          (((is, ps), xs), nt) <- unbind bnt
           withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
-                checkNameType nt
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                    checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclODH s b -> do
           ensureNoConcreteDefs
@@ -1324,7 +1325,7 @@ nameTypeUniform nt =
       NT_Nonce _ -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
-      NT_App p ps -> resolveNameTypeApp p ps >>= nameTypeUniform
+      NT_App p ps as -> resolveNameTypeApp p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
       NT_KDF _ _ -> return ()
       _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
@@ -1438,8 +1439,8 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTy t
         checkNoTopTy False t
         checkTyPubLen t
-      NT_App p ps -> do
-          resolveNameTypeApp p ps >>= checkNameType
+      NT_App p ps as -> do
+          resolveNameTypeApp p ps as >>= checkNameType
       NT_StAEAD t xaad p ypat -> do
           checkTy t
           checkNoTopTy False t
@@ -2413,7 +2414,7 @@ getValidatedTy albl t = local (set tcScope $ TcGhost False) $ do
                         case nt^.val of
                             NT_Nonce l -> return $ mkSpanned $ AELenConst l
                             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                            NT_App p ps -> resolveNameTypeApp p ps >>= go
+                            NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                             NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                             NT_DH -> return $ mkSpanned $ AELenConst "group"
