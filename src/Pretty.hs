@@ -75,8 +75,8 @@ instance  OwlPretty NameExpX where
                             <>
                             owlpretty ";"
                             <>
-                            (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-                            -- owlpretty nt
+                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            owlpretty nt
                             <> owlpretty ">"
                             <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 

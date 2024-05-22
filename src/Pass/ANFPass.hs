@@ -177,6 +177,9 @@ anf e =
       ECorrCaseNameOf a op k -> do 
          k' <- anf k
          return $ Spanned (e^.spanOf) $ ECorrCaseNameOf a op k'
+      EOpenTyOf a k -> do 
+         k' <- anf k
+         return $ Spanned (e^.spanOf) $ EOpenTyOf a k'
       ESetOption s1 s2 k -> do
           k' <- anf k
           return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'

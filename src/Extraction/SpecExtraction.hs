@@ -7,15 +7,13 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE QuasiQuotes #-}
 module SpecExtraction where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
-import Data.Char
 import Control.Monad
-import Control.Monad.State
-import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Lens
 import Prettyprinter
@@ -23,454 +21,564 @@ import Pretty
 import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
-import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
-import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
+import Unbound.Generics.LocallyNameless.Name
+import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
-import AST
+import ANFPass (isGhostTyAnn)
+import Verus
+import PrettyVerus
 import ConcreteAST
-import System.IO
-import qualified Text.Parsec as P
-import qualified Parse as OwlP
-import qualified TypingBase as TB
 import ExtractionBase
+import AST
+--import Data.String.Interpolate (i, __i, iii)
+import Prettyprinter.Interpolate
 
-----------------------------------------------------------------------------------
---- Datatype extraction
+type EM = ExtractionMonad FormatTy
 
+seqU8 :: VerusTy
+seqU8 = RTSeq RTU8
 
+specTyOf :: FormatTy -> VerusTy
+specTyOf FUnit = RTUnit
+specTyOf FBool = RTBool
+specTyOf FInt = RTVerusNat
+specTyOf (FBuf _) = seqU8
+specTyOf (FOption ft) = RTOption (specTyOf ft)
+specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n, specTyOf t)) ffs)
+specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
+specTyOf FGhost = RTVerusGhost
 
-extractStruct :: String -> [(String, Ty)] -> Bool -> ExtractionMonad OwlDoc
-extractStruct owlName owlFields isVest = do
-    let name = specName owlName
-    let owlFieldsConcrete = map (\(n,t) -> case doConcretifyTy t of CTGhost -> Nothing; t' -> Just (n,t')) owlFields
-    let owlFieldsNoGhost = catMaybes owlFieldsConcrete
-    fields <- mapM (\(n, t) -> rustifySpecTy t >>= \t' -> return (n, t')) owlFieldsNoGhost
-    let structDef = owlpretty "pub struct" <+> owlpretty name <> braces (line <> (
-                        vsep . punctuate comma . map (\(n, t) -> owlpretty "pub" <+> owlpretty (specName n) <+> owlpretty ":" <+> owlpretty t) $ fields
-                    ) <> line)
-    parseSerializeDefs <- genParserSerializer owlName fields
-    constructor <- genConstructor owlName fields owlFieldsConcrete
-    -- selectors <- mapM (genFieldSelector owlName) fields
-    return $ vsep $ [structDef, parseSerializeDefs, constructor]
+specTyOfSerialized :: FormatTy -> VerusTy
+specTyOfSerialized (FStruct fn ffs) = seqU8
+specTyOfSerialized (FEnum n fcs) = seqU8
+specTyOfSerialized f = specTyOf f 
+
+extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
+extractCTyDef (CStructDef s) = extractCStruct s
+extractCTyDef (CEnumDef e) = extractCEnum e
+
+mkNestPattern :: [Doc ann] -> Doc ann
+mkNestPattern l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
+
+extractCStruct :: CStruct FormatTy -> EM (Doc ann)
+extractCStruct (CStruct n fs isVest) = do
+    let rn = specName n
+    let rfs = map (\(n, t) -> (specName n, specTyOf t)) fs
+    let structFields = vsep $ fmap (\(n, t) -> [di|pub #{n}: #{pretty t},|]) rfs
+    let structDef = [__di|
+    pub struct #{rn} {
+        #{structFields}
+    }
+    |]
+    parseSerializeDefs <- if isVest then 
+                                genParserSerializer (execName n) rn rfs 
+                            else genParserSerializerNoVest (execName n) rn rfs
+    constructor <- genConstructor n rn rfs
+    return $ vsep [structDef, parseSerializeDefs, constructor]
     where
-        genConstructor owlName fields owlFieldsConcrete = do
-            let printConstructor args = owlpretty owlName <> tupled (mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just _ -> Just a) $ zip args owlFieldsConcrete)
-            specAdtFuncs %= M.insert owlName printConstructor
-            let specArgTy t = case t of
-                    SpecBool -> owlpretty "bool"
-                    _ -> owlpretty "Seq<u8>"
-            let args = parens . hsep . punctuate comma . map (\(n,t) -> owlpretty "arg_" <> owlpretty n <> owlpretty ":" <> specArgTy t) $ fields
-            let body = owlpretty "serialize_" <> owlpretty (specName owlName) <>
-                    parens (owlpretty (specName owlName) <> braces (hsep . punctuate comma . map (\(n,_) -> owlpretty (specName n) <> owlpretty ": arg_" <> owlpretty n) $ fields))
-            return $
-                owlpretty "pub open spec fn" <+> owlpretty owlName <> args <+> owlpretty "-> Seq<u8>" <+> braces (line <>
-                    body
-                <> line)
+        genParserSerializer execname specname specfields = do
+            let fieldNames = map (pretty . fst) $ specfields
+            let fieldNamesCommaSep = hsep . punctuate comma $ fieldNames
+            let fieldNamesNestPattern = mkNestPattern fieldNames
+            let parse = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                let stream = parse_serialize::SpecStream { data: x, start: 0 };
+                if let Ok((_,_,parsed)) = parse_serialize::spec_parse_#{execname}(stream) {
+                    let (#{fieldNamesNestPattern}) = parsed;
+                    Some(#{specname} { #{fieldNamesCommaSep} })
+                } else {
+                    None
+                }
+            }
+            |]
+            let fieldSels = map (\n -> [di|x.#{n}|]) fieldNames
+            let fieldLens = map (\xn -> [di|#{xn}.len()|]) fieldSels
+            let serInner = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
+                if no_usize_overflows_spec![ #{hsep . punctuate comma $ fieldLens} ] {
+                    let stream = parse_serialize::SpecStream {
+                        data: seq_u8_of_len(#{hsep . punctuate (pretty " + ") $ fieldLens}),
+                        start: 0,
+                    };
+                    if let Ok((serialized, n)) = parse_serialize::spec_serialize_#{execname}(stream, (#{mkNestPattern fieldSels})) 
+                    {
+                        Some(seq_truncate(serialized.data, n))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                if let Some(val) = serialize_#{specname}_inner(x) {
+                    val
+                } else {
+                    seq![]
+                }
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
-        genParserSerializer :: String -> [(String, SpecTy)] -> ExtractionMonad OwlDoc
-        genParserSerializer owlName fields = do
-            let name = specName owlName
-            let mkNestPattern l = 
-                    case l of
-                        [] -> owlpretty ""
-                        [x] -> owlpretty x
-                        x:y:tl -> foldl (\acc v -> parens (acc <+> owlpretty "," <+> owlpretty v)) (parens (owlpretty x <> owlpretty "," <+> owlpretty y)) tl
-            let parserBody = 
-                    owlpretty "let stream = parse_serialize::SpecStream { data : x, start : 0 };" <> line <>
-                    owlpretty "if let Ok((_, _, parsed)) = parse_serialize::spec_parse_" <> owlpretty (rustifyName owlName) <> owlpretty "(stream) {" <> line <>
-                    owlpretty "let" <+> mkNestPattern (map (specName . fst) fields) <+> owlpretty "=" <+> owlpretty "parsed;" <> line <>
-                    owlpretty "Some" <> parens (owlpretty name <+> braces (hsep . punctuate comma . map (owlpretty . specName . fst) $ fields)) <> line <>
-                    owlpretty "} else { None }" 
-            let parser = 
-                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <>
-                    owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
-                        owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
-                        (if isVest then parserBody else owlpretty "// can't autogenerate vest parser" <> line <> owlpretty "todo!()") <> line
-                    )
-            let fieldLen f = owlpretty "x." <> owlpretty (specName f) <> owlpretty ".len()"
-            let fieldLens = map (\(f,_) -> fieldLen f) fields
-            let sumFieldLens = foldl1 (\acc f -> acc <+> owlpretty "+" <+> f) . map (\(f,_) -> fieldLen f) 
-            let structLen = sumFieldLens fields
-            let checkLenOverflow = owlpretty "no_usize_overflows_spec![" <+> (hsep . punctuate comma $ fieldLens) <+> owlpretty "]"
-            let serializerBody =
-                    owlpretty "if" <+> checkLenOverflow <+> braces (line <>
-                        owlpretty "let stream = parse_serialize::SpecStream { data : seq_u8_of_len" <> parens structLen <> owlpretty ", start : 0 };" <> line <>
-                        owlpretty "if let Ok((serialized, n)) = parse_serialize::spec_serialize_" <> owlpretty (rustifyName owlName) <> 
-                                owlpretty "(stream," <+> parens (mkNestPattern (map (\(f,_) -> "x." ++ specName f) fields )) <> owlpretty ") {" <> line <>
-                        owlpretty "Some(seq_truncate(serialized.data, n))" <> line <>
-                        owlpretty "} else { None }" <> line
-                    ) <> owlpretty "else { None }"
-            let serializer = 
-                    (if isVest then 
-                        owlpretty "#[verifier::opaque]" <> line <>
-                        owlpretty "pub closed spec fn serialize_" <> owlpretty name <> owlpretty "_inner" <> parens (owlpretty "x:" <+> owlpretty name) <+>
-                            owlpretty "->" <+> owlpretty "Option<Seq<u8>>" <+> braces (line <>
-                            serializerBody <> line)
-                    else owlpretty "")
-            let serializerWrapper = 
-                    (if isVest then owlpretty "#[verifier::opaque]" else owlpretty "#[verifier(external_body)]") <> line <> 
-                    owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
-                            owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
-                            (if isVest then 
-                                owlpretty "if let Some(val) = serialize_" <> owlpretty name <> owlpretty "_inner(x) {" <> line <>
-                                owlpretty "val" <> line <>
-                                owlpretty "} else { seq![] }" <> line
-                            else owlpretty "// can't autogenerate vest serializer" <> line <> owlpretty "todo!()")
-                        )
-            let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
-                            owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
-                        )
-            return $ vsep $ punctuate line [parser, serializer, serializerWrapper, implOwlSpecSerialize]
+        genParserSerializerNoVest execname specname specfields = do
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                // cant autogenerate vest parser
+                todo!()
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                // cant autogenerate vest serializer
+                todo!()
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, ser, implOwlSpecSer]
 
 
+        genConstructor owlName specname specfields = do
+            let fieldNames = map (pretty . fst) $ specfields
+            let args = hsep . punctuate comma $ map (\(n,t) -> [di|arg_#{n}: #{pretty t}|]) specfields
+            let mkFields = hsep . punctuate comma $ map (\(n,_) -> [di|#{n}: arg_#{n}|]) specfields
+            let constructor = [__di|
+            // TODO: make sure the arg types line up
+            pub open spec fn #{owlName}(#{args}) -> #{specname} {
+                #{specname} { 
+                    #{mkFields} 
+                }
+            }
+            |]
+            return constructor
 
 
-extractEnum :: String -> [(String, Maybe Ty)] -> ExtractionMonad OwlDoc
-extractEnum owlName owlCases = do
-    let name = specName owlName
-    cases <- mapM (\(n, topt) -> do
-                        t' <- case topt of
-                            Just t -> Just <$> (rustifySpecTy . doConcretifyTy) t
-                            Nothing -> return Nothing
-                        return (n, t')) owlCases
-    let enumDef = owlpretty "pub enum" <+> owlpretty name <> braces (line <> (
-                        vsep . punctuate comma . map (\(n, t) -> owlpretty (specName n) <> parens (owlpretty t)) $ cases
-                    ) <> line) <> line <> owlpretty "use crate::" <> owlpretty name <> owlpretty "::*;" <> line
-    parseSerializeDefs <- genParserSerializer name
-    caseConstructors <- mapM (genCaseConstructor name) cases
-    return $ vsep $ [enumDef, parseSerializeDefs] ++ caseConstructors
+extractCEnum :: CEnum FormatTy -> EM (Doc ann)
+extractCEnum (CEnum n cs isVest) = do
+    let rn = specName n
+    let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
+    let rfsOwlNames = map (\(n, t) -> (n, fmap specTyOf t)) $ M.assocs cs
+    let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
+    let enumDef = [__di|
+    pub enum #{rn} {
+        #{enumCases}
+    }
+    use crate::#{rn}::*;
+    |]
+    parseSerializeDefs <- genParserSerializer (execName n) rn rfs
+    constructors <- genConstructors n rn rfsOwlNames
+    enumTests <- genEnumTests n rn rfsOwlNames
+    return $ vsep [enumDef, parseSerializeDefs, constructors, enumTests]
     where
-        genCaseConstructor name (caseName, Just caseTy) = do
-            specAdtFuncs %= M.insert caseName (\args -> owlpretty caseName <> tupled args)
-            return $
-                owlpretty "pub open spec fn" <+> owlpretty caseName <> parens (owlpretty "x: Seq<u8>") <+> owlpretty "-> Seq<u8>" <+> braces (line <>
-                    owlpretty "serialize_" <> owlpretty name <> parens (
-                        owlpretty "crate::" <> owlpretty name <> owlpretty "::" <> owlpretty (specName caseName) <> parens (owlpretty "x")
-                    )
-                <> line)
+        genParserSerializer execname specname speccases = do
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                todo!()
+            }
+            |]
+            let serInner = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
+                todo!()
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                todo!()
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
-        genCaseConstructor name (caseName, Nothing) = do
-            specAdtFuncs %= M.insert caseName (\args -> owlpretty caseName <> tupled args)
-            return $
-                owlpretty "pub open spec fn" <+> owlpretty caseName <> owlpretty "()" <+> owlpretty "-> Seq<u8>" <+> braces (line <>
-                    owlpretty "serialize_" <> owlpretty name <> parens (
-                        owlpretty "crate::" <> owlpretty name <> owlpretty "::" <> owlpretty (specName caseName) <> owlpretty "()"
-                    )
-                <> line)
+        genConstructors owlName specname speccases = do
+            vsep <$> mapM (genConstructor owlName specname) speccases
 
-        genParserSerializer :: String -> ExtractionMonad OwlDoc
-        genParserSerializer name = do
-            -- TODO nesting design---Seq or ADT args---depends on parsing lib
-            let parser = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn parse_" <> owlpretty name <> parens (owlpretty "x: Seq<u8>") <+>
-                            owlpretty "->" <+> owlpretty "Option" <> angles (owlpretty name) <+> braces (line <>
-                            owlpretty "todo!()" <> line
-                        )
-            let serializer = owlpretty "#[verifier(external_body)]" <+> owlpretty "pub closed spec fn serialize_" <> owlpretty name <> parens (owlpretty "x:" <+> owlpretty name) <+>
-                            owlpretty "->" <+> owlpretty "Seq<u8>" <+> braces (line <>
-                            owlpretty "todo!()" <> line
-                        )
-            let implOwlSpecSerialize = owlpretty "impl OwlSpecSerialize for" <+> owlpretty name <+> braces (line <>
-                            owlpretty "open spec fn as_seq(self) -> Seq<u8> {" <+> owlpretty "serialize_" <> owlpretty name <> parens (owlpretty "self") <+> owlpretty "}" 
-                        )
-            return $ vsep $ punctuate line [parser, serializer, implOwlSpecSerialize]
+        genConstructor owlName specname (caseName, Nothing) = do
+            return [__di|
+            pub open spec fn #{caseName}() -> #{specname} {
+                crate::#{specname}::#{specName caseName}()
+            }
+            |]
+        genConstructor owlName specname (caseName, Just caseTy) = do
+            return [__di|
+            pub open spec fn #{caseName}(x: #{pretty caseTy}) -> #{specname} {
+                crate::#{specname}::#{specName caseName}(x)
+            }
+            |]
+        
+        genEnumTests owlName specname speccases = do
+            tests <- mapM mkEnumTest speccases
+            return $ vsep tests
+            where
+                mkEnumTest (caseName, topt) = do
+                    let var = case topt of
+                            Just t -> [di|_|]
+                            Nothing -> [di||]
+                    return [__di|
+                    pub open spec fn #{caseName}_enumtest(x: #{specname}) -> bool {
+                        match x {
+                            #{specname}::#{specName caseName}(#{var}) => true,
+                            _ => false,
+                        }
+                    }
+                    |]
 
-----------------------------------------------------------------------------------
---- Code generation
 
--- Owl builtin functions that must be printed differently in Rust
-specBuiltinFuncs :: M.Map String ([OwlDoc] -> OwlDoc)
-specBuiltinFuncs = M.fromList [
-        ("unit", \_ -> owlpretty "()"),
-        ("true", \_ -> owlpretty "true"),
-        ("false", \_ -> owlpretty "false"),
-        ("Some", \a -> owlpretty "Option::Some" <> tupled a),
-        ("None", \_ -> owlpretty "Option::None"),
-        ("eq", \[a1, a2] -> a1 <> owlpretty "" <+> owlpretty "==" <+> a2 <> owlpretty ""),
-        ("checknonce", \[a1, a2] -> a1 <+> owlpretty "==" <+> parens a2)
-    ]
-
--- How to print len consts in spec land
-specLenConsts :: M.Map String String
-specLenConsts = M.fromList [
-        -- ("signature", "256"),
-        ("enckey", "KEY_SIZE()"),
-        ("nonce", "NONCE_SIZE()"),
-        ("mackey", "MACKEY_SIZE()"),
-        ("kdfkey", "KDFKEY_SIZE()"),
-        -- ("maclen", hmacLen),
-        -- ("pkekey", pkeKeySize),
-        -- ("sigkey", sigKeySize),
-        -- ("vk", vkSize),
-        -- ("DH", dhSize),
-        ("tag", "1")
-    ]
-
-extractEndpoint :: Endpoint -> ExtractionMonad OwlDoc
-extractEndpoint (Endpoint evar) = extractVar evar
+extractEndpoint :: Endpoint -> EM (Doc ann)
+extractEndpoint (Endpoint evar) = return . pretty . replacePrimes . show $ evar
 extractEndpoint (EndpointLocality (Locality s _)) = do
     l <- flattenPath s
-    return $ owlpretty "Endpoint::Loc_" <> owlpretty l
+    return $ pretty "Endpoint::Loc_" <> pretty l
 
-extractVarString :: String -> ExtractionMonad String
-extractVarString "_" = show <$> fresh (string2Name "_unused")
-extractVarString s = return $ replacePrimes s
+extractVar :: CDataVar FormatTy -> EM (Doc ann)
+extractVar n = do
+    case name2String n of
+        "_" -> pretty . show <$> fresh (string2Name "_unused")
+        s -> return . pretty . replacePrimes $ s
 
-extractVar :: Name a -> ExtractionMonad OwlDoc
-extractVar v = do
-    v' <- extractVarString (name2String v)
-    return $ owlpretty v'
+specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
+specBuiltins = M.mapWithKey addSpecName builtins' where
+    addSpecName n (args, rty) = (n, args, rty)
+    builtins' = M.fromList [
+          ("enc", ([seqU8, seqU8, seqU8], seqU8))
+        , ("dec", ([seqU8, seqU8], RTOption seqU8))
+        , ("sign", ([seqU8, seqU8], seqU8))
+        , ("vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("dhpk", ([seqU8], seqU8))
+        , ("dh_combine", ([seqU8, seqU8], seqU8))
+        , ("mac", ([seqU8, seqU8], seqU8))
+        , ("mac_vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("pkenc", ([seqU8, seqU8], seqU8))
+        , ("pkdec", ([seqU8, seqU8], seqU8))
+        -- , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
+        , ("dec_st_aead", ([seqU8, seqU8, seqU8, seqU8], RTOption seqU8))
+        , ("is_group_elem", ([seqU8], RTBool))
+        , ("crh", ([seqU8], seqU8))
+        , ("bytes_as_counter", ([seqU8], RTUsize))
+        , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
+        , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
+        ]
+    -- diffNameBuiltins = M.fromList [
+    --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
+    --     ]
 
-extractUserFunc :: String -> RustTy -> OwlFunDef -> ExtractionMonad OwlDoc
-extractUserFunc owlName rtExec o = do
-    ((_, args), ae) <- unbind o
-    let rtSpec = specTyOf rtExec
-    let binds = M.fromList $ map (\x -> (show x, (VecU8, Nothing))) args
-    body <- extractAExpr ae
-    let declArgs = map (\x -> owlpretty (show x) <> owlpretty ":" <+> owlpretty "Seq<u8>") args
-    let decl = owlpretty "#[verifier::opaque] pub closed spec fn" <+> owlpretty owlName <> tupled declArgs <+> 
-                    owlpretty "->" <+> owlpretty rtSpec <> line
-    return $ decl <> braces (line <> body <> line)
+extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
+extractCAExpr aexpr = do
+    case aexpr ^. tval of
+        CAVar s v -> extractVar v
+        CAApp f args -> do
+            case specBuiltins M.!? f of
+                Just (f, argDstTys, rSrcTy) -> do
+                    args' <- mapM extractCAExpr args
+                    let argtys = map (^. tty) args
+                    args'' <- zipWithM specCast (zip args' argtys) argDstTys
+                    return [di|#{f}(#{hsep . punctuate comma $ args''})|]
+                Nothing -> do
+                    case f of
+                        "unit" -> return [di|()|]
+                        "andp" -> return [di|ghost_unit()|]
+                        "true" -> return [di|true|]
+                        "false" -> return [di|false|]
+                        "Some" -> do
+                            let [a] = args
+                            a' <- extractCAExpr a
+                            return [di|Option::Some(#{a'})|]
+                        "None" -> return [di|Option::None|]
+                        "eq" -> do
+                            let [a,b] = args
+                            a' <- extractCAExpr a
+                            b' <- extractCAExpr b
+                            return [di|#{a'} == #{b'}|]
+                        "subrange" -> do
+                            let [buf,start,end] = args
+                            buf' <- extractCAExpr buf
+                            start' <- extractCAExpr start
+                            end' <- extractCAExpr end
+                            return [di|Seq::subrange(#{buf'}, #{start'}, #{end'})|]
+                        "enc_st_aead" -> do
+                            let [key, msg, nonce, aad] = args
+                            let extAndCast x dstty = do
+                                    x' <- extractCAExpr x
+                                    x'' <- specCast (x', x ^. tty) dstty
+                                    return x''
+                            key' <- extAndCast key seqU8
+                            msg' <- extAndCast msg seqU8
+                            nonce' <- extractCAExpr nonce
+                            aad' <- extAndCast aad seqU8
+                            return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
+                        _ | "?" `isSuffixOf` f -> do
+                            -- Special case for enum test functions
+                            let f' = init f ++ "_enumtest"
+                            args' <- mapM extractCAExpr args
+                            return [__di|
+                            #{pretty f'}(#{hsep . punctuate comma $ args'})
+                            |]
+                        _ -> do
+                            args' <- mapM extractCAExpr args
+                            return [__di|
+                                #{pretty f}(#{hsep . punctuate comma $ args'})
+                            |]
+        CAGet n -> do
+            let rustN = execName n
+            return [di|cfg.#{rustN}.dview()|]
+        CAGetVK n -> do
+            let rustN = execName n
+            return [di|cfg.pk_#{rustN}.dview()|]
+        (CAHexConst s) -> do
+            bytelist <- hexStringToByteList s
+            if null s then
+                return $ pretty "empty_seq_u8()"
+            else
+                return $ pretty "seq![" <> bytelist <> pretty "]"
+        CACounter ctrname -> return [di|#{execName ctrname}|]
+        CAInt flen -> return . pretty . lowerFLen $ flen
+        _ -> return [__di|
+        /*
+            TODO: SpecExtraction.extractCAExpr #{show aexpr}
+        */
+        |]
 
-
-extractAExpr :: AExpr -> ExtractionMonad OwlDoc
-extractAExpr ae = extractAExpr' (ae ^. val) where
-    extractAExpr' (AEVar s n) = extractVar n
-    extractAExpr' (AEApp f _ as) = do
-        as' <- mapM extractAExpr as
-        ftail <- tailPath f
-        case specBuiltinFuncs M.!? ftail of
-            Just f' -> return $ f' as'
-            Nothing  -> do
-                -- Check if the func is a spec ADT func
-                specAdtFs <- use specAdtFuncs
-                case specAdtFs M.!? ftail of
-                    Just printer -> 
-                        return $ printer as'
-                    Nothing -> do
-                        f' <- flattenPath f
-                        return $ owlpretty f' <> tupled as'
-        -- return $ owlpretty f' <> tupled as'
-    extractAExpr' (AEHex s) = do
-        bytelist <- hexStringToByteList s
-        if null s then
-            return $ owlpretty "empty_seq_u8()"
-        else
-            return $ owlpretty "seq![" <> bytelist <> owlpretty "]"
-    extractAExpr' (AELenConst s) = do
-        case specLenConsts M.!? s of
-            Nothing -> throwError $ ErrSomethingFailed $ "TODO add spec len const " ++ s
-            Just s' -> return $ owlpretty s'
-    extractAExpr' (AEInt i) = return $ owlpretty i
-    extractAExpr' (AEGet ne) = do
-        ne' <- flattenNameExp ne
-        return $ parens (owlpretty "cfg." <> owlpretty ne') <> owlpretty ".dview()"
-    extractAExpr' (AEGetEncPK ne) = do
-        ne' <- flattenNameExp ne
-        return $ parens (owlpretty "cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
-    extractAExpr' (AEGetVK ne) = do
-        ne' <- flattenNameExp ne
-        return $ parens (owlpretty "cfg.pk_" <> owlpretty ne') <> owlpretty ".dview()"
-    extractAExpr' (AEKDF _ _ _ _ _) = throwError $ GhostInExec "AEKDF"
-    --extractAExpr' (AEPreimage p _ _) = do
-    --    p' <- flattenPath p
-    --    throwError $ PreimageInExec p'
-
-extractCryptOp :: CryptOp -> [AExpr] -> ExtractionMonad OwlDoc
-extractCryptOp op owlArgs = do
-    args <- mapM extractAExpr owlArgs
-    case (op, args) of
-        (CKDF _ _ nks nkidx, [salt, ikm, info]) -> do
-           (outLen, sliceIdxs) <- makeKdfSliceMap nks
-           (start, end, _) <- case sliceIdxs M.!? nkidx of
-               Nothing -> throwError $ TypeError $ "bad index " ++ show nkidx ++ " to spec kdf with return type " ++ show nks
-               Just p -> return p
-        --    orclArgs <- case args of
-        --        [ikm] -> return [owlpretty "cfg.salt.dview()", ikm]
-        --        [salt, ikm] -> return [salt, ikm]
-        --        _ -> throwError $ TypeError "unsupported random-oracle argument pattern"
-           return $ 
-               owlpretty "ret" <> parens 
-                   (owlpretty "kdf" <> tupled (parens (printOrclLen outLen) <> owlpretty " as usize" : args) <> owlpretty ".subrange" <> tupled [printOrclLen start, printOrclLen end])
-        -- (CPRF s, _) -> do throwError $ ErrSomethingFailed $ "TODO implement crypto op: " ++ show op
-        (CAEnc, [k, x]) -> do return $ owlpretty "sample" <> tupled [owlpretty "NONCE_SIZE()", owlpretty "enc" <> tupled [k, x]]
-        (CADec, [k, x]) -> do return $ noSamp "dec" [k, x]
-        (CEncStAEAD np _ xpat, [k, x, aad]) -> do
-            error "TODO: fix extraction for pattern"
-            n <- flattenPath np
-            return $ noSamp "enc_st_aead" [k, x, owlpretty (rustifyName n), aad]
-        (CDecStAEAD, [k, c, aad, n]) -> do 
-            return $ noSamp "dec_st_aead" [k, c, n, aad]
-        (CPKEnc, [k, x]) -> do return $ noSamp "pkenc" [k, x]
-        (CPKDec, [k, x]) -> do return $ noSamp "pkdec" [k, x]
-        (CMac, [k, x]) -> do return $ noSamp "mac" [k, x]
-        (CMacVrfy, [k, x, v]) -> do return $ noSamp "mac_vrfy" [k, x, v]
-        (CSign, [k, x]) -> do return $ noSamp "sign" [k, x]
-        (CSigVrfy, [k, x, v]) -> do return $ noSamp "vrfy" [k, x, v]
-        (_, _) -> do throwError $ TypeError $ "got bad args for spec crypto op: " ++ show op ++ "(" ++ show args ++ ")"
-    where
-        noSamp name args = owlpretty "ret" <> parens (owlpretty name <> tupled args)
-        printOrclLen = owlpretty . intercalate "+" . map (\x -> if x == "0" then "0" else specLenConsts M.! x) 
-
--- the Bool arg is whether the case has arguments
-specCaseName :: Bool -> String -> String
-specCaseName _ "Some" = "Some"
-specCaseName _ "None" = "None"
-specCaseName True c = specName c
-specCaseName False c = specName c ++ "()"
-
-extractExpr :: CExpr -> ExtractionMonad OwlDoc
-extractExpr CSkip = return $ owlpretty "ret(())" -- skip should be erased
-extractExpr (CInput xsk) = do
-    let ((x, ev), sk) = unsafeUnbind xsk
-    sk' <- extractExpr sk
-    x' <- extractVar x
-    ev' <- extractVar ev
-    return $ parens (owlpretty "input" <+> tupled [x', ev']) <+> owlpretty "in" <> line <> sk'
-extractExpr (COutput a l) = do
-    a' <- extractAExpr a
-    l' <- case l of
-      Nothing -> throwError OutputWithUnknownDestination
-      Just s  -> do
-        s' <- extractEndpoint s
-        return $ owlpretty "to" <+> parens s'
-    return $ parens $ owlpretty "output " <> parens a' <+> l'
-extractExpr (CLet (COutput a l) _ xk) = do
-    let (_, k) = unsafeUnbind xk
-    o <- extractExpr (COutput a l)
-    k' <- extractExpr k
-    return $ o <+> owlpretty "in" <> line <> k'
-extractExpr (CLet CSkip _ xk) =
-    let (_, k) = unsafeUnbind xk in extractExpr k
-extractExpr (CLet e _ xk) = do
-    let (x, k) = unsafeUnbind xk
-    x' <- extractVar x
-    e' <- extractExpr e
-    k' <- extractExpr k
-    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens e' <+> owlpretty "in" <> line <> k'
-extractExpr (CBlock e) = extractExpr e
-extractExpr (CIf a e1 e2) = do
-    a' <- extractAExpr a
-    e1' <- extractExpr e1
-    e2' <- extractExpr e2
-    return $ parens $
-        owlpretty "if" <+> parens a' <+> owlpretty "then" <+> parens e1' <+> owlpretty "else" <+> parens e2'
-extractExpr (CRet a) = do
-    a' <- extractAExpr a
-    return $ parens $ owlpretty "ret" <+> parens a'
-extractExpr (CCall f is as) = do
-    as' <- mapM extractAExpr as
-    ftail <- flattenPath f
-    sfs <- use specFuncs
-    case sfs M.!? ftail of
-        Just printer -> return $ printer as'
-        Nothing -> throwError $ TypeError $ "got bad args for spec call: " ++ show ftail ++ "(" ++ show as ++ ")"
-    -- return $ owlpretty "call" <> parens (owlpretty ftail <> owlpretty "_spec" <> tupled (owlpretty "cfg" : owlpretty "mut_state" : as'))
-extractExpr (CCase a otk xs) = do
-    a' <- extractAExpr a
-    (parseCall, badk, enumName) <- case otk of
-            Just (CTConst p, bk) -> do
-                t <- tailPath p
-                bk' <- extractExpr bk
-                return  (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk', owlpretty (specName t) <> owlpretty "::")
-            Nothing -> return (a', owlpretty "", owlpretty "")
-            Just (t, _) -> throwError $ TypeError $ "got parsing case statement with bad type " ++ show t
-    pcases <-
-            mapM (\(c, o) ->
-                case o of
-                Left e -> do
-                    e' <- extractExpr e
-                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName False c) <+> owlpretty "=>" <+> braces e' <> comma
-                Right xe -> do
-                    let (x, e) = unsafeUnbind xe
+extractExpr :: CExpr FormatTy -> EM (Doc ann)
+extractExpr expr = do
+    case expr ^. tval of
+        CSkip -> return [di|ret(())|]
+        CRet ae -> do
+            ae' <- extractCAExpr ae
+            return [di|(ret(#{ae'}))|]
+        CInput _ xek -> do
+            let ((x, ev), k) = unsafeUnbind xek
+            x' <- extractVar x
+            let ev' = pretty . replacePrimes . show $ ev
+            k' <- extractExpr k
+            return [__di|
+            (input(#{x'},#{ev'})) in 
+            #{k'}
+            |]
+        COutput ae dst -> do
+            dst' <- case dst of
+                Just endp -> do
+                    endp' <- extractEndpoint endp
+                    return [di|(#{endp'})|]
+                Nothing -> throwError OutputWithUnknownDestination
+            ae' <- extractCAExpr ae
+            ae'' <- specCast (ae', ae ^. tty) seqU8
+            return [__di|
+            (output (#{ae''}) to #{dst'})
+            |]
+        CSample fl ck -> do
+            let sz = pretty $ lowerFLen fl
+            let (coins, k) = unsafeUnbind ck
+            coins' <- extractVar coins
+            case k ^. tval of
+                -- need special-case handling of CSample to insert the right itree syntax
+                -- TODO: we could change the itree macro to handle sample more similarly to 
+                -- input and output, but that would break backwards compatibility
+                CRet (Typed t (CAApp "enc" [key, msg, coins])) -> do
+                    key' <- extractCAExpr key
+                    key'' <- specCast (key', key ^. tty) seqU8
+                    msg' <- extractCAExpr msg
+                    msg'' <- specCast (msg', msg ^. tty) seqU8
+                    return [__di|
+                    (sample(#{sz}, enc(#{key''}, #{msg''})))
+                    |]
+                _ -> throwError $ ErrSomethingFailed $ "Unsupported continuation after sample: " ++ show k
+        CLet (Typed t (COutput a l)) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            o <- extractExpr (Typed t (COutput a l))
+            k' <- extractExpr k
+            return $ o <+> pretty "in" <> line <> k'
+        CLet (Typed _ CSkip) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            extractExpr k
+        CLet (Typed _ (CRet (Typed _ (CAApp "unit" _)))) _ xk -> do
+            let (_, k) = unsafeUnbind xk
+            extractExpr k
+        CLet e _ xk -> do
+            let (x, k) = unsafeUnbind xk
+            case (name2String x, e ^. tval) of
+                ("_", CRet (Typed _ (CAApp "unit" _))) -> do
+                    extractExpr k
+                (_, _) -> do
                     x' <- extractVar x
                     e' <- extractExpr e
-                    return $ owlpretty "|" <+> enumName <> owlpretty (specCaseName True c) <+> parens x' <+> owlpretty "=>" <+> braces e' <> comma
-                ) xs
-    return $ parens $ owlpretty "case" <+> parens parseCall <> braces (line <> vsep pcases <> line <> badk <> line)
-extractExpr (CCrypt cop args) = do
-    parens <$> extractCryptOp cop args
-extractExpr (CIncCtr p (_, _)) = do
-    p' <- flattenPath p
-    return $ parens $ parens (owlpretty "inc_counter" <> tupled [owlpretty (rustifyName p')])
-extractExpr (CGetCtr p (_, _)) = do
-    p' <- flattenPath p
-    return $ parens $ owlpretty "ret" <> parens (owlpretty "counter_as_bytes" <> parens (owlpretty "mut_state." <> owlpretty (rustifyName p')))
-extractExpr (CParse a (CTConst p) otk bindpat) = do 
-    t <- tailPath p
-    let (pats, k) = unsafeUnbind bindpat
-    fs <- lookupStruct . rustifyName $ t
-    let patfields = mapMaybe (\(a, bopt) -> case bopt of Nothing -> Nothing; Just b -> Just (a,b)) $ zip (map (unignore . snd) pats) fs
-    let printPat (v, (f, _)) = do
-            v' <- extractVarString v
-            return $ owlpretty (specName f) <+> owlpretty ":" <+> owlpretty v'
-    patfields' <- mapM printPat patfields
-    a' <- extractAExpr a
-    k' <- extractExpr k
-    (parseCall, badk) <- case otk of
-            Just bk -> do
-                bk' <- extractExpr bk
-                return $ (owlpretty "parse_" <> owlpretty (specName t) <> parens a', owlpretty "otherwise" <+> parens bk')
-            Nothing -> return $ (a', owlpretty "")
-    return $ parens $ 
-        owlpretty "parse" <+> parens parseCall <+> 
-        owlpretty "as" <+> parens (owlpretty (specName t) <> braces ((hsep . punctuate (space <> comma)) patfields' <> space)) <+> 
-        owlpretty "in" <+> lbrace <> line <> k' <> line <> rbrace <+> 
-        badk
-extractExpr (CLetGhost xk) = do
-    let (x, k) = unsafeUnbind xk
-    x' <- extractVar x
-    k' <- extractExpr k
-    return $ owlpretty "let" <+> x' <+> owlpretty "=" <+> parens (owlpretty "ret" <> parens (owlpretty "spec_unit()")) <+> owlpretty "in" <> line <> k'
-extractExpr c = throwError . ErrSomethingFailed . show $ owlpretty "unimplemented case for Spec.extractExpr:" <+> owlpretty c
--- extractExpr (CTLookup n a) = return $ owlpretty "lookup" <> tupled [owlpretty n, extractAExpr a]
--- extractExpr (CTWrite n a a') = return $ owlpretty "write" <> tupled [owlpretty n, extractAExpr a, extractAExpr a']
+                    k' <- extractExpr k
+                    return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
+        CBlock e -> extractExpr e
+        CIf a e1 e2 -> do
+            a' <- extractCAExpr a
+            e1' <- extractExpr e1
+            e2' <- extractExpr e2
+            return $ parens $
+                pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
+        CCase ae cases -> do
+            ae' <- extractCAExpr ae
+            translateCaseName <- case ae ^. tty of
+                    FEnum n _ -> return specName
+                    FOption _ -> return id
+                    _ -> throwError $ TypeError "Unsupported spec case type"
+            let extractCase (c, o) = do
+                    case o of
+                        Left e -> do
+                            e' <- extractExpr e
+                            let parens = case ae ^. tty of
+                                    FOption _ -> ""
+                                    _ -> "()"
+                            return [__di|
+                            | #{translateCaseName c}#{parens} => { 
+                            #{e'} 
+                            },
+                            |]
+                        Right xte -> do
+                            let (x, (_, e)) = unsafeUnbind xte
+                            x' <- extractVar x
+                            e' <- extractExpr e
+                            return [__di|
+                            | #{translateCaseName c}(#{x'}) => {
+                            #{e'}
+                            },
+                            |]
+            cases' <- mapM extractCase cases
+            return [__di|
+            (case (#{ae'}) {
+            #{vsep cases'}
+            }
+            )
+            |]
+        CParse pkind ae t maybeOtw xtsk -> do
+            let (xts, k) = unsafeUnbind xtsk
+            xs <- mapM (\(x,_,_) -> extractVar x) xts
+            ae' <- extractCAExpr ae
+            k' <- extractExpr k
+            case t of
+                FStruct n fs -> do
+                    let dstTyName = specName n
+                    let parsedTypeMembers = map (specName . fst) fs
+                    let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
+                    (parseCall, badk) <- case maybeOtw of
+                        Just otw -> do
+                            let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                            otw' <- extractExpr otw
+                            return (parseCall, [di|otherwise (#{otw'})|])
+                        Nothing -> return (ae', [di||])
+                    return $ parens [__di|
+                    parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
+                    #{k'}
+                    } #{badk}
+                    |]
+                FEnum n cs -> throwError $ ErrSomethingFailed $ "TODO: spec enum parsing for " ++ show n
+                FOption t' -> do
+                    let [x] = xs
+                    let PFromDatatype = pkind
+                    return $ pretty "let" <+> x <+> pretty "=" <+> parens [di|(ret(#{ae'}))|] <+> pretty "in" <> line <> k'
+                _ -> throwError $ TypeError $ "Unsupported spec parse type: " ++ show t
+        CGetCtr ctrname -> do
+            return $ parens $ pretty "ret" <> parens (pretty "counter_as_bytes" <> parens (pretty "mut_state." <> pretty (execName ctrname)))
+        CCall f frty args -> do
+            args' <- mapM extractCAExpr args
+            let args'' = [di|cfg|] : [di|mut_state|] : args'
+            return [di|(call(#{f}_spec(#{hsep . punctuate comma $ args''})))|]
+        _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
-specExtractArg :: (DataVar, Embed Ty) -> ExtractionMonad OwlDoc
-specExtractArg (v, t) = do    
-    st <- rustifyArgTy . doConcretifyTy . unembed $ t
-    v' <- extractVar v
-    return $ v' <> owlpretty ":" <+> (owlpretty . specDataTyOf $ st)
 
-
-extractDef :: String -> Locality -> Maybe CExpr -> [(DataVar, Embed Ty)] -> SpecTy -> ExtractionMonad OwlDoc
-extractDef owlName (Locality lpath _) concreteBody owlArgs specRt = do
-    -- debugPrint . show . owlpretty $ concreteBody
-    lname <- flattenPath lpath
-    specArgs <- mapM specExtractArg owlArgs
-    let argsPrettied = hsep . punctuate comma $
-            owlpretty "cfg:" <+> owlpretty (cfgName lname)
-            : owlpretty "mut_state:" <+> owlpretty (stateName lname)
-            : specArgs
-    let rtPrettied = owlpretty "-> (res: ITree<(" <> owlpretty specRt <> comma <+> owlpretty (stateName lname) <> owlpretty "), Endpoint>" <> owlpretty ")"
-    (body, pureDef) <- case concreteBody of
-        Just concreteBody' -> do
-            e <- extractExpr concreteBody'
-            return (e, owlpretty "")
+extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
+extractDef locName (CDef defname b) = do
+    let specname = defname ++ "_spec"
+    -- debugLog $ "Spec extracting def " ++ defname
+    (owlArgs, (retTy, body)) <- unbindCDepBind b
+    owlArgs' <- mapM extractArg owlArgs
+    let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
+    -- NB: forces all data structures to be represented as Seq<u8> in spec
+    let specRetTy = specTyOf retTy
+    let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
+    (body, pureDef) <- case body of
+        Just body -> do
+            body' <- extractExpr body
+            return (body', [di||])
         Nothing -> do
-            let p = pureDef owlName specArgs specRt
-            specArgVars <- mapM extractVar . map fst $ owlArgs
-            return (parens (owlpretty "ret" <> parens (owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgVars)), p)
-    let defBody = owlpretty "owl_spec!" <> 
-                    parens (owlpretty "mut_state," <> owlpretty (stateName lname) <> comma <> line <>
-                        body
-                    <> line)
-    return $ owlpretty "#[verifier::opaque] pub open spec fn" <+> owlpretty owlName <> owlpretty "_spec" <> parens argsPrettied <+> rtPrettied <+> lbrace <> line <>
-        defBody <> line <>
-        rbrace <> line <> line <> pureDef
+            let p = pureDef defname owlArgs' specRetTy
+            let specArgVars = map (\(cdvar, strname, ty) -> pretty strname) owlArgs
+            return ([di|(ret(#{defname}_pure(#{hsep . punctuate comma $ specArgVars})))|], p)
+    return [__di|
+        \#[verifier::opaque]
+        pub open spec fn #{specname}(#{hsep . punctuate comma $ specArgs}) -> (res: #{itreeTy}) {
+            owl_spec!(mut_state, state_#{locName},
+                #{body}
+            )
+        }
+        #{pureDef}
+    |]
     where
+        extractArg (cdvar, strname, ty) = do
+            let specty = specTyOf ty
+            return [di|#{pretty strname} : #{pretty specty}|]
         pureDef owlName specArgs specRt = 
-            owlpretty "#[verifier(external_body)] pub closed spec fn" <+> owlpretty (specName owlName) <> owlpretty "_pure" <> tupled specArgs <+> 
-            owlpretty "->" <+> owlpretty specRt <+> line <> 
-            braces (owlpretty "unimplemented!()" )
+            line <>
+            pretty "#[verifier(external_body)] pub closed spec fn" <+> pretty owlName <> pretty "_pure" <> tupled specArgs <+> 
+            pretty "->" <+> pretty specRt <+> line <> 
+            braces (pretty "unimplemented!()" )
 
-mkSpecEndpoint :: [String] -> OwlDoc
-mkSpecEndpoint lnames =
-    owlpretty "#[derive(Copy, Clone)]" <> line <>
-    owlpretty "pub enum Endpoint" <+> braces (line <>
-        (vsep . punctuate comma . map (\s -> owlpretty "Loc_" <> owlpretty s) $ lnames)
-    <> line)
+extractLoc :: (LocalityName, FormatLocalityData) -> EM (Doc ann)
+extractLoc (locname, locdata) = do
+    defs' <- mapM (extractDef locname) . catMaybes $ locdata ^. defs
+    return $ vsep defs'
 
-endpointOfAddr :: OwlDoc
-endpointOfAddr = owlpretty "#[verifier(external_body)] pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint { unimplemented!() /* axiomatized */ }"
+
+extractUserFunc :: CUserFunc FormatTy -> EM (Doc ann)
+extractUserFunc (CUserFunc name b) = do
+    let specname = name
+    (args, (retTy, body)) <- unbindCDepBind b
+    args' <- mapM extractArg args
+    let specRetTy = specTyOf retTy
+    body <- extractCAExpr body
+    return [__di|
+        \#[verifier::opaque]
+        pub closed spec fn #{specname}(#{hsep . punctuate comma $ args'}) -> (res: #{pretty specRetTy}) {
+            #{body}
+        }
+    |]
+    where
+        extractArg (cdvar, strname, ty) = do
+            let specty = specTyOf ty
+            return [di|#{pretty strname} : #{pretty specty}|]
+
+
+specCast :: (Doc ann, FormatTy) -> VerusTy -> EM (Doc ann)
+specCast (x, FStruct t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|]
+specCast (x, FEnum t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|]
+specCast (x, FOption (FStruct _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
+specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
+specCast (x, FInt) RTUsize = return [di|(#{x}) as usize|]
+specCast (x, _) _ = return [di|#{x}|]

@@ -60,6 +60,14 @@ impl OwlSpecSerialize for bool {
     }
 }
 
+// hack
+impl DView for Ghost<()> {
+    type V = Ghost<()>;
+    open spec fn dview(&self) -> Ghost<()> {
+        Ghost(())
+    }
+}
+
 
 pub trait OwlSpecAsCtr {
     spec fn as_ctr(self) -> usize where Self: Sized;
@@ -148,48 +156,13 @@ pub open spec fn concat(a: Seq<u8>, b: Seq<u8>) -> Seq<u8> {
     a.add(b)
 }
 
-
 #[verifier(external_body)]
-pub closed spec(checked) fn evercrypt_spec_of_enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> Seq<u8>
-    recommends k.len() == crate::KEY_SIZE(),
-               coins.len() == crate::TAG_SIZE()
-{
-    todo!()
-}
-
 pub open spec(checked) fn enc(k: Seq<u8>, x: Seq<u8>, coins: Seq<u8>) -> (c: Seq<u8>)
-{
-    // match (k, c) {
-    //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE() && coins.len() == crate::TAG_SIZE()) {
-                evercrypt_spec_of_enc(k, x, coins)
-            } else {
-                seq![]
-            }
-    //     _ => None
-    // }
-}
-
+{ unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn evercrypt_spec_of_dec(k: Seq<u8>, c: Seq<u8>) -> Option<Seq<u8>>
-    recommends k.len() == crate::KEY_SIZE(),
-{
-    todo!()
-}
-
 pub open spec(checked) fn dec(k: Seq<u8>, c: Seq<u8>) -> (x: Option<Seq<u8>>)
-{
-    // match (k, c) {
-    //     (Some(k), Some(c)) =>
-            if (k.len() == crate::KEY_SIZE()) {
-                evercrypt_spec_of_dec(k, c)
-            } else {
-                None
-            }
-    //     _ => None
-    // }
-}
+{ unimplemented!() }
 
 #[verifier(external_body)]
 pub closed spec(checked) fn sign(privkey: Seq<u8>, msg: Seq<u8>) -> (signature: Seq<u8>)
@@ -286,6 +259,17 @@ pub open spec fn spec_ghost_unit() -> Ghost<()>
     Ghost(())
 }
 
+
+pub open spec fn ghost_unit() -> Ghost<()>
+{
+    Ghost(())
+}
+
+// pub open spec fn owl_ghost_unit() -> Ghost<()>
+// {
+//     Ghost(())
+// }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -357,32 +341,35 @@ pub mod itree {
     }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_ret<A, B, Endpoint>(x: A, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Ret(x).bind(k)) == k(x)
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_input<A, B, Endpoint>(f : spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_input<A, B, Endpoint>(f : spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>, k: spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Input(f).bind(k)) == ITree::Input(|x,e| f(x,e).bind(k))
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Output(x, e, f).bind(k)) == ITree::Output(x, e, Box::new((*f).bind(k)))
     { }
 
     #[verifier(external_body)]
-    #[verifier(broadcast_forall)]
-    pub proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : spec_fn(Seq<u8>) -> ITree<A, Endpoint>, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_sample<A, B, Endpoint>(n : usize, f : spec_fn(Seq<u8>) -> ITree<A, Endpoint>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
+
+    pub broadcast group itree_axioms {
+        axiom_bind_ret,
+        axiom_bind_input,
+        axiom_bind_output,
+        axiom_bind_sample,
+    }
 
     //////////////////////////////////////////////////////
     ///// Proof for axiom_bind_assoc (TODO update) ///////
@@ -535,7 +522,7 @@ pub mod itree {
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, option_as_seq(dview_option(res)), $($tail)*)
+                owl_call_internal!(res, dview_option(res), $($tail)*)
             }
         };
     }

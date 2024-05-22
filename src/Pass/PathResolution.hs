@@ -692,6 +692,10 @@ resolveExpr e =
           op' <- traverse resolveProp op
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EPCase p' op' ob k'
+      EOpenTyOf a k -> do 
+          a' <- resolveAExpr a
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ EOpenTyOf a' k'
       ECorrCaseNameOf a op k -> do 
           a' <- resolveAExpr a
           op' <- traverse resolveProp op
