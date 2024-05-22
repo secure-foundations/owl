@@ -182,8 +182,30 @@ def AuthEncap(pkR : dhpk(skR)) @ sender : AuthEncapResult =
         else
             Data<adv> ||kdfkey||
             = shared_secret in 
-
     AuthEncapResult(shared_secret, dhpk(get(skE)))
+
+struct AuthDecapResult {
+    adr_shared_secret : if sec(skR) /\ (sec(skS) \/ sec(skE)) then
+        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
+        lbl_ikm(eae_prk(), AuthEncap_dh()), 
+        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())))
+        else
+            (x:Data<adv> ||kdfkey|| {
+                x == AuthEncap_shared_secret()})
+}
+
+def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option AuthDecapResult = 
+    guard is_group_elem(eph) in         
+    assume (sec(skR));
+    assume (corr(skS));
+    let dh = dh_combine(pkS, get(skR)) ++ dh_combine(eph, get(skR)) in
+    let kem_context = eph ++ dhpk(get(skR)) ++ pkS in
+    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x,
+        lbl_ikm(eae_prk(), dh), 
+        lbl_info(|kdfkey|, shared_secret_string(), kem_context)) in
+    debug printTyContext;
+    None()
+    
 
 struct ContextS {
         kssr_ss : (x:Ghost{x == AuthEncap_shared_secret()}),
