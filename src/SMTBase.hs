@@ -869,7 +869,7 @@ instance SMTNameKindOf NameType where
           NT_Nonce l -> do
               let v = lengthConstant l 
               return $ SApp [SAtom "Nonce", v]
-          NT_App p ps -> resolveNameTypeApp p ps >>= smtNameKindOf
+          NT_App p ps as -> resolveNameTypeApp p ps as >>= smtNameKindOf
 
 instance SMTNameKindOf NameKind where
     smtNameKindOf nk = 

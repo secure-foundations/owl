@@ -691,7 +691,15 @@ parseNameType =
     (parseSpanned $ do
         p <- parsePath
         ps <- parseIdxParams
-        return $ NT_App p ps
+        oargs <- optionMaybe $ do
+            symbol "("
+            xs <- parseAExpr `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let as = case oargs of
+                   Nothing -> []
+                   Just v -> v
+        return $ NT_App p ps as
     )
 
 parseKDFStrictness = 
@@ -862,9 +870,17 @@ parseDecls =
         reserved "nametype"
         n <- identifier
         ps <- parseIdxParamBinds
+        oxs <- optionMaybe $ do
+            symbol "("
+            xs <- identifier `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let xs = case oxs of
+                   Nothing -> []
+                   Just v -> map s2n v
         symbol "="
         nt <- parseNameType
-        return $ DeclNameType n (bind ps nt)
+        return $ DeclNameType n (bind (ps, xs) nt)
     )
     <|>
     (parseSpanned $ do

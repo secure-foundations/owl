@@ -141,7 +141,7 @@ data ModBody = ModBody {
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
     _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
-    _nameTypeDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameType),
+    _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
     _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
@@ -674,7 +674,7 @@ inODHProp salt ikm info = do
 normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
-      NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
+      NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
       NT_KDF pos bcases -> do
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
           cases' <- withVars 
@@ -771,21 +771,23 @@ getNameKind nt =
       NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
-      NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
+      NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
       NT_KDF _ _ -> return $ NK_KDF
     
-resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> Check' senv NameType
-resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) = do
+resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
+resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
     forM_ is checkIdxSession
     forM_ ps checkIdxPId
+    forM_ as inferAExpr
     md <- openModule p
     case lookup s (md ^. nameTypeDefs) of 
       Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
       Just bnd -> do
-          ((xs, ys), nt) <- unbind bnd
+          (((xs, ys), args), nt) <- unbind bnd
           assert ("Wrong index arity on name type") $ (length is, length ps) == (length xs, length ys)
-          return $ substs (zip xs is) $ substs (zip ys ps) $ nt
-resolveNameTypeApp pth _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
+          assert ("Wrong var arity on name type") $ length args == length as
+          return $ substs (zip xs is) $ substs (zip ys ps) $ substs (zip args as) $ nt
+resolveNameTypeApp pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
 
 
 getNameTypeOpt :: NameExp -> Check' senv (Maybe NameType)
@@ -900,7 +902,7 @@ lenConstOfUniformName ne = do
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
-                    NT_App p ps -> resolveNameTypeApp p ps >>= go
+                    NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check' senv AExpr

@@ -129,7 +129,7 @@ preprocessModBody mb = do
                     -- ...
                 -- _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
 
-        resolveNameApp :: Path -> ExtractionMonad t (Bind ([IdxVar], [IdxVar]) NameType)
+        resolveNameApp :: Path -> ExtractionMonad t (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
         resolveNameApp p = do
             s <- tailPath p
             let ntds = mb ^. TB.nameTypeDefs
@@ -147,7 +147,7 @@ preprocessModBody mb = do
               TB.AbstractName -> return (locMap, shared, pubkeys) -- ignore abstract names, they should be concretized when used
               TB.BaseDef (nt, loc) -> do
                 nt <- case nt ^. val of
-                    NT_App p _ -> do
+                    NT_App p _ _ -> do
                         b <- resolveNameApp p
                         let (_, nt) = unsafeUnbind b
                         return nt

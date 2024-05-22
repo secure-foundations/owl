@@ -29,19 +29,19 @@ def AuthEncap(pkR : dhpk(skR)) @ sender : AuthEncapResult =
 
 
 struct ContextS {
-        kssr_ss : (x:Ghost{x == AuthEncap_shared_secret()}),
-        kssr_base : if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then PubName(KDF<nonce |counter|;0;nonce |counter|>(kssr_ss,
+        ctxtS_ss : (x:Ghost{x == AuthEncap_shared_secret()}),
+        ctxtS_base : if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
+            then PubName(KDF<nonce |counter|;0;nonce |counter|>(ctxtS_ss,
             dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
             else Data<adv>,
-        kssr_sk :
+        ctxtS_sk :
         if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then SecName(KDF<enckey;0;hpke_key_t>(kssr_ss,
+            then SecName(KDF<enckey;0;hpke_key_t>(ctxtS_ss,
             dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
             else Data<adv>,
-        kssr_export : 
+        ctxtS_export : 
         if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))) 
-            then SecName(KDF<nonce;0;nonce>(kssr_ss,
+            then SecName(KDF<nonce;0;nonce>(ctxtS_ss,
             dh_secret_kdf_ikm(get(psk)), export_kdf_info()))
             else Data<adv>
 }
@@ -51,7 +51,7 @@ def KeyScheduleS(aer : AuthEncapResult) @ sender : ContextS =
     let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
     dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
     let sk = kdf<1;1;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), key_kdf_info()) in 
-    let exp = kdf<2;2;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
+    let exp = kdf<2;3;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
     ContextS(shared_secret, base_nonce, sk, exp)
 
 def Seal(ctxt : ContextS, x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Data<adv> = 

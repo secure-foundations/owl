@@ -2,13 +2,20 @@ include "defs.owl"
 
 struct AuthDecapResult {
     adr_eph : (x:Ghost{is_group_elem(x)}), 
-    adr_shared_secret : if adr_eph == dhpk(get(skE)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE))) then
-        SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
-        lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
-        lbl_info(|kdfkey|, shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+    adr_shared_secret : 
+        if adr_eph == dhpk(get(skE)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE))) then
+            SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
+            lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
+            lbl_info(|kdfkey|, shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        else if sec(skR) /\ sec(skS) then 
+            SecName(KDF<kdfkey;0;shared_secret_corr_t>(0x, 
+            lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
+            lbl_info(|kdfkey|, shared_secret_string(), AuthDecap_kem_context(adr_eph))))
         else
             (x:Data<adv> ||kdfkey|| {
-                x == AuthDecap_shared_secret(adr_eph)})
+                x == AuthDecap_shared_secret(adr_eph) 
+                }),
+    adr_shared_secret_inj : (x:Ghost{adr_eph == dhpk(get(skE)) <==> adr_shared_secret == AuthEncap_shared_secret()})
 }
 
 def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option AuthDecapResult = 
@@ -17,11 +24,73 @@ def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option AuthDecapRes
     let kem_context = eph ++ dhpk(get(skR)) ++ pkS in
     pcase (eph == dhpk(get(skE))) in 
     pcase (eph == dhpk(get(skS))) when (eph != dhpk(get(skE))) in 
-    corr_case skS in
-    corr_case skR in
-    let shared_secret = kdf<; odh ss[0], odh se[0];kdfkey;0>(0x,
+    let shared_secret = kdf<; odh ss[0], odh ss[1], odh se[0], odh se[1];kdfkey;0>(0x,
         lbl_ikm(eae_prk(), dh), 
         lbl_info(|kdfkey|, shared_secret_string(), kem_context)) in
-    Some(AuthDecapResult(eph, shared_secret))
+    let shared_secret_ghost = gkdf<kdfkey;0>(0x,
+        lbl_ikm(eae_prk(), dh), 
+        lbl_info(|kdfkey|, shared_secret_string(), kem_context)) in
+    kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret());
+    Some(AuthDecapResult(eph, shared_secret, ()))
     
+struct ContextR {
+        ctxtR_eph : Ghost,
+        ctxtR_confirmed : Bool<adv>,
+        ctxtR_ss : (x:Ghost{x == AuthDecap_shared_secret(ctxtR_eph)}),
+        ctxtR_base : 
+        if (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ (ctxtR_eph == dhpk(get(skE)) /\ sec(skE)))))
+            then PubName(KDF<nonce |counter|;0;nonce |counter|>(ctxtR_ss,
+            dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
+            else Data<adv>,
+        ctxtR_sk :
+        if ctxtR_eph == dhpk(get(skE)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE))))
+            then SecName(KDF<enckey;0;hpke_key_t>(ctxtR_ss,
+            dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
+            else 
+                if (ctxtR_confirmed == false) /\ (sec(psk) \/ (sec(skR) /\ sec(skS)))
+                    then SecName(KDF<enckey;0;hpke_corr_key_t>(ctxtR_ss, dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
+                else
+                    Data<adv>,
+        ctxtR_export : 
+        if (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ (ctxtR_eph == dhpk(get(skE)) /\ sec(skE)))))
+            then SecName(KDF<nonce;0;nonce>(ctxtR_ss,
+            dh_secret_kdf_ikm(get(psk)), export_kdf_info()))
+            else Data<adv>
+}
+
+def KeyScheduleR(adr : AuthDecapResult) @ receiver : ContextR = 
+    parse adr as AuthDecapResult(eph, shared_secret, _) in 
+    pcase (eph == dhpk(get(skE))) in 
+    let base_nonce = kdf<0;0;nonce |counter|;0>(shared_secret,
+    dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()) in 
+    assert (eph != dhpk(get(skE)) ==> shared_secret !=
+    AuthEncap_shared_secret());
+    let sk = kdf<1;1,2;enckey;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), key_kdf_info()) in 
+    let exp = kdf<2;3;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
+    ContextR(eph, false, shared_secret, base_nonce, sk, exp)
+
+enum OpenMsg { 
+    | SomeMsg plaintext_t
+    | NoMsg
+}
+
+struct OpenResult {
+    or_ctxt : ContextR,
+    or_pt : OpenMsg,
+    or_wf : (x:Ghost{SomeMsg?(or_pt) ==> ctxtR_confirmed(or_ctxt) == true})
+}
+
+def Open(ctxtR : ContextR, ct_aad : Data<adv>, ct : Data<adv>) @ receiver : OpenResult = 
+    parse ctxtR as ContextR(eph, confirmed, ss, bn, sk, exp) in
+    let ctr = get_counter recv_counter in 
+    inc_counter recv_counter;
+    pcase (eph == dhpk(get(skE))) in 
+    case st_aead_dec(sk, ct, ct_aad, ctr) as Option Data<[channel_secret] /\ adv, |adv|> {
+        | Some x =>
+            false_elim in 
+            let ctxtR' = ContextR(eph, true, ss, bn, sk, exp) in 
+            OpenResult(ctxtR', SomeMsg(x), ())
+        | None => OpenResult(ctxtR, NoMsg(), ()) 
+        otherwise => OpenResult(ctxtR, NoMsg(), ()) 
+    }
 

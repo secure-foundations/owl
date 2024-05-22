@@ -3,6 +3,8 @@ locality receiver
 
 name channel_secret : nonce
 
+type plaintext_t = Data<[channel_secret] /\ adv, |adv|>
+
 name skR : DH @ receiver
 name skE : DH @ sender
 name skS : DH @ sender
@@ -89,6 +91,9 @@ func AuthEncap_kem_context() =
     ++
     dhpk(get(skS)) 
 
+func AuthEncap_honest_info() = 
+    lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())
+
 func AuthEncap_shared_secret() = 
     gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh()),
                        lbl_info(|kdfkey|, shared_secret_string(),
@@ -111,17 +116,24 @@ func AuthDecap_shared_secret(eph) =
                        lbl_info(|kdfkey|, shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
+nametype hpke_corr_key_t = 
+     st_aead (x:Data<adv>{false})
+          aad x. false
+          nonce send_counter
+
 
 nametype psk_t = dualkdf {salt info self.
-    info == base_nonce_kdf_info() -> public nonce |counter|,
-    info == key_kdf_info() -> 
+    (info == base_nonce_kdf_info()) -> public nonce |counter|,
+    (salt == AuthEncap_shared_secret() /\ info == key_kdf_info()) -> 
      strict st_aead Data<[channel_secret] /\ adv, |adv|>
                               aad x. true
                               nonce send_counter
                               pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
                                 dh_secret_kdf_ikm(self),
                                 base_nonce_kdf_info())),
-    info == export_kdf_info() -> strict nonce
+    (salt != AuthEncap_shared_secret() /\ info == key_kdf_info()) -> 
+         strict hpke_corr_key_t,
+    (info == export_kdf_info()) -> strict nonce
 
 }
 
@@ -139,6 +151,7 @@ nametype hpke_key_t =
         pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret(), 
                                                 dh_secret_kdf_ikm(get(psk)),
                                                 base_nonce_kdf_info()))
+
 
 
 nametype shared_secret_t = 
@@ -163,10 +176,31 @@ nametype shared_secret_t =
         -> strict nonce
     }
 
+nametype shared_secret_corr_t = 
+    kdf {ikm info self. 
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == base_nonce_kdf_info()
+        -> public nonce |counter|,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == key_kdf_info()
+        -> strict hpke_corr_key_t,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == export_kdf_info()
+        -> strict nonce
+    }
+
+
 odh ss : skR, skS -> { salt info. 
-    info == lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context()) -> strict shared_secret_t
+    (info == AuthEncap_honest_info()) -> strict shared_secret_t,
+    (info != AuthEncap_honest_info()) -> strict shared_secret_corr_t
 } 
 
 odh se : skR, skE -> {salt info.
-    info == lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context()) -> strict shared_secret_t
+    (info == AuthEncap_honest_info()) -> strict shared_secret_t,
+    (info != AuthEncap_honest_info()) -> strict shared_secret_corr_t
 }
