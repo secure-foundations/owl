@@ -39,11 +39,11 @@ import qualified GenVerus
 import qualified SpecExtraction
 
 
-extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann, Doc ann))
+extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extract' modbody
 
 
-extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann, Doc ann, Doc ann)
+extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann, Doc ann)
 extract' modbody = do
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
@@ -53,7 +53,7 @@ extract' modbody = do
         if fs ^. fExtractBufOpt then 
             throwError $ ErrSomethingFailed "TODO: buffer-optimization for extraction"
         else lowerImmutPass concreteExtrData
-    (extractedOwl, extractedVest) <- liftExtractionMonad $ genVerusPass verusTyExtrData
+    extractedOwl <- liftExtractionMonad $ genVerusPass verusTyExtrData
     (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
     lp <- prettyFile "extraction/lib_preamble.rs"
@@ -76,7 +76,6 @@ extract' modbody = do
         callMain                <> line <> line
       , lp                      <> line <> line <> line <> line <> 
         libHarness
-      , extractedVest
       )
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
@@ -245,16 +244,15 @@ lowerImmutPass cfExtrData = do
     where lowerDef (Just d) = Just <$> LowerImmut.lowerDef d
           lowerDef Nothing = return Nothing
 
--- Directly generate strings; first ret val is the Verus code, second is the generated Vest code
-genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann, Doc ann)
+genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann)
 genVerusPass crExtrData = do
     debugLog "Generating Verus code"
     endpointDef <- GenVerus.genVerusEndpointDef <$> M.keys $ crExtrData ^. locMap
-    (tyDefs, vestDefs) <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
+    tyDefs <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
     locDefs <- mapM (GenVerus.genVerusLocality $ crExtrData ^. pubKeys) <$> M.assocs $ crExtrData ^. locMap
     userFuncDefs <- mapM GenVerus.genVerusUserFunc $ crExtrData ^. userFuncs
     let verusDefs = vsep $ endpointDef : tyDefs : locDefs ++ userFuncDefs
-    return (verusDefs, vestDefs)
+    return verusDefs
 
 specExtractPass :: CFExtractionData -> ExtractionMonad FormatTy (Doc ann)
 specExtractPass cfExtrData = do

@@ -49,6 +49,7 @@ specTyOf (FOption ft) = RTOption (specTyOf ft)
 specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n, specTyOf t)) ffs)
 specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
 specTyOf FGhost = RTVerusGhost
+specTyOf (FHexConst _) = seqU8
 
 specTyOfSerialized :: FormatTy -> VerusTy
 specTyOfSerialized (FStruct fn ffs) = seqU8
@@ -66,6 +67,111 @@ mkNestPattern l =
             [x] -> x
             x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
 
+-- We construct both the spec and exec Parsley combinators in spec extraction, since here, we have access to the 
+-- format types which include hex consts
+specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
+specCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+specCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (specCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
+specCombTyOf' _ = return Nothing
+
+specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+specCombTyOf = liftFromJust specCombTyOf'
+
+execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+execCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (execCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|ConstBytes<#{l}>|]
+execCombTyOf' _ = return Nothing
+
+execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+execCombTyOf = liftFromJust specCombTyOf'
+
+-- (combinator type, any constants that need to be defined)
+specCombOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+specCombOf' (FBuf (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+specCombOf' (FBuf Nothing) = return $ noconst [di|Tail|]
+specCombOf' (FStruct _ fs) = do
+    fcs <- mapM (specCombOf' . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+specCombOf' (FHexConst s) = do
+    bl <- hexStringToByteList s
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}: Seq<u8> = seq![#{bl}];|]
+    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s})|], const)
+specCombOf' _ = return Nothing
+
+specCombOf :: FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+specCombOf = liftFromJust specCombOf'
+
+-- (combinator type, any constants that need to be defined)
+execCombOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+execCombOf' (FBuf (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+execCombOf' (FBuf Nothing) = return $ noconst [di|Tail|]
+execCombOf' (FStruct _ fs) = do
+    fcs <- mapM (execCombOf' . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' (FHexConst s) = do
+    bl <- hexStringToByteList s
+    let l = length s `div` 2
+    let const = [__di|
+    exec const EXEC_BYTES_CONST_#{s}: [u8; #{l}] 
+        ensures EXEC_BYTES_CONST_#{s}.view() == SPEC_BYTES_CONST_#{s} 
+    {
+        let arr: [u8; #{l}] = #{bl};
+        assert(arr.view() == SPEC_BYTES_CONST_#{s});
+        arr
+    }
+    |]
+    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s})|], const)
+execCombOf' _ = return Nothing
+
+execCombOf :: FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+execCombOf = liftFromJust execCombOf'
+
+noconst :: a -> Maybe (a, Doc ann)
+noconst x = Just (x, [di||])
+
+liftFromJust :: (a -> ExtractionMonad t (Maybe b)) -> a -> ExtractionMonad t b
+liftFromJust f x = do
+    res <- f x
+    case res of
+        Just r -> return r
+        Nothing -> throwError $ ErrSomethingFailed "liftFromJust failed"
+
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
     let rn = specName n
@@ -76,12 +182,43 @@ extractCStruct (CStruct n fs isVest) = do
         #{structFields}
     }
     |]
+    formatDefs <- if isVest then genFormatDefs n fs else return [di||]
     parseSerializeDefs <- if isVest then 
                                 genParserSerializer (execName n) rn rfs 
                             else genParserSerializerNoVest (execName n) rn rfs
     constructor <- genConstructor n rn rfs
-    return $ vsep [structDef, parseSerializeDefs, constructor]
+    return $ vsep [formatDefs, structDef, parseSerializeDefs, constructor]
     where
+        genFormatDefs owlN fs = do
+            let specname = specName owlN
+            let execname = execName owlN
+            let ftys = map snd fs
+            specCombTy <- mkNestPattern <$> mapM specCombTyOf ftys
+            execCombTy <- mkNestPattern <$>  mapM execCombTyOf ftys
+            (specCombs, specConsts) <- unzip <$> mapM specCombOf ftys
+            (execCombs, execConsts) <- unzip <$> mapM execCombOf ftys
+            let fieldVars = map ((++) "field_" . show) [1..length ftys]
+            let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
+            let mkSpecCombs = zipWith mkComb fieldVars specCombs
+            let mkExecCombs = zipWith mkComb fieldVars execCombs
+            let nest = mkNestPattern $ map pretty fieldVars
+            let specCombFnName = [di|spec_combinator_#{specname}|]
+            let execCombFnName = [di|exec_combinator_#{execname}|]
+            let combDefs = [__di|
+            spec fn #{specCombFnName}() -> #{specCombTy} {
+                #{vsep mkSpecCombs}
+                #{nest}
+            }
+            exec fn #{execCombFnName}() -> (res: #{execCombTy})
+                ensures res.view() == #{specCombFnName}()
+            {
+                #{vsep mkExecCombs}
+                #{nest}
+            }
+            |]
+            return $ vsep $ specConsts ++ execConsts ++ [combDefs]
+
+
         genParserSerializer execname specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
             let fieldNamesCommaSep = hsep . punctuate comma $ fieldNames
@@ -89,8 +226,8 @@ extractCStruct (CStruct n fs isVest) = do
             let parse = [__di|
             \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                let stream = parse_serialize::SpecStream { data: x, start: 0 };
-                if let Ok((_,_,parsed)) = parse_serialize::spec_parse_#{execname}(stream) {
+                let spec_comb = spec_combinator_#{specname}();
+                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
                     let (#{fieldNamesNestPattern}) = parsed;
                     Some(#{specname} { #{fieldNamesCommaSep} })
                 } else {
@@ -104,13 +241,10 @@ extractCStruct (CStruct n fs isVest) = do
             \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 if no_usize_overflows_spec![ #{hsep . punctuate comma $ fieldLens} ] {
-                    let stream = parse_serialize::SpecStream {
-                        data: seq_u8_of_len(#{hsep . punctuate (pretty " + ") $ fieldLens}),
-                        start: 0,
-                    };
-                    if let Ok((serialized, n)) = parse_serialize::spec_serialize_#{execname}(stream, (#{mkNestPattern fieldSels})) 
+                    let spec_comb = spec_combinator_#{specname}();
+                    if let Ok(serialized) = spec_comb.spec_serialize((#{mkNestPattern fieldSels})) 
                     {
-                        Some(seq_truncate(serialized.data, n))
+                        Some(serialized)
                     } else {
                         None
                     }

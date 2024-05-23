@@ -263,9 +263,9 @@ macro_rules! mk_vec_u8 {
     ($($e:expr),* $(,)?) => {
         verus_exec_expr!{{
             #[allow(unused_mut)]
-            let mut v = vec_new();
+            let mut v = Vec::new();
             $(
-                vec_push(&mut v, $e);
+                v.push($e);
             )*
             v
         }}

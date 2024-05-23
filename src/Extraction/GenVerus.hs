@@ -668,28 +668,6 @@ genVerusDef lname cdef = do
         prettyArgName = pretty . execName . show
 
 
-vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> ExtractionMonad t (Maybe (Doc ann))
-vestLayoutOf name _ (RTArray RTU8 len) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTVec RTU8) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTOwlBuf (Lifetime _)) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name _ (RTVec RTU8) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf name _ (RTOwlBuf (Lifetime _)) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf name _ t = return Nothing
-
-vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
-vestLayoutOf' name len t = do
-    layout <- vestLayoutOf name len t
-    case layout of
-        Just l -> return l
-        Nothing -> throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
-
-
 tyNeedsLifetime :: VerusTy -> Bool
 tyNeedsLifetime (RTOwlBuf _) = True
 tyNeedsLifetime (RTWithLifetime _ _) = True
@@ -723,7 +701,7 @@ mkNestPattern l =
             [x] -> x
             x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl   
 
-genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
     -- debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
@@ -744,24 +722,24 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
+    -- vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFields lifetimeConst else return [di||]
-    return $ (vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers], vestFormat)
+    return $ vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers]
     where 
 
-        genVestFormat name layoutFields = do
-            let genField (_, f, format, l) = do 
-                    layout <- vestLayoutOf' f format l
-                    return [di|    #{layout},|]
-            fields <- mapM genField layoutFields
-            return [__di|
-            #{name} = {
-            #{vsep fields}
-            }
-            |]
+        -- genVestFormat name layoutFields = do
+        --     let genField (_, f, format, l) = do 
+        --             layout <- vestLayoutOf' f format l
+        --             return [di|    #{layout},|]
+        --     fields <- mapM genField layoutFields
+        --     return [__di|
+        --     #{name} = {
+        --     #{vsep fields}
+        --     }
+        --     |]
 
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
@@ -841,8 +819,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     res matches Some(x) ==> x.len_valid(),
             {
                 reveal(#{specParse});
-                let stream = parse_serialize::Stream { data: arg, start: 0 };
-                if let Ok((_, _, parsed)) = parse_serialize::#{execParse}(stream) {
+                let exec_comb = exec_combinator_#{verusName}();
+                if let Ok((_, parsed)) = exec_comb.parse(arg) {
                     let #{tupPatFields} = parsed;
                     Some (#{verusName} { #{mkStructFields} })
                 } else {
@@ -857,19 +835,19 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let lens = (map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields) ++ [pretty "0"]
             fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
             let ser = [__di|
-            \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 requires arg.len_valid(),
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
-                    res is None ==> #{specSerInner}(arg.view()) is None,
+                    // res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
                 reveal(#{specSerInner});
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let exec_comb = exec_combinator_#{verusName}();
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
-                    let ser_result = parse_serialize::#{execSer}(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
-                    if let Ok((_new_start, num_written)) = ser_result {
+                    let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
+                    if let Ok((num_written)) = ser_result {
                         vec_truncate(&mut obuf, num_written);
                         Some(obuf)
                     } else {
@@ -892,7 +870,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             return $ vsep [parse, ser]
 
 
-genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusEnum (CEnum name casesFV isVest) = do
     -- debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
@@ -913,19 +891,19 @@ genVerusEnum (CEnum name casesFV isVest) = do
     use crate::#{verusName}::*;
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- genVestFormat verusName casesFV
+    -- vestFormat <- genVestFormat verusName casesFV
     allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
     -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
-    return $ (vsep [enumDef, allLensValid, viewImpl, enumTests], vestFormat)
+    return $ (vsep [enumDef, allLensValid, viewImpl, enumTests])
     where 
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
 
-        genVestFormat name layoutCases = do
-            debugLog $ "No vest format for enum: " ++ name
-            return [__di||]
+        -- genVestFormat name layoutCases = do
+        --     debugLog $ "No vest format for enum: " ++ name
+        --     return [__di||]
             -- let genField (_, (f, l)) = do 
             --         layout <- vestLayoutOf f l
             --         return [di|    #{layout},|]
@@ -1068,16 +1046,16 @@ genVerusEnum (CEnum name casesFV isVest) = do
         --     return $ vsep [parse, ser]
 
 
-genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusTyDef (CStructDef s) = genVerusStruct s
 genVerusTyDef (CEnumDef e) = genVerusEnum e
 
 
-genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann, Doc ann)
+genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann)
 genVerusTyDefs tydefs = do
     -- debugLog "genVerusTyDefs"
-    (tyDefs, vestDefs) <- unzip <$> mapM (genVerusTyDef . snd) tydefs
-    return (vsep tyDefs, vsep vestDefs)
+    tyDefs <- mapM (genVerusTyDef . snd) tydefs
+    return $ vsep tyDefs
 
 
 -----------------------------------------------------------------------------

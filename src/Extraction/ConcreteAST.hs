@@ -44,6 +44,7 @@ data FormatTy =
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
+    | FHexConst String
     | FDummy -- for when we can't infer the type locally
     deriving (Show, Eq, Generic, Typeable)
 
@@ -184,6 +185,7 @@ instance OwlPretty FormatTy where
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
     owlpretty FGhost = owlpretty "ghost"
     owlpretty FDummy = owlpretty "dummy"
+    owlpretty (FHexConst s) = owlpretty "HexConst" <> parens (owlpretty "0x" <> owlpretty s)
 
 flagShouldPrettyTypes :: Bool
 flagShouldPrettyTypes = True

@@ -105,7 +105,7 @@ concretifyTy t = do
       THexConst s -> return $ hexConstType s
 
 hexConstType :: String -> FormatTy
-hexConstType s = FBuf $ Just $ FLConst $ length s `div` 2
+hexConstType s = FHexConst s
 
 groupFormatTy :: FormatTy
 groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here? 

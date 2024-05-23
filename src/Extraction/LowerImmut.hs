@@ -48,6 +48,7 @@ lowerTy (FEnum n fcs) = do
     return $ RTEnum rn rcs
 lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
+lowerTy (FHexConst s) = lowerTy (FBuf (Just $ FLConst $ length s `div` 2))
 
 -- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
 -- lowerTyNoOwlBuf FUnit = return RTUnit
