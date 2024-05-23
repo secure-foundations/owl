@@ -15,7 +15,17 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub use parsley::*;
+pub use parsley::{
+    *,
+    properties::*,
+    regular::*,
+    regular::bytes::*,
+    regular::bytes_const::*,
+    regular::choice::*,
+    regular::tail::*,
+    regular::uints::*,
+    utils::*,
+};
 
 pub use extraction_lib::*;
 pub use std::collections::HashMap;
