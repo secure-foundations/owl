@@ -788,7 +788,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
-            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{specName fname}: self.#{ename}.view()|]) $ fields
+            let viewField (fname, ename, fty) = case fty of
+                    RTVerusGhost -> [di|#{specName fname}: owl_ghost_unit()|]
+                    _ -> [di|#{specName fname}: self.#{ename}.view()|]
+            let body = vsep . punctuate [di|,|] . fmap viewField $ fields
             return [__di|
             impl View for #{verusName}#{lAnnot} {
                 type V = #{specname};
@@ -938,6 +941,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
             }
             |]
 
+        viewCase specname fname (ename, Just RTVerusGhost) = [di|#{ename}(v) => #{specname}::#{specName fname}(owl_ghost_unit())|]
         viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.view())|]
         viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{specName fname}()|]
 
