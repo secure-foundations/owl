@@ -353,10 +353,10 @@ extractCAExpr aexpr = do
                             |]
         CAGet n -> do
             let rustN = execName n
-            return [di|cfg.#{rustN}.dview()|]
+            return [di|cfg.#{rustN}.view()|]
         CAGetVK n -> do
             let rustN = execName n
-            return [di|cfg.pk_#{rustN}.dview()|]
+            return [di|cfg.pk_#{rustN}.view()|]
         (CAHexConst s) -> do
             bytelist <- hexStringToByteList s
             if null s then

@@ -15,7 +15,6 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub use crate::deep_view::{*};
 pub use parsley::*;
 
 pub use extraction_lib::*;
@@ -70,7 +69,7 @@ pub struct OwlErrorWrapper ( OwlError );
 
 #[verifier(external_body)]
 pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
-    requires old(t).view().is_output(x.dview(), endpoint_of_addr(dest_addr.view()))
+    requires old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view()))
     ensures  t.view() == old(t).view().give_output()
 {
     let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
@@ -83,7 +82,7 @@ pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8],
 #[verifier(external_body)]
 pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
     requires old(t).view().is_input()
-    ensures  t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view()))
+    ensures  t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view()))
 {
     let (mut stream, _addr) = listener.accept().unwrap();
     let mut reader = io::BufReader::new(&mut stream);
@@ -96,7 +95,7 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
 #[verifier(external_body)]
 pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
     requires old(t).view().is_sample(n)
-    ensures  t.view() == old(t).view().get_sample(res.dview())
+    ensures  t.view() == old(t).view().get_sample(res.view())
 {
     owl_util::gen_rand_bytes(n)
 }

@@ -68,7 +68,7 @@ genVerusUserFunc (CUserFunc name b) = do
     let specname = name
     (args, (retTy, body)) <- unbindCDepBind b
     let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
-    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
+    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.view()|]) args
     body' <- genVerusCAExpr body
     body'' <- castGRE body' retTy
     let needsLifetime = tyNeedsLifetime retTy
@@ -84,7 +84,7 @@ genVerusUserFunc (CUserFunc name b) = do
     return [__di|
     pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
         ensures
-            res.dview() == #{specname}(#{viewArgs}),
+            res.view() == #{specname}(#{viewArgs}),
             #{ensuresLenValid}
     {
         reveal(#{specname});
@@ -277,7 +277,7 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             -- x'' <- castGRE x' (x ^. tty)
                             case x' ^. eTy of
-                                RTVec RTU8 -> return $ GenRustExpr RTUsize [di|vec_length(#{x' ^. code})|]
+                                RTVec RTU8 -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr RTUsize [di|{ slice_len(#{x' ^. code}) }|]
                                 RTOwlBuf _ -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 _ -> throwError $ ErrSomethingFailed $ "TODO: length for type: " ++ show (x' ^. eTy)
@@ -774,7 +774,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                             RTEnum _ _ -> Just [di|arg_#{ename}.len_valid()|]
                             _ -> Nothing
                     ) $ fields
-            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.dview() == arg_#{ename}.dview()|]) fields
+            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) fields
             let enss = vsep . punctuate comma $ [di|res.len_valid()|] : fieldEnss
             return [__di|
             // Allows us to use function call syntax to construct members of struct types, a la Owl,
@@ -810,11 +810,11 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
-            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{specName fname}: self.#{ename}.dview()|]) $ fields
+            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{specName fname}: self.#{ename}.view()|]) $ fields
             return [__di|
-            impl DView for #{verusName}#{lAnnot} {
+            impl View for #{verusName}#{lAnnot} {
                 type V = #{specname};
-                open spec fn dview(&self) -> #{specname} {
+                open spec fn view(&self) -> #{specname} {
                     #{specname} { 
                         #{body}
                     }
@@ -835,9 +835,9 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
                 // requires arg.len_valid()
                 ensures
-                    res is Some ==> #{specParse}(arg.dview()) is Some,
-                    res is None ==> #{specParse}(arg.dview()) is None,
-                    res matches Some(x) ==> x.dview() == #{specParse}(arg.dview())->Some_0,
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     res matches Some(x) ==> x.len_valid(),
             {
                 reveal(#{specParse});
@@ -861,9 +861,9 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 requires arg.len_valid(),
                 ensures
-                    res is Some ==> #{specSerInner}(arg.dview()) is Some,
-                    res is None ==> #{specSerInner}(arg.dview()) is None,
-                    res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
                 reveal(#{specSerInner});
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
@@ -881,7 +881,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
                 requires arg.len_valid(),
-                ensures  res.dview() == #{specSer}(arg.dview())
+                ensures  res.view() == #{specSer}(arg.view())
             {
                 reveal(#{specSer});
                 let res = #{execSerInner}(arg);
@@ -960,16 +960,16 @@ genVerusEnum (CEnum name casesFV isVest) = do
             }
             |]
 
-        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.dview())|]
+        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.view())|]
         viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{specName fname}()|]
 
         genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname cases lAnnot = do
             let body = vsep . punctuate [di|,|] . M.elems . M.mapWithKey (viewCase specname) $ cases
             return [__di|
-            impl DView for #{verusName}#{lAnnot} {
+            impl View for #{verusName}#{lAnnot} {
                 type V = #{specname};
-                open spec fn dview(&self) -> #{specname} {
+                open spec fn view(&self) -> #{specname} {
                     match self { 
                         #{body}
                     }
@@ -989,7 +989,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
                     return [__di|
                     \#[inline]
                     pub fn #{fname}_enumtest(x: &#{verusName}#{lAnnot}) -> (res:bool)
-                        ensures res == #{cname}_enumtest(x.dview())
+                        ensures res == #{cname}_enumtest(x.view())
                     {
                         match x {
                             #{verusName}::#{fname}(#{var}) => true,
@@ -1011,9 +1011,9 @@ genVerusEnum (CEnum name casesFV isVest) = do
         --     pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
         --         // requires arg.len_valid()
         --         ensures
-        --             res is Some ==> #{specParse}(arg.dview()) is Some,
-        --             res is None ==> #{specParse}(arg.dview()) is None,
-        --             res matches Some(x) ==> x.dview() == #{specParse}(arg.dview())->Some_0,
+        --             res is Some ==> #{specParse}(arg.view()) is Some,
+        --             res is None ==> #{specParse}(arg.view()) is None,
+        --             res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
         --             res matches Some(x) ==> x.len_valid(),
         --     {
         --         reveal(#{specParse});
@@ -1037,9 +1037,9 @@ genVerusEnum (CEnum name casesFV isVest) = do
         --     pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
         --         requires arg.len_valid(),
         --         ensures
-        --             res is Some ==> #{specSerInner}(arg.dview()) is Some,
-        --             res is None ==> #{specSerInner}(arg.dview()) is None,
-        --             res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
+        --             res is Some ==> #{specSerInner}(arg.view()) is Some,
+        --             res is None ==> #{specSerInner}(arg.view()) is None,
+        --             res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
         --     {
         --         reveal(#{specSerInner});
         --         if no_usize_overflows![ #{punctuate comma lens} ] {
@@ -1057,7 +1057,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
         --     }
         --     pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
         --         requires arg.len_valid(),
-        --         ensures  res.dview() == #{specSer}(arg.dview())
+        --         ensures  res.view() == #{specSer}(arg.view())
         --     {
         --         reveal(#{specSer});
         --         let res = #{execSerInner}(arg);
@@ -1095,7 +1095,7 @@ cast (v, t1) t2 | t2 == RTRef RMut t1 =
 cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
-    return [di|vec_as_slice(&#{v})|]
+    return [di|#{v}.as_slice()|]
 cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
@@ -1166,15 +1166,15 @@ specTyOfExecTySerialized t = t -- TODO: not true in general
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
-viewVar vname (RTNamed _) = return [di|#{vname}.dview()|]
-viewVar vname (RTStruct _ _) = return [di|#{vname}.dview()|]
-viewVar vname (RTEnum _ _) = return [di|#{vname}.dview()|]
-viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(dview_option(#{vname}))|]
-viewVar vname (RTOption _) = return [di|dview_option(#{vname})|]
-viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.dview()|]
-viewVar vname (RTVec RTU8) = return [di|#{vname}.dview()|]
-viewVar vname (RTArray RTU8 _) = return [di|#{vname}.dview()|]
-viewVar vname (RTOwlBuf _) = return [di|#{vname}.dview()|]
+viewVar vname (RTNamed _) = return [di|#{vname}.view()|]
+viewVar vname (RTStruct _ _) = return [di|#{vname}.view()|]
+viewVar vname (RTEnum _ _) = return [di|#{vname}.view()|]
+viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(view_option(#{vname}))|]
+viewVar vname (RTOption _) = return [di|view_option(#{vname})|]
+viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.view()|]
+viewVar vname (RTVec RTU8) = return [di|#{vname}.view()|]
+viewVar vname (RTArray RTU8 _) = return [di|#{vname}.view()|]
+viewVar vname (RTOwlBuf _) = return [di|#{vname}.view()|]
 viewVar vname RTBool = return [di|#{vname}|]
 viewVar vname RTUsize = return [di|#{vname}|]
 viewVar vname (RTWithLifetime t _) = viewVar vname t
