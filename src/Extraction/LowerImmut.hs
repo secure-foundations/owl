@@ -48,7 +48,7 @@ lowerTy (FEnum n fcs) = do
     return $ RTEnum rn rcs
 lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
-lowerTy (FHexConst s) = lowerTy (FBuf (Just $ FLConst $ length s `div` 2))
+lowerTy (FHexConst s) = return $ RTUnit
 
 -- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
 -- lowerTyNoOwlBuf FUnit = return RTUnit
@@ -98,6 +98,7 @@ lowerUserFunc (CUserFunc name b) = do
 
 
 lowerFieldTy :: FormatTy -> EM VerusTy
+-- lowerFieldTy (FHexConst s) = return RTUnit
 lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 

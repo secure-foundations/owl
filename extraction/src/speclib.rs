@@ -626,7 +626,7 @@ pub mod itree {
         {verus_proof_expr! {
             if let Some(parseval) = $parser($a) {
                 let $structTy { $($fieldName),* } = parseval;
-                $(let $varName = $fieldName.as_seq();)*
+                $(let $varName = $fieldName;)*
                 owl_spec!($mut_state, $mut_type, $($next)*)
             } else {
                 owl_spec!($mut_state, $mut_type, $($otw)*)

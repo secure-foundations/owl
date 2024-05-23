@@ -52,6 +52,10 @@ specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap
 specTyOf FGhost = RTVerusGhost
 specTyOf (FHexConst _) = seqU8
 
+specFieldTyOf :: FormatTy -> VerusTy
+specFieldTyOf (FHexConst _) = RTUnit
+specFieldTyOf ft = specTyOf ft
+
 specTyOfSerialized :: FormatTy -> VerusTy
 specTyOfSerialized (FStruct fn ffs) = seqU8
 specTyOfSerialized (FEnum n fcs) = seqU8
@@ -176,7 +180,7 @@ liftFromJust f x = do
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
     let rn = specName n
-    let rfs = map (\(n, t) -> (specName n, specTyOf t)) fs
+    let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
     let structFields = vsep $ fmap (\(n, t) -> [di|pub #{n}: #{pretty t},|]) rfs
     let structDef = [__di|
     pub struct #{rn} {
@@ -238,7 +242,10 @@ extractCStruct (CStruct n fs isVest) = do
             }
             |]
             let fieldSels = map (\n -> [di|x.#{n}|]) fieldNames
-            let fieldLens = map (\xn -> [di|#{xn}.len()|]) fieldSels
+            let mklen (fn, ft) = case ft of
+                    RTUnit -> [di|0|]
+                    _ -> [di|x.#{fn}.len()|]
+            let fieldLens = map mklen specfields
             let serInner = [__di|
             \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
@@ -304,7 +311,6 @@ extractCStruct (CStruct n fs isVest) = do
             let args = hsep . punctuate comma $ map (\(n,t) -> [di|arg_#{n}: #{pretty t}|]) specfields
             let mkFields = hsep . punctuate comma $ map (\(n,_) -> [di|#{n}: arg_#{n}|]) specfields
             let constructor = [__di|
-            // TODO: make sure the arg types line up
             pub open spec fn #{owlName}(#{args}) -> #{specname} {
                 #{specname} { 
                     #{mkFields} 
@@ -317,8 +323,8 @@ extractCStruct (CStruct n fs isVest) = do
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
 extractCEnum (CEnum n cs isVest) = do
     let rn = specName n
-    let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
-    let rfsOwlNames = map (\(n, t) -> (n, fmap specTyOf t)) $ M.assocs cs
+    let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
+    let rfsOwlNames = map (\(n, t) -> (n, fmap specFieldTyOf t)) $ M.assocs cs
     let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
     let enumDef = [__di|
     pub enum #{rn} {
@@ -482,11 +488,18 @@ extractCAExpr aexpr = do
                             return [__di|
                             #{pretty f'}(#{hsep . punctuate comma $ args'})
                             |]
-                        _ -> do
-                            args' <- mapM extractCAExpr args
-                            return [__di|
-                                #{pretty f}(#{hsep . punctuate comma $ args'})
-                            |]
+                        _ -> case aexpr ^. tty of
+                                FStruct n fs | n == f -> do
+                                    -- Special case for struct constructors
+                                    args' <- mapM extractCAExpr args
+                                    let ftys = map (specFieldTyOf . snd) fs
+                                    args'' <- zipWithM specCast (zip args' (map (^. tty) args)) ftys
+                                    return [di|#{pretty f}(#{hsep . punctuate comma $ args''})|]
+                                _ -> do
+                                    args' <- mapM extractCAExpr args
+                                    return [__di|
+                                        #{pretty f}(#{hsep . punctuate comma $ args'})
+                                    |]
         CAGet n -> do
             let rustN = execName n
             return [di|cfg.#{rustN}.view()|]
@@ -717,4 +730,5 @@ specCast (x, FEnum t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|
 specCast (x, FOption (FStruct _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
 specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
 specCast (x, FInt) RTUsize = return [di|(#{x}) as usize|]
+specCast (x, _) RTUnit = return [di|()|]
 specCast (x, _) _ = return [di|#{x}|]

@@ -102,10 +102,11 @@ concretifyTy t = do
       TExistsIdx _ it -> do
           (i, t) <- unbind it
           concretifyTy t -- TODO keep track of indices?
-      THexConst s -> return $ hexConstType s
+      THexConst s -> return $ FHexConst s
+
 
 hexConstType :: String -> FormatTy
-hexConstType s = FHexConst s
+hexConstType s = FBuf $ Just $ FLConst $ length s `div` 2
 
 groupFormatTy :: FormatTy
 groupFormatTy = FBuf $ Just $ FLNamed "group" -- maybe we want internal repr here? 
@@ -128,6 +129,12 @@ unifyFormatTy t1 t2 =
             return $ FOption t
         (FStruct n1 fs1, FStruct n2 fs2) | n1 == n2 -> return t1
         (FEnum n1 fs1, FEnum n2 fs2) | n1 == n2 -> return t1
+        (FHexConst s, FBuf (Just flen)) -> do
+            unifyFLen flen $ FLConst $ length s `div` 2
+            return $ FBuf $ Just flen
+        (FBuf (Just flen), FHexConst s) -> do
+            unifyFLen flen $ FLConst $ length s `div` 2
+            return $ FBuf $ Just flen
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 unifyFLen :: FLen -> FLen -> EM FLen
@@ -687,7 +694,6 @@ typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False
 typeIsVest _ = True
-
 
 concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing

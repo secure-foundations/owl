@@ -325,10 +325,17 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             x'' <- castGRE x' (RTRef RShared (x ^. tty))
                             return $ GenRustExpr (ae ^. tty) [di|#{execName f'}(#{x''})|]
-                        _ -> do
-                            args' <- mapM genVerusCAExpr args
-                            args'' <- zipWithM castGRE args' (map (^. tty) args)
-                            return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
+                        _ -> case ae ^. tty of
+                                RTStruct n fs | n == execName f -> do
+                                    -- Special case for struct constructors
+                                    args' <- mapM genVerusCAExpr args
+                                    let ftys = map snd fs
+                                    args'' <- zipWithM castGRE args' ftys
+                                    return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
+                                _ -> do
+                                    args' <- mapM genVerusCAExpr args
+                                    args'' <- zipWithM castGRE args' (map (^. tty) args)
+                                    return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
@@ -667,6 +674,8 @@ genVerusDef lname cdef = do
         viewArg (cdvar, strname, ty) = viewVar (execName . show $ cdvar) ty
         prettyArgName = pretty . execName . show
 
+---------------------------------------------------------------------------------------------------------------------------
+-- Structs and enums
 
 tyNeedsLifetime :: VerusTy -> Bool
 tyNeedsLifetime (RTOwlBuf _) = True
@@ -789,7 +798,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
             let viewField (fname, ename, fty) = case fty of
-                    RTVerusGhost -> [di|#{specName fname}: owl_ghost_unit()|]
+                    RTVerusGhost -> [di|#{specName fname}: ghost_unit()|]
                     _ -> [di|#{specName fname}: self.#{ename}.view()|]
             let body = vsep . punctuate [di|,|] . fmap viewField $ fields
             return [__di|
@@ -835,8 +844,14 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
-            let lens = (map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields) ++ [pretty "0"]
-            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
+            let mklen fname fty = case fty of
+                    RTUnit -> [di|0|]
+                    _ -> [di|arg.#{fname}.len()|]
+            let lens = map (\(_, fname, fty) -> mklen fname fty) fields ++ [pretty "0"]
+            let innerTyOf fty = case fty of
+                    RTUnit -> RTUnit
+                    _ -> u8slice
+            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             let ser = [__di|
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 requires arg.len_valid(),
@@ -1068,6 +1083,11 @@ genVerusTyDefs tydefs = do
 castGRE :: GenRustExpr ann -> VerusTy -> EM (Doc ann)
 castGRE gre t2 = cast (gre ^. code, gre ^. eTy) t2
 
+-- castField :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
+-- castField (v, RTRef RShared (RTSlice RTU8)) RTUnit =
+--     return [di|()|]
+-- castField (v, t1) t2 = cast (v, t1) t2
+
 -- cast v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
 cast (v, t1) t2 | t2 == RTRef RShared t1 =
@@ -1114,6 +1134,7 @@ cast (v, RTOwlBuf _) (RTOwlBuf _) =
 cast (v, RTDummy) t = return v
 cast (v, RTOption RTDummy) (RTOption t) = return v
 cast (v, t1) t2 | t1 == t2 = return v
+cast (v, _) RTUnit = return [di|()|]
 cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
 
 u8slice :: VerusTy
