@@ -5,13 +5,19 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
+
+
+
 pub use vstd::{modes::*, prelude::*, seq::*, string::*};
 pub use crate::wireguard::owl_wg::speclib::{*, itree::*};
 pub use crate::wireguard::owl_wg::execlib::{*};
-pub use crate::wireguard::owl_wg::deep_view::{*};
 pub use crate::wireguard::owl_wg::*;
-use crate::wireguard::owl_wg::parse_serialize;
 use crate::wireguard::handshake::device::Device;
+
+pub use parsley::{
+    properties::*, regular::bytes::*, regular::bytes_const::*, regular::choice::*,
+    regular::tail::*, regular::uints::*, regular::*, utils::*, *,
+};
 
 pub use std::collections::HashMap;
 pub use std::env;
@@ -23,7 +29,6 @@ pub use std::sync::Arc;
 pub use std::thread;
 pub use std::time::Duration;
 pub use std::time::Instant;
-// pub use crate::parse_serialize::View as _;
 
 verus! {
 
@@ -43,7 +48,7 @@ pub fn owl_output<A>(
     obuf: &mut [u8]
 )
     requires
-        old(t).view().is_output(x.dview(), endpoint_of_addr(dest_addr.view())),
+        old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view())),
     ensures
         t.view() == old(t).view().give_output(),
 {
@@ -63,7 +68,7 @@ pub fn owl_input<A, 'a>(
     requires
         old(t).view().is_input(),
     ensures
-        t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view())),
+        t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
 {
     (ibuf, String::from_rust_string("".to_string())) // Specific to Wireguard---we never use the endpoints
 }
@@ -73,7 +78,7 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize
     requires
         old(t).view().is_sample(n),
     ensures
-        t.view() == old(t).view().get_sample(res.dview()),
+        t.view() == old(t).view().get_sample(res.view()),
 {
     owl_util::gen_rand_bytes(n)
 }
@@ -84,34 +89,150 @@ pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
 }
 
-pub fn ghost_unit() -> (res: Ghost<()>)
-    ensures
-        res == Ghost(()),
-{
-    Ghost(())
-}
-
 } // verus!
 verus! {
+
 
 // ------------------------------------
 // ---------- SPECIFICATIONS ----------
 // ------------------------------------
+pub enum owlSpec_PSKMode {
+    owlSpec_HasPSK(Seq<u8>),
+    owlSpec_NoPSK(),
+}
+
+use owlSpec_PSKMode::*;
+
+#[verifier::external_body]
+pub closed spec fn parse_owlSpec_PSKMode(x: Seq<u8>) -> Option<owlSpec_PSKMode> {
+    todo!()
+}
+
+#[verifier::external_body]
+pub closed spec fn serialize_owlSpec_PSKMode_inner(x: owlSpec_PSKMode) -> Option<Seq<u8>> {
+    todo!()
+}
+
+#[verifier::external_body]
+pub closed spec fn serialize_owlSpec_PSKMode(x: owlSpec_PSKMode) -> Seq<u8> {
+    todo!()
+}
+
+impl OwlSpecSerialize for owlSpec_PSKMode {
+    open spec fn as_seq(self) -> Seq<u8> {
+        serialize_owlSpec_PSKMode(self)
+    }
+}
+
+pub open spec fn HasPSK(x: Seq<u8>) -> owlSpec_PSKMode {
+    crate::owlSpec_PSKMode::owlSpec_HasPSK(x)
+}
+
+pub open spec fn NoPSK() -> owlSpec_PSKMode {
+    crate::owlSpec_PSKMode::owlSpec_NoPSK()
+}
+
+pub open spec fn HasPSK_enumtest(x: owlSpec_PSKMode) -> bool {
+    match x {
+        owlSpec_PSKMode::owlSpec_HasPSK(_) => true,
+        _ => false,
+    }
+}
+
+pub open spec fn NoPSK_enumtest(x: owlSpec_PSKMode) -> bool {
+    match x {
+        owlSpec_PSKMode::owlSpec_NoPSK() => true,
+        _ => false,
+    }
+}
+
+spec const SPEC_BYTES_CONST_01000000_MSG1: Seq<u8> = seq![0x01u8, 0x00u8, 0x00u8, 0x00u8, ];
+
+spec const SPEC_BYTES_CONST_00000000000000000000000000000000_MSG1: Seq<u8> =
+    seq![0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, ];
+
+exec const EXEC_BYTES_CONST_01000000_MSG1: [u8; 4]
+    ensures
+        EXEC_BYTES_CONST_01000000_MSG1.view() == SPEC_BYTES_CONST_01000000_MSG1,
+{
+    let arr: [u8; 4] = [0x01u8, 0x00u8, 0x00u8, 0x00u8];
+    assert(arr.view() == SPEC_BYTES_CONST_01000000_MSG1);
+    arr
+}
+
+exec const EXEC_BYTES_CONST_00000000000000000000000000000000_MSG1: [u8; 16]
+    ensures
+        EXEC_BYTES_CONST_00000000000000000000000000000000_MSG1.view()
+            == SPEC_BYTES_CONST_00000000000000000000000000000000_MSG1,
+{
+    let arr: [u8; 16] = [
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+    ];
+    assert(arr.view() == SPEC_BYTES_CONST_00000000000000000000000000000000_MSG1);
+    arr
+}
+
+spec fn spec_combinator_owlSpec_msg1() -> (
+    (((((SpecConstBytes, Bytes), Bytes), Bytes), Bytes), Bytes),
+    SpecConstBytes,
+) {
+    let field_1 = SpecConstBytes(SPEC_BYTES_CONST_01000000_MSG1);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(32);
+    let field_4 = Bytes(48);
+    let field_5 = Bytes(28);
+    let field_6 = Bytes(16);
+    let field_7 = SpecConstBytes(SPEC_BYTES_CONST_00000000000000000000000000000000_MSG1);
+    ((((((field_1, field_2), field_3), field_4), field_5), field_6), field_7)
+}
+
+exec fn exec_combinator_owl_msg1() -> (res: (
+    (((((ConstBytes<4>, Bytes), Bytes), Bytes), Bytes), Bytes),
+    ConstBytes<16>,
+))
+    ensures
+        res.view() == spec_combinator_owlSpec_msg1(),
+{
+    let field_1 = ConstBytes(EXEC_BYTES_CONST_01000000_MSG1);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(32);
+    let field_4 = Bytes(48);
+    let field_5 = Bytes(28);
+    let field_6 = Bytes(16);
+    let field_7 = ConstBytes(EXEC_BYTES_CONST_00000000000000000000000000000000_MSG1);
+    ((((((field_1, field_2), field_3), field_4), field_5), field_6), field_7)
+}
+
 pub struct owlSpec_msg1 {
-    pub owlSpec__msg1_tag: Seq<u8>,
+    pub owlSpec__msg1_tag: (),
     pub owlSpec__msg1_sender: Seq<u8>,
     pub owlSpec__msg1_ephemeral: Seq<u8>,
     pub owlSpec__msg1_static: Seq<u8>,
     pub owlSpec__msg1_timestamp: Seq<u8>,
     pub owlSpec__msg1_mac1: Seq<u8>,
-    pub owlSpec__msg1_mac2: Seq<u8>,
+    pub owlSpec__msg1_mac2: (),
 }
 
 #[verifier::opaque]
 pub closed spec fn parse_owlSpec_msg1(x: Seq<u8>) -> Option<owlSpec_msg1> {
-    let stream = parse_serialize::SpecStream { data: x, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::spec_parse_owl_msg1(stream) {
-        let (
+    let spec_comb = spec_combinator_owlSpec_msg1();
+    if let Ok((_, parsed)) = spec_comb.spec_parse(x) {
+        let ((
             (
                 (
                     (
@@ -123,7 +244,7 @@ pub closed spec fn parse_owlSpec_msg1(x: Seq<u8>) -> Option<owlSpec_msg1> {
                 owlSpec__msg1_mac1,
             ),
             owlSpec__msg1_mac2,
-        ) = parsed;
+        )) = parsed;
         Some(
             owlSpec_msg1 {
                 owlSpec__msg1_tag,
@@ -142,18 +263,9 @@ pub closed spec fn parse_owlSpec_msg1(x: Seq<u8>) -> Option<owlSpec_msg1> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_msg1_inner(x: owlSpec_msg1) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ x.owlSpec__msg1_tag.len(), x.owlSpec__msg1_sender.len(), x.owlSpec__msg1_ephemeral.len(), x.owlSpec__msg1_static.len(), x.owlSpec__msg1_timestamp.len(), x.owlSpec__msg1_mac1.len(), x.owlSpec__msg1_mac2.len() ] {
-        let stream = parse_serialize::SpecStream {
-            data: seq_u8_of_len(
-                x.owlSpec__msg1_tag.len() + x.owlSpec__msg1_sender.len()
-                    + x.owlSpec__msg1_ephemeral.len() + x.owlSpec__msg1_static.len()
-                    + x.owlSpec__msg1_timestamp.len() + x.owlSpec__msg1_mac1.len()
-                    + x.owlSpec__msg1_mac2.len(),
-            ),
-            start: 0,
-        };
-        if let Ok((serialized, n)) = parse_serialize::spec_serialize_owl_msg1(
-            stream,
+    if no_usize_overflows_spec![ 0, x.owlSpec__msg1_sender.len(), x.owlSpec__msg1_ephemeral.len(), x.owlSpec__msg1_static.len(), x.owlSpec__msg1_timestamp.len(), x.owlSpec__msg1_mac1.len(), 0 ] {
+        let spec_comb = spec_combinator_owlSpec_msg1();
+        if let Ok(serialized) = spec_comb.spec_serialize(
             ((
                 (
                     (
@@ -171,7 +283,7 @@ pub closed spec fn serialize_owlSpec_msg1_inner(x: owlSpec_msg1) -> Option<Seq<u
                 x.owlSpec__msg1_mac2,
             )),
         ) {
-            Some(seq_truncate(serialized.data, n))
+            Some(serialized)
         } else {
             None
         }
@@ -196,42 +308,112 @@ impl OwlSpecSerialize for owlSpec_msg1 {
 }
 
 pub open spec fn msg1(
-    arg__msg1_tag: Seq<u8>,
-    arg__msg1_sender: Seq<u8>,
-    arg__msg1_ephemeral: Seq<u8>,
-    arg__msg1_static: Seq<u8>,
-    arg__msg1_timestamp: Seq<u8>,
-    arg__msg1_mac1: Seq<u8>,
-    arg__msg1_mac2: Seq<u8>,
-) -> Seq<u8> {
-    serialize_owlSpec_msg1(
-        owlSpec_msg1 {
-            owlSpec__msg1_tag: arg__msg1_tag,
-            owlSpec__msg1_sender: arg__msg1_sender,
-            owlSpec__msg1_ephemeral: arg__msg1_ephemeral,
-            owlSpec__msg1_static: arg__msg1_static,
-            owlSpec__msg1_timestamp: arg__msg1_timestamp,
-            owlSpec__msg1_mac1: arg__msg1_mac1,
-            owlSpec__msg1_mac2: arg__msg1_mac2,
-        },
-    )
+    arg_owlSpec__msg1_tag: (),
+    arg_owlSpec__msg1_sender: Seq<u8>,
+    arg_owlSpec__msg1_ephemeral: Seq<u8>,
+    arg_owlSpec__msg1_static: Seq<u8>,
+    arg_owlSpec__msg1_timestamp: Seq<u8>,
+    arg_owlSpec__msg1_mac1: Seq<u8>,
+    arg_owlSpec__msg1_mac2: (),
+) -> owlSpec_msg1 {
+    owlSpec_msg1 {
+        owlSpec__msg1_tag: arg_owlSpec__msg1_tag,
+        owlSpec__msg1_sender: arg_owlSpec__msg1_sender,
+        owlSpec__msg1_ephemeral: arg_owlSpec__msg1_ephemeral,
+        owlSpec__msg1_static: arg_owlSpec__msg1_static,
+        owlSpec__msg1_timestamp: arg_owlSpec__msg1_timestamp,
+        owlSpec__msg1_mac1: arg_owlSpec__msg1_mac1,
+        owlSpec__msg1_mac2: arg_owlSpec__msg1_mac2,
+    }
+}
+
+spec const SPEC_BYTES_CONST_02000000_MSG2: Seq<u8> = seq![0x02u8, 0x00u8, 0x00u8, 0x00u8, ];
+
+spec const SPEC_BYTES_CONST_00000000000000000000000000000000_MSG2: Seq<u8> =
+    seq![0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, ];
+
+exec const EXEC_BYTES_CONST_02000000_MSG2: [u8; 4]
+    ensures
+        EXEC_BYTES_CONST_02000000_MSG2.view() == SPEC_BYTES_CONST_02000000_MSG2,
+{
+    let arr: [u8; 4] = [0x02u8, 0x00u8, 0x00u8, 0x00u8];
+    assert(arr.view() == SPEC_BYTES_CONST_02000000_MSG2);
+    arr
+}
+
+exec const EXEC_BYTES_CONST_00000000000000000000000000000000_MSG2: [u8; 16]
+    ensures
+        EXEC_BYTES_CONST_00000000000000000000000000000000_MSG2.view()
+            == SPEC_BYTES_CONST_00000000000000000000000000000000_MSG2,
+{
+    let arr: [u8; 16] = [
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+        0x00u8,
+    ];
+    assert(arr.view() == SPEC_BYTES_CONST_00000000000000000000000000000000_MSG2);
+    arr
+}
+
+spec fn spec_combinator_owlSpec_msg2() -> (
+    (((((SpecConstBytes, Bytes), Bytes), Bytes), Bytes), Bytes),
+    SpecConstBytes,
+) {
+    let field_1 = SpecConstBytes(SPEC_BYTES_CONST_02000000_MSG2);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(4);
+    let field_4 = Bytes(32);
+    let field_5 = Bytes(16);
+    let field_6 = Bytes(16);
+    let field_7 = SpecConstBytes(SPEC_BYTES_CONST_00000000000000000000000000000000_MSG2);
+    ((((((field_1, field_2), field_3), field_4), field_5), field_6), field_7)
+}
+
+exec fn exec_combinator_owl_msg2() -> (res: (
+    (((((ConstBytes<4>, Bytes), Bytes), Bytes), Bytes), Bytes),
+    ConstBytes<16>,
+))
+    ensures
+        res.view() == spec_combinator_owlSpec_msg2(),
+{
+    let field_1 = ConstBytes(EXEC_BYTES_CONST_02000000_MSG2);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(4);
+    let field_4 = Bytes(32);
+    let field_5 = Bytes(16);
+    let field_6 = Bytes(16);
+    let field_7 = ConstBytes(EXEC_BYTES_CONST_00000000000000000000000000000000_MSG2);
+    ((((((field_1, field_2), field_3), field_4), field_5), field_6), field_7)
 }
 
 pub struct owlSpec_msg2 {
-    pub owlSpec__msg2_tag: Seq<u8>,
+    pub owlSpec__msg2_tag: (),
     pub owlSpec__msg2_sender: Seq<u8>,
     pub owlSpec__msg2_receiver: Seq<u8>,
     pub owlSpec__msg2_ephemeral: Seq<u8>,
     pub owlSpec__msg2_empty: Seq<u8>,
     pub owlSpec__msg2_mac1: Seq<u8>,
-    pub owlSpec__msg2_mac2: Seq<u8>,
+    pub owlSpec__msg2_mac2: (),
 }
 
 #[verifier::opaque]
 pub closed spec fn parse_owlSpec_msg2(x: Seq<u8>) -> Option<owlSpec_msg2> {
-    let stream = parse_serialize::SpecStream { data: x, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::spec_parse_owl_msg2(stream) {
-        let (
+    let spec_comb = spec_combinator_owlSpec_msg2();
+    if let Ok((_, parsed)) = spec_comb.spec_parse(x) {
+        let ((
             (
                 (
                     (
@@ -243,7 +425,7 @@ pub closed spec fn parse_owlSpec_msg2(x: Seq<u8>) -> Option<owlSpec_msg2> {
                 owlSpec__msg2_mac1,
             ),
             owlSpec__msg2_mac2,
-        ) = parsed;
+        )) = parsed;
         Some(
             owlSpec_msg2 {
                 owlSpec__msg2_tag,
@@ -262,18 +444,9 @@ pub closed spec fn parse_owlSpec_msg2(x: Seq<u8>) -> Option<owlSpec_msg2> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_msg2_inner(x: owlSpec_msg2) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ x.owlSpec__msg2_tag.len(), x.owlSpec__msg2_sender.len(), x.owlSpec__msg2_receiver.len(), x.owlSpec__msg2_ephemeral.len(), x.owlSpec__msg2_empty.len(), x.owlSpec__msg2_mac1.len(), x.owlSpec__msg2_mac2.len() ] {
-        let stream = parse_serialize::SpecStream {
-            data: seq_u8_of_len(
-                x.owlSpec__msg2_tag.len() + x.owlSpec__msg2_sender.len()
-                    + x.owlSpec__msg2_receiver.len() + x.owlSpec__msg2_ephemeral.len()
-                    + x.owlSpec__msg2_empty.len() + x.owlSpec__msg2_mac1.len()
-                    + x.owlSpec__msg2_mac2.len(),
-            ),
-            start: 0,
-        };
-        if let Ok((serialized, n)) = parse_serialize::spec_serialize_owl_msg2(
-            stream,
+    if no_usize_overflows_spec![ 0, x.owlSpec__msg2_sender.len(), x.owlSpec__msg2_receiver.len(), x.owlSpec__msg2_ephemeral.len(), x.owlSpec__msg2_empty.len(), x.owlSpec__msg2_mac1.len(), 0 ] {
+        let spec_comb = spec_combinator_owlSpec_msg2();
+        if let Ok(serialized) = spec_comb.spec_serialize(
             ((
                 (
                     (
@@ -291,7 +464,7 @@ pub closed spec fn serialize_owlSpec_msg2_inner(x: owlSpec_msg2) -> Option<Seq<u
                 x.owlSpec__msg2_mac2,
             )),
         ) {
-            Some(seq_truncate(serialized.data, n))
+            Some(serialized)
         } else {
             None
         }
@@ -316,29 +489,57 @@ impl OwlSpecSerialize for owlSpec_msg2 {
 }
 
 pub open spec fn msg2(
-    arg__msg2_tag: Seq<u8>,
-    arg__msg2_sender: Seq<u8>,
-    arg__msg2_receiver: Seq<u8>,
-    arg__msg2_ephemeral: Seq<u8>,
-    arg__msg2_empty: Seq<u8>,
-    arg__msg2_mac1: Seq<u8>,
-    arg__msg2_mac2: Seq<u8>,
-) -> Seq<u8> {
-    serialize_owlSpec_msg2(
-        owlSpec_msg2 {
-            owlSpec__msg2_tag: arg__msg2_tag,
-            owlSpec__msg2_sender: arg__msg2_sender,
-            owlSpec__msg2_receiver: arg__msg2_receiver,
-            owlSpec__msg2_ephemeral: arg__msg2_ephemeral,
-            owlSpec__msg2_empty: arg__msg2_empty,
-            owlSpec__msg2_mac1: arg__msg2_mac1,
-            owlSpec__msg2_mac2: arg__msg2_mac2,
-        },
-    )
+    arg_owlSpec__msg2_tag: (),
+    arg_owlSpec__msg2_sender: Seq<u8>,
+    arg_owlSpec__msg2_receiver: Seq<u8>,
+    arg_owlSpec__msg2_ephemeral: Seq<u8>,
+    arg_owlSpec__msg2_empty: Seq<u8>,
+    arg_owlSpec__msg2_mac1: Seq<u8>,
+    arg_owlSpec__msg2_mac2: (),
+) -> owlSpec_msg2 {
+    owlSpec_msg2 {
+        owlSpec__msg2_tag: arg_owlSpec__msg2_tag,
+        owlSpec__msg2_sender: arg_owlSpec__msg2_sender,
+        owlSpec__msg2_receiver: arg_owlSpec__msg2_receiver,
+        owlSpec__msg2_ephemeral: arg_owlSpec__msg2_ephemeral,
+        owlSpec__msg2_empty: arg_owlSpec__msg2_empty,
+        owlSpec__msg2_mac1: arg_owlSpec__msg2_mac1,
+        owlSpec__msg2_mac2: arg_owlSpec__msg2_mac2,
+    }
+}
+
+spec const SPEC_BYTES_CONST_04000000_TRANSP: Seq<u8> = seq![0x04u8, 0x00u8, 0x00u8, 0x00u8, ];
+
+exec const EXEC_BYTES_CONST_04000000_TRANSP: [u8; 4]
+    ensures
+        EXEC_BYTES_CONST_04000000_TRANSP.view() == SPEC_BYTES_CONST_04000000_TRANSP,
+{
+    let arr: [u8; 4] = [0x04u8, 0x00u8, 0x00u8, 0x00u8];
+    assert(arr.view() == SPEC_BYTES_CONST_04000000_TRANSP);
+    arr
+}
+
+spec fn spec_combinator_owlSpec_transp() -> (((SpecConstBytes, Bytes), Bytes), Tail) {
+    let field_1 = SpecConstBytes(SPEC_BYTES_CONST_04000000_TRANSP);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(8);
+    let field_4 = Tail;
+    (((field_1, field_2), field_3), field_4)
+}
+
+exec fn exec_combinator_owl_transp() -> (res: (((ConstBytes<4>, Bytes), Bytes), Tail))
+    ensures
+        res.view() == spec_combinator_owlSpec_transp(),
+{
+    let field_1 = ConstBytes(EXEC_BYTES_CONST_04000000_TRANSP);
+    let field_2 = Bytes(4);
+    let field_3 = Bytes(8);
+    let field_4 = Tail;
+    (((field_1, field_2), field_3), field_4)
 }
 
 pub struct owlSpec_transp {
-    pub owlSpec__transp_tag: Seq<u8>,
+    pub owlSpec__transp_tag: (),
     pub owlSpec__transp_receiver: Seq<u8>,
     pub owlSpec__transp_counter: Seq<u8>,
     pub owlSpec__transp_packet: Seq<u8>,
@@ -346,12 +547,12 @@ pub struct owlSpec_transp {
 
 #[verifier::opaque]
 pub closed spec fn parse_owlSpec_transp(x: Seq<u8>) -> Option<owlSpec_transp> {
-    let stream = parse_serialize::SpecStream { data: x, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::spec_parse_owl_transp(stream) {
-        let (
+    let spec_comb = spec_combinator_owlSpec_transp();
+    if let Ok((_, parsed)) = spec_comb.spec_parse(x) {
+        let ((
             ((owlSpec__transp_tag, owlSpec__transp_receiver), owlSpec__transp_counter),
             owlSpec__transp_packet,
-        ) = parsed;
+        )) = parsed;
         Some(
             owlSpec_transp {
                 owlSpec__transp_tag,
@@ -367,22 +568,15 @@ pub closed spec fn parse_owlSpec_transp(x: Seq<u8>) -> Option<owlSpec_transp> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_transp_inner(x: owlSpec_transp) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ x.owlSpec__transp_tag.len(), x.owlSpec__transp_receiver.len(), x.owlSpec__transp_counter.len(), x.owlSpec__transp_packet.len() ] {
-        let stream = parse_serialize::SpecStream {
-            data: seq_u8_of_len(
-                x.owlSpec__transp_tag.len() + x.owlSpec__transp_receiver.len()
-                    + x.owlSpec__transp_counter.len() + x.owlSpec__transp_packet.len(),
-            ),
-            start: 0,
-        };
-        if let Ok((serialized, n)) = parse_serialize::spec_serialize_owl_transp(
-            stream,
+    if no_usize_overflows_spec![ 0, x.owlSpec__transp_receiver.len(), x.owlSpec__transp_counter.len(), x.owlSpec__transp_packet.len() ] {
+        let spec_comb = spec_combinator_owlSpec_transp();
+        if let Ok(serialized) = spec_comb.spec_serialize(
             ((
                 ((x.owlSpec__transp_tag, x.owlSpec__transp_receiver), x.owlSpec__transp_counter),
                 x.owlSpec__transp_packet,
             )),
         ) {
-            Some(seq_truncate(serialized.data, n))
+            Some(serialized)
         } else {
             None
         }
@@ -407,87 +601,39 @@ impl OwlSpecSerialize for owlSpec_transp {
 }
 
 pub open spec fn transp(
-    arg__transp_tag: Seq<u8>,
-    arg__transp_receiver: Seq<u8>,
-    arg__transp_counter: Seq<u8>,
-    arg__transp_packet: Seq<u8>,
-) -> Seq<u8> {
-    serialize_owlSpec_transp(
-        owlSpec_transp {
-            owlSpec__transp_tag: arg__transp_tag,
-            owlSpec__transp_receiver: arg__transp_receiver,
-            owlSpec__transp_counter: arg__transp_counter,
-            owlSpec__transp_packet: arg__transp_packet,
-        },
-    )
+    arg_owlSpec__transp_tag: (),
+    arg_owlSpec__transp_receiver: Seq<u8>,
+    arg_owlSpec__transp_counter: Seq<u8>,
+    arg_owlSpec__transp_packet: Seq<u8>,
+) -> owlSpec_transp {
+    owlSpec_transp {
+        owlSpec__transp_tag: arg_owlSpec__transp_tag,
+        owlSpec__transp_receiver: arg_owlSpec__transp_receiver,
+        owlSpec__transp_counter: arg_owlSpec__transp_counter,
+        owlSpec__transp_packet: arg_owlSpec__transp_packet,
+    }
 }
 
 pub struct owlSpec_transp_keys_init {
     pub owlSpec_tki_msg2_receiver: Seq<u8>,
     pub owlSpec_tki_msg2_sender: Seq<u8>,
+    pub owlSpec_tki_has_psk: bool,
+    pub owlSpec_tki_eph: Ghost<()>,
+    pub owlSpec_tki_c7: Ghost<()>,
     pub owlSpec_tki_k_init_send: Seq<u8>,
     pub owlSpec_tki_k_resp_send: Seq<u8>,
 }
 
-#[verifier::opaque]
+#[verifier::external_body]
 pub closed spec fn parse_owlSpec_transp_keys_init(x: Seq<u8>) -> Option<owlSpec_transp_keys_init> {
-    let stream = parse_serialize::SpecStream { data: x, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::spec_parse_owl_transp_keys_init(stream) {
-        let (
-            ((owlSpec_tki_msg2_receiver, owlSpec_tki_msg2_sender), owlSpec_tki_k_init_send),
-            owlSpec_tki_k_resp_send,
-        ) = parsed;
-        Some(
-            owlSpec_transp_keys_init {
-                owlSpec_tki_msg2_receiver,
-                owlSpec_tki_msg2_sender,
-                owlSpec_tki_k_init_send,
-                owlSpec_tki_k_resp_send,
-            },
-        )
-    } else {
-        None
-    }
+    // cant autogenerate vest parser
+    todo!()
 }
 
-#[verifier::opaque]
-pub closed spec fn serialize_owlSpec_transp_keys_init_inner(x: owlSpec_transp_keys_init) -> Option<
-    Seq<u8>,
-> {
-    if no_usize_overflows_spec![ x.owlSpec_tki_msg2_receiver.len(), x.owlSpec_tki_msg2_sender.len(), x.owlSpec_tki_k_init_send.len(), x.owlSpec_tki_k_resp_send.len() ] {
-        let stream = parse_serialize::SpecStream {
-            data: seq_u8_of_len(
-                x.owlSpec_tki_msg2_receiver.len() + x.owlSpec_tki_msg2_sender.len()
-                    + x.owlSpec_tki_k_init_send.len() + x.owlSpec_tki_k_resp_send.len(),
-            ),
-            start: 0,
-        };
-        if let Ok((serialized, n)) = parse_serialize::spec_serialize_owl_transp_keys_init(
-            stream,
-            ((
-                (
-                    (x.owlSpec_tki_msg2_receiver, x.owlSpec_tki_msg2_sender),
-                    x.owlSpec_tki_k_init_send,
-                ),
-                x.owlSpec_tki_k_resp_send,
-            )),
-        ) {
-            Some(seq_truncate(serialized.data, n))
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-#[verifier::opaque]
+#[verifier::external_body]
 pub closed spec fn serialize_owlSpec_transp_keys_init(x: owlSpec_transp_keys_init) -> Seq<u8> {
-    if let Some(val) = serialize_owlSpec_transp_keys_init_inner(x) {
-        val
-    } else {
-        seq![]
-    }
+    // cant autogenerate vest serializer
+    todo!()
 }
 
 impl OwlSpecSerialize for owlSpec_transp_keys_init {
@@ -497,38 +643,45 @@ impl OwlSpecSerialize for owlSpec_transp_keys_init {
 }
 
 pub open spec fn transp_keys_init(
-    arg_tki_msg2_receiver: Seq<u8>,
-    arg_tki_msg2_sender: Seq<u8>,
-    arg_tki_k_init_send: Seq<u8>,
-    arg_tki_k_resp_send: Seq<u8>,
-) -> Seq<u8> {
-    serialize_owlSpec_transp_keys_init(
-        owlSpec_transp_keys_init {
-            owlSpec_tki_msg2_receiver: arg_tki_msg2_receiver,
-            owlSpec_tki_msg2_sender: arg_tki_msg2_sender,
-            owlSpec_tki_k_init_send: arg_tki_k_init_send,
-            owlSpec_tki_k_resp_send: arg_tki_k_resp_send,
-        },
-    )
+    arg_owlSpec_tki_msg2_receiver: Seq<u8>,
+    arg_owlSpec_tki_msg2_sender: Seq<u8>,
+    arg_owlSpec_tki_has_psk: bool,
+    arg_owlSpec_tki_eph: Ghost<()>,
+    arg_owlSpec_tki_c7: Ghost<()>,
+    arg_owlSpec_tki_k_init_send: Seq<u8>,
+    arg_owlSpec_tki_k_resp_send: Seq<u8>,
+) -> owlSpec_transp_keys_init {
+    owlSpec_transp_keys_init {
+        owlSpec_tki_msg2_receiver: arg_owlSpec_tki_msg2_receiver,
+        owlSpec_tki_msg2_sender: arg_owlSpec_tki_msg2_sender,
+        owlSpec_tki_has_psk: arg_owlSpec_tki_has_psk,
+        owlSpec_tki_eph: arg_owlSpec_tki_eph,
+        owlSpec_tki_c7: arg_owlSpec_tki_c7,
+        owlSpec_tki_k_init_send: arg_owlSpec_tki_k_init_send,
+        owlSpec_tki_k_resp_send: arg_owlSpec_tki_k_resp_send,
+    }
 }
 
 pub struct owlSpec_transp_keys_resp {
     pub owlSpec_tkr_msg2_receiver: Seq<u8>,
     pub owlSpec_tkr_msg2_sender: Seq<u8>,
+    pub owlSpec_tkr_has_psk: bool,
+    pub owlSpec_tkr_eph: Ghost<()>,
+    pub owlSpec_tkr_c7: Ghost<()>,
     pub owlSpec_tkr_recvd: bool,
     pub owlSpec_tkr_k_init_send: Seq<u8>,
     pub owlSpec_tkr_k_resp_send: Seq<u8>,
 }
 
-#[verifier(external_body)]
+#[verifier::external_body]
 pub closed spec fn parse_owlSpec_transp_keys_resp(x: Seq<u8>) -> Option<owlSpec_transp_keys_resp> {
-    // can't autogenerate vest parser
+    // cant autogenerate vest parser
     todo!()
 }
 
-#[verifier(external_body)]
+#[verifier::external_body]
 pub closed spec fn serialize_owlSpec_transp_keys_resp(x: owlSpec_transp_keys_resp) -> Seq<u8> {
-    // can't autogenerate vest serializer
+    // cant autogenerate vest serializer
     todo!()
 }
 
@@ -539,41 +692,45 @@ impl OwlSpecSerialize for owlSpec_transp_keys_resp {
 }
 
 pub open spec fn transp_keys_resp(
-    arg_tkr_msg2_receiver: Seq<u8>,
-    arg_tkr_msg2_sender: Seq<u8>,
-    arg_tkr_recvd: bool,
-    arg_tkr_k_init_send: Seq<u8>,
-    arg_tkr_k_resp_send: Seq<u8>,
-) -> Seq<u8> {
-    serialize_owlSpec_transp_keys_resp(
-        owlSpec_transp_keys_resp {
-            owlSpec_tkr_msg2_receiver: arg_tkr_msg2_receiver,
-            owlSpec_tkr_msg2_sender: arg_tkr_msg2_sender,
-            owlSpec_tkr_recvd: arg_tkr_recvd,
-            owlSpec_tkr_k_init_send: arg_tkr_k_init_send,
-            owlSpec_tkr_k_resp_send: arg_tkr_k_resp_send,
-        },
-    )
+    arg_owlSpec_tkr_msg2_receiver: Seq<u8>,
+    arg_owlSpec_tkr_msg2_sender: Seq<u8>,
+    arg_owlSpec_tkr_has_psk: bool,
+    arg_owlSpec_tkr_eph: Ghost<()>,
+    arg_owlSpec_tkr_c7: Ghost<()>,
+    arg_owlSpec_tkr_recvd: bool,
+    arg_owlSpec_tkr_k_init_send: Seq<u8>,
+    arg_owlSpec_tkr_k_resp_send: Seq<u8>,
+) -> owlSpec_transp_keys_resp {
+    owlSpec_transp_keys_resp {
+        owlSpec_tkr_msg2_receiver: arg_owlSpec_tkr_msg2_receiver,
+        owlSpec_tkr_msg2_sender: arg_owlSpec_tkr_msg2_sender,
+        owlSpec_tkr_has_psk: arg_owlSpec_tkr_has_psk,
+        owlSpec_tkr_eph: arg_owlSpec_tkr_eph,
+        owlSpec_tkr_c7: arg_owlSpec_tkr_c7,
+        owlSpec_tkr_recvd: arg_owlSpec_tkr_recvd,
+        owlSpec_tkr_k_init_send: arg_owlSpec_tkr_k_init_send,
+        owlSpec_tkr_k_resp_send: arg_owlSpec_tkr_k_resp_send,
+    }
 }
 
 pub struct owlSpec_resp_transp_recv_result {
-    pub owlSpec_rr_st: Seq<u8>,
+    pub owlSpec_rr_st: owlSpec_transp_keys_resp,
     pub owlSpec_rr_msg: Seq<u8>,
 }
 
-#[verifier(external_body)]
+#[verifier::external_body]
 pub closed spec fn parse_owlSpec_resp_transp_recv_result(x: Seq<u8>) -> Option<
     owlSpec_resp_transp_recv_result,
 > {
-    // can't autogenerate vest parser
+    // cant autogenerate vest parser
     todo!()
 }
 
-#[verifier(external_body)]
+#[verifier::external_body]
 pub closed spec fn serialize_owlSpec_resp_transp_recv_result(
     x: owlSpec_resp_transp_recv_result,
 ) -> Seq<u8> {
-    // can't autogenerate vest serializer
+    // cant autogenerate vest serializer
     todo!()
 }
 
@@ -583,12 +740,15 @@ impl OwlSpecSerialize for owlSpec_resp_transp_recv_result {
     }
 }
 
-pub open spec fn resp_transp_recv_result(arg_rr_st: Seq<u8>, arg_rr_msg: Seq<u8>) -> Seq<u8> {
-    serialize_owlSpec_resp_transp_recv_result(
-        owlSpec_resp_transp_recv_result { owlSpec_rr_st: arg_rr_st, owlSpec_rr_msg: arg_rr_msg },
-    )
+pub open spec fn resp_transp_recv_result(
+    arg_owlSpec_rr_st: owlSpec_transp_keys_resp,
+    arg_owlSpec_rr_msg: Seq<u8>,
+) -> owlSpec_resp_transp_recv_result {
+    owlSpec_resp_transp_recv_result {
+        owlSpec_rr_st: arg_owlSpec_rr_st,
+        owlSpec_rr_msg: arg_owlSpec_rr_msg,
+    }
 }
-
 
 #[verifier::opaque]
 pub open spec fn init_send_spec(
@@ -597,15 +757,15 @@ pub open spec fn init_send_spec(
     tki: owlSpec_transp_keys_init,
     msg: Seq<u8>,
 ) -> (res: ITree<((), state_Initiator), Endpoint>) {
-    owl_spec!(mut_state,state_Initiator,
-(parse (tki) as (owlSpec_transp_keys_init{owlSpec_tki_msg2_receiver : init , owlSpec_tki_msg2_sender : resp , owlSpec_tki_k_init_send : init_send , owlSpec_tki_k_resp_send : resp_send }) in {
+    owl_spec!(mut_state, state_Initiator,
+        (parse (tki) as (owlSpec_transp_keys_init{owlSpec_tki_msg2_receiver : init, owlSpec_tki_msg2_sender : resp, owlSpec_tki_has_psk : haspsk, owlSpec_tki_eph : eph, owlSpec_tki_c7 : c7, owlSpec_tki_k_init_send : init_send, owlSpec_tki_k_resp_send : resp_send}) in {
 let transp_counter = ((ret(counter_as_bytes(mut_state.owl_N_init_send)))) in
 let c = ((ret(enc_st_aead(init_send, msg, owl_N_init_send, empty_seq_u8())))) in
-let transp_tag = ((ret (transp_tag_value()))) in
-let o = ((ret (transp(transp_tag, init, transp_counter, c)))) in
-(output (o) to (Endpoint::Loc_Responder))
+let transp_tag = ((ret(transp_tag_value()))) in
+let o = ((ret(transp((), init, transp_counter, c)))) in
+(output (serialize_owlSpec_transp(o)) to (Endpoint::Loc_Responder))
 } )
-)
+    )
 }
 
 #[verifier::opaque]
@@ -614,18 +774,15 @@ pub open spec fn init_recv_spec(
     mut_state: state_Initiator,
     tki: owlSpec_transp_keys_init,
 ) -> (res: ITree<(Option<Seq<u8>>, state_Initiator), Endpoint>) {
-    owl_spec!(mut_state,state_Initiator,
-(input (i, _unused74)) in
-(parse (tki) as (owlSpec_transp_keys_init{owlSpec_tki_msg2_receiver : init , owlSpec_tki_msg2_sender : resp , owlSpec_tki_k_init_send : init_send , owlSpec_tki_k_resp_send : resp_send }) in {
-(parse (parse_owlSpec_transp(i)) as (owlSpec_transp{owlSpec__transp_tag : tag , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
-(if (from == resp) then (let p = ((ret(dec_st_aead( resp_send
-, pkt
-, ctr
-, empty_seq_u8() )))) in
-(ret (p))) else ((ret (Option::None))))
-} otherwise ((ret (Option::None))))
+    owl_spec!(mut_state, state_Initiator,
+        (input(i,_104)) in
+(parse (tki) as (owlSpec_transp_keys_init{owlSpec_tki_msg2_receiver : init, owlSpec_tki_msg2_sender : resp, owlSpec_tki_has_psk : haspsk, owlSpec_tki_eph : eph, owlSpec_tki_c7 : c7, owlSpec_tki_k_init_send : init_send, owlSpec_tki_k_resp_send : resp_send}) in {
+(parse (parse_owlSpec_transp(i)) as (owlSpec_transp{owlSpec__transp_tag : tag, owlSpec__transp_receiver : from, owlSpec__transp_counter : ctr, owlSpec__transp_packet : pkt}) in {
+(if (from == resp) then (let p = ((ret(dec_st_aead(resp_send, pkt, ctr, empty_seq_u8())))) in
+(ret(p))) else ((ret(Option::None))))
+} otherwise ((ret(Option::None))))
 } )
-)
+    )
 }
 
 #[verifier::opaque]
@@ -633,13 +790,13 @@ pub open spec fn timestamp_i_spec(cfg: cfg_Initiator, mut_state: state_Initiator
     (Seq<u8>, state_Initiator),
     Endpoint,
 >) {
-    owl_spec!(mut_state,state_Initiator,
-(ret(owlSpec_timestamp_i_pure()))
-)
+    owl_spec!(mut_state, state_Initiator,
+        (ret(timestamp_i_pure()))
+    )
 }
 
 #[verifier(external_body)]
-pub closed spec fn owlSpec_timestamp_i_pure() -> Seq<u8> {
+pub closed spec fn timestamp_i_pure() -> Seq<u8> {
     unimplemented!()
 }
 
@@ -648,13 +805,13 @@ pub open spec fn get_sender_i_spec(cfg: cfg_Initiator, mut_state: state_Initiato
     (Seq<u8>, state_Initiator),
     Endpoint,
 >) {
-    owl_spec!(mut_state,state_Initiator,
-(ret(owlSpec_get_sender_i_pure()))
-)
+    owl_spec!(mut_state, state_Initiator,
+        (ret(get_sender_i_pure()))
+    )
 }
 
 #[verifier(external_body)]
-pub closed spec fn owlSpec_get_sender_i_pure() -> Seq<u8> {
+pub closed spec fn get_sender_i_pure() -> Seq<u8> {
     unimplemented!()
 }
 
@@ -665,16 +822,20 @@ pub open spec fn resp_send_spec(
     tki: owlSpec_transp_keys_resp,
     msg: Seq<u8>,
 ) -> (res: ITree<(Option<()>, state_Responder), Endpoint>) {
-    owl_spec!(mut_state,state_Responder,
-(parse (tki) as (owlSpec_transp_keys_resp{owlSpec_tkr_msg2_receiver : init , owlSpec_tkr_msg2_sender : resp , owlSpec_tkr_recvd : b , owlSpec_tkr_k_init_send : init_send , owlSpec_tkr_k_resp_send : resp_send }) in {
-(if (b) then (let transp_counter = ((ret(counter_as_bytes(mut_state.owl_N_resp_send)))) in
+    owl_spec!(mut_state, state_Responder,
+        let tki_ = ((ret(tki))) in
+(parse (tki_) as (owlSpec_transp_keys_resp{owlSpec_tkr_msg2_receiver : init, owlSpec_tkr_msg2_sender : resp, owlSpec_tkr_has_psk : haspsk, owlSpec_tkr_eph : eph, owlSpec_tkr_c7 : c7, owlSpec_tkr_recvd : b, owlSpec_tkr_k_init_send : init_send, owlSpec_tkr_k_resp_send : resp_send}) in {
+(if (b) then (let _unused330 = (let _unused331 = (let _assert_91 = ((ret(ghost_unit()))) in
+(ret(ghost_unit()))) in
+(ret(ghost_unit()))) in
+let transp_counter = ((ret(counter_as_bytes(mut_state.owl_N_resp_send)))) in
 let c = ((ret(enc_st_aead(resp_send, msg, owl_N_resp_send, empty_seq_u8())))) in
-let transp_tag = ((ret (transp_tag_value()))) in
-let o = ((ret (transp(transp_tag, resp, transp_counter, c)))) in
-(output (o) to (Endpoint::Loc_Initiator)) in
-(ret (Option::Some(())))) else ((ret (Option::None))))
+let transp_tag = ((ret(transp_tag_value()))) in
+let o = ((ret(transp((), resp, transp_counter, c)))) in
+(output (serialize_owlSpec_transp(o)) to (Endpoint::Loc_Initiator)) in
+(ret(Option::Some(())))) else ((ret(Option::None))))
 } )
-)
+    )
 }
 
 #[verifier::opaque]
@@ -682,28 +843,27 @@ pub open spec fn resp_recv_spec(
     cfg: cfg_Responder,
     mut_state: state_Responder,
     tki: owlSpec_transp_keys_resp,
-) -> (res: ITree<(Option<Seq<u8>>, state_Responder), Endpoint>) {
-    owl_spec!(mut_state,state_Responder,
-(input (i, _unused242)) in
-(parse (tki) as (owlSpec_transp_keys_resp{owlSpec_tkr_msg2_receiver : init , owlSpec_tkr_msg2_sender : resp , owlSpec_tkr_recvd : _unused241 , owlSpec_tkr_k_init_send : init_send , owlSpec_tkr_k_resp_send : resp_send }) in {
-(parse (parse_owlSpec_transp(i)) as (owlSpec_transp{owlSpec__transp_tag : tag , owlSpec__transp_receiver : from , owlSpec__transp_counter : ctr , owlSpec__transp_packet : pkt }) in {
-(if (from == init) then (let caseval = ((ret(dec_st_aead( init_send
-, pkt
-, ctr
-, empty_seq_u8() )))) in
-(case (caseval){
-| Some (x) => {let st_ = ((ret (transp_keys_resp( init
-, resp
-, true
-, init_send
-, resp_send )))) in
-(ret (Option::Some(resp_transp_recv_result(st_, x))))},
-| None => {(ret (Option::None))},
-
-})) else ((ret (Option::None))))
-} otherwise ((ret (Option::None))))
+) -> (res: ITree<(Option<owlSpec_resp_transp_recv_result>, state_Responder), Endpoint>) {
+    owl_spec!(mut_state, state_Responder,
+        (input(i,_191)) in
+let tki_ = ((ret(tki))) in
+(parse (tki_) as (owlSpec_transp_keys_resp{owlSpec_tkr_msg2_receiver : init, owlSpec_tkr_msg2_sender : resp, owlSpec_tkr_has_psk : haspsk, owlSpec_tkr_eph : eph, owlSpec_tkr_c7 : c7, owlSpec_tkr_recvd : _unused333, owlSpec_tkr_k_init_send : init_send, owlSpec_tkr_k_resp_send : resp_send}) in {
+(parse (parse_owlSpec_transp(i)) as (owlSpec_transp{owlSpec__transp_tag : tag, owlSpec__transp_receiver : from, owlSpec__transp_counter : ctr, owlSpec__transp_packet : pkt}) in {
+(if (from == init) then (let caseval = ((ret(dec_st_aead(init_send, pkt, ctr, empty_seq_u8())))) in
+(case (caseval) {
+| Some(x) => {
+let st_ = ((ret(transp_keys_resp(init, resp, haspsk, ghost_unit(), ghost_unit(), true, init_send, resp_send)))) in
+let ret = ((ret(resp_transp_recv_result(st_, x)))) in
+(ret(Option::Some(ret)))
+},
+| None => {
+(ret(Option::None))
+},
+}
+)) else ((ret(Option::None))))
+} otherwise ((ret(Option::None))))
 } )
-)
+    )
 }
 
 #[verifier::opaque]
@@ -711,13 +871,13 @@ pub open spec fn timestamp_r_spec(cfg: cfg_Responder, mut_state: state_Responder
     (Seq<u8>, state_Responder),
     Endpoint,
 >) {
-    owl_spec!(mut_state,state_Responder,
-(ret(owlSpec_timestamp_r_pure()))
-)
+    owl_spec!(mut_state, state_Responder,
+        (ret(timestamp_r_pure()))
+    )
 }
 
 #[verifier(external_body)]
-pub closed spec fn owlSpec_timestamp_r_pure() -> Seq<u8> {
+pub closed spec fn timestamp_r_pure() -> Seq<u8> {
     unimplemented!()
 }
 
@@ -726,14 +886,19 @@ pub open spec fn get_sender_r_spec(cfg: cfg_Responder, mut_state: state_Responde
     (Seq<u8>, state_Responder),
     Endpoint,
 >) {
-    owl_spec!(mut_state,state_Responder,
-(ret(owlSpec_get_sender_r_pure()))
-)
+    owl_spec!(mut_state, state_Responder,
+        (ret(get_sender_r_pure()))
+    )
 }
 
 #[verifier(external_body)]
-pub closed spec fn owlSpec_get_sender_r_pure() -> Seq<u8> {
+pub closed spec fn get_sender_r_pure() -> Seq<u8> {
     unimplemented!()
+}
+
+#[verifier::opaque]
+pub closed spec fn transp_tag_value() -> (res: Seq<u8>) {
+    seq![0x04u8, 0x00u8, 0x00u8, 0x00u8, ]
 }
 
 // ------------------------------------
@@ -776,45 +941,92 @@ pub const fn nobody_addr() -> (a: StrSlice<'static>)
     new_strlit("127.0.0.1:9003")
 }
 
+pub enum owl_PSKMode<'a> {
+    owl_HasPSK(OwlBuf<'a>),
+    owl_NoPSK(),
+}
+
+use owl_PSKMode::*;
+
+impl owl_PSKMode<'_> {
+    pub open spec fn len_valid(&self) -> bool {
+        match self {
+            owl_HasPSK(x) => x.len_valid(),
+            owl_NoPSK() => true,
+        }
+    }
+}
+
+impl View for owl_PSKMode<'_> {
+    type V = owlSpec_PSKMode;
+
+    open spec fn view(&self) -> owlSpec_PSKMode {
+        match self {
+            owl_HasPSK(v) => owlSpec_PSKMode::owlSpec_HasPSK(v.view()),
+            owl_NoPSK() => owlSpec_PSKMode::owlSpec_NoPSK(),
+        }
+    }
+}
+
+#[inline]
+pub fn owl_HasPSK_enumtest(x: &owl_PSKMode<'_>) -> (res: bool)
+    ensures
+        res == HasPSK_enumtest(x.view()),
+{
+    match x {
+        owl_PSKMode::owl_HasPSK(_) => true,
+        _ => false,
+    }
+}
+
+#[inline]
+pub fn owl_NoPSK_enumtest(x: &owl_PSKMode<'_>) -> (res: bool)
+    ensures
+        res == NoPSK_enumtest(x.view()),
+{
+    match x {
+        owl_PSKMode::owl_NoPSK() => true,
+        _ => false,
+    }
+}
+
 pub struct owl_msg1<'a> {
-    pub owl__msg1_tag: OwlBuf<'a>,
+    pub owl__msg1_tag: (),
     pub owl__msg1_sender: OwlBuf<'a>,
     pub owl__msg1_ephemeral: OwlBuf<'a>,
     pub owl__msg1_static: OwlBuf<'a>,
     pub owl__msg1_timestamp: OwlBuf<'a>,
     pub owl__msg1_mac1: OwlBuf<'a>,
-    pub owl__msg1_mac2: OwlBuf<'a>,
+    pub owl__msg1_mac2: (),
 }
 
 // Allows us to use function call syntax to construct members of struct types, a la Owl,
 // so we don't have to special-case struct constructors in the compiler
 #[inline]
 pub fn owl_msg1<'a>(
-    arg_owl__msg1_tag: OwlBuf<'a>,
+    arg_owl__msg1_tag: (),
     arg_owl__msg1_sender: OwlBuf<'a>,
     arg_owl__msg1_ephemeral: OwlBuf<'a>,
     arg_owl__msg1_static: OwlBuf<'a>,
     arg_owl__msg1_timestamp: OwlBuf<'a>,
     arg_owl__msg1_mac1: OwlBuf<'a>,
-    arg_owl__msg1_mac2: OwlBuf<'a>,
+    arg_owl__msg1_mac2: (),
 ) -> (res: owl_msg1<'a>)
     requires
-        arg_owl__msg1_tag.len_valid(),
         arg_owl__msg1_sender.len_valid(),
         arg_owl__msg1_ephemeral.len_valid(),
         arg_owl__msg1_static.len_valid(),
         arg_owl__msg1_timestamp.len_valid(),
         arg_owl__msg1_mac1.len_valid(),
-        arg_owl__msg1_mac2.len_valid(),
     ensures
         res.len_valid(),
-        res.owl__msg1_tag.dview() == arg_owl__msg1_tag.dview(),
-        res.owl__msg1_sender.dview() == arg_owl__msg1_sender.dview(),
-        res.owl__msg1_ephemeral.dview() == arg_owl__msg1_ephemeral.dview(),
-        res.owl__msg1_static.dview() == arg_owl__msg1_static.dview(),
-        res.owl__msg1_timestamp.dview() == arg_owl__msg1_timestamp.dview(),
-        res.owl__msg1_mac1.dview() == arg_owl__msg1_mac1.dview(),
-        res.owl__msg1_mac2.dview() == arg_owl__msg1_mac2.dview(),
+        res.owl__msg1_tag.view() == arg_owl__msg1_tag.view(),
+        res.owl__msg1_sender.view() == arg_owl__msg1_sender.view(),
+        res.owl__msg1_ephemeral.view() == arg_owl__msg1_ephemeral.view(),
+        res.owl__msg1_static.view() == arg_owl__msg1_static.view(),
+        res.owl__msg1_timestamp.view() == arg_owl__msg1_timestamp.view(),
+        res.owl__msg1_mac1.view() == arg_owl__msg1_mac1.view(),
+        res.owl__msg1_mac2.view() == arg_owl__msg1_mac2.view(),
 {
     owl_msg1 {
         owl__msg1_tag: arg_owl__msg1_tag,
@@ -829,25 +1041,24 @@ pub fn owl_msg1<'a>(
 
 impl owl_msg1<'_> {
     pub open spec fn len_valid(&self) -> bool {
-        self.owl__msg1_tag.len_valid() && self.owl__msg1_sender.len_valid()
-            && self.owl__msg1_ephemeral.len_valid() && self.owl__msg1_static.len_valid()
-            && self.owl__msg1_timestamp.len_valid() && self.owl__msg1_mac1.len_valid()
-            && self.owl__msg1_mac2.len_valid()
+        self.owl__msg1_sender.len_valid() && self.owl__msg1_ephemeral.len_valid()
+            && self.owl__msg1_static.len_valid() && self.owl__msg1_timestamp.len_valid()
+            && self.owl__msg1_mac1.len_valid()
     }
 }
 
-impl DView for owl_msg1<'_> {
+impl View for owl_msg1<'_> {
     type V = owlSpec_msg1;
 
-    open spec fn dview(&self) -> owlSpec_msg1 {
+    open spec fn view(&self) -> owlSpec_msg1 {
         owlSpec_msg1 {
-            owlSpec__msg1_tag: self.owl__msg1_tag.dview(),
-            owlSpec__msg1_sender: self.owl__msg1_sender.dview(),
-            owlSpec__msg1_ephemeral: self.owl__msg1_ephemeral.dview(),
-            owlSpec__msg1_static: self.owl__msg1_static.dview(),
-            owlSpec__msg1_timestamp: self.owl__msg1_timestamp.dview(),
-            owlSpec__msg1_mac1: self.owl__msg1_mac1.dview(),
-            owlSpec__msg1_mac2: self.owl__msg1_mac2.dview(),
+            owlSpec__msg1_tag: self.owl__msg1_tag.view(),
+            owlSpec__msg1_sender: self.owl__msg1_sender.view(),
+            owlSpec__msg1_ephemeral: self.owl__msg1_ephemeral.view(),
+            owlSpec__msg1_static: self.owl__msg1_static.view(),
+            owlSpec__msg1_timestamp: self.owl__msg1_timestamp.view(),
+            owlSpec__msg1_mac1: self.owl__msg1_mac1.view(),
+            owlSpec__msg1_mac2: self.owl__msg1_mac2.view(),
         }
     }
 }
@@ -858,14 +1069,14 @@ pub exec fn parse_owl_msg1<'a>(arg: &'a [u8]) -> (res: Option<
 // requires arg.len_valid()
 
     ensures
-        res is Some ==> parse_owlSpec_msg1(arg.dview()) is Some,
-        res is None ==> parse_owlSpec_msg1(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == parse_owlSpec_msg1(arg.dview())->Some_0,
+        res is Some ==> parse_owlSpec_msg1(arg.view()) is Some,
+        res is None ==> parse_owlSpec_msg1(arg.view()) is None,
+        res matches Some(x) ==> x.view() == parse_owlSpec_msg1(arg.view())->Some_0,
         res matches Some(x) ==> x.len_valid(),
 {
     reveal(parse_owlSpec_msg1);
-    let stream = parse_serialize::Stream { data: arg, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::parse_owl_msg1(stream) {
+    let exec_comb = exec_combinator_owl_msg1();
+    if let Ok((_, parsed)) = exec_comb.parse(arg) {
         let (
             (
                 (
@@ -878,13 +1089,13 @@ pub exec fn parse_owl_msg1<'a>(arg: &'a [u8]) -> (res: Option<
         ) = parsed;
         Some(
             owl_msg1 {
-                owl__msg1_tag: OwlBuf::from_slice(&owl__msg1_tag),
+                owl__msg1_tag: (),
                 owl__msg1_sender: OwlBuf::from_slice(&owl__msg1_sender),
                 owl__msg1_ephemeral: OwlBuf::from_slice(&owl__msg1_ephemeral),
                 owl__msg1_static: OwlBuf::from_slice(&owl__msg1_static),
                 owl__msg1_timestamp: OwlBuf::from_slice(&owl__msg1_timestamp),
                 owl__msg1_mac1: OwlBuf::from_slice(&owl__msg1_mac1),
-                owl__msg1_mac2: OwlBuf::from_slice(&owl__msg1_mac2),
+                owl__msg1_mac2: (),
             },
         )
     } else {
@@ -892,31 +1103,29 @@ pub exec fn parse_owl_msg1<'a>(arg: &'a [u8]) -> (res: Option<
     }
 }
 
-#[verifier(external_body)]  // to allow `as_mut_slice` call, TODO fix
 pub exec fn serialize_owl_msg1_inner(arg: &owl_msg1) -> (res: Option<Vec<u8>>)
     requires
         arg.len_valid(),
     ensures
-        res is Some ==> serialize_owlSpec_msg1_inner(arg.dview()) is Some,
-        res is None ==> serialize_owlSpec_msg1_inner(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == serialize_owlSpec_msg1_inner(arg.dview())->Some_0,
+        res is Some ==> serialize_owlSpec_msg1_inner(arg.view()) is Some,
+        // res is None ==> serialize_owlSpec_msg1_inner(arg.view()) is None,
+        res matches Some(x) ==> x.view() == serialize_owlSpec_msg1_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_msg1_inner);
-    if no_usize_overflows![ arg.owl__msg1_tag.len(), arg.owl__msg1_sender.len(), arg.owl__msg1_ephemeral.len(), arg.owl__msg1_static.len(), arg.owl__msg1_timestamp.len(), arg.owl__msg1_mac1.len(), arg.owl__msg1_mac2.len(), 0 ] {
+    if no_usize_overflows![ 0, arg.owl__msg1_sender.len(), arg.owl__msg1_ephemeral.len(), arg.owl__msg1_static.len(), arg.owl__msg1_timestamp.len(), arg.owl__msg1_mac1.len(), 0, 0 ] {
+        let exec_comb = exec_combinator_owl_msg1();
         let mut obuf = vec_u8_of_len(
-            arg.owl__msg1_tag.len() + arg.owl__msg1_sender.len() + arg.owl__msg1_ephemeral.len()
+            0 + arg.owl__msg1_sender.len() + arg.owl__msg1_ephemeral.len()
                 + arg.owl__msg1_static.len() + arg.owl__msg1_timestamp.len()
-                + arg.owl__msg1_mac1.len() + arg.owl__msg1_mac2.len() + 0,
+                + arg.owl__msg1_mac1.len() + 0 + 0,
         );
-        let ser_result = parse_serialize::serialize_owl_msg1(
-            obuf.as_mut_slice(),
-            0,
-            ((
+        let ser_result = exec_comb.serialize(
+            (
                 (
                     (
                         (
                             (
-                                (arg.owl__msg1_tag.as_slice(), arg.owl__msg1_sender.as_slice()),
+                                (arg.owl__msg1_tag, arg.owl__msg1_sender.as_slice()),
                                 arg.owl__msg1_ephemeral.as_slice(),
                             ),
                             arg.owl__msg1_static.as_slice(),
@@ -925,10 +1134,12 @@ pub exec fn serialize_owl_msg1_inner(arg: &owl_msg1) -> (res: Option<Vec<u8>>)
                     ),
                     arg.owl__msg1_mac1.as_slice(),
                 ),
-                arg.owl__msg1_mac2.as_slice(),
-            )),
+                arg.owl__msg1_mac2,
+            ),
+            &mut obuf,
+            0,
         );
-        if let Ok((_new_start, num_written)) = ser_result {
+        if let Ok((num_written)) = ser_result {
             vec_truncate(&mut obuf, num_written);
             Some(obuf)
         } else {
@@ -943,7 +1154,7 @@ pub exec fn serialize_owl_msg1(arg: &owl_msg1) -> (res: Vec<u8>)
     requires
         arg.len_valid(),
     ensures
-        res.dview() == serialize_owlSpec_msg1(arg.dview()),
+        res.view() == serialize_owlSpec_msg1(arg.view()),
 {
     reveal(serialize_owlSpec_msg1);
     let res = serialize_owl_msg1_inner(arg);
@@ -952,44 +1163,42 @@ pub exec fn serialize_owl_msg1(arg: &owl_msg1) -> (res: Vec<u8>)
 }
 
 pub struct owl_msg2<'a> {
-    pub owl__msg2_tag: OwlBuf<'a>,
+    pub owl__msg2_tag: (),
     pub owl__msg2_sender: OwlBuf<'a>,
     pub owl__msg2_receiver: OwlBuf<'a>,
     pub owl__msg2_ephemeral: OwlBuf<'a>,
     pub owl__msg2_empty: OwlBuf<'a>,
     pub owl__msg2_mac1: OwlBuf<'a>,
-    pub owl__msg2_mac2: OwlBuf<'a>,
+    pub owl__msg2_mac2: (),
 }
 
 // Allows us to use function call syntax to construct members of struct types, a la Owl,
 // so we don't have to special-case struct constructors in the compiler
 #[inline]
 pub fn owl_msg2<'a>(
-    arg_owl__msg2_tag: OwlBuf<'a>,
+    arg_owl__msg2_tag: (),
     arg_owl__msg2_sender: OwlBuf<'a>,
     arg_owl__msg2_receiver: OwlBuf<'a>,
     arg_owl__msg2_ephemeral: OwlBuf<'a>,
     arg_owl__msg2_empty: OwlBuf<'a>,
     arg_owl__msg2_mac1: OwlBuf<'a>,
-    arg_owl__msg2_mac2: OwlBuf<'a>,
+    arg_owl__msg2_mac2: (),
 ) -> (res: owl_msg2<'a>)
     requires
-        arg_owl__msg2_tag.len_valid(),
         arg_owl__msg2_sender.len_valid(),
         arg_owl__msg2_receiver.len_valid(),
         arg_owl__msg2_ephemeral.len_valid(),
         arg_owl__msg2_empty.len_valid(),
         arg_owl__msg2_mac1.len_valid(),
-        arg_owl__msg2_mac2.len_valid(),
     ensures
         res.len_valid(),
-        res.owl__msg2_tag.dview() == arg_owl__msg2_tag.dview(),
-        res.owl__msg2_sender.dview() == arg_owl__msg2_sender.dview(),
-        res.owl__msg2_receiver.dview() == arg_owl__msg2_receiver.dview(),
-        res.owl__msg2_ephemeral.dview() == arg_owl__msg2_ephemeral.dview(),
-        res.owl__msg2_empty.dview() == arg_owl__msg2_empty.dview(),
-        res.owl__msg2_mac1.dview() == arg_owl__msg2_mac1.dview(),
-        res.owl__msg2_mac2.dview() == arg_owl__msg2_mac2.dview(),
+        res.owl__msg2_tag.view() == arg_owl__msg2_tag.view(),
+        res.owl__msg2_sender.view() == arg_owl__msg2_sender.view(),
+        res.owl__msg2_receiver.view() == arg_owl__msg2_receiver.view(),
+        res.owl__msg2_ephemeral.view() == arg_owl__msg2_ephemeral.view(),
+        res.owl__msg2_empty.view() == arg_owl__msg2_empty.view(),
+        res.owl__msg2_mac1.view() == arg_owl__msg2_mac1.view(),
+        res.owl__msg2_mac2.view() == arg_owl__msg2_mac2.view(),
 {
     owl_msg2 {
         owl__msg2_tag: arg_owl__msg2_tag,
@@ -1004,25 +1213,24 @@ pub fn owl_msg2<'a>(
 
 impl owl_msg2<'_> {
     pub open spec fn len_valid(&self) -> bool {
-        self.owl__msg2_tag.len_valid() && self.owl__msg2_sender.len_valid()
-            && self.owl__msg2_receiver.len_valid() && self.owl__msg2_ephemeral.len_valid()
-            && self.owl__msg2_empty.len_valid() && self.owl__msg2_mac1.len_valid()
-            && self.owl__msg2_mac2.len_valid()
+        self.owl__msg2_sender.len_valid() && self.owl__msg2_receiver.len_valid()
+            && self.owl__msg2_ephemeral.len_valid() && self.owl__msg2_empty.len_valid()
+            && self.owl__msg2_mac1.len_valid()
     }
 }
 
-impl DView for owl_msg2<'_> {
+impl View for owl_msg2<'_> {
     type V = owlSpec_msg2;
 
-    open spec fn dview(&self) -> owlSpec_msg2 {
+    open spec fn view(&self) -> owlSpec_msg2 {
         owlSpec_msg2 {
-            owlSpec__msg2_tag: self.owl__msg2_tag.dview(),
-            owlSpec__msg2_sender: self.owl__msg2_sender.dview(),
-            owlSpec__msg2_receiver: self.owl__msg2_receiver.dview(),
-            owlSpec__msg2_ephemeral: self.owl__msg2_ephemeral.dview(),
-            owlSpec__msg2_empty: self.owl__msg2_empty.dview(),
-            owlSpec__msg2_mac1: self.owl__msg2_mac1.dview(),
-            owlSpec__msg2_mac2: self.owl__msg2_mac2.dview(),
+            owlSpec__msg2_tag: self.owl__msg2_tag.view(),
+            owlSpec__msg2_sender: self.owl__msg2_sender.view(),
+            owlSpec__msg2_receiver: self.owl__msg2_receiver.view(),
+            owlSpec__msg2_ephemeral: self.owl__msg2_ephemeral.view(),
+            owlSpec__msg2_empty: self.owl__msg2_empty.view(),
+            owlSpec__msg2_mac1: self.owl__msg2_mac1.view(),
+            owlSpec__msg2_mac2: self.owl__msg2_mac2.view(),
         }
     }
 }
@@ -1033,14 +1241,14 @@ pub exec fn parse_owl_msg2<'a>(arg: &'a [u8]) -> (res: Option<
 // requires arg.len_valid()
 
     ensures
-        res is Some ==> parse_owlSpec_msg2(arg.dview()) is Some,
-        res is None ==> parse_owlSpec_msg2(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == parse_owlSpec_msg2(arg.dview())->Some_0,
+        res is Some ==> parse_owlSpec_msg2(arg.view()) is Some,
+        res is None ==> parse_owlSpec_msg2(arg.view()) is None,
+        res matches Some(x) ==> x.view() == parse_owlSpec_msg2(arg.view())->Some_0,
         res matches Some(x) ==> x.len_valid(),
 {
     reveal(parse_owlSpec_msg2);
-    let stream = parse_serialize::Stream { data: arg, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::parse_owl_msg2(stream) {
+    let exec_comb = exec_combinator_owl_msg2();
+    if let Ok((_, parsed)) = exec_comb.parse(arg) {
         let (
             (
                 (
@@ -1053,13 +1261,13 @@ pub exec fn parse_owl_msg2<'a>(arg: &'a [u8]) -> (res: Option<
         ) = parsed;
         Some(
             owl_msg2 {
-                owl__msg2_tag: OwlBuf::from_slice(&owl__msg2_tag),
+                owl__msg2_tag: (),
                 owl__msg2_sender: OwlBuf::from_slice(&owl__msg2_sender),
                 owl__msg2_receiver: OwlBuf::from_slice(&owl__msg2_receiver),
                 owl__msg2_ephemeral: OwlBuf::from_slice(&owl__msg2_ephemeral),
                 owl__msg2_empty: OwlBuf::from_slice(&owl__msg2_empty),
                 owl__msg2_mac1: OwlBuf::from_slice(&owl__msg2_mac1),
-                owl__msg2_mac2: OwlBuf::from_slice(&owl__msg2_mac2),
+                owl__msg2_mac2: (),
             },
         )
     } else {
@@ -1067,31 +1275,29 @@ pub exec fn parse_owl_msg2<'a>(arg: &'a [u8]) -> (res: Option<
     }
 }
 
-#[verifier(external_body)]  // to allow `as_mut_slice` call, TODO fix
 pub exec fn serialize_owl_msg2_inner(arg: &owl_msg2) -> (res: Option<Vec<u8>>)
     requires
         arg.len_valid(),
     ensures
-        res is Some ==> serialize_owlSpec_msg2_inner(arg.dview()) is Some,
-        res is None ==> serialize_owlSpec_msg2_inner(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == serialize_owlSpec_msg2_inner(arg.dview())->Some_0,
+        res is Some ==> serialize_owlSpec_msg2_inner(arg.view()) is Some,
+        // res is None ==> serialize_owlSpec_msg2_inner(arg.view()) is None,
+        res matches Some(x) ==> x.view() == serialize_owlSpec_msg2_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_msg2_inner);
-    if no_usize_overflows![ arg.owl__msg2_tag.len(), arg.owl__msg2_sender.len(), arg.owl__msg2_receiver.len(), arg.owl__msg2_ephemeral.len(), arg.owl__msg2_empty.len(), arg.owl__msg2_mac1.len(), arg.owl__msg2_mac2.len(), 0 ] {
+    if no_usize_overflows![ 0, arg.owl__msg2_sender.len(), arg.owl__msg2_receiver.len(), arg.owl__msg2_ephemeral.len(), arg.owl__msg2_empty.len(), arg.owl__msg2_mac1.len(), 0, 0 ] {
+        let exec_comb = exec_combinator_owl_msg2();
         let mut obuf = vec_u8_of_len(
-            arg.owl__msg2_tag.len() + arg.owl__msg2_sender.len() + arg.owl__msg2_receiver.len()
+            0 + arg.owl__msg2_sender.len() + arg.owl__msg2_receiver.len()
                 + arg.owl__msg2_ephemeral.len() + arg.owl__msg2_empty.len()
-                + arg.owl__msg2_mac1.len() + arg.owl__msg2_mac2.len() + 0,
+                + arg.owl__msg2_mac1.len() + 0 + 0,
         );
-        let ser_result = parse_serialize::serialize_owl_msg2(
-            obuf.as_mut_slice(),
-            0,
-            ((
+        let ser_result = exec_comb.serialize(
+            (
                 (
                     (
                         (
                             (
-                                (arg.owl__msg2_tag.as_slice(), arg.owl__msg2_sender.as_slice()),
+                                (arg.owl__msg2_tag, arg.owl__msg2_sender.as_slice()),
                                 arg.owl__msg2_receiver.as_slice(),
                             ),
                             arg.owl__msg2_ephemeral.as_slice(),
@@ -1100,10 +1306,12 @@ pub exec fn serialize_owl_msg2_inner(arg: &owl_msg2) -> (res: Option<Vec<u8>>)
                     ),
                     arg.owl__msg2_mac1.as_slice(),
                 ),
-                arg.owl__msg2_mac2.as_slice(),
-            )),
+                arg.owl__msg2_mac2,
+            ),
+            &mut obuf,
+            0,
         );
-        if let Ok((_new_start, num_written)) = ser_result {
+        if let Ok((num_written)) = ser_result {
             vec_truncate(&mut obuf, num_written);
             Some(obuf)
         } else {
@@ -1118,7 +1326,7 @@ pub exec fn serialize_owl_msg2(arg: &owl_msg2) -> (res: Vec<u8>)
     requires
         arg.len_valid(),
     ensures
-        res.dview() == serialize_owlSpec_msg2(arg.dview()),
+        res.view() == serialize_owlSpec_msg2(arg.view()),
 {
     reveal(serialize_owlSpec_msg2);
     let res = serialize_owl_msg2_inner(arg);
@@ -1127,7 +1335,7 @@ pub exec fn serialize_owl_msg2(arg: &owl_msg2) -> (res: Vec<u8>)
 }
 
 pub struct owl_transp<'a> {
-    pub owl__transp_tag: OwlBuf<'a>,
+    pub owl__transp_tag: (),
     pub owl__transp_receiver: OwlBuf<'a>,
     pub owl__transp_counter: OwlBuf<'a>,
     pub owl__transp_packet: OwlBuf<'a>,
@@ -1137,22 +1345,21 @@ pub struct owl_transp<'a> {
 // so we don't have to special-case struct constructors in the compiler
 #[inline]
 pub fn owl_transp<'a>(
-    arg_owl__transp_tag: OwlBuf<'a>,
+    arg_owl__transp_tag: (),
     arg_owl__transp_receiver: OwlBuf<'a>,
     arg_owl__transp_counter: OwlBuf<'a>,
     arg_owl__transp_packet: OwlBuf<'a>,
 ) -> (res: owl_transp<'a>)
     requires
-        arg_owl__transp_tag.len_valid(),
         arg_owl__transp_receiver.len_valid(),
         arg_owl__transp_counter.len_valid(),
         arg_owl__transp_packet.len_valid(),
     ensures
         res.len_valid(),
-        res.owl__transp_tag.dview() == arg_owl__transp_tag.dview(),
-        res.owl__transp_receiver.dview() == arg_owl__transp_receiver.dview(),
-        res.owl__transp_counter.dview() == arg_owl__transp_counter.dview(),
-        res.owl__transp_packet.dview() == arg_owl__transp_packet.dview(),
+        res.owl__transp_tag.view() == arg_owl__transp_tag.view(),
+        res.owl__transp_receiver.view() == arg_owl__transp_receiver.view(),
+        res.owl__transp_counter.view() == arg_owl__transp_counter.view(),
+        res.owl__transp_packet.view() == arg_owl__transp_packet.view(),
 {
     owl_transp {
         owl__transp_tag: arg_owl__transp_tag,
@@ -1164,20 +1371,20 @@ pub fn owl_transp<'a>(
 
 impl owl_transp<'_> {
     pub open spec fn len_valid(&self) -> bool {
-        self.owl__transp_tag.len_valid() && self.owl__transp_receiver.len_valid()
-            && self.owl__transp_counter.len_valid() && self.owl__transp_packet.len_valid()
+        self.owl__transp_receiver.len_valid() && self.owl__transp_counter.len_valid()
+            && self.owl__transp_packet.len_valid()
     }
 }
 
-impl DView for owl_transp<'_> {
+impl View for owl_transp<'_> {
     type V = owlSpec_transp;
 
-    open spec fn dview(&self) -> owlSpec_transp {
+    open spec fn view(&self) -> owlSpec_transp {
         owlSpec_transp {
-            owlSpec__transp_tag: self.owl__transp_tag.dview(),
-            owlSpec__transp_receiver: self.owl__transp_receiver.dview(),
-            owlSpec__transp_counter: self.owl__transp_counter.dview(),
-            owlSpec__transp_packet: self.owl__transp_packet.dview(),
+            owlSpec__transp_tag: self.owl__transp_tag.view(),
+            owlSpec__transp_receiver: self.owl__transp_receiver.view(),
+            owlSpec__transp_counter: self.owl__transp_counter.view(),
+            owlSpec__transp_packet: self.owl__transp_packet.view(),
         }
     }
 }
@@ -1188,19 +1395,19 @@ pub exec fn parse_owl_transp<'a>(arg: &'a [u8]) -> (res: Option<
 // requires arg.len_valid()
 
     ensures
-        res is Some ==> parse_owlSpec_transp(arg.dview()) is Some,
-        res is None ==> parse_owlSpec_transp(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == parse_owlSpec_transp(arg.dview())->Some_0,
+        res is Some ==> parse_owlSpec_transp(arg.view()) is Some,
+        res is None ==> parse_owlSpec_transp(arg.view()) is None,
+        res matches Some(x) ==> x.view() == parse_owlSpec_transp(arg.view())->Some_0,
         res matches Some(x) ==> x.len_valid(),
 {
     reveal(parse_owlSpec_transp);
-    let stream = parse_serialize::Stream { data: arg, start: 0 };
-    if let Ok((_, _, parsed)) = parse_serialize::parse_owl_transp(stream) {
+    let exec_comb = exec_combinator_owl_transp();
+    if let Ok((_, parsed)) = exec_comb.parse(arg) {
         let (((owl__transp_tag, owl__transp_receiver), owl__transp_counter), owl__transp_packet) =
             parsed;
         Some(
             owl_transp {
-                owl__transp_tag: OwlBuf::from_slice(&owl__transp_tag),
+                owl__transp_tag: (),
                 owl__transp_receiver: OwlBuf::from_slice(&owl__transp_receiver),
                 owl__transp_counter: OwlBuf::from_slice(&owl__transp_counter),
                 owl__transp_packet: OwlBuf::from_slice(&owl__transp_packet),
@@ -1211,33 +1418,33 @@ pub exec fn parse_owl_transp<'a>(arg: &'a [u8]) -> (res: Option<
     }
 }
 
-#[verifier(external_body)]  // to allow `as_mut_slice` call, TODO fix
 pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>>)
     requires
         arg.len_valid(),
     ensures
-        res is Some ==> serialize_owlSpec_transp_inner(arg.dview()) is Some,
-        res is None ==> serialize_owlSpec_transp_inner(arg.dview()) is None,
-        res matches Some(x) ==> x.dview() == serialize_owlSpec_transp_inner(arg.dview())->Some_0,
+        res is Some ==> serialize_owlSpec_transp_inner(arg.view()) is Some,
+        // res is None ==> serialize_owlSpec_transp_inner(arg.view()) is None,
+        res matches Some(x) ==> x.view() == serialize_owlSpec_transp_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_transp_inner);
-    if no_usize_overflows![ arg.owl__transp_tag.len(), arg.owl__transp_receiver.len(), arg.owl__transp_counter.len(), arg.owl__transp_packet.len(), 0 ] {
+    if no_usize_overflows![ 0, arg.owl__transp_receiver.len(), arg.owl__transp_counter.len(), arg.owl__transp_packet.len(), 0 ] {
+        let exec_comb = exec_combinator_owl_transp();
         let mut obuf = vec_u8_of_len(
-            arg.owl__transp_tag.len() + arg.owl__transp_receiver.len()
-                + arg.owl__transp_counter.len() + arg.owl__transp_packet.len() + 0,
+            0 + arg.owl__transp_receiver.len() + arg.owl__transp_counter.len()
+                + arg.owl__transp_packet.len() + 0,
         );
-        let ser_result = parse_serialize::serialize_owl_transp(
-            obuf.as_mut_slice(),
-            0,
-            ((
+        let ser_result = exec_comb.serialize(
+            (
                 (
-                    (arg.owl__transp_tag.as_slice(), arg.owl__transp_receiver.as_slice()),
+                    (arg.owl__transp_tag, arg.owl__transp_receiver.as_slice()),
                     arg.owl__transp_counter.as_slice(),
                 ),
                 arg.owl__transp_packet.as_slice(),
-            )),
+            ),
+            &mut obuf,
+            0,
         );
-        if let Ok((_new_start, num_written)) = ser_result {
+        if let Ok((num_written)) = ser_result {
             vec_truncate(&mut obuf, num_written);
             Some(obuf)
         } else {
@@ -1252,7 +1459,7 @@ pub exec fn serialize_owl_transp(arg: &owl_transp) -> (res: Vec<u8>)
     requires
         arg.len_valid(),
     ensures
-        res.dview() == serialize_owlSpec_transp(arg.dview()),
+        res.view() == serialize_owlSpec_transp(arg.view()),
 {
     reveal(serialize_owlSpec_transp);
     let res = serialize_owl_transp_inner(arg);
@@ -1263,6 +1470,7 @@ pub exec fn serialize_owl_transp(arg: &owl_transp) -> (res: Vec<u8>)
 pub struct owl_transp_keys_init<'a> {
     pub owl_tki_msg2_receiver: OwlBuf<'a>,
     pub owl_tki_msg2_sender: OwlBuf<'a>,
+    pub owl_tki_has_psk: bool,
     pub owl_tki_eph: Ghost<()>,
     pub owl_tki_c7: Ghost<()>,
     pub owl_tki_k_init_send: OwlBuf<'a>,
@@ -1275,6 +1483,7 @@ pub struct owl_transp_keys_init<'a> {
 pub fn owl_transp_keys_init<'a>(
     arg_owl_tki_msg2_receiver: OwlBuf<'a>,
     arg_owl_tki_msg2_sender: OwlBuf<'a>,
+    arg_owl_tki_has_psk: bool,
     arg_owl_tki_eph: Ghost<()>,
     arg_owl_tki_c7: Ghost<()>,
     arg_owl_tki_k_init_send: OwlBuf<'a>,
@@ -1287,16 +1496,18 @@ pub fn owl_transp_keys_init<'a>(
         arg_owl_tki_k_resp_send.len_valid(),
     ensures
         res.len_valid(),
-        res.owl_tki_msg2_receiver.dview() == arg_owl_tki_msg2_receiver.dview(),
-        res.owl_tki_msg2_sender.dview() == arg_owl_tki_msg2_sender.dview(),
-        res.owl_tki_eph.dview() == arg_owl_tki_eph.dview(),
-        res.owl_tki_c7.dview() == arg_owl_tki_c7.dview(),
-        res.owl_tki_k_init_send.dview() == arg_owl_tki_k_init_send.dview(),
-        res.owl_tki_k_resp_send.dview() == arg_owl_tki_k_resp_send.dview(),
+        res.owl_tki_msg2_receiver.view() == arg_owl_tki_msg2_receiver.view(),
+        res.owl_tki_msg2_sender.view() == arg_owl_tki_msg2_sender.view(),
+        res.owl_tki_has_psk.view() == arg_owl_tki_has_psk.view(),
+        res.owl_tki_eph.view() == arg_owl_tki_eph.view(),
+        res.owl_tki_c7.view() == arg_owl_tki_c7.view(),
+        res.owl_tki_k_init_send.view() == arg_owl_tki_k_init_send.view(),
+        res.owl_tki_k_resp_send.view() == arg_owl_tki_k_resp_send.view(),
 {
     owl_transp_keys_init {
         owl_tki_msg2_receiver: arg_owl_tki_msg2_receiver,
         owl_tki_msg2_sender: arg_owl_tki_msg2_sender,
+        owl_tki_has_psk: arg_owl_tki_has_psk,
         owl_tki_eph: arg_owl_tki_eph,
         owl_tki_c7: arg_owl_tki_c7,
         owl_tki_k_init_send: arg_owl_tki_k_init_send,
@@ -1311,17 +1522,18 @@ impl owl_transp_keys_init<'_> {
     }
 }
 
-impl DView for owl_transp_keys_init<'_> {
+impl View for owl_transp_keys_init<'_> {
     type V = owlSpec_transp_keys_init;
 
-    open spec fn dview(&self) -> owlSpec_transp_keys_init {
+    open spec fn view(&self) -> owlSpec_transp_keys_init {
         owlSpec_transp_keys_init {
-            owlSpec_tki_msg2_receiver: self.owl_tki_msg2_receiver.dview(),
-            owlSpec_tki_msg2_sender: self.owl_tki_msg2_sender.dview(),
-            owlSpec_tki_eph: self.owl_tki_eph.dview(),
-            owlSpec_tki_c7: self.owl_tki_c7.dview(),
-            owlSpec_tki_k_init_send: self.owl_tki_k_init_send.dview(),
-            owlSpec_tki_k_resp_send: self.owl_tki_k_resp_send.dview(),
+            owlSpec_tki_msg2_receiver: self.owl_tki_msg2_receiver.view(),
+            owlSpec_tki_msg2_sender: self.owl_tki_msg2_sender.view(),
+            owlSpec_tki_has_psk: self.owl_tki_has_psk.view(),
+            owlSpec_tki_eph: ghost_unit(),
+            owlSpec_tki_c7: ghost_unit(),
+            owlSpec_tki_k_init_send: self.owl_tki_k_init_send.view(),
+            owlSpec_tki_k_resp_send: self.owl_tki_k_resp_send.view(),
         }
     }
 }
@@ -1329,6 +1541,7 @@ impl DView for owl_transp_keys_init<'_> {
 pub struct owl_transp_keys_resp<'a> {
     pub owl_tkr_msg2_receiver: OwlBuf<'a>,
     pub owl_tkr_msg2_sender: OwlBuf<'a>,
+    pub owl_tkr_has_psk: bool,
     pub owl_tkr_eph: Ghost<()>,
     pub owl_tkr_c7: Ghost<()>,
     pub owl_tkr_recvd: bool,
@@ -1342,6 +1555,7 @@ pub struct owl_transp_keys_resp<'a> {
 pub fn owl_transp_keys_resp<'a>(
     arg_owl_tkr_msg2_receiver: OwlBuf<'a>,
     arg_owl_tkr_msg2_sender: OwlBuf<'a>,
+    arg_owl_tkr_has_psk: bool,
     arg_owl_tkr_eph: Ghost<()>,
     arg_owl_tkr_c7: Ghost<()>,
     arg_owl_tkr_recvd: bool,
@@ -1355,17 +1569,19 @@ pub fn owl_transp_keys_resp<'a>(
         arg_owl_tkr_k_resp_send.len_valid(),
     ensures
         res.len_valid(),
-        res.owl_tkr_msg2_receiver.dview() == arg_owl_tkr_msg2_receiver.dview(),
-        res.owl_tkr_msg2_sender.dview() == arg_owl_tkr_msg2_sender.dview(),
-        res.owl_tkr_eph.dview() == arg_owl_tkr_eph.dview(),
-        res.owl_tkr_c7.dview() == arg_owl_tkr_c7.dview(),
-        res.owl_tkr_recvd.dview() == arg_owl_tkr_recvd.dview(),
-        res.owl_tkr_k_init_send.dview() == arg_owl_tkr_k_init_send.dview(),
-        res.owl_tkr_k_resp_send.dview() == arg_owl_tkr_k_resp_send.dview(),
+        res.owl_tkr_msg2_receiver.view() == arg_owl_tkr_msg2_receiver.view(),
+        res.owl_tkr_msg2_sender.view() == arg_owl_tkr_msg2_sender.view(),
+        res.owl_tkr_has_psk.view() == arg_owl_tkr_has_psk.view(),
+        res.owl_tkr_eph.view() == arg_owl_tkr_eph.view(),
+        res.owl_tkr_c7.view() == arg_owl_tkr_c7.view(),
+        res.owl_tkr_recvd.view() == arg_owl_tkr_recvd.view(),
+        res.owl_tkr_k_init_send.view() == arg_owl_tkr_k_init_send.view(),
+        res.owl_tkr_k_resp_send.view() == arg_owl_tkr_k_resp_send.view(),
 {
     owl_transp_keys_resp {
         owl_tkr_msg2_receiver: arg_owl_tkr_msg2_receiver,
         owl_tkr_msg2_sender: arg_owl_tkr_msg2_sender,
+        owl_tkr_has_psk: arg_owl_tkr_has_psk,
         owl_tkr_eph: arg_owl_tkr_eph,
         owl_tkr_c7: arg_owl_tkr_c7,
         owl_tkr_recvd: arg_owl_tkr_recvd,
@@ -1381,18 +1597,19 @@ impl owl_transp_keys_resp<'_> {
     }
 }
 
-impl DView for owl_transp_keys_resp<'_> {
+impl View for owl_transp_keys_resp<'_> {
     type V = owlSpec_transp_keys_resp;
 
-    open spec fn dview(&self) -> owlSpec_transp_keys_resp {
+    open spec fn view(&self) -> owlSpec_transp_keys_resp {
         owlSpec_transp_keys_resp {
-            owlSpec_tkr_msg2_receiver: self.owl_tkr_msg2_receiver.dview(),
-            owlSpec_tkr_msg2_sender: self.owl_tkr_msg2_sender.dview(),
-            owlSpec_tkr_eph: self.owl_tkr_eph.dview(),
-            owlSpec_tkr_c7: self.owl_tkr_c7.dview(),
-            owlSpec_tkr_recvd: self.owl_tkr_recvd.dview(),
-            owlSpec_tkr_k_init_send: self.owl_tkr_k_init_send.dview(),
-            owlSpec_tkr_k_resp_send: self.owl_tkr_k_resp_send.dview(),
+            owlSpec_tkr_msg2_receiver: self.owl_tkr_msg2_receiver.view(),
+            owlSpec_tkr_msg2_sender: self.owl_tkr_msg2_sender.view(),
+            owlSpec_tkr_has_psk: self.owl_tkr_has_psk.view(),
+            owlSpec_tkr_eph: ghost_unit(),
+            owlSpec_tkr_c7: ghost_unit(),
+            owlSpec_tkr_recvd: self.owl_tkr_recvd.view(),
+            owlSpec_tkr_k_init_send: self.owl_tkr_k_init_send.view(),
+            owlSpec_tkr_k_resp_send: self.owl_tkr_k_resp_send.view(),
         }
     }
 }
@@ -1410,28 +1627,29 @@ pub fn owl_resp_transp_recv_result<'a>(
     arg_owl_rr_msg: OwlBuf<'a>,
 ) -> (res: owl_resp_transp_recv_result<'a>)
     requires
+        arg_owl_rr_st.len_valid(),
         arg_owl_rr_msg.len_valid(),
     ensures
         res.len_valid(),
-        res.owl_rr_st.dview() == arg_owl_rr_st.dview(),
-        res.owl_rr_msg.dview() == arg_owl_rr_msg.dview(),
+        res.owl_rr_st.view() == arg_owl_rr_st.view(),
+        res.owl_rr_msg.view() == arg_owl_rr_msg.view(),
 {
     owl_resp_transp_recv_result { owl_rr_st: arg_owl_rr_st, owl_rr_msg: arg_owl_rr_msg }
 }
 
 impl owl_resp_transp_recv_result<'_> {
     pub open spec fn len_valid(&self) -> bool {
-        self.owl_rr_msg.len_valid()
+        self.owl_rr_st.len_valid() && self.owl_rr_msg.len_valid()
     }
 }
 
-impl DView for owl_resp_transp_recv_result<'_> {
+impl View for owl_resp_transp_recv_result<'_> {
     type V = owlSpec_resp_transp_recv_result;
 
-    open spec fn dview(&self) -> owlSpec_resp_transp_recv_result {
+    open spec fn view(&self) -> owlSpec_resp_transp_recv_result {
         owlSpec_resp_transp_recv_result {
-            owlSpec_rr_st: self.owl_rr_st.dview(),
-            owlSpec_rr_msg: self.owl_rr_msg.dview(),
+            owlSpec_rr_st: self.owl_rr_st.view(),
+            owlSpec_rr_msg: self.owl_rr_msg.view(),
         }
     }
 }
@@ -1488,6 +1706,7 @@ impl<O> cfg_Initiator<O> {
         let owl_transp_keys_val = owl_transp_keys_init {
             owl_tki_msg2_receiver: OwlBuf::from_slice(owl_tki_msg2_receiver),
             owl_tki_msg2_sender: OwlBuf::from_slice(owl_tki_msg2_sender),
+            owl_tki_has_psk: false,
             owl_tki_eph: Ghost(()),
             owl_tki_c7: Ghost(()),
             owl_tki_k_init_send: OwlBuf::from_slice(owl_tki_k_init_send),
@@ -1504,41 +1723,45 @@ impl<O> cfg_Initiator<O> {
         &'a self,
         Tracked(itree): Tracked<ITreeToken<((), state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
-        owl_tki373: owl_transp_keys_init<'a>,
-        owl_msg374: OwlBuf<'a>,
-        obuf: &mut [u8],
+        owl_tki401: owl_transp_keys_init<'a>,
+        owl_msg402: OwlBuf<'a>,
+        obuf: &'a mut [u8],
     ) -> (res: Result<((), Tracked<ITreeToken<((), state_Initiator), Endpoint>>), OwlError>)
         requires
             itree.view() == init_send_spec(
                 *self,
                 *old(mut_state),
-                owl_tki373.dview(),
-                owl_msg374.dview(),
+                owl_tki401.view(),
+                owl_msg402.view(),
             ),
-            owl_tki373.len_valid(),
-            owl_msg374.len_valid(),
+            owl_tki401.len_valid(),
+            owl_msg402.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in(((), *mut_state)),
     {
         let tracked mut itree = itree;
-        let res_inner = {
-            // broadcast use itree_axioms;
+        let (res_inner, Tracked(itree)): (
+            (),
+            Tracked<ITreeToken<((), state_Initiator), Endpoint>>,
+        ) = {
+            broadcast use itree_axioms;
 
             reveal(init_send_spec);
-            let parseval = owl_tki373;
-            let owl_init317 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
-            let owl_resp316 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
-            let owl_eph315 = parseval.owl_tki_eph;
-            let owl_c7314 = parseval.owl_tki_c7;
-            let owl_init_send313 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
-            let owl_resp_send312 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
-            let tmp_owl_transp_counter318 = { owl_counter_as_bytes(&mut_state.owl_N_init_send) };
-            let owl_transp_counter318 = OwlBuf::from_slice(&tmp_owl_transp_counter318);
-            let owl_c319 = {
+            let parseval = owl_tki401;
+            let owl_init342 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
+            let owl_resp341 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
+            let owl_haspsk340 = parseval.owl_tki_has_psk;
+            let owl_eph339 = parseval.owl_tki_eph;
+            let owl_c7338 = parseval.owl_tki_c7;
+            let owl_init_send337 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
+            let owl_resp_send336 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
+            let tmp_owl_transp_counter343 = { owl_counter_as_bytes(&mut_state.owl_N_init_send) };
+            let owl_transp_counter343 = OwlBuf::from_slice(&tmp_owl_transp_counter343);
+            let owl_c344 = {
                 {
                     match owl_enc_st_aead(
-                        owl_init_send313.as_slice(),
-                        owl_msg374.as_slice(),
+                        owl_init_send337.as_slice(),
+                        owl_msg402.as_slice(),
                         &mut mut_state.owl_N_init_send,
                         {
                             let x = mk_vec_u8![];
@@ -1550,20 +1773,25 @@ impl<O> cfg_Initiator<O> {
                     }
                 }
             };
-            let owl_transp_tag320 = { owl_transp_tag_value() };
-            let owl_o321 = {
-                owl_transp(owl_transp_tag320, owl_init317, owl_transp_counter318, owl_c319)
+            let owl_transp_tag345 = { owl_transp_tag_value() };
+            let owl_o346 = {
+                owl_transp(
+                    (),
+                    OwlBuf::another_ref(&owl_init342),
+                    OwlBuf::another_ref(&owl_transp_counter343),
+                    OwlBuf::another_ref(&owl_c344),
+                )
             };
             owl_output::<((), state_Initiator)>(
                 Tracked(&mut itree),
-                &serialize_owl_transp(&owl_o321).as_slice(),
+                serialize_owl_transp(&owl_o346).as_slice(),
                 &Responder_addr(),
                 &Initiator_addr(),
                 obuf
             );
             ((), Tracked(itree))
         };
-        Ok(res_inner)
+        Ok((res_inner, Tracked(itree)))
     }
 
     pub exec fn owl_transp_recv_init_wrapper<'a>(
@@ -1586,6 +1814,7 @@ impl<O> cfg_Initiator<O> {
         let owl_tki = owl_transp_keys_init {
             owl_tki_msg2_receiver: OwlBuf::from_slice(owl_tki_msg2_receiver),
             owl_tki_msg2_sender: OwlBuf::from_slice(owl_tki_msg2_sender),
+            owl_tki_has_psk: false,
             owl_tki_eph: Ghost(()),
             owl_tki_c7: Ghost(()),
             owl_tki_k_init_send: OwlBuf::from_slice(owl_tki_k_init_send),
@@ -1601,55 +1830,60 @@ impl<O> cfg_Initiator<O> {
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
-        owl_tki375: owl_transp_keys_init<'a>,
+        owl_tki403: owl_transp_keys_init<'a>,
         ibuf: &'a [u8],
     ) -> (res: Result<
         (Option<OwlBuf<'a>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
-            itree.view() == init_recv_spec(*self, *old(mut_state), owl_tki375.dview()),
-            owl_tki375.len_valid(),
+            itree.view() == init_recv_spec(*self, *old(mut_state), owl_tki403.view()),
+            owl_tki403.len_valid(),
         ensures
-            res matches Ok(r) ==> (r.1).view().view().results_in((dview_option((r.0)), *mut_state)),
+            res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
+            res matches Ok((Some(b), _)) ==> b.len_valid(),
     {
         let tracked mut itree = itree;
-        let res_inner = {
-            // broadcast use itree_axioms;
+        let (res_inner, Tracked(itree)): (
+            Option<OwlBuf<'a>>,
+            Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
+        ) = {
+            broadcast use itree_axioms;
 
             reveal(init_recv_spec);
-            let (tmp_owl_i324, owl__323) = {
+            let (tmp_owl_i349, owl__348) = {
                 owl_input::<(Option<Seq<u8>>, state_Initiator)>(Tracked(&mut itree), ibuf)
             };
-            let owl_i324 = OwlBuf::from_slice(tmp_owl_i324);
-            let parseval = owl_tki375;
-            let owl_init330 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
-            let owl_resp329 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
-            let owl_eph328 = parseval.owl_tki_eph;
-            let owl_c7327 = parseval.owl_tki_c7;
-            let owl_init_send326 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
-            let owl_resp_send325 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
-            let parseval_tmp = OwlBuf::another_ref(&owl_i324);
+            let owl_i349 = OwlBuf::from_slice(tmp_owl_i349);
+            let parseval = owl_tki403;
+            let owl_init356 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
+            let owl_resp355 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
+            let owl_haspsk354 = parseval.owl_tki_has_psk;
+            let owl_eph353 = parseval.owl_tki_eph;
+            let owl_c7352 = parseval.owl_tki_c7;
+            let owl_init_send351 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
+            let owl_resp_send350 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
+            let parseval_tmp = OwlBuf::another_ref(&owl_i349);
             if let Some(parseval) = parse_owl_transp(parseval_tmp.as_slice()) {
-                let owl_tag334 = OwlBuf::another_ref(&parseval.owl__transp_tag);
-                let owl_from333 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
-                let owl_ctr332 = OwlBuf::another_ref(&parseval.owl__transp_counter);
-                let owl_pkt331 = OwlBuf::another_ref(&parseval.owl__transp_packet);
+                let owl_tag360 = parseval.owl__transp_tag;
+                let owl_from359 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
+                let owl_ctr358 = OwlBuf::another_ref(&parseval.owl__transp_counter);
+                let owl_pkt357 = OwlBuf::another_ref(&parseval.owl__transp_packet);
                 {
-                    if { slice_eq(owl_from333.as_slice(), owl_resp329.as_slice()) } {
-                        let tmp_owl_p335 = {
+                    if { slice_eq(owl_from359.as_slice(), owl_resp355.as_slice()) } {
+                        let tmp_owl_p361 = {
                             owl_dec_st_aead(
-                                owl_resp_send325.as_slice(),
-                                owl_pkt331.as_slice(),
-                                owl_ctr332.as_slice(),
+                                owl_resp_send350.as_slice(),
+                                owl_pkt357.as_slice(),
+                                owl_ctr358.as_slice(),
                                 {
                                     let x = mk_vec_u8![];
                                     OwlBuf::from_vec(x)
                                 }.as_slice(),
                             )
                         };
-                        let owl_p335 = OwlBuf::from_vec_option(tmp_owl_p335);
-                        (owl_p335, Tracked(itree))
+                        let owl_p361 = OwlBuf::from_vec_option(tmp_owl_p361);
+                        (owl_p361, Tracked(itree))
                     } else {
                         (None, Tracked(itree))
                     }
@@ -1658,7 +1892,7 @@ impl<O> cfg_Initiator<O> {
                 (None, Tracked(itree))
             }
         };
-        Ok(res_inner)
+        Ok((res_inner, Tracked(itree)))
     }
 
     #[verifier(external_body)]
@@ -1761,6 +1995,7 @@ impl<O> cfg_Responder<O> {
         let owl_transp_keys_val = owl_transp_keys_resp {
             owl_tkr_msg2_receiver: OwlBuf::from_slice(owl_tkr_msg2_receiver),
             owl_tkr_msg2_sender: OwlBuf::from_slice(owl_tkr_msg2_sender),
+            owl_tkr_has_psk: false,
             owl_tkr_eph: Ghost(()),
             owl_tkr_c7: Ghost(()),
             owl_tkr_recvd: owl_tkr_recvd,
@@ -1777,9 +2012,9 @@ impl<O> cfg_Responder<O> {
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
-        owl_tki376: owl_transp_keys_resp<'a>,
-        owl_msg377: OwlBuf<'a>,
-        obuf: &mut [u8],
+        owl_tki404: owl_transp_keys_resp<'a>,
+        owl_msg405: OwlBuf<'a>,
+        obuf: &'a mut [u8],
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>),
         OwlError,
@@ -1788,46 +2023,50 @@ impl<O> cfg_Responder<O> {
             itree.view() == resp_send_spec(
                 *self,
                 *old(mut_state),
-                owl_tki376.dview(),
-                owl_msg377.dview(),
+                owl_tki404.view(),
+                owl_msg405.view(),
             ),
-            owl_tki376.len_valid(),
-            owl_msg377.len_valid(),
+            owl_tki404.len_valid(),
+            owl_msg405.len_valid(),
         ensures
-            res matches Ok(r) ==> (r.1).view().view().results_in((dview_option((r.0)), *mut_state)),
+            res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
     {
         let tracked mut itree = itree;
-        let res_inner = {
-            // broadcast use itree_axioms;
+        let (res_inner, Tracked(itree)): (
+            Option<()>,
+            Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>,
+        ) = {
+            broadcast use itree_axioms;
 
             reveal(resp_send_spec);
-            let owl_tki_338 = { owl_tki376 };
-            let parseval = owl_tki_338;
-            let owl_init345 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
-            let owl_resp344 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
-            let owl_eph343 = parseval.owl_tkr_eph;
-            let owl_c7342 = parseval.owl_tkr_c7;
-            let owl_b341 = parseval.owl_tkr_recvd;
-            let owl_init_send340 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
-            let owl_resp_send339 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
-            if owl_b341 {
+            let owl_tki_364 = { owl_tki404 };
+            let parseval = owl_tki_364;
+            let owl_init372 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
+            let owl_resp371 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
+            let owl_haspsk370 = parseval.owl_tkr_has_psk;
+            let owl_eph369 = parseval.owl_tkr_eph;
+            let owl_c7368 = parseval.owl_tkr_c7;
+            let owl_b367 = parseval.owl_tkr_recvd;
+            let owl_init_send366 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
+            let owl_resp_send365 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
+            if owl_b367 {
                 {
-                    let owl__346 = {
-                        let owl__347 = {
-                            let owl__assert_91348 = { owl_unit() };
-                            owl_unit()
+                    let owl__373 = {
+                        let owl__374 = {
+                            let owl__assert_91375 = { owl_ghost_unit() };
+                            owl_ghost_unit()
                         };
-                        owl_unit()
+                        owl_ghost_unit()
                     };
-                    let tmp_owl_transp_counter349 = {
+                    let tmp_owl_transp_counter376 = {
                         owl_counter_as_bytes(&mut_state.owl_N_resp_send)
                     };
-                    let owl_transp_counter349 = OwlBuf::from_slice(&tmp_owl_transp_counter349);
-                    let owl_c350 = {
+                    let owl_transp_counter376 = OwlBuf::from_slice(&tmp_owl_transp_counter376);
+                    let owl_c377 = {
                         {
                             match owl_enc_st_aead(
-                                owl_resp_send339.as_slice(),
-                                owl_msg377.as_slice(),
+                                owl_resp_send365.as_slice(),
+                                owl_msg405.as_slice(),
                                 &mut mut_state.owl_N_resp_send,
                                 {
                                     let x = mk_vec_u8![];
@@ -1839,17 +2078,22 @@ impl<O> cfg_Responder<O> {
                             }
                         }
                     };
-                    let owl_transp_tag351 = { owl_transp_tag_value() };
-                    let owl_o352 = {
-                        owl_transp(owl_transp_tag351, owl_resp344, owl_transp_counter349, owl_c350)
+                    let owl_transp_tag378 = { owl_transp_tag_value() };
+                    let owl_o379 = {
+                        owl_transp(
+                            (),
+                            OwlBuf::another_ref(&owl_resp371),
+                            OwlBuf::another_ref(&owl_transp_counter376),
+                            OwlBuf::another_ref(&owl_c377),
+                        )
                     };
-                    let owl__353 = {
+                    let owl__380 = {
                         owl_output::<(Option<()>, state_Responder)>(
                             Tracked(&mut itree),
-                            &serialize_owl_transp(&owl_o352).as_slice(),
+                            serialize_owl_transp(&owl_o379).as_slice(),
                             &Initiator_addr(),
                             &Responder_addr(),
-                            obuf,
+                            obuf
                         );
                     };
                     (Some(owl_unit()), Tracked(itree))
@@ -1858,7 +2102,7 @@ impl<O> cfg_Responder<O> {
                 (None, Tracked(itree))
             }
         };
-        Ok(res_inner)
+        Ok((res_inner, Tracked(itree)))
     }
 
     pub exec fn owl_transp_recv_resp_wrapper<'a>(
@@ -1882,6 +2126,7 @@ impl<O> cfg_Responder<O> {
         let owl_transp_keys_val = owl_transp_keys_resp {
             owl_tkr_msg2_receiver: OwlBuf::from_slice(owl_tkr_msg2_receiver),
             owl_tkr_msg2_sender: OwlBuf::from_slice(owl_tkr_msg2_sender),
+            owl_tkr_has_psk: false,
             owl_tkr_eph: Ghost(()),
             owl_tkr_c7: Ghost(()),
             owl_tkr_recvd: owl_tkr_recvd,
@@ -1900,11 +2145,11 @@ impl<O> cfg_Responder<O> {
             ITreeToken<(Option<owlSpec_resp_transp_recv_result>, state_Responder), Endpoint>,
         >,
         mut_state: &mut state_Responder,
-        owl_tki378: owl_transp_keys_resp<'a>,
+        owl_tki406: owl_transp_keys_resp<'a>,
         ibuf: &'a [u8],
     ) -> (res: Result<
         (
-            Option<owl_resp_transp_recv_result>,
+            Option<owl_resp_transp_recv_result<'a>>,
             Tracked<
                 ITreeToken<(Option<owlSpec_resp_transp_recv_result>, state_Responder), Endpoint>,
             >,
@@ -1912,69 +2157,81 @@ impl<O> cfg_Responder<O> {
         OwlError,
     >)
         requires
-            itree.view() == resp_recv_spec(*self, *old(mut_state), owl_tki378.dview()),
-            owl_tki378.len_valid(),
+            itree.view() == resp_recv_spec(*self, *old(mut_state), owl_tki406.view()),
+            owl_tki406.len_valid(),
         ensures
-            res matches Ok(r) ==> (r.1).view().view().results_in((dview_option((r.0)), *mut_state)),
+            res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
+            res matches Ok((Some(b), _)) ==> b.len_valid(),
     {
         let tracked mut itree = itree;
-        let res_inner = {
-            // broadcast use itree_axioms;
+        let (res_inner, Tracked(itree)): (
+            Option<owl_resp_transp_recv_result<'a>>,
+            Tracked<
+                ITreeToken<(Option<owlSpec_resp_transp_recv_result>, state_Responder), Endpoint>,
+            >,
+        ) = {
+            broadcast use itree_axioms;
 
             reveal(resp_recv_spec);
-            let (tmp_owl_i356, owl__355) = {
+            let (tmp_owl_i383, owl__382) = {
                 owl_input::<(Option<owlSpec_resp_transp_recv_result>, state_Responder)>(
                     Tracked(&mut itree),
-                    ibuf,
+                    ibuf
                 )
             };
-            let owl_i356 = OwlBuf::from_slice(tmp_owl_i356);
-            let owl_tki_357 = { owl_tki378 };
-            let parseval = owl_tki_357;
-            let owl_init364 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
-            let owl_resp363 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
-            let owl_eph362 = parseval.owl_tkr_eph;
-            let owl_c7361 = parseval.owl_tkr_c7;
-            let owl__360 = parseval.owl_tkr_recvd;
-            let owl_init_send359 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
-            let owl_resp_send358 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
-            let parseval_tmp = OwlBuf::another_ref(&owl_i356);
+            let owl_i383 = OwlBuf::from_slice(tmp_owl_i383);
+            let owl_tki_384 = { owl_tki406 };
+            let parseval = owl_tki_384;
+            let owl_init392 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
+            let owl_resp391 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
+            let owl_haspsk390 = parseval.owl_tkr_has_psk;
+            let owl_eph389 = parseval.owl_tkr_eph;
+            let owl_c7388 = parseval.owl_tkr_c7;
+            let owl__387 = parseval.owl_tkr_recvd;
+            let owl_init_send386 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
+            let owl_resp_send385 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
+            let parseval_tmp = OwlBuf::another_ref(&owl_i383);
             if let Some(parseval) = parse_owl_transp(parseval_tmp.as_slice()) {
-                let owl_tag368 = OwlBuf::another_ref(&parseval.owl__transp_tag);
-                let owl_from367 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
-                let owl_ctr366 = OwlBuf::another_ref(&parseval.owl__transp_counter);
-                let owl_pkt365 = OwlBuf::another_ref(&parseval.owl__transp_packet);
+                let owl_tag396 = parseval.owl__transp_tag;
+                let owl_from395 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
+                let owl_ctr394 = OwlBuf::another_ref(&parseval.owl__transp_counter);
+                let owl_pkt393 = OwlBuf::another_ref(&parseval.owl__transp_packet);
                 {
-                    if { slice_eq(owl_from367.as_slice(), owl_init364.as_slice()) } {
-                        let tmp_owl_caseval369 = {
+                    if { slice_eq(owl_from395.as_slice(), owl_init392.as_slice()) } {
+                        let tmp_owl_caseval397 = {
                             owl_dec_st_aead(
-                                owl_init_send359.as_slice(),
-                                owl_pkt365.as_slice(),
-                                owl_ctr366.as_slice(),
+                                owl_init_send386.as_slice(),
+                                owl_pkt393.as_slice(),
+                                owl_ctr394.as_slice(),
                                 {
                                     let x = mk_vec_u8![];
                                     OwlBuf::from_vec(x)
                                 }.as_slice(),
                             )
                         };
-                        let owl_caseval369 = OwlBuf::from_vec_option(tmp_owl_caseval369);
-                        match owl_caseval369 {
-                            Option::Some(tmp_owl_x370) => {
-                                let owl_x370 = OwlBuf::another_ref(&tmp_owl_x370);
-                                let owl_st_371 = {
+                        let owl_caseval397 = OwlBuf::from_vec_option(tmp_owl_caseval397);
+                        match owl_caseval397 {
+                            Option::Some(tmp_owl_x398) => {
+                                let owl_x398 = OwlBuf::another_ref(&tmp_owl_x398);
+                                let owl_st_399 = {
                                     owl_transp_keys_resp(
-                                        owl_init364,
-                                        owl_resp363,
-                                        owl_eph362,
-                                        owl_c7361,
+                                        OwlBuf::another_ref(&owl_init392),
+                                        OwlBuf::another_ref(&owl_resp391),
+                                        owl_haspsk390,
+                                        owl_ghost_unit(),
+                                        owl_ghost_unit(),
                                         true,
-                                        owl_init_send359,
-                                        owl_resp_send358,
+                                        OwlBuf::another_ref(&owl_init_send386),
+                                        OwlBuf::another_ref(&owl_resp_send385),
                                     )
                                 };
-                                let owl_ret372 = { owl_resp_transp_recv_result(owl_st_371, owl_x370)
+                                let owl_ret400 = {
+                                    owl_resp_transp_recv_result(
+                                        owl_st_399,
+                                        OwlBuf::another_ref(&owl_x398),
+                                    )
                                 };
-                                (Some(owl_ret372), Tracked(itree))
+                                (Some(owl_ret400), Tracked(itree))
                             },
                             Option::None => { (None, Tracked(itree)) },
                         }
@@ -1986,7 +2243,7 @@ impl<O> cfg_Responder<O> {
                 (None, Tracked(itree))
             }
         };
-        Ok(res_inner)
+        Ok((res_inner, Tracked(itree)))
     }
 
     #[verifier(external_body)]
