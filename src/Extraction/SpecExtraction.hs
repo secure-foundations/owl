@@ -101,7 +101,7 @@ execCombTyOf' (FHexConst s) = do
 execCombTyOf' _ = return Nothing
 
 execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
-execCombTyOf = liftFromJust specCombTyOf'
+execCombTyOf = liftFromJust execCombTyOf'
 
 -- (combinator type, any constants that need to be defined)
 specCombOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
@@ -151,7 +151,7 @@ execCombOf' (FHexConst s) = do
     exec const EXEC_BYTES_CONST_#{s}: [u8; #{l}] 
         ensures EXEC_BYTES_CONST_#{s}.view() == SPEC_BYTES_CONST_#{s} 
     {
-        let arr: [u8; #{l}] = #{bl};
+        let arr: [u8; #{l}] = [#{bl}];
         assert(arr.view() == SPEC_BYTES_CONST_#{s});
         arr
     }
