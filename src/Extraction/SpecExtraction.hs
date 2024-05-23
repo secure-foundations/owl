@@ -13,6 +13,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
+import Data.Char
 import Control.Monad
 import Control.Monad.Except
 import Control.Lens
@@ -104,13 +105,13 @@ execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 execCombTyOf = liftFromJust execCombTyOf'
 
 -- (combinator type, any constants that need to be defined)
-specCombOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-specCombOf' (FBuf (Just flen)) = do
+specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+specCombOf' _ (FBuf (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-specCombOf' (FBuf Nothing) = return $ noconst [di|Tail|]
-specCombOf' (FStruct _ fs) = do
-    fcs <- mapM (specCombOf' . snd) fs
+specCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+specCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (specCombOf' constSuffix . snd) fs
     case sequence fcs of
         Just fcs' -> do
             let (fs', consts) = unzip fcs'
@@ -119,23 +120,23 @@ specCombOf' (FStruct _ fs) = do
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
-specCombOf' (FHexConst s) = do
+specCombOf' constSuffix (FHexConst s) = do
     bl <- hexStringToByteList s
-    let const = [di|spec const SPEC_BYTES_CONST_#{s}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s})|], const)
-specCombOf' _ = return Nothing
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix}: Seq<u8> = seq![#{bl}];|]
+    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
+specCombOf' _ _ = return Nothing
 
-specCombOf :: FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
-specCombOf = liftFromJust specCombOf'
+specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+specCombOf s = liftFromJust (specCombOf' s)
 
 -- (combinator type, any constants that need to be defined)
-execCombOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-execCombOf' (FBuf (Just flen)) = do
+execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+execCombOf' _ (FBuf (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-execCombOf' (FBuf Nothing) = return $ noconst [di|Tail|]
-execCombOf' (FStruct _ fs) = do
-    fcs <- mapM (execCombOf' . snd) fs
+execCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+execCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (execCombOf' constSuffix . snd) fs
     case sequence fcs of
         Just fcs' -> do
             let (fs', consts) = unzip fcs'
@@ -144,23 +145,23 @@ execCombOf' (FStruct _ fs) = do
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
-execCombOf' (FHexConst s) = do
+execCombOf' constSuffix (FHexConst s) = do
     bl <- hexStringToByteList s
     let l = length s `div` 2
     let const = [__di|
-    exec const EXEC_BYTES_CONST_#{s}: [u8; #{l}] 
-        ensures EXEC_BYTES_CONST_#{s}.view() == SPEC_BYTES_CONST_#{s} 
+    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix}: [u8; #{l}] 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix} 
     {
         let arr: [u8; #{l}] = [#{bl}];
-        assert(arr.view() == SPEC_BYTES_CONST_#{s});
+        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix});
         arr
     }
     |]
-    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s})|], const)
-execCombOf' _ = return Nothing
+    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
+execCombOf' _ _ = return Nothing
 
-execCombOf :: FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
-execCombOf = liftFromJust execCombOf'
+execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+execCombOf s = liftFromJust (execCombOf' s)
 
 noconst :: a -> Maybe (a, Doc ann)
 noconst x = Just (x, [di||])
@@ -195,8 +196,9 @@ extractCStruct (CStruct n fs isVest) = do
             let ftys = map snd fs
             specCombTy <- mkNestPattern <$> mapM specCombTyOf ftys
             execCombTy <- mkNestPattern <$>  mapM execCombTyOf ftys
-            (specCombs, specConsts) <- unzip <$> mapM specCombOf ftys
-            (execCombs, execConsts) <- unzip <$> mapM execCombOf ftys
+            let constSuffix = map Data.Char.toUpper owlN
+            (specCombs, specConsts) <- unzip <$> mapM (specCombOf constSuffix) ftys
+            (execCombs, execConsts) <- unzip <$> mapM (execCombOf constSuffix) ftys
             let fieldVars = map ((++) "field_" . show) [1..length ftys]
             let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
             let mkSpecCombs = zipWith mkComb fieldVars specCombs
