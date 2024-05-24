@@ -52,9 +52,9 @@ specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap
 specTyOf FGhost = RTVerusGhost
 specTyOf (FHexConst _) = seqU8
 
-specFieldTyOf :: FormatTy -> VerusTy
-specFieldTyOf (FHexConst _) = RTUnit
-specFieldTyOf ft = specTyOf ft
+specFieldTyOf :: FormatTy -> (VerusTy, Maybe Int)
+specFieldTyOf (FHexConst s) = (RTUnit, Just $ length s `div` 2)
+specFieldTyOf ft = (specTyOf ft, Nothing)
 
 specTyOfSerialized :: FormatTy -> VerusTy
 specTyOfSerialized (FStruct fn ffs) = seqU8
@@ -181,7 +181,7 @@ extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
-    let structFields = vsep $ fmap (\(n, t) -> [di|pub #{n}: #{pretty t},|]) rfs
+    let structFields = vsep $ fmap (\(n, (t, _)) -> [di|pub #{n}: #{pretty t},|]) rfs
     let structDef = [__di|
     pub struct #{rn} {
         #{structFields}
@@ -242,10 +242,11 @@ extractCStruct (CStruct n fs isVest) = do
             }
             |]
             let fieldSels = map (\n -> [di|x.#{n}|]) fieldNames
-            let mklen (fn, ft) = case ft of
-                    RTUnit -> [di|0|]
-                    _ -> [di|x.#{fn}.len()|]
-            let fieldLens = map mklen specfields
+            let mklen (fn, ftfl) = case ftfl of
+                    (RTUnit, Just usz) -> return [di|#{pretty usz}|]
+                    (RTUnit, Nothing) -> throwError $ ErrSomethingFailed "no size for const ty"
+                    _ -> return [di|x.#{fn}.len()|]
+            fieldLens <- mapM mklen specfields
             let serInner = [__di|
             \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
@@ -308,7 +309,7 @@ extractCStruct (CStruct n fs isVest) = do
 
         genConstructor owlName specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
-            let args = hsep . punctuate comma $ map (\(n,t) -> [di|arg_#{n}: #{pretty t}|]) specfields
+            let args = hsep . punctuate comma $ map (\(n,(t,_)) -> [di|arg_#{n}: #{pretty t}|]) specfields
             let mkFields = hsep . punctuate comma $ map (\(n,_) -> [di|#{n}: arg_#{n}|]) specfields
             let constructor = [__di|
             pub open spec fn #{owlName}(#{args}) -> #{specname} {
@@ -330,7 +331,7 @@ extractCEnum (CEnum n cs isVest) = do
     pub enum #{rn} {
         #{enumCases}
     }
-    use crate::#{rn}::*;
+    use #{rn}::*;
     |]
     parseSerializeDefs <- genParserSerializer (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
@@ -492,7 +493,7 @@ extractCAExpr aexpr = do
                                 FStruct n fs | n == f -> do
                                     -- Special case for struct constructors
                                     args' <- mapM extractCAExpr args
-                                    let ftys = map (specFieldTyOf . snd) fs
+                                    let ftys = map (fst . specFieldTyOf . snd) fs
                                     args'' <- zipWithM specCast (zip args' (map (^. tty) args)) ftys
                                     return [di|#{pretty f}(#{hsep . punctuate comma $ args''})|]
                                 _ -> do

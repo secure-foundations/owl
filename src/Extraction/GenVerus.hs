@@ -735,7 +735,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFields lifetimeConst else return [di||]
+    parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst else return [di||]
     return $ vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers]
     where 
 
@@ -812,15 +812,15 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
         
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, VerusTy)] -> String -> EM (Doc ann)
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> EM (Doc ann)
         genParsleyWrappers verusName specname structTy fields lifetimeConst = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
-            let tupPatFields = mkNestPattern . fmap (\(_, fname, _) -> pretty fname) $ fields
+            let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
             let mkField fname fty = do
                     mkf <- (pretty fname, u8slice) `cast` fty
                     return [di|#{fname}: #{mkf}|]
-            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
             let parse = [__di|
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
                 // requires arg.len_valid()
@@ -844,14 +844,16 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
-            let mklen fname fty = case fty of
-                    RTUnit -> [di|0|]
-                    _ -> [di|arg.#{fname}.len()|]
-            let lens = map (\(_, fname, fty) -> mklen fname fty) fields ++ [pretty "0"]
+            let mklen fname szopt fty = case (fty, szopt) of
+                    (RTUnit, Just usz) -> return [di|#{pretty usz}|]
+                    (RTUnit, Nothing) -> throwError $ ErrSomethingFailed "no size for const ty"
+                    _ -> return [di|arg.#{fname}.len()|]
+            lens' <- mapM (\(_, fname, szopt, fty) -> mklen fname szopt fty) fields
+            let lens = lens' ++ [pretty "0"]
             let innerTyOf fty = case fty of
                     RTUnit -> RTUnit
                     _ -> u8slice
-            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
+            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             let ser = [__di|
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 requires arg.len_valid(),
@@ -906,7 +908,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
     pub enum #{verusName}#{lifetimeAnnot} {
         #{enumCases}
     }
-    use crate::#{verusName}::*;
+    use #{verusName}::*;
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
     -- vestFormat <- genVestFormat verusName casesFV

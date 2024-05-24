@@ -104,6 +104,7 @@ lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
 maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
+maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))

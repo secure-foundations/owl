@@ -72,7 +72,7 @@ extract' modbody = do
         pretty "// ------------ ENTRY POINT -----------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         entryPoint                 <> line <> line <>
-        pretty "} // verus!"    <> line <> line <>
+        pretty "} // verus!"    <> line <> line <> 
         callMain                <> line <> line
       , lp                      <> line <> line <> line <> line <> 
         libHarness

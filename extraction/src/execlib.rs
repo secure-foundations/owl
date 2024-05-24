@@ -49,7 +49,7 @@ impl<'x> OwlBuf<'x> {
         broadcast use axiom_spec_len;
         let len = v.len();
         proof { assert_seqs_equal!(v.view(), v.view().subrange(0int, len as int)); }
-        OwlBuf::Owned(rc_new(v), 0, len)
+        OwlBuf::Owned(Rc::new(v), 0, len)
     }
  
     pub fn from_vec_option(v: Option<Vec<u8>>) -> (result: Option<OwlBuf<'x>>)
@@ -110,7 +110,7 @@ impl<'x> OwlBuf<'x> {
                         (*v).view().subrange(new_start as int, new_start as int + len as int)
                     ); 
                 }
-                OwlBuf::Owned(rc_clone(v), new_start, len)
+                OwlBuf::Owned(Rc::clone(v), new_start, len)
             },
         }
     }
@@ -135,7 +135,7 @@ impl<'x> OwlBuf<'x> {
         match self {
             OwlBuf::Borrowed(s) => OwlBuf::Borrowed(s),
             OwlBuf::Owned(v, start, len) => {
-                OwlBuf::Owned(rc_clone(v), *start, *len)
+                OwlBuf::Owned(Rc::clone(v), *start, *len)
             },
         }
     }
@@ -158,17 +158,6 @@ pub fn owl_unit() -> (res: ())
 
 pub fn owl_ghost_unit() -> (res: Ghost<()>)
 { Ghost(()) }
-
-#[verifier(external_body)]
-pub exec fn rc_new<T:View>(t: T) -> (r: Rc<T>)
-    ensures r.view() == t.view()
-{ Rc::new(t) }
-
-#[verifier(external_body)]
-pub exec fn rc_clone<T:View>(t: &Rc<T>) -> (r: Rc<T>)
-    ensures r.view() == t.view()
-{ Rc::clone(t) }
-
 
 #[verifier(external_body)]
 pub exec fn slice_eq(s1: &[u8], s2: &[u8]) -> (res: bool)

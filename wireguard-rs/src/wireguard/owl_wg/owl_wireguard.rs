@@ -97,7 +97,7 @@ verus! {
 // ---------- SPECIFICATIONS ----------
 // ------------------------------------
 pub enum owlSpec_PSKMode {
-    owlSpec_HasPSK(Seq<u8>),
+    owlSpec_HasPSK((Seq<u8>)),
     owlSpec_NoPSK(),
 }
 
@@ -124,7 +124,7 @@ impl OwlSpecSerialize for owlSpec_PSKMode {
     }
 }
 
-pub open spec fn HasPSK(x: Seq<u8>) -> owlSpec_PSKMode {
+pub open spec fn HasPSK(x: (Seq<u8>)) -> owlSpec_PSKMode {
     crate::owlSpec_PSKMode::owlSpec_HasPSK(x)
 }
 
@@ -263,7 +263,7 @@ pub closed spec fn parse_owlSpec_msg1(x: Seq<u8>) -> Option<owlSpec_msg1> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_msg1_inner(x: owlSpec_msg1) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ 0, x.owlSpec__msg1_sender.len(), x.owlSpec__msg1_ephemeral.len(), x.owlSpec__msg1_static.len(), x.owlSpec__msg1_timestamp.len(), x.owlSpec__msg1_mac1.len(), 0 ] {
+    if no_usize_overflows_spec![ 4, x.owlSpec__msg1_sender.len(), x.owlSpec__msg1_ephemeral.len(), x.owlSpec__msg1_static.len(), x.owlSpec__msg1_timestamp.len(), x.owlSpec__msg1_mac1.len(), 16 ] {
         let spec_comb = spec_combinator_owlSpec_msg1();
         if let Ok(serialized) = spec_comb.spec_serialize(
             ((
@@ -444,7 +444,7 @@ pub closed spec fn parse_owlSpec_msg2(x: Seq<u8>) -> Option<owlSpec_msg2> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_msg2_inner(x: owlSpec_msg2) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ 0, x.owlSpec__msg2_sender.len(), x.owlSpec__msg2_receiver.len(), x.owlSpec__msg2_ephemeral.len(), x.owlSpec__msg2_empty.len(), x.owlSpec__msg2_mac1.len(), 0 ] {
+    if no_usize_overflows_spec![ 4, x.owlSpec__msg2_sender.len(), x.owlSpec__msg2_receiver.len(), x.owlSpec__msg2_ephemeral.len(), x.owlSpec__msg2_empty.len(), x.owlSpec__msg2_mac1.len(), 16 ] {
         let spec_comb = spec_combinator_owlSpec_msg2();
         if let Ok(serialized) = spec_comb.spec_serialize(
             ((
@@ -568,7 +568,7 @@ pub closed spec fn parse_owlSpec_transp(x: Seq<u8>) -> Option<owlSpec_transp> {
 
 #[verifier::opaque]
 pub closed spec fn serialize_owlSpec_transp_inner(x: owlSpec_transp) -> Option<Seq<u8>> {
-    if no_usize_overflows_spec![ 0, x.owlSpec__transp_receiver.len(), x.owlSpec__transp_counter.len(), x.owlSpec__transp_packet.len() ] {
+    if no_usize_overflows_spec![ 4, x.owlSpec__transp_receiver.len(), x.owlSpec__transp_counter.len(), x.owlSpec__transp_packet.len() ] {
         let spec_comb = spec_combinator_owlSpec_transp();
         if let Ok(serialized) = spec_comb.spec_serialize(
             ((
@@ -1112,12 +1112,12 @@ pub exec fn serialize_owl_msg1_inner(arg: &owl_msg1) -> (res: Option<Vec<u8>>)
         res matches Some(x) ==> x.view() == serialize_owlSpec_msg1_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_msg1_inner);
-    if no_usize_overflows![ 0, arg.owl__msg1_sender.len(), arg.owl__msg1_ephemeral.len(), arg.owl__msg1_static.len(), arg.owl__msg1_timestamp.len(), arg.owl__msg1_mac1.len(), 0, 0 ] {
+    if no_usize_overflows![ 4, arg.owl__msg1_sender.len(), arg.owl__msg1_ephemeral.len(), arg.owl__msg1_static.len(), arg.owl__msg1_timestamp.len(), arg.owl__msg1_mac1.len(), 16, 0 ] {
         let exec_comb = exec_combinator_owl_msg1();
         let mut obuf = vec_u8_of_len(
-            0 + arg.owl__msg1_sender.len() + arg.owl__msg1_ephemeral.len()
+            4 + arg.owl__msg1_sender.len() + arg.owl__msg1_ephemeral.len()
                 + arg.owl__msg1_static.len() + arg.owl__msg1_timestamp.len()
-                + arg.owl__msg1_mac1.len() + 0 + 0,
+                + arg.owl__msg1_mac1.len() + 16 + 0,
         );
         let ser_result = exec_comb.serialize(
             (
@@ -1284,12 +1284,12 @@ pub exec fn serialize_owl_msg2_inner(arg: &owl_msg2) -> (res: Option<Vec<u8>>)
         res matches Some(x) ==> x.view() == serialize_owlSpec_msg2_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_msg2_inner);
-    if no_usize_overflows![ 0, arg.owl__msg2_sender.len(), arg.owl__msg2_receiver.len(), arg.owl__msg2_ephemeral.len(), arg.owl__msg2_empty.len(), arg.owl__msg2_mac1.len(), 0, 0 ] {
+    if no_usize_overflows![ 4, arg.owl__msg2_sender.len(), arg.owl__msg2_receiver.len(), arg.owl__msg2_ephemeral.len(), arg.owl__msg2_empty.len(), arg.owl__msg2_mac1.len(), 16, 0 ] {
         let exec_comb = exec_combinator_owl_msg2();
         let mut obuf = vec_u8_of_len(
-            0 + arg.owl__msg2_sender.len() + arg.owl__msg2_receiver.len()
+            4 + arg.owl__msg2_sender.len() + arg.owl__msg2_receiver.len()
                 + arg.owl__msg2_ephemeral.len() + arg.owl__msg2_empty.len()
-                + arg.owl__msg2_mac1.len() + 0 + 0,
+                + arg.owl__msg2_mac1.len() + 16 + 0,
         );
         let ser_result = exec_comb.serialize(
             (
@@ -1427,10 +1427,10 @@ pub exec fn serialize_owl_transp_inner(arg: &owl_transp) -> (res: Option<Vec<u8>
         res matches Some(x) ==> x.view() == serialize_owlSpec_transp_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_transp_inner);
-    if no_usize_overflows![ 0, arg.owl__transp_receiver.len(), arg.owl__transp_counter.len(), arg.owl__transp_packet.len(), 0 ] {
+    if no_usize_overflows![ 4, arg.owl__transp_receiver.len(), arg.owl__transp_counter.len(), arg.owl__transp_packet.len(), 0 ] {
         let exec_comb = exec_combinator_owl_transp();
         let mut obuf = vec_u8_of_len(
-            0 + arg.owl__transp_receiver.len() + arg.owl__transp_counter.len()
+            4 + arg.owl__transp_receiver.len() + arg.owl__transp_counter.len()
                 + arg.owl__transp_packet.len() + 0,
         );
         let ser_result = exec_comb.serialize(
