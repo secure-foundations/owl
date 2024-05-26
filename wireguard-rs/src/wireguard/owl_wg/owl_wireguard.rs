@@ -15,6 +15,7 @@ pub use crate::wireguard::owl_wg::*;
 use crate::wireguard::handshake::device::Device;
 
 pub use parsley::{
+    regular::builder::*,
     properties::*, regular::bytes::*, regular::bytes_const::*, regular::choice::*,
     regular::tail::*, regular::uints::*, regular::*, utils::*, *,
 };
@@ -1689,7 +1690,7 @@ impl<O> cfg_Initiator<O> {
         &'a self,         
         mut_state: &mut state_Initiator,
         owl_plaintext: &'a [u8],
-        obuf: &'a mut [u8],
+        obuf: &mut Vec<u8>,
         owl_tki_msg2_receiver: &'a [u8],
         owl_tki_msg2_sender: &'a [u8],
         owl_tki_k_init_send: &'a [u8],
@@ -1725,7 +1726,7 @@ impl<O> cfg_Initiator<O> {
         mut_state: &mut state_Initiator,
         owl_tki401: owl_transp_keys_init<'a>,
         owl_msg402: OwlBuf<'a>,
-        obuf: &'a mut [u8],
+        obuf: &mut Vec<u8>,
     ) -> (res: Result<((), Tracked<ITreeToken<((), state_Initiator), Endpoint>>), OwlError>)
         requires
             itree.view() == init_send_spec(
@@ -1757,34 +1758,52 @@ impl<O> cfg_Initiator<O> {
             let owl_resp_send336 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
             let tmp_owl_transp_counter343 = { owl_counter_as_bytes(&mut_state.owl_N_init_send) };
             let owl_transp_counter343 = OwlBuf::from_slice(&tmp_owl_transp_counter343);
+            let x = mk_vec_u8![];
             let owl_c344 = {
                 {
-                    match owl_enc_st_aead(
+                    match owl_enc_st_aead_builder(
                         owl_init_send337.as_slice(),
                         owl_msg402.as_slice(),
                         &mut mut_state.owl_N_init_send,
-                        {
-                            let x = mk_vec_u8![];
-                            OwlBuf::from_vec(x)
-                        }.as_slice(),
+                        x.as_slice(),
                     ) {
-                        Ok(ctxt) => { OwlBuf::from_vec(ctxt) },
+                        Ok(b) => { b },
                         Err(e) => { return Err(e) },
                     }
                 }
             };
             let owl_transp_tag345 = { owl_transp_tag_value() };
-            let owl_o346 = {
-                owl_transp(
-                    (),
-                    OwlBuf::another_ref(&owl_init342),
-                    OwlBuf::another_ref(&owl_transp_counter343),
-                    OwlBuf::another_ref(&owl_c344),
-                )
-            };
+
+            let field_1 = ConstBytes(EXEC_BYTES_CONST_04000000_TRANSP);
+            let field_2 = Bytes(4);
+            let field_3 = Bytes(8);
+            let field_4 = BuilderCombinator(owl_c344);
+            let exec_comb = (((field_1, field_2), field_3), field_4);
+
+            let mut ser_buf = vec_u8_of_len(
+                4 + owl_init342.len() + owl_transp_counter343.len()
+                    + owl_msg402.len() + tag_size() + 0,
+            );
+            let ser_result = exec_comb.serialize(
+                (
+                    (
+                        ((), owl_init342.as_slice()),
+                        owl_transp_counter343.as_slice(),
+                    ),
+                    ()
+                ),
+                &mut ser_buf,
+                0,
+            );
+            if let Ok((num_written)) = ser_result {
+                vec_truncate(&mut ser_buf, num_written);
+            } else {
+                panic!();
+            }
+
             owl_output::<((), state_Initiator)>(
                 Tracked(&mut itree),
-                serialize_owl_transp(&owl_o346).as_slice(),
+                ser_buf.as_slice(),
                 &Responder_addr(),
                 &Initiator_addr(),
                 obuf
