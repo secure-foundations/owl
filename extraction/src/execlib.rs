@@ -1,6 +1,7 @@
 use std::rc::Rc;
 pub use vstd::{modes::*, prelude::*, seq::*, string::*, slice::*};
 use crate::{speclib, *};
+use parsley::regular::builder::*;
 
 verus! {
 
@@ -377,6 +378,61 @@ pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
 }
 
 
+// Builder for stateful AEAD encryption
+pub struct OwlStAEADBuilder<'a> {
+    pub k: &'a [u8],
+    pub msg: &'a [u8],
+    pub nonce: usize,
+    pub aad: &'a [u8],
+}
+
+impl<'a> Builder for OwlStAEADBuilder<'a> {
+    open spec fn value(&self) -> Seq<u8> {
+        enc_st_aead(self.k.view(), self.msg.view(), self.nonce, self.aad.view()).0
+    }
+    
+    #[verifier::external_body]
+    proof fn value_wf(&self);
+    
+    #[verifier::external_body]
+    fn length(&self) -> usize {
+        self.msg.len() + TAG_SIZE
+    }
+
+    #[verifier::external_body]
+    fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
+        let mut iv = self.nonce.to_le_bytes().to_vec();
+        iv.resize(NONCE_SIZE, 0u8);
+        match owl_aead::encrypt_combined_into(CIPHER, self.k, self.msg, &iv[..], self.aad, data, pos) {
+            Ok(()) => (),
+            Err(_e) => {
+                // dbg!(e);
+                ()
+            }
+        };
+    }
+}
+
+impl View for OwlStAEADBuilder<'_> {
+    type V = Seq<u8>;
+
+    open spec fn view(&self) -> Self::V {
+        self.value()
+    }
+}
+
+#[verifier(external_body)]
+pub exec fn owl_enc_st_aead_builder<'a>(k: &'a [u8], msg: &'a [u8], nonce: &mut usize, aad: &'a [u8]) -> (res: Result<OwlStAEADBuilder<'a>, OwlError>)
+    ensures  
+        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
+{
+    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
+    let old_nonce = *nonce;
+    *nonce += 1;
+    Ok(OwlStAEADBuilder { k, msg, nonce: old_nonce, aad })
+}
+
+
 #[verifier(external_body)]
 pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Vec<u8>, OwlError>)
     ensures
@@ -387,11 +443,7 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8])
     let mut iv = nonce.to_le_bytes().to_vec();
     iv.resize(NONCE_SIZE, 0u8);
     let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
-        Ok(mut c) => {
-            let mut v = iv.to_owned();
-            v.append(&mut c);
-            v
-        },
+        Ok(c) => c,
         Err(_e) => {
             // dbg!(e);
             vec![]
@@ -438,7 +490,7 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // dec(k.view(), c.view()).is_None() ==> x.is_None(),
         // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(CIPHER, k, &c[NONCE_SIZE..], nonce, aad) {
+    match owl_aead::decrypt_combined(CIPHER, k, &c, nonce, aad) {
         Ok(p) => Some(p),
         Err(_e) => {
             // dbg!(e);

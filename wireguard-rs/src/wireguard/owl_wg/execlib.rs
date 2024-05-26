@@ -1,6 +1,7 @@
 use vstd::prelude::*;
 use crate::wireguard::owl_wg::{owl_aead, speclib, deep_view::*, *};
 use std::rc::Rc;
+use parsley::regular::builder::*;
 
 verus! {
 
@@ -376,6 +377,76 @@ pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
 {
     owl_pke::decrypt(privkey, ctxt)
 }
+
+// Builder for stateful AEAD encryption
+pub struct OwlStAEADBuilder<'a,'b,'c> {
+    pub k: &'a [u8],
+    pub msg: &'b [u8],
+    pub nonce: usize,
+    pub aad: &'c [u8],
+}
+
+pub struct OwlStAEADBuilderSpec {
+    pub k: Seq<u8>,
+    pub msg: Seq<u8>,
+    pub nonce: usize,
+    pub aad: Seq<u8>,
+}
+
+impl<'a,'b,'c> Builder for OwlStAEADBuilder<'a,'b,'c> {
+    open spec fn value(&self) -> Seq<u8> {
+        enc_st_aead(self.k.view(), self.msg.view(), self.nonce, self.aad.view()).0
+    }
+    
+    #[verifier::external_body]
+    proof fn value_wf(&self);
+    
+    #[verifier::external_body]
+    fn length(&self) -> usize {
+        self.msg.len() + tag_size()
+    }
+
+    #[verifier::external_body]
+    fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
+        assert_eq!(owl_aead::nonce_size(cipher()), 12);
+        let mut iv = [0u8; 12];
+        let nonce_as_bytes = self.nonce.to_le_bytes();
+        let iv_len = iv.len();
+        iv[(iv_len - nonce_as_bytes.len())..].copy_from_slice(&nonce_as_bytes[..]);
+        match owl_aead::encrypt_combined_into(cipher(), self.k, self.msg, &iv[..], self.aad, data, pos) {
+            Ok(()) => (),
+            Err(_e) => {
+                // dbg!(e);
+                ()
+            }
+        };
+    }
+}
+
+impl View for OwlStAEADBuilder<'_,'_,'_> {
+    type V = OwlStAEADBuilderSpec;
+
+    open spec fn view(&self) -> Self::V {
+        OwlStAEADBuilderSpec {
+            k: self.k.view(),
+            msg: self.msg.view(),
+            nonce: self.nonce,
+            aad: self.aad.view(),
+        }
+    }
+}
+
+#[verifier(external_body)]
+pub exec fn owl_enc_st_aead_builder<'a,'b,'c>(k: &'a [u8], msg: &'b [u8], nonce: &mut usize, aad: &'c [u8]) -> (res: Result<OwlStAEADBuilder<'a,'b,'c>, OwlError>)
+    ensures  
+        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
+{
+    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
+    let old_nonce = *nonce;
+    *nonce += 1;
+    Ok(OwlStAEADBuilder { k, msg, nonce: old_nonce, aad })
+}
+
 
 
 #[verifier(external_body)]

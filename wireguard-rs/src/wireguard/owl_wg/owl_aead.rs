@@ -1,5 +1,5 @@
 use crate::wireguard::owl_wg::owl_util::gen_rand_bytes;
-use aead::{Aead, NewAead, Nonce, Payload};
+use aead::{Aead, AeadInPlace, NewAead, Nonce, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};
 use chacha20poly1305::ChaCha20Poly1305;
 use vstd::prelude::*;
@@ -172,6 +172,51 @@ pub fn encrypt_inplace(
     }
 }
 
+#[verifier(external_body)]
+pub fn encrypt_combined_into(
+    alg: Mode,
+    k: &[u8],
+    msg: &[u8],
+    iv: &[u8],
+    aad: &Aad,
+    data: &mut Vec<u8>,
+    pos: usize,
+) -> Result<(), Error> {
+    // dbg!(hex::encode(&k));
+    // dbg!(hex::encode(&iv));
+    // dbg!(hex::encode(&msg));
+    // dbg!(hex::encode(&aad));
+    data[pos..pos + msg.len()].copy_from_slice(msg);
+    if USE_BORINGSSL {
+        use ring::aead::{Aad, LessSafeKey, Nonce as RingAeadNonce, UnboundKey, CHACHA20_POLY1305};
+        use std::convert::TryInto;
+
+        let key = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, &k).unwrap(),
+        );
+        let tmp = iv.try_into().unwrap();
+        let nonce = RingAeadNonce::assume_unique_for_key(tmp);
+        let aad_ring = Aad::from(aad);
+        // let mut ctxt = Vec::with_capacity(msg.len() + tag_size(alg)); //msg.to_vec();
+        // ctxt.extend_from_slice(msg);
+
+        let tag = key.seal_in_place_separate_tag(nonce, aad_ring, &mut data[pos..pos + msg.len()]).unwrap();
+        data[pos + msg.len()..pos + msg.len() + tag.as_ref().len()].copy_from_slice(&tag.as_ref());
+        Ok(())
+    } else {
+        match alg {
+            Mode::Chacha20Poly1305 => {
+                let tag = ChaCha20Poly1305::new(GenericArray::from_slice(k))
+                .encrypt_in_place_detached(iv.into(), aad, &mut data[pos..pos + msg.len()])
+                .map_err(|_| Error::Encrypting)?;
+                // dbg!(r.clone().map(|v| hex::encode(&v)));
+                data[pos + msg.len()..pos + msg.len() + tag.len()].copy_from_slice(&tag[..]);
+                Ok(())
+            }
+            _ => panic!("unsupported aead mode"),
+        }    
+    }
+}
 
 #[verifier(external_body)]
 pub fn encrypt_combined(

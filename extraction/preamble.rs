@@ -19,6 +19,7 @@ pub use parsley::{
     *,
     properties::*,
     regular::*,
+    regular::builder::*,
     regular::bytes::*,
     regular::bytes_const::*,
     regular::choice::*,

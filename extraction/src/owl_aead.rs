@@ -1,5 +1,5 @@
 use crate::owl_util::gen_rand_bytes;
-use aead::{Aead, Nonce, Payload};
+use aead::{Aead, Nonce, Payload, AeadInPlace};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};
 use chacha20poly1305::ChaCha20Poly1305;
 use vstd::prelude::*;
@@ -123,6 +123,65 @@ pub enum Error {
 pub type Aad = [u8];
 pub type Ciphertext = Vec<u8>;
 pub type Tag = Vec<u8>;
+
+
+#[verifier(external_body)]
+pub fn encrypt_combined_into(
+    alg: Mode,
+    k: &[u8],
+    msg: &[u8],
+    iv: &[u8],
+    aad: &Aad,
+    data: &mut Vec<u8>,
+    pos: usize,
+) -> Result<(), Error> {
+    // check lengths
+    if k.len() != key_size(alg) {
+        return Err(Error::InvalidKeySize);
+    }
+    if iv.len() != nonce_size(alg) {
+        return Err(Error::InvalidNonce);
+    }
+
+    data[pos..pos + msg.len()].copy_from_slice(msg);
+
+    #[verifier(external_body)]
+    fn encrypt_inner<C: AeadInPlace + KeyInit>(
+        k: &[u8],
+        msg: &[u8],
+        iv: &[u8],
+        aad: &Aad,
+        data: &mut Vec<u8>,
+        pos: usize,
+    ) -> Result<(), Error> {
+        let cipher = match C::new_from_slice(k) {
+            Ok(c) => c,
+            Err(_) => {
+                return Err(Error::InvalidInit);
+            }
+        };
+
+        let nonce = <Nonce<C>>::from_slice(iv);
+
+        let tag = match cipher.encrypt_in_place_detached(nonce, aad, &mut data[pos..pos + msg.len()]) {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(Error::Encrypting);
+            }
+        };
+        data[pos + msg.len()..pos + msg.len() + tag.len()].copy_from_slice(&tag);
+        Ok(())
+    }
+
+    return match alg {
+        Mode::Aes128Gcm => encrypt_inner::<Aes128Gcm>(k, msg, iv, aad, data, pos),
+        Mode::Aes256Gcm => encrypt_inner::<Aes256Gcm>(k, msg, iv, aad, data, pos),
+        Mode::Chacha20Poly1305 => encrypt_inner::<ChaCha20Poly1305>(k, msg, iv, aad, data, pos),
+    };
+}
+
+
+
 
 #[verifier(external_body)]
 pub fn encrypt_combined(
