@@ -267,16 +267,22 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
         self.tun_readers.wait();
     }
 
-    pub fn new(writer: T::Writer) -> WireGuard<T, B> {
+    pub fn new(writer: T::Writer, use_owl: bool) -> WireGuard<T, B> {
         // workers equal to number of physical cores
         let cpus = num_cpus::get();
 
         // create handshake queue
         let (tx, mut rxs) = ParallelQueue::new(cpus, 128);
 
+        let devtype = if use_owl {
+            RouterDeviceType::OwlInitiator
+        } else {
+            RouterDeviceType::NoOwl
+        };
+
         // create router
         let router: router::Device<B::Endpoint, PeerInner<T, B>, T::Writer, B::Writer> =
-            router::Device::new(num_cpus::get(), writer, RouterDeviceType::NoOwl);
+            router::Device::new(num_cpus::get(), writer, devtype);
 
         // create arc to state
         let wg = WireGuard {
@@ -288,7 +294,12 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
                 last_under_load: Mutex::new(Instant::now() - TIME_HORIZON),
                 router,
                 pending: AtomicUsize::new(0),
-                peers: RwLock::new(handshake::Device::new()),
+                peers: RwLock::new(
+                    if use_owl {
+                        handshake::Device::new_owl_initiator()
+                    } else {
+                        handshake::Device::new()
+                    }),
                 runner: Mutex::new(Runner::new(TIMERS_TICK, TIMERS_SLOTS, TIMERS_CAPACITY)),
                 queue: tx,
             }),

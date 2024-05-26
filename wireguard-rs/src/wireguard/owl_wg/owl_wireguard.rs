@@ -919,7 +919,7 @@ pub closed spec fn endpoint_of_addr(addr: Seq<char>) -> Endpoint {
 }
 
 #[verifier(external_body)]
-pub const fn Initiator_addr() -> (a: StrSlice<'static>)
+pub fn Initiator_addr() -> (a: StrSlice<'static>)
     ensures
         endpoint_of_addr(a.view()) == Endpoint::Loc_Initiator,
 {
@@ -927,7 +927,7 @@ pub const fn Initiator_addr() -> (a: StrSlice<'static>)
 }
 
 #[verifier(external_body)]
-pub const fn Responder_addr() -> (a: StrSlice<'static>)
+pub fn Responder_addr() -> (a: StrSlice<'static>)
     ensures
         endpoint_of_addr(a.view()) == Endpoint::Loc_Responder,
 {
@@ -935,7 +935,7 @@ pub const fn Responder_addr() -> (a: StrSlice<'static>)
 }
 
 #[verifier(external_body)]
-pub const fn nobody_addr() -> (a: StrSlice<'static>)
+pub fn nobody_addr() -> (a: StrSlice<'static>)
     ensures
         endpoint_of_addr(a.view()) == Endpoint::Loc_nobody,
 {

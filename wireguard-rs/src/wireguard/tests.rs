@@ -100,12 +100,12 @@ fn test_pure_wireguard() {
     // create WG instances for dummy TUN devices
 
     let (fake1, tun_reader1, tun_writer1, _) = dummy::TunTest::create(true);
-    let wg1: WireGuard<dummy::TunTest, dummy::PairBind> = WireGuard::new(tun_writer1);
+    let wg1: WireGuard<dummy::TunTest, dummy::PairBind> = WireGuard::new(tun_writer1, false);
     wg1.add_tun_reader(tun_reader1);
     wg1.up(1500);
 
     let (fake2, tun_reader2, tun_writer2, _) = dummy::TunTest::create(true);
-    let wg2: WireGuard<dummy::TunTest, dummy::PairBind> = WireGuard::new(tun_writer2);
+    let wg2: WireGuard<dummy::TunTest, dummy::PairBind> = WireGuard::new(tun_writer2, false);
     wg2.add_tun_reader(tun_reader2);
     wg2.up(1500);
 
