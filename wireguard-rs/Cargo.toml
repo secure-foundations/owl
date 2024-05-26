@@ -61,7 +61,7 @@ start_up = []
 memory_profile = []
 
 [dev-dependencies]
-pnet = "^0.27"
+pnet = "^0.28"
 proptest = "^0.10"
 rand_chacha = "^0.2"
 heappy = { git = "https://github.com/mkmik/heappy", rev = "c071b74227cb8c77d6d52180fbd9014284d23917", features = [ "enable_heap_profiler", "measure_free" ] }
