@@ -62,8 +62,7 @@ pub struct OwlResponder<O> {
 
 pub enum Device<O> {
     NoOwl(DeviceInner<O>),
-    Initiator (OwlInitiator<O>),
-    Responder (OwlResponder<O>),
+    Owl (DeviceInner<O>),
 }
 
 impl<O> Device<O> {
@@ -71,22 +70,14 @@ impl<O> Device<O> {
     pub fn inner(&self) -> &DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Initiator(i) => &i.cfg.device.as_ref().unwrap(),
-            Device::Responder(r) => &r.cfg.device.as_ref().unwrap(),
+            Device::Owl(inner) => &inner,
         }
     }
 
     pub fn inner_mut(&mut self) -> &mut DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Initiator(i) => {
-                let d = i.cfg.device.as_mut().unwrap();
-                d
-            },
-            Device::Responder(r) => {
-                let d = r.cfg.device.as_mut().unwrap();
-                d
-            },
+            Device::Owl(inner) => inner,
         }
     }
 
@@ -94,53 +85,57 @@ impl<O> Device<O> {
         Device::NoOwl(DeviceInner::new())
     }
 
-    pub fn new_owl_initiator() -> Device<O> {
-        let inner = DeviceInner::new();
-
-        // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
-        // This is a hack---can be made more robust later
-        let eph_sk = StaticSecret::new(&mut OsRng);
-
-        let cfg = owl_wireguard::cfg_Initiator {
-            owl_S_init: vec![],
-            owl_E_init: eph_sk.to_bytes().to_vec(),
-            pk_owl_S_resp: vec![],
-            pk_owl_S_init: vec![],
-            pk_owl_E_resp: vec![],
-            pk_owl_E_init: vec![],
-            salt: vec![],
-            device: Some(inner),
-        };
-        let state = owl_wireguard::state_Initiator::init_state_Initiator();
-        Device::Initiator(OwlInitiator {
-            cfg,
-            state
-        })
+    pub fn new_owl() -> Device<O> {
+        Device::Owl(DeviceInner::new())
     }
 
-    pub fn new_owl_responder() -> Device<O> {
-        let inner = DeviceInner::new();
+    // pub fn new_owl_initiator() -> Device<O> {
+    //     let inner = DeviceInner::new();
 
-        // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
-        // This is a hack---can be made more robust later
-        let eph_sk = StaticSecret::new(&mut OsRng);
+    //     // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
+    //     // This is a hack---can be made more robust later
+    //     let eph_sk = StaticSecret::new(&mut OsRng);
 
-        let cfg = owl_wireguard::cfg_Responder {
-            owl_S_resp: vec![],
-            owl_E_resp: eph_sk.to_bytes().to_vec(),
-            pk_owl_S_resp: vec![],
-            pk_owl_S_init: vec![],
-            pk_owl_E_resp: vec![],
-            pk_owl_E_init: vec![],
-            salt: vec![],
-            device: Some(inner)
-        };
-        let state = owl_wireguard::state_Responder::init_state_Responder();
-        Device::Responder(OwlResponder {
-            cfg,
-            state
-        })
-    }
+    //     let cfg = owl_wireguard::cfg_Initiator {
+    //         owl_S_init: vec![],
+    //         owl_E_init: eph_sk.to_bytes().to_vec(),
+    //         pk_owl_S_resp: vec![],
+    //         pk_owl_S_init: vec![],
+    //         pk_owl_E_resp: vec![],
+    //         pk_owl_E_init: vec![],
+    //         salt: vec![],
+    //         device: Some(inner),
+    //     };
+    //     let state = owl_wireguard::state_Initiator::init_state_Initiator();
+    //     Device::Initiator(OwlInitiator {
+    //         cfg,
+    //         state
+    //     })
+    // }
+
+    // pub fn new_owl_responder() -> Device<O> {
+    //     let inner = DeviceInner::new();
+
+    //     // We generate the ephemeral key here---the Owl structs effectively always use the same "ephemeral key"
+    //     // This is a hack---can be made more robust later
+    //     let eph_sk = StaticSecret::new(&mut OsRng);
+
+    //     let cfg = owl_wireguard::cfg_Responder {
+    //         owl_S_resp: vec![],
+    //         owl_E_resp: eph_sk.to_bytes().to_vec(),
+    //         pk_owl_S_resp: vec![],
+    //         pk_owl_S_init: vec![],
+    //         pk_owl_E_resp: vec![],
+    //         pk_owl_E_init: vec![],
+    //         salt: vec![],
+    //         device: Some(inner)
+    //     };
+    //     let state = owl_wireguard::state_Responder::init_state_Responder();
+    //     Device::Responder(OwlResponder {
+    //         cfg,
+    //         state
+    //     })
+    // }
 
     /// Update the secret key of the device
     ///
@@ -148,15 +143,15 @@ impl<O> Device<O> {
     ///
     /// * `sk` - x25519 scalar representing the local private key
     pub fn set_sk(&mut self, sk: Option<StaticSecret>) -> Option<PublicKey> {
-        match self {
-            Device::NoOwl(_) => {},
-            Device::Initiator(i) => {
-                i.cfg.owl_S_init = sk.clone().unwrap().to_bytes().to_vec();
-            },
-            Device::Responder(r) => {
-                r.cfg.owl_S_resp = sk.clone().unwrap().to_bytes().to_vec();
-            },
-        }
+        // match self {
+        //     Device::NoOwl(_) => {},
+        //     Device::Initiator(i) => {
+        //         i.cfg.owl_S_init = sk.clone().unwrap().to_bytes().to_vec();
+        //     },
+        //     Device::Responder(r) => {
+        //         r.cfg.owl_S_resp = sk.clone().unwrap().to_bytes().to_vec();
+        //     },
+        // }
         
         // update secret and public key
         self.inner_mut().keyst = sk.map(|sk| {
@@ -260,15 +255,15 @@ impl<O> Device<O> {
     ///
     /// The call might fail if the public key is not found
     pub fn set_psk(&mut self, pk: PublicKey, psk: Psk) -> Result<(), ConfigError> {
-        match self {
-            Device::NoOwl(_) => {},
-            Device::Initiator(i) => {
-                assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard initiator");
-            },
-            Device::Responder(r) => {
-                assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard responder");
-            },
-        }
+        // match self {
+        //     Device::NoOwl(_) => {},
+        //     Device::Initiator(i) => {
+        //         assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard initiator");
+        //     },
+        //     Device::Responder(r) => {
+        //         assert!(psk.as_bytes() == &[0u8; 32], "Only psk 0 is supported for owl-wireguard responder");
+        //     },
+        // }
 
         match self.inner_mut().pk_map.get_mut(pk.as_bytes()) {
             Some(mut peer) => {
@@ -478,10 +473,10 @@ impl<O> Device<O> {
                 match self {
                     // Device::NoOwl(_) => {
                     _ => {
-                        match self {
-                            Device::NoOwl(_) => {},
-                            _ => { println!("using no-owl handshake in begin"); }
-                        };
+                        // match self {
+                        //     Device::NoOwl(_) => {},
+                        //     _ => { println!("using no-owl handshake in begin"); }
+                        // };
                         noise::create_initiation(rng, keyst, peer, pk, local, &mut msg.noise)?;
                         // add macs to initation
                         peer.macs
@@ -566,10 +561,10 @@ impl<O> Device<O> {
                 match self {
                     // Device::NoOwl(_) => {
                     _ => {
-                        match self {
-                            Device::NoOwl(_) => {},
-                            _ => { println!("using no-owl handshake for TYPE_INITIATION"); }
-                        };
+                        // match self {
+                        //     Device::NoOwl(_) => {},
+                        //     _ => { println!("using no-owl handshake for TYPE_INITIATION"); }
+                        // };
                         // parse message
                         let msg = Initiation::parse(msg)?;
 
@@ -675,10 +670,10 @@ impl<O> Device<O> {
                 match self {
                     // Device::NoOwl(_) => {
                     _ => {
-                        match self {
-                            Device::NoOwl(_) => {},
-                            _ => { println!("using no-owl handshake for TYPE_RESPONSE"); }
-                        };
+                        // match self {
+                        //     Device::NoOwl(_) => {},
+                        //     _ => { println!("using no-owl handshake for TYPE_RESPONSE"); }
+                        // };
                         let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
 
                         // check mac1 field

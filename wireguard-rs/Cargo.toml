@@ -68,9 +68,12 @@ heappy = { git = "https://github.com/mkmik/heappy", rev = "c071b74227cb8c77d6d52
 
 [profile.release]
 debug = true
+# lto = "fat"
+# opt-level = 3
+# codegen-units = 1
 
 [profile.bench]
-debug = 1
+debug = true
 
 [profile.profiling]
 inherits = "release"

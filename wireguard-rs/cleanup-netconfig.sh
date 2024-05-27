@@ -4,11 +4,14 @@
 
 set -euo pipefail
 
-# Delete net1 namespace. This deletes veth1n and wg1n interfaces too
-ip netns del net1
+# Delete wg1 interface
+ip link del wg1
+ip netns exec net1 ip link del wg1n
 
 # Delete veth1 interface
 ip link del veth1
 
-# Delete wg1 interface
-ip link del wg1
+# Delete net1 namespace. This deletes veth1n interface too
+ip netns del net1
+
+

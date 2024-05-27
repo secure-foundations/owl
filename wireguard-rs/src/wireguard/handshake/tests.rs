@@ -36,8 +36,8 @@ fn setup_devices<R: RngCore + CryptoRng, O: Default>(
 
     // initialize devices on both ends
 
-    let mut dev1 = if dev1_is_owl { Device::new_owl_initiator() } else { Device::new() };
-    let mut dev2 = if dev2_is_owl { Device::new_owl_responder() } else { Device::new() }; 
+    let mut dev1 = if dev1_is_owl { Device::new_owl() } else { Device::new() };
+    let mut dev2 = if dev2_is_owl { Device::new_owl() } else { Device::new() }; 
 
     dev1.set_sk(Some(sk1));
     dev2.set_sk(Some(sk2));

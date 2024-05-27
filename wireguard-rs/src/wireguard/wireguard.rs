@@ -296,7 +296,7 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
                 pending: AtomicUsize::new(0),
                 peers: RwLock::new(
                     if use_owl {
-                        handshake::Device::new_owl_initiator()
+                        handshake::Device::new_owl()
                     } else {
                         handshake::Device::new()
                     }),
