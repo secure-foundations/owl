@@ -1795,11 +1795,11 @@ impl<O> cfg_Initiator<O> {
                 &mut ser_buf,
                 0,
             );
-            if let Ok((num_written)) = ser_result {
-                vec_truncate(&mut ser_buf, num_written);
-            } else {
-                panic!();
-            }
+            // if let Ok((num_written)) = ser_result {
+            //     vec_truncate(&mut ser_buf, num_written);
+            // } else {
+            //     panic!();
+            // }
 
             owl_output::<((), state_Initiator)>(
                 Tracked(&mut itree),

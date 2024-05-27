@@ -514,7 +514,8 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
 {
     // match owl_aead::decrypt_combined(cipher(), k, &c[nonce_size()..], nonce, aad) {
-    let mut iv = vec![0u8; owl_aead::nonce_size(cipher())];
+    assert_eq!(owl_aead::nonce_size(cipher()), 12);
+    let mut iv = [0u8; 12];
     let iv_len = iv.len();
     iv[(iv_len - nonce.len())..].copy_from_slice(&nonce[..]);
     match owl_aead::decrypt_combined(cipher(), k, c, &iv[..], aad) {
