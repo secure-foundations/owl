@@ -79,13 +79,13 @@ pub struct OwlErrorWrapper ( OwlError );
 
 
 #[verifier(external_body)]
-pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
+pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &str, ret_addr: &str)
     requires old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view()))
     ensures  t.view() == old(t).view().give_output()
 {
-    let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
+    let msg = msg { ret_addr: ret_addr.to_string(), payload: std::vec::Vec::from(x) };
     let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
+    let mut stream = TcpStream::connect(dest_addr).unwrap();
     stream.write_all(&serialized).unwrap();
     stream.flush().unwrap();
 }
@@ -100,7 +100,7 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
     let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
     reader.consume(received.len());
     let msg : msg = deserialize_msg(&received);
-    (msg.payload, String::from_rust_string(msg.ret_addr))
+    (msg.payload, msg.ret_addr)
 }
 
 #[verifier(external_body)]

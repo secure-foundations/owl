@@ -110,10 +110,10 @@ genVerusEndpointDef lnames = do
     |]
     let mkLocAddr (lname, ipport) = [__di|
     \#[verifier(external_body)]
-    pub const fn #{lname}_addr() -> (a: StrSlice<'static>) 
+    pub const fn #{lname}_addr() -> (a: &'static str) 
         ensures endpoint_of_addr(a.view()) == Endpoint::#{locNameOf lname}
     {
-        new_strlit("127.0.0.1:#{pretty ipport}")
+        "127.0.0.1:#{pretty ipport}"
     }
     |]
     let locNameAddrs :: [(LocalityName, Int)] = zip lnames $ [9000 + x | x <- [1..]]
@@ -540,7 +540,7 @@ genVerusCExpr info expr = do
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
                     otw' <- genVerusCExpr info otw
-                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
+                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` RTOwlBuf (Lifetime "_")
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval_tmp = #{ae''};
                     if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}) {
@@ -821,9 +821,14 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     mkf <- (pretty fname, u8slice) `cast` fty
                     return [di|#{fname}: #{mkf}|]
             mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
+            let mkFieldVec fname fty = do
+                    mkf <- ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
+                    return [di|#{fname}: #{mkf}|]
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
+            mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
             let parse = [__di|
-            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
-                // requires arg.len_valid()
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
                     res is None ==> #{specParse}(arg.view()) is None,
@@ -832,12 +837,28 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             {
                 reveal(#{specParse});
                 let exec_comb = exec_combinator_#{verusName}();
-                if let Ok((_, parsed)) = exec_comb.parse(arg) {
-                    let #{tupPatFields} = parsed;
-                    Some (#{verusName} { #{mkStructFields} })
-                } else {
-                    None
+                match arg {
+                    OwlBuf::Borrowed(s) => {
+                        if let Ok((_, parsed)) = exec_comb.parse(s) {
+                            let #{tupPatFields} = parsed;
+                            Some (#{verusName} { #{mkStructFields} })
+                        } else {
+                            None
+                        }
+                    }
+                    OwlBuf::Owned(v, start, len) => {
+                        reveal(OwlBuf::len_valid);
+                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange(v.as_slice(), start, start + len),) {
+                            let #{tupPatFields} = parsed;
+                            Some (#{verusName} { #{mkStructFieldsVecs} })
+                        } else {
+                            None
+                        }
+                    }
                 }
+
+
+
             }
             |]
             let specSer = [di|serialize_#{specname}|]
