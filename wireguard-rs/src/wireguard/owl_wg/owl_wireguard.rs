@@ -1813,7 +1813,7 @@ impl<O> cfg_Initiator<O> {
         Ok((res_inner, Tracked(itree)))
     }
 
-    pub exec fn owl_transp_recv_init_wrapper<'a>(
+    pub exec fn owl_transp_recv_init_wrapper<'a,'b>(
         &'a self,         
         mut_state: &mut state_Initiator,
         ibuf: &'a [u8],
@@ -1821,7 +1821,7 @@ impl<O> cfg_Initiator<O> {
         owl_tki_msg2_sender: &'a [u8],
         owl_tki_k_init_send: &'a [u8],
         owl_tki_k_resp_send: &'a [u8],
-    ) -> (Option<OwlBuf<'a>>) {
+    ) -> (Option<OwlBuf<'b>>) {
         let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
             (),
             Endpoint,
@@ -1845,14 +1845,14 @@ impl<O> cfg_Initiator<O> {
     }
 
     #[verifier::spinoff_prover]
-    pub fn owl_init_recv<'a>(
+    pub fn owl_init_recv<'a,'b>(
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
         owl_tki403: owl_transp_keys_init<'a>,
         ibuf: &'a [u8],
     ) -> (res: Result<
-        (Option<OwlBuf<'a>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
+        (Option<OwlBuf<'b>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
@@ -1864,7 +1864,7 @@ impl<O> cfg_Initiator<O> {
     {
         let tracked mut itree = itree;
         let (res_inner, Tracked(itree)): (
-            Option<OwlBuf<'a>>,
+            Option<OwlBuf<'b>>,
             Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         ) = {
             broadcast use itree_axioms;

@@ -280,9 +280,11 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
             RouterDeviceType::NoOwl
         };
 
+        let num_workers = 1; 
+
         // create router
         let router: router::Device<B::Endpoint, PeerInner<T, B>, T::Writer, B::Writer> =
-            router::Device::new(num_cpus::get(), writer, devtype);
+            router::Device::new(num_workers, writer, devtype);
 
         // create arc to state
         let wg = WireGuard {
