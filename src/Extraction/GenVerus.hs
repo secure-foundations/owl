@@ -316,7 +316,7 @@ genVerusCAExpr ae = do
                             castStart <- castGRE start' RTUsize
                             castEnd <- castGRE end' RTUsize
                             case buf' ^. eTy of
-                                RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ #{buf' ^. code}.subrange(#{castStart}, #{castEnd}) }|]
+                                RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ OwlBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         (f, [x]) | "?" `isSuffixOf` f -> do
