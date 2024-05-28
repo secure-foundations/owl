@@ -592,7 +592,7 @@ extractExpr expr = do
             e1' <- extractExpr e1
             e2' <- extractExpr e2
             return $ parens $
-                pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
+                pretty "if" <+> parens a' <+> pretty "then" <> line <> parens e1' <> line <> pretty "else" <> line <> parens e2'
         CCase ae cases -> do
             ae' <- extractCAExpr ae
             translateCaseName <- case ae ^. tty of
@@ -659,7 +659,7 @@ extractExpr expr = do
         CCall f frty args -> do
             args' <- mapM extractCAExpr args
             let args'' = [di|cfg|] : [di|mut_state|] : args'
-            return [di|(call(#{f}_spec(#{hsep . punctuate comma $ args''})))|]
+            return [di|call(#{f}_spec(#{hsep . punctuate comma $ args''}))|]
         _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
 
 

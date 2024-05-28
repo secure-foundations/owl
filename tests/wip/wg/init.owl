@@ -170,7 +170,7 @@ def init_stage2<i@n,m>
         let c6 = kdf<0; odh L5<j@n,m>[0]; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x
         ) in 
-        let c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
+        let ghost c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
         forall i:idx,j:idx {
             kdf_inj_lemma(c6_ghost, honest_c6<session i, session j, pid n, pid
             n, pid m>())
