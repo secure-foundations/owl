@@ -81,6 +81,14 @@ else
     ip netns exec net1 $wireguard_rs_bin wg1n
 fi
 
+# Use kernel wireguard instead:
+# ip link add wg1 type wireguard
+# ip netns exec net1 ip link add wg1n type wireguard
+
+# Use boringtun instead:
+# /usr0/home/prataps/.cargo/bin/boringtun-cli --disable-drop-privileges wg1
+# ip netns exec net1 /usr0/home/prataps/.cargo/bin/boringtun-cli --disable-drop-privileges wg1n
+
 # Add IP addresses to Wireguard interfaces
 ip addr add 10.100.2.1/24 dev wg1
 ip netns exec net1 ip addr add 10.100.2.2/24 dev wg1n
