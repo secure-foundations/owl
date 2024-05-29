@@ -50,19 +50,15 @@ pub struct DeviceInner<O> {
     limiter: Mutex<RateLimiter>,
 }
 
-pub struct OwlInitiator<O> {
-    cfg : owl_wireguard::cfg_Initiator<O>,
-    state : owl_wireguard::state_Initiator,
-}
-
-pub struct OwlResponder<O> {
-    cfg : owl_wireguard::cfg_Responder<O>,
-    state : owl_wireguard::state_Responder,
+pub struct OwlDevice<O> {
+    eph_sk: Vec<u8>,
+    static_sk: Vec<u8>,
+    inner: DeviceInner<O>,
 }
 
 pub enum Device<O> {
     NoOwl(DeviceInner<O>),
-    Owl (DeviceInner<O>),
+    Owl (OwlDevice<O>),
 }
 
 impl<O> Device<O> {
@@ -70,14 +66,14 @@ impl<O> Device<O> {
     pub fn inner(&self) -> &DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Owl(inner) => &inner,
+            Device::Owl(od) => &od.inner,
         }
     }
 
     pub fn inner_mut(&mut self) -> &mut DeviceInner<O> {
         match self {
             Device::NoOwl(inner) => inner,
-            Device::Owl(inner) => inner,
+            Device::Owl(od) => &mut od.inner,
         }
     }
 
@@ -86,7 +82,9 @@ impl<O> Device<O> {
     }
 
     pub fn new_owl() -> Device<O> {
-        Device::Owl(DeviceInner::new())
+        let eph_sk = StaticSecret::new(&mut OsRng).to_bytes().to_vec();
+        let static_sk = vec![];
+        Device::Owl(OwlDevice { eph_sk, static_sk, inner: DeviceInner::new() })
     }
 
     // pub fn new_owl_initiator() -> Device<O> {
@@ -143,15 +141,12 @@ impl<O> Device<O> {
     ///
     /// * `sk` - x25519 scalar representing the local private key
     pub fn set_sk(&mut self, sk: Option<StaticSecret>) -> Option<PublicKey> {
-        // match self {
-        //     Device::NoOwl(_) => {},
-        //     Device::Initiator(i) => {
-        //         i.cfg.owl_S_init = sk.clone().unwrap().to_bytes().to_vec();
-        //     },
-        //     Device::Responder(r) => {
-        //         r.cfg.owl_S_resp = sk.clone().unwrap().to_bytes().to_vec();
-        //     },
-        // }
+        match self {
+            Device::NoOwl(_) => {},
+            Device::Owl(o) => {
+                o.static_sk = sk.clone().unwrap().to_bytes().to_vec();
+            },
+        }
         
         // update secret and public key
         self.inner_mut().keyst = sk.map(|sk| {
@@ -471,8 +466,7 @@ impl<O> Device<O> {
 
                 // create noise part of initation
                 match self {
-                    // Device::NoOwl(_) => {
-                    _ => {
+                    Device::NoOwl(_) => {
                         // match self {
                         //     Device::NoOwl(_) => {},
                         //     _ => { println!("using no-owl handshake in begin"); }
@@ -483,43 +477,67 @@ impl<O> Device<O> {
                             .lock()
                             .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
-                    // Device::Initiator(i) => {
-                    //     let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                    //     // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
-                    //     // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
-                    //     let static_static = peer.ss;
+                    Device::Owl(owl_device) => {
+                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator {
+                            owl_S_init: owl_device.static_sk.clone(),
+                            owl_E_init: owl_device.eph_sk.clone(),
+                            pk_owl_S_resp: vec![],
+                            pk_owl_S_init: vec![],
+                            pk_owl_E_resp: vec![],
+                            pk_owl_E_init: vec![],
+                            salt: vec![],
+                            device: Some(&owl_device.inner)
+                        };
 
-                    //     let initiator_msg1_val = i.cfg.owl_generate_msg1_wrapper(
-                    //         &mut dummy_state, 
-                    //         Arc::new(pk.as_bytes().to_vec()), 
-                    //         Arc::new(keyst.pk.as_bytes().to_vec()),
-                    //         Arc::new(static_static.as_bytes().to_vec()), 
-                    //         &mut msg.as_bytes_mut()
-                    //     );
+                        // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
+                        // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
+
+                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                        let static_static = peer.ss;
                         
-                    //     let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
-                    //     let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
-                    //     let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
+                        let init_sent_state = cfg.owl_init_stage1_wrapper(
+                            &mut dummy_state,
+                            pk.as_bytes(),
+                            keyst.pk.as_bytes(),
+                            static_static.as_bytes(),
+                            None, // TODO psk
+                            &mut msg.as_bytes_mut()
+                        );
 
-                    //     // save state
-                    //     *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
-                    //         hs: hs.into(),
-                    //         ck: ck.into(),
-                    //         eph_sk: e_init_as_array.into(),
-                    //         local,
-                    //     };
+                        let hs: [u8; 32] = init_sent_state.owl_ss_h4.as_slice().try_into().unwrap();
+                        let ck: [u8; 32] = init_sent_state.owl_iss_c3.as_slice().try_into().unwrap();
+                        let e_init_as_array: [u8; 32] = ((*owl_device.eph_sk)[..]).try_into().unwrap();
 
+                        // let static_static = peer.ss;
 
-                    //     // println!("msg1 = {} : {} bytes", hex::encode(&msg.as_bytes()[..]), msg.as_bytes().len());
+                        // let initiator_msg1_val = cfg.owl_generate_msg1_wrapper(
+                        //     &mut dummy_state, 
+                        //     Arc::new(pk.as_bytes().to_vec()), 
+                        //     Arc::new(keyst.pk.as_bytes().to_vec()),
+                        //     Arc::new(static_static.as_bytes().to_vec()), 
+                        //     &mut msg.as_bytes_mut()
+                        // );
+                        
+                        // let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
+                        // let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
+                        // let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
 
-                    //     // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
-                    //     // peer.macs
-                    //     //     .lock()
-                    //     //     .generate(msg.noise.as_bytes(), &mut msg.macs);
-                    // },
-                    // Device::Responder(_) => {
-                    //     panic!("Responder cannot initiate handshake");
-                    // },
+                        // save state
+                        *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
+                            hs: hs.into(),
+                            ck: ck.into(),
+                            eph_sk: e_init_as_array.into(),
+                            local,
+                        };
+
+                        // println!("msg1 = {} : {} bytes", hex::encode(&msg.as_bytes()[..]), msg.as_bytes().len());
+
+                        // noise::create_initiation_precomputed_eph_key(rng, keyst, peer, pk, local, StaticSecret::from(e_init_as_array), &mut msg.noise)?;
+                        // peer.macs
+                        //     .lock()
+                        //     .generate(msg.noise.as_bytes(), &mut msg.macs);
+                    },
+
                 }
 
                 // dbg!(hex::encode(&msg.noise.as_bytes()));

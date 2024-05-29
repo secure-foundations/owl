@@ -2395,7 +2395,7 @@ impl state_Initiator {
     }
 }
 
-pub struct cfg_Initiator<O> {
+pub struct cfg_Initiator<O,'device> {
     pub salt: Vec<u8>,
     pub owl_S_init: Vec<u8>,
     pub owl_E_init: Vec<u8>,
@@ -2403,10 +2403,10 @@ pub struct cfg_Initiator<O> {
     pub pk_owl_S_init: Vec<u8>,
     pub pk_owl_E_resp: Vec<u8>,
     pub pk_owl_E_init: Vec<u8>,
-    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
+    pub device: Option<&'device crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
-impl<O> cfg_Initiator<O> {    
+impl<O, 'device> cfg_Initiator<O, 'device> {    
     pub exec fn owl_transp_send_init_wrapper<'a>(
         &'a self,         
         mut_state: &mut state_Initiator,
@@ -2910,6 +2910,38 @@ impl<O> cfg_Initiator<O> {
         Ok((res_inner, Tracked(itree)))
     }
 
+    pub fn owl_init_stage1_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_Initiator,
+        owl_dhpk_S_resp: &'a [u8],
+        owl_dhpk_S_init: &'a [u8],
+        owl_ss_S_resp_S_init: &'a [u8],
+        owl_psk: Option<&'a [u8]>,
+        obuf: &mut [u8],
+    ) -> owl_init_sent_state<'a> {
+        let pskmode = match owl_psk {
+            Some(psk) => owl_PSKMode::owl_HasPSK(OwlBuf::from_slice(psk)),
+            None => owl_PSKMode::owl_NoPSK(),
+        };        
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            init_stage1_spec(*self, *s, dhpk_S_resp.dview(), dhpk_S_init.dview(), ss_S_resp_S_init.dview(), pskmode.dview())
+        );
+        let (res, _) =
+            self.owl_init_stage1(
+                Tracked(call_token), 
+                mut_state, 
+                OwlBuf::from_slice(owl_dhpk_S_resp), 
+                OwlBuf::from_slice(owl_dhpk_S_init), 
+                OwlBuf::from_slice(owl_ss_S_resp_S_init),
+                pskmode,
+                obuf).unwrap();
+        res
+        
+    }
+
+
     #[verifier::spinoff_prover]
     pub fn owl_init_stage1<'a>(
         &'a self,
@@ -2919,7 +2951,7 @@ impl<O> cfg_Initiator<O> {
         owl_dhpk_S_init936: OwlBuf<'a>,
         owl_ss_S_resp_S_init937: OwlBuf<'a>,
         owl_psk938: owl_PSKMode<'a>,
-        obuf: &mut Vec<u8>,
+        obuf: &mut [u8],
     ) -> (res: Result<
         (
             owl_init_sent_state<'a>,

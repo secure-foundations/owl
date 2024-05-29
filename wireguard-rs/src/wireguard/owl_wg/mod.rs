@@ -69,7 +69,7 @@ pub exec const HMAC_MODE: owl_hmac::Mode
     ensures
         HMAC_MODE == SPEC_HMAC_MODE,
 {
-    owl_hmac::Mode::Sha512
+    owl_hmac::Mode::Blake2s
 }
 
 #[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]

@@ -350,7 +350,7 @@ pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8], info:
 pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Vec<u8>)
     ensures mac_val.view() == mac(mackey.view(), msg.view())
 {
-    owl_hmac::hmac(HMAC_MODE, mackey, msg, None)
+    owl_hmac::mac(mackey, msg)
 }
 
 #[verifier(external_body)]

@@ -142,7 +142,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 // let plaintext =
                 //     &*(&msg[SIZE_TAG..(msg.len() - SIZE_TAG)] as *const [u8] as *mut [u8]);
                 
-                let msg2_receiver = job.keypair.send.id.to_le_bytes().to_vec();
+                let msg2_receiver = job.keypair.send.id.to_le_bytes();
 
                 let succeeded = cfg.owl_transp_send_init_wrapper(
                     &mut state, 
@@ -172,7 +172,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 let mut state = owl_wireguard::state_Responder::init_state_Responder();
                 state.owl_N_resp_send = job.counter as usize;
 
-                let msg2_sender = job.keypair.send.id.to_le_bytes().to_vec();
+                let msg2_sender = job.keypair.send.id.to_le_bytes();
 
                 // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
                 let plaintext = msg[SIZE_TAG..(msg.len() - SIZE_TAG)].to_vec();
@@ -181,8 +181,8 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                     &mut state, 
                     &plaintext, 
                     &mut msg,
-                    msg2_sender.as_slice(),
                     [].as_slice(),
+                    msg2_sender.as_slice(),
                     true, // TODO: confirm, but I think wireguard-rs handshake automatically sends the extra message
                     &job.keypair.recv.key[..],
                     &job.keypair.send.key[..]

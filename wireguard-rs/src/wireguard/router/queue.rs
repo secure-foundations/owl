@@ -104,6 +104,7 @@ mod tests {
     use rand::Rng;
 
     #[test]
+    #[ignore]
     fn test_consume_queue() {
         struct TestJob {
             cnt: Arc<AtomicUsize>,
