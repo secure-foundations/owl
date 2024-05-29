@@ -722,7 +722,7 @@ extractUserFunc (CUserFunc name b) = do
     where
         extractArg (cdvar, strname, ty) = do
             let specty = specTyOf ty
-            return [di|#{pretty strname} : #{pretty specty}|]
+            return [di|#{pretty . name2String $ cdvar} : #{pretty specty}|]
 
 
 specCast :: (Doc ann, FormatTy) -> VerusTy -> EM (Doc ann)

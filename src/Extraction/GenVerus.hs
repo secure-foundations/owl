@@ -1157,8 +1157,9 @@ cast (v, RTOwlBuf _) (RTOwlBuf _) =
 cast (v, RTDummy) t = return v
 cast (v, RTOption RTDummy) (RTOption t) = return v
 cast (v, t1) t2 | t1 == t2 = return v
+cast (v, RTEnum e1 cs1) (RTEnum e2 cs2) | e1 == e2 && S.fromList cs1 == S.fromList cs2 = return v
 cast (v, _) RTUnit = return [di|()|]
-cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
+cast (v, t1) t2 = throwError $ CantCastType (show v) (show t1) (show t2)
 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)

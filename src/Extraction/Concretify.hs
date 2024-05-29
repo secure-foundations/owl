@@ -668,7 +668,7 @@ userFuncArgTy = FBuf Nothing
 
 concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do
-    let ((_, args), body) = unsafeUnbind bd
+    ((_, args), body) <- unbind bd
     let argstys = zip (map castName args) (repeat userFuncArgTy)
     body' <- withVars argstys $ concretifyAExpr body
     let rty = body' ^. tty

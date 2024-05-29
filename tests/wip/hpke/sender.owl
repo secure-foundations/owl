@@ -65,6 +65,6 @@ def SingleShotSeal(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ 
     let context = call KeyScheduleS(aer) in 
     let c = call Seal(context, x) in 
     parse aer as AuthEncapResult(_, pk) in 
-    output (pk ++ c)
+    output (pk ++ c) to endpoint(receiver)
 
 
