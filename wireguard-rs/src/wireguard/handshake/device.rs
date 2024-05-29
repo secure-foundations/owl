@@ -585,8 +585,7 @@ impl<O> Device<O> {
         match LittleEndian::read_u32(msg) {
             TYPE_INITIATION => {
                 match self {
-                    // Device::NoOwl(_) => {
-                    _ => {
+                    Device::NoOwl(_) => {                    
                         // match self {
                         //     Device::NoOwl(_) => {},
                         //     _ => { println!("using no-owl handshake for TYPE_INITIATION"); }
@@ -646,50 +645,60 @@ impl<O> Device<O> {
                             Some(keys),
                         ))
                     },
-                    // Device::Initiator(_) => {
-                    //     panic!("Initiator cannot receive initiation")
-                    // },
-                    // Device::Responder(r) => {
-                    //     let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
-                    //     let msg1_val = r.cfg.owl_receive_msg1_wrapper(
-                    //         &mut dummy_state,
-                    //         Arc::new(keyst.pk.as_bytes().to_vec()),
-                    //         msg
-                    //     );
+                    Device::Owl(owl_device) => {
+                        let cfg: owl_wireguard::cfg_Responder<O> = owl_wireguard::cfg_Responder {
+                            owl_S_resp: owl_device.static_sk.clone(),
+                            owl_E_resp: owl_device.eph_sk.clone(),
+                            pk_owl_S_resp: vec![],
+                            pk_owl_S_init: vec![],
+                            pk_owl_E_resp: vec![],
+                            pk_owl_E_init: vec![],
+                            salt: vec![],
+                            device: Some(&owl_device.inner)
+                        };
 
-                    //     let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
+                        let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
+                        let msg1_val = cfg.owl_resp_stage1_wrapper(
+                            &mut dummy_state,
+                            keyst.pk.as_bytes(),
+                            msg
+                        );
 
-                    //     let pk: [u8; 32] = (&msg1_val.owl__responder_msg1_sender_pk[..]).try_into().unwrap();
-                    //     let pk = PublicKey::from(pk);
-                    //     let peer = self.inner().lookup_pk(&pk)?;
+                        let msg1_val = msg1_val.ok_or(HandshakeError::DecryptionFailure)?;
 
-                    //     // allocate new index for response
-                    //     let local = self.inner().allocate(rng, &pk);
+                        let pk: [u8; 32] = msg1_val.owl_rrs_dhpk_S_init.as_slice().try_into().unwrap();
+                        let pk = PublicKey::from(pk);
+                        let peer = self.inner().lookup_pk(&pk)?;
 
-                    //     // allocate buffer for response
-                    //     let mut resp = Response::default();
+                        // allocate new index for response
+                        let local = self.inner().allocate(rng, &pk);
 
-                    //     let transp_keys = r.cfg.owl_generate_msg2_wrapper(&mut dummy_state, msg1_val, &mut resp.as_bytes_mut());
+                        // allocate buffer for response
+                        let mut resp = Response::default();
 
-                    //     Ok((
-                    //         Some(&peer.opaque),
-                    //         Some(resp.as_bytes().to_owned()),
-                    //         Some(KeyPair {
-                    //             birth: Instant::now(),
-                    //             initiator: false,
-                    //             send: Key {
-                    //                 id: u32::from_le_bytes(transp_keys.owl__transp_keys_initiator.try_into().unwrap()),
-                    //                 key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
-                    //             },
-                    //             recv: Key {
-                    //                 id: local,
-                    //                 key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
-                    //             },
-                    //         }),
-                    //     ))
+                        let transp_keys = cfg.owl_resp_stage2_wrapper(&mut dummy_state, msg1_val, &mut resp.as_bytes_mut());
+
+                        let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
+
+                        Ok((
+                            Some(&peer.opaque),
+                            Some(resp.as_bytes().to_owned()),
+                            Some(KeyPair {
+                                birth: Instant::now(),
+                                initiator: false,
+                                send: Key {
+                                    id: u32::from_le_bytes(transp_keys.owl_tkr_msg2_receiver.as_slice().try_into().unwrap()),
+                                    key: transp_keys.owl_tkr_k_resp_send.as_slice().try_into().unwrap(),
+                                },
+                                recv: Key {
+                                    id: local,
+                                    key: transp_keys.owl_tkr_k_init_send.as_slice().try_into().unwrap(),
+                                },
+                            }),
+                        ))
 
 
-                    // },
+                    },
                 }
             }
             TYPE_RESPONSE => {

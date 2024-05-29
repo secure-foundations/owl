@@ -2926,7 +2926,7 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
         let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();
         let tracked (Tracked(call_token), _) = split_bind(
             dummy_tok,
-            init_stage1_spec(*self, *s, dhpk_S_resp.dview(), dhpk_S_init.dview(), ss_S_resp_S_init.dview(), pskmode.dview())
+            init_stage1_spec(*self, *s, dhpk_S_resp.view(), dhpk_S_init.view(), ss_S_resp_S_init.view(), pskmode.view())
         );
         let (res, _) =
             self.owl_init_stage1(
@@ -3237,7 +3237,7 @@ impl state_Responder {
     }
 }
 
-pub struct cfg_Responder<O> {
+pub struct cfg_Responder<O, 'device> {
     pub salt: Vec<u8>,
     pub owl_S_resp: Vec<u8>,
     pub owl_E_resp: Vec<u8>,
@@ -3245,10 +3245,10 @@ pub struct cfg_Responder<O> {
     pub pk_owl_S_init: Vec<u8>,
     pub pk_owl_E_resp: Vec<u8>,
     pub pk_owl_E_init: Vec<u8>,
-    pub device: Option<crate::wireguard::handshake::device::DeviceInner<O>>,
+    pub device: Option<&'device crate::wireguard::handshake::device::DeviceInner<O>>,
 }
 
-impl<O> cfg_Responder<O> {
+impl<O, 'device> cfg_Responder<O, 'device> {
     pub exec fn owl_transp_send_resp_wrapper<'a>(
         &'a self,         
         mut_state: &'a mut state_Responder,
@@ -3515,6 +3515,23 @@ impl<O> cfg_Responder<O> {
         Ok((res_inner, Tracked(itree)))
     }
 
+    pub fn owl_resp_stage2_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_Responder,
+        owl_st: owl_resp_received_state<'a>,
+        obuf: &mut [u8],
+    ) -> (res: Option<owl_transp_keys_resp<'a>>) 
+    {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            resp_stage2_spec(*self, *s, owl_st.view()),
+        );
+        let (res, _) =
+            self.owl_resp_stage2(Tracked(call_token), mut_state, owl_st, obuf).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_resp_stage2<'a>(
         &'a self,
@@ -3522,8 +3539,8 @@ impl<O> cfg_Responder<O> {
             ITreeToken<(Option<owlSpec_transp_keys_resp>, state_Responder), Endpoint>,
         >,
         mut_state: &mut state_Responder,
-        owl_st942: owl_resp_received_state<'a>,
-        obuf: &mut Vec<u8>,
+        owl_st392: owl_resp_received_state<'a>,
+        obuf: &mut [u8],
     ) -> (res: Result<
         (
             Option<owl_transp_keys_resp<'a>>,
@@ -3532,8 +3549,8 @@ impl<O> cfg_Responder<O> {
         OwlError,
     >)
         requires
-            itree.view() == resp_stage2_spec(*self, *old(mut_state), owl_st942.view()),
-            owl_st942.len_valid(),
+            itree.view() == resp_stage2_spec(*self, *old(mut_state), owl_st392.view()),
+            owl_st392.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
             res matches Ok((Some(b), _)) ==> b.len_valid(),
@@ -3546,67 +3563,67 @@ impl<O> cfg_Responder<O> {
             broadcast use itree_axioms;
 
             reveal(resp_stage2_spec);
-            let owl_st_850 = { owl_st942 };
-            let owl_st__851 = { owl_st_850 };
-            let parseval = owl_st__851;
-            let owl_msg2_receiver858 = OwlBuf::another_ref(&parseval.owl_rrs_msg1_sender);
-            let owl_psk857 = parseval.owl_rrs_psk;
-            let owl_dhpk_S_init856 = OwlBuf::another_ref(&parseval.owl_rrs_dhpk_S_init);
-            let owl_msg1_ephemeral855 = OwlBuf::another_ref(&parseval.owl_rrs_msg1_ephemeral);
-            let owl_C2854 = parseval.owl_rrs_c2;
-            let owl_H4853 = OwlBuf::another_ref(&parseval.owl_rrs_h4);
-            let owl_C3852 = OwlBuf::another_ref(&parseval.owl_rrs_c3);
-            let tmp_owl_e_resp_pk859 = {
+            let owl_st_312 = { owl_st392 };
+            let owl_st__313 = { owl_st_312 };
+            let parseval = owl_st__313;
+            let owl_msg2_receiver320 = OwlBuf::another_ref(&parseval.owl_rrs_msg1_sender);
+            let owl_psk319 = parseval.owl_rrs_psk;
+            let owl_dhpk_S_init318 = OwlBuf::another_ref(&parseval.owl_rrs_dhpk_S_init);
+            let owl_msg1_ephemeral317 = OwlBuf::another_ref(&parseval.owl_rrs_msg1_ephemeral);
+            let owl_C2316 = parseval.owl_rrs_c2;
+            let owl_H4315 = OwlBuf::another_ref(&parseval.owl_rrs_h4);
+            let owl_C3314 = OwlBuf::another_ref(&parseval.owl_rrs_c3);
+            let tmp_owl_e_resp_pk321 = {
                 owl_dhpk(OwlBuf::from_slice(&self.owl_E_resp.as_slice()).as_slice())
             };
-            let owl_e_resp_pk859 = OwlBuf::from_vec(tmp_owl_e_resp_pk859);
-            let tmp_owl_kdfval471860 = {
+            let owl_e_resp_pk321 = OwlBuf::from_vec(tmp_owl_e_resp_pk321);
+            let tmp_owl_kdfval106322 = {
                 owl_extract_expand_to_len(
                     0 + KDFKEY_SIZE,
-                    owl_C3852.as_slice(),
-                    owl_e_resp_pk859.as_slice(),
+                    owl_C3314.as_slice(),
+                    owl_e_resp_pk321.as_slice(),
                     {
                         let x = mk_vec_u8![];
                         OwlBuf::from_vec(x)
                     }.as_slice(),
                 )
             };
-            let owl_kdfval471860 = OwlBuf::from_vec(tmp_owl_kdfval471860);
-            let owl_c4861 = {
-                { OwlBuf::another_ref(&owl_kdfval471860).subrange(0, 0 + KDFKEY_SIZE) }
+            let owl_kdfval106322 = OwlBuf::from_vec(tmp_owl_kdfval106322);
+            let owl_c4323 = {
+                { OwlBuf::another_ref(&owl_kdfval106322).subrange(0, 0 + KDFKEY_SIZE) }
             };
-            let tmp_owl_h5862 = {
-                owl_crh(owl_concat(owl_H4853.as_slice(), owl_e_resp_pk859.as_slice()).as_slice())
+            let tmp_owl_h5324 = {
+                owl_crh(owl_concat(owl_H4315.as_slice(), owl_e_resp_pk321.as_slice()).as_slice())
             };
-            let owl_h5862 = OwlBuf::from_vec(tmp_owl_h5862);
-            let tmp_owl_ss863 = {
+            let owl_h5324 = OwlBuf::from_vec(tmp_owl_h5324);
+            let tmp_owl_ss325 = {
                 owl_dh_combine(
-                    owl_msg1_ephemeral855.as_slice(),
+                    owl_msg1_ephemeral317.as_slice(),
                     OwlBuf::from_slice(&self.owl_E_resp.as_slice()).as_slice(),
                 )
             };
-            let owl_ss863 = OwlBuf::from_vec(tmp_owl_ss863);
-            let tmp_owl_kdfval484864 = {
+            let owl_ss325 = OwlBuf::from_vec(tmp_owl_ss325);
+            let tmp_owl_kdfval119326 = {
                 owl_extract_expand_to_len(
                     0 + KDFKEY_SIZE,
-                    owl_c4861.as_slice(),
-                    owl_ss863.as_slice(),
+                    owl_c4323.as_slice(),
+                    owl_ss325.as_slice(),
                     {
                         let x = mk_vec_u8![];
                         OwlBuf::from_vec(x)
                     }.as_slice(),
                 )
             };
-            let owl_kdfval484864 = OwlBuf::from_vec(tmp_owl_kdfval484864);
-            let owl_c5865 = {
-                { OwlBuf::another_ref(&owl_kdfval484864).subrange(0, 0 + KDFKEY_SIZE) }
+            let owl_kdfval119326 = OwlBuf::from_vec(tmp_owl_kdfval119326);
+            let owl_c5327 = {
+                { OwlBuf::another_ref(&owl_kdfval119326).subrange(0, 0 + KDFKEY_SIZE) }
             };
-            let tmp_owl_kdfval491866 = {
+            let tmp_owl_kdfval126328 = {
                 owl_extract_expand_to_len(
                     0 + KDFKEY_SIZE,
-                    owl_c5865.as_slice(),
+                    owl_c5327.as_slice(),
                     owl_dh_combine(
-                        owl_dhpk_S_init856.as_slice(),
+                        owl_dhpk_S_init318.as_slice(),
                         OwlBuf::from_slice(&self.owl_E_resp.as_slice()).as_slice(),
                     ).as_slice(),
                     {
@@ -3615,130 +3632,124 @@ impl<O> cfg_Responder<O> {
                     }.as_slice(),
                 )
             };
-            let owl_kdfval491866 = OwlBuf::from_vec(tmp_owl_kdfval491866);
-            let owl_c6867 = {
-                { OwlBuf::another_ref(&owl_kdfval491866).subrange(0, 0 + KDFKEY_SIZE) }
+            let owl_kdfval126328 = OwlBuf::from_vec(tmp_owl_kdfval126328);
+            let owl_c6329 = {
+                { OwlBuf::another_ref(&owl_kdfval126328).subrange(0, 0 + KDFKEY_SIZE) }
             };
-            let owl_psk_val868 = {
-                let owl_caseval869 = { &owl_psk857 };
-                match owl_caseval869 {
-                    owl_PSKMode::owl_HasPSK(tmp_owl_v870) => {
-                        let owl_v870 = OwlBuf::another_ref(&tmp_owl_v870);
-                        owl_v870
+            let owl_psk_val330 = {
+                let owl_caseval331 = { &owl_psk319 };
+                match owl_caseval331 {
+                    owl_PSKMode::owl_HasPSK(tmp_owl_v332) => {
+                        let owl_v332 = OwlBuf::another_ref(&tmp_owl_v332);
+                        owl_v332
                     },
                     owl_PSKMode::owl_NoPSK() => { owl_zeros_32() },
                 }
             };
-            let tmp_owl_kdfval500871 = {
+            let tmp_owl_kdfval135333 = {
                 owl_extract_expand_to_len(
                     0 + KDFKEY_SIZE + NONCE_SIZE + ENCKEY_SIZE,
-                    owl_c6867.as_slice(),
-                    owl_psk_val868.as_slice(),
+                    owl_c6329.as_slice(),
+                    owl_psk_val330.as_slice(),
                     {
                         let x = mk_vec_u8![];
                         OwlBuf::from_vec(x)
                     }.as_slice(),
                 )
             };
-            let owl_kdfval500871 = OwlBuf::from_vec(tmp_owl_kdfval500871);
-            let owl_c7872 = {
-                { OwlBuf::another_ref(&owl_kdfval500871).subrange(0, 0 + KDFKEY_SIZE) }
+            let owl_kdfval135333 = OwlBuf::from_vec(tmp_owl_kdfval135333);
+            let owl_c7334 = {
+                { OwlBuf::another_ref(&owl_kdfval135333).subrange(0, 0 + KDFKEY_SIZE) }
             };
-            let owl_tau873 = {
+            let owl_tau335 = {
                 {
-                    OwlBuf::another_ref(&owl_kdfval500871).subrange(
+                    OwlBuf::another_ref(&owl_kdfval135333).subrange(
                         0 + KDFKEY_SIZE,
                         0 + KDFKEY_SIZE + NONCE_SIZE,
                     )
                 }
             };
-            let owl_k0874 = {
+            let owl_k0336 = {
                 {
-                    OwlBuf::another_ref(&owl_kdfval500871).subrange(
+                    OwlBuf::another_ref(&owl_kdfval135333).subrange(
                         0 + KDFKEY_SIZE + NONCE_SIZE,
                         0 + KDFKEY_SIZE + NONCE_SIZE + ENCKEY_SIZE,
                     )
                 }
             };
-            let owl_msg2_tag875 = { owl_msg2_tag_value() };
-            let (owl_msg2_sender876, Tracked(itree)) = {
+            let owl_msg2_tag337 = { owl_msg2_tag_value() };
+            let (owl_msg2_sender338, Tracked(itree)) = {
                 owl_call!(itree, *mut_state, get_sender_r_spec(*self, *mut_state), self.owl_get_sender_r(mut_state))
             };
-            let tmp_owl_msg2_mac1_k877 = {
-                owl_crh(owl_concat(owl_mac1().as_slice(), owl_dhpk_S_init856.as_slice()).as_slice())
+            let tmp_owl_msg2_mac1_k339 = {
+                owl_crh(owl_concat(owl_mac1().as_slice(), owl_dhpk_S_init318.as_slice()).as_slice())
             };
-            let owl_msg2_mac1_k877 = OwlBuf::from_vec(tmp_owl_msg2_mac1_k877);
-            let owl_msg2_receiver878 = {
-                {
-                    let x = mk_vec_u8![0x00u8, 0x00u8, 0x00u8, 0x00u8, ];
-                    OwlBuf::from_vec(x)
-                }
+            let owl_msg2_mac1_k339 = OwlBuf::from_vec(tmp_owl_msg2_mac1_k339);
+            let tmp_owl_h6340 = {
+                owl_crh(owl_concat(owl_h5324.as_slice(), owl_tau335.as_slice()).as_slice())
             };
-            let tmp_owl_h6879 = {
-                owl_crh(owl_concat(owl_h5862.as_slice(), owl_tau873.as_slice()).as_slice())
-            };
-            let owl_h6879 = OwlBuf::from_vec(tmp_owl_h6879);
-            let owl_msg2_empty880 = {
+            let owl_h6340 = OwlBuf::from_vec(tmp_owl_h6340);
+            let owl_msg2_empty341 = {
                 {
                     match owl_enc_st_aead(
-                        owl_k0874.as_slice(),
+                        owl_k0336.as_slice(),
                         {
                             let x = mk_vec_u8![];
                             OwlBuf::from_vec(x)
                         }.as_slice(),
                         &mut mut_state.owl_aead_counter_msg2_C7,
-                        owl_h6879.as_slice(),
+                        owl_h6340.as_slice(),
                     ) {
                         Ok(ctxt) => { OwlBuf::from_vec(ctxt) },
                         Err(e) => { return Err(e) },
                     }
                 }
             };
-            let tmp_owl_msg2_mac1881 = {
+            let tmp_owl_msg2_mac1342 = {
                 owl_mac(
-                    owl_msg2_mac1_k877.as_slice(),
+                    owl_msg2_mac1_k339.as_slice(),
                     owl_concat(
                         owl_concat(
                             owl_concat(
                                 owl_concat(
-                                    owl_msg2_tag875.as_slice(),
-                                    owl_msg2_sender876.as_slice(),
+                                    owl_msg2_tag337.as_slice(),
+                                    owl_msg2_sender338.as_slice(),
                                 ).as_slice(),
-                                owl_msg2_receiver878.as_slice(),
+                                owl_msg2_receiver320.as_slice(),
                             ).as_slice(),
-                            owl_e_resp_pk859.as_slice(),
+                            owl_e_resp_pk321.as_slice(),
                         ).as_slice(),
-                        owl_msg2_empty880.as_slice(),
+                        owl_msg2_empty341.as_slice(),
                     ).as_slice(),
                 )
             };
-            let owl_msg2_mac1881 = OwlBuf::from_vec(tmp_owl_msg2_mac1881);
-            let owl__assert_267882 = { owl_ghost_unit() };
-            let owl_msg2_mac2883 = { owl_zeros_16() };
-            let owl_msg2_output884 = {
+            let owl_msg2_mac1342 = OwlBuf::from_vec(tmp_owl_msg2_mac1342);
+            let owl__assert_266343 = { owl_ghost_unit() };
+            let owl_msg2_mac2344 = { owl_zeros_16() };
+            let owl_msg2_output345 = {
                 owl_msg2(
                     (),
-                    OwlBuf::another_ref(&owl_msg2_sender876),
-                    OwlBuf::another_ref(&owl_msg2_receiver878),
-                    OwlBuf::another_ref(&owl_e_resp_pk859),
-                    OwlBuf::another_ref(&owl_msg2_empty880),
-                    OwlBuf::another_ref(&owl_msg2_mac1881),
+                    OwlBuf::another_ref(&owl_msg2_sender338),
+                    OwlBuf::another_ref(&owl_msg2_receiver320),
+                    OwlBuf::another_ref(&owl_e_resp_pk321),
+                    OwlBuf::another_ref(&owl_msg2_empty341),
+                    OwlBuf::another_ref(&owl_msg2_mac1342),
                     (),
                 )
             };
-            let owl__885 = {
+            let owl__346 = {
                 owl_output::<(Option<owlSpec_transp_keys_resp>, state_Responder)>(
                     Tracked(&mut itree),
-                    serialize_owl_msg2(&owl_msg2_output884).as_slice(),
+                    serialize_owl_msg2(&owl_msg2_output345).as_slice(),
                     &Initiator_addr(),
                     &Responder_addr(),
-                    obuf,
+                    obuf
                 );
             };
-            let tmp_owl_kdfval517886 = {
+            let tmp_owl_kdfval151347 = {
                 owl_extract_expand_to_len(
                     0 + ENCKEY_SIZE + ENCKEY_SIZE,
-                    owl_c7872.as_slice(),
+                    owl_c7334.as_slice(),
                     {
                         let x = mk_vec_u8![];
                         OwlBuf::from_vec(x)
@@ -3749,34 +3760,52 @@ impl<O> cfg_Responder<O> {
                     }.as_slice(),
                 )
             };
-            let owl_kdfval517886 = OwlBuf::from_vec(tmp_owl_kdfval517886);
-            let owl_tk1887 = {
-                { OwlBuf::another_ref(&owl_kdfval517886).subrange(0, 0 + ENCKEY_SIZE) }
+            let owl_kdfval151347 = OwlBuf::from_vec(tmp_owl_kdfval151347);
+            let owl_tk1348 = {
+                { OwlBuf::another_ref(&owl_kdfval151347).subrange(0, 0 + ENCKEY_SIZE) }
             };
-            let owl_tk2888 = {
+            let owl_tk2349 = {
                 {
-                    OwlBuf::another_ref(&owl_kdfval517886).subrange(
+                    OwlBuf::another_ref(&owl_kdfval151347).subrange(
                         0 + ENCKEY_SIZE,
                         0 + ENCKEY_SIZE + ENCKEY_SIZE,
                     )
                 }
             };
-            let owl_ret889 = {
+            let owl_ret350 = {
                 owl_transp_keys_resp(
-                    OwlBuf::another_ref(&owl_msg2_receiver878),
-                    OwlBuf::another_ref(&owl_msg2_sender876),
-                    owl_HasPSK_enumtest(&owl_psk857),
+                    OwlBuf::another_ref(&owl_msg2_receiver320),
+                    OwlBuf::another_ref(&owl_msg2_sender338),
+                    owl_HasPSK_enumtest(&owl_psk319),
                     owl_ghost_unit(),
                     owl_ghost_unit(),
                     false,
-                    OwlBuf::another_ref(&owl_tk1887),
-                    OwlBuf::another_ref(&owl_tk2888),
+                    OwlBuf::another_ref(&owl_tk1348),
+                    OwlBuf::another_ref(&owl_tk2349),
                 )
             };
-            (Some(owl_ret889), Tracked(itree))
+            (Some(owl_ret350), Tracked(itree))
         };
         Ok((res_inner, Tracked(itree)))
     }
+        
+
+    #[verifier::spinoff_prover]
+    pub fn owl_resp_stage1_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_Responder,
+        owl_dhpk_S_resp: &'a [u8],
+        ibuf: &'a [u8]
+    ) -> Option<owl_resp_received_state<'a>> {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            resp_stage1_spec(*self, *s, dhpk_S_resp.view())
+        );
+        let (res, _) = self.owl_resp_stage1(Tracked(call_token), mut_state, OwlBuf::from_slice(owl_dhpk_S_resp), ibuf).unwrap();
+        res
+    }
+
 
     #[verifier::spinoff_prover]
     pub fn owl_resp_stage1<'a>(
