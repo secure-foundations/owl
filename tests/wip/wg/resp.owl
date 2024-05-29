@@ -258,7 +258,6 @@ pcase HasPSK?(psk) in
  let msg2_tag = msg2_tag_value() in 
  let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
  let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
- let msg2_receiver : Data<adv> |4| = 0x00000000 in 
  let h6 = crh(h5 ++ tau) in
  let msg2_empty : Data<adv> | cipherlen(0) | = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, 0x, h6) in
  let msg2_mac1 = mac(msg2_mac1_k,
