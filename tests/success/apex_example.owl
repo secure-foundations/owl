@@ -4,10 +4,12 @@ name channel_secret : nonce
 type plaintext = Data<[channel_secret] /\ adv, |adv|>
 counter ACtr @ Alice
 counter BCtr @ Bob
-name kA2B : st_aead plaintext 
+def alice_send(m : plaintext) @ Alice : Unit
+def bob_send(m : plaintext) @ Bob : Unit
+name kA2B : st_aead (x:plaintext{happened(alice_send(x))})
                 aad x. true
                 nonce ACtr @ Alice, Bob
-name kB2A : st_aead plaintext 
+name kB2A : st_aead (x:plaintext{happened(bob_send(x))})
                 aad x. true
                 nonce BCtr @ Alice, Bob
 
@@ -25,7 +27,7 @@ def alice_send(m : plaintext) @ Alice : Unit = {
 }
 
 
-def alice_recv() @ Alice : Option (if sec(kB2A) then plaintext else Data<adv>) = {
+def alice_recv() @ Alice : Option (if sec(kB2A) then (m:plaintext{happened(bob_send(m))}) else Data<adv>) = {
     input i in
     parse i as EncMsg(ctr, c) in {
         let recv_key = get(kB2A) in 
