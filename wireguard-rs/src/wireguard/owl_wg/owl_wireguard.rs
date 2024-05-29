@@ -4089,7 +4089,21 @@ impl<O> cfg_Responder<O> {
             broadcast use itree_axioms;
 
             reveal(get_pk_info_spec);
-            todo!(/* implement owl_get_pk_info by hand */)
+            use x25519_dalek::{PublicKey};
+            use std::convert::TryInto;
+
+            let pk: [u8; 32] = (&owl_pk945).as_slice().try_into().unwrap();
+            let ss = self.device.as_ref().unwrap().get_ss(&pk).map(|ss| ss.to_vec());
+            let psk = self.device.as_ref().unwrap().get_psk(&pk).map(|psk| psk.to_vec());
+            let res = match (ss, psk) {
+                (Some(ss), Some(psk)) => Some(owl_init_info {
+                    owl_init_info_ss: OwlBuf::from_vec(ss),
+                    owl_init_info_psk: owl_PSKMode::owl_HasPSK(OwlBuf::from_vec(psk)),
+                }),
+                _ => None,
+            };
+            (res, Tracked(itree))
+
         };
         Ok((res_inner, Tracked(itree)))
     }
@@ -4118,7 +4132,8 @@ impl<O> cfg_Responder<O> {
             broadcast use itree_axioms;
 
             reveal(timestamp_r_spec);
-            todo!(/* implement owl_timestamp_r by hand */)
+            let t = crate::wireguard::handshake::timestamp::now().to_vec();
+            (OwlBuf::from_vec(t), Tracked(itree))
         };
         Ok((res_inner, Tracked(itree)))
     }
@@ -4147,7 +4162,8 @@ impl<O> cfg_Responder<O> {
             broadcast use itree_axioms;
 
             reveal(get_sender_r_spec);
-            todo!(/* implement owl_get_sender_r by hand */)
+            let v = self.device.as_ref().unwrap().get_singleton_id();
+            (OwlBuf::from_vec(v.to_le_bytes().to_vec()), Tracked(itree))
         };
         Ok((res_inner, Tracked(itree)))
     }

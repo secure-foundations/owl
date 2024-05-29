@@ -397,6 +397,13 @@ impl<O> DeviceInner<O> {
             .map(|peer| peer.ss)
     }
 
+    pub fn get_psk(&self, pk: &[u8; 32]) -> Option<[u8; 32]> {
+        self.pk_map
+            .get(pk.as_bytes())
+            .map(|peer| peer.psk)
+    }
+
+
     // Internal function
     //
     // Return the peer currently associated with the receiver identifier
@@ -494,13 +501,14 @@ impl<O> Device<O> {
 
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
                         let static_static = peer.ss;
+                        let psk = peer.psk;
                         
                         let init_sent_state = cfg.owl_init_stage1_wrapper(
                             &mut dummy_state,
                             pk.as_bytes(),
                             keyst.pk.as_bytes(),
                             static_static.as_bytes(),
-                            None, // TODO psk
+                            Some(&psk), 
                             &mut msg.as_bytes_mut()
                         );
 
