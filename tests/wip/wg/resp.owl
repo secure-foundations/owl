@@ -212,7 +212,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
      pid n2, pid m>()
  );
  let c5 = kdf<0,1; odh L4<i,j@n,m>[0], odh L4<i,j@n,m>[1]; kdfkey; 0>(c4, ss, 0x) in 
- let c5_ghost = gkdf<kdfkey;0>(c4_ghost, ss, 0x) in 
+ let ghost c5_ghost = gkdf<kdfkey;0>(c4_ghost, ss, 0x) in 
  forall n1:idx,n2:idx,i:idx {
      kdf_inj_lemma(c5_ghost, honest_c5<session i, session j, pid n1, pid n2, pid
      m>())
@@ -231,7 +231,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
          nb =idx n3));
  let c6 = kdf<0; odh L5<j@n,m>[0], odh
  L5<j@n3,m>[1<n>]; kdfkey;0>(c5, dh_combine(dhpk_S_init, get(E_resp<j@m>)), 0x) in 
- let c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(dhpk_S_init,
+ let ghost c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(dhpk_S_init,
  get(E_resp<j@m>)), 0x) in 
  forall i:idx,j:idx,n1:idx,n2:idx {
      kdf_inj_lemma(c6_ghost, honest_c6<session i, session j, pid n1, pid n2, pid

@@ -883,7 +883,7 @@ fn bench_send_recv_no_owl(b: &mut Bencher) {
 
 #[bench]
 fn bench_send_recv_owl(b: &mut Bencher) {
-    bench_send_recv(b, RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder, true)
+    bench_send_recv(b, RouterDeviceType::OwlInitiator, RouterDeviceType::OwlInitiator, true)
 }
 
 

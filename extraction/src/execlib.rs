@@ -93,7 +93,7 @@ impl<'x> OwlBuf<'x> {
         }
     }
 
-    pub fn subrange(&self, start: usize, end: usize) -> (result: OwlBuf)
+    pub fn subrange(self, start: usize, end: usize) -> (result: OwlBuf<'x>)
         requires self.len_valid(),
                     0 <= start <= end <= self.view().len(),
         ensures  result.view() == self.view().subrange(start as int, end as int),
@@ -103,7 +103,7 @@ impl<'x> OwlBuf<'x> {
         match self {
             OwlBuf::Borrowed(s) => OwlBuf::Borrowed(slice_subrange(s, start, end)),
             OwlBuf::Owned(v, start0, _) => {
-                let new_start = *start0 + start;
+                let new_start = start0 + start;
                 let len = end - start;
                 proof { 
                     assert_seqs_equal!(
@@ -111,7 +111,7 @@ impl<'x> OwlBuf<'x> {
                         (*v).view().subrange(new_start as int, new_start as int + len as int)
                     ); 
                 }
-                OwlBuf::Owned(Rc::clone(v), new_start, len)
+                OwlBuf::Owned(Rc::clone(&v), new_start, len)
             },
         }
     }

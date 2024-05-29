@@ -40,6 +40,7 @@ builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
 parsley = { git = "https://github.com/secure-foundations/parsley", branch = "main" }
+# parsley = { path = "/usr0/home/prataps/src/parsley/parsley" }
 
 [dependencies.treebitmap]
 package = "ip_network_table-deps-treebitmap"
@@ -68,12 +69,15 @@ heappy = { git = "https://github.com/mkmik/heappy", rev = "c071b74227cb8c77d6d52
 
 [profile.release]
 debug = true
-# lto = "fat"
-# opt-level = 3
-# codegen-units = 1
+lto = "fat"
+opt-level = 3
+codegen-units = 1
 
 [profile.bench]
 debug = true
+lto = "fat"
+opt-level = 3
+codegen-units = 1
 
 [profile.profiling]
 inherits = "release"
