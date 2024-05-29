@@ -804,9 +804,6 @@ getNameType ne = do
         Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
 
-
-
-
 pushLogTypecheckScope :: Check' senv ()
 pushLogTypecheckScope = do
     r <- view $ typeCheckLogDepth
