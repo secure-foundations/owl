@@ -73,7 +73,7 @@ def prettyData(data):
 
     for bench in [OTR, RTO, OTO]:
         data[bench]['slowdown'] = (data[bench]['no_init']/data[BASELINE]['no_init']) - 1
-        data[bench]['slowdown handshakes/sec'] = (data[bench]['handshakes/sec']/data[BASELINE]['handshakes/sec']) - 1
+        data[bench]['slowdown handshakes/sec'] = abs((data[bench]['handshakes/sec']/data[BASELINE]['handshakes/sec']) - 1)
 
 
     # print data as a table
