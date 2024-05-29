@@ -2511,51 +2511,8 @@ proveDisjointContents x y = do
                         _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (owlpretty f)
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
-
-data KDFInferResult = KDFAdv | KDFGood KDFStrictness NameExp | KDFCorrupt (Maybe Label)
-    deriving (Show, Generic, Typeable)
-
-instance OwlPretty KDFInferResult where
-    owlpretty KDFAdv = owlpretty "KDFAdv"
-    owlpretty (KDFGood str ne) = owlpretty "KDFGood(" <> owlpretty ne <> owlpretty ")"
-    owlpretty (KDFCorrupt l) = owlpretty "KDFCorrupt(" <> owlpretty l <> owlpretty ")"
-
-instance Alpha KDFInferResult
-
--- unifyKDFInferResult :: 
---     KDFSelector ->
---     Maybe (Either KDFSelector (String, ([Idx], [Idx]), KDFSelector))
---     ->
---     KDFInferResult -> KDFInferResult -> Check KDFInferResult
--- unifyKDFInferResult _ _ (KDFCorrupt _) v = return v
--- unifyKDFInferResult _ _ v (KDFCorrupt _) = return v
--- unifyKDFInferResult _ _ (KDFAdv) v = return v
--- unifyKDFInferResult _ _ v KDFAdv = return v
--- unifyKDFInferResult i e v1@(KDFGood str ne_) (KDFGood str' ne_') = do
---     ne <- normalizeNameExp ne_
---     ne' <- normalizeNameExp ne_'
---     b <- SMT.symEqNameExp ne ne'
---     ni1 <- getNameInfo ne
---     ni2 <- getNameInfo ne'
---     let b2 = (str == str')
---     (b3, pnt) <- case (ni1, ni2) of
---                (Nothing, Nothing) -> return (True, mempty)
---                (Just (nt1, _), Just (nt2, _)) -> return (nt1 `aeq` nt2, owlpretty nt1 <> line <> line <> line <> owlpretty nt2)
---                (_, _) -> return (False, mempty)
---     let pe = case e of
---                 Just (Left i) -> owlpretty i
---                 Just (Right (s, ips, i)) -> list [owlpretty s, owlpretty ips, owlpretty i]
---                 Nothing -> mempty
---     case (b && b2 && b3) of
---       True -> return v1
---       _ | not b3 -> do
---           typeError $ "KDF results inconsistent: mismatch on name types for selectors "  ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe ++ ": \n" ++ show pnt
---       _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
---       _ | not b -> typeError $ "KDF results inconsistent: result name types not equal for selectors " ++ show (owlprettyKDFSelector i) ++ ", " ++ show pe
---
-
-unifyValidKDFs :: [(KDFStrictness, NameExp)] -> Check (Maybe (KDFStrictness, NameExp))
-unifyValidKDFs valids = do
+unifyValidKDFResults :: [(KDFStrictness, NameExp)] -> Check (Maybe (KDFStrictness, NameExp))
+unifyValidKDFResults valids = do
     if length valids == 0 then return Nothing else Just <$> go valids
         where
             go (v : []) = return v
@@ -2577,57 +2534,158 @@ unifyValidKDFs valids = do
                      typeError $ "KDF results inconsistent: mismatch on name types" 
                  _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness" 
                  _ | not b -> typeError $ "KDF results inconsistent: result name types not equal" 
+
+unifyKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
+unifyKDFCallResult xs = do
+    -- If any are (Left False), return Nothing
+    let bad = or $ map (\e -> e `aeq` Left False) xs 
+    if bad then return (Left False) else do
+        let valids = catMaybes $ map (\e -> case e of                           
+                                              Left _ -> Nothing
+                                              Right v -> Just v) xs
+        res <- unifyValidKDFResults valids
+        case res of
+          Nothing -> return $ Left True
+          Just v -> return $ Right v
+
+findBestKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
+findBestKDFCallResult xs = do
+    let valids = catMaybes $ map (\e -> case e of                           
+                                          Left _ -> Nothing
+                                          Right v -> Just v) xs
+    res <- unifyValidKDFResults valids
+    case res of
+      Just v -> return $ Right v
+      Nothing -> return $ Left $ and $ map (\e -> case e of 
+                                                    Left b -> b
+                                                    Right _ -> True) xs
                
 
-
-findValidKDFCalls :: KDFPos -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [KDFSelector] -> Int -> [NameKind] -> Check [(KDFStrictness, NameExp)]
-findValidKDFCalls kpos a b c anns j nks = do
-    let (principal, other) = case kpos of
-                              KDF_SaltPos -> (a, b)
-                              KDF_IKMPos -> (b, a)
-    principals <- case kpos of
-                       KDF_SaltPos -> return [principal]
-                       KDF_IKMPos -> do
-                           xs <- unconcatIKM $ fst principal
-                           forM xs $ \x -> do
-                               t <- inferAExpr x >>= normalizeTy
-                               return (x, t)
+findValidSaltCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [KDFSelector] -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
+findValidSaltCalls a b c anns j nks = do
     results <- forM anns $ \(i, is_case) -> do
-       mapM_ inferIdx is_case
-       pres <- forM principals $ \(xp, tp) -> go kpos other (xp, tp) c (i, is_case) j nks
-       return $ catMaybes pres
-    return $ concat results
-       where
-           go kpos other (xp, tp) c (i, is_case) j nks = do
-               case extractNameFromType tp of
-                  Nothing -> return Nothing
-                  Just ne -> do
-                      wf <- isSubtype tp (tName ne)
-                      case wf of
-                        False -> return Nothing
-                        True -> do 
-                            nt <- getNameType ne
-                            case nt^.val of
-                              NT_KDF kpos' bcases | kpos `aeq` kpos' -> do
-                                  (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
-                                  let cases = subst x (fst other) $ subst y (fst c) $ subst xself xp $ cases_
-                                  if i < length cases then do
-                                    (ixs, pnts) <- unbind $ cases !! i
-                                    assert ("KDF case index arity mismatch") $ length ixs == length is_case
-                                    let (p, nts) = substs (zip ixs is_case) $ pnts
-                                    nks2 <- forM nts $ \(_, nt) -> getNameKind nt
-                                    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
-                                    assert "KDF row index out of bounds" $ j < length nks                    
-                                    let (str, nt) = nts !! j
-                                    bp <- decideProp p
-                                    b2 <- not <$> flowsTo (nameLbl ne) advLbl
-                                    if (bp == Just True) then
-                                          if b2 then do
-                                                return $ Just (str, mkSpanned $ KDFName (fst a) (fst b) (fst c) nks2 j nt (ignore $ True))   
-                                          else return Nothing
-                                    else return Nothing
-                                  else return Nothing
-                              _ -> return Nothing
+        mapM_ inferIdx is_case
+        case (extractNameFromType (snd a)) of
+          Nothing -> Left <$> tyFlowsTo (snd a) advLbl
+          Just ne -> do
+              nt <- getNameType ne
+              case nt^.val of
+                NT_KDF KDF_SaltPos kdfbody -> matchKDF [] KDF_SaltPos ne kdfbody a ((fst b, fst b), snd b) c (i, is_case) j nks
+                _ -> Left <$> kdfArgPublic [] KDF_SaltPos a b c
+    findBestKDFCallResult results
+
+
+findValidIKMCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)] 
+                  -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
+findValidIKMCalls a b c anns j nks = do
+    bs <- unconcatIKM (fst b)
+    dhs_ <- forM anns $ \e ->
+        case e of
+          Left _ -> return []
+          Right (s, ips, i) -> do
+              pth <- curModName
+              (ne1, ne2, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+              return [(ne1, ne2)]
+    let dhs = concat dhs_
+    b_results <- forM bs $ \b' -> do
+        bt' <- inferAExpr b' >>= normalizeTy
+        b'_res <- forM anns $ \e -> do
+            case e of
+              Left (i, is_case) -> do
+                  mapM_ inferIdx is_case
+                  case (extractNameFromType bt') of
+                    Nothing -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
+                    Just ne -> do
+                        nt <- getNameType ne
+                        case nt^.val of
+                          NT_KDF KDF_IKMPos kdfbody -> do
+                              matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
+                          _ -> do
+                              Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
+              Right (s, ips, i) -> matchODH dhs a ((fst b, b'), bt') c (s, ips, i) j nks
+        findBestKDFCallResult b'_res
+    unifyKDFCallResult $ b_results
+
+matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> (String, ([Idx], [Idx]), KDFSelector) -> Int -> [NameKind] -> 
+    Check (Either Bool (KDFStrictness, NameExp))
+matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
+    pth <- curModName
+    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+    nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
+    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+    let (str, nt) = str_nts !! j
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
+    -- We ask if one of the unconcatted elements is equal to the specified
+    -- DH name
+    beq <- decideProp $ pEq real_ss b 
+    case beq of 
+      Just True -> do
+          b2 <- decideProp p
+          b3 <- flowsTo (nameLbl ne1) advLbl
+          b4 <- flowsTo (nameLbl ne2) advLbl
+          -- If it is, and if the DH name is a secret, then we are good
+          if (b2 == Just True) then 
+                if (not b3) && (not b4) then do
+                      return $ Right (str, mkSpanned $ KDFName (fst a) bFull (fst c) nks2 j nt (ignore $ True))
+                else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+          else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+      _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+
+
+matchKDF :: [(NameExp, NameExp)] -> KDFPos -> NameExp -> KDFBody -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> KDFSelector -> Int -> [NameKind] ->
+    Check (Either Bool (KDFStrictness, NameExp))
+matchKDF dhs pos ne bcases a ((bFull, b), bt) c (i, is_case) j nks = do 
+    (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
+    let cases = case pos of
+                  KDF_SaltPos -> subst x bFull $ subst y (fst c) $ subst xself (fst a) $ cases_
+                  KDF_IKMPos -> subst x (fst a) $ subst y (fst c) $ subst xself b $ cases_
+    if i < length cases then do
+      (ixs, pnts) <- unbind $ cases !! i
+      assert ("KDF case index arity mismatch") $ length ixs == length is_case
+      let (p, nts) = substs (zip ixs is_case) $ pnts
+      nks2 <- forM nts $ \(_, nt) -> getNameKind nt
+      assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+      assert "KDF row index out of bounds" $ j < length nks                    
+      let (str, nt) = nts !! j
+      bp <- decideProp p
+      b2 <- not <$> flowsTo (nameLbl ne) advLbl
+      if (bp == Just True) then
+            if b2 then do
+                  return $ Right (str, mkSpanned $ KDFName (fst a) bFull (fst c) nks2 j nt (ignore $ True))   
+            else Left <$> kdfArgPublic dhs pos a (b, bt) c 
+      else Left <$> kdfArgPublic dhs pos a (b, bt) c
+    else Left <$> kdfArgPublic dhs pos a (b, bt) c
+
+kdfArgPublic dhs pos a b c = do
+    case pos of
+      KDF_SaltPos -> tyFlowsTo (snd a) advLbl
+      KDF_IKMPos -> pubIKM dhs a b c
+
+pubIKM :: [(NameExp, NameExp)] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check Bool
+pubIKM dhs a b c = do
+    p <- tyFlowsTo (snd b) advLbl
+    if p then return True else kdfOOB dhs (fst a) (fst b) (fst c)
+
+kdfOOB :: [(NameExp, NameExp)] -> AExpr -> AExpr -> AExpr -> Check Bool
+kdfOOB matchedSecrets a b c = do
+    dhComp <- getLocalDHComputation b
+    case dhComp of
+      Nothing -> return False
+      Just _ -> do 
+        let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+        let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+        (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH a b c
+        if notODH then return True else do
+            bs <- forM matchedSecrets $ \(ne1, ne2) -> do
+                p <- decideProp $ pEq b (dhCombine (dhpk $ mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2))
+                if p == Just True then do
+                     pub1 <- flowsTo (nameLbl ne1) advLbl
+                     pub2 <- flowsTo (nameLbl ne2) advLbl
+                     return $ pub1 || pub2
+                else return False
+            return $ or bs
 
 -- Try to infer a valid local DH computation (pk, sk) from input
 -- (local = sk name is local to the module)
@@ -2635,7 +2693,7 @@ getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
 getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     let go_from_ty = do
-            t <- inferAExpr a
+            t <- inferAExpr a >>= normalizeTy
             case (stripRefinements t)^.val of
               TSS n m -> do
                   m_local <- nameExpIsLocal m
@@ -2646,9 +2704,9 @@ getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
     a' <- resolveANF a
     case a'^.val of
       AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
-          tx <- inferAExpr x
+          tx <- inferAExpr x >>= normalizeTy
           xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
-          ty <- inferAExpr y
+          ty <- inferAExpr y >>= normalizeTy
           case extractNameFromType ty of
             Just ny -> do
                 ny_local <- nameExpIsLocal ny
@@ -2686,68 +2744,8 @@ unconcatIKM a = do
                  Just True -> return [a']
                  _ -> typeError $ "Unsupported computation for IKM: " ++ show (owlpretty a') ++ " with type " ++ show (owlpretty t)
 
--- Returns (shared secrets matched, secret KDF results)
--- Shared secrets matched used for inferring information flow
-findValidODHCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [(String, ([Idx], [Idx]), KDFSelector)] -> Int -> [NameKind] -> Check ([(NameExp, NameExp)], [(KDFStrictness, NameExp)]) 
-findValidODHCalls a b c anns j nks = do
-    res <- forM anns $ \(s, ips, i) -> go a b c s ips i j nks
-    let matchedSecrets = map fst $ catMaybes res
-    let goodKDFs = catMaybes $ map snd $ catMaybes res
-    return (matchedSecrets, goodKDFs)
-        where
-            go a (b, tb) c s ips i j nks = do
-                pth <- curModName
-                (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips (fst a) (fst c) i j
-                nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
-                assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
-                assert "KDF row index out of bounds" $ j < length nks                    
-                let (str, nt) = str_nts !! j
-                let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-                let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-                let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
-                -- We ask if one of the unconcatted elements is equal to the specified
-                -- DH name
-                beq <- do 
-                    bs <- unconcatIKM b
-                    let contains_real_ss = foldr pOr pFalse $ map (pEq real_ss) bs
-                    decideProp $ contains_real_ss
-                case beq of 
-                  Just True -> do
-                      b2 <- decideProp p
-                      b3 <- flowsTo (nameLbl ne1) advLbl
-                      b4 <- flowsTo (nameLbl ne2) advLbl
-                      -- If it is, and if the DH name is a secret, then we are good
-                      if (b2 == Just True) then 
-                            if (not b3) && (not b4) then do
-                                  return $ Just ((ne1, ne2), Just (str, mkSpanned $ KDFName (fst a) b (fst c) nks2 j nt (ignore $ True)))
-                            else return (Just ((ne1, ne2), Nothing))
-                      else return (Just ((ne1, ne2), Nothing))
-                  _ -> return Nothing
-    
 
-pubIKM :: [(NameExp, NameExp)] -> AExpr -> AExpr -> AExpr -> Check Bool
-pubIKM matchedSecrets a b c = do
-    bs <- unconcatIKM b
-    bpubs <- forM bs $ \x -> do
-        tx <- inferAExpr x
-        p <- tyFlowsTo tx advLbl
-        if p then return True else kdfOOB matchedSecrets a x c
-    return $ and bpubs
 
-kdfOOB :: [(NameExp, NameExp)] -> AExpr -> AExpr -> AExpr -> Check Bool
-kdfOOB matchedSecrets a b c = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH a b c
-    if notODH then return True else do
-        bs <- forM matchedSecrets $ \(ne1, ne2) -> do
-            p <- decideProp $ pEq b (dhCombine (dhpk $ mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2))
-            if p == Just True then do
-                 pub1 <- flowsTo (nameLbl ne1) advLbl
-                 pub2 <- flowsTo (nameLbl ne2) advLbl
-                 return $ pub1 || pub2
-            else return False
-        return $ or bs
 
 nameKindLength :: NameKind -> AExpr
 nameKindLength nk =
@@ -2863,16 +2861,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
 -- For CKDF:
 --  0. Ensure that info is public
---  1. Find all instantiations that constitute secret KDF calls
---      - If some exist: ensure that they are unifiable; if so, return it
---  2. If no instantiations exist, we check whether:
---      a. salt is public
---      b. ikm is of the form (t_1 || .. || t_n), where each t_i is either
---          - derivable; or
---          - of the form g^(st), where g^st is a local, out-of-bounds DH
---          computation
---      If the above hold, then return adv
---  3. Otherwise, return covering label
+--  1. For the salt:
+--      - Ensure it matches a secret, or is public
+--  2. For the IKM:
+--      - Split it into components
+--      - For each component, ensure it matches a secret, or is public
+--  3. Collect the secret ann's, make sure they are consistent
       CKDF oann1 oann2 nks j -> do
           assert ("KDF must take three arguments") $ length args == 3
           let [a, b, c] = args
@@ -2884,22 +2878,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
               case falseCase of
                 True -> return tAdmit
                 False -> do 
-                    validSaltCalls <- findValidKDFCalls KDF_SaltPos a b c oann1 j nks
-                    let ikm_anns = catMaybes $ map (\e -> case e of 
-                                                            Left i -> Just i
-                                                            Right _ -> Nothing) oann2
-                    validIKMKeyCalls <- findValidKDFCalls KDF_IKMPos a b c ikm_anns j nks
-                    let dh_anns = catMaybes $ map (\e -> case e of
-                                                           Left _ -> Nothing
-                                                           Right i -> Just i) oann2
-                    (matchedSecrets, validKDFODHs) <- findValidODHCalls a b c dh_anns j nks
-                    unif <- unifyValidKDFs (validSaltCalls ++ validIKMKeyCalls ++ validKDFODHs) 
+                    saltResult <- findValidSaltCalls a b c oann1 j nks
+                    ikmResult <- findValidIKMCalls a b c oann2 j nks
+                    unif <- unifyKDFCallResult [saltResult, ikmResult] 
                     resT <- case unif of 
-                      Nothing -> do
-                          saltIsPub <- tyFlowsTo (snd a) advLbl
-                          ikmIsPub <- pubIKM matchedSecrets (fst a) (fst b) (fst c)
-                          if saltIsPub && ikmIsPub then return (tData advLbl advLbl) else (mkSpanned <$> trivialTypeOf [snd a, snd b, snd c])
-                      Just (strictness, ne) -> do
+                      Left False -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
+                      Left True -> return $ tData advLbl advLbl
+                      Right (strictness, ne) -> do 
                         let flowAx = case strictness of
                                        KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                                        KDFPub -> pFlow (nameLbl ne) advLbl 
