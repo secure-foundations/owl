@@ -2638,6 +2638,36 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
     }
 
     #[verifier::spinoff_prover]
+    pub fn owl_init_stage2_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_Initiator,
+        psk: Option<&'a [u8]>,
+        h4: &'a [u8],
+        c3: &'a [u8],
+        ibuf: &'a [u8]
+    ) -> (Option<owl_transp_keys_init<'a>>) {
+        let pskmode = match psk {
+            Some(psk) => owl_PSKMode::owl_HasPSK(OwlBuf::from_slice(psk)),
+            None => owl_PSKMode::owl_NoPSK(),
+        };
+        let owl_st = owl_init_sent_state {
+            owl_iss_c2: Ghost(()),
+            owl_iss_psk: pskmode,
+            owl_iss_static_ss: Ghost(()),
+            owl_ss_h4: OwlBuf::from_slice(h4),
+            owl_iss_c3: OwlBuf::from_slice(c3),
+        };
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<(), Endpoint>::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            init_stage2_spec(*self, *s, owl_st.view())
+        );
+        let (res, _) = self.owl_init_stage2(Tracked(call_token), mut_state, owl_st, ibuf).unwrap();
+        res
+    }
+
+
+    #[verifier::spinoff_prover]
     pub fn owl_init_stage2<'a>(
         &'a self,
         Tracked(itree): Tracked<

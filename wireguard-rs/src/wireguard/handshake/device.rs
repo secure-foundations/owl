@@ -516,20 +516,6 @@ impl<O> Device<O> {
                         let ck: [u8; 32] = init_sent_state.owl_iss_c3.as_slice().try_into().unwrap();
                         let e_init_as_array: [u8; 32] = ((*owl_device.eph_sk)[..]).try_into().unwrap();
 
-                        // let static_static = peer.ss;
-
-                        // let initiator_msg1_val = cfg.owl_generate_msg1_wrapper(
-                        //     &mut dummy_state, 
-                        //     Arc::new(pk.as_bytes().to_vec()), 
-                        //     Arc::new(keyst.pk.as_bytes().to_vec()),
-                        //     Arc::new(static_static.as_bytes().to_vec()), 
-                        //     &mut msg.as_bytes_mut()
-                        // );
-                        
-                        // let hs: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_H4.try_into().unwrap();
-                        // let ck: [u8; 32] = initiator_msg1_val.owl__initiator_msg1_C3.try_into().unwrap();
-                        // let e_init_as_array: [u8; 32] = ((*i.cfg.owl_E_init)[..]).try_into().unwrap();
-
                         // save state
                         *peer.state.lock() = crate::wireguard::handshake::peer::State::InitiationSent {
                             hs: hs.into(),
@@ -703,12 +689,7 @@ impl<O> Device<O> {
             }
             TYPE_RESPONSE => {
                 match self {
-                    // Device::NoOwl(_) => {
-                    _ => {
-                        // match self {
-                        //     Device::NoOwl(_) => {},
-                        //     _ => { println!("using no-owl handshake for TYPE_RESPONSE"); }
-                        // };
+                    Device::NoOwl(_) => {
                         let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
 
                         // check mac1 field
@@ -738,56 +719,68 @@ impl<O> Device<O> {
                         // consume inner playload
                         noise::consume_response(self, keyst, &msg.noise)
                     },
-                    // Device::Initiator(i) => {
-                    //     let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
-                    //     let (hs, ck, local) = match *peer.state.lock() {
-                    //         crate::wireguard::handshake::peer::State::InitiationSent {
-                    //             hs,
-                    //             ck,
-                    //             local,
-                    //             eph_sk: _,
-                    //         } => Ok((hs, ck, local)),
-                    //         _ => Err(HandshakeError::InvalidState),
-                    //     }?;
+                    Device::Owl(owl_device) => {
+                        let (peer, pk) = self.inner().lookup_id(self.inner().get_singleton_id())?;
+                        let (hs, ck, local) = match *peer.state.lock() {
+                            crate::wireguard::handshake::peer::State::InitiationSent {
+                                hs,
+                                ck,
+                                local,
+                                eph_sk: _,
+                            } => Ok((hs, ck, local)),
+                            _ => Err(HandshakeError::InvalidState),
+                        }?;
+                        let psk = peer.psk;
 
-                    //     // dbg!(hex::encode(e_init_as_array));
-                    //     let initiator_msg1_val = crate::wireguard::owl_wg::owl_wireguard::owl_initiator_msg1_val {
-                    //         owl__initiator_msg1_H4: hs.to_vec(),
-                    //         owl__initiator_msg1_C3: ck.to_vec(),
-                    //     };
-                    //     let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
-                    //     let transp_keys = i.cfg.owl_receive_msg2_wrapper(&mut dummy_state, Arc::new(pk.as_bytes().to_vec()), initiator_msg1_val, msg.as_bytes());
+                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator {
+                            owl_S_init: owl_device.static_sk.clone(),
+                            owl_E_init: owl_device.eph_sk.clone(),
+                            pk_owl_S_resp: vec![],
+                            pk_owl_S_init: vec![],
+                            pk_owl_E_resp: vec![],
+                            pk_owl_E_init: vec![],
+                            salt: vec![],
+                            device: Some(&owl_device.inner)
+                        };
 
 
-                    //     // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
-                    //     // noise::consume_response(self, keyst, &msg.noise)
-                    //     assert!(transp_keys.is_some());
+                        // dbg!(hex::encode(e_init_as_array));
+                        let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
+                        let transp_keys = cfg.owl_init_stage2_wrapper(
+                            &mut dummy_state, 
+                            Some(&psk),
+                            hs.as_slice(),
+                            ck.as_slice(),
+                            msg.as_bytes()
+                        );
 
-                    //     let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
+
+                        // let msg: zerocopy::LayoutVerified<&[u8], Response> = Response::parse(msg)?;
+                        // noise::consume_response(self, keyst, &msg.noise)
+                        // assert!(transp_keys.is_some());
+
+                        let transp_keys = transp_keys.ok_or(HandshakeError::DecryptionFailure)?;
                         
-                    //     // return confirmed key-pair
-                    //     let birth = Instant::now();
-                    //     Ok((
-                    //         Some(&peer.opaque),
-                    //         None,
-                    //         Some(KeyPair {
-                    //             birth,
-                    //             initiator: true,
-                    //             send: Key {
-                    //                 id: u32::from_le_bytes(transp_keys.owl__transp_keys_responder.try_into().unwrap()),
-                    //                 key: transp_keys.owl__transp_keys_T_init_send.try_into().unwrap(),
-                    //             },
-                    //             recv: Key {
-                    //                 id: local,
-                    //                 key: transp_keys.owl__transp_keys_T_resp_send.try_into().unwrap(),
-                    //             },
-                    //         }),
-                    //     ))
+                        // return confirmed key-pair
+                        let birth = Instant::now();
+                        Ok((
+                            Some(&peer.opaque),
+                            None,
+                            Some(KeyPair {
+                                birth,
+                                initiator: true,
+                                send: Key {
+                                    id: u32::from_le_bytes(transp_keys.owl_tki_msg2_sender.as_slice().try_into().unwrap()),
+                                    key: transp_keys.owl_tki_k_init_send.as_slice().try_into().unwrap(),
+                                },
+                                recv: Key {
+                                    id: local,
+                                    key: transp_keys.owl_tki_k_resp_send.as_slice().try_into().unwrap(),
+                                },
+                            }),
+                        ))
 
-                    // },
-                    // Device::Responder(_) => {
-                    //     panic!("Responder cannot receive response");
-                    // },
+                    },
                 }
             }
             TYPE_COOKIE_REPLY => {
