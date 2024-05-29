@@ -1,0 +1,36 @@
+locality Alice
+locality Bob
+name channel_secret : nonce
+type plaintext = Data<[channel_secret] /\ adv, |adv|>
+counter ACtr @ Alice
+counter BCtr @ Bob
+name kA2B : st_aead plaintext 
+                aad x. true
+                nonce ACtr @ Alice, Bob
+name kB2A : st_aead plaintext 
+                aad x. true
+                nonce BCtr @ Alice, Bob
+
+struct EncMsg {
+    ctr : Data<adv> ||counter||,
+    cipher : Data<adv>
+}
+
+def alice_send(m : plaintext) @ Alice : Unit = { 
+    let send_key = get(kA2B) in 
+    let ctr = get_counter ACtr in
+    inc_counter ACtr;
+    let c = st_aead_enc<ACtr>(send_key, m, 0x) in
+    output EncMsg(ctr, c)
+}
+
+
+def alice_recv() @ Alice : Option (if sec(kB2A) then plaintext else Data<adv>) = {
+    input i in
+    parse i as EncMsg(ctr, c) in {
+        let recv_key = get(kB2A) in 
+        corr_case kB2A in
+        st_aead_dec(recv_key, c, 0x, ctr)
+    }
+    otherwise { None() }
+}
