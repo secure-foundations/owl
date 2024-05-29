@@ -145,7 +145,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     pub struct #{cfgName} {
         pub listener: TcpListener,
         pub salt: Vec<u8>,
-        #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls},
+        #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
     impl #{cfgName} {
         // TODO: library routines for reading configs
@@ -561,6 +561,15 @@ genVerusCExpr info expr = do
             let rustCtr = execName ctrname
             -- castCtr <- ([di|#{tmpCtrName}|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
             return $ GenRustExpr (RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) [di|owl_counter_as_bytes(&mut_state.#{rustCtr})|]
+        CIncCtr ctrname -> do
+            let rustCtr = [di|mut_state.#{execName ctrname}|]
+            let incrExpr = [__di|
+            if #{rustCtr} > usize::MAX - 1 {
+                return Err(OwlError::IntegerOverflow);
+            };
+            #{rustCtr} = #{rustCtr} + 1;
+            |]
+            return $ GenRustExpr RTUnit incrExpr
         CCall f frty args -> do
             args' <- mapM genVerusCAExpr args
             let callMacro = case expr ^. tty of

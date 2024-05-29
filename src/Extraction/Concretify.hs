@@ -416,7 +416,7 @@ concretifyExpr e = do
           return $ noLets $ Typed (FBuf $ Just $ FLNamed "counter") $ CGetCtr s
       EIncCtr p _ -> do
           s <- concretifyPath p
-          return $ noLets $ Typed FInt $ CIncCtr s
+          return $ noLets $ Typed FUnit $ CIncCtr s
       EDebug _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssert _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
