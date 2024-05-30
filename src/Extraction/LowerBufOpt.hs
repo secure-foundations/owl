@@ -67,10 +67,31 @@ tyOf v = do
 
 mkApp :: String -> FormatTy -> [CAExpr VerusTy] -> EM (CAExpr VerusTy)
 mkApp f frty argrtys = do
-    case f of
-        "enc_st_aead" -> do 
+    case (f, frty) of
+        ("enc_st_aead", _) -> do 
             let frty = RTStAeadBuilder
             return $ Typed frty $ CAApp "enc_st_aead_builder" argrtys
+        (f, FStruct f' fields) | f == f' -> do
+            let argtys = map (^. tty) argrtys
+            if RTStAeadBuilder `elem` argtys then do
+                debugPrint $ "mkApp struct constructor: " ++ f
+                {-
+                TODO: 
+                - Have a way to "suspend" computations which floats up to the enclosing let-binding,
+                  so that the code is emitted immediately prior to when it is used. (Can borrow from GenVerus)
+                - In the lowerCtx, store some data structure for the suspended computation, which should contain
+                  the way to construct the combinator, the way to construct the input to the combinator, and the
+                  call to just construct the struct as normal. This will need to float up to the enclosing let-binding.
+                - When we encounter a use of whatever variable was bound to this call, we examine its type to determine
+                  whether it is being used as a struct or as a serialized buffer. If buffer, we emit the right serializing
+                  call; if constructor, we just emit the constructor.
+                - It is then easy to emit the optimization for `Output` as well.
+                -}
+                frty' <- lowerTy frty
+                return $ Typed frty' $ CAApp f argrtys 
+            else do
+                frty' <- lowerTy frty
+                return $ Typed frty' $ CAApp f argrtys 
         _ -> do
             frty' <- lowerTy frty
             return $ Typed frty' $ CAApp f argrtys
