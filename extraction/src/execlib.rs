@@ -386,6 +386,26 @@ pub struct OwlStAEADBuilder<'a> {
     pub aad: &'a [u8],
 }
 
+// Hack: due to https://github.com/verus-lang/verus/issues/1147, we cannot use `Builder::into_vec` directly,
+// so we have to define our own version with a different name.
+impl<'a> OwlStAEADBuilder<'a> {
+    pub fn into_fresh_vec(&self) -> (res: Vec<u8>)
+        ensures
+            res@ == self.value(),
+    {
+        let mut res = vec_u8_of_len(self.length());
+        self.into_mut_vec(&mut res, 0);
+        assert(res@.subrange(0, 0).add(self.value()).add(
+            res@.subrange(0 + self.value().len() as int, self.value().len() as int),
+        ) == res@);
+        assert(res@.subrange(0, 0).add(self.value()).add(
+            res@.subrange(0 + self.value().len() as int, self.value().len() as int),
+        ) == self.value());
+        res
+    }
+}
+
+
 impl<'a> Builder for OwlStAEADBuilder<'a> {
     open spec fn value(&self) -> Seq<u8> {
         enc_st_aead(self.k.view(), self.msg.view(), self.nonce, self.aad.view()).0

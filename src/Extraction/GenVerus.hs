@@ -250,6 +250,22 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
+                        ("enc_st_aead_builder", [k, x, nonce, aad]) -> do
+                            k' <- genVerusCAExpr k
+                            x' <- genVerusCAExpr x
+                            nonce' <- genVerusCAExpr nonce
+                            aad' <- genVerusCAExpr aad
+                            castK <- castGRE k' u8slice
+                            castX <- castGRE x' u8slice
+                            castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                            castAad <- castGRE aad' u8slice
+                            castRes <- cast ([di|ctxt|], RTStAeadBuilder) (ae ^. tty)
+                            return $ GenRustExpr (ae ^. tty) $ [__di|{ 
+                                match owl_enc_st_aead_builder(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                                    Ok(ctxt) => { #{castRes} },
+                                    Err(e) => { return Err(e) },
+                                }                                
+                            }|]
                         ("enc_st_aead", [k, x, nonce, aad]) -> do
                             k' <- genVerusCAExpr k
                             x' <- genVerusCAExpr x
@@ -1167,6 +1183,13 @@ cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
 cast (v, RTDummy) t = return v
 cast (v, RTOption RTDummy) (RTOption t) = return v
+cast (v, RTStAeadBuilder) (RTVec RTU8) = return [di|#{v}.into_fresh_vec()|]
+cast (v, RTStAeadBuilder) (RTRef RShared (RTSlice RTU8)) = do
+    c1 <- cast (v, RTStAeadBuilder) vecU8
+    cast (c1, vecU8) (RTRef RShared (RTSlice RTU8)) 
+cast (v, RTStAeadBuilder) (RTOwlBuf l) = do
+    c1 <- cast (v, RTStAeadBuilder) vecU8
+    cast (c1, vecU8) (RTOwlBuf l)
 cast (v, t1) t2 | t1 == t2 = return v
 cast (v, RTEnum e1 cs1) (RTEnum e2 cs2) | e1 == e2 && S.fromList cs1 == S.fromList cs2 = return v
 cast (v, _) RTUnit = return [di|()|]

@@ -65,9 +65,15 @@ tyOf v = do
         Just t -> return t
         Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
 
-verusTyOfApp :: String -> FormatTy -> [VerusTy] -> EM VerusTy
-verusTyOfApp f frty argrtys = do
-    lowerTy frty
+mkApp :: String -> FormatTy -> [CAExpr VerusTy] -> EM (CAExpr VerusTy)
+mkApp f frty argrtys = do
+    case f of
+        "enc_st_aead" -> do 
+            let frty = RTStAeadBuilder
+            return $ Typed frty $ CAApp "enc_st_aead_builder" argrtys
+        _ -> do
+            frty' <- lowerTy frty
+            return $ Typed frty' $ CAApp f argrtys
 
 lowerCAExpr :: CAExpr FormatTy -> EM (CAExpr VerusTy)
 lowerCAExpr aexpr = do
@@ -79,8 +85,7 @@ lowerCAExpr aexpr = do
             return $ Typed rtFromCtx $ CAVar s (castName n)
         CAApp f args -> do
             args' <- mapM lowerCAExpr args
-            rty <- verusTyOfApp f (aexpr ^. tty) (map (^. tty) args')
-            return $ Typed rty $ CAApp f args'
+            mkApp f (aexpr ^. tty) args'
         CAGet s -> withRt $ CAGet s
         CAGetEncPK s -> withRt $ CAGetEncPK s
         CAGetVK s -> withRt $ CAGetVK s
@@ -97,14 +102,14 @@ lowerExpr expr = do
     case expr ^. tval of
         CSkip -> withRt CSkip
         CRet ae -> do
-            ae' <- traverseCAExpr lowerTy ae
-            withRt $ CRet ae'
+            ae' <- lowerCAExpr ae
+            return $ Typed (ae' ^. tty) $ CRet ae'
         CInput ft xek -> do
             ((x, ev), k) <- unbind xek
             frt <- lowerTy ft
             k' <- withVars [(x, frt)] $ lowerExpr k
             let xek' = bind (castName x, ev) k'
-            withRt $ CInput frt xek'
+            return $ Typed (k' ^. tty) $ CInput frt xek'
         COutput ae dst -> do
             ae' <- lowerCAExpr ae
             withRt $ COutput ae' dst
@@ -113,16 +118,16 @@ lowerExpr expr = do
             t' <- lowerTy t
             k' <- withVars [(x, t')] $ lowerExpr k
             let xk' = bind (castName x) k'
-            withRt $ CSample flen t' xk'
+            return $ Typed (k' ^. tty) $ CSample flen t' xk'
         CLet e oanf xk -> do
             (x, k) <- unbind xk
             e' <- lowerExpr e
             k' <- withVars [(x, e' ^. tty)] $ lowerExpr k
             let xk' = bind (castName x) k'
-            withRt $ CLet e' oanf xk'
+            return $ Typed (k' ^. tty) $ CLet e' oanf xk'
         CBlock e -> do
             e' <- lowerExpr e
-            withRt $ CBlock e'
+            return $ Typed (e' ^. tty) $ CBlock e'
         CIf ae e1 e2 -> do
             ae' <- lowerCAExpr ae
             e1' <- lowerExpr e1
@@ -144,7 +149,7 @@ lowerExpr expr = do
         CCall fn frty args -> do
             frty' <- lowerTy frty
             args' <- mapM lowerCAExpr args
-            withRt $ CCall fn frty' args'
+            return $ Typed frty' $ CCall fn frty' args'
         CParse pk ae dst_ty otw xtsk -> do
             (xts, k) <- unbind xtsk
             xts' <- mapM (\(n, s, t) -> do t' <- lowerTy t ; return (castName n, s, t')) xts
@@ -154,7 +159,7 @@ lowerExpr expr = do
             otw' <- traverse lowerExpr otw
             k' <- withVars ctx $ lowerExpr k
             let xtsk' = bind xts' k'
-            withRt $ CParse pk ae' dst_ty' otw' xtsk'
+            return $ Typed (k' ^. tty) $ CParse pk ae' dst_ty' otw' xtsk'
         CTLookup s ae -> do
             ae' <- lowerCAExpr ae
             withRt $ CTLookup s ae'
