@@ -179,6 +179,7 @@ liftFromJust f x = do
 
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
+    debugLog $ "Spec extraction struct: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
     let structFields = vsep $ fmap (\(n, (t, _)) -> [di|pub #{n}: #{pretty t},|]) rfs
@@ -323,6 +324,7 @@ extractCStruct (CStruct n fs isVest) = do
 
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
 extractCEnum (CEnum n cs isVest) = do
+    debugLog $ "Spec extraction enum: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
     let rfsOwlNames = map (\(n, t) -> (n, fmap specFieldTyOf t)) $ M.assocs cs
@@ -668,7 +670,7 @@ extractExpr expr = do
 extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
 extractDef locName (CDef defname b) = do
     let specname = defname ++ "_spec"
-    -- debugLog $ "Spec extracting def " ++ defname
+    debugLog $ "Spec extracting def " ++ defname
     (owlArgs, (retTy, body)) <- unbindCDepBind b
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'

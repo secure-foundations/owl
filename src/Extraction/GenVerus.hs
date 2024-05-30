@@ -614,7 +614,7 @@ addLifetime _ t = t
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
-    debugPrint $ "genVerusDef: " ++ cdef ^. defName
+    debugLog $ "genVerusDef: " ++ cdef ^. defName
     let specname = cdef ^. defName ++ "_spec"
     (defArgs', (rty', body)) <- unbindCDepBind $ cdef ^. defBody
     -- If any of the arguments or return type have a lifetime, we parameterize the whole function with lifetime 'a
@@ -721,7 +721,7 @@ mkNestPattern l =
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
-    -- debugLog $ "genVerusStruct: " ++ name
+    debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (tyNeedsLifetime . snd) fields
@@ -922,7 +922,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusEnum (CEnum name casesFV isVest) = do
-    -- debugLog $ "genVerusEnum: " ++ name
+    debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases

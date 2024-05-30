@@ -589,6 +589,11 @@ concretifyCryptOp _ CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
+    (patx, patbody) <- unbind xpat
+    case patbody ^. val of
+        AEVar _ patx' | patx `aeq` patx' -> return ()
+        _ -> throwError $ ErrSomethingFailed $ 
+            "TODO: handle non-trivial nonce patter in CEncStAEAD: " ++ show (owlprettyBind xpat)
     nonce <- concretifyPath np
     let t = case x ^. tty of
               FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
@@ -640,7 +645,7 @@ withDepBind (DPVar t s xd) k = do
 concretifyDef :: String -> TB.Def -> EM (Maybe (CDef FormatTy))
 concretifyDef defName (TB.DefHeader _) = return Nothing
 concretifyDef defName (TB.Def bd) = do
-    debugPrint $ "Concretifying def: " ++ defName
+    debugLog $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
     ores <- 
@@ -705,7 +710,7 @@ concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing
 concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
 concretifyTyDef tname (TB.EnumDef bnd) = do
-    -- debugPrint $ "Concretifying enum: " ++ tname
+    debugLog $ "Concretifying enum: " ++ tname
     (idxs, ts) <- unbind bnd
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
         cs <- forM ts $ \(s, ot) -> do
@@ -714,7 +719,7 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
         let isVest = all (maybe True typeIsVest . snd) cs
         return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
 concretifyTyDef tname (TB.StructDef bnd) = do 
-    -- debugPrint $ "Concretifying struct: " ++ tname
+    debugLog $ "Concretifying struct: " ++ tname
     (idxs, dp) <- unbind bnd
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
         let go dp = case dp of
