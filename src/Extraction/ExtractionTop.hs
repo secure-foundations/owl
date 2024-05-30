@@ -35,6 +35,7 @@ import qualified SMTBase
 import qualified TypingBase as TB
 import qualified Concretify
 import qualified LowerImmut
+import qualified LowerBufOpt
 import qualified GenVerus
 import qualified SpecExtraction
 
@@ -51,7 +52,7 @@ extract' modbody = do
     verusTyExtrData <- do
         fs <- use flags
         if fs ^. fExtractBufOpt then 
-            throwError $ ErrSomethingFailed "TODO: buffer-optimization for extraction"
+            lowerBufOptPass concreteExtrData
         else lowerImmutPass concreteExtrData
     extractedOwl <- liftExtractionMonad $ genVerusPass verusTyExtrData
     (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
@@ -242,6 +243,18 @@ lowerImmutPass cfExtrData = do
         LowerImmut.lowerUserFunc
         cfExtrData
     where lowerDef (Just d) = Just <$> LowerImmut.lowerDef d
+          lowerDef Nothing = return Nothing
+
+lowerBufOptPass :: CFExtractionData -> ExtractionMonad FormatTy CRExtractionData
+lowerBufOptPass cfExtrData = do
+    debugLog "Lowering to Verus types: buffer-optimizing translation"
+    traverseExtractionData
+        lowerDef
+        LowerBufOpt.lowerName
+        LowerBufOpt.lowerTyDef
+        LowerBufOpt.lowerUserFunc
+        cfExtrData
+    where lowerDef (Just d) = Just <$> LowerBufOpt.lowerDef d
           lowerDef Nothing = return Nothing
 
 genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann)

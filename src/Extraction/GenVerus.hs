@@ -412,14 +412,16 @@ genVerusCExpr info expr = do
             owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
             #{retItree}
             |]
-        CSample fl xk -> do
+        CSample fl t xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             let sz = lowerFLen fl
             k' <- genVerusCExpr info k
             let itreeTy = specItreeTy info
+            castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
             return $ GenRustExpr (k' ^. eTy) [__di|
-            let #{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
+            let tmp_#{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
+            let #{rustX} = #{castTmp};
             #{k' ^. code}
             |]
         CLet e oanf xk -> do

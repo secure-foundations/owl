@@ -82,7 +82,7 @@ data CExpr' t =
     | CRet (CAExpr t)
     | CInput t (Bind (CDataVar t, EndpointVar) (CExpr t)) -- keep track of received buf type
     | COutput (CAExpr t) (Maybe Endpoint)
-    | CSample FLen (Bind (CDataVar t) (CExpr t))
+    | CSample FLen t (Bind (CDataVar t) (CExpr t))
     | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)
@@ -215,7 +215,7 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
-    owlpretty (CSample n xk) = 
+    owlpretty (CSample n t xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "sample" <> brackets (owlpretty n) <+> x <+> owlpretty "in" <+> k
     owlpretty (CLet e oanf xk) =
@@ -282,9 +282,10 @@ traverseCExpr f a =
               t' <- f t
               CInput t' . bind (castName n, ep) <$> traverseCExpr f k
           COutput e k -> COutput <$> traverseCAExpr f e <*> pure k
-          CSample n xk -> do
+          CSample n t xk -> do
                 (x, k) <- unbind xk
-                CSample n . bind (castName x) <$> traverseCExpr f k
+                t' <- f t
+                CSample n t' . bind (castName x) <$> traverseCExpr f k
           CLet e a bk -> do
               (n, k) <- unbind bk
               CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)

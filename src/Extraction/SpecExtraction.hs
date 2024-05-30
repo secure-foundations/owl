@@ -550,7 +550,7 @@ extractExpr expr = do
             return [__di|
             (output (#{ae''}) to #{dst'})
             |]
-        CSample fl ck -> do
+        CSample fl _ ck -> do
             let sz = pretty $ lowerFLen fl
             let (coins, k) = unsafeUnbind ck
             coins' <- extractVar coins

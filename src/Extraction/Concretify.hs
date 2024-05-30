@@ -584,7 +584,7 @@ concretifyCryptOp _ CAEnc [k, x] = do
     let sampFLen = FLNamed "nonce"
     let coinsVar = Typed (FBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
     let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
-    return $ noLets $ Typed t $ CSample sampFLen $ bind coinsName doEnc
+    return $ noLets $ Typed t $ CSample sampFLen (FBuf $ Just sampFLen) $ bind coinsName doEnc
 concretifyCryptOp _ CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
