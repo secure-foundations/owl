@@ -88,7 +88,7 @@ impl<'x> OwlBuf<'x> {
             OwlBuf::Borrowed(s) => s,
             OwlBuf::Owned(v, start, len) => {
                 reveal(OwlBuf::len_valid);
-                slice_subrange((*v).as_slice(), *start, *start + *len)
+                slice_subrange((**v).as_slice(), *start, *start + *len)
             },
         }
     }

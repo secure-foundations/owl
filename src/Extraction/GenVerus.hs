@@ -875,7 +875,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     }
                     OwlBuf::Owned(v, start, len) => {
                         reveal(OwlBuf::len_valid);
-                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange(v.as_slice(), start, start + len),) {
+                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
                             let #{tupPatFields} = parsed;
                             Some (#{verusName} { #{mkStructFieldsVecs} })
                         } else {
