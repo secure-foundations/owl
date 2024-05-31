@@ -2,6 +2,8 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use vstd::prelude::*;
 
+use libcrux::hkdf::*;
+
 verus! {
 
 pub open spec fn spec_kdfkey_size() -> usize { 32 }
@@ -14,10 +16,19 @@ pub fn gen_rand_kdf_key() -> Vec<u8> {
 
 #[verifier(external_body)]
 pub fn extract_expand_to_len(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
-    let h = Hkdf::<Sha256>::new(Some(salt), ikm);
-    let mut okm = vec![0u8; len];
-    h.expand(info, &mut okm).expect("failed to expand");
-    okm
+    #[cfg(feature = "nonverif-crypto")]
+    {
+        let h = Hkdf::<Sha256>::new(Some(salt), ikm);
+        let mut okm = vec![0u8; len];
+        h.expand(info, &mut okm).expect("failed to expand");
+        okm
+    }
+    #[cfg(not(feature = "nonverif-crypto"))]
+    {
+        // support other algorithms here?
+        libcrux::hkdf::hkdf(Algorithm::Sha256, salt, ikm, info, len).unwrap()
+    }
 }
+
 
 } // verus!
