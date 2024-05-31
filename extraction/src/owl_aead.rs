@@ -221,37 +221,50 @@ pub fn encrypt_combined(
         return Err(Error::InvalidNonce);
     }
 
-    #[verifier(external_body)]
-    fn encrypt_inner<C: Aead + KeyInit>(
-        k: &[u8],
-        msg: &[u8],
-        iv: &[u8],
-        aad: &Aad,
-    ) -> Result<Vec<u8>, Error> {
-        let cipher = match C::new_from_slice(k) {
-            Ok(c) => c,
-            Err(_) => {
-                return Err(Error::InvalidInit);
-            }
-        };
+    #[cfg(feature = "nonverif-crypto")]
+    {
+        #[verifier(external_body)]
+        fn encrypt_inner<C: Aead + KeyInit>(
+            k: &[u8],
+            msg: &[u8],
+            iv: &[u8],
+            aad: &Aad,
+        ) -> Result<Vec<u8>, Error> {
+            let cipher = match C::new_from_slice(k) {
+                Ok(c) => c,
+                Err(_) => {
+                    return Err(Error::InvalidInit);
+                }
+            };
 
-        let nonce = <Nonce<C>>::from_slice(iv);
-        let plaintext = Payload { msg: msg, aad: aad };
+            let nonce = <Nonce<C>>::from_slice(iv);
+            let plaintext = Payload { msg: msg, aad: aad };
 
-        let ctxt = match cipher.encrypt(nonce, plaintext) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(Error::Encrypting);
-            }
+            let ctxt = match cipher.encrypt(nonce, plaintext) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(Error::Encrypting);
+                }
+            };
+            return Ok(ctxt);
+        }
+
+        return match alg {
+            Mode::Aes128Gcm => encrypt_inner::<Aes128Gcm>(k, msg, iv, aad),
+            Mode::Aes256Gcm => encrypt_inner::<Aes256Gcm>(k, msg, iv, aad),
+            Mode::Chacha20Poly1305 => encrypt_inner::<ChaCha20Poly1305>(k, msg, iv, aad),
         };
-        return Ok(ctxt);
     }
 
-    return match alg {
-        Mode::Aes128Gcm => encrypt_inner::<Aes128Gcm>(k, msg, iv, aad),
-        Mode::Aes256Gcm => encrypt_inner::<Aes256Gcm>(k, msg, iv, aad),
-        Mode::Chacha20Poly1305 => encrypt_inner::<ChaCha20Poly1305>(k, msg, iv, aad),
-    };
+    #[cfg(not(feature = "nonverif-crypto"))]
+    {
+        let crux_alg = crux_alg_of_mode(alg);
+        let key = Key::from_slice(crux_alg, k).map_err(|_| Error::InvalidInit)?;
+        let iv = Iv::new(iv).map_err(|_| Error::InvalidInit)?;
+        let (tag, mut ctxt) = libcrux::aead::encrypt_detached(&key, msg, iv, &aad).map_err(|_| Error::Encrypting)?;
+        ctxt.extend(tag.as_ref());
+        Ok(ctxt)
+    }
 }
 
 #[verifier(external_body)]

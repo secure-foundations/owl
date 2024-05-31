@@ -25,7 +25,12 @@ BENCH_PATTERN = "bench_h"
 BENCH_ARGS = "--format=json -Z unstable-options"
 HIDE_STDERR = "2> /dev/null"
 
-COMMAND = " ".join([BASE_COMMAND, "--", BENCH_PATTERN, BENCH_ARGS, HIDE_STDERR])
+UNVERIF_CRYPTO_ARGS = "--features=nonverif-crypto"
+
+
+def mk_command(base_args):
+    return " ".join([BASE_COMMAND, base_args, "--", BENCH_PATTERN, BENCH_ARGS, HIDE_STDERR])
+
 
 def run_cargo_bench_command(command):
     try:
@@ -94,13 +99,24 @@ def prettyData(data):
     print(table)
 
 
-def run_bench():
-    parsed_output = run_cargo_bench_command(COMMAND)
+def run_bench(base_args):
+    command = mk_command(base_args)
+    parsed_output = run_cargo_bench_command(command)
     if parsed_output:
         # print(parsed_output)
         data = process_cargo_bench_output(parsed_output)
         
         prettyData(data)
 
+def run_benches():
+    print("Benchmarks with verified crypto:")
+    run_bench("")
+    print("")
+    print("")
+    print("Benchmarks with unverified crypto:")
+    run_bench(UNVERIF_CRYPTO_ARGS)
+    print("")
+
+
 if __name__ == "__main__":
-    run_bench()
+    run_benches()

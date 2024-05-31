@@ -6,6 +6,7 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use vstd::prelude::*;
 use blake2::{Blake2s256};
+use libcrux::digest::*;
 
 verus! {
 
@@ -83,10 +84,17 @@ pub fn verify(
 
 #[verifier(external_body)]
 pub fn blake2s(input: &[u8]) -> (res: Vec<u8>) {
-    use blake2::Digest;
-    let mut hsh = Blake2s256::new();
-    hsh.update(input);
-    hsh.finalize().to_vec()
+    #[cfg(feature = "nonverif-crypto")]
+    {
+        use blake2::Digest;
+        let mut hsh = Blake2s256::new();
+        hsh.update(input);
+        hsh.finalize().to_vec()
+    }
+    #[cfg(not(feature = "nonverif-crypto"))]
+    {
+        libcrux::digest::hash(Algorithm::Blake2s, input)
+    }
 }
 
 } // verus!
