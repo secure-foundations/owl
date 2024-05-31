@@ -106,3 +106,17 @@ def Open<j>(ctxtR : exists i. ContextR<session i>, ct_aad : Data<adv>, ct : Data
         otherwise => let res = OpenResult<session i>(ctxtR, NoMsg(), ()) in pack<i>(res)
     }
 
+def SingleShotOpen<j>(pkS : dhpk(skS), eph : Data<adv>, ct_aad : Data<adv>, ct:Data<adv>) @ receiver : Option (exists i. OpenResult<session i>) =
+    let oadr = call AuthDecap(pkS, eph) in
+    case oadr {
+        | Some adr => {
+            let ctxt = call KeyScheduleR(adr) in
+            let res = call Open<j>(ctxt, ct_aad, ct)  in
+            Some(res)
+          }
+        | None => None()
+    }
+    
+
+    
+
