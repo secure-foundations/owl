@@ -25,6 +25,7 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
+import qualified AST
 import ConcreteAST
 import ExtractionBase
 import Verus
@@ -65,12 +66,38 @@ tyOf v = do
         Just t -> return t
         Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
 
-mkApp :: String -> FormatTy -> [CAExpr VerusTy] -> EM (CAExpr VerusTy)
+data Suspended = SuspendedComputation {
+    scTy :: VerusTy,
+    -- Map from desired return type to the aexpr for the current call site, 
+    -- plus any letbindings that need to be inserted before the current call site
+    scComputation :: VerusTy -> EM (CAExpr VerusTy, [CLetBinding])
+} 
+
+type CLetBinding = (CDataVar VerusTy, Maybe AST.AExpr, CExpr VerusTy)
+
+
+data Suspendable a = 
+    Eager (a, [CLetBinding]) -- any letbindings that need to be evaluated before the current computation
+    | Susp Suspended
+
+
+forceAE :: Suspendable (CAExpr VerusTy) -> EM (CAExpr VerusTy, [CLetBinding])
+forceAE (Eager x) = return x
+forceAE (Susp _) = throwError $ ErrSomethingFailed "TODO force suspended computation"
+
+forceAEs :: [Suspendable (CAExpr VerusTy)] -> EM ([CAExpr VerusTy], [CLetBinding])
+forceAEs xs = do
+    xs' <- mapM forceAE xs
+    let (ys, zss) = unzip xs'
+    return (ys, concat zss)
+
+mkApp :: String -> FormatTy -> [CAExpr VerusTy] -> EM (Suspendable (CAExpr VerusTy))
 mkApp f frty argrtys = do
+    let eager x = return $ Eager (x, [])
     case (f, frty) of
         ("enc_st_aead", _) -> do 
             let frty = RTStAeadBuilder
-            return $ Typed frty $ CAApp "enc_st_aead_builder" argrtys
+            eager $ Typed frty $ CAApp "enc_st_aead_builder" argrtys
         (f, FStruct f' fields) | f == f' -> do
             let argtys = map (^. tty) argrtys
             if RTStAeadBuilder `elem` argtys then do
@@ -88,110 +115,147 @@ mkApp f frty argrtys = do
                 - It is then easy to emit the optimization for `Output` as well.
                 -}
                 frty' <- lowerTy frty
-                return $ Typed frty' $ CAApp f argrtys 
+                eager $ Typed frty' $ CAApp f argrtys 
             else do
                 frty' <- lowerTy frty
-                return $ Typed frty' $ CAApp f argrtys 
+                eager $ Typed frty' $ CAApp f argrtys 
         _ -> do
             frty' <- lowerTy frty
-            return $ Typed frty' $ CAApp f argrtys
+            eager $ Typed frty' $ CAApp f argrtys
 
-lowerCAExpr :: CAExpr FormatTy -> EM (CAExpr VerusTy)
+addLets :: Suspendable a -> [CLetBinding] -> Suspendable a
+addLets (Eager (x, lets)) lets' = Eager (x, lets ++ lets')
+addLets (Susp sc) lets' = Susp $ sc { scComputation = \rt -> do
+    (x, lets) <- scComputation sc rt
+    return (x, lets ++ lets')
+}
+
+lowerCAExpr :: CAExpr FormatTy -> EM (Suspendable (CAExpr VerusTy))
 lowerCAExpr aexpr = do
     rt <- lowerTy $ aexpr ^. tty
-    let withRt x = return $ Typed rt x :: EM (CAExpr VerusTy)
+    let eager x = return $ Eager (x, [])
+    let eagerRt x = eager $ Typed rt x :: EM (Suspendable (CAExpr VerusTy))
     case aexpr ^. tval of
         CAVar s n -> do
             rtFromCtx <- tyOf n
-            return $ Typed rtFromCtx $ CAVar s (castName n)
+            eager $ Typed rtFromCtx $ CAVar s (castName n)
         CAApp f args -> do
             args' <- mapM lowerCAExpr args
-            mkApp f (aexpr ^. tty) args'
-        CAGet s -> withRt $ CAGet s
-        CAGetEncPK s -> withRt $ CAGetEncPK s
-        CAGetVK s -> withRt $ CAGetVK s
-        CAInt fl -> withRt $ CAInt fl
-        CAHexConst s -> withRt $ CAHexConst s
-        CACounter s -> withRt $ CACounter s
+            (args'', arglets) <- forceAEs args'
+            app <- mkApp f (aexpr ^. tty) args''
+            return $ addLets app arglets
+        CAGet s -> eagerRt $ CAGet s
+        CAGetEncPK s -> eagerRt $ CAGetEncPK s
+        CAGetVK s -> eagerRt $ CAGetVK s
+        CAInt fl -> eagerRt $ CAInt fl
+        CAHexConst s -> eagerRt $ CAHexConst s
+        CACounter s -> eagerRt $ CACounter s
+
+
+exprFromLets :: [CLetBinding] -> CExpr VerusTy -> CExpr VerusTy
+exprFromLets lets e = foldr (\(x, oanf, e') acc -> Typed (acc ^. tty) $ CLet e' oanf $ bind x acc) e lets
+
+forceE :: Suspendable (CExpr VerusTy) -> EM (CExpr VerusTy)
+forceE (Eager (x, lets)) = return $ exprFromLets lets x
+forceE (Susp _) = throwError $ ErrSomethingFailed "TODO force suspended computation"
 
 
 
-lowerExpr :: CExpr FormatTy -> EM (CExpr VerusTy)
+
+lowerExprNoSusp :: CExpr FormatTy -> EM (CExpr VerusTy)
+lowerExprNoSusp expr = do
+    expr' <- lowerExpr expr
+    case expr' of
+        Eager (x, lets) -> return $ exprFromLets lets x
+        Susp _ -> throwError $ ErrSomethingFailed "got suspended computation in lowerExprNoSusp"
+
+lowerExpr :: CExpr FormatTy -> EM (Suspendable (CExpr VerusTy))
 lowerExpr expr = do
     rt <- lowerTy $ expr ^. tty
-    let withRt x = return $ Typed rt x :: EM (CExpr VerusTy)
+    let eager x = return $ Eager x
+    let eagerNoLets x = eager $ (x, []) :: EM (Suspendable (CExpr VerusTy))
+    let eagerRt x lets = eager $ (Typed rt x, lets) :: EM (Suspendable (CExpr VerusTy))
+    let eagerRtNoLets x = eagerNoLets $ Typed rt x :: EM (Suspendable (CExpr VerusTy))
     case expr ^. tval of
-        CSkip -> withRt CSkip
+        CSkip -> eagerRtNoLets CSkip
         CRet ae -> do
             ae' <- lowerCAExpr ae
-            return $ Typed (ae' ^. tty) $ CRet ae'
+            case ae' of
+                Eager (ae', aelets) -> eager (Typed (ae' ^. tty) $ CRet ae', aelets)
+                Susp ae' -> throwError $ ErrSomethingFailed "TODO susp"
         CInput ft xek -> do
             ((x, ev), k) <- unbind xek
             frt <- lowerTy ft
-            k' <- withVars [(x, frt)] $ lowerExpr k
+            k' <- withVars [(x, frt)] $ lowerExprNoSusp k
             let xek' = bind (castName x, ev) k'
-            return $ Typed (k' ^. tty) $ CInput frt xek'
+            eagerNoLets $ Typed (k' ^. tty) $ CInput frt xek'
         COutput ae dst -> do
             ae' <- lowerCAExpr ae
-            withRt $ COutput ae' dst
+            case ae' of
+                Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
+                Susp ae' -> throwError $ ErrSomethingFailed "TODO susp for output"
         CSample flen t xk -> do
             (x, k) <- unbind xk
             t' <- lowerTy t
-            k' <- withVars [(x, t')] $ lowerExpr k
+            k' <- withVars [(x, t')] $ lowerExprNoSusp k
             let xk' = bind (castName x) k'
-            return $ Typed (k' ^. tty) $ CSample flen t' xk'
+            eagerNoLets $ Typed (k' ^. tty) $ CSample flen t' xk'
         CLet e oanf xk -> do
             (x, k) <- unbind xk
             e' <- lowerExpr e
-            k' <- withVars [(x, e' ^. tty)] $ lowerExpr k
+            (e'', elets) <- case e' of
+                Eager e' -> return e'
+                Susp e' -> throwError $ ErrSomethingFailed "TODO susp for let"
+            k' <- withVars [(x, e'' ^. tty)] $ lowerExprNoSusp k
             let xk' = bind (castName x) k'
-            return $ Typed (k' ^. tty) $ CLet e' oanf xk'
+            eagerNoLets $ exprFromLets elets $ Typed (k' ^. tty) $ CLet e'' oanf xk'
         CBlock e -> do
-            e' <- lowerExpr e
-            return $ Typed (e' ^. tty) $ CBlock e'
+            e' <- lowerExpr e >>= forceE
+            eagerNoLets $ Typed (e' ^. tty) $ CBlock e'
         CIf ae e1 e2 -> do
-            ae' <- lowerCAExpr ae
-            e1' <- lowerExpr e1
-            e2' <- lowerExpr e2
-            withRt $ CIf ae' e1' e2'
+            (ae', aelets) <- lowerCAExpr ae >>= forceAE
+            e1' <- lowerExpr e1 >>= forceE
+            e2' <- lowerExpr e2 >>= forceE
+            eagerNoLets $ exprFromLets aelets $ Typed rt $ CIf ae' e1' e2'
         CCase ae cases -> do
-            ae' <- lowerCAExpr ae
+            (ae', aelets) <- lowerCAExpr ae >>= forceAE
             cases' <- forM cases $ \(n, c) -> do
                 case c of
                     Left k -> do
-                        k' <- lowerExpr k
+                        k' <- lowerExprNoSusp k
                         return (n, Left k')
                     Right xtk -> do
                         (x, (t, k)) <- unbind xtk
                         t' <- lowerTy t
-                        k' <- withVars [(x, t')] $ lowerExpr k
+                        k' <- withVars [(x, t')] $ lowerExprNoSusp k
                         return (n, Right $ bind (castName x) (t', k'))
-            withRt $ CCase ae' cases'
+            eagerNoLets $ exprFromLets aelets $ Typed rt $ CCase ae' cases'
         CCall fn frty args -> do
             frty' <- lowerTy frty
             args' <- mapM lowerCAExpr args
-            return $ Typed frty' $ CCall fn frty' args'
+            (args'', arglets) <- forceAEs args'
+            eagerNoLets $ exprFromLets arglets $ Typed frty' $ CCall fn frty' args''
         CParse pk ae dst_ty otw xtsk -> do
             (xts, k) <- unbind xtsk
             xts' <- mapM (\(n, s, t) -> do t' <- lowerTy t ; return (castName n, s, t')) xts
             let ctx = map (\(x, _, t) -> (castName x, t)) xts'
-            ae' <- lowerCAExpr ae
+            (ae', aeLets) <- lowerCAExpr ae >>= forceAE
             dst_ty' <- lowerTy dst_ty
-            otw' <- traverse lowerExpr otw
-            k' <- withVars ctx $ lowerExpr k
+            otw' <- traverse (lowerExpr >=> forceE) otw
+            k' <- withVars ctx $ lowerExprNoSusp k
             let xtsk' = bind xts' k'
-            return $ Typed (k' ^. tty) $ CParse pk ae' dst_ty' otw' xtsk'
+            eagerNoLets $ exprFromLets aeLets $ Typed (k' ^. tty) $ CParse pk ae' dst_ty' otw' xtsk'
         CTLookup s ae -> do
-            ae' <- lowerCAExpr ae
-            withRt $ CTLookup s ae'
+            (ae', aelets) <- lowerCAExpr ae >>= forceAE
+            eagerNoLets $ exprFromLets aelets $ Typed rt $ CTLookup s ae'
         CTWrite s ae1 ae2 -> do
-            ae1' <- lowerCAExpr ae1
-            ae2' <- lowerCAExpr ae2
-            withRt $ CTWrite s ae1' ae2'
+            (ae1', ae1lets) <- lowerCAExpr ae1 >>= forceAE
+            (ae2', ae2lets) <- lowerCAExpr ae2 >>= forceAE
+            eagerNoLets $ exprFromLets (ae1lets ++ ae2lets) $ Typed rt $ CTWrite s ae1' ae2'
         CGetCtr s -> do
-            withRt $ CGetCtr s
+            eagerRtNoLets $ CGetCtr s
         CIncCtr s -> do
-            withRt $ CIncCtr s
+            eagerRtNoLets $ CIncCtr s
         
 
 lowerArg :: (CDataVar FormatTy, String, FormatTy) -> EM (CDataVar VerusTy, String, VerusTy)
@@ -207,7 +271,7 @@ lowerDef (CDef name b) = do
     args' <- mapM lowerArg args
     retTy' <- lowerTy retTy
     let argctx = map (\(v,_,t) -> (castName v,t)) args'
-    body' <- withVars argctx $ traverse lowerExpr body
+    body' <- withVars argctx $ traverse lowerExprNoSusp body
     b' <- bindCDepBind args' (retTy', body')
     return $ CDef name b'
 
