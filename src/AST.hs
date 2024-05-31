@@ -476,6 +476,7 @@ data DebugCommand =
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
       | DebugPrintModules
+      | DebugCheckMatchesStruct [AExpr] Path [FuncParam]
     deriving (Show, Generic, Typeable)
 
 data IdxType = IdxSession | IdxPId | IdxGhost

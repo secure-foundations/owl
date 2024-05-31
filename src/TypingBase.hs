@@ -784,7 +784,7 @@ resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
       Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
       Just bnd -> do
           (((xs, ys), args), nt) <- unbind bnd
-          assert ("Wrong index arity on name type") $ (length is, length ps) == (length xs, length ys)
+          assert ("Wrong index arity on name type: " ++ show (owlpretty pth)) $ (length is, length ps) == (length xs, length ys)
           assert ("Wrong var arity on name type") $ length args == length as
           return $ substs (zip xs is) $ substs (zip ys ps) $ substs (zip args as) $ nt
 resolveNameTypeApp pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)

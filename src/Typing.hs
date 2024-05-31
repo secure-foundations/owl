@@ -325,6 +325,19 @@ mkStructType pth tv args ps b = do
             pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args)))
                  (foldr pAnd pTrue p)
 
+-- Only for debugging
+ensureTysMatchDepBind :: [(AExpr, Ty)] -> DepBind () -> Check ()
+ensureTysMatchDepBind [] (DPDone ()) = return ()
+ensureTysMatchDepBind ((a, t) : args) (DPVar t1 sx xk) = do
+    b <- isSubtype t t1
+    if b then do
+         (x, k) <- unbind xk
+         ensureTysMatchDepBind args $ subst x a k
+    else do
+        t' <- normalizeTy t
+        t1' <- normalizeTy t1
+        typeError ("Argument " ++ show (owlpretty a) ++ " does not match type " ++ sx ++ ": " ++ show (owlpretty t1') ++ "\nGot type " ++ show (owlpretty t'))
+
 tysMatchStructDef :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] -> Bind [IdxVar] (DepBind ()) -> Check Bool
 tysMatchStructDef pth sname args ps b = do
     (is, dp) <- unbind b
@@ -655,7 +668,7 @@ mkRefineds t ((s,p):ps) = mkSpanned $ TRefined (mkRefineds t ps) s p
 checkSubRefinement t1 r1 t2 r2 = snd <$> (SMT.smtTypingQuery "" $ SMT.subTypeCheck (mkRefineds t1 r1) (mkRefineds t2 r2))
 
 isSubtype' :: Ty -> [(String, Bind DataVar Prop)] -> Ty -> [(String, Bind DataVar Prop)] -> Check Bool
-isSubtype' t1 r1 t2 r2 = do
+isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
     res <- withPushLog $ do
       x <- freshVar
       falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
@@ -1847,6 +1860,18 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           let lineno =  fst $ begin $ unignore $ e^.spanOf
           getOutTy ot $ tRefined tUnit ("assumption_line_" ++ show lineno) p
       (EAdmit) -> getOutTy ot $ tAdmit
+      (EDebug (DebugCheckMatchesStruct args pth@(PRes (PDot p v)) ps)) -> do 
+          argTys <- mapM inferAExpr args
+          md <- openModule p
+          case lookup v (md^.tyDefs) of 
+            Just (StructDef idf) -> do
+                sps <- getStructParams ps
+                (ixs, dp') <- unbind idf
+                assert ("Bad number of params for struct") $ length sps == length ixs
+                let dp = substs (zip ixs sps) dp'
+                ensureTysMatchDepBind (zip args argTys) dp
+                getOutTy ot $ tUnit
+            _ -> typeError "Not a struct" 
       (EDebug (DebugPrintPathCondition)) -> do
           pc <- view pathCondition
           logTypecheck $ owlpretty "Path condition: " <> list (map owlpretty pc)

@@ -1137,6 +1137,21 @@ parseDebugCommand =
     )
     <|>
     (try $ do
+        reserved "checkStructMatches"
+        symbol "(" 
+        x <- parsePath
+        op <- optionMaybe parseParams
+        symbol "(" 
+        args <- parseArgs
+        symbol ")"
+        symbol ")"
+        let ps = case op of
+                   Just ps -> ps
+                   Nothing -> []
+        return $ DebugCheckMatchesStruct args x ps
+    )
+    <|>
+    (try $ do
         reserved "hasType"
         symbol "("
         a <- parseAExpr
