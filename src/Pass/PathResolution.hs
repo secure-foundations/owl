@@ -722,6 +722,11 @@ resolveExpr e =
 resolveDebugCommand :: DebugCommand -> Resolve DebugCommand
 resolveDebugCommand dc = 
     case dc of
+      DebugCheckMatchesStruct aes p fps -> do
+          aes' <- mapM resolveAExpr aes
+          p' <- resolvePath (ignore def) PTFunc p
+          fps' <- mapM resolveFuncParam fps
+          return $ DebugCheckMatchesStruct aes' p' fps'
       DebugPrintTyOf s a -> do
           s' <- resolveAExpr (unignore s)
           a' <- resolveAExpr a

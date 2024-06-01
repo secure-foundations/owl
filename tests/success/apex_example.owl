@@ -20,10 +20,9 @@ struct EncMsg {
 
 def alice_send(m : plaintext) @ Alice : Unit = { 
     let send_key = get(kA2B) in 
-    let ctr = get_counter ACtr in
-    inc_counter ACtr;
+    let ctr = get_counter ACtr in 
     let c = st_aead_enc<ACtr>(send_key, m, 0x) in
-    output EncMsg(ctr, c)
+    output EncMsg(ctr, c) to endpoint(Bob)
 }
 
 
