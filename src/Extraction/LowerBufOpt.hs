@@ -23,7 +23,6 @@ import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Bind
 import Unbound.Generics.LocallyNameless.Name
-import Unbound.Generics.LocallyNameless.Unsafe
 import Unbound.Generics.LocallyNameless.TH
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
@@ -32,34 +31,7 @@ import ConcreteAST
 import ExtractionBase
 import Verus
 
-newtype LowerMonad t a = LowerMonad (StateT LowerEnv (ExtractionMonad t) a)
-    deriving (Functor, Applicative, Monad, MonadState LowerEnv, MonadIO, MonadError ExtractionError)
-
-data LowerEnv = LowerEnv {
-    _lowerCtx :: M.Map (CDataVar FormatTy) VerusTy
-}
-
-instance Fresh (LowerMonad t) where
-    fresh (Fn s _) = do
-        n <- liftEM $ use freshCtr
-        liftEM $ freshCtr %= (+) 1
-        return $ Fn s n
-    fresh nm@(Bn {}) = return nm
-
-initLEnv :: LowerEnv
-initLEnv = LowerEnv M.empty
-
-runLowerMonad :: LowerMonad t a -> ExtractionMonad t a
-runLowerMonad (LowerMonad m) = evalStateT m initLEnv
-
-liftEM :: ExtractionMonad t a -> LowerMonad t a
-liftEM = LowerMonad . lift
-
-makeLenses ''LowerEnv
-
-
 type EM = ExtractionMonad FormatTy
-type LM = LowerMonad FormatTy
 
 lowerTy :: FormatTy -> EM VerusTy
 lowerTy FUnit = return RTUnit
@@ -80,46 +52,103 @@ lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
 lowerTy (FHexConst s) = return $ RTUnit
 
-lowerTy' :: FormatTy -> LM VerusTy
-lowerTy' = liftEM . lowerTy
+newtype LowerMonad t a = LowerMonad (StateT LowerEnv (ExtractionMonad t) a)
+    deriving (Functor, Applicative, Monad, MonadState LowerEnv, MonadIO, MonadError ExtractionError)
 
-withVars :: [(CDataVar FormatTy, VerusTy)] -> LM a -> LM a
-withVars xs k = do
-    s <- use lowerCtx
-    lowerCtx %= mappend (M.fromList xs)
-    res <- k
-    lowerCtx .= s
-    return res
-
-tyOf :: CDataVar FormatTy -> LM VerusTy
-tyOf v = do
-    ctx <- use lowerCtx
-    case M.lookup v ctx of
-        Just t -> return t
-        Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
+data LowerEnv = LowerEnv {
+    _lowerCtx :: M.Map (CDataVar FormatTy) LowerTCVal
+}
 
 
 type CLetBinding = (CDataVar VerusTy, Maybe AST.AExpr, CExpr VerusTy)
 
 data Suspendable a = 
     Eager a
-    | Susp (Suspended VerusTy a)
+    | Susp (Suspended a)
 
 type CWithLets a = (a, [CLetBinding])
 type CAWithLets = CWithLets (CAExpr VerusTy)
 type CEWithLets = CWithLets (CExpr VerusTy)
 
 
-data Suspended t a = Suspended {
+data Suspended a = Suspended {
     scTy :: VerusTy,
     -- Map from desired return type to the aexpr for the current call site, 
     -- plus any letbindings that need to be inserted before the current call site
     scComputation :: VerusTy -> LM a
 } 
 
-data LowerTCVal t a = 
+
+instance Fresh (LowerMonad t) where
+    fresh (Fn s _) = do
+        n <- liftEM $ use freshCtr
+        liftEM $ freshCtr %= (+) 1
+        return $ Fn s n
+    fresh nm@(Bn {}) = return nm
+
+initLEnv :: LowerEnv
+initLEnv = LowerEnv M.empty
+
+runLowerMonad :: LowerMonad t a -> ExtractionMonad t a
+runLowerMonad (LowerMonad m) = evalStateT m initLEnv
+
+liftEM :: ExtractionMonad t a -> LowerMonad t a
+liftEM = LowerMonad . lift
+
+-- The type context stores either the type of eagerly evaluated variables,
+-- or a list of letbindings to be inserted before the current call site to
+-- force a suspended computation.
+data LowerTCVal = 
     LTCTy VerusTy
-    | LTCSusp 
+    | LTCSusp (Suspended [CLetBinding])
+
+type LM = LowerMonad FormatTy
+
+
+makeLenses ''LowerEnv
+
+
+lowerTy' :: FormatTy -> LM VerusTy
+lowerTy' = liftEM . lowerTy
+
+withVars :: [(CDataVar FormatTy, VerusTy)] -> LM a -> LM a
+withVars xs k = do
+    s <- use lowerCtx
+    let tcmap = M.fromList $ map (\(x,t) -> (x, LTCTy t)) xs
+    lowerCtx %= mappend tcmap
+    res <- k
+    lowerCtx .= s
+    return res
+
+withSusp :: [(CDataVar FormatTy, Suspended [CLetBinding])] -> LM a -> LM a
+withSusp xs k = do
+    s <- use lowerCtx
+    let tcmap = M.fromList $ map (\(x,t) -> (x, LTCSusp t)) xs
+    lowerCtx %= mappend tcmap
+    res <- k
+    lowerCtx .= s
+    return res
+
+lookupLTC :: CDataVar FormatTy -> LM LowerTCVal
+lookupLTC v = do
+    ctx <- use lowerCtx
+    case M.lookup v ctx of
+        Just v -> return v
+        Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
+
+-- Lookup a variable in the type context, and return its type.
+-- If the variable is suspended, return the letbindings from forcing it at type t
+-- and update the context to reflect the fact that the variable has been forced.
+forceLTC :: CDataVar FormatTy -> VerusTy -> LM (VerusTy, [CLetBinding])
+forceLTC v t = do
+    ltcv <- lookupLTC v
+    case ltcv of
+        LTCTy t -> return (t, [])
+        LTCSusp s -> do
+            lets <- scComputation s $ t
+            let vt = scTy s
+            lowerCtx %= M.insert v (LTCTy $ vt)
+            return (vt, lets)
 
 forceAE :: Suspendable CAWithLets -> LM (CAExpr VerusTy, [CLetBinding])
 forceAE (Eager x) = return x
@@ -188,8 +217,8 @@ lowerCAExpr info aexpr = do
     let lowerGet ae = if inArg info then eager $ Typed u8slice ae else eagerRt ae
     case aexpr ^. tval of
         CAVar s n -> do
-            rtFromCtx <- tyOf n
-            eager $ Typed rtFromCtx $ CAVar s (castName n)
+            (rtFromCtx, lets) <- forceLTC n rt
+            return $ Eager (Typed rtFromCtx $ CAVar s (castName n), lets)
         CAApp f args -> do
             args' <- mapM (lowerCAExpr info { inArg = True }) args
             mkApp f (aexpr ^. tty) args'
@@ -257,12 +286,18 @@ lowerExpr expr = do
         CLet e oanf xk -> do
             (x, k) <- unbind xk
             e' <- lowerExpr e
-            (e'', elets) <- case e' of
-                Eager e' -> return e'
-                Susp e' -> throwError $ ErrSomethingFailed "TODO susp for let"
-            k' <- withVars [(x, e'' ^. tty)] $ lowerExprNoSusp k
-            let xk' = bind (castName x) k'
-            eagerNoLets $ exprFromLets elets $ Typed (k' ^. tty) $ CLet e'' oanf xk'
+            case e' of
+                Eager (e'', elets) -> do
+                    k' <- withVars [(x, e'' ^. tty)] $ lowerExprNoSusp k
+                    let xk' = bind (castName x) k'
+                    eagerNoLets $ exprFromLets elets $ Typed (k' ^. tty) $ CLet e'' oanf xk'
+                Susp (Suspended scty sccomp) -> do
+                    let sccompLet t = do
+                            (e'', elets) <- sccomp t
+                            let lets = elets ++ [(castName x, oanf, e'')]
+                            return lets
+                    k' <- withSusp [ (castName x, Suspended scty sccompLet) ] $ lowerExprNoSusp k
+                    eagerNoLets k'                    
         CBlock e -> do
             e' <- lowerExpr e >>= forceE
             eagerNoLets $ Typed (e' ^. tty) $ CBlock e'
