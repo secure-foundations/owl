@@ -70,12 +70,9 @@ type CWithLets a = (a, [CLetBinding])
 type CAWithLets = CWithLets (CAExpr VerusTy)
 type CEWithLets = CWithLets (CExpr VerusTy)
 
-
 data Suspended a = Suspended {
     scTy :: VerusTy,
-    -- Map from desired return type to the aexpr for the current call site, 
-    -- plus any letbindings that need to be inserted before the current call site
-    scComputation :: VerusTy -> LM a
+    scComputation :: VerusTy -> LM (a, VerusTy)
 } 
 
 
@@ -133,26 +130,15 @@ lookupLTC :: CDataVar FormatTy -> LM LowerTCVal
 lookupLTC v = do
     ctx <- use lowerCtx
     case M.lookup v ctx of
-        Just v -> return v
+        Just x -> return x
         Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
-
--- Lookup a variable in the type context, and return its type.
--- If the variable is suspended, return the letbindings from forcing it at type t
--- and update the context to reflect the fact that the variable has been forced.
-forceLTC :: CDataVar FormatTy -> VerusTy -> LM (VerusTy, [CLetBinding])
-forceLTC v t = do
-    ltcv <- lookupLTC v
-    case ltcv of
-        LTCTy t -> return (t, [])
-        LTCSusp s -> do
-            lets <- scComputation s $ t
-            let vt = scTy s
-            lowerCtx %= M.insert v (LTCTy $ vt)
-            return (vt, lets)
 
 forceAE :: Suspendable CAWithLets -> LM (CAExpr VerusTy, [CLetBinding])
 forceAE (Eager x) = return x
-forceAE (Susp _) = throwError $ ErrSomethingFailed "TODO force suspended computation"
+forceAE (Susp sc) = do
+    let t = scTy sc
+    ((x, lets), t') <- scComputation sc t
+    return (x, lets)
 
 forceAEs :: [Suspendable CAWithLets] -> LM ([CAExpr VerusTy], [CLetBinding])
 forceAEs xs = do
@@ -160,23 +146,34 @@ forceAEs xs = do
     let (ys, zss) = unzip xs'
     return (ys, concat zss)
 
+exprFromLets :: [CLetBinding] -> CExpr VerusTy -> CExpr VerusTy
+exprFromLets lets e = foldr (\(x, oanf, e') acc -> Typed (acc ^. tty) $ CLet e' oanf $ bind x acc) e lets
+
+forceE :: Suspendable CEWithLets -> LM (CExpr VerusTy)
+forceE (Eager (x, lets)) = return $ exprFromLets lets x
+forceE (Susp sc) = do
+    let t = scTy sc
+    ((x, lets), t') <- scComputation sc t
+    return $ exprFromLets lets x
+
+
+getSuspTy :: Suspendable CAWithLets -> VerusTy
+getSuspTy (Eager (Typed t _, _)) = t
+getSuspTy (Susp s) = scTy s
+
 mkApp :: String -> FormatTy -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
 mkApp f frty args' = do
-    (argrtys, arglets) <- forceAEs args'
-    let eager x = return $ addLets (Eager (x, [])) arglets
     case (f, frty) of
         ("enc_st_aead", _) -> do 
-            let frty = RTStAeadBuilder
-            let suspcomp rt = do
-                    case rt of
-                        _ -> do
-                            let ae = Typed frty $ CAApp "enc_st_aead_builder" argrtys
-                            return (ae, arglets)
-            return $ Susp $ Suspended frty suspcomp
+            (argrtys, arglets) <- forceAEs args'
+            let frty' = RTStAeadBuilder
+            let suspcomp _ = do
+                        let ae = Typed frty' $ CAApp "enc_st_aead_builder" argrtys
+                        return ((ae, arglets), frty')
+            return $ Susp $ Suspended frty' suspcomp
         (f, FStruct f' fields) | f == f' -> do
-            let argtys = map (^. tty) argrtys
+            let argtys = map getSuspTy args'
             if RTStAeadBuilder `elem` argtys then do
-                liftEM $ debugPrint $ "mkApp struct constructor: " ++ f
                 {-
                 TODO: 
                 - Have a way to "suspend" computations which floats up to the enclosing let-binding,
@@ -190,19 +187,32 @@ mkApp f frty args' = do
                 - It is then easy to emit the optimization for `Output` as well.
                 -}
                 frty' <- lowerTy' frty
-                eager $ Typed frty' $ CAApp f argrtys 
+                let suspcomp rt = do
+                        liftEM $ debugPrint $ "forcing struct constructor " ++ f ++ " at type " ++ show rt
+                        serializedTy <- lowerTy' $ FBuf Nothing
+                        case rt of
+                            rt' | rt' == frty' -> do
+                                -- We want the struct as an actual Rust struct, so return it as normal
+                                (argrtys, arglets) <- forceAEs args'
+                                return ((Typed frty' $ CAApp f argrtys, arglets), frty')
+                            rt' | rt' == serializedTy -> do
+                                throwError $ ErrSomethingFailed "mkApp struct constructor: got serialized buffer type"
+                            _ -> throwError $ ErrSomethingFailed "mkApp struct constructor: got bad type"
+                return $ Susp $ Suspended frty' suspcomp
             else do
+                (argrtys, arglets) <- forceAEs args'
                 frty' <- lowerTy' frty
-                eager $ Typed frty' $ CAApp f argrtys 
+                return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
         _ -> do
+            (argrtys, arglets) <- forceAEs args'
             frty' <- lowerTy' frty
-            eager $ Typed frty' $ CAApp f argrtys
+            return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
 
 addLets :: Suspendable (CWithLets a) -> [CLetBinding] -> Suspendable (CWithLets a)
 addLets (Eager (x, lets)) lets' = Eager (x, lets ++ lets')
 addLets (Susp sc) lets' = Susp $ sc { scComputation = \rt -> do
-    (x, lets) <- scComputation sc rt
-    return (x, lets ++ lets')
+    ((x, lets), t) <- scComputation sc rt
+    return ((x, lets ++ lets'), t)
 }
 
 data LowerCAExprInfo = LowerCAExprInfo {
@@ -217,8 +227,14 @@ lowerCAExpr info aexpr = do
     let lowerGet ae = if inArg info then eager $ Typed u8slice ae else eagerRt ae
     case aexpr ^. tval of
         CAVar s n -> do
-            (rtFromCtx, lets) <- forceLTC n rt
-            return $ Eager (Typed rtFromCtx $ CAVar s (castName n), lets)
+            ltcv <- lookupLTC n 
+            case ltcv of
+                LTCTy t -> eagerRt $ CAVar s (castName n)
+                LTCSusp sc -> do
+                    let suspcomp rt = do
+                            (lets, rt') <- scComputation sc rt
+                            return ((Typed rt $ CAVar s (castName n), lets), rt')
+                    return $ Susp $ Suspended (scTy sc) suspcomp
         CAApp f args -> do
             args' <- mapM (lowerCAExpr info { inArg = True }) args
             mkApp f (aexpr ^. tty) args'
@@ -226,18 +242,11 @@ lowerCAExpr info aexpr = do
         CAGetEncPK s -> lowerGet $ CAGetEncPK s
         CAGetVK s -> lowerGet $ CAGetVK s
         CAInt fl -> eagerRt $ CAInt fl
-        CAHexConst s -> eagerRt $ CAHexConst s -- todo float?
+        CAHexConst s -> do
+            hcvar <- fresh $ s2n "hexconst"
+            let lets = [(hcvar, Nothing, Typed rt $ CRet $ Typed rt $ CAHexConst s)]
+            return $ Eager (Typed rt $ CAVar (ignore "hexconst") hcvar, lets)
         CACounter s -> eagerRt $ CACounter s
-
-
-exprFromLets :: [CLetBinding] -> CExpr VerusTy -> CExpr VerusTy
-exprFromLets lets e = foldr (\(x, oanf, e') acc -> Typed (acc ^. tty) $ CLet e' oanf $ bind x acc) e lets
-
-forceE :: Suspendable CEWithLets -> LM (CExpr VerusTy)
-forceE (Eager (x, lets)) = return $ exprFromLets lets x
-forceE (Susp _) = throwError $ ErrSomethingFailed "TODO force suspended computation"
-
-
 
 
 lowerExprNoSusp :: CExpr FormatTy -> LM (CExpr VerusTy)
@@ -263,8 +272,8 @@ lowerExpr expr = do
                 Eager (ae', aelets) -> eager (Typed (ae' ^. tty) $ CRet ae', aelets)
                 Susp s -> do
                     let suspcomp rt = do
-                            (ae'', aelets) <- scComputation s $ rt
-                            return (Typed (ae'' ^. tty) $ CRet ae'', aelets)
+                            ((ae'', aelets), rt') <- scComputation s $ rt
+                            return ((Typed (ae'' ^. tty) $ CRet ae'', aelets), rt')
                     return $ Susp $ Suspended (scTy s) suspcomp
         CInput ft xek -> do
             ((x, ev), k) <- unbind xek
@@ -276,7 +285,10 @@ lowerExpr expr = do
             ae' <- lowerCAExpr' ae
             case ae' of
                 Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
-                Susp ae' -> throwError $ ErrSomethingFailed "TODO susp for output"
+                Susp sc -> do
+                    outputTy <- lowerTy' $ FBuf Nothing
+                    ((ae'', aeLets), _) <- scComputation sc $ outputTy
+                    eager (Typed outputTy $ COutput ae'' dst, aeLets)
         CSample flen t xk -> do
             (x, k) <- unbind xk
             t' <- lowerTy' t
@@ -291,12 +303,15 @@ lowerExpr expr = do
                     k' <- withVars [(x, e'' ^. tty)] $ lowerExprNoSusp k
                     let xk' = bind (castName x) k'
                     eagerNoLets $ exprFromLets elets $ Typed (k' ^. tty) $ CLet e'' oanf xk'
-                Susp (Suspended scty sccomp) -> do
+                Susp (Suspended scTy sccomp) -> do
                     let sccompLet t = do
-                            (e'', elets) <- sccomp t
+                            ((e'', elets), t') <- sccomp t
                             let lets = elets ++ [(castName x, oanf, e'')]
-                            return lets
-                    k' <- withSusp [ (castName x, Suspended scty sccompLet) ] $ lowerExprNoSusp k
+                            -- When this computation is later forced, we update the context to reflect this
+                            -- TODO: make sure that this doesn't result in duplication
+                            lowerCtx %= M.insert x (LTCTy t)
+                            return (lets, t')
+                    k' <- withSusp [ (castName x, Suspended scTy sccompLet) ] $ lowerExprNoSusp k
                     eagerNoLets k'                    
         CBlock e -> do
             e' <- lowerExpr e >>= forceE

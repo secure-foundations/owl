@@ -730,13 +730,6 @@ extraLt _ _ = pretty ""
 liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
 liftLifetime _ ty = ty
 
-mkNestPattern :: [Doc ann] -> Doc ann
-mkNestPattern l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl   
-
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
     debugLog $ "genVerusStruct: " ++ name
@@ -916,7 +909,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
                     if let Ok((num_written)) = ser_result {
-                        vec_truncate(&mut obuf, num_written);
                         Some(obuf)
                     } else {
                         None
@@ -925,6 +917,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     None
                 }
             }
+            \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
                 requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())

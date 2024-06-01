@@ -38,6 +38,9 @@ import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad FormatTy
 
+-- We construct both the spec and exec Parsley combinators in spec extraction, since here, we have access to the 
+-- format types which include hex consts
+
 seqU8 :: VerusTy
 seqU8 = RTSeq RTU8
 
@@ -64,118 +67,6 @@ specTyOfSerialized f = specTyOf f
 extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
 extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
-
-mkNestPattern :: [Doc ann] -> Doc ann
-mkNestPattern l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
-
--- We construct both the spec and exec Parsley combinators in spec extraction, since here, we have access to the 
--- format types which include hex consts
-specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-specCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
-specCombTyOf' (FStruct _ fs) = do
-    fs' <- mapM (specCombTyOf' . snd) fs
-    case sequence fs' of
-        Just fs'' -> do
-            let nest = mkNestPattern fs''
-            return $ Just [di|#{nest}|]
-        Nothing -> return Nothing
-specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
-specCombTyOf' _ = return Nothing
-
-specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
-specCombTyOf = liftFromJust specCombTyOf'
-
-execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-execCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
-execCombTyOf' (FStruct _ fs) = do
-    fs' <- mapM (execCombTyOf' . snd) fs
-    case sequence fs' of
-        Just fs'' -> do
-            let nest = mkNestPattern fs''
-            return $ Just [di|#{nest}|]
-        Nothing -> return Nothing
-execCombTyOf' (FHexConst s) = do
-    let l = length s `div` 2
-    return $ Just [di|ConstBytes<#{l}>|]
-execCombTyOf' _ = return Nothing
-
-execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
-execCombTyOf = liftFromJust execCombTyOf'
-
--- (combinator type, any constants that need to be defined)
-specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-specCombOf' _ (FBuf (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
-specCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
-specCombOf' constSuffix (FStruct _ fs) = do
-    fcs <- mapM (specCombOf' constSuffix . snd) fs
-    case sequence fcs of
-        Just fcs' -> do
-            let (fs', consts) = unzip fcs'
-            let nest = mkNestPattern fs'
-            -- We don't return the consts here, since they would already have been
-            -- returned and printed when the nested struct was defined
-            return $ noconst [di|#{nest}|]
-        Nothing -> return Nothing
-specCombOf' constSuffix (FHexConst s) = do
-    bl <- hexStringToByteList s
-    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
-specCombOf' _ _ = return Nothing
-
-specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
-specCombOf s = liftFromJust (specCombOf' s)
-
--- (combinator type, any constants that need to be defined)
-execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-execCombOf' _ (FBuf (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
-execCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
-execCombOf' constSuffix (FStruct _ fs) = do
-    fcs <- mapM (execCombOf' constSuffix . snd) fs
-    case sequence fcs of
-        Just fcs' -> do
-            let (fs', consts) = unzip fcs'
-            let nest = mkNestPattern fs'
-            -- We don't return the consts here, since they would already have been
-            -- returned and printed when the nested struct was defined
-            return $ noconst [di|#{nest}|]
-        Nothing -> return Nothing
-execCombOf' constSuffix (FHexConst s) = do
-    bl <- hexStringToByteList s
-    let l = length s `div` 2
-    let const = [__di|
-    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix}: [u8; #{l}] 
-        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix} 
-    {
-        let arr: [u8; #{l}] = [#{bl}];
-        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix});
-        arr
-    }
-    |]
-    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
-execCombOf' _ _ = return Nothing
-
-execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
-execCombOf s = liftFromJust (execCombOf' s)
-
-noconst :: a -> Maybe (a, Doc ann)
-noconst x = Just (x, [di||])
-
-liftFromJust :: (a -> ExtractionMonad t (Maybe b)) -> a -> ExtractionMonad t b
-liftFromJust f x = do
-    res <- f x
-    case res of
-        Just r -> return r
-        Nothing -> throwError $ ErrSomethingFailed "liftFromJust failed"
 
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
