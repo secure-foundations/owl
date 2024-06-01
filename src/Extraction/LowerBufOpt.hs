@@ -71,7 +71,10 @@ type CAWithLets = CWithLets (CAExpr VerusTy)
 type CEWithLets = CWithLets (CExpr VerusTy)
 
 data Suspended a = Suspended {
-    scTy :: VerusTy,
+    -- The choices for the type of the suspended computation
+    scTyChoices :: [VerusTy],
+    -- The computation to perform when the computation is forced
+    -- (only works when given one of the choices in scTyChoices)
     scComputation :: VerusTy -> LM (a, VerusTy)
 } 
 
@@ -133,48 +136,54 @@ lookupLTC v = do
         Just x -> return x
         Nothing -> throwError $ UndefinedSymbol $ "LowerBufOpt.tyOf: " ++ show v
 
-forceAE :: Suspendable CAWithLets -> LM (CAExpr VerusTy, [CLetBinding])
-forceAE (Eager x) = return x
-forceAE (Susp sc) = do
-    let t = scTy sc
+forceAE :: VerusTy -> Suspendable CAWithLets -> LM (CAExpr VerusTy, [CLetBinding])
+forceAE _ (Eager x) = return x
+forceAE t (Susp sc) = do
     ((x, lets), t') <- scComputation sc t
     return (x, lets)
 
-forceAEs :: [Suspendable CAWithLets] -> LM ([CAExpr VerusTy], [CLetBinding])
-forceAEs xs = do
-    xs' <- mapM forceAE xs
+forceAEs :: [VerusTy] -> [Suspendable CAWithLets] -> LM ([CAExpr VerusTy], [CLetBinding])
+forceAEs tys xs = do
+    xs' <- zipWithM forceAE tys xs
     let (ys, zss) = unzip xs'
     return (ys, concat zss)
 
 exprFromLets :: [CLetBinding] -> CExpr VerusTy -> CExpr VerusTy
 exprFromLets lets e = foldr (\(x, oanf, e') acc -> Typed (acc ^. tty) $ CLet e' oanf $ bind x acc) e lets
 
-forceE :: Suspendable CEWithLets -> LM (CExpr VerusTy)
-forceE (Eager (x, lets)) = return $ exprFromLets lets x
-forceE (Susp sc) = do
-    let t = scTy sc
+forceE :: VerusTy -> Suspendable CEWithLets -> LM (CExpr VerusTy)
+forceE _ (Eager (x, lets)) = return $ exprFromLets lets x
+forceE t (Susp sc) = do
     ((x, lets), t') <- scComputation sc t
     return $ exprFromLets lets x
 
 
-getSuspTy :: Suspendable CAWithLets -> VerusTy
-getSuspTy (Eager (Typed t _, _)) = t
-getSuspTy (Susp s) = scTy s
+getSuspTy :: Suspendable CAWithLets -> [VerusTy]
+getSuspTy (Eager (Typed t _, _)) = [t]
+getSuspTy (Susp s) = scTyChoices s
 
-mkApp :: String -> FormatTy -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
-mkApp f frty args' = do
+mkApp :: String -> FormatTy -> [VerusTy] -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
+mkApp f frty argtys args' = do
     case (f, frty) of
         ("enc_st_aead", _) -> do 
-            (argrtys, arglets) <- forceAEs args'
-            let frty' = RTStAeadBuilder
+            (argrtys, arglets) <- forceAEs argtys args'
+            serializedTy <- getSerializedTy
+            let frtyChoices = [RTStAeadBuilder, serializedTy]
             let suspcomp rt = do
-                        liftEM $ debugPrint $ "enc_st_aead_builder used at type: " ++ show rt
-                        let ae = Typed frty' $ CAApp "enc_st_aead_builder" argrtys
-                        return ((ae, arglets), frty')
-            return $ Susp $ Suspended frty' suspcomp
+                    liftEM $ debugPrint $ "enc_st_aead_builder used at type: " ++ show rt
+                    case rt of
+                        RTStAeadBuilder -> do
+                            let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" argrtys
+                            return ((ae, arglets), RTStAeadBuilder)
+                        tt' | tt' == serializedTy -> do
+                            let ae = Typed serializedTy $ CAApp "enc_st_aead" argrtys
+                            return ((ae, arglets), serializedTy)
+                        _ -> throwError $ ErrSomethingFailed "mkApp enc_st_aead_builder: got bad type"
+            return $ Susp $ Suspended frtyChoices suspcomp
         (f, FStruct f' fields) | f == f' -> do
-            let argtys = map getSuspTy args'
-            if RTStAeadBuilder `elem` argtys then do
+            let argsusptys = map getSuspTy args'
+            if RTStAeadBuilder `elem` concat argsusptys then do
+                liftEM $ debugPrint $ "Struct constructor of: " ++ f' ++ " found at type: " ++ show frty
                 {-
                 TODO: 
                 - Have a way to "suspend" computations which floats up to the enclosing let-binding,
@@ -187,28 +196,32 @@ mkApp f frty args' = do
                   call; if constructor, we just emit the constructor.
                 - It is then easy to emit the optimization for `Output` as well.
                 -}
-                frty' <- lowerTy' frty
+                rStructTy' <- lowerTy' frty
+                serializedTy <- getSerializedTy
                 let suspcomp rt = do
-                        serializedTy <- lowerTy' $ FBuf Nothing
+                        liftEM $ debugPrint $ "Struct constructor of: " ++ f' ++ " used at type: " ++ show rt
                         case rt of
-                            rt' | rt' == frty' -> do
+                            rt' | rt' == rStructTy' -> do
                                 -- We want the struct as an actual Rust struct, so return it as normal
-                                (argrtys, arglets) <- forceAEs args'
-                                return ((Typed frty' $ CAApp f argrtys, arglets), frty')
+                                (argrtys, arglets) <- forceAEs argtys args'
+                                return ((Typed rStructTy' $ CAApp f argrtys, arglets), rStructTy')
                             rt' | rt' == serializedTy -> do
-                                let parsleycombof (fieldFormatTy, argVerusTy) =
-                                        if argVerusTy == RTStAeadBuilder then return PCBuilder else liftEM $ execParsleyCombOf f' fieldFormatTy
-                                combs <- mapM parsleycombof $ zip (map snd fields) argtys
-                                (argrtys, arglets) <- forceAEs args'
-                                return ((Typed serializedTy $ CASerializeWith frty' (zip argrtys combs), arglets), frty')
+                                let parsleycombof (fieldFormatTy, argVerusTyChoices) =
+                                        if RTStAeadBuilder `elem` argVerusTyChoices then return PCBuilder else liftEM $ execParsleyCombOf f' fieldFormatTy
+                                let forceTyOf fieldVerusTy argVerusTyChoices = 
+                                        if RTStAeadBuilder `elem` argVerusTyChoices then RTStAeadBuilder else fieldVerusTy
+                                combs <- mapM parsleycombof $ zip (map snd fields) argsusptys
+                                let forcetys = zipWith forceTyOf argtys argsusptys
+                                (argrtys, arglets) <- forceAEs forcetys args' 
+                                return ((Typed serializedTy $ CASerializeWith rStructTy' (zip argrtys combs), arglets), rStructTy')
                             _ -> throwError $ ErrSomethingFailed "mkApp struct constructor: got bad type"
-                return $ Susp $ Suspended frty' suspcomp
+                return $ Susp $ Suspended [rStructTy', serializedTy] suspcomp
             else do
-                (argrtys, arglets) <- forceAEs args'
+                (argrtys, arglets) <- forceAEs argtys args'
                 frty' <- lowerTy' frty
                 return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
         _ -> do
-            (argrtys, arglets) <- forceAEs args'
+            (argrtys, arglets) <- forceAEs argtys args'
             frty' <- lowerTy' frty
             return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
 
@@ -233,15 +246,16 @@ lowerCAExpr info aexpr = do
         CAVar s n -> do
             ltcv <- lookupLTC n 
             case ltcv of
-                LTCTy t -> eagerRt $ CAVar s (castName n)
+                LTCTy t -> eager $ Typed t $ CAVar s (castName n)
                 LTCSusp sc -> do
                     let suspcomp rt = do
                             (lets, rt') <- scComputation sc rt
                             return ((Typed rt $ CAVar s (castName n), lets), rt')
-                    return $ Susp $ Suspended (scTy sc) suspcomp
+                    return $ Susp $ Suspended (scTyChoices sc) suspcomp
         CAApp f args -> do
+            argtys <- mapM (lowerTy' . (^. tty)) args
             args' <- mapM (lowerCAExpr info { inArg = True }) args
-            mkApp f (aexpr ^. tty) args'
+            mkApp f (aexpr ^. tty) argtys args'
         CAGet s -> lowerGet $ CAGet s
         CAGetEncPK s -> lowerGet $ CAGetEncPK s
         CAGetVK s -> lowerGet $ CAGetVK s
@@ -280,7 +294,7 @@ lowerExpr expr = do
                     let suspcomp rt = do
                             ((ae'', aelets), rt') <- scComputation s $ rt
                             return ((Typed (ae'' ^. tty) $ CRet ae'', aelets), rt')
-                    return $ Susp $ Suspended (scTy s) suspcomp
+                    return $ Susp $ Suspended (scTyChoices s) suspcomp
         CInput ft xek -> do
             ((x, ev), k) <- unbind xek
             frt <- lowerTy' ft
@@ -293,7 +307,7 @@ lowerExpr expr = do
                 Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
                 Susp sc -> do
                     -- Force the computation at type Buffer
-                    outputTy <- lowerTy' $ FBuf Nothing
+                    outputTy <- getSerializedTy
                     ((ae'', aeLets), _) <- scComputation sc $ outputTy
                     eagerRt (COutput ae'' dst) aeLets
         CSample flen t xk -> do
@@ -316,20 +330,26 @@ lowerExpr expr = do
                             let lets = elets ++ [(castName x, oanf, e'')]
                             -- When this computation is later forced, we update the context to reflect this
                             -- TODO: make sure that this doesn't result in duplication
-                            lowerCtx %= M.insert x (LTCTy t)
+                            liftEM $ debugPrint $ "Adding let bindings for: " ++ show x ++ " at type: " ++ show t'
+                            lowerCtx %= M.insert x (LTCTy t')
                             return (lets, t')
                     k' <- withSusp [ (castName x, Suspended scTy sccompLet) ] $ lowerExprNoSusp k
                     eagerNoLets k'                    
         CBlock e -> do
-            e' <- lowerExpr e >>= forceE
+            eTy <- lowerTy' $ e ^. tty
+            e' <- lowerExpr e >>= forceE eTy
             eagerNoLets $ Typed (e' ^. tty) $ CBlock e'
         CIf ae e1 e2 -> do
-            (ae', aelets) <- lowerCAExpr' ae >>= forceAE
-            e1' <- lowerExpr e1 >>= forceE
-            e2' <- lowerExpr e2 >>= forceE
+            aety <- lowerTy' $ ae ^. tty
+            e1ty <- lowerTy' $ e1 ^. tty
+            e2ty <- lowerTy' $ e2 ^. tty
+            (ae', aelets) <- lowerCAExpr' ae >>= forceAE aety
+            e1' <- lowerExpr e1 >>= forceE e1ty
+            e2' <- lowerExpr e2 >>= forceE e2ty
             eagerNoLets $ exprFromLets aelets $ Typed rt $ CIf ae' e1' e2'
         CCase ae cases -> do
-            (ae', aelets) <- lowerCAExpr' ae >>= forceAE
+            aety <- lowerTy' $ ae ^. tty
+            (ae', aelets) <- lowerCAExpr' ae >>= forceAE aety
             cases' <- forM cases $ \(n, c) -> do
                 case c of
                     Left k -> do
@@ -343,25 +363,34 @@ lowerExpr expr = do
             eagerNoLets $ exprFromLets aelets $ Typed rt $ CCase ae' cases'
         CCall fn frty args -> do
             frty' <- lowerTy' frty
+            argtys <- mapM (lowerTy' . (^. tty)) args
             args' <- mapM lowerCAExpr' args
-            (args'', arglets) <- forceAEs args'
+            (args'', arglets) <- forceAEs argtys args'
             eagerNoLets $ exprFromLets arglets $ Typed frty' $ CCall fn frty' args''
         CParse pk ae dst_ty otw xtsk -> do
             (xts, k) <- unbind xtsk
             xts' <- mapM (\(n, s, t) -> do t' <- lowerTy' t ; return (castName n, s, t')) xts
             let ctx = map (\(x, _, t) -> (castName x, t)) xts'
-            (ae', aeLets) <- lowerCAExpr' ae >>= forceAE
+            aety <- lowerTy' $ ae ^. tty
+            (ae', aeLets) <- lowerCAExpr' ae >>= forceAE aety
             dst_ty' <- lowerTy' dst_ty
-            otw' <- traverse (lowerExpr >=> forceE) otw
+            otw' <- case otw of
+                Nothing -> return Nothing
+                Just otw -> do
+                    otwty <- (lowerTy' . (^. tty)) otw
+                    Just <$> (lowerExpr >=> forceE otwty) otw
             k' <- withVars ctx $ lowerExprNoSusp k
             let xtsk' = bind xts' k'
             eagerNoLets $ exprFromLets aeLets $ Typed (k' ^. tty) $ CParse pk ae' dst_ty' otw' xtsk'
         CTLookup s ae -> do
-            (ae', aelets) <- lowerCAExpr' ae >>= forceAE
+            aety <- lowerTy' $ ae ^. tty
+            (ae', aelets) <- lowerCAExpr' ae >>= forceAE aety
             eagerNoLets $ exprFromLets aelets $ Typed rt $ CTLookup s ae'
         CTWrite s ae1 ae2 -> do
-            (ae1', ae1lets) <- lowerCAExpr' ae1 >>= forceAE
-            (ae2', ae2lets) <- lowerCAExpr' ae2 >>= forceAE
+            ae1ty <- lowerTy' $ ae1 ^. tty
+            ae2ty <- lowerTy' $ ae2 ^. tty
+            (ae1', ae1lets) <- lowerCAExpr' ae1 >>= forceAE ae1ty
+            (ae2', ae2lets) <- lowerCAExpr' ae2 >>= forceAE ae2ty
             eagerNoLets $ exprFromLets (ae1lets ++ ae2lets) $ Typed rt $ CTWrite s ae1' ae2'
         CGetCtr s -> do
             eagerRtNoLets $ CGetCtr s
@@ -378,6 +407,7 @@ lowerArg (n, s, t) = do
 
 lowerDef' :: CDef FormatTy -> LM (CDef VerusTy)
 lowerDef' (CDef name b) = do
+    liftEM $ debugLog $ "Buffer optimizing lowering def: " ++ name
     (args, (retTy, body)) <- liftEM $ unbindCDepBind b
     args' <- mapM lowerArg args
     retTy' <- lowerTy' retTy
@@ -452,3 +482,6 @@ arrayU8 n = RTArray RTU8 n
 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
+
+getSerializedTy :: LM VerusTy
+getSerializedTy = lowerTy' $ FBuf Nothing
