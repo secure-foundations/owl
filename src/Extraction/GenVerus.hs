@@ -371,6 +371,50 @@ genVerusCAExpr ae = do
             s' <- hexStringToByteList s
             castX <- ([di|x|], vecU8) `cast` (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
+        CASerializeWith (RTStruct n fs) args -> do
+            let ftys = map snd fs
+            let printComb arg comb = case comb of
+                    PCTail -> return [di|Tail|]
+                    PCBytes l -> do
+                        l' <- concreteLength $ lowerFLen l
+                        return [di|Bytes(#{l'})|]
+                    PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                    PCBuilder -> return [di|BuilderCombinator(#{arg})|]
+            let mkCombArg ((arg, comb), fty) = do
+                    arg' <- genVerusCAExpr arg
+                    let fty' = if comb == PCBuilder then RTUnit else fty
+                    arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                    argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                    comb' <- printComb arg'' comb
+                    len <- case comb of
+                        PCBytes l -> do
+                            return [di|#{arg''}.len()|]
+                        PCConstBytes l _ -> return [di|#{l}|]
+                        PCTail -> return [di|#{arg''}.len()|]
+                        PCBuilder -> return [di|#{arg''}.length()|]
+                    return (comb', (argForSer, len))
+            let acfs = zip args ftys
+            (combs, arglens) <- unzip <$> mapM mkCombArg acfs
+            let (args, lens) = unzip arglens
+            let execcomb = mkNestPattern combs
+            let execargs = mkNestPattern args
+            let ser_body = [__di|    
+                if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let mut ser_buf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
+                    let exec_comb = #{execcomb};
+                    let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
+                    if let Ok((num_written)) = ser_result {
+                        vec_truncate(&mut ser_buf, num_written);
+                        ser_buf
+                    } else {
+                        // TODO better error name
+                        return Err(OwlError::IntegerOverflow);
+                    }
+                } else {
+                    return Err(OwlError::IntegerOverflow);
+                }
+            |]
+            return $ GenRustExpr vecU8 ser_body
         _ -> return  $ GenRustExpr (ae ^. tty) [__di|
         /*
             TODO: genVerusCAExpr #{show ae}
@@ -876,9 +920,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                         }
                     }
                 }
-
-
-
             }
             |]
             let specSer = [di|serialize_#{specname}|]
@@ -909,6 +950,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
                     if let Ok((num_written)) = ser_result {
+                        vec_truncate(&mut obuf, num_written);
                         Some(obuf)
                     } else {
                         None

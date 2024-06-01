@@ -258,9 +258,9 @@ execName owlName = "owl_" ++ replacePrimes owlName
 specName :: String -> VerusName
 specName owlName = "owlSpec_" ++ replacePrimes owlName
 
--- specNameOf :: VerusName -> String
--- specNameOf (VN s _) = 
---     if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
+specNameOfExecName :: VerusName -> String
+specNameOfExecName s = 
+    if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
 
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
 fLenOfNameKind nk = do
@@ -397,8 +397,9 @@ specCombOf' constSuffix (FStruct _ fs) = do
         Nothing -> return Nothing
 specCombOf' constSuffix (FHexConst s) = do
     bl <- hexStringToByteList s
-    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
+    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 specCombOf' _ _ = return Nothing
 
 specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -423,20 +424,35 @@ execCombOf' constSuffix (FStruct _ fs) = do
 execCombOf' constSuffix (FHexConst s) = do
     bl <- hexStringToByteList s
     let l = length s `div` 2
+    let constSuffix' = map Data.Char.toUpper constSuffix
     let const = [__di|
-    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix}: [u8; #{l}] 
-        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix} 
+    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
     {
         let arr: [u8; #{l}] = [#{bl}];
-        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix});
+        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
         arr
     }
     |]
-    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix})|], const)
+    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 execCombOf' _ _ = return Nothing
 
 execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
 execCombOf s = liftFromJust (execCombOf' s)
+
+
+execParsleyCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe ParsleyCombinator)
+execParsleyCombOf' _ (FBuf (Just flen)) = do
+    return $ Just $ PCBytes flen
+execParsleyCombOf' _ (FBuf Nothing) = return $ Just $ PCTail
+execParsleyCombOf' constSuffix (FHexConst s) = do
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let len = length s `div` 2
+    return $ Just $ PCConstBytes len $ "EXEC_BYTES_CONST_" ++ s ++ "_" ++ constSuffix'
+execParsleyCombOf' _ _ = return Nothing
+
+execParsleyCombOf :: String -> FormatTy -> ExtractionMonad t ParsleyCombinator
+execParsleyCombOf s = liftFromJust (execParsleyCombOf' s)
 
 noconst :: a -> Maybe (a, Doc ann)
 noconst x = Just (x, [di||])

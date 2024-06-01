@@ -58,18 +58,26 @@ instance (Show v, Show t) => Show (Typed v t) where
 
 makeLenses ''Typed
 
+data ParsleyCombinator =
+    PCConstBytes Int String
+    | PCBytes FLen
+    | PCTail
+    | PCBuilder
+    deriving (Show, Eq, Generic, Typeable)
+
+
 type CDataVar t = Name (CAExpr t)
 
 data CAExpr' t = 
     CAVar (Ignore String) (CDataVar t)
-    -- TODO should the type be the variable's type, or the desired type for the func call?
     | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
     | CAGet String
     | CAGetEncPK String
     | CAGetVK String
-    | CAInt (FLen)
+    | CAInt FLen
     | CAHexConst String
     | CACounter String
+    | CASerializeWith t [(CAExpr t, ParsleyCombinator)]
     deriving (Show, Generic, Typeable)
 
 type CAExpr t = Typed (CAExpr' t) t
@@ -150,6 +158,7 @@ data CTyDef t =
 instance Alpha FLen
 instance Alpha FormatTy
 instance Alpha ParseKind
+instance Alpha ParsleyCombinator
 
 instance (Alpha v, Alpha t) => Alpha (Typed v t)
 instance (Subst b a, Subst b t) => Subst b (Typed a t)
@@ -193,6 +202,12 @@ flagShouldPrettyTypes = True
 instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
     owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
 
+instance OwlPretty ParsleyCombinator where
+    owlpretty (PCConstBytes n s) = owlpretty "ConstBytes" <> brackets (owlpretty n) <> parens (owlpretty s)
+    owlpretty (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
+    owlpretty PCTail = owlpretty "Tail"
+    owlpretty PCBuilder = owlpretty "BuilderCombinator"
+
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
     owlpretty (CAApp f as) = owlpretty f <> tupled (map owlpretty as)
@@ -200,6 +215,9 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
     owlpretty (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
+    owlpretty (CASerializeWith t xs) = 
+        let xs' = map (\(e, p) -> owlpretty e <+> owlpretty "as" <+> owlpretty p) xs in
+        owlpretty "serialize" <> brackets (owlpretty t) <+> owlpretty "(" <> line <> vsep xs' <> owlpretty ")"
 
 
 instance OwlPretty ParseKind where
@@ -270,6 +288,7 @@ traverseCAExpr f a =
           CAInt i -> pure $ CAInt i
           CAHexConst i -> pure $ CAHexConst i
           CACounter s -> pure $ CACounter s
+          CASerializeWith t xs -> CASerializeWith <$> f t <*> traverse (\(e, p) -> (,) <$> traverseCAExpr f e <*> pure p) xs
 
 -- Does not take into account bound names
 traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)

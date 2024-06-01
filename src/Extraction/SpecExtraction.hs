@@ -92,7 +92,7 @@ extractCStruct (CStruct n fs isVest) = do
             let ftys = map snd fs
             specCombTy <- mkNestPattern <$> mapM specCombTyOf ftys
             execCombTy <- mkNestPattern <$>  mapM execCombTyOf ftys
-            let constSuffix = map Data.Char.toUpper owlN
+            let constSuffix = owlN
             (specCombs, specConsts) <- unzip <$> mapM (specCombOf constSuffix) ftys
             (execCombs, execConsts) <- unzip <$> mapM (execCombOf constSuffix) ftys
             let fieldVars = map ((++) "field_" . show) [1..length ftys]

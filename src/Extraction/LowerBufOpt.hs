@@ -167,7 +167,8 @@ mkApp f frty args' = do
         ("enc_st_aead", _) -> do 
             (argrtys, arglets) <- forceAEs args'
             let frty' = RTStAeadBuilder
-            let suspcomp _ = do
+            let suspcomp rt = do
+                        liftEM $ debugPrint $ "enc_st_aead_builder used at type: " ++ show rt
                         let ae = Typed frty' $ CAApp "enc_st_aead_builder" argrtys
                         return ((ae, arglets), frty')
             return $ Susp $ Suspended frty' suspcomp
@@ -188,7 +189,6 @@ mkApp f frty args' = do
                 -}
                 frty' <- lowerTy' frty
                 let suspcomp rt = do
-                        liftEM $ debugPrint $ "forcing struct constructor " ++ f ++ " at type " ++ show rt
                         serializedTy <- lowerTy' $ FBuf Nothing
                         case rt of
                             rt' | rt' == frty' -> do
@@ -196,7 +196,11 @@ mkApp f frty args' = do
                                 (argrtys, arglets) <- forceAEs args'
                                 return ((Typed frty' $ CAApp f argrtys, arglets), frty')
                             rt' | rt' == serializedTy -> do
-                                throwError $ ErrSomethingFailed "mkApp struct constructor: got serialized buffer type"
+                                let parsleycombof (fieldFormatTy, argVerusTy) =
+                                        if argVerusTy == RTStAeadBuilder then return PCBuilder else liftEM $ execParsleyCombOf f' fieldFormatTy
+                                combs <- mapM parsleycombof $ zip (map snd fields) argtys
+                                (argrtys, arglets) <- forceAEs args'
+                                return ((Typed serializedTy $ CASerializeWith frty' (zip argrtys combs), arglets), frty')
                             _ -> throwError $ ErrSomethingFailed "mkApp struct constructor: got bad type"
                 return $ Susp $ Suspended frty' suspcomp
             else do
@@ -247,6 +251,8 @@ lowerCAExpr info aexpr = do
             let lets = [(hcvar, Nothing, Typed rt $ CRet $ Typed rt $ CAHexConst s)]
             return $ Eager (Typed rt $ CAVar (ignore "hexconst") hcvar, lets)
         CACounter s -> eagerRt $ CACounter s
+        CASerializeWith t args -> do
+            throwError $ ErrSomethingFailed "got CASerializeWith as input to lowering, it should not be emitted by Concretify"
 
 
 lowerExprNoSusp :: CExpr FormatTy -> LM (CExpr VerusTy)
@@ -286,9 +292,10 @@ lowerExpr expr = do
             case ae' of
                 Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
                 Susp sc -> do
+                    -- Force the computation at type Buffer
                     outputTy <- lowerTy' $ FBuf Nothing
                     ((ae'', aeLets), _) <- scComputation sc $ outputTy
-                    eager (Typed outputTy $ COutput ae'' dst, aeLets)
+                    eagerRt (COutput ae'' dst) aeLets
         CSample flen t xk -> do
             (x, k) <- unbind xk
             t' <- lowerTy' t
