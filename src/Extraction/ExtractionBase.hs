@@ -52,6 +52,8 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "liftCheck error: "
       Right i -> return i
 
+
+
 data Env t = Env {
         _flags :: Flags
     ,   _path :: String
@@ -60,7 +62,6 @@ data Env t = Env {
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
-    ,   _lowerCtx :: M.Map (CDataVar FormatTy) VerusTy
 }
 
 
@@ -140,8 +141,7 @@ liftExtractionMonad m = do
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
             _owlUserFuncs = env' ^. owlUserFuncs,
-            _memoKDF = [],
-            _lowerCtx = M.empty
+            _memoKDF = []
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -174,7 +174,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) []
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
