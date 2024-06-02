@@ -85,6 +85,32 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize
     owl_util::gen_rand_bytes(n)
 }
 
+#[verifier(external_body)]
+pub fn owl_output_serialize_fused<'a, A, C: Combinator<'a> + 'a>(
+    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    comb: C,
+    val: C::Result,
+    obuf: &mut Vec<u8>,
+    dest_addr: &str,
+    ret_addr: &str,
+)
+    requires
+        comb.spec_serialize(val.view()) matches Ok(b) ==> 
+            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+    ensures
+        t.view() == old(t).view().give_output(),
+        comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
+{
+    let ser_result = comb.serialize(val, obuf, 0);
+    assume(ser_result.is_ok());
+    if let Ok((num_written)) = ser_result {
+        vec_truncate(obuf, num_written);
+    } else {
+        assert(false);
+    }
+}
+
+
 // for debugging purposes, not used by the compiler
 #[verifier(external_body)]
 pub fn debug_print_bytes(x: &[u8]) {
@@ -2445,19 +2471,19 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
         &'a self,
         Tracked(itree): Tracked<ITreeToken<((), state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
-        owl_tki931: owl_transp_keys_init<'a>,
-        owl_msg932: OwlBuf<'a>,
+        owl_tki402: owl_transp_keys_init<'a>,
+        owl_msg403: OwlBuf<'a>,
         obuf: &mut Vec<u8>,
     ) -> (res: Result<((), Tracked<ITreeToken<((), state_Initiator), Endpoint>>), OwlError>)
         requires
             itree.view() == init_send_spec(
                 *self,
                 *old(mut_state),
-                owl_tki931.view(),
-                owl_msg932.view(),
+                owl_tki402.view(),
+                owl_msg403.view(),
             ),
-            owl_tki931.len_valid(),
-            owl_msg932.len_valid(),
+            owl_tki402.len_valid(),
+            owl_msg403.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in(((), *mut_state)),
     {
@@ -2469,67 +2495,56 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
             broadcast use itree_axioms;
 
             reveal(init_send_spec);
-            let parseval = owl_tki931;
-            let owl_init725 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
-            let owl_resp724 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
-            let owl_haspsk723 = parseval.owl_tki_has_psk;
-            let owl_eph722 = parseval.owl_tki_eph;
-            let owl_c7721 = parseval.owl_tki_c7;
-            let owl_init_send720 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
-            let owl_resp_send719 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
-            let tmp_owl_transp_counter726 = { owl_counter_as_bytes(&mut_state.owl_N_init_send) };
-            let owl_transp_counter726 = OwlBuf::from_slice(&tmp_owl_transp_counter726);
-            let x = mk_vec_u8![];
-            let owl_c727 = {
+            let parseval = owl_tki402;
+            let owl_init342 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
+            let owl_resp341 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
+            let owl_haspsk340 = parseval.owl_tki_has_psk;
+            let owl_eph339 = parseval.owl_tki_eph;
+            let owl_c7338 = parseval.owl_tki_c7;
+            let owl_init_send337 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
+            let owl_resp_send336 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
+            let tmp_owl_transp_counter343 = { owl_counter_as_bytes(&mut_state.owl_N_init_send) };
+            let owl_transp_counter343 = OwlBuf::from_slice(&tmp_owl_transp_counter343);
+            let owl_transp_tag346 = { owl_transp_tag_value() };
+            let owl_hexconst345 = {
+                {
+                    let x = mk_vec_u8![];
+                    OwlBuf::from_vec(x)
+                }
+            };
+            let owl_c344 = {
                 {
                     match owl_enc_st_aead_builder(
-                        owl_init_send720.as_slice(),
-                        owl_msg932.as_slice(),
+                        owl_init_send337.as_slice(),
+                        owl_msg403.as_slice(),
                         &mut mut_state.owl_N_init_send,
-                        x.as_slice(),
+                        owl_hexconst345.as_slice(),
                     ) {
-                        Ok(b) => { b },
+                        Ok(ctxt) => { ctxt },
                         Err(e) => { return Err(e) },
                     }
                 }
             };
-            let owl_transp_tag728 = { owl_transp_tag_value() };
-
-            let c727_len = owl_c727.length();
-            let field_1 = ConstBytes(EXEC_BYTES_CONST_04000000_TRANSP);
-            let field_2 = Bytes(4);
-            let field_3 = Bytes(8);
-            let field_4 = BuilderCombinator(owl_c727);
-            let exec_comb = (((field_1, field_2), field_3), field_4);
-
-            let mut ser_buf = vec_u8_of_len(
-                4 + owl_init725.len() + owl_transp_counter726.len()
-                    + c727_len + 0,
+            let exec_comb = (
+                ((ConstBytes(EXEC_BYTES_CONST_04000000_TRANSP), Bytes(4)), Bytes(8)),
+                BuilderCombinator(owl_c344),
             );
-            let ser_result = exec_comb.serialize(
+            owl_output_serialize_fused::<
+                ((), state_Initiator),
+                (((ConstBytes<4>, Bytes), Bytes), BuilderCombinator<OwlStAEADBuilder>),
+            >(
+                Tracked(&mut itree),
+                exec_comb,
                 (
                     (
-                        ((), owl_init725.as_slice()),
-                        owl_transp_counter726.as_slice(),
+                        ((), OwlBuf::another_ref(&owl_init342).as_slice()),
+                        OwlBuf::another_ref(&owl_transp_counter343).as_slice(),
                     ),
-                    ()
+                    (),
                 ),
-                &mut ser_buf,
-                0,
-            );
-            // if let Ok((num_written)) = ser_result {
-            //     vec_truncate(&mut ser_buf, num_written);
-            // } else {
-            //     panic!();
-            // }
-
-
-            owl_output::<((), state_Initiator)>(
-                Tracked(&mut itree),
-                ser_buf.as_slice(),
+                obuf,
                 &Responder_addr(),
                 &Initiator_addr(),
-                obuf,
             );
             ((), Tracked(itree))
         };
@@ -2568,19 +2583,19 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
     }
 
     #[verifier::spinoff_prover]
-    pub fn owl_init_recv<'a,'b>(
+    pub fn owl_init_recv<'a, 'b>(
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>,
         mut_state: &mut state_Initiator,
-        owl_tki933: owl_transp_keys_init<'a>,
+        owl_tki404: owl_transp_keys_init<'a>,
         ibuf: &'a [u8],
     ) -> (res: Result<
         (Option<OwlBuf<'b>>, Tracked<ITreeToken<(Option<Seq<u8>>, state_Initiator), Endpoint>>),
         OwlError,
     >)
         requires
-            itree.view() == init_recv_spec(*self, *old(mut_state), owl_tki933.view()),
-            owl_tki933.len_valid(),
+            itree.view() == init_recv_spec(*self, *old(mut_state), owl_tki404.view()),
+            owl_tki404.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
             res matches Ok((Some(b), _)) ==> b.len_valid(),
@@ -2593,39 +2608,42 @@ impl<O, 'device> cfg_Initiator<O, 'device> {
             broadcast use itree_axioms;
 
             reveal(init_recv_spec);
-            let (tmp_owl_i732, owl__731) = {
+            let (tmp_owl_i350, owl__349) = {
                 owl_input::<(Option<Seq<u8>>, state_Initiator)>(Tracked(&mut itree), ibuf)
             };
-            let owl_i732 = OwlBuf::from_slice(tmp_owl_i732);
-            let parseval = owl_tki933;
-            let owl_init739 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
-            let owl_resp738 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
-            let owl_haspsk737 = parseval.owl_tki_has_psk;
-            let owl_eph736 = parseval.owl_tki_eph;
-            let owl_c7735 = parseval.owl_tki_c7;
-            let owl_init_send734 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
-            let owl_resp_send733 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
-            let parseval_tmp = OwlBuf::another_ref(&owl_i732);
+            let owl_i350 = OwlBuf::from_slice(tmp_owl_i350);
+            let parseval = owl_tki404;
+            let owl_init357 = OwlBuf::another_ref(&parseval.owl_tki_msg2_receiver);
+            let owl_resp356 = OwlBuf::another_ref(&parseval.owl_tki_msg2_sender);
+            let owl_haspsk355 = parseval.owl_tki_has_psk;
+            let owl_eph354 = parseval.owl_tki_eph;
+            let owl_c7353 = parseval.owl_tki_c7;
+            let owl_init_send352 = OwlBuf::another_ref(&parseval.owl_tki_k_init_send);
+            let owl_resp_send351 = OwlBuf::another_ref(&parseval.owl_tki_k_resp_send);
+            let parseval_tmp = OwlBuf::another_ref(&owl_i350);
             if let Some(parseval) = parse_owl_transp(OwlBuf::another_ref(&parseval_tmp)) {
-                let owl_tag743 = parseval.owl__transp_tag;
-                let owl_from742 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
-                let owl_ctr741 = OwlBuf::another_ref(&parseval.owl__transp_counter);
-                let owl_pkt740 = OwlBuf::another_ref(&parseval.owl__transp_packet);
+                let owl_tag361 = parseval.owl__transp_tag;
+                let owl_from360 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
+                let owl_ctr359 = OwlBuf::another_ref(&parseval.owl__transp_counter);
+                let owl_pkt358 = OwlBuf::another_ref(&parseval.owl__transp_packet);
                 {
-                    if { slice_eq(owl_from742.as_slice(), owl_resp738.as_slice()) } {
-                        let tmp_owl_p744 = {
+                    if { slice_eq(owl_from360.as_slice(), owl_resp356.as_slice()) } {
+                        let owl_hexconst363 = {
+                            {
+                                let x = mk_vec_u8![];
+                                OwlBuf::from_vec(x)
+                            }
+                        };
+                        let tmp_owl_p362 = {
                             owl_dec_st_aead(
-                                owl_resp_send733.as_slice(),
-                                owl_pkt740.as_slice(),
-                                owl_ctr741.as_slice(),
-                                {
-                                    let x = mk_vec_u8![];
-                                    OwlBuf::from_vec(x)
-                                }.as_slice(),
+                                owl_resp_send351.as_slice(),
+                                owl_pkt358.as_slice(),
+                                owl_ctr359.as_slice(),
+                                owl_hexconst363.as_slice(),
                             )
                         };
-                        let owl_p744 = OwlBuf::from_vec_option(tmp_owl_p744);
-                        (owl_p744, Tracked(itree))
+                        let owl_p362 = OwlBuf::from_vec_option(tmp_owl_p362);
+                        (owl_p362, Tracked(itree))
                     } else {
                         (None, Tracked(itree))
                     }
@@ -3318,9 +3336,9 @@ impl<O, 'device> cfg_Responder<O, 'device> {
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>,
         mut_state: &mut state_Responder,
-        owl_tki939: owl_transp_keys_resp<'a>,
-        owl_msg940: OwlBuf<'a>,
-        obuf: &mut Vec<u8>,
+        owl_tki405: owl_transp_keys_resp<'a>,
+        owl_msg406: OwlBuf<'a>,
+        obuf: &mut Vec<u8>
     ) -> (res: Result<
         (Option<()>, Tracked<ITreeToken<(Option<()>, state_Responder), Endpoint>>),
         OwlError,
@@ -3329,11 +3347,11 @@ impl<O, 'device> cfg_Responder<O, 'device> {
             itree.view() == resp_send_spec(
                 *self,
                 *old(mut_state),
-                owl_tki939.view(),
-                owl_msg940.view(),
+                owl_tki405.view(),
+                owl_msg406.view(),
             ),
-            owl_tki939.len_valid(),
-            owl_msg940.len_valid(),
+            owl_tki405.len_valid(),
+            owl_msg406.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
     {
@@ -3345,54 +3363,63 @@ impl<O, 'device> cfg_Responder<O, 'device> {
             broadcast use itree_axioms;
 
             reveal(resp_send_spec);
-            let owl_tki_815 = { owl_tki939 };
-            let parseval = owl_tki_815;
-            let owl_init823 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
-            let owl_resp822 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
-            let owl_haspsk821 = parseval.owl_tkr_has_psk;
-            let owl_eph820 = parseval.owl_tkr_eph;
-            let owl_c7819 = parseval.owl_tkr_c7;
-            let owl_b818 = parseval.owl_tkr_recvd;
-            let owl_init_send817 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
-            let owl_resp_send816 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
-            if owl_b818 {
+            let owl_tki_366 = { owl_tki405 };
+            let parseval = owl_tki_366;
+            let owl_init374 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
+            let owl_resp373 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
+            let owl_haspsk372 = parseval.owl_tkr_has_psk;
+            let owl_eph371 = parseval.owl_tkr_eph;
+            let owl_c7370 = parseval.owl_tkr_c7;
+            let owl_b369 = parseval.owl_tkr_recvd;
+            let owl_init_send368 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
+            let owl_resp_send367 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
+            if owl_b369 {
                 {
-                    let tmp_owl_transp_counter824 = {
+                    let tmp_owl_transp_counter375 = {
                         owl_counter_as_bytes(&mut_state.owl_N_resp_send)
                     };
-                    let owl_transp_counter824 = OwlBuf::from_slice(&tmp_owl_transp_counter824);
-                    let owl_c825 = {
+                    let owl_transp_counter375 = OwlBuf::from_slice(&tmp_owl_transp_counter375);
+                    let owl_transp_tag378 = { owl_transp_tag_value() };
+                    let owl_hexconst377 = {
                         {
-                            match owl_enc_st_aead(
-                                owl_resp_send816.as_slice(),
-                                owl_msg940.as_slice(),
+                            let x = mk_vec_u8![];
+                            OwlBuf::from_vec(x)
+                        }
+                    };
+                    let owl_c376 = {
+                        {
+                            match owl_enc_st_aead_builder(
+                                owl_resp_send367.as_slice(),
+                                owl_msg406.as_slice(),
                                 &mut mut_state.owl_N_resp_send,
-                                {
-                                    let x = mk_vec_u8![];
-                                    OwlBuf::from_vec(x)
-                                }.as_slice(),
+                                owl_hexconst377.as_slice(),
                             ) {
-                                Ok(ctxt) => { OwlBuf::from_vec(ctxt) },
+                                Ok(ctxt) => { ctxt },
                                 Err(e) => { return Err(e) },
                             }
                         }
                     };
-                    let owl_transp_tag826 = { owl_transp_tag_value() };
-                    let owl_o827 = {
-                        owl_transp(
-                            (),
-                            OwlBuf::another_ref(&owl_resp822),
-                            OwlBuf::another_ref(&owl_transp_counter824),
-                            OwlBuf::another_ref(&owl_c825),
-                        )
-                    };
-                    let owl__828 = {
-                        owl_output::<(Option<()>, state_Responder)>(
+                    let owl__380 = {
+                        let exec_comb = (
+                            ((ConstBytes(EXEC_BYTES_CONST_04000000_TRANSP), Bytes(4)), Bytes(8)),
+                            BuilderCombinator(owl_c376),
+                        );
+                        owl_output_serialize_fused::<
+                            (Option<()>, state_Responder),
+                            (((ConstBytes<4>, Bytes), Bytes), BuilderCombinator<OwlStAEADBuilder>),
+                        >(
                             Tracked(&mut itree),
-                            serialize_owl_transp(&owl_o827).as_slice(),
+                            exec_comb,
+                            (
+                                (
+                                    ((), OwlBuf::another_ref(&owl_resp373).as_slice()),
+                                    OwlBuf::another_ref(&owl_transp_counter375).as_slice(),
+                                ),
+                                (),
+                            ),
+                            obuf,
                             &Initiator_addr(),
                             &Responder_addr(),
-                            obuf
                         );
                     };
                     (Some(owl_unit()), Tracked(itree))
@@ -3444,8 +3471,8 @@ impl<O, 'device> cfg_Responder<O, 'device> {
             ITreeToken<(Option<owlSpec_resp_transp_recv_result>, state_Responder), Endpoint>,
         >,
         mut_state: &mut state_Responder,
-        owl_tki941: owl_transp_keys_resp<'a>,
-        ibuf: &'a [u8]
+        owl_tki407: owl_transp_keys_resp<'a>,
+        ibuf: &'a [u8],
     ) -> (res: Result<
         (
             Option<owl_resp_transp_recv_result<'a>>,
@@ -3456,8 +3483,8 @@ impl<O, 'device> cfg_Responder<O, 'device> {
         OwlError,
     >)
         requires
-            itree.view() == resp_recv_spec(*self, *old(mut_state), owl_tki941.view()),
-            owl_tki941.len_valid(),
+            itree.view() == resp_recv_spec(*self, *old(mut_state), owl_tki407.view()),
+            owl_tki407.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
             res matches Ok((Some(b), _)) ==> b.len_valid(),
@@ -3472,65 +3499,68 @@ impl<O, 'device> cfg_Responder<O, 'device> {
             broadcast use itree_axioms;
 
             reveal(resp_recv_spec);
-            let (tmp_owl_i831, owl__830) = {
+            let (tmp_owl_i383, owl__382) = {
                 owl_input::<(Option<owlSpec_resp_transp_recv_result>, state_Responder)>(
                     Tracked(&mut itree),
                     ibuf,
                 )
             };
-            let owl_i831 = OwlBuf::from_slice(tmp_owl_i831);
-            let owl_tki_832 = { owl_tki941 };
-            let parseval = owl_tki_832;
-            let owl_init840 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
-            let owl_resp839 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
-            let owl_haspsk838 = parseval.owl_tkr_has_psk;
-            let owl_eph837 = parseval.owl_tkr_eph;
-            let owl_c7836 = parseval.owl_tkr_c7;
-            let owl__835 = parseval.owl_tkr_recvd;
-            let owl_init_send834 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
-            let owl_resp_send833 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
-            let parseval_tmp = OwlBuf::another_ref(&owl_i831);
+            let owl_i383 = OwlBuf::from_slice(tmp_owl_i383);
+            let owl_tki_384 = { owl_tki407 };
+            let parseval = owl_tki_384;
+            let owl_init392 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_receiver);
+            let owl_resp391 = OwlBuf::another_ref(&parseval.owl_tkr_msg2_sender);
+            let owl_haspsk390 = parseval.owl_tkr_has_psk;
+            let owl_eph389 = parseval.owl_tkr_eph;
+            let owl_c7388 = parseval.owl_tkr_c7;
+            let owl__387 = parseval.owl_tkr_recvd;
+            let owl_init_send386 = OwlBuf::another_ref(&parseval.owl_tkr_k_init_send);
+            let owl_resp_send385 = OwlBuf::another_ref(&parseval.owl_tkr_k_resp_send);
+            let parseval_tmp = OwlBuf::another_ref(&owl_i383);
             if let Some(parseval) = parse_owl_transp(OwlBuf::another_ref(&parseval_tmp)) {
-                let owl_tag844 = parseval.owl__transp_tag;
-                let owl_from843 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
-                let owl_ctr842 = OwlBuf::another_ref(&parseval.owl__transp_counter);
-                let owl_pkt841 = OwlBuf::another_ref(&parseval.owl__transp_packet);
+                let owl_tag396 = parseval.owl__transp_tag;
+                let owl_from395 = OwlBuf::another_ref(&parseval.owl__transp_receiver);
+                let owl_ctr394 = OwlBuf::another_ref(&parseval.owl__transp_counter);
+                let owl_pkt393 = OwlBuf::another_ref(&parseval.owl__transp_packet);
                 {
-                    if { slice_eq(owl_from843.as_slice(), owl_init840.as_slice()) } {
-                        let tmp_owl_caseval845 = {
+                    if { slice_eq(owl_from395.as_slice(), owl_init392.as_slice()) } {
+                        let owl_hexconst398 = {
+                            {
+                                let x = mk_vec_u8![];
+                                OwlBuf::from_vec(x)
+                            }
+                        };
+                        let tmp_owl_caseval397 = {
                             owl_dec_st_aead(
-                                owl_init_send834.as_slice(),
-                                owl_pkt841.as_slice(),
-                                owl_ctr842.as_slice(),
-                                {
-                                    let x = mk_vec_u8![];
-                                    OwlBuf::from_vec(x)
-                                }.as_slice(),
+                                owl_init_send386.as_slice(),
+                                owl_pkt393.as_slice(),
+                                owl_ctr394.as_slice(),
+                                owl_hexconst398.as_slice(),
                             )
                         };
-                        let owl_caseval845 = OwlBuf::from_vec_option(tmp_owl_caseval845);
-                        match owl_caseval845 {
-                            Option::Some(tmp_owl_x846) => {
-                                let owl_x846 = OwlBuf::another_ref(&tmp_owl_x846);
-                                let owl_st_847 = {
+                        let owl_caseval397 = OwlBuf::from_vec_option(tmp_owl_caseval397);
+                        match owl_caseval397 {
+                            Option::Some(tmp_owl_x399) => {
+                                let owl_x399 = OwlBuf::another_ref(&tmp_owl_x399);
+                                let owl_st_400 = {
                                     owl_transp_keys_resp(
-                                        OwlBuf::another_ref(&owl_init840),
-                                        OwlBuf::another_ref(&owl_resp839),
-                                        owl_haspsk838,
+                                        OwlBuf::another_ref(&owl_init392),
+                                        OwlBuf::another_ref(&owl_resp391),
+                                        owl_haspsk390,
                                         owl_ghost_unit(),
                                         owl_ghost_unit(),
                                         true,
-                                        OwlBuf::another_ref(&owl_init_send834),
-                                        OwlBuf::another_ref(&owl_resp_send833),
+                                        OwlBuf::another_ref(&owl_init_send386),
+                                        OwlBuf::another_ref(&owl_resp_send385),
                                     )
                                 };
-                                let owl_ret848 = {
+                                let owl_ret401 = {
                                     owl_resp_transp_recv_result(
-                                        owl_st_847,
-                                        OwlBuf::another_ref(&owl_x846),
+                                        owl_st_400,
+                                        OwlBuf::another_ref(&owl_x399),
                                     )
                                 };
-                                (Some(owl_ret848), Tracked(itree))
+                                (Some(owl_ret401), Tracked(itree))
                             },
                             Option::None => { (None, Tracked(itree)) },
                         }
@@ -3544,6 +3574,7 @@ impl<O, 'device> cfg_Responder<O, 'device> {
         };
         Ok((res_inner, Tracked(itree)))
     }
+
 
     pub fn owl_resp_stage2_wrapper<'a>(
         &'a self,
