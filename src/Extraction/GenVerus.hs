@@ -464,14 +464,63 @@ genVerusCExpr info expr = do
                 Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
                 Nothing -> throwError OutputWithUnknownDestination 
             let myAddr = [di|&#{curLocality info}_addr()|]
-            ae' <- genVerusCAExpr ae
-            aeCast <- ae' `castGRE` u8slice
-            let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
             let itreeTy = specItreeTy info
-            return $ GenRustExpr RTUnit [__di|
-            owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
-            #{retItree}
-            |]
+            let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
+            case ae ^. tval of
+                CASerializeWith (RTStruct n fs) args -> do
+                    -- Special case for fused serialize-output operation
+                    let ftys = map snd fs
+                    let printComb arg comb = case comb of
+                            PCTail -> return [di|Tail|]
+                            PCBytes l -> do
+                                l' <- concreteLength $ lowerFLen l
+                                return [di|Bytes(#{l'})|]
+                            PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                            PCBuilder -> return [di|BuilderCombinator(#{arg})|]
+                    let printCombTy comb = case comb of
+                            PCTail -> [di|Tail|]
+                            PCBytes l -> [di|Bytes|]
+                            PCConstBytes l _ -> [di|ConstBytes<#{l}>|]
+                            PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
+                    let mkCombArg ((arg, comb), fty) = do
+                            arg' <- genVerusCAExpr arg
+                            let fty' = if comb == PCBuilder then RTUnit else fty
+                            arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                            argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                            comb' <- printComb arg'' comb
+                            len <- case comb of
+                                PCBytes l -> do
+                                    return [di|#{arg''}.len()|]
+                                PCConstBytes l _ -> return [di|#{l}|]
+                                PCTail -> return [di|#{arg''}.len()|]
+                                PCBuilder -> return [di|#{arg''}.length()|]
+                            return (comb', (argForSer, len))
+                    let acfs = zip args ftys
+                    (combs, arglens) <- unzip <$> mapM mkCombArg acfs
+                    let (verusArgs, lens) = unzip arglens
+                    let execcomb = mkNestPattern combs
+                    let combTy = mkNestPattern $ map (printCombTy . snd) args
+                    let execargs = mkNestPattern verusArgs
+                    let serout_body = [__di|    
+                        let exec_comb = #{execcomb};
+                        owl_output_serialize_fused::<#{itreeTy}, #{combTy}>(
+                            Tracked(&mut itree),
+                            exec_comb,
+                            #{execargs}, 
+                            obuf,
+                            #{dst'}, 
+                            #{myAddr}
+                        );
+                        #{retItree}
+                    |]
+                    return $ GenRustExpr RTUnit serout_body
+                _ -> do
+                    ae' <- genVerusCAExpr ae
+                    aeCast <- ae' `castGRE` u8slice
+                    return $ GenRustExpr RTUnit [__di|
+                    owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
+                    #{retItree}
+                    |]
         CSample fl t xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x

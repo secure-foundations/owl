@@ -116,6 +116,33 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
     owl_util::gen_rand_bytes(n)
 }
 
+
+#[verifier(external_body)]
+pub fn owl_output_serialize_fused<'a, A, C: Combinator<'a> + 'a>(
+    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    comb: C,
+    val: C::Result,
+    obuf: &mut Vec<u8>,
+    dest_addr: &str,
+    ret_addr: &str,
+)
+    requires
+        comb.spec_serialize(val.view()) matches Ok(b) ==> 
+            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+    ensures
+        t.view() == old(t).view().give_output(),
+        comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
+{
+    let ser_result = comb.serialize(val, obuf, 0);
+    assume(ser_result.is_ok());
+    if let Ok((num_written)) = ser_result {
+        vec_truncate(obuf, num_written);
+    } else {
+        assert(false);
+    }
+}
+
+
 // for debugging purposes, not used by the compiler
 #[verifier(external_body)]
 pub fn debug_print_bytes(x: &[u8]) {

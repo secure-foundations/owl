@@ -170,7 +170,6 @@ mkApp f frty argtys args' = do
             serializedTy <- getSerializedTy
             let frtyChoices = [RTStAeadBuilder, serializedTy]
             let suspcomp rt = do
-                    liftEM $ debugPrint $ "enc_st_aead_builder used at type: " ++ show rt
                     case rt of
                         RTStAeadBuilder -> do
                             let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" argrtys
@@ -183,7 +182,6 @@ mkApp f frty argtys args' = do
         (f, FStruct f' fields) | f == f' -> do
             let argsusptys = map getSuspTy args'
             if RTStAeadBuilder `elem` concat argsusptys then do
-                liftEM $ debugPrint $ "Struct constructor of: " ++ f' ++ " found at type: " ++ show frty
                 {-
                 TODO: 
                 - Have a way to "suspend" computations which floats up to the enclosing let-binding,
@@ -196,16 +194,26 @@ mkApp f frty argtys args' = do
                   call; if constructor, we just emit the constructor.
                 - It is then easy to emit the optimization for `Output` as well.
                 -}
-                rStructTy' <- lowerTy' frty
+
+
+                let mkBuilderStructField (fieldName, fieldFormatTy) argVerusTyChoices = do
+                        if RTStAeadBuilder `elem` argVerusTyChoices 
+                        then return (execName fieldName, RTStAeadBuilder) 
+                        else (,) (execName fieldName) <$> lowerTy' fieldFormatTy
+                builderStructFields <- zipWithM mkBuilderStructField fields argsusptys
+                let rStructTy' = RTStruct (execName f') builderStructFields
+                -- serStructTy <- lowerTy' frty
                 serializedTy <- getSerializedTy
                 let suspcomp rt = do
-                        liftEM $ debugPrint $ "Struct constructor of: " ++ f' ++ " used at type: " ++ show rt
                         case rt of
-                            rt' | rt' == rStructTy' -> do
+                            -- Owl enforces that there cannot be two different struct declarations with the same name,
+                            -- so we only need to check that the struct names are equal
+                            RTStruct rn' rfs' | rn' == execName f' -> do
                                 -- We want the struct as an actual Rust struct, so return it as normal
                                 (argrtys, arglets) <- forceAEs argtys args'
                                 return ((Typed rStructTy' $ CAApp f argrtys, arglets), rStructTy')
                             rt' | rt' == serializedTy -> do
+                                -- We want the struct as a serialized buffer, so we serialize it using the builder combinator
                                 let parsleycombof (fieldFormatTy, argVerusTyChoices) =
                                         if RTStAeadBuilder `elem` argVerusTyChoices then return PCBuilder else liftEM $ execParsleyCombOf f' fieldFormatTy
                                 let forceTyOf fieldVerusTy argVerusTyChoices = 
@@ -213,6 +221,7 @@ mkApp f frty argtys args' = do
                                 combs <- mapM parsleycombof $ zip (map snd fields) argsusptys
                                 let forcetys = zipWith forceTyOf argtys argsusptys
                                 (argrtys, arglets) <- forceAEs forcetys args' 
+                                -- CASerializeWith needs serStructTy since that is the type that will determine
                                 return ((Typed serializedTy $ CASerializeWith rStructTy' (zip argrtys combs), arglets), rStructTy')
                             _ -> throwError $ ErrSomethingFailed "mkApp struct constructor: got bad type"
                 return $ Susp $ Suspended [rStructTy', serializedTy] suspcomp
@@ -308,8 +317,20 @@ lowerExpr expr = do
                 Susp sc -> do
                     -- Force the computation at type Buffer
                     outputTy <- getSerializedTy
-                    ((ae'', aeLets), _) <- scComputation sc $ outputTy
-                    eagerRt (COutput ae'' dst) aeLets
+                    ((ae'', aeLets), resTy) <- scComputation sc $ outputTy
+                    case (resTy, ae ^. tval) of
+                        (RTStruct _ fs, CAVar _ x) | RTStAeadBuilder `elem` map snd fs -> do
+                            -- Special case for fused serialize-output
+                            let x' = castName x
+                            aeForX <- case find (\(xlet, _, _) -> xlet == x') aeLets of
+                                Just (_, _, rhs) -> do
+                                    case rhs ^. tval of
+                                        CRet ae -> return ae
+                                        _ -> throwError $ ErrSomethingFailed "COutput fused serialize opt: could not find rhs for x"
+                                Nothing -> throwError $ ErrSomethingFailed "COutput fused serialize opt: could not find rhs for x"
+                            let aeLetsNoX = filter (\(xlet, _, _) -> xlet /= x') aeLets
+                            eagerRt (COutput aeForX dst) aeLetsNoX
+                        _ -> eagerRt (COutput ae'' dst) aeLets
         CSample flen t xk -> do
             (x, k) <- unbind xk
             t' <- lowerTy' t
@@ -329,8 +350,7 @@ lowerExpr expr = do
                             ((e'', elets), t') <- sccomp t
                             let lets = elets ++ [(castName x, oanf, e'')]
                             -- When this computation is later forced, we update the context to reflect this
-                            -- TODO: make sure that this doesn't result in duplication
-                            liftEM $ debugPrint $ "Adding let bindings for: " ++ show x ++ " at type: " ++ show t'
+                            -- liftEM $ debugPrint $ "Adding let bindings for: " ++ show x ++ " at type: " ++ show t'
                             lowerCtx %= M.insert x (LTCTy t')
                             return (lets, t')
                     k' <- withSusp [ (castName x, Suspended scTy sccompLet) ] $ lowerExprNoSusp k
