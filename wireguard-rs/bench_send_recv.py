@@ -111,7 +111,8 @@ def packet_size_test():
     saved_file_contents = get_file_contents(filepath)
     # print(saved_file_contents)
 
-    packet_sizes = [0] #[0, 1] + list(range(50, 1440, 50)) + [1440]
+    packet_sizes = [0, 1] + list(range(50, 1440, 50)) + [1440]
+    print(packet_sizes)
     results = {}
     for packet_size in packet_sizes:
         rust_const_decl = f"const BYTES_PER_PACKET: usize = {packet_size};"
