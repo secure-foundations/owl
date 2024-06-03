@@ -49,11 +49,12 @@ fi
 ##############################################################
 # Set up output log directory
 
-output_dir="iperf-tests/$cur_time-$fd_suffix"
+output_dir="iperf-linedelay-tests/$cur_time-$fd_suffix"
 echo "Output directory: $output_dir"
 mkdir -p $output_dir
 
-for mss in 100 200 300 400 500 600 700 800 900 1000 1100 1200 1300 1400 1440
+
+for delay in 0ms 0.5ms 1ms 1.5ms 2ms 3ms 4ms 5ms 6ms 8ms 10ms 15ms 20ms 25ms 30ms 40ms 50ms 60ms 70ms 80ms 90ms 100ms
 do
 
 ##############################################################
@@ -82,6 +83,14 @@ ip netns exec net1 ip addr add 10.100.1.2/24 dev veth1n
 # Add default route to the net1 namespace
 ip netns exec net1 route add default gw 10.100.1.1
 
+##############################################################
+# Configure link latencies
+
+# Set up link delay on outbound interface
+tc qdisc add dev veth1 root netem delay $delay
+
+# Set up link delay on inbound interface
+ip netns exec net1 tc qdisc add dev veth1n root netem delay $delay
 
 ##############################################################
 # Set up wireguard interfaces
@@ -112,14 +121,14 @@ ip netns exec net1 ip link set wg1n up
 ##############################################################
 # Run test
 
-echo "Running iperf test with MSS $mss"
-logfile="$output_dir/iperf_$mss.json"
+echo "Running iperf line delay test with line delay $delay"
+logfile="$output_dir/iperf_$delay.json"
 
 # Start iperf server in net1 namespace
 ip netns exec net1 iperf3 -sD -1 
 
 # Run iperf client in default namespace
-iperf3 -c 10.100.2.2 --zerocopy --time 120 --set-mss $mss --logfile $logfile --json
+iperf3 -c 10.100.2.2 --zerocopy --time 120 --logfile $logfile --json
 
 
 
