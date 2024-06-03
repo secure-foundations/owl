@@ -119,7 +119,7 @@ do
     ip netns exec net1 iperf3 -sD -1 
 
     # Run iperf client in default namespace
-    iperf3 -c 10.100.2.2 --zerocopy --time 10 --set-mss 1440 --logfile $logfile --json
+    iperf3 -c 10.100.2.2 --zerocopy --time 120 --set-mss 1440 --logfile $logfile --json
 done
 
 
