@@ -4,7 +4,7 @@ struct AuthEncapResult<i> {
     aer_shared_secret : if sec(skR) /\ (sec(skS) \/ sec(skE<i>)) then
         SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
         lbl_ikm(eae_prk(), AuthEncap_dh<session i>()), 
-        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context<session i>())))
+        lbl_info(kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())))
         else
             (x:Data<adv> ||kdfkey|| {
                 x == AuthEncap_shared_secret<session i>()}),
@@ -15,12 +15,12 @@ def AuthEncap<i>(pkR : dhpk(skR)) @ sender : AuthEncapResult<session i> =
     let dh = dh_combine(pkR, get(skS)) ++ dh_combine(pkR, get(skE<i>)) in 
     let kem_context = dhpk(get(skE<i>)) ++ pkR ++ dhpk(get(skS)) in
     let shared_secret = kdf<; odh ss[0], odh se<i>[0];kdfkey;0>(0x,
-    lbl_ikm(eae_prk(), dh), lbl_info(|kdfkey|, shared_secret_string(),
+    lbl_ikm(eae_prk(), dh), lbl_info(kdfkey_len(), shared_secret_string(),
     kem_context)) in
     let res :   if sec(skR) /\ (sec(skS) \/ sec(skE<i>)) then
         SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
         lbl_ikm(eae_prk(), AuthEncap_dh<session i>()), 
-        lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context<session i>())))
+        lbl_info(kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())))
         else
             Data<adv> ||kdfkey||
             = shared_secret in 

@@ -77,6 +77,7 @@ func export_kdf_info() =
 
 func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
 
+
 func AuthEncap_dh<i>() =   
     dh_combine(dhpk(get(skR)), get(skS))
     ++
@@ -89,12 +90,15 @@ func AuthEncap_kem_context<i>() =
     ++
     dhpk(get(skS)) 
 
+func kdfkey_len() = 
+    0x0020
+
 func AuthEncap_honest_info<i>() = 
-    lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context<session i>())
+    lbl_info(kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
 
 func AuthEncap_shared_secret<i>() = 
     gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh<session i>()),
-                       lbl_info(|kdfkey|, shared_secret_string(),
+                       lbl_info(kdfkey_len(), shared_secret_string(),
                        AuthEncap_kem_context<session i>()))
 
 func AuthDecap_dh(eph) = 
@@ -111,7 +115,7 @@ func AuthDecap_kem_context(eph) =
 
 func AuthDecap_shared_secret(eph) = 
     gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthDecap_dh(eph)),
-                       lbl_info(|kdfkey|, shared_secret_string(),
+                       lbl_info(kdfkey_len(), shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
 nametype hpke_corr_key_t = 
