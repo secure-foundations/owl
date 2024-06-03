@@ -110,7 +110,7 @@ ip netns exec net1 ip link set wg1n up
 ##############################################################
 # Run test
 
-for mss in 100 150 200 250 300 350 400 450 500 550 600 650 700 750 800 850 900 950 1000 1050 1100 1150 1200 1250 1300 1350 1400 1440
+for mss in 100 200 300 400 500 600 700 800 900 1000 1100 1200 1300 1400 1440
 do
     echo "Running iperf test with MSS $mss"
     logfile="$output_dir/iperf_$mss.json"
@@ -119,7 +119,7 @@ do
     ip netns exec net1 iperf3 -sD -1 
 
     # Run iperf client in default namespace
-    iperf3 -c 10.100.2.2 --zerocopy --time 120 --set-mss 1440 --logfile $logfile --json
+    iperf3 -c 10.100.2.2 --zerocopy --time 120 --set-mss $mss --logfile $logfile --json
 done
 
 
