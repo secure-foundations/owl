@@ -3,6 +3,7 @@
 import json
 import subprocess
 from prettytable import PrettyTable
+import time
 
 #### CONFIGURATION ####
 BASELINE = "setup"
@@ -26,7 +27,7 @@ def mk_command(base_args):
 
 def run_cargo_bench_command(command):
     try:
-        print(f"Running shell command: {command}")
+        # print(f"Running shell command: {command}")
         # Run the shell command and capture the output
         output = subprocess.check_output(command, shell=True)
         # print(output)
@@ -75,6 +76,10 @@ def prettyData(data):
         ])
     
     print(table)
+    return (data[NO_OWL]['no_setup'], data[OWL]['no_setup'])
+    # print("")
+    # print(f"{data[NO_OWL]['no_setup']}")
+    # print(f"{data[OWL]['no_setup']}")
 
 
 def run_bench(base_args):
@@ -84,17 +89,75 @@ def run_bench(base_args):
         # print(parsed_output)
         data = process_cargo_bench_output(parsed_output)
         
-        prettyData(data)
+        (no_owl, owl) = prettyData(data)
+        return (no_owl, owl)
 
 def run_benches():
     print("Benchmarks with unverified crypto:")
-    run_bench(UNVERIF_CRYPTO_ARGS)
+    (unverif_no_owl, unverif_owl) = run_bench(UNVERIF_CRYPTO_ARGS)
     print("")
     print("")
     print("Benchmarks with verified crypto:")
-    run_bench("")
+    (verif_no_owl, verif_owl) = run_bench("")
     print("")
+    return (unverif_no_owl, unverif_owl, verif_no_owl, verif_owl)
+
+def get_file_contents(filepath):
+    with open(filepath, "r") as file:
+        return file.read()
+
+def packet_size_test():
+    filepath = "./src/wireguard/router/tests/tests.rs"
+    saved_file_contents = get_file_contents(filepath)
+    # print(saved_file_contents)
+
+    packet_sizes = [0] #[0, 1] + list(range(50, 1440, 50)) + [1440]
+    results = {}
+    for packet_size in packet_sizes:
+        rust_const_decl = f"const BYTES_PER_PACKET: usize = {packet_size};"
+        # print(rust_const_decl)
+        print(f"Running test with packet size = {packet_size}")
+
+        # write the packet size to the right file in wireguard-rs source
+        with open(filepath, "a") as file:
+            file.write(rust_const_decl)
+        
+        (unverif_no_owl, unverif_owl, verif_no_owl, verif_owl) = run_benches()
+        results[packet_size] = {
+            'unverif_no_owl': unverif_no_owl, 
+            'unverif_owl': unverif_owl,
+            'verif_no_owl': verif_no_owl,
+            'verif_owl': verif_owl
+        }
+
+        # write the original contents back to the file
+        with open(filepath, "w") as file:
+            file.write(saved_file_contents)
+        print("")
+        print("")
+
+
+    table = PrettyTable()
+    table.field_names = ["packet size", "unverif crypto baseline ns/iter", "unverif crypto owl ns/iter", "verif crypto baseline ns/iter", "verif crypto owl ns/iter"]
+    for packet_size, values in results.items():
+        table.add_row([
+            packet_size,
+            f"{values['unverif_no_owl']:,}", 
+            f"{values['unverif_owl']:,}", 
+            f"{values['verif_no_owl']:,}",
+            f"{values['verif_owl']:,}",
+        ])
+
+    print("")
+    print("")
+    print("Overall packet size microbench results:")
+    print(table)
+    print("")
+    print("Overall packet size microbench results as CSV:")
+    print(table.get_formatted_string(out_format="csv"))
+
 
 
 if __name__ == "__main__":
-    run_benches()
+    packet_size_test()
+    #run_benches()
