@@ -87,12 +87,12 @@ def run_bench(base_args):
         prettyData(data)
 
 def run_benches():
-    print("Benchmarks with verified crypto:")
-    run_bench("")
-    print("")
-    print("")
     print("Benchmarks with unverified crypto:")
     run_bench(UNVERIF_CRYPTO_ARGS)
+    print("")
+    print("")
+    print("Benchmarks with verified crypto:")
+    run_bench("")
     print("")
 
 

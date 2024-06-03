@@ -179,12 +179,15 @@ fn handshake_under_load() {
 }
 
 #[cfg(test)]
-fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
+fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize, do_routines: bool) {
     let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
         setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, dev1_is_owl, dev2_is_owl);
 
     // do a few handshakes (every handshake should succeed)
-
+    if !do_routines {
+        return;
+    }
+    
     for i in 0..num_tests {
         println!("handshake : {}", i);
 
@@ -243,84 +246,119 @@ fn test_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize) {
 
 #[test]
 fn handshake_no_load() {
-    test_handshake(false, false, 10);
+    test_handshake(false, false, 10, true);
 }
 
 
 #[test]
 fn handshake_owl_initiator_rs_responder() {
-    test_handshake(true, false, 10);
+    test_handshake(true, false, 10, true);
 }
 
 #[test]
 fn handshake_rs_initiator_owl_responder() {
-    test_handshake(false, true, 10);
+    test_handshake(false, true, 10, true);
 }
 
 #[test]
 fn handshake_owl_initiator_owl_responder() {
-    test_handshake(true, true, 10);
+    test_handshake(true, true, 10, true);
 }
 
 use test::Bencher;
 
+#[cfg(test)]
+fn bench_handshake(dev1_is_owl: bool, dev2_is_owl: bool, num_tests: usize, do_routines: bool) { 
+    for i in 0..num_tests {
+        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) =
+            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, dev1_is_owl, dev2_is_owl);
+
+        if do_routines {          
+            // create initiation
+
+            let msg1 = dev1.begin(&mut OsRng, &pk2).unwrap();
+
+            // process initiation and create response
+
+            let (_, msg2, ks_r) = dev2
+                .process(&mut OsRng, &msg1, None)
+                .expect("failed to process initiation");
+
+            let ks_r = ks_r.unwrap();
+            let msg2 = msg2.unwrap();
+
+            // process response and obtain confirmed key-pair
+
+            let (_, msg3, ks_i) = dev1
+                .process(&mut OsRng, &msg2, None)
+                .expect("failed to process response");
+            let ks_i = ks_i.unwrap();
+
+            dev1.release(ks_i.local_id());
+            dev2.release(ks_r.local_id());
+        }
+
+        dev1.remove(&pk2).unwrap();
+        dev2.remove(&pk1).unwrap();
+    }
+
+
+}
+
+const NUM_TESTS: usize = 1;
+
 #[bench]
 fn bench_h_1_rs_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(false, false, 1)
+        bench_handshake(false, false, NUM_TESTS, true)
     });
 }
 
 #[bench]
 fn bench_h_2_owl_init_rs_resp_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(true, false, 1)
+        bench_handshake(true, false, NUM_TESTS, true)
     });
 }
 
 #[bench]
 fn bench_h_3_rs_init_owl_resp_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(false, true, 1)
+        bench_handshake(false, true, NUM_TESTS, true)
     });
 }
 
 #[bench]
 fn bench_h_4_owl_handshake(b: &mut Bencher) {
     b.iter(|| {
-        test_handshake(true, true, 1)
+        bench_handshake(true, true, NUM_TESTS, true)
     });
 }
-
 
 #[bench]
 fn bench_h_1_rs_handshake_init(b: &mut Bencher) {
     b.iter(|| {
-        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
-            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, false);
+        bench_handshake(false, false, NUM_TESTS, false)
     });
 }
 
 #[bench]
 fn bench_h_2_owl_init_rs_resp_handshake_init(b: &mut Bencher) {
     b.iter(|| {
-        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
-            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, false);
+        bench_handshake(true, false, NUM_TESTS, false)
     });
 }
 
 #[bench]
 fn bench_h_3_rs_init_owl_resp_handshake_init(b: &mut Bencher) {
     b.iter(|| {
-        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
-            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, false, true);
+        bench_handshake(false, true, NUM_TESTS, false)
     });
 }
 
 #[bench]
 fn bench_h_4_owl_handshake_init(b: &mut Bencher) {
     b.iter(|| {
-        let (pk1, mut dev1, pk2, mut dev2): (_, Device<usize>, _, _) = 
-            setup_devices(&mut OsRng, &mut OsRng, &mut OsRng, true, true);
+        bench_handshake(true, true, NUM_TESTS, false)
     });
 }

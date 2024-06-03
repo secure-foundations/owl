@@ -34,7 +34,7 @@ def mk_command(base_args):
 
 def run_cargo_bench_command(command):
     try:
-        print(f"Running shell command: {command}")
+        # print(f"Running shell command: {command}")
         # Run the shell command and capture the output
         output = subprocess.check_output(command, shell=True)
         # print(output)
@@ -71,29 +71,46 @@ def process_cargo_bench_output(obj_list):
 def prettyData(data):
     for bench in data.keys():
         data[bench]['no_init'] = data[bench]['median'] - data[bench]['init_median']
+        data[bench]['no_init_dev'] = data[bench]['deviation'] + data[bench]['init_deviation']
         data[bench]['slowdown'] = "N/A"
         data[bench]['handshakes/sec'] = 1e9 / data[bench]['no_init']
+        data[bench]['handshakes/sec_dev'] = ((1e9 / (data[bench]['no_init'] - data[bench]['no_init_dev'])) - (1e9 / (data[bench]['no_init'] + data[bench]['no_init_dev'])))/2
         data[bench]['slowdown handshakes/sec'] = "N/A"
 
 
     for bench in [OTR, RTO, OTO]:
         data[bench]['slowdown'] = (data[bench]['no_init']/data[BASELINE]['no_init']) - 1
-        data[bench]['slowdown handshakes/sec'] = abs((data[bench]['handshakes/sec']/data[BASELINE]['handshakes/sec']) - 1)
-
+        data[bench]['slowdown handshakes/sec'] = (data[bench]['handshakes/sec']/data[BASELINE]['handshakes/sec']) - 1
 
     # print data as a table
     table = PrettyTable()
-    table.field_names = ["Benchmark", "ns/iter", "± ns/iter", "setup ns/iter", "without setup ns/iter", "relative slowdown", "handshakes/sec", "relative slowdown handshakes/sec"]
+    table.field_names = [
+        "Benchmark",
+        "ns/iter",
+        "± ns/iter",
+        "setup ns/iter",
+        "± setup ns/iter",
+        "without setup ns/iter",
+        "± without setup ns/iter",
+        "relative slowdown",
+        "handshakes/sec",
+        "± handshakes/sec",
+        "rel slowdown handshakes/sec",
+    ]
+
     for name, values in data.items():
         table.add_row([
             name,
             f"{values['median']:,}", 
             f"{values['deviation']:,}", 
             f"{values['init_median']:,}",
+            f"{values['init_deviation']:,}",
             f"{values['no_init']:,}" if values['no_init'] != "N/A" else values['no_init'], 
+            f"{values['no_init_dev']:,}" if values['no_init_dev'] != "N/A" else values['no_init_dev'], 
             f"{values['slowdown']:.3%}" if values['slowdown'] != "N/A" else values['slowdown'],
-            f"{values['handshakes/sec']:,.5}" if values['handshakes/sec'] != "N/A" else values['handshakes/sec'], 
-            f"{values['slowdown handshakes/sec']:.3%}" if values['slowdown handshakes/sec'] != "N/A" else values['slowdown handshakes/sec']
+            f"{values['handshakes/sec']:,.1f}" if values['handshakes/sec'] != "N/A" else values['handshakes/sec'], 
+            f"{values['handshakes/sec_dev']:,.1f}" if values['handshakes/sec_dev'] != "N/A" else values['handshakes/sec_dev'], 
+            f"{values['slowdown handshakes/sec']:.3%}" if values['slowdown handshakes/sec'] != "N/A" else values['slowdown handshakes/sec'],
         ])
     
     print(table)
@@ -109,12 +126,12 @@ def run_bench(base_args):
         prettyData(data)
 
 def run_benches():
-    print("Benchmarks with verified crypto:")
-    run_bench("")
-    print("")
-    print("")
     print("Benchmarks with unverified crypto:")
     run_bench(UNVERIF_CRYPTO_ARGS)
+    print("")    
+    print("")
+    print("Benchmarks with verified crypto:")
+    run_bench("")
     print("")
 
 
