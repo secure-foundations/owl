@@ -319,7 +319,7 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
         , ("mac_vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
         , ("pkenc", ([seqU8, seqU8], seqU8))
         , ("pkdec", ([seqU8, seqU8], seqU8))
-        -- , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
+        , ("enc_st_aead", ([seqU8, seqU8, seqU8, seqU8], seqU8))
         , ("dec_st_aead", ([seqU8, seqU8, seqU8, seqU8], RTOption seqU8))
         , ("is_group_elem", ([seqU8], RTBool))
         , ("crh", ([seqU8], seqU8))
@@ -364,17 +364,17 @@ extractCAExpr aexpr = do
                             start' <- extractCAExpr start
                             end' <- extractCAExpr end
                             return [di|Seq::subrange(#{buf'}, #{start'}, #{end'})|]
-                        "enc_st_aead" -> do
-                            let [key, msg, nonce, aad] = args
-                            let extAndCast x dstty = do
-                                    x' <- extractCAExpr x
-                                    x'' <- specCast (x', x ^. tty) dstty
-                                    return x''
-                            key' <- extAndCast key seqU8
-                            msg' <- extAndCast msg seqU8
-                            nonce' <- extractCAExpr nonce
-                            aad' <- extAndCast aad seqU8
-                            return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
+                        -- "enc_st_aead" -> do
+                        --     let [key, msg, nonce, aad] = args
+                        --     let extAndCast x dstty = do
+                        --             x' <- extractCAExpr x
+                        --             x'' <- specCast (x', x ^. tty) dstty
+                        --             return x''
+                        --     key' <- extAndCast key seqU8
+                        --     msg' <- extAndCast msg seqU8
+                        --     nonce' <- extractCAExpr nonce
+                        --     aad' <- extAndCast aad seqU8
+                        --     return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
                         _ | "?" `isSuffixOf` f -> do
                             -- Special case for enum test functions
                             let f' = init f ++ "_enumtest"

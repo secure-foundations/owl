@@ -382,7 +382,7 @@ pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
 pub struct OwlStAEADBuilder<'a> {
     pub k: &'a [u8],
     pub msg: &'a [u8],
-    pub nonce: usize,
+    pub iv: &'a [u8],
     pub aad: &'a [u8],
 }
 
@@ -408,7 +408,7 @@ impl<'a> OwlStAEADBuilder<'a> {
 
 impl<'a> Builder for OwlStAEADBuilder<'a> {
     open spec fn value(&self) -> Seq<u8> {
-        enc_st_aead(self.k.view(), self.msg.view(), self.nonce, self.aad.view()).0
+        enc_st_aead(self.k.view(), self.msg.view(), self.iv.view(), self.aad.view())
     }
     
     #[verifier::external_body]
@@ -421,9 +421,9 @@ impl<'a> Builder for OwlStAEADBuilder<'a> {
 
     #[verifier::external_body]
     fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
-        let mut iv = self.nonce.to_le_bytes().to_vec();
-        iv.resize(NONCE_SIZE, 0u8);
-        match owl_aead::encrypt_combined_into(CIPHER, self.k, self.msg, &iv[..], self.aad, data, pos) {
+        let mut iv_sized = self.iv.to_vec();
+        iv_sized.resize(NONCE_SIZE, 0u8);
+        match owl_aead::encrypt_combined_into(CIPHER, self.k, self.msg, &iv_sized[..], self.aad, data, pos) {
             Ok(()) => (),
             Err(_e) => {
                 // dbg!(e);
@@ -442,63 +442,57 @@ impl View for OwlStAEADBuilder<'_> {
 }
 
 #[verifier(external_body)]
-pub exec fn owl_enc_st_aead_builder<'a>(k: &'a [u8], msg: &'a [u8], nonce: &mut usize, aad: &'a [u8]) -> (res: Result<OwlStAEADBuilder<'a>, OwlError>)
+pub exec fn owl_enc_st_aead_builder<'a>(k: &'a [u8], msg: &'a [u8], iv: &'a [u8], aad: &'a [u8]) -> (res: OwlStAEADBuilder<'a>)
     ensures  
-        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
+        res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
 {
-    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    let old_nonce = *nonce;
-    *nonce += 1;
-    Ok(OwlStAEADBuilder { k, msg, nonce: old_nonce, aad })
+    OwlStAEADBuilder { k, msg, iv, aad }
 }
 
 
 #[verifier(external_body)]
-pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Vec<u8>, OwlError>)
+pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], iv: &[u8], aad: &[u8]) -> (res: Vec<u8>)
     ensures
-        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
-        // *nonce == *old(nonce) + 1,
+        res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
 {
-    if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    let mut iv = nonce.to_le_bytes().to_vec();
-    iv.resize(NONCE_SIZE, 0u8);
-    let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
+    let mut iv_sized = iv.to_vec();
+    iv_sized.resize(NONCE_SIZE, 0u8);
+    let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv_sized[..], aad) {
         Ok(c) => c,
         Err(_e) => {
             // dbg!(e);
             vec![]
         }
     };
-    *nonce += 1;
-    Ok(res)
+    res
 }
 
-#[verifier(external_body)]
-pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Ghost<Seq<u8>>, OwlError>)
-    ensures
-        res.is_Ok() ==> (dst.view().subrange(start as int, end as int), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
-        res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
-        res.is_Ok() ==> res.get_Ok_0().view() == dst.view().subrange(start as int, end as int)
-        // *nonce == *old(nonce) + 1,
-{
-    todo!()
-    // if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    // let mut iv = nonce.to_le_bytes().to_vec();
-    // iv.resize(NONCE_SIZE, 0u8);
-    // let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
-    //     Ok(mut c) => {
-    //         let mut v = iv.to_owned();
-    //         v.append(&mut c);
-    //         v
-    //     },
-    //     Err(_e) => {
-    //         // dbg!(e);
-    //         vec![]
-    //     }
-    // };
-    // *nonce += 1;
-    // Ok(res)
-}
+// #[verifier(external_body)]
+// pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Ghost<Seq<u8>>, OwlError>)
+//     ensures
+//         res.is_Ok() ==> (dst.view().subrange(start as int, end as int), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
+//         res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
+//         res.is_Ok() ==> res.get_Ok_0().view() == dst.view().subrange(start as int, end as int)
+//         // *nonce == *old(nonce) + 1,
+// {
+//     todo!()
+//     // if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
+//     // let mut iv = nonce.to_le_bytes().to_vec();
+//     // iv.resize(NONCE_SIZE, 0u8);
+//     // let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
+//     //     Ok(mut c) => {
+//     //         let mut v = iv.to_owned();
+//     //         v.append(&mut c);
+//     //         v
+//     //     },
+//     //     Err(_e) => {
+//     //         // dbg!(e);
+//     //         vec![]
+//     //     }
+//     // };
+//     // *nonce += 1;
+//     // Ok(res)
+// }
 
 
 #[verifier(external_body)]

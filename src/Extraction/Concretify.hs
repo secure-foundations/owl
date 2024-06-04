@@ -599,9 +599,15 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
             FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
             _ -> FBuf Nothing
     -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+    ctrVar <- fresh $ s2n nonce
+    let ctrTy = FBuf $ Just $ FLNamed "counter"
+    let getCtr = (ctrVar, Nothing, Typed ctrTy $ CGetCtr nonce)
+    incVar <- fresh $ s2n "_"
+    let incCtr = (incVar, Nothing, Typed FUnit $ CIncCtr nonce)
+    let getInc = [getCtr, incCtr]
     case patbody ^. val of
         AEVar _ patx' | patx `aeq` patx' -> 
-            return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+            return $ withLets getInc $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ CAVar (ignore nonce) ctrVar, aad]
         _ -> throwError $ ErrSomethingFailed $ 
             "TODO: handle non-trivial nonce patter in CEncStAEAD: " ++ show (owlprettyBind xpat)
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
