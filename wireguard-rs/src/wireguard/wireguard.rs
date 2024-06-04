@@ -280,8 +280,10 @@ impl<T: Tun, B: UDP> WireGuard<T, B> {
             RouterDeviceType::NoOwl
         };
 
+        // leave one core free for the main thread and for the iperf thread on each of client & server
+        // let num_workers = (cpus/2) - 2; 
         let num_workers = 1; 
-
+    
         // create router
         let router: router::Device<B::Endpoint, PeerInner<T, B>, T::Writer, B::Writer> =
             router::Device::new(num_workers, writer, devtype);
