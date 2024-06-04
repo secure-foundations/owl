@@ -543,4 +543,15 @@ pub exec fn owl_counter_as_bytes<'a>(x: &usize) -> (res: [u8; 8])
     v
 }
 
+#[verifier(external_body)]
+pub exec fn owl_xor(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
+    ensures res.view() == xor(a.view(), b.view())
+{
+    let mut res = vec_u8_of_len(a.len());
+    for i in 0..a.len() {
+        res.set(i, a[i] ^ b[i]);
+    }
+    res
+}
+
 } // verus!

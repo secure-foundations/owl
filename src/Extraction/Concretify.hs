@@ -237,8 +237,8 @@ concreteTyOfApp (PRes pth) =
       PDot PTop "xor" -> \_ [x, y] -> do
           t <- unifyFormatTy x y
           case t of
-            FBuf (Just _) -> return t
-            _ -> throwError $ ErrSomethingFailed $ "cannot extract xor"
+            FBuf _ -> return t
+            _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
       PDot PTop "cipherlen" -> \_ [x] -> return FInt
       PDot PTop "pk_cipherlen" -> \_ [x] -> error "unimp"
       PDot PTop "vk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "vk"
@@ -605,11 +605,14 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     incVar <- fresh $ s2n "_"
     let incCtr = (incVar, Nothing, Typed FUnit $ CIncCtr nonce)
     let getInc = [getCtr, incCtr]
-    case patbody ^. val of
-        AEVar _ patx' | patx `aeq` patx' -> 
-            return $ withLets getInc $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ CAVar (ignore nonce) ctrVar, aad]
-        _ -> throwError $ ErrSomethingFailed $ 
-            "TODO: handle non-trivial nonce patter in CEncStAEAD: " ++ show (owlprettyBind xpat)
+    (ivVar, mkIv) <- case patbody ^. val of
+        AEVar _ patx' | patx `aeq` patx' -> return (CAVar (ignore nonce) ctrVar, [])
+        _ -> do 
+            let patbodySubst = subst patx (mkSpanned $ AEVar (ignore nonce) (castName ctrVar)) patbody
+            iv <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
+            let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
+            return (CAVar (ignore $ name2String patx) $ castName patx, mkIv)
+    return $ withLets (getInc ++ mkIv) $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]

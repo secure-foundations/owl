@@ -217,6 +217,12 @@ pub closed spec(checked) fn bytes_as_counter(x: Seq<u8>) -> usize
 pub closed spec(checked) fn counter_as_bytes(x: usize) -> Seq<u8>
 { unimplemented!() }
 
+pub open spec fn xor(a: Seq<u8>, b: Seq<u8>) -> Seq<u8>
+{
+    Seq::new(a.len(), |i| a[i] ^ b[i])
+}
+
+
 pub open spec fn andb(x: bool, y: bool) -> bool
 {
     x && y

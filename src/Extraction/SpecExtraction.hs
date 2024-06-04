@@ -326,6 +326,7 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
         , ("bytes_as_counter", ([seqU8], RTUsize))
         , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
         , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
+        , ("xor", ([seqU8, seqU8], seqU8))
         ]
     -- diffNameBuiltins = M.fromList [
     --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))

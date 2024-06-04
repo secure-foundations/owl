@@ -238,6 +238,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
         , ("concat", ([u8slice, u8slice], vecU8))
+        , ("xor", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
