@@ -38,7 +38,7 @@ base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk),
 */
 
 func hpke_v1() = 0x48504b452d7631
-func suite_id() = 0x1234 // dummy for now
+func suite_id() = 0x1234 // TODO
 func secret_string() = 0x736563726574 // "secret"
 func shared_secret_string() = 0x7368617265645f736563726574 // "shared_secret"
 func key_string() = 0x6b6579 // "key"
@@ -103,6 +103,7 @@ func AuthEncap_shared_secret<i>() =
     gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh<session i>()),
                        lbl_info(kdfkey_len(), shared_secret_string(),
                        AuthEncap_kem_context<session i>()))
+
 
 func AuthDecap_dh(eph) = 
     dh_combine(dhpk(get(skR)), get(skS))
