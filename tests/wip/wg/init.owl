@@ -14,6 +14,9 @@ predicate init_safe<i,n,m>() =
     \/
     (sec(S_resp<@m>) /\ sec(S_init<@n>)) 
 
+def key_confirm_initiator_send<@n>(k : Ghost) @ Initiator<n> : Unit = () 
+def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = () 
+
     
 struct init_sent_state<i,n,m> {
     iss_c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
@@ -222,6 +225,8 @@ def init_stage2<i@n,m>
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
+                    call key_confirm_initiator_send<@n>(k1);
+                    call key_confirm_initiator_recv<@n>(k2);
                     Some(transp_keys_init<session i, pid n, pid
                     m>(msg2_receiver, msg2_sender, HasPSK?(opsk), msg2_ephemeral, c7, k1, k2))
                 }

@@ -1,5 +1,8 @@
 include "defs.owl"
 
+def key_confirm_responder_send<@m> (k : Ghost) @ Responder<m> : Unit = () 
+def key_confirm_responder_recv<@m> (k : Ghost) @ Responder<m> : Unit = () 
+
 predicate is_e_init(eph) = 
     exists n:idx,i:idx.
         eph == dhpk(get(E_init<i@n>))
@@ -259,6 +262,10 @@ pcase HasPSK?(psk) in
  let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
  let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in
  let h6 = crh(h5 ++ tau) in
+ let tk1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
+ let tk2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
+ call key_confirm_responder_recv<@m>(tk1);
+ call key_confirm_responder_send<@m>(tk2);
  let msg2_empty : Data<adv> | cipherlen(0) | = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, 0x, h6) in
  let msg2_mac1 = mac(msg2_mac1_k,
          msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
@@ -269,8 +276,6 @@ pcase HasPSK?(psk) in
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
  ) in
  let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
- let tk1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
- let tk2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
  let ret = 
  pack<n>(
      pack<n3>(

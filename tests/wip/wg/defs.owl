@@ -61,13 +61,21 @@ counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
+def key_confirm_initiator_send<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
+def key_confirm_initiator_recv<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
+def key_confirm_responder_send<@m> @ Responder<m> // (k : Ghost) @ Responder<m> : Unit = () 
+def key_confirm_responder_recv<@m> @ Responder<m> // (k : Ghost) @ Responder<m> : Unit = () 
+
+def init_sent_message<@n> @ Initiator<n>
+def resp_sent_message<@m> @ Responder<m>
+
 nametype transp_key_init_send<@n,m> = 
-            st_aead (Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>)
-                aad x. true
+            st_aead (x : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|> { happened(init_sent_message<@n>(x))})
+                aad x self. happened(key_confirm_initiator_send<@n>(self))
                 nonce N_init_send
 
 nametype transp_key_resp_send<@n,m> = 
-            st_aead (Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>)
+            st_aead (x : Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>{ happened(resp_sent_message<@m>(x)) })
                 aad x. true
                 nonce N_resp_send
 
@@ -142,10 +150,14 @@ func honest_c7<i,j@n_eph,n_pk,m>() =
     )
 
 
-nametype C6_dual<@n, m> = dualkdf {salt info.
+func tk1_of_c6(x, psk) = gkdf<enckey||enckey;0>(gkdf<kdfkey||nonce||enckey;0>(x, psk, 0x), 0x, 0x)
+func tk2_of_c6(x, psk) = gkdf<enckey||enckey;1>(gkdf<kdfkey||nonce||enckey;0>(x, psk, 0x), 0x, 0x)
+
+nametype C6_dual<@n, m> = dualkdf {salt info self .
     (exists i:idx,j:idx. salt == honest_c6<session i, session j, pid n, pid n, pid m>()) -> strict C7<@n,m> || public nonce || 
         strict st_aead (Data<adv> |0|)
-           aad x. valid_h6[x] 
+           aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(salt, self)))  
+                              /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(salt, self))) 
            nonce aead_counter_msg2_C7,
     (forall i:idx,j:idx. salt != honest_c6<session i, session j, pid n, pid n, pid m>()) -> strict C7_corr || public nonce || 
         strict st_aead (Data<adv> |0|)
@@ -167,11 +179,13 @@ nametype C6_corr = kdf {ikm info.
                        nonce aead_counter_msg2_C7
 }
 
-nametype C6<@n, m> = kdf {ikm info.
+
+nametype C6<@n, m> = kdf {ikm info self.
     (ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n,m>)) -> 
         strict C7<@n,m> || public nonce || 
         strict st_aead (Data<adv> |0|)
-           aad x. valid_h6[x] 
+           aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(self, ikm))) 
+                              /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(self, ikm))) 
            nonce aead_counter_msg2_C7
 }
 
@@ -372,10 +386,16 @@ struct transp_keys_init<i,n,m> {
     tki_eph : Ghost,
     tki_c7 : Ghost,
     tki_k_init_send : if init_clean<i,n,m>[tki_has_psk, tki_eph] then
-        SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7, 0x, 0x))
+        (x:SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7,0x, 0x)){
+            happened(key_confirm_responder_recv<@m>(x)) /\ 
+            happened(key_confirm_initiator_send<@n>(x))
+         })
         else Data<adv>,
     tki_k_resp_send : if init_clean<i,n,m>[tki_has_psk, tki_eph] then
-        SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x))
+        (x:SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x)){
+            happened(key_confirm_responder_send<@m>(x)) /\ 
+            happened(key_confirm_initiator_recv<@n>(x))
+         })
         else Data<adv>
 }
 
@@ -407,9 +427,13 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
     tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph]) ==> n_pk =idx n_eph}),
     tkr_k_init_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
         if n_pk =idx n_eph then 
-              SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x))
+              (x:SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
+                  happened(key_confirm_responder_recv<@m>(x))
+               })
         else
-            SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x))
+            (x:SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x)){
+                  happened(key_confirm_responder_send<@m>(x))
+             })
         else
         Data<adv>, 
     tkr_k_resp_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then

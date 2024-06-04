@@ -538,7 +538,7 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PAADOf ne a -> do
                          ne' <- normalizeNameExp ne
                          a' <- resolveANF a >>= normalizeAExpr
-                         return $ Spanned (p^.spanOf) $ PAADOf ne' a'
+                         return $ Spanned (p^.spanOf) $ PAADOf ne' a'               
                      PInODH a1 a2 a3 -> do 
                          a1' <- resolveANF a1 >>= normalizeAExpr
                          a2' <- resolveANF a2 >>= normalizeAExpr
@@ -783,16 +783,17 @@ allM (x:xs) f = do
 subNameType :: NameType -> NameType -> Check Bool
 subNameType nt1 nt2 = do
     res <- withPushLog $ case (nt1^.val, nt2^.val) of
+             _ | nt1 `aeq` nt2 -> return True
              (NT_DH, NT_DH) -> return True
              (NT_Sig t1, NT_Sig t2) -> isSubtype t1 t2
              (NT_Nonce s1, NT_Nonce s2) -> return $ s1 == s2
              (NT_Enc t1, NT_Enc t2) -> isSubtype t1 t2
              (NT_StAEAD t1 xp1 pth1 xpat1, NT_StAEAD t2 xp2 pth2 xpat2) -> do
                  b1 <- isSubtype t1 t2
-                 (x, p1) <- unbind xp1
-                 (x', p2_) <- unbind xp2
-                 let p2 = subst x' (aeVar' x) p2_
-                 b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
+                 ((x, slf), p1) <- unbind xp1
+                 ((x', slf'), p2_) <- unbind xp2
+                 let p2 = subst x' (aeVar' x) $ subst slf' (aeVar' slf) $ p2_
+                 b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
                  b3 <- return $ pth1 `aeq` pth2
                  (z, pat1) <- unbind xpat1
                  (w, pat2) <- unbind xpat2
@@ -1454,12 +1455,12 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTyPubLen t
       NT_App p ps as -> do
           resolveNameTypeApp p ps as >>= checkNameType
-      NT_StAEAD t xaad p ypat -> do
+      NT_StAEAD t xsaad p ypat -> do
           checkTy t
           checkNoTopTy False t
           checkTyPubLen t
-          (x, aad) <- unbind xaad
-          withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp aad
+          ((x, slf), aad) <- unbind xsaad
+          withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ checkProp aad
           (y, pat) <- unbind ypat
           (y', _) <- freshen y
           let pat' = subst y (aeVar' y') pat
@@ -2549,10 +2550,10 @@ unifyValidKDFResults valids = do
                ni1 <- getNameInfo ne
                ni2 <- getNameInfo ne'
                let b2 = (str == str')
-               (b3, pnt) <- case (ni1, ni2) of
-                          (Nothing, Nothing) -> return (True, mempty)
-                          (Just (nt1, _), Just (nt2, _)) -> return (nt1 `aeq` nt2, owlpretty nt1 <> line <> line <> line <> owlpretty nt2)
-                          (_, _) -> return (False, mempty)
+               b3 <- case (ni1, ni2) of
+                       (Nothing, Nothing) -> return True
+                       (Just (nt1, _), Just (nt2, _)) -> liftM2 (&&) (subNameType nt1 nt2) (subNameType nt2 nt1)
+                       (_, _) -> return False
                case (b && b2 && b3) of
                  True -> return (str, ne_)
                  _ | not b3 -> do
@@ -2954,10 +2955,10 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       pnorm' <- normalizePath p'
                       assert ("Wrong counter for AEAD: expected " ++ show (owlpretty p') ++ " but got " ++ show (owlpretty p)) $ pnorm `aeq` pnorm'
                       b1 <- isSubtype t tm
-                      (xa, aadp) <- unbind xaad
+                      ((xa, xslf), aadp) <- unbind xaad
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
                           pImpl (pNot $ pFlow (nameLbl k) advLbl)
-                                (subst xa (aeVar ".res") aadp)
+                                (subst xa (aeVar ".res") $ subst xslf (aeGet k) $  aadp)
                       (b3, b4) <- patternPublicAndEquivalent xpat ypat'
                       if b1 && b2 && b3 && b4 then return $ tData advLbl advLbl 
                                   else do
@@ -2988,8 +2989,8 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b3 <- tyFlowsTo t advLbl
                       b4 <- tyFlowsTo t2 advLbl
                       if (not b1) && b2 && b3 && b4 then do
-                            (x, aad) <- unbind xaad
-                            return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y aad
+                            ((x, xslf), aad) <- unbind xaad
+                            return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y $ subst xslf (aeGet k) $ aad
                       else if (b1 && b2 && b3 && b4) then do 
                           return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
                       else do

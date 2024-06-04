@@ -1127,9 +1127,9 @@ extractAAD ne a = do
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ _ -> do
-                (y, p) <- unbind yp
-                return $ subst y a p
+            NT_StAEAD _ ysp _ _ -> do
+                ((y, slf), p) <- unbind ysp
+                return $ subst y a $ subst slf (aeGet ne) $ p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
 
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check' senv Prop
