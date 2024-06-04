@@ -54,7 +54,7 @@ echo "Output directory: $output_dir"
 mkdir -p $output_dir
 
 
-for delay in 0ms 0.5ms 1ms 1.5ms 2ms 3ms 4ms 5ms 6ms 8ms 10ms 15ms 20ms 25ms 30ms 40ms 50ms 60ms 70ms 80ms 90ms 100ms
+for delay in 0ms 0.5ms 1ms 1.5ms 2ms 3ms 4ms 5ms 6ms 7ms 8ms 9ms 10ms 
 do
 
 ##############################################################
