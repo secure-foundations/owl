@@ -37,13 +37,17 @@ resolveLengthAnnot a = do
     case a^.val of
         AEInt i -> return $ FLConst i
         AELenConst s -> return $ FLNamed s
-        AEApp p _ [ae] -> do
+        AEApp p _ args -> do
             s <- concretifyPath p
-            if s == "cipherlen" then do
-                fl' <- resolveLengthAnnot ae
-                return $ FLCipherlen fl'
-            else do
-                throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
+            case (s, args) of
+                ("plus", [a1, a2]) -> do
+                    l1 <- resolveLengthAnnot a1
+                    l2 <- resolveLengthAnnot a2
+                    return $ FLPlus l1 l2
+                ("cipherlen", [a1]) -> do
+                    l1 <- resolveLengthAnnot a1
+                    return $ FLCipherlen l1
+                _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
         _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
 
 
@@ -218,7 +222,7 @@ concreteTyOfApp (PRes pth) =
                     return $ FOption FDummy
       PDot PTop "andb" -> \_ [x, y] -> return FBool
       PDot PTop "andp" -> \_ [x, y] -> return FGhost
-      PDot PTop "notb" -> \_ [x, y] -> return FBool
+      PDot PTop "notb" -> \_ [x] -> return FBool
       PDot PTop "length" -> \_ [x] -> return FInt
       PDot PTop "plus" -> \_ [x, y] -> return FInt
       PDot PTop "crh" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "crh"
@@ -590,15 +594,16 @@ concretifyCryptOp _ CADec [k, c] = do
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     (patx, patbody) <- unbind xpat
-    case patbody ^. val of
-        AEVar _ patx' | patx `aeq` patx' -> return ()
-        _ -> throwError $ ErrSomethingFailed $ 
-            "TODO: handle non-trivial nonce patter in CEncStAEAD: " ++ show (owlprettyBind xpat)
     nonce <- concretifyPath np
     let t = case x ^. tty of
-              FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
-              _ -> FBuf Nothing
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+            FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
+            _ -> FBuf Nothing
+    -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+    case patbody ^. val of
+        AEVar _ patx' | patx `aeq` patx' -> 
+            return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+        _ -> throwError $ ErrSomethingFailed $ 
+            "TODO: handle non-trivial nonce patter in CEncStAEAD: " ++ show (owlprettyBind xpat)
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]

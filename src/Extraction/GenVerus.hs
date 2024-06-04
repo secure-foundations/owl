@@ -76,6 +76,15 @@ genVerusUserFunc (CUserFunc name b) = do
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let retTy' = liftLifetime lifetimeConst retTy
     let retval = [di|res: #{pretty retTy'}|]
+    let mkArgLenVald (arg, s, argty) = case argty of
+            RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
+            _ -> Nothing
+    let requiresLenValid = case mapMaybe mkArgLenVald args of
+            [] -> [di||]
+            xs -> [di|requires #{hsep . punctuate comma $ xs}|]
     let ensuresLenValid = case retTy of
             RTOwlBuf _ -> [di|res.len_valid()|]
             RTStruct _ _ -> [di|res.len_valid()|]
@@ -83,6 +92,7 @@ genVerusUserFunc (CUserFunc name b) = do
             _ -> [di||]
     return [__di|
     pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
+        #{requiresLenValid}
         ensures
             res.view() == #{specname}(#{viewArgs}),
             #{ensuresLenValid}
@@ -91,6 +101,8 @@ genVerusUserFunc (CUserFunc name b) = do
         #{body''}
     }
     |]
+    where
+        prettyArgName = pretty . execName . show
 
 
 genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
@@ -846,10 +858,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
     -- vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
-    allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
+    implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst else return [di||]
-    return $ vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers]
+    return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where 
 
         -- genVestFormat name layoutFields = do
@@ -888,8 +900,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
 
-        genAllLensValid :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
-        genAllLensValid verusName fields lAnnot = do
+        genImplStruct :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
+        genImplStruct verusName fields lAnnot = do
             let fieldsValids = mapMaybe (\(_,fname, fty) -> 
                         case fty of 
                             RTWithLifetime (RTStruct _ _) _ -> Just [di|self.#{fname}.len_valid()|]
@@ -900,10 +912,28 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                             _ -> Nothing
                     ) fields
             let body = if null fieldsValids then [di|true|] else hsep . punctuate [di|&&|] $ fieldsValids
+            let anotherRefFields = map (\(_, fname, fty) -> case fty of 
+                        RTWithLifetime (RTStruct t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        RTWithLifetime (RTEnum t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        (RTStruct t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        (RTEnum t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        RTOwlBuf _ -> [di|#{fname}: OwlBuf::another_ref(&self.#{fname})|]
+                        _ -> [di|#{fname}: self.#{fname}|]
+                    ) fields
             return [__di|
-            impl #{verusName}#{lAnnot} {
+            impl#{lAnnot} #{verusName}#{lAnnot} {
                 pub open spec fn len_valid(&self) -> bool {
                     #{body}
+                }
+
+                pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
+                    requires self.len_valid(),
+                    ensures result.view() == self.view(),
+                            result.len_valid(),
+                {
+                    #{verusName} { 
+                        #{vsep . punctuate comma $ anotherRefFields} 
+                    }
                 }
             }
             |]
@@ -1044,11 +1074,11 @@ genVerusEnum (CEnum name casesFV isVest) = do
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
     -- vestFormat <- genVestFormat verusName casesFV
-    allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
+    implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
     -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
-    return $ (vsep [enumDef, allLensValid, viewImpl, enumTests])
+    return $ (vsep [enumDef, implEnum, viewImpl, enumTests])
     where 
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
@@ -1067,8 +1097,8 @@ genVerusEnum (CEnum name casesFV isVest) = do
             -- |]
 
 
-        genAllLensValid :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
-        genAllLensValid verusName cases lAnnot = do
+        genImplEnum :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
+        genImplEnum verusName cases lAnnot = do
             let casesValids = M.map (\(fname, fty) -> 
                         case fty of 
                             Just (RTWithLifetime (RTStruct _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
@@ -1080,11 +1110,31 @@ genVerusEnum (CEnum name casesFV isVest) = do
                             Nothing -> [di|#{fname}() => true|]
                     ) cases
             let body = vsep . punctuate comma $ M.elems casesValids
+            let anotherRefFields = M.map (\(fname, fty) -> case fty of 
+                        Just (RTWithLifetime (RTStruct t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTWithLifetime (RTEnum t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTStruct t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTEnum t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTOwlBuf _) -> [di|#{fname}(x) => #{fname}(OwlBuf::another_ref(x))|]
+                        Just _ -> [di|#{fname}(x) => #{fname}(x)|]
+                        Nothing -> [di|#{fname}() => #{fname}()|]
+                    ) cases
+            let anotherRefBody = vsep . punctuate comma $ M.elems anotherRefFields
             return [__di|
-            impl #{verusName}#{lAnnot} {
+            impl#{lAnnot} #{verusName}#{lAnnot} {
                 pub open spec fn len_valid(&self) -> bool {
                     match self {
                         #{body}
+                    }
+                }
+
+                pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
+                    requires self.len_valid(),
+                    ensures result.view() == self.view(),
+                            result.len_valid(),
+                {
+                    match self { 
+                        #{anotherRefBody} 
                     }
                 }
             }
@@ -1265,6 +1315,10 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, RTStruct s _) (RTStruct s' _) | s == s' =
+    return [di|#{s}::another_ref(&#{v})|]
+cast (v, RTEnum e _) (RTEnum e' _) | e == e' =
+    return [di|#{e}::another_ref(&#{v})|]
 cast (v, RTDummy) t = return v
 cast (v, RTOption RTDummy) (RTOption t) = return v
 cast (v, RTStAeadBuilder) (RTVec RTU8) = return [di|#{v}.into_fresh_vec()|]

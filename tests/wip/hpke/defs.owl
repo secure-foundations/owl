@@ -66,14 +66,20 @@ func lbl_ikm(lbl, ikm) =
 func lbl_info(len, lbl, info) = 
     len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
 
+func kdfkey_len() = 
+    0x0020
+
+func enckey_len() = 
+    0x0020
+
 func base_nonce_kdf_info() = 
-    lbl_info(|enckey|, base_nonce_string(), key_schedule_context())
+    lbl_info(enckey_len(), base_nonce_string(), key_schedule_context())
 
 func key_kdf_info() =                         
-    lbl_info(|enckey|, key_string(), key_schedule_context())
+    lbl_info(enckey_len(), key_string(), key_schedule_context())
 
 func export_kdf_info() = 
-    lbl_info(|enckey|, export_string(), key_schedule_context())
+    lbl_info(enckey_len(), export_string(), key_schedule_context())
 
 func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
 
@@ -89,9 +95,6 @@ func AuthEncap_kem_context<i>() =
     dhpk(get(skR)) 
     ++
     dhpk(get(skS)) 
-
-func kdfkey_len() = 
-    0x0020
 
 func AuthEncap_honest_info<i>() = 
     lbl_info(kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
