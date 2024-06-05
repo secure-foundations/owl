@@ -19,12 +19,44 @@ fn gen_keypair() -> (Vec<u8>, Vec<u8>) {
     (privkey.to_bytes().to_vec(), pubkey.to_bytes().to_vec())
 }
 
-fn owl_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
-    todo!()
+fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8> {
+    let (skE, pk_skE) = gen_keypair();
+
+    let cfg = owl_hpke::cfg_sender {
+        salt: vec![],
+        owl_psk: vec![],
+        owl_skS: skS.to_vec(),
+        owl_skE: skE,
+        pk_owl_skS: pk_skS.to_vec(),
+        pk_owl_skE: pk_skE,
+        pk_owl_skR: vec![]
+    };
+    let mut state = owl_hpke::state_sender::init_state_sender();
+
+    let mut obuf = vec![0u8; ENCAPPED_KEY_SIZE + msg.len() + TAG_SIZE];
+    
+    cfg.owl_SingleShotSeal_wrapper(&mut state, receiver_pk, msg, &mut obuf);
+
+    obuf
 }
 
-fn owl_recv(receiver_sk: &[u8], ctxt: &[u8]) -> Vec<u8> {
-    todo!()
+fn owl_recv(receiver_sk: Vec<u8>, pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+    let cfg = owl_hpke::cfg_receiver {
+        salt: vec![],
+        owl_psk: vec![],
+        owl_skR: receiver_sk,
+        pk_owl_skR: vec![],
+        pk_owl_skE: vec![],
+        pk_owl_skS: vec![],
+    };
+    let mut state = owl_hpke::state_receiver::init_state_receiver();
+
+    let res = cfg.owl_SingleShotOpen_wrapper(&mut state, pk_skS, enc_msg);
+
+    match res.unwrap().owl_or_pt {
+        owl_OpenMsg::owl_NoMsg() => panic!("No message"),
+        owl_OpenMsg::owl_SomeMsg(pt) => pt.as_slice().to_vec(),
+    }
 }
 
 fn rust_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
@@ -57,11 +89,11 @@ fn rust_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
     output
 }
 
-fn rust_recv(receiver_sk: &[u8], msg: &[u8]) -> Vec<u8> {
+fn rust_recv(receiver_sk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     // "parse"
-    let encapped_key = &msg[0..ENCAPPED_KEY_SIZE];
-    let ctxt = &msg[ENCAPPED_KEY_SIZE..msg.len()-TAG_SIZE];
-    let tag = &msg[msg.len()-TAG_SIZE..msg.len()];
+    let encapped_key = &enc_msg[0..ENCAPPED_KEY_SIZE];
+    let ctxt = &enc_msg[ENCAPPED_KEY_SIZE..enc_msg.len()-TAG_SIZE];
+    let tag = &enc_msg[enc_msg.len()-TAG_SIZE..enc_msg.len()];
     let associated_data = b"";
 
     // We have to derialize the secret key, AEAD tag, and encapsulated pubkey. These fail if the
@@ -93,6 +125,7 @@ fn rust_recv(receiver_sk: &[u8], msg: &[u8]) -> Vec<u8> {
 
 fn basic_test() {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
 
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
     dbg!(hex::encode(&plaintext));
@@ -100,10 +133,17 @@ fn basic_test() {
     let rust_ctxt = rust_send(&receiver_pubkey, &plaintext);
     dbg!(hex::encode(&rust_ctxt));
 
+    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+    dbg!(hex::encode(&owl_ctxt));
+
     let rust_plaintext = rust_recv(&receiver_privkey, &rust_ctxt);
     dbg!(hex::encode(&rust_plaintext));
 
+    let owl_plaintext = owl_recv(receiver_privkey, &pk_skS, &owl_ctxt);
+    dbg!(hex::encode(&owl_plaintext));
+
     assert_eq!(plaintext, rust_plaintext);
+    assert_eq!(plaintext, owl_plaintext);
 }
 
 

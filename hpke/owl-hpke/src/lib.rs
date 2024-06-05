@@ -135,26 +135,27 @@ pub fn owl_output<A>(
     x: &[u8],
     dest_addr: &str,
     ret_addr: &str,
+    obuf: &mut [u8]
 )
     requires
         old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view())),
     ensures
         t.view() == old(t).view().give_output(),
 {
-    todo!()
+    obuf[..x.len()].copy_from_slice(x);
 }
 
 #[verifier(external_body)]
-pub fn owl_input<A>(
+pub fn owl_input<'a, A>(
     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    listener: &TcpListener,
-) -> (ie: (Vec<u8>, String))
+    ibuf: &'a [u8],
+) -> (ie: (&'a [u8], String))
     requires
         old(t).view().is_input(),
     ensures
         t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
 {
-    todo!()
+    (ibuf, "".to_string())
 }
 
 #[verifier(external_body)]
@@ -1504,7 +1505,6 @@ impl state_receiver {
 }
 
 pub struct cfg_receiver {
-    pub listener: TcpListener,
     pub salt: Vec<u8>,
     pub owl_psk: Vec<u8>,
     pub owl_skR: Vec<u8>,
@@ -1532,12 +1532,38 @@ pk_owl_skR : (config.pk_owl_skR)
         }
     }
     */
+
+    #[verifier::external_body]
+    pub fn owl_SingleShotOpen_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_receiver,
+        owl_pkS379: &'a [u8],
+        msg: &'a [u8],
+    ) -> Option<owl_OpenResult<'a>> {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) = self.owl_SingleShotOpen(
+            Tracked(call_token),
+            mut_state,
+            OwlBuf::from_slice(owl_pkS379),
+            msg
+        ).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_SingleShotOpen<'a>(
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<owlSpec_OpenResult>, state_receiver), Endpoint>>,
         mut_state: &mut state_receiver,
         owl_pkS379: OwlBuf<'a>,
+        ibuf: &'a [u8]
     ) -> (res: Result<
         (
             Option<owl_OpenResult<'a>>,
@@ -1563,10 +1589,10 @@ pk_owl_skR : (config.pk_owl_skR)
             let (tmp_owl_i302, owl__301) = {
                 owl_input::<(Option<owlSpec_OpenResult>, state_receiver)>(
                     Tracked(&mut itree),
-                    &self.listener,
+                    ibuf,
                 )
             };
-            let owl_i302 = OwlBuf::from_vec(tmp_owl_i302);
+            let owl_i302 = OwlBuf::from_slice(tmp_owl_i302);
             let parseval_tmp = OwlBuf::another_ref(&owl_i302);
             if let Some(parseval) = parse_owl_hpke_ciphertext(OwlBuf::another_ref(&parseval_tmp)) {
                 let owl_eph304 = OwlBuf::another_ref(&parseval.owl_hc_pk);
@@ -1913,7 +1939,6 @@ impl state_sender {
 }
 
 pub struct cfg_sender {
-    pub listener: TcpListener,
     pub salt: Vec<u8>,
     pub owl_psk: Vec<u8>,
     pub owl_skS: Vec<u8>,
@@ -1943,6 +1968,33 @@ pk_owl_skR : (config.pk_owl_skR)
         }
     }
     */
+
+    #[verifier::external_body]
+    pub fn owl_SingleShotSeal_wrapper<'a>(
+        &'a self,
+        mut_state: &mut state_sender,
+        owl_pkR392: &'a [u8],
+        owl_x393: &'a [u8],      
+        obuf: &'a mut [u8]  
+    ) {
+        let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
+            (),
+            Endpoint,
+        >::dummy_itree_token();
+        let tracked (Tracked(call_token), _) = split_bind(
+            dummy_tok,
+            transp_send_init_spec(*self, *s, dhpk_S_resp.dview()),
+        );
+        let (res, _) = self.owl_SingleShotSeal(
+            Tracked(call_token),
+            mut_state,
+            OwlBuf::from_slice(owl_pkR392),
+            OwlBuf::from_slice(owl_x393),
+            obuf
+        ).unwrap();
+        res
+    }
+
     #[verifier::spinoff_prover]
     pub fn owl_SingleShotSeal<'a>(
         &'a self,
@@ -1950,6 +2002,7 @@ pk_owl_skR : (config.pk_owl_skR)
         mut_state: &mut state_sender,
         owl_pkR392: OwlBuf<'a>,
         owl_x393: OwlBuf<'a>,
+        obuf: &'a mut [u8]
     ) -> (res: Result<((), Tracked<ITreeToken<((), state_sender), Endpoint>>), OwlError>)
         requires
             itree.view() == SingleShotSeal_spec(
@@ -1994,6 +2047,7 @@ pk_owl_skR : (config.pk_owl_skR)
                 ).as_slice(),
                 &receiver_addr(),
                 &sender_addr(),
+                obuf
             );
             ((), Tracked(itree))
         };
