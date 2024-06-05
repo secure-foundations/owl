@@ -57,9 +57,10 @@ enum A_result {
     | A_No
 }
 
+corr adv ==> [A_username]
+corr adv ==> [B_username]
 
 def A_main() @ A 
-    requires [A_username] /\ [B_username] <= adv
 : A_result =
     let a = get(A_username) in
     let b = get(B_username) in    
@@ -95,8 +96,9 @@ enum B_result {
     | B_No
 }
 
+
+
 def B_main() @ B 
-    requires [B_username] <= adv
 : B_result =
     let b = get(B_username) in
     input inp in

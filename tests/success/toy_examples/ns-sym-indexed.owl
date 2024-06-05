@@ -84,9 +84,12 @@ enum alice_result<i, j> {
 name A_username : nonce @ Alice
 name B_username : nonce @ Alice
 
+corr adv ==> [A_username]
+corr adv ==> [B_username]
+corr<i> adv ==> [NA<i>]
+
 def Alice_main<i> (
 ) @ Alice
-    requires ([NA<i>] /\ [A_username] /\ [B_username] <= adv)
 : if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
     let A = get(A_username) in
     let B = get(B_username) in
