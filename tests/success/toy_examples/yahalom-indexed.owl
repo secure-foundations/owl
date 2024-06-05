@@ -70,7 +70,7 @@ struct msg2_BtoS {
 }
 
 struct msg3_StoA {
-    msg3_tkt1 : Data<adv> |cipherlen((3 * |nonce|) + |enckey|)|,
+    msg3_tkt1 : Data<adv> |cipherlen((|nonce| + |nonce| + |nonce|) + |enckey|)|,
     msg3_tkt2 : encd_by_kB
 }
 
