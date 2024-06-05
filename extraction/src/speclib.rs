@@ -640,6 +640,26 @@ pub mod itree {
             $(let $varName = $fieldName;)*
             owl_spec!($mut_state, $mut_type, $($next)*)
         }}};
+        // ($mut_state:ident, $mut_type:ident, 
+        //     parse ($a:ident) as 
+        //         ($enumName:ident : $enumTy:ident) 
+        //     in { $($next:tt)* }) => 
+        // {verus_proof_expr! {
+        //     let $enumName = $a;
+        //     owl_spec!($mut_state, $mut_type, $($next)*)
+        // }};
+        ($mut_state:ident, $mut_type:ident, 
+            parse ($parser:ident($a:ident)) as 
+                ($enumName:ident : $enumTy:ident) 
+            in { $($next:tt)* } otherwise ($($otw:tt)*)) => 
+        {verus_proof_expr! {
+            if let Some(parseval) = $parser($a) {
+                let $enumName = parseval;
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            } else {
+                owl_spec!($mut_state, $mut_type, $($otw)*)
+            }
+        }};
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{

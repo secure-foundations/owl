@@ -446,6 +446,13 @@ data GenCExprInfo ann = GenCExprInfo {
     curLocality :: LocalityName
 } deriving (Show)
 
+needsToplevelCast :: VerusTy -> Bool
+needsToplevelCast (RTOwlBuf _)  = True
+needsToplevelCast (RTOption (RTOwlBuf _)) = True
+needsToplevelCast (RTStruct _ _) = True
+needsToplevelCast (RTEnum _ _) = True
+needsToplevelCast _ = False
+
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
     case expr ^. tval of
@@ -456,8 +463,7 @@ genVerusCExpr info expr = do
                 -- On this side we cast as necessary
                 castRes <- castGRE ae' (expr ^. tty) 
                 return $ GenRustExpr (expr ^. tty) [di|(#{castRes}, Tracked(itree))|]
-            else 
-                return ae'
+            else return ae'
         CInput t xek -> do
             let ((x, ev), k) = unsafeUnbind xek
             let rustX = execName . show $ x
@@ -562,6 +568,13 @@ genVerusCExpr info expr = do
                 return $ GenRustExpr (k' ^. eTy) [__di|
                 let #{lhs} = { #{e' ^. code} };
                 let #{rustX} = #{castE'};
+                #{k' ^. code}
+                |]
+            else if needsToplevelCast $ e' ^. eTy then do
+                castE' <- castGRE e' (e ^. tty)
+                let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
+                return $ GenRustExpr (k' ^. eTy) [__di|
+                let #{lhs} = { #{castE'} };
                 #{k' ^. code}
                 |]
             else do
@@ -1317,6 +1330,8 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, RTOption (RTOwlBuf _)) (RTOption (RTOwlBuf _)) =
+    return [di|OwlBuf::another_ref_option(&#{v})|]
 cast (v, RTStruct s _) (RTStruct s' _) | s == s' =
     return [di|#{s}::another_ref(&#{v})|]
 cast (v, RTEnum e _) (RTEnum e' _) | e == e' =

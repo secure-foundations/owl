@@ -542,7 +542,25 @@ extractExpr expr = do
                     #{k'}
                     } #{badk}
                     |]
-                FEnum n cs -> throwError $ ErrSomethingFailed $ "TODO: spec enum parsing for " ++ show n
+                FEnum n cs -> do
+                    let [x] = xs
+                    let dstTyName = specName n
+                    case maybeOtw of
+                        Just otw -> do
+                            let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                            otw' <- extractExpr otw
+                            -- return (parseCall, [di|otherwise (#{otw'})|])
+                            return $ parens [__di|
+                            parse (#{parseCall}) as (#{x} : #{dstTyName}) in {
+                            #{k'}
+                            } otherwise #{otw'}
+                            |]
+                        Nothing -> do
+                            return $ parens [__di|
+                            parse (#{ae'}) as (#{x} : #{dstTyName}) in {
+                            #{k'}
+                            }
+                            |]
                 FOption t' -> do
                     let [x] = xs
                     let PFromDatatype = pkind

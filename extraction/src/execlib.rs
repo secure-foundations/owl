@@ -141,6 +141,17 @@ impl<'x> OwlBuf<'x> {
         }
     }
 
+    pub fn another_ref_option<'a>(x: &'a Option<Self>) -> (result: Option<OwlBuf<'x>>)
+        requires x.is_Some() ==> x.get_Some_0().len_valid(),
+        ensures view_option(result) == view_option(*x),
+                result.is_Some() ==> result.get_Some_0().len_valid(),
+    {
+        match x {
+            Some(x) => Some(OwlBuf::another_ref(x)),
+            None => None,
+        }
+    }
+
     pub fn into_owned(self) -> (result: OwlBuf<'x>)
         requires self.len_valid(),
         ensures  result.view() == self.view(),
