@@ -426,7 +426,7 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
     tkr_c7 : Ghost,
     tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph]) ==> n_pk =idx n_eph}),
     tkr_k_init_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
-        if (n_pk =idx n_eph /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>))) then 
+        if (n_pk =idx n_eph) /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)) then 
               (x:SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
                   happened(key_confirm_responder_recv<@m>(x))
                })
@@ -437,7 +437,7 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
         else
         Data<adv>, 
     tkr_k_resp_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
-        if n_pk =idx n_eph then 
+        if n_pk =idx n_eph /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)) then 
             (x:SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
                   happened(key_confirm_responder_send<@m>(x))
                })

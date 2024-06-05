@@ -3,7 +3,8 @@ locality receiver
 
 name channel_secret : nonce
 
-type plaintext_t = Data<[channel_secret] /\ adv, |adv|>
+def sent_message @ sender
+type plaintext_t = (x:Data<[channel_secret] /\ adv, |adv|>{happened(sent_message(x))})
 
 name skR : DH @ receiver
 name skE<i> : DH @ sender
@@ -131,7 +132,7 @@ nametype hpke_corr_key_t =
 nametype psk_t = dualkdf {salt info self.
     (info == base_nonce_kdf_info()) -> public nonce |counter|,
     (exists i:idx. salt == AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
-     strict st_aead Data<[channel_secret] /\ adv, |adv|>
+     strict st_aead  plaintext_t
                               aad x. true
                               nonce send_counter
                               pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
@@ -151,7 +152,7 @@ corr [psk] ==> [channel_secret]
 
 
 nametype hpke_key_t<i> = 
-    st_aead Data<[channel_secret] /\ adv, |adv|>
+    st_aead plaintext_t
         aad x. true
         nonce send_counter
         pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret<session i>(), 
@@ -170,7 +171,7 @@ nametype shared_secret_t =
         (ikm == dh_secret_kdf_ikm(get(psk)))
         /\
         info == key_kdf_info()
-        -> strict st_aead Data<[channel_secret] /\ adv, |adv|>
+        -> strict st_aead plaintext_t
                           aad x. true
                           nonce send_counter
                           pattern i. xor(i, gkdf<nonce |counter|;0>(self,

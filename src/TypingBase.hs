@@ -1679,6 +1679,29 @@ getTyIdxVars :: Ty -> [IdxVar]
 getTyIdxVars p = toListOf fv p
 
 
+tyNonGhost :: Ty -> Check' senv Bool
+tyNonGhost t = do
+    l <- coveringLabel' t
+    lblNonGhost l
+
+lblNonGhost :: Label -> Check' senv Bool
+lblNonGhost l  =
+    case l^.val of
+      LName _ -> return True
+      LZero -> return True
+      LAdv -> return True
+      LTop -> return True
+      LGhost -> return False
+      LJoin l1 l2 -> liftM2 (&&) (lblNonGhost l1) (lblNonGhost l2)
+      LConst _ -> return True
+      LRangeIdx xl -> lblNonGhost $ snd $ unsafeUnbind xl
+      LRangeVar xl -> lblNonGhost $ snd $ unsafeUnbind xl
+
+
+
+
+
+
 -- get strongest type that doesn't mention x
 -- t <= stripTy x t
 -- p ==> stripProp x p 

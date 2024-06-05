@@ -438,9 +438,10 @@ smtStructRefinement fps spath idp structval = do
                 sn <- smtName $ PDot spath sx
                 let fld = SApp [SAtom sn, structval]
                 vt1 <- smtTy fld t
-                let l = case (stripRefinements t)^.val of
-                          TGhost -> []
-                          _ -> [sLength fld]
+                tNonGhost <- liftCheck $ tyNonGhost t
+                let l = case tNonGhost of 
+                          True -> [sLength fld]
+                          False -> []
                 let plength1 = ([vt1], l)
                 (x, k) <- liftCheck $ unbind xk
                 case k of

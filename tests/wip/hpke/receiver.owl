@@ -80,7 +80,7 @@ def KeyScheduleR(adr : exists i. AuthDecapResult<session i>) @ receiver : exists
 
 
 enum OpenMsg { 
-    | SomeMsg plaintext_t
+    | SomeMsg Data<adv /\ [channel_secret], |adv|>
     | NoMsg
 }
 
@@ -101,7 +101,8 @@ def Open<j>(ctxtR : exists i. ContextR<session i>, ct_aad : Data<adv>, ct : Data
         | Some x =>
             false_elim in 
             let ctxtR' = ContextR<session i>(eph, true, ss, bn, sk, exp) in 
-            let res = OpenResult<session i>(ctxtR', SomeMsg(x), ()) in
+            assert (eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))) ==> happened(sent_message(x));
+            let res : OpenResult<session i> = OpenResult<session i>(ctxtR', SomeMsg(x), ()) in
             pack<i>(res)
         | None => let res = OpenResult<session i>(ctxtR, NoMsg(), ()) in pack<i>(res)
         otherwise => let res = OpenResult<session i>(ctxtR, NoMsg(), ()) in pack<i>(res)

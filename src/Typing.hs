@@ -313,16 +313,17 @@ initDetFuncs = withNormalizedTys $ [
 
 
 
-mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
-mkStructType pth tv args ps b = do
+mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [Ty] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
+mkStructType pth tv args outTs ps b = do
     (is, dp) <- unbind b
     idxs <- getStructParams ps
     assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty (PRes $ PDot pth tv)) $ length idxs == length is
     let p = map (\(a, s) -> pEq a $ mkSpanned $ AEApp (PRes $ PDot pth s) ps [aeVar ".res"])
                 (zip (map fst args) (depBindNames $ substs (zip is idxs) dp))
+    slengths <- sumOfLengths (zip (map fst args) outTs)
     return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) ".res" $
         bind (s2n ".res") $ 
-            pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths (map fst args)))
+            pAnd (pEq (aeLength (aeVar ".res")) slengths)
                  (foldr pAnd pTrue p)
 
 -- Only for debugging
@@ -338,20 +339,26 @@ ensureTysMatchDepBind ((a, t) : args) (DPVar t1 sx xk) = do
         t1' <- normalizeTy t1
         typeError ("Argument " ++ show (owlpretty a) ++ " does not match type " ++ sx ++ ": " ++ show (owlpretty t1') ++ "\nGot type " ++ show (owlpretty t'))
 
-tysMatchStructDef :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] -> Bind [IdxVar] (DepBind ()) -> Check Bool
+-- returns Nothing if input tys don't match; returns the output tys if they all
+-- do match
+tysMatchStructDef :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] -> Bind [IdxVar] (DepBind ()) -> Check (Maybe [Ty])
 tysMatchStructDef pth sname args ps b = do
     (is, dp) <- unbind b
     idxs <- getStructParams ps
     assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty sname ) $ length idxs == length is
     go args $ substs (zip is idxs) dp
         where
-            go [] (DPDone ()) = return True
+            go [] (DPDone ()) = return $ Just []
             go ((a, t):args) (DPVar t1 sx xk) = do
                 b1 <- isSubtype t t1 
-                if b1 then do
+                case b1 of
+                  False -> return Nothing
+                  True -> do
                       (x, k) <- unbind xk
-                      go args $ subst x a k
-                else return False
+                      res <- go args $ subst x a k
+                      case res of
+                        Nothing -> return Nothing
+                        Just ts -> return $ Just (t1 : ts)
             go _ _ = typeError "Bad number of arguments to tyMatchStructDef"
 
 
@@ -369,8 +376,10 @@ interpUserFunc pth md (StructConstructor tv) = do
               forM_ ps checkParam
               assert (show $ owlpretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               if length xs == ar then do
-                b <- tysMatchStructDef pth tv xs ps idf 
-                if b then mkStructType pth tv xs ps idf else trivialTypeOf (map snd xs)
+                res <- tysMatchStructDef pth tv xs ps idf 
+                case res of
+                  Nothing -> trivialTypeOf (map snd xs)
+                  Just outTs -> mkStructType pth tv xs outTs ps idf
               else trivialTypeOf (map snd xs))
       _ -> typeError $ "Unknown struct: " ++ show tv
 interpUserFunc pth md (StructProjector tv field) = do
@@ -980,9 +989,14 @@ addNameAbbrev n (is1, is2) bne k = do
     local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (AbbrevNameDef bne))) $ k
 
 
-sumOfLengths :: [AExpr] -> AExpr
-sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
-sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
+sumOfLengths :: [(AExpr, Ty)] -> Check AExpr
+sumOfLengths [] = return $ aeApp (topLevelPath $ "zero") [] []
+sumOfLengths ((x, t):xs) = do
+    ng <- tyNonGhost t
+    xslen <- sumOfLengths xs
+    case ng of
+      True -> return $ aeApp (topLevelPath $ "plus") [] [aeLength x, xslen]
+      False -> return $ xslen
 
 inferModuleExp :: ModuleExp -> Check ModDef
 inferModuleExp me = 

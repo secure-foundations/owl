@@ -53,8 +53,11 @@ def KeyScheduleS<i>(aer : AuthEncapResult<session i>) @ sender : ContextS<sessio
     let exp = kdf<2;3;nonce;0>(shared_secret, dh_secret_kdf_ikm(get(psk)), export_kdf_info()) in 
     ContextS<session i>(shared_secret, base_nonce, sk, exp)
 
+def sent_message(x : Ghost) @ sender : Unit = ()
+
 def Seal<i>(ctxt : ContextS<session i>, x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Data<adv> = 
     parse ctxt as ContextS<session i>(_, base, sk, _) in 
+    call sent_message(x);
     st_aead_enc<send_counter<i>, pattern i. xor(i, base)>(sk, x, 0x) 
 
 def SingleShotSeal<i>(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
