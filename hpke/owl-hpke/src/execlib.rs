@@ -213,11 +213,13 @@ pub exec fn vec_truncate(vec: &mut Vec<u8>, len: usize)
     vec.truncate(len)
 }
 
+#[verifier::external_body]
 pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
     ensures res.view() == concat(a.view(), b.view())
 {
-    let mut v = slice_to_vec(a);
-    extend_vec_u8(&mut v, b);
+    let mut v = Vec::with_capacity(a.len() + b.len());
+    v.extend_from_slice(a);
+    v.extend_from_slice(b);
     v
 }
 
