@@ -455,8 +455,10 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], iv: &[u8], aad: &[u8]) -> (res
     ensures
         res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
 {
-    let mut iv_sized = iv.to_vec();
-    iv_sized.resize(NONCE_SIZE, 0u8);
+    assert_eq!(owl_aead::nonce_size(CIPHER), 12);
+    let mut iv_sized = [0u8; 12];
+    let iv_len = iv_sized.len();
+    iv_sized[(iv_len - iv.len())..].copy_from_slice(&iv[..]);
     let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv_sized[..], aad) {
         Ok(c) => c,
         Err(_e) => {
@@ -504,7 +506,11 @@ pub exec fn owl_dec_st_aead(k: &[u8], c: &[u8], nonce: &[u8], aad: &[u8]) -> (x:
         // dec(k.view(), c.view()).is_None() ==> x.is_None(),
         // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
 {
-    match owl_aead::decrypt_combined(CIPHER, k, &c, nonce, aad) {
+    assert_eq!(owl_aead::nonce_size(CIPHER), 12);
+    let mut iv_sized = [0u8; 12];
+    let iv_len = iv_sized.len();
+    iv_sized[(iv_len - nonce.len())..].copy_from_slice(&nonce[..]);
+    match owl_aead::decrypt_combined(CIPHER, k, &c, &iv_sized[..], aad) {
         Ok(p) => Some(p),
         Err(_e) => {
             // dbg!(e);

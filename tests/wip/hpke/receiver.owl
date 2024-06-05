@@ -94,9 +94,10 @@ def Open<j>(ctxtR : exists i. ContextR<session i>, ct_aad : Data<adv>, ct : Data
     unpack i, ctxtR = ctxtR in 
     parse ctxtR as ContextR<session i>(eph, confirmed, ss, bn, sk, exp) in
     let ctr = get_counter recv_counter<j> in 
+    let iv = xor(bn, ctr) in
     inc_counter recv_counter<j>;
     pcase (eph == dhpk(get(skE<i>))) in 
-    case st_aead_dec(sk, ct, ct_aad, ctr) as Option Data<[channel_secret] /\ adv, |adv|> {
+    case st_aead_dec(sk, ct, ct_aad, iv) as Option Data<[channel_secret] /\ adv, |adv|> {
         | Some x =>
             false_elim in 
             let ctxtR' = ContextR<session i>(eph, true, ss, bn, sk, exp) in 

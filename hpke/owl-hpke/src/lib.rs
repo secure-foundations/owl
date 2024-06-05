@@ -1641,9 +1641,9 @@ pk_owl_skR : (config.pk_owl_skR)
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(owlSpec_OpenResult, state_receiver), Endpoint>>,
         mut_state: &mut state_receiver,
-        owl_ctxtR386: owl_ContextR<'a>,
-        owl_ct_aad387: OwlBuf<'a>,
-        owl_ct388: OwlBuf<'a>,
+        owl_ctxtR388: owl_ContextR<'a>,
+        owl_ct_aad389: OwlBuf<'a>,
+        owl_ct390: OwlBuf<'a>,
     ) -> (res: Result<
         (owl_OpenResult<'a>, Tracked<ITreeToken<(owlSpec_OpenResult, state_receiver), Endpoint>>),
         OwlError,
@@ -1652,13 +1652,13 @@ pk_owl_skR : (config.pk_owl_skR)
             itree.view() == Open_spec(
                 *self,
                 *old(mut_state),
-                owl_ctxtR386.view(),
-                owl_ct_aad387.view(),
-                owl_ct388.view(),
+                owl_ctxtR388.view(),
+                owl_ct_aad389.view(),
+                owl_ct390.view(),
             ),
-            owl_ctxtR386.len_valid(),
-            owl_ct_aad387.len_valid(),
-            owl_ct388.len_valid(),
+            owl_ctxtR388.len_valid(),
+            owl_ct_aad389.len_valid(),
+            owl_ct390.len_valid(),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in(((r.0).view(), *mut_state)),
             res matches Ok(r) ==> r.0.len_valid(),
@@ -1671,63 +1671,65 @@ pk_owl_skR : (config.pk_owl_skR)
             broadcast use itree_axioms;
 
             reveal(Open_spec);
-            let owl_ctxtR313 = { owl_ctxtR386 };
-            let parseval = owl_ContextR::another_ref(&owl_ctxtR313);
-            let owl_eph319 = parseval.owl_ctxtR_eph;
-            let owl_confirmed318 = parseval.owl_ctxtR_confirmed;
-            let owl_ss317 = parseval.owl_ctxtR_ss;
-            let owl_bn316 = OwlBuf::another_ref(&parseval.owl_ctxtR_base);
-            let owl_sk315 = OwlBuf::another_ref(&parseval.owl_ctxtR_sk);
-            let owl_exp314 = OwlBuf::another_ref(&parseval.owl_ctxtR_export);
-            let tmp_owl_ctr320 = { owl_counter_as_bytes(&mut_state.owl_recv_counter) };
-            let owl_ctr320 = OwlBuf::from_slice(&tmp_owl_ctr320);
-            let owl__321 = {
+            let owl_ctxtR314 = { owl_ctxtR388 };
+            let parseval = owl_ContextR::another_ref(&owl_ctxtR314);
+            let owl_eph320 = parseval.owl_ctxtR_eph;
+            let owl_confirmed319 = parseval.owl_ctxtR_confirmed;
+            let owl_ss318 = parseval.owl_ctxtR_ss;
+            let owl_bn317 = OwlBuf::another_ref(&parseval.owl_ctxtR_base);
+            let owl_sk316 = OwlBuf::another_ref(&parseval.owl_ctxtR_sk);
+            let owl_exp315 = OwlBuf::another_ref(&parseval.owl_ctxtR_export);
+            let tmp_owl_ctr321 = { owl_counter_as_bytes(&mut_state.owl_recv_counter) };
+            let owl_ctr321 = OwlBuf::from_slice(&tmp_owl_ctr321);
+            let tmp_owl_iv322 = { owl_xor(owl_bn317.as_slice(), owl_ctr321.as_slice()) };
+            let owl_iv322 = OwlBuf::from_vec(tmp_owl_iv322);
+            let owl__323 = {
                 if mut_state.owl_recv_counter > usize::MAX - 1 {
                     return Err(OwlError::IntegerOverflow);
                 };
                 mut_state.owl_recv_counter = mut_state.owl_recv_counter + 1;
             };
-            let tmp_owl_parseval322 = {
+            let tmp_owl_parseval324 = {
                 owl_dec_st_aead(
-                    owl_sk315.as_slice(),
-                    owl_ct388.as_slice(),
-                    owl_ctr320.as_slice(),
-                    owl_ct_aad387.as_slice(),
+                    owl_sk316.as_slice(),
+                    owl_ct390.as_slice(),
+                    owl_iv322.as_slice(),
+                    owl_ct_aad389.as_slice(),
                 )
             };
-            let owl_parseval322 = OwlBuf::from_vec_option(tmp_owl_parseval322);
-            let owl_caseval323 = { owl_parseval322 };
-            match owl_caseval323 {
-                Option::Some(tmp_owl_x324) => {
-                    let owl_x324 = OwlBuf::another_ref(&tmp_owl_x324);
-                    let owl_ctxtR_325 = {
+            let owl_parseval324 = OwlBuf::from_vec_option(tmp_owl_parseval324);
+            let owl_caseval325 = { owl_parseval324 };
+            match owl_caseval325 {
+                Option::Some(tmp_owl_x326) => {
+                    let owl_x326 = OwlBuf::another_ref(&tmp_owl_x326);
+                    let owl_ctxtR_327 = {
                         owl_ContextR(
                             owl_ghost_unit(),
                             true,
                             owl_ghost_unit(),
-                            OwlBuf::another_ref(&owl_bn316),
-                            OwlBuf::another_ref(&owl_sk315),
-                            OwlBuf::another_ref(&owl_exp314),
+                            OwlBuf::another_ref(&owl_bn317),
+                            OwlBuf::another_ref(&owl_sk316),
+                            OwlBuf::another_ref(&owl_exp315),
                         )
                     };
-                    let owl_res326 = {
+                    let owl_res328 = {
                         owl_OpenResult(
-                            owl_ContextR::another_ref(&owl_ctxtR_325),
-                            owl_OpenMsg::another_ref(&owl_SomeMsg(OwlBuf::another_ref(&owl_x324))),
+                            owl_ContextR::another_ref(&owl_ctxtR_327),
+                            owl_OpenMsg::another_ref(&owl_SomeMsg(OwlBuf::another_ref(&owl_x326))),
                             owl_ghost_unit(),
                         )
                     };
-                    (owl_OpenResult::another_ref(&owl_res326), Tracked(itree))
+                    (owl_OpenResult::another_ref(&owl_res328), Tracked(itree))
                 },
                 Option::None => {
-                    let owl_res327 = {
+                    let owl_res329 = {
                         owl_OpenResult(
-                            owl_ContextR::another_ref(&owl_ctxtR313),
+                            owl_ContextR::another_ref(&owl_ctxtR314),
                             owl_OpenMsg::another_ref(&owl_NoMsg()),
                             owl_ghost_unit(),
                         )
                     };
-                    (owl_OpenResult::another_ref(&owl_res327), Tracked(itree))
+                    (owl_OpenResult::another_ref(&owl_res329), Tracked(itree))
                 },
             }
         };
