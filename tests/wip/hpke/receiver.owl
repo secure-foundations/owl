@@ -27,7 +27,7 @@ def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option (exists i.Au
     pcase (exists i:idx. eph == dhpk(get(skE<i>))) in 
     pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
     choose_idx i | eph == dhpk(get(skE<i>)) in 
-    let dh = dh_combine(pkS, get(skR)) ++ dh_combine(eph, get(skR)) in
+    let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ dhpk(get(skR)) ++ pkS in
     let shared_secret = kdf<; odh ss[0], odh ss[1], odh se<i>[0], odh se<i>[1];kdfkey;0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh), 

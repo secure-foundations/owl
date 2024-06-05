@@ -87,9 +87,9 @@ func dh_secret_kdf_ikm(psk_) = lbl_ikm(hpke_suite_id(), secret_string(), psk_)
 
 
 func AuthEncap_dh<i>() =   
-    dh_combine(dhpk(get(skR)), get(skS))
-    ++
     dh_combine(dhpk(get(skR)), get(skE<i>))
+    ++
+    dh_combine(dhpk(get(skR)), get(skS))
 
 func AuthEncap_kem_context<i>() =   
     dhpk(get(skE<i>)) 
@@ -108,9 +108,9 @@ func AuthEncap_shared_secret<i>() =
 
 
 func AuthDecap_dh(eph) = 
-    dh_combine(dhpk(get(skR)), get(skS))
-    ++
     dh_combine(eph, get(skR))
+    ++
+    dh_combine(dhpk(get(skR)), get(skS))
 
 func AuthDecap_kem_context(eph) =   
     eph
