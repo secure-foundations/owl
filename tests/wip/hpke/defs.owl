@@ -56,9 +56,9 @@ func psk_id() = (0x)
 func info() = (0x)
 
 func mode() = 0x03 // auth_psk
-func key_schedule_context() = 
-    mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
-    crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
+func key_schedule_context() = 0x03431df6cd95e11ff49d7013563baf7f11588c75a6611ee2a4404a49306ae4cfc555e7b39d7a73553c14eee3b605f8c4438fb8c4a5d32fb2bef735f26128ed5695
+    // mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
+    // crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
 
 func eae_prk() = 0x6561655f70726b
 
