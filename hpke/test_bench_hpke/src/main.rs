@@ -23,12 +23,16 @@ fn gen_keypair() -> (Vec<u8>, Vec<u8>) {
     (privkey.to_bytes().to_vec(), pubkey.to_bytes().to_vec())
 }
 
-fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8> {
+fn gen_psk() -> Vec<u8> {
+    owl_hpke::owl_util::gen_rand_bytes(32)
+}
+
+fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], psk: &[u8], msg: &[u8]) -> Vec<u8> {
     let (skE, pk_skE) = gen_keypair();
 
     let cfg = owl_hpke::cfg_sender {
         salt: vec![],
-        owl_psk: vec![],
+        owl_psk: psk.to_vec(),
         owl_skS: skS.to_vec(),
         owl_skE: skE,
         pk_owl_skS: pk_skS.to_vec(),
@@ -44,10 +48,10 @@ fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8
     obuf
 }
 
-fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], psk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     let cfg = owl_hpke::cfg_receiver {
         salt: vec![],
-        owl_psk: vec![],
+        owl_psk: psk.to_vec(),
         owl_skR: receiver_sk.to_vec(),
         pk_owl_skR: vec![],
         pk_owl_skE: vec![],
@@ -63,7 +67,7 @@ fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     }
 }
 
-fn rust_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8> {
+fn rust_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], psk: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut csprng = StdRng::from_entropy();
     let associated_data = b"";
 
@@ -72,10 +76,10 @@ fn rust_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u
 
     // Encapsulate a key and use the resulting shared secret to encrypt a message. The AEAD context
     // is what you use to encrypt.
-    let opmode = OpModeS::Auth((
+    let opmode = OpModeS::AuthPsk((
         <HPKE_Kem as Kem>::PrivateKey::from_bytes(skS).unwrap(),
         <HPKE_Kem as Kem>::PublicKey::from_bytes(pk_skS).unwrap(),
-    ));
+    ), PskBundle { psk: psk, psk_id: b"" });
     let (encapped_key, mut sender_ctx) =
         hpke::setup_sender::<HPKE_Aead, HPKE_Kdf, HPKE_Kem, _>(&opmode, &receiver_pk, INFO_STR, &mut csprng)
             .expect("invalid server pubkey!");
@@ -97,7 +101,7 @@ fn rust_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u
     output
 }
 
-fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], psk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     // "parse"
     let encapped_key = &enc_msg[0..ENCAPPED_KEY_SIZE];
     let ctxt = &enc_msg[ENCAPPED_KEY_SIZE..enc_msg.len()-TAG_SIZE];
@@ -113,7 +117,10 @@ fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
         .expect("could not deserialize the encapsulated pubkey!");
 
     // Decapsulate and derive the shared secret. This creates a shared AEAD context.
-    let opmode = OpModeR::Auth(<HPKE_Kem as Kem>::PublicKey::from_bytes(pk_skS).unwrap());
+    let opmode = OpModeR::AuthPsk(
+        <HPKE_Kem as Kem>::PublicKey::from_bytes(pk_skS).unwrap(),
+        PskBundle { psk: psk, psk_id: b"" },
+    );
     let mut receiver_ctx =
         hpke::setup_receiver::<HPKE_Aead, HPKE_Kdf, HPKE_Kem>(&opmode, &server_sk, &encapped_key, INFO_STR)
             .expect("failed to set up receiver!");
@@ -135,26 +142,27 @@ fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
 fn basic_interop_test() {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
 
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
     dbg!(hex::encode(&plaintext));
 
-    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
     dbg!(hex::encode(&rust_ctxt));
 
-    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
     dbg!(hex::encode(&owl_ctxt));
 
-    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
     dbg!(hex::encode(&rust_plaintext));
 
-    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
     dbg!(hex::encode(&owl_plaintext));
 
-    let rust_decrypt_owl = rust_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+    let rust_decrypt_owl = rust_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
     dbg!(hex::encode(&rust_decrypt_owl));
 
-    let owl_decrypt_rust = owl_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+    let owl_decrypt_rust = owl_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
     dbg!(hex::encode(&owl_decrypt_rust));
 
     assert_eq!(plaintext, rust_plaintext);
@@ -162,14 +170,20 @@ fn basic_interop_test() {
 }
 
 #[test]
+fn test_interop() {
+    basic_interop_test();
+}
+
+#[test]
 fn test_rs_rs() {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
 
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
 
-    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
-    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
 
     assert_eq!(plaintext, rust_plaintext);
 }
@@ -178,11 +192,12 @@ fn test_rs_rs() {
 fn test_owl_owl() {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
 
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
 
-    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
-    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
 
     assert_eq!(plaintext, owl_plaintext);
 }
@@ -195,12 +210,13 @@ const PAYLOAD_SIZE: usize = 0;
 fn bench_rust(b: &mut Bencher) {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
 
     let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
 
     b.iter(|| {
-        let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
-        let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+        let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+        let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
         test::black_box(rust_plaintext);
     });
 }
@@ -209,12 +225,13 @@ fn bench_rust(b: &mut Bencher) {
 fn bench_owl(b: &mut Bencher) {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
 
     let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
 
     b.iter(|| {
-        let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
-        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+        let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
         test::black_box(owl_plaintext);
     });
 }
