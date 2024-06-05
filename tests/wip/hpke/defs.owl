@@ -153,8 +153,6 @@ name psk : psk_t @ sender, receiver
 
 corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
 corr [skR] /\ [psk] ==> [channel_secret]
-corr [psk] ==> [channel_secret]
-
 
 nametype hpke_key_t<i> = 
     st_aead plaintext_t
