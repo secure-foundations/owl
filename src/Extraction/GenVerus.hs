@@ -232,11 +232,13 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("mac_vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
         , ("pkenc", ([u8slice, u8slice], vecU8))
         , ("pkdec", ([u8slice, u8slice], vecU8))
-        -- , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) -- special-cased
+        , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
+        , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
         , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
         , ("concat", ([u8slice, u8slice], vecU8))
+        , ("xor", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
@@ -262,38 +264,38 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
-                        ("enc_st_aead_builder", [k, x, nonce, aad]) -> do
-                            k' <- genVerusCAExpr k
-                            x' <- genVerusCAExpr x
-                            nonce' <- genVerusCAExpr nonce
-                            aad' <- genVerusCAExpr aad
-                            castK <- castGRE k' u8slice
-                            castX <- castGRE x' u8slice
-                            castNonce <- castGRE nonce' (RTRef RMut RTUsize)
-                            castAad <- castGRE aad' u8slice
-                            castRes <- cast ([di|ctxt|], RTStAeadBuilder) (ae ^. tty)
-                            return $ GenRustExpr (ae ^. tty) $ [__di|{ 
-                                match owl_enc_st_aead_builder(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                                    Ok(ctxt) => { #{castRes} },
-                                    Err(e) => { return Err(e) },
-                                }                                
-                            }|]
-                        ("enc_st_aead", [k, x, nonce, aad]) -> do
-                            k' <- genVerusCAExpr k
-                            x' <- genVerusCAExpr x
-                            nonce' <- genVerusCAExpr nonce
-                            aad' <- genVerusCAExpr aad
-                            castK <- castGRE k' u8slice
-                            castX <- castGRE x' u8slice
-                            castNonce <- castGRE nonce' (RTRef RMut RTUsize)
-                            castAad <- castGRE aad' u8slice
-                            castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
-                            return $ GenRustExpr (ae ^. tty) $ [__di|{ 
-                                match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                                    Ok(ctxt) => { #{castRes} },
-                                    Err(e) => { return Err(e) },
-                                }                                
-                            }|]
+                        -- ("enc_st_aead_builder", [k, x, nonce, aad]) -> do
+                        --     k' <- genVerusCAExpr k
+                        --     x' <- genVerusCAExpr x
+                        --     nonce' <- genVerusCAExpr nonce
+                        --     aad' <- genVerusCAExpr aad
+                        --     castK <- castGRE k' u8slice
+                        --     castX <- castGRE x' u8slice
+                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                        --     castAad <- castGRE aad' u8slice
+                        --     castRes <- cast ([di|ctxt|], RTStAeadBuilder) (ae ^. tty)
+                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
+                        --         match owl_enc_st_aead_builder(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                        --             Ok(ctxt) => { #{castRes} },
+                        --             Err(e) => { return Err(e) },
+                        --         }                                
+                        --     }|]
+                        -- ("enc_st_aead", [k, x, nonce, aad]) -> do
+                        --     k' <- genVerusCAExpr k
+                        --     x' <- genVerusCAExpr x
+                        --     nonce' <- genVerusCAExpr nonce
+                        --     aad' <- genVerusCAExpr aad
+                        --     castK <- castGRE k' u8slice
+                        --     castX <- castGRE x' u8slice
+                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                        --     castAad <- castGRE aad' u8slice
+                        --     castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
+                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
+                        --         match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                        --             Ok(ctxt) => { #{castRes} },
+                        --             Err(e) => { return Err(e) },
+                        --         }                                
+                        --     }|]
                         ("true", []) -> return $ GenRustExpr RTBool [di|true|] 
                         ("false", []) -> return $ GenRustExpr RTBool [di|false|] 
                         ("Some", [x]) -> do
@@ -1376,5 +1378,6 @@ viewVar vname (RTArray RTU8 _) = return [di|#{vname}.view()|]
 viewVar vname (RTOwlBuf _) = return [di|#{vname}.view()|]
 viewVar vname RTBool = return [di|#{vname}|]
 viewVar vname RTUsize = return [di|#{vname}|]
+viewVar vname RTVerusGhost = return [di|#{vname}|]
 viewVar vname (RTWithLifetime t _) = viewVar vname t
 viewVar vname ty = throwError $ ErrSomethingFailed $ "TODO: viewVar: " ++ vname ++ ": " ++ show ty
