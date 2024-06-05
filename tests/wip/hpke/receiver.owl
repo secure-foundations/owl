@@ -5,12 +5,12 @@ struct AuthDecapResult<i> {
     adr_shared_secret : 
         if adr_eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
             SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
-            lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
-            lbl_info(kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+            lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)), 
+            lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
         else if sec(skR) /\ sec(skS) then 
             SecName(KDF<kdfkey;0;shared_secret_corr_t>(0x, 
-            lbl_ikm(eae_prk(), AuthDecap_dh(adr_eph)), 
-            lbl_info(kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+            lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)), 
+            lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
         else
             (x:Data<adv> ||kdfkey|| {
                 x == AuthDecap_shared_secret(adr_eph) 
@@ -30,15 +30,17 @@ def AuthDecap(pkS : dhpk(skS), eph : Data<adv>) @ receiver : Option (exists i.Au
     let dh = dh_combine(pkS, get(skR)) ++ dh_combine(eph, get(skR)) in
     let kem_context = eph ++ dhpk(get(skR)) ++ pkS in
     let shared_secret = kdf<; odh ss[0], odh ss[1], odh se<i>[0], odh se<i>[1];kdfkey;0>(0x,
-        lbl_ikm(eae_prk(), dh), 
-        lbl_info(kdfkey_len(), shared_secret_string(), kem_context)) in
+        lbl_ikm(kem_suite_id(), eae_prk(), dh), 
+        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
     let shared_secret_ghost = gkdf<kdfkey;0>(0x,
-        lbl_ikm(eae_prk(), dh), 
-        lbl_info(kdfkey_len(), shared_secret_string(), kem_context)) in
+        lbl_ikm(kem_suite_id(), eae_prk(), dh), 
+        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
     forall j:idx {
         kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret<session j>())
     };
-    Some(AuthDecapResult<session i>(eph, shared_secret, ()))
+    let res = AuthDecapResult<session i>(eph, shared_secret, ()) in
+    let pres = pack<i>(res) in 
+    Some(pres)
 
     
 struct ContextR<i> {

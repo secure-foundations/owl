@@ -39,7 +39,8 @@ base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk),
 */
 
 func hpke_v1() = 0x48504b452d7631
-func suite_id() = 0x48504b45002000010003 // TODO
+func hpke_suite_id() = 0x48504b45002000010003 // TODO
+func kem_suite_id() = 0x4b454d0020
 func secret_string() = 0x736563726574 // "secret"
 func shared_secret_string() = 0x7368617265645f736563726574 // "shared_secret"
 func key_string() = 0x6b6579 // "key"
@@ -48,7 +49,7 @@ func export_string() = 0x657870 // "exp"
 func info_hash_string() = 0x696e666f5f68617368 // "info_hash"
 func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
 func crh_labeled_extract_0salt(lbl, ikm) = 
-    crh(hpke_v1() ++ suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
+    crh(hpke_v1() ++ hpke_suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
 
 func psk_id() = (0x)
 
@@ -61,11 +62,11 @@ func key_schedule_context() =
 
 func eae_prk() = 0x6561655f70726b
 
-func lbl_ikm(lbl, ikm) = 
-    hpke_v1() ++ suite_id() ++ lbl ++ ikm
+func lbl_ikm(suite_id, lbl, ikm) = 
+    hpke_v1() ++ suite_id ++ lbl ++ ikm
 
-func lbl_info(len, lbl, info) = 
-    len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
+func lbl_info(suite_id, len, lbl, info) = 
+    len ++ hpke_v1() ++ suite_id ++ lbl ++ info
 
 func kdfkey_len() = 
     0x0020
@@ -74,15 +75,15 @@ func enckey_len() =
     0x0020
 
 func base_nonce_kdf_info() = 
-    lbl_info(enckey_len(), base_nonce_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), enckey_len(), base_nonce_string(), key_schedule_context())
 
 func key_kdf_info() =                         
-    lbl_info(enckey_len(), key_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), enckey_len(), key_string(), key_schedule_context())
 
 func export_kdf_info() = 
-    lbl_info(enckey_len(), export_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), enckey_len(), export_string(), key_schedule_context())
 
-func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
+func dh_secret_kdf_ikm(psk_) = lbl_ikm(hpke_suite_id(), secret_string(), psk_)
 
 
 func AuthEncap_dh<i>() =   
@@ -98,11 +99,11 @@ func AuthEncap_kem_context<i>() =
     dhpk(get(skS)) 
 
 func AuthEncap_honest_info<i>() = 
-    lbl_info(kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
+    lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
 
 func AuthEncap_shared_secret<i>() = 
-    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh<session i>()),
-                       lbl_info(kdfkey_len(), shared_secret_string(),
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
                        AuthEncap_kem_context<session i>()))
 
 
@@ -119,8 +120,8 @@ func AuthDecap_kem_context(eph) =
     dhpk(get(skS)) 
 
 func AuthDecap_shared_secret(eph) = 
-    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthDecap_dh(eph)),
-                       lbl_info(kdfkey_len(), shared_secret_string(),
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
 nametype hpke_corr_key_t = 
