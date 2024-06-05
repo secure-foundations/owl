@@ -2247,12 +2247,14 @@ pk_owl_skR : (config.pk_owl_skR)
             let tmp_owl_kem_context375 = {
                 owl_concat(
                     owl_concat(
-                        owl_dhpk(
-                            OwlBuf::from_slice(&self.owl_skE.as_slice()).as_slice(),
-                        ).as_slice(),
+                        OwlBuf::from_slice(&self.pk_owl_skE.as_slice()).as_slice(),
+                        // owl_dhpk(
+                        //     OwlBuf::from_slice(&self.owl_skE.as_slice()).as_slice(),
+                        // ).as_slice(),
                         owl_pkR401.as_slice(),
                     ).as_slice(),
-                    owl_dhpk(OwlBuf::from_slice(&self.owl_skS.as_slice()).as_slice()).as_slice(),
+                    // owl_dhpk(OwlBuf::from_slice(&self.owl_skS.as_slice()).as_slice()).as_slice(),
+                    OwlBuf::from_slice(&self.pk_owl_skS.as_slice()).as_slice(),
                 )
             };
             let owl_kem_context375 = OwlBuf::from_vec(tmp_owl_kem_context375);

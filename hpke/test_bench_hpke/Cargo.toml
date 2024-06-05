@@ -16,4 +16,16 @@ hex = "0.4"
 default = [] # ["nonverif-crypto"]
 nonverif-crypto = ["owl-hpke/nonverif-crypto"]
 
+[profile.release]
+debug = true
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.bench]
+debug = true
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
 

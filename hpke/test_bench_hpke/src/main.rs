@@ -1,3 +1,6 @@
+#![feature(test)]
+extern crate test;
+
 use rand::{rngs::StdRng, SeedableRng};
 use hpke::{*, aead::*, kdf::*, kem::*, setup_receiver, setup_sender};
 use owl_hpke::{*};
@@ -129,7 +132,7 @@ fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
 }
 
 
-fn basic_test() {
+fn basic_interop_test() {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
 
@@ -158,7 +161,65 @@ fn basic_test() {
     assert_eq!(plaintext, owl_plaintext);
 }
 
+#[test]
+fn test_rs_rs() {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+
+    let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
+
+    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+
+    assert_eq!(plaintext, rust_plaintext);
+}
+
+#[test]
+fn test_owl_owl() {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+
+    let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
+
+    let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+
+    assert_eq!(plaintext, owl_plaintext);
+}
+
+use test::Bencher;
+
+const PAYLOAD_SIZE: usize = 0;
+
+#[bench]
+fn bench_rust(b: &mut Bencher) {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+
+    let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
+
+    b.iter(|| {
+        let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+        let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+        test::black_box(rust_plaintext);
+    });
+}
+
+#[bench]
+fn bench_owl(b: &mut Bencher) {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+
+    let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
+
+    b.iter(|| {
+        let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
+        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+        test::black_box(owl_plaintext);
+    });
+}
+
 
 fn main() {
-    basic_test();
+    basic_interop_test();
 }
