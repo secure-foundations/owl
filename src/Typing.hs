@@ -329,7 +329,7 @@ mkStructType pth tv args ps b = do
 ensureTysMatchDepBind :: [(AExpr, Ty)] -> DepBind () -> Check ()
 ensureTysMatchDepBind [] (DPDone ()) = return ()
 ensureTysMatchDepBind ((a, t) : args) (DPVar t1 sx xk) = do
-    b <- isSubtype t t1
+    b <- isSubtype (tRefined t ".res" $ pEq (aeVar ".res") a) t1
     if b then do
          (x, k) <- unbind xk
          ensureTysMatchDepBind args $ subst x a k
@@ -499,6 +499,10 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                          normalizeProp $ subst x a p
                      PNot (Spanned _ PTrue) -> return pFalse
                      PNot (Spanned _ PFalse) -> return pTrue
+                     PNot (Spanned _ (PAnd p1 p2)) -> do
+                         np1' <- normalizeProp $ pNot p1
+                         np2' <- normalizeProp $ pNot p2
+                         return $ pOr np1' np2'
                      PNot p1 -> do
                          p' <- normalizeProp p1
                          return $ Spanned (p^.spanOf) $ PNot p'
@@ -1863,16 +1867,18 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (EAdmit) -> getOutTy ot $ tAdmit
       (EDebug (DebugCheckMatchesStruct args pth@(PRes (PDot p v)) ps)) -> do 
           argTys <- mapM inferAExpr args
-          md <- openModule p
-          case lookup v (md^.tyDefs) of 
-            Just (StructDef idf) -> do
-                sps <- getStructParams ps
-                (ixs, dp') <- unbind idf
-                assert ("Bad number of params for struct") $ length sps == length ixs
-                let dp = substs (zip ixs sps) dp'
-                ensureTysMatchDepBind (zip args argTys) dp
-                getOutTy ot $ tUnit
-            _ -> typeError "Not a struct" 
+          _ <- openArgs (zip args argTys) $ \args' -> do 
+              md <- openModule p
+              case lookup v (md^.tyDefs) of 
+                Just (StructDef idf) -> do
+                    sps <- getStructParams ps
+                    (ixs, dp') <- unbind idf
+                    assert ("Bad number of params for struct") $ length sps == length ixs
+                    let dp = substs (zip ixs sps) dp'
+                    ensureTysMatchDepBind args' dp
+                    getOutTy ot $ tUnit
+                _ -> typeError "Not a struct" 
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintPathCondition)) -> do
           pc <- view pathCondition
           logTypecheck $ owlpretty "Path condition: " <> list (map owlpretty pc)

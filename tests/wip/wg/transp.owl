@@ -51,7 +51,8 @@ def resp_recv<j@n,m>(
     resp_send) in 
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, init) in 
-        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in 
+        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in
+        pcase exists i:idx. eph == dhpk(get(E_init<i@n>)) when resp_clean<j,n_pk,n,m>[haspsk, eph] in 
         pcase n =idx n_pk in 
         case st_aead_dec(init_send, pkt, 0x, ctr) // as Option 
         // (Data<adv /\
