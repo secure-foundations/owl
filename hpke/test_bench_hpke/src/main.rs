@@ -3,6 +3,7 @@ use hpke::{*, aead::*, kdf::*, kem::*, setup_receiver, setup_sender};
 use owl_hpke::{*};
 use hex;
 
+// Some code is copied from the client-server example in rust-hpke
 
 type HPKE_Kem = X25519HkdfSha256;
 type HPKE_Aead = ChaCha20Poly1305;
@@ -40,11 +41,11 @@ fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8
     obuf
 }
 
-fn owl_recv(receiver_sk: Vec<u8>, pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     let cfg = owl_hpke::cfg_receiver {
         salt: vec![],
         owl_psk: vec![],
-        owl_skR: receiver_sk,
+        owl_skR: receiver_sk.to_vec(),
         pk_owl_skR: vec![],
         pk_owl_skE: vec![],
         pk_owl_skS: vec![],
@@ -54,12 +55,12 @@ fn owl_recv(receiver_sk: Vec<u8>, pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     let res = cfg.owl_SingleShotOpen_wrapper(&mut state, pk_skS, enc_msg);
 
     match res.unwrap().owl_or_pt {
-        owl_OpenMsg::owl_NoMsg() => panic!("No message"),
+        owl_OpenMsg::owl_NoMsg() => panic!("owl_recv failed"),
         owl_OpenMsg::owl_SomeMsg(pt) => pt.as_slice().to_vec(),
     }
 }
 
-fn rust_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
+fn rust_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut csprng = StdRng::from_entropy();
     let associated_data = b"";
 
@@ -68,8 +69,12 @@ fn rust_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
 
     // Encapsulate a key and use the resulting shared secret to encrypt a message. The AEAD context
     // is what you use to encrypt.
+    let opmode = OpModeS::Auth((
+        <HPKE_Kem as Kem>::PrivateKey::from_bytes(skS).unwrap(),
+        <HPKE_Kem as Kem>::PublicKey::from_bytes(pk_skS).unwrap(),
+    ));
     let (encapped_key, mut sender_ctx) =
-        hpke::setup_sender::<HPKE_Aead, HPKE_Kdf, HPKE_Kem, _>(&OpModeS::Base, &receiver_pk, INFO_STR, &mut csprng)
+        hpke::setup_sender::<HPKE_Aead, HPKE_Kdf, HPKE_Kem, _>(&opmode, &receiver_pk, INFO_STR, &mut csprng)
             .expect("invalid server pubkey!");
 
     // On success, seal_in_place_detached() will encrypt the plaintext in place
@@ -89,7 +94,7 @@ fn rust_send(receiver_pk: &[u8], msg: &[u8]) -> Vec<u8> {
     output
 }
 
-fn rust_recv(receiver_sk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+fn rust_recv(receiver_sk: &[u8], pk_skS: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     // "parse"
     let encapped_key = &enc_msg[0..ENCAPPED_KEY_SIZE];
     let ctxt = &enc_msg[ENCAPPED_KEY_SIZE..enc_msg.len()-TAG_SIZE];
@@ -105,15 +110,16 @@ fn rust_recv(receiver_sk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
         .expect("could not deserialize the encapsulated pubkey!");
 
     // Decapsulate and derive the shared secret. This creates a shared AEAD context.
+    let opmode = OpModeR::Auth(<HPKE_Kem as Kem>::PublicKey::from_bytes(pk_skS).unwrap());
     let mut receiver_ctx =
-        hpke::setup_receiver::<HPKE_Aead, HPKE_Kdf, HPKE_Kem>(&OpModeR::Base, &server_sk, &encapped_key, INFO_STR)
+        hpke::setup_receiver::<HPKE_Aead, HPKE_Kdf, HPKE_Kem>(&opmode, &server_sk, &encapped_key, INFO_STR)
             .expect("failed to set up receiver!");
 
     // On success, open_in_place_detached() will decrypt the ciphertext in place
     let mut ciphertext_copy = ctxt.to_vec();
     receiver_ctx
         .open_in_place_detached(&mut ciphertext_copy, associated_data, &tag)
-        .expect("invalid ciphertext!");
+        .map_err(|e| { dbg!(e); panic!("invalid ciphertext!") });
 
     // Rename for clarity. Cargo clippy thinks it's unnecessary, but I disagree
     #[allow(clippy::let_and_return)]
@@ -130,17 +136,23 @@ fn basic_test() {
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
     dbg!(hex::encode(&plaintext));
 
-    let rust_ctxt = rust_send(&receiver_pubkey, &plaintext);
+    let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
     dbg!(hex::encode(&rust_ctxt));
 
     let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &plaintext);
     dbg!(hex::encode(&owl_ctxt));
 
-    let rust_plaintext = rust_recv(&receiver_privkey, &rust_ctxt);
+    let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
     dbg!(hex::encode(&rust_plaintext));
 
-    let owl_plaintext = owl_recv(receiver_privkey, &pk_skS, &owl_ctxt);
+    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
     dbg!(hex::encode(&owl_plaintext));
+
+    let rust_decrypt_owl = rust_recv(&receiver_privkey, &pk_skS, &owl_ctxt);
+    dbg!(hex::encode(&rust_decrypt_owl));
+
+    let owl_decrypt_rust = owl_recv(&receiver_privkey, &pk_skS, &rust_ctxt);
+    dbg!(hex::encode(&owl_decrypt_rust));
 
     assert_eq!(plaintext, rust_plaintext);
     assert_eq!(plaintext, owl_plaintext);

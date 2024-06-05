@@ -154,6 +154,10 @@ macro_rules! impl_dhkem {
                     let mut buf = <SharedSecret<$kem_name> as Default>::default();
                     extract_and_expand::<$kdf>(concatted_secrets, &suite_id, kem_context, &mut buf.0)
                         .expect("shared secret is way too big");
+
+                    // #[cfg(feature="std")]
+                    // dbg!(hex::encode(&buf.0));
+
                     buf
                 } else {
                     // kem_context = encapped_key || pk_recip

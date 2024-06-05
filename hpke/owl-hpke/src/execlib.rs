@@ -2,6 +2,7 @@ use std::rc::Rc;
 pub use vstd::{modes::*, prelude::*, seq::*, string::*, slice::*};
 use crate::{speclib, *};
 use parsley::regular::builder::*;
+use hex;
 
 verus! {
 
@@ -459,6 +460,7 @@ pub exec fn owl_enc_st_aead(k: &[u8], msg: &[u8], iv: &[u8], aad: &[u8]) -> (res
     let mut iv_sized = [0u8; 12];
     let iv_len = iv_sized.len();
     iv_sized[(iv_len - iv.len())..].copy_from_slice(&iv[..]);
+    // dbg!(hex::encode(&iv_sized));
     let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv_sized[..], aad) {
         Ok(c) => c,
         Err(_e) => {
@@ -541,11 +543,14 @@ pub exec fn owl_bytes_as_counter(x: &[u8]) -> (res: usize)
     todo!("implement bytes_as_counter")
 }
 
+// HPKE requires big-endian
 #[verifier(external_body)]
-pub exec fn owl_counter_as_bytes<'a>(x: &usize) -> (res: [u8; 8])
+pub exec fn owl_counter_as_bytes<'a>(x: &usize) -> (res: [u8; 12])
     ensures res.view() == counter_as_bytes(x.view())
 {
-    let v = x.to_le_bytes();
+    let mut v = [0u8; 12];
+    let v_len = v.len();
+    v[(v_len - x.to_be_bytes().len())..].copy_from_slice(&x.to_be_bytes());
     v
 }
 

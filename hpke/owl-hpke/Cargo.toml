@@ -25,6 +25,7 @@ builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
 parsley = { git = "https://github.com/secure-foundations/parsley", branch = "main" }
+hex = "0.4"
 
 [features]
 default = [] # ["nonverif-crypto"]

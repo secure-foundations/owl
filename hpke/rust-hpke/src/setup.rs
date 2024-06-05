@@ -66,6 +66,9 @@ where
 {
     // Put together the binding context used for all KDF operations
     let suite_id = full_suite_id::<A, Kdf, Kem>();
+    
+    // #[cfg(feature="std")]
+    // dbg!(hex::encode(suite_id));
 
     // In KeySchedule(),
     //   psk_id_hash = LabeledExtract("", "psk_id_hash", psk_id)

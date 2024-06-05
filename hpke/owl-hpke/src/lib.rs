@@ -56,7 +56,7 @@ pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
 
 pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
 
-pub spec const SPEC_COUNTER_SIZE: usize = 8usize;
+pub spec const SPEC_COUNTER_SIZE: usize = 12usize;
 
 #[verifier::when_used_as_spec(SPEC_CIPHER)]
 pub exec const CIPHER: owl_aead::Mode
@@ -119,7 +119,7 @@ pub exec const COUNTER_SIZE: usize
     ensures
         COUNTER_SIZE == SPEC_COUNTER_SIZE,
 {
-    8usize
+    12usize
 }
 
 #[verifier(external_type_specification)]
@@ -839,7 +839,7 @@ pub closed spec fn shared_secret_string() -> (res: Seq<u8>) {
 
 #[verifier::opaque]
 pub closed spec fn suite_id() -> (res: Seq<u8>) {
-    seq![0x12u8, 0x34u8, ]
+    seq![0x48u8, 0x50u8, 0x4bu8, 0x45u8, 0x00u8, 0x20u8, 0x00u8, 0x01u8, 0x00u8, 0x03u8, ]
 }
 
 // ------------------------------------
@@ -2096,6 +2096,8 @@ pk_owl_skR : (config.pk_owl_skR)
                 };
                 mut_state.owl_send_counter = mut_state.owl_send_counter + 1;
             };
+            // dbg!(hex::encode(&owl_send_counter361.as_slice()));
+            // dbg!(hex::encode(&owl_base359.as_slice()));
             let tmp_owl_i363 = { owl_xor(owl_send_counter361.as_slice(), owl_base359.as_slice()) };
             let owl_i363 = OwlBuf::from_vec(tmp_owl_i363);
             (
@@ -2277,6 +2279,7 @@ pk_owl_skR : (config.pk_owl_skR)
                 { OwlBuf::another_ref(&owl_kdfval221376).subrange(0, 0 + KDFKEY_SIZE) }
             };
             let owl_res378 = { owl_shared_secret377 };
+            // dbg!(hex::encode(&owl_res378.as_slice()));
             (
                 owl_AuthEncapResult::another_ref(
                     &owl_AuthEncapResult(
@@ -2653,7 +2656,8 @@ pub fn owl_suite_id<'a>() -> (res: OwlBuf<'a>)
     reveal(suite_id);
     OwlBuf::another_ref(
         &{
-            let x = mk_vec_u8![0x12u8, 0x34u8, ];
+            let x =
+                mk_vec_u8![0x48u8, 0x50u8, 0x4bu8, 0x45u8, 0x00u8, 0x20u8, 0x00u8, 0x01u8, 0x00u8, 0x03u8, ];
             OwlBuf::from_vec(x)
         },
     )

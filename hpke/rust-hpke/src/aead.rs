@@ -1,4 +1,6 @@
 //! Traits and structs for authenticated encryption schemes
+#[cfg(feature = "std")]
+use hex;
 
 use crate::{
     kdf::{Kdf as KdfTrait, LabeledExpand, SimpleHkdf},
@@ -106,6 +108,12 @@ fn increment_seq(seq: &Seq) -> Option<Seq> {
 /// Derives a nonce from the base nonce and a "sequence number". The sequence number is treated as
 /// a big-endian integer with length equal to the nonce length.
 fn mix_nonce<A: Aead>(base_nonce: &AeadNonce<A>, seq: &Seq) -> AeadNonce<A> {
+    // #[cfg(feature = "std")]
+    // dbg!(hex::encode(&base_nonce.0));
+    // #[cfg(feature = "std")]
+    // dbg!(hex::encode(seq.0.to_be_bytes()));
+
+
     // Write `seq` in big-endian order into a byte buffer that's the size of a nonce
     let mut seq_buf = AeadNonce::<A>::default();
     // We just write to the last seq_size bytes. This is necessary because our AEAD nonces (>= 96
@@ -287,6 +295,10 @@ impl<A: Aead, Kdf: KdfTrait, Kem: KemTrait> AeadCtxR<A, Kdf, Kem> {
         } else {
             // Compute the nonce and do the encryption in place
             let nonce = mix_nonce::<A>(&self.0.base_nonce, &self.0.seq);
+            
+            // #[cfg(feature = "std")]
+            // dbg!(hex::encode(&nonce.0));
+            
             let decrypt_res = self
                 .0
                 .encryptor
@@ -400,6 +412,10 @@ impl<A: Aead, Kdf: KdfTrait, Kem: KemTrait> AeadCtxS<A, Kdf, Kem> {
         } else {
             // Compute the nonce and do the encryption in place
             let nonce = mix_nonce::<A>(&self.0.base_nonce, &self.0.seq);
+            
+            // #[cfg(feature = "std")]
+            // dbg!(hex::encode(&nonce.0));
+
             let tag = self
                 .0
                 .encryptor
