@@ -1,0 +1,73 @@
+[package]
+name = "hpke"
+repository = "https://github.com/rozbb/rust-hpke"
+documentation = "https://docs.rs/rust-hpke"
+description = "An implementation of the HPKE hybrid encryption standard (RFC 9180) in pure Rust"
+readme = "README.md"
+version = "0.11.0"
+authors = ["Michael Rosenberg <michael@mrosenberg.pub>"]
+edition = "2021"
+license = "MIT/Apache-2.0"
+keywords = ["cryptography", "crypto", "key-exchange", "encryption", "aead"]
+categories = ["cryptography", "no-std"]
+
+[features]
+# "p256" enables the use of ECDH-NIST-P256 as a KEM
+# "p384" enables the use of ECDH-NIST-P384 as a KEM
+# "x25519" enables the use of the X25519 as a KEM
+default = ["alloc", "p256", "x25519"]
+x25519 = ["dep:x25519-dalek"]
+p384 = ["dep:p384"]
+p256 = ["dep:p256"]
+p521 = ["dep:p521"]
+# Include allocating methods like open() and seal()
+alloc = []
+# Includes an implementation of `std::error::Error` for `HpkeError`. Also does what `alloc` does.
+std = []
+
+[dependencies]
+aead = "0.5"
+aes-gcm = "0.10"
+byteorder = { version = "1.4", default-features = false }
+chacha20poly1305 = "0.10"
+generic-array = { version = "0.14", default-features = false }
+digest = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+rand_core = { version = "0.6", default-features = false }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"], optional = true}
+p384 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"], optional = true}
+p521 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"], optional = true}
+sha2 = { version = "0.10", default-features = false }
+subtle = { version = "2.5", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"], optional = true }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+hex = "0.4"
+hex-literal = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rand = { version = "0.8", default-features = false, features = ["getrandom", "std_rng"] }
+
+[[example]]
+name = "client_server"
+required-features = ["x25519"]
+
+[[example]]
+name = "agility"
+required-features = ["p256", "p384", "p521", "x25519"]
+
+# Tell docs.rs to build docs with `--all-features` and `--cfg docsrs` (for nightly docs features)
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# Criteron benches
+[[bench]]
+name = "benches"
+harness = false
+
+[lib]
+bench = false

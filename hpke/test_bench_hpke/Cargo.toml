@@ -1,0 +1,18 @@
+[package]
+name = "test_bench_hpke"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+owl-hpke = { path = "../owl-hpke" }
+hpke = { path = "../rust-hpke" }
+rand = { version = "0.8", features = ["getrandom", "std_rng"] }
+
+
+[features]
+default = [] # ["nonverif-crypto"]
+nonverif-crypto = ["owl-hpke/nonverif-crypto"]
+
+
