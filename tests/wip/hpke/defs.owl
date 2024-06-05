@@ -74,8 +74,12 @@ func kdfkey_len() =
 func enckey_len() = 
     0x0020
 
+func nonce_len() = 
+    0x000c
+
+
 func base_nonce_kdf_info() = 
-    lbl_info(hpke_suite_id(), enckey_len(), base_nonce_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), nonce_len(), base_nonce_string(), key_schedule_context())
 
 func key_kdf_info() =                         
     lbl_info(hpke_suite_id(), enckey_len(), key_string(), key_schedule_context())
