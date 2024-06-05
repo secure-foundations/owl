@@ -1,0 +1,272 @@
+// set_option ":rlimit" "65000"
+/*
+ * Excerpt from Squirrel SSH:
+
+        We refer to P and S as the two processes of ssh-forward-part1-comp.sp
+        In this protocol,
+            - PFA is a process which first runs P, and then starts a forwarded agent
+            process, which accepts to sign queries received on the secure channel
+            established through P
+            - PDIS is a protocol which first runs S, and then can run P on the distant
+            server. When P while require a signature, it will request it on the channel
+            established by S, to contact some forwarded agent.
+            - SDIS is the server that will communicated with P run by PDIS.
+
+        PFA <-> PDIS : SSH key exchange, deriving an ideal key k11.
+
+        PDIS -> SDIS : g^a
+        SDIS-> PDIS : g^b, pkS, sign(h(g^a,g^b, g^ab),skS) )
+        PDIS -> PFA : aenc(<"sign request",h(g^a,g^b, g^ab)>,k11 )
+        PFA -> PDIS : aenc(<"sign answer",sign(h(g^a,g^b, g^ab),skP)>,k11 )
+        PDIS -> SDIS : aenc( sign(g(g^a,g^b,g^ab),skP) , g^ab)
+ */
+
+locality PFA  // forwarding agent
+locality PDIS // local
+locality SDIS // remote
+
+enum sign_request_response {
+    | _req Data<static>
+    | _res Data<adv>
+}
+
+name a : DH @ PFA
+name b : DH @ PDIS
+name b1 : DH @ PDIS
+name c : DH @ SDIS
+
+enum dhpk_b {
+    | _comm_with_pfa dhpk(b)
+    | _comm_with_sdis dhpk(b1)
+}
+
+enum signed_by_PFA {
+    | _signed_by_PFA_g_pow_a dhpk(a)
+    | _signed_by_PFA_hash Data<adv>
+}
+
+name skPFA  : sigkey (signed_by_PFA) @ PFA  // signing g^a or sign_request
+corr_group [a], [skPFA]
+// name skPFA  : sigkey (dhpk(a)) @ PFA  // g^a
+name skPDIS : sigkey (dhpk_b) @ PDIS // either g^b or g^b1
+corr_group [skPDIS], [b], [b1]
+
+name skSDIS  : sigkey (dhpk(c)) @ SDIS  // g^a1
+corr_group [skSDIS], [c]
+
+odh l1:
+    b, a -> {salt info.
+        (info == 0x01) -> enckey sign_request_response
+    }
+
+odh l2:
+    b1, c -> {salt info.
+        (info == 0x02) -> enckey Data<adv>
+    }
+
+struct pfa_msg {
+    _pfa1: dhpk(a),
+    _pfa2: Data<adv> ||signature||
+}
+
+struct pdis_msg1 {
+    _pdis1_1: dhpk(b),
+    _pdis2_1: Data<adv> ||signature||
+}
+// can just use an enum in the above struct instead of two structs
+struct pdis_msg2 {
+    _pdis1_2: dhpk(b1),
+    _pdis2_2: Data<adv> ||signature|| 
+}
+
+struct sdis_msg {
+    _sdis1: dhpk(c),
+    _sdis2: Data<adv> ||signature||
+}
+
+def PFA_FW (gb : Ghost, k11: 
+    if (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a) \/ corr(b)) 
+    then Data<adv> else Name(KDF<enckey;0;enckey sign_request_response>(0x,
+    dh_combine(dhpk(get(b)), get(a)), 0x01))) @ PFA 
+: Unit =
+    pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
+    pcase (corr(a) \/ corr(b)) in
+    input inp in // from PDIS (actual non-KE)
+    case adec(k11, inp) as Option sign_request_response {
+        | None => ()
+        | Some m' =>
+            case m' as sign_request_response {
+            | _res _ => ()
+            | _req hh =>
+                let signed = sign(get(skPFA), _signed_by_PFA_hash(hh)) in
+                let msg_to_send_PDIS = aenc(k11, _res(_res(signed))) in
+                let _ = output msg_to_send_PDIS to endpoint(PDIS) in ()
+            otherwise => ()
+            }
+        otherwise => ()
+    }
+    
+
+    
+
+def PDIS_actual(gb : Ghost, 
+    k11: 
+        if (corr(skPFA) /\ gb != dh_combine(dhpk(get(a)), get(b))) \/ (corr(a)
+            \/ corr(b)) 
+        then Data<adv> else 
+     Name(KDF<enckey;0;enckey sign_request_response>(0x,
+    dh_combine(dhpk(get(b)), get(a)), 0x01))) @ PDIS
+: Unit =
+    pcase (sec(a) /\ sec(b)) in 
+    let g_pow_b1 = dhpk(get(b1)) in
+    let signed_g_pow_b1 = sign(get(skPDIS), _comm_with_sdis(g_pow_b1)) in
+    let _ = output pdis_msg2(g_pow_b1, signed_g_pow_b1) to endpoint(SDIS) in
+    
+    input inp in
+    let vkSDIS = get_vk(skSDIS) in
+    corr_case skSDIS in
+    parse inp as sdis_msg(sdis1, sdis2) in 
+    case vrfy(vkSDIS, sdis1, sdis2) {
+        | None => ()
+        | Some g_pow_c =>
+            if !is_group_elem(g_pow_c) then () else {
+                let ss  = dh_combine(g_pow_c, get(b1)) in
+                pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
+                corr_case b1 in 
+                corr_case c in
+                let k = kdf<; odh l2[0]; enckey; 0>(0x, ss, 0x02) in
+                
+                // request PFA to sign
+                let request = _req(0x01) in // TODO: 0x01 is the hash
+                let enc_request = aenc(k11, request) in
+                let _ = output enc_request to endpoint(PFA) in
+
+                // get its input
+                input inp2 in
+                case adec(k11, inp2) as Option sign_request_response {
+                    | None => ()
+                    | Some m' =>
+                        case m' as sign_request_response {
+                            | _req _ => ()
+                            | _res h2 =>
+                                // enc that with k and send to SDIS
+                                let msg_to_send_SDIS = aenc(k, h2) in // _m2(r) == "sign answer"
+                                let _ = output msg_to_send_SDIS to endpoint(SDIS) in
+                                ()
+                            otherwise => ()
+                        }
+                    otherwise => ()
+                }                
+            }                
+                
+    }                
+    otherwise ()
+
+
+def SDIS_actual () @ SDIS
+: Unit =
+    let g_pow_c = dhpk(get(c)) in
+    let signed_g_pow_c = sign(get(skSDIS), g_pow_c) in
+    let _ = output sdis_msg(g_pow_c, signed_g_pow_c) to endpoint(PDIS) in
+
+    input inp in
+    let vkPDIS = get_vk(skPDIS) in
+    corr_case skPDIS in
+    parse inp as pdis_msg2(pdis1_2, pdis2_2) in 
+    case vrfy(vkPDIS, pdis1_2, pdis2_2) {
+        | None => ()
+        | Some m =>
+            case m as dhpk_b {
+                | _comm_with_pfa _ => ()
+                | _comm_with_sdis g_pow_b1 =>
+                    if !is_group_elem(g_pow_b1) then ()
+                    else {
+                        let ss   = dh_combine(g_pow_b1, get(c)) in
+                        pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
+                        corr_case c in 
+                        corr_case b1 in 
+                        let k    = kdf<;odh l2[0];enckey;0>(0x, ss, 0x02) in 
+                        
+                        input inp2 in
+                        corr_case nameOf(k) in 
+                        case adec(k, inp2) /* as Option (Data<adv>) */ {
+                            | None => ()
+                            | Some m'' =>
+                                // m'' is the signature which was forwarded using the agent from the client
+                                ()
+                            /* otherwise => () */
+                        }
+                    }
+                otherwise => ()
+            }
+    }
+    otherwise ()
+
+
+def PFA_KE () @ PFA
+: Unit =
+    let g_pow_a = dhpk(get(a)) in
+    let signed_g_pow_a = sign(get(skPFA), _signed_by_PFA_g_pow_a(g_pow_a)) in
+    let _ = output pfa_msg(g_pow_a, signed_g_pow_a) to endpoint(PDIS) in
+
+    input inp in // signed g_pow_b
+    let vkPDIS = get_vk(skPDIS) in
+    corr_case skPDIS in
+    parse inp as pdis_msg1(pdis1_1, pdis2_1) in      
+    case vrfy(vkPDIS, pdis1_1, pdis2_1) {
+        | None => ()
+        | Some m =>
+            case m as dhpk_b {
+            | _comm_with_sdis _ => ()
+            | _comm_with_pfa g_pow_b =>
+                corr_case a in 
+                corr_case b in 
+                if !is_group_elem(g_pow_b) then () else {
+                    let ss     = dh_combine(g_pow_b, get(a)) in
+                    pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                    let k11 
+                        = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
+                    call PFA_FW(ss, k11)
+                }
+            otherwise => ()
+            }
+    }
+    otherwise ()
+
+
+
+def PDIS_KE () @ PDIS
+: Unit =
+    let g_pow_b = dhpk(get(b)) in
+    let signed_g_pow_b = sign(get(skPDIS), _comm_with_pfa(g_pow_b)) in
+    let _ = output pdis_msg1(g_pow_b, signed_g_pow_b) to endpoint(PFA) in
+
+    input inp in // from PFA (KE), signed g_pow_a
+    let vkPFA = get_vk(skPFA) in
+    corr_case skPFA in
+    parse inp as pfa_msg(pfa1, pfa2) in 
+    case vrfy(vkPFA, pfa1, pfa2) {
+        | None => ()
+        | Some m =>
+            case m as signed_by_PFA {
+                | _signed_by_PFA_hash _ => ()
+                | _signed_by_PFA_g_pow_a g_pow_a =>
+                    corr_case a in
+                    corr_case b in
+                    if !is_group_elem(g_pow_a) then () else {
+                        let ss   = dh_combine(g_pow_a, get(b)) in
+                        pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
+                        let k11 = kdf<; odh l1[0]; enckey; 0>(0x, ss, 0x01) in
+                        let _ = output 0x to endpoint(SDIS) in // TODO: The hash stuff
+                        call PDIS_actual(ss, k11)
+                    }
+                otherwise => ()
+            }
+    }
+    otherwise ()
+
+
+// Entry points
+def PFA_main() @ PFA : Unit = call PFA_KE()
+def PDIS_main() @ PDIS : Unit = call PDIS_KE()
+def SDIS_main() @ SDIS : Unit = call SDIS_actual()

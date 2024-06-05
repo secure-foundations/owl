@@ -1,0 +1,238 @@
+/**
+ * Reference: https://en.wikipedia.org/wiki/Yahalom_(protocol)
+ *
+ * A -> B: A, NA
+ * B -> S: B, {A, NA, NB}KB
+ * S -> A: {B, KAB, NA, NB}KA, {A, KAB}KB
+ * A -> B: {A, KAB}KB, {NB}KAB
+ */
+
+locality Alice
+locality Bob
+locality AS
+
+name NA<i> : nonce @ Alice
+name NB<i> : nonce @ Bob
+corr adv ==> /\_i [NB<i>]
+
+// name KAB<i> : enckey (exists j. Name(NB<j>)) @ AS
+name KAB<i> : enckey (Data<adv>) @ AS
+
+// func check_nonce
+//     arity 2
+
+// func check_username
+//     arity 2    
+
+struct kA_message<i> {
+    _B_kA   : Data<adv> ||nonce||,
+    _kAB_kA : Name(KAB<i>),
+    _nA_kA  : Data<adv> ||nonce||,
+    // _nB_kA  : exists j. Name(NB<j>)
+    // _nB_kA  : if sec(KB) then (exists j. Name(NB<j>)) else Data<adv> // have to change the type for KAB also to the same thing if this line is uncommented
+    _nB_kA  : Data<adv> ||nonce||
+}
+
+name KA : enckey (exists i. kA_message<idx i>) @ Alice, AS
+
+struct kB_message_1<i> {
+    _A_kB1  : Data<adv> ||nonce||,
+    _nA_kB1 : Data<adv> ||nonce||,
+    _nB_kB1 : Name(NB<i>)
+}
+
+struct kB_message_2<i, j> {
+    _A_kB2   : Data<adv> ||nonce||,
+    _kAB_kB2 : Name(KAB<j>),
+    _nB_kB2  : Name(NB<i>)
+}
+
+enum kB_messages<i, j> {
+    | mB1 kB_message_1<idx i>        // message 2
+    | mB2 kB_message_2<idx i, idx j> // message 3
+}
+
+enum encd_by_kB {
+    | e1 Data<adv> 
+    | e2 Data<adv> 
+}
+
+name KB : enckey (exists i. exists j. kB_messages<idx i, idx j>) @ Bob, AS
+
+struct msg1_AtoB {
+    msg1_A  : Data<adv> ||nonce||,
+    msg1_nA : Data<adv> ||nonce||
+}
+
+struct msg2_BtoS {
+    msg2_B : Data<adv> ||nonce||,
+    msg2_x : encd_by_kB
+}
+
+struct msg3_StoA {
+    msg3_tkt1 : Data<adv> |cipherlen((3 * |nonce|) + |enckey|)|,
+    msg3_tkt2 : encd_by_kB
+}
+
+struct msg4_AtoB {
+    msg4_x   : Data<adv> |cipherlen(|nonce|)|, 
+    msg4_tkt : encd_by_kB
+}
+
+enum alice_result<i, j> {
+    | alice_Some Name(KAB<j>)
+    | alice_None
+}
+
+name Alice_username : nonce @ Alice
+
+enum bob_result<i, j> {
+    | bob_Some Name(KAB<j>)
+    | bob_None
+}
+
+name Bob_username : nonce @ Bob
+
+def Alice_main<i> () @ Alice
+    requires ([NA<i>] /\ [Alice_username] <= adv)
+: if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
+    let A = get(Alice_username) in
+    let nA = get(NA<i>) in
+    let kA = get(KA) in
+    corr_case KA in
+
+    let _ = output (msg1_AtoB(A, nA)) to endpoint(Bob) in
+
+    input inp1 in
+    parse inp1 as msg3_StoA(tkt1, tkt2) in {
+        case adec(kA, tkt1)  {
+            | None => 
+                unpack j, _ = () in
+                pack<j>(alice_None<idx i, idx j>())
+            | Some res =>
+                unpack j, res' = res in
+                parse res' as kA_message<idx j>(B', kAB', nA', nB') in {
+                    // let encm =  aenc(kAB', nB_packed') in
+                    let encm = aenc(kAB', nB') in
+                    // case tkt2' 
+                    // | e1 _ => pack<j>(alice_None<idx i, idx j>())
+                    // | e2 tkt2 =>
+                    let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
+                    pack<j>(alice_Some<idx i, idx j>(kAB'))
+                }
+                otherwise pack<j>(alice_None<idx i, idx j>()) 
+        }
+    }
+    otherwise {
+        unpack j, _ = () in
+        pack<j>(alice_None<idx i, idx j>())
+    }
+
+                
+
+
+
+def Bob_main<i> () @ Bob
+    requires ([Bob_username] <= adv)
+: if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv> =
+    let B = get(Bob_username) in
+    let nB = get(NB<i>) in
+    let kB = get(KB) in
+    corr_case KB in
+
+    input inp in
+
+    unpack j_, _ = () in
+    parse inp as msg1_AtoB(A', nA') in {
+    let temp_packed = pack<i>(pack<j_>(mB1<idx i, idx j_>(kB_message_1<idx i>(A', nA', nB)))) in
+
+    let encm = aenc(kB, temp_packed) in
+    let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
+    
+    input inp2 in
+    parse inp2 as msg4_AtoB(x, tkt') in {
+        case tkt' as encd_by_kB  {
+        | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
+        | e2 tkt =>
+                case adec(kB, tkt) {
+                | None => pack<j_>(bob_None<idx i, idx j_>())
+                | Some res =>
+                    unpack i', res' = res in
+                    unpack j', res'' = res' in
+                    case res'' as kB_messages<idx i', idx j'> {
+                        | mB1 _ => pack<j'>(bob_None<idx i, idx j'>())
+                        | mB2 msg2 =>
+                            parse msg2 as kB_message_2<idx i', idx j'>(A'', kAB', nB') in {
+                                if checknonce(nB', nB) then 
+                                    assert(sec(KB) ==> (i =idx i'));
+                                    corr_case KAB<j'> in
+                                    case adec(kAB', x) {
+                                        | None => pack<j'>(bob_None<idx i, idx j'>())
+                                        | Some res2 =>
+                                            // unpack j'', nB' = res2 in
+                                            let nB' = res2 in
+                                            if checknonce(nB', nB) then 
+                                                pack<j'>(bob_Some<idx i, idx j'>(kAB'))
+                                            else
+                                                pack<j'>(bob_None<idx i, idx j'>())
+                                        }
+                                else
+                                    pack<j'>(bob_None<idx i, idx j'>())
+                            }
+                            otherwise pack<j'>(bob_None<idx i, idx j'>())
+                        otherwise => pack<j_>(bob_None<idx i, idx j_>())
+                    }
+                }
+            otherwise => pack<j_>(bob_None<idx i, idx j_>())
+        }
+    }
+    otherwise pack<j_>(bob_None<idx i, idx j_>())
+
+    }
+    otherwise pack<j_>(bob_None<idx i, idx j_>())
+
+def AS_main<i> () @ AS
+: Unit =
+    let kAB = get(KAB<i>) in
+    let kA = get(KA) in
+    let kB = get(KB) in
+    corr_case KB in
+
+    input inp in
+
+    parse inp as msg2_BtoS(B', x') in {
+        case x' as encd_by_kB {
+            | e2 _ => ()
+            | e1 x'' => 
+                case adec(kB, x'') {
+                    | None => ()
+                    | Some res =>
+                        unpack i1, res' = res in
+                        unpack j1, res'' = res' in
+
+                        case res'' as kB_messages<idx i1, idx j1> {
+                            | mB1 msg1 =>
+                                parse msg1 as kB_message_1<idx i1>(A', nA', nB') in {
+                                        // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
+                                        let m = pack<i>(kA_message<idx i>(B', kAB, nA', nB')) in
+                                        let encmA = aenc(kA, m) in
+                                        let m = pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB')))) in 
+                                        let encmB = aenc(kB, m) in 
+                                        let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
+                                        ()
+                                }
+                                otherwise ()
+                            | mB2 _ => ()
+                            otherwise => ()
+                        }
+                }
+            otherwise => ()
+        }
+    }
+    otherwise ()
+
+// TODO: Strengthen spec for all servers also? if sec(KA, KB) then valid key output    
+// Cannot really prove something meaningful if kab encs Data<adv>
+//   This protocol finds the nB fix issue
+//   This protocol introduces a key dependency : KB -> KA
+//   Maybe make KB: enckey (some_enum) where enum could be adv/static?

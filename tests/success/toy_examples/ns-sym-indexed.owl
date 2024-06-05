@@ -1,0 +1,184 @@
+/*
+ * Reference: https://en.wikipedia.org/wiki/Needham%E2%80%93Schroeder_protocol
+ *
+ * Original Protocol:
+ * A -> S: A, B, NA
+ * S -> A: {NA, KAB, B, {KAB, A}KB}KA
+ * A -> B: {KAB, A}KB
+ * B -> A: {NB}KAB
+ * A -> B: {NB - 1}KAB
+ *
+ */
+
+locality Alice
+locality Bob
+locality AS
+
+name NA<i> : nonce @ Alice
+name NB<i> : nonce @ Bob
+
+// ************************************************************************
+// Data encrypted using the shared key KAB ********************************
+enum KABEnum<i> { 
+    | nonceB Name(NB<i>)
+    | Other Data<adv>
+}
+
+name KAB<i> : enckey (exists j. KABEnum<idx j>) @ AS
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using B's key KB ****************************************
+struct kB_message {
+    _kAB1: (exists i. Name(KAB<i>)),
+    _A   : Data<adv> ||nonce||
+}
+
+name KB : enckey kB_message @ Bob, AS
+// ************************************************************************
+
+
+// ************************************************************************
+// Data encrypted using A's key KA ****************************************
+struct kA_message {
+    _nA  : Data<adv> ||nonce||,
+    _kAB2: (exists i. Name(KAB<i>)),
+    _B   : Data<adv> ||nonce||,
+    // _x   : Data<adv> |cipherlen(plus(|enckey|, zero()))| // missing username length
+    _x   : Data<adv> |cipherlen(|enckey| + |nonce|)|
+}
+
+name KA : enckey kA_message @ Alice, AS
+// ************************************************************************
+
+
+// ************************************************************************
+// The messages exchanged by the parties **********************************
+struct msg1_AtoS {
+    msg1_A  : Data<adv> ||nonce||,
+    msg1_B  : Data<adv> ||nonce||,
+    msg1_nA : Data<adv> ||nonce||
+}
+// The other messages are all just single values and do not require structs
+// ************************************************************************
+
+
+// ************************************************************************
+// Helper functions *******************************************************
+// func some_func
+//     arity 1
+
+// func check_nonce
+//     arity 2
+// ************************************************************************
+
+
+// ************************************************************************
+// Alice's result and operation *******************************************
+enum alice_result<i, j> {
+    | alice_Some Name(KAB<j>)
+    | alice_None
+}
+
+name A_username : nonce @ Alice
+name B_username : nonce @ Alice
+
+def Alice_main<i> (
+) @ Alice
+    requires ([NA<i>] /\ [A_username] /\ [B_username] <= adv)
+: if sec(KA) then (exists j. alice_result<idx i, idx j>) else Data<adv> =
+    let A = get(A_username) in
+    let B = get(B_username) in
+    let kA:Name(KA) = get(KA) in
+    let nA:Name(NA<i>) = get(NA<i>) in
+    let _ = output msg1_AtoS(A, B, nA) to endpoint(AS) in
+
+    corr_case KA in
+    input inp in
+    case adec(kA, inp) { 
+        | None => 
+            unpack j, _ = () in // arbitrary j
+            pack<j>(alice_None<idx i, idx j>())
+        | Some res =>
+            parse res as kA_message(nA', kAB, B', m1) in 
+            unpack j, kAB' = kAB in
+            corr_case KAB<j> in
+
+            let _ = output m1 to endpoint(Bob) in
+
+            input inp2 in
+            assert (corr(KA) ==> corr(KAB<j>));
+            case adec(kAB', inp2) {
+                | None => pack<j>(alice_None<idx i, idx j>())
+                | Some res2 =>
+                    let nB': if sec(KAB<j>) then (exists jj. KABEnum<idx jj>) else Data<adv> = res2 in
+                    let encm = aenc(kAB', nB') in // some_func(nB')
+                    let _ = output encm to endpoint(Bob) in
+                    pack<j>(alice_Some<idx i, idx j>(kAB'))
+            }
+            otherwise {
+                unpack j, _ = () in // arbitrary j
+                pack<j>(alice_None<idx i, idx j>())
+            }
+        }
+// ************************************************************************
+
+
+// ************************************************************************
+// Server's operation *****************************************************
+def AS_main<i> () @ AS
+: Unit =
+    input inp in
+    parse inp as msg1_AtoS(A', B', nA') in 
+        let kAB = get(KAB<i>) in
+        let kAB' = pack<i>(kAB) in
+        let kA  = get(KA) in
+        let kB  = get(KB) in
+        let encm1 = aenc(kB, kB_message(kAB', A')) in
+        let encm2 = aenc(kA, kA_message(nA', kAB', B', encm1)) in
+        let _ = output encm2 to endpoint(Alice) in ()
+    otherwise let _ = output 0 to endpoint(Alice) in ()
+// ************************************************************************
+
+
+// ************************************************************************
+// Bob's result and operation *********************************************
+enum bob_result<i, j> {
+    | bob_Some Name(KAB<j>)
+    | bob_None
+}
+
+def Bob_main<i> () @ Bob
+: if sec(KB) then (exists j. bob_result<idx i, idx j>) else Data<adv> =
+    let kB : Name(KB) = get(KB) in
+    corr_case KB in
+    input inp in 
+    case adec(kB, inp) {
+        | None => 
+          unpack j, _ = () in // arbitrary j
+          pack<j>(bob_None<idx i, idx j>())
+        | Some res =>
+            parse res as kB_message(kAB, A') in
+            unpack j, kAB' = kAB in
+            corr_case KAB<j> in 
+
+            let m = pack<i>(nonceB<idx i>(get(NB<i>))) in 
+            let encm = aenc(kAB', m) in 
+            let _ = output encm to endpoint(Alice) in
+
+            input inp2 in
+            case adec(kAB', inp2) {
+                | None => pack<j>(bob_None<idx i, idx j>())
+                | Some res2 =>
+                    // let _ = check_nonce(res2, nB) in
+                    assert (corr(KB) ==> corr(KAB<j>));
+                    let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
+                    pack<j>(bob_Some<idx i, idx j>(m))
+            }
+        otherwise {
+          unpack j, _ = () in // arbitrary j
+          pack<j>(bob_None<idx i, idx j>())
+        }
+    }
+// ************************************************************************

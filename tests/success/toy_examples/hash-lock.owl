@@ -1,0 +1,102 @@
+/*
+ * Hash Lock (with indices - index i corresponds to tag i)
+ * Paper: Defining Strong Privacy for RFID
+ *
+ * Protocol:
+ * ---------
+ * R -> T : nR
+ * T -> R : < nT, h(<nR,nT>,kT) >
+ * R -> T : ok
+ */
+
+locality T: 1
+locality R
+
+name NR : nonce @ R
+corr adv ==> [NR]
+name NT<@i> : nonce @ T<i>
+// name username<j> : nonce @ T
+corr adv ==> /\_i [NT<@i>]
+
+struct nonces<i> {
+    _nR : Data<adv> ||nonce||,
+    _nT1: Name(NT<@i>)
+}
+
+def T_main<@i> @ T<i>
+
+// name K<i> : mackey (t:Name(NT<i>){happened(tag<i>())}) @ T, R
+name K<@i> : mackey (t:nonces<idx i>{happened(T_main<i>())}) @ T<i>, R
+
+struct s {
+    _nT2 : Data<adv> ||nonce||,
+    _m  : Data<adv> ||mackey||
+    // _u : Data<adv>
+}
+
+table keys : (exists i. Name(K<@i>)) @ R
+
+def T_main<@i> () @ T<i>
+: Unit =
+    let _ = output 0 to endpoint(R) in
+    input inp in
+    if eq(length(inp), |nonce|) then
+        let inp':Data<adv> ||nonce|| = inp in
+        let nT = get(NT<@i>) in
+        let msg_to_mac = nonces<idx i>(inp', nT) in
+        let m = mac(get(K<@i>), msg_to_mac) in // include the username here (in mac and PT)
+        output s(get(NT<@i>), m) to endpoint(R)
+    else ()
+
+enum reader_response {
+    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | No
+}
+
+def R_main () @ R
+: reader_response =
+    let nR = get(NR) in
+    input _, ev_t in
+    let _ = output nR to ev_t in
+
+    input inp in
+
+    
+    parse inp as s(nT, mc) in 
+    let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
+
+    case x {
+        | None => No()
+        | Some k_packed =>
+            unpack j, k = k_packed in
+
+            corr_case K<@j> in
+            let msg_to_verify = nonces<idx j>(nR, nT) in
+            case mac_vrfy(k, msg_to_verify, mc) {
+                | None => No()
+                | Some m =>
+                    // len(m) == plus(..)
+                    parse m as nonces<idx j>(nR, mm) in 
+                        let mmm: if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())}  else Data<adv> ||nonce|| = mm in
+                        let m':if sec(K<@j>) then x:Name(NT<@j>){happened(T_main<@j>())} 
+                            else (x:(Data<adv> ||nonce||){sec(K<@j>) ==> ((x == get(NT<@j>)) /\ happened(T_main<@j>()))}) 
+                            = mmm in
+                        
+                        // Checking if m is of type Name(NT<j>) as expected
+                        //   and if m == x - these two lines can be removed
+                        // let m'': if sec(K<j>) then
+                        // x:Name(NT<j>){happened(tag<j>())} else
+                        // (x:Data<adv>{sec(K<j>) ==> ((x == get(NT<j>)) /\ happened(tag<j>()))}) = m' in
+                        // assert(sec(K<j>) ==> m' == nT);                            
+                        let res : (exists i. (x:(Data<adv> ||nonce||){sec(K<@i>)
+                        ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+                            = pack<j>(m') in 
+                        // assert(eq(length(res), |nonce|));
+                        Ok(res)
+                    otherwise No()
+            }
+    }
+    otherwise No()
+
+
