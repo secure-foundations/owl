@@ -11,9 +11,9 @@ struct AuthEncapResult<i> {
     aer_pke : dhpk(skE<i>)
 }
 
-def AuthEncap<i>(pkR : dhpk(skR)) @ sender : AuthEncapResult<session i> = 
+def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @ sender : AuthEncapResult<session i> = 
     let dh = dh_combine(pkR, get(skE<i>)) ++ dh_combine(pkR, get(skS))  in 
-    let kem_context = dhpk(get(skE<i>)) ++ pkR ++ dhpk(get(skS)) in
+    let kem_context = dhpk_skE ++ pkR ++ dhpk_skS in
     let shared_secret = kdf<; odh ss[0], odh se<i>[0];kdfkey;0>(0x,
     lbl_ikm(kem_suite_id(), eae_prk(), dh), lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
     kem_context)) in
@@ -60,8 +60,8 @@ def Seal<i>(ctxt : ContextS<session i>, x : Data<[channel_secret] /\ adv, |adv|>
     call sent_message(x);
     st_aead_enc<send_counter<i>, pattern i. xor(i, base)>(sk, x, 0x) 
 
-def SingleShotSeal<i>(pkR : dhpk(skR), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
-    let aer = call AuthEncap<i>(pkR) in
+def SingleShotSeal<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
+    let aer = call AuthEncap<i>(pkR, dhpk_skE, dhpk_skS) in
     let context = call KeyScheduleS<i>(aer) in 
     let c = call Seal<i>(context, x) in 
     parse aer as AuthEncapResult<session i>(_, pk) in 
