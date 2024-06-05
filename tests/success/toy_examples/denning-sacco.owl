@@ -39,6 +39,8 @@ name skS : sigkey signed_by_pkS @ S
 
 name A_username : nonce @ A, B
 name B_username : nonce @ A, B
+corr adv ==> [A_username]
+corr adv ==> [B_username]
 
 def S_main () @ S : Unit =
     let sigK = get(skS) in
@@ -57,8 +59,6 @@ enum A_result {
     | A_No
 }
 
-corr adv ==> [A_username]
-corr adv ==> [B_username]
 
 def A_main() @ A 
 : A_result =
