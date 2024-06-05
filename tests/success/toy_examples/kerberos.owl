@@ -142,7 +142,7 @@ struct client_to_service_msg {
 
 struct pkinit_client_to_authserver_msg {
     _pkinit_client_to_authserver_msg_1 : Data<adv> ||signature||,
-    _pkinit_client_to_authserver_msg_2 : Data<adv> ||sigkey||,
+    _pkinit_client_to_authserver_msg_2 : Data<adv> ||vk||,
     _pkinit_client_to_authserver_msg_3 : Data<adv> ||signature||,
     _pkinit_client_to_authserver_msg_4 : Data<adv> ||nonce||
 }

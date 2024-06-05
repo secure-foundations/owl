@@ -141,7 +141,7 @@ def AS_main<i> () @ AS
         let encm1 = aenc(kB, kB_message(kAB', A')) in
         let encm2 = aenc(kA, kA_message(nA', kAB', B', encm1)) in
         let _ = output encm2 to endpoint(Alice) in ()
-    otherwise let _ = output 0 to endpoint(Alice) in ()
+    otherwise let _ = output 0x to endpoint(Alice) in ()
 // ************************************************************************
 
 

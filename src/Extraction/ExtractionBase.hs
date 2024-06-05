@@ -291,6 +291,11 @@ concreteLength (CUsizeConst s) = do
         "MACLEN_SIZE"    -> return 16
         "COUNTER_SIZE"   -> return 8
         "SIGNATURE_SIZE" -> return 64
+        -- The below are for compatibility with old Owl and probably should be updated
+        "VK_SIZE"        -> return 1219
+        "SIGKEY_SIZE"    -> return 1219
+        "PKEKEY_SIZE"    -> return 1219
+        "PKE_PK_SIZE"    -> return 1219
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
     debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
     return l

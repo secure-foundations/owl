@@ -99,13 +99,13 @@ concretifyTy t = do
       TUnit -> return $ FUnit
       TName ne -> formatTyOfNameExp ne
       TVK ne -> return $ FBuf $ Just $ FLNamed "vk"
-      TEnc_PK ne -> error "unimp"
+      TEnc_PK ne -> return $ FBuf $ Just $ FLNamed "pke_pk"
       TDH_PK ne -> return $ FBuf $ Just $ FLNamed "group"
       TSS ne1 ne2 -> return $ groupFormatTy
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
           (i, t) <- unbind it
-          concretifyTy t -- TODO keep track of indices?
+          TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ concretifyTy t
       THexConst s -> return $ FHexConst s
 
 
@@ -240,7 +240,7 @@ concreteTyOfApp (PRes pth) =
             FBuf _ -> return t
             _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
       PDot PTop "cipherlen" -> \_ [x] -> return FInt
-      PDot PTop "pk_cipherlen" -> \_ [x] -> error "unimp"
+      PDot PTop "pk_cipherlen" -> \_ [x] -> return FInt
       PDot PTop "vk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "vk"
       PDot PTop "dhpk" -> \_ [x] -> return groupFormatTy
       PDot PTop "enc_pk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "enc_pk"
@@ -250,7 +250,7 @@ concreteTyOfApp (PRes pth) =
         --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
         --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
           return groupFormatTy
-      PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
+      PDot PTop "checknonce" -> \_ [x, y] -> return FBool
       PDot PTop p -> \_ args -> do
         fs <- use funcs
         case fs M.!? p of
@@ -625,18 +625,24 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
-concretifyCryptOp _ CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
-concretifyCryptOp _ CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
-concretifyCryptOp _ CMac cs = do
-    let t = FBuf $ Just $ FLNamed "maclen"
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
-concretifyCryptOp _ CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
-concretifyCryptOp _ CSign cs = do
-    let t = FBuf $ Just $ FLNamed "signature"
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
-concretifyCryptOp _ CSigVrfy cs = do
+concretifyCryptOp _ CPKEnc [k, x] = do
+    let t = FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkenc" [k, x]
+concretifyCryptOp _ CPKDec [k, x] = do
     let t = FOption $ FBuf Nothing
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkdec" [k, x]
+concretifyCryptOp _ CMac [k, x] = do
+    let t = FBuf $ Just $ FLNamed "maclen"
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" [k, x]
+concretifyCryptOp _ CMacVrfy [k, x, v] = do
+    let t = FOption $ FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac_vrfy" [k, x, v]
+concretifyCryptOp _ CSign [k, x] = do
+    let t = FBuf $ Just $ FLNamed "signature"
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" [k, x]
+concretifyCryptOp _ CSigVrfy [k, x, v] = do
+    let t = FOption $ FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" [k, x, v]
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 
