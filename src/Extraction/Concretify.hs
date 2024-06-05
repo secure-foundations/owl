@@ -278,16 +278,20 @@ concreteTyOfApp _ = \_ _ -> do
 
 -- Special case: Owl lets us implicitly cast exec values into ghost, but we must make this
 -- explicit in the concrete AST
-ghostifyArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
-ghostifyArgs (PRes (PDot PTop p)) args = do
+ghostifyAppArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
+ghostifyAppArgs (PRes (PDot PTop p)) args = do
     fs <- use funcs
     case fs M.!? p of
-        Just (argTys, _) -> do
-            forM (zip argTys args) $ \(t, a) -> do
-                if t == FGhost then return ghostUnit
-                else return a
+        Just (argTys, _) -> ghostifyArgs argTys args 
         Nothing -> return args
-ghostifyArgs _ args = return args
+ghostifyAppArgs _ args = return args
+
+ghostifyArgs :: [FormatTy] -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
+ghostifyArgs argTys args = do
+    forM (zip argTys args) $ \(t, a) -> do
+        if t == FGhost then return ghostUnit
+        else return a
+
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -320,7 +324,7 @@ concretifyAExpr a =
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
           t <- concreteTyOfApp p ps (map _tty vs)
-          args <- ghostifyArgs p vs
+          args <- ghostifyAppArgs p vs
           return $ Typed t $ CAApp s args
       AEVar s x -> do
           ot <- lookupVar $ castName x
@@ -432,8 +436,9 @@ concretifyExpr e = do
       ECall p _ aes -> do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
-          t <- returnTyOfCall p cs
-          return $ noLets $ Typed t $ CCall s t cs
+          (argtys, t) <- tySigOfCall p
+          cs' <- ghostifyArgs argtys cs
+          return $ noLets $ Typed t $ CCall s t cs'
       EParse a t_target otherwiseCase xsk -> do
             a' <- concretifyAExpr a
             t_target' <- concretifyTy t_target
@@ -537,17 +542,21 @@ typeOfTable (PRes (PDot p n)) = do
       Nothing -> error "table not found"
       Just (t, _) -> concretifyTy t
 
-returnTyOfCall :: Path -> [CAExpr FormatTy] -> EM FormatTy
-returnTyOfCall p cs = do
+tySigOfCall :: Path -> EM ([FormatTy], FormatTy)
+tySigOfCall p = do
     bfdef <- liftCheck $ TB.getDefSpec p
     ((bi1, bi2), dspec) <- unbind bfdef
     let (TB.DefSpec _ _ db) = dspec
-    go db
+    go [] db
         where
-            go (DPDone (_, t, _)) = concretifyTy t
-            go (DPVar _ _ xk) = do
+            go argtys (DPVar t _ xk) = do
+                t' <- concretifyTy t
                 (_, k) <- unbind xk
-                go k
+                go (argtys ++ [t']) k
+            go argtys (DPDone (_, t, _)) = do
+                t' <- concretifyTy t
+                return (argtys, t')
+
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
 concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
