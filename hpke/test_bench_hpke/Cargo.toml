@@ -9,6 +9,7 @@ edition = "2021"
 owl-hpke = { path = "../owl-hpke" }
 hpke = { path = "../rust-hpke" }
 rand = { version = "0.8", features = ["getrandom", "std_rng"] }
+hex = "0.4"
 
 
 [features]
