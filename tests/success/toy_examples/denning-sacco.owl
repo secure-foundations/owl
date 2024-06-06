@@ -2,13 +2,12 @@ locality A
 locality B
 locality S
 
-struct msg {
-}
+name secret
 
 name T : nonce @ A, B, S
 corr adv ==> [T]
-name skA : pkekey msg @ A
-name skB : pkekey msg @ B
+name skA : pkekey Name(secret) @ A
+name skB : pkekey Name(secret) @ B
 
 struct addrs {
     _A : Data<adv> ||nonce||,
