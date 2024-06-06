@@ -382,8 +382,8 @@ pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)
 }
 
 #[verifier(external_body)]
-pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Vec<u8>)
-    ensures msg.view() == sign(privkey.view(), ctxt.view())
+pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8]) -> (msg: Option<Vec<u8>>)
+    ensures view_option(msg) == pkdec(privkey.view(), ctxt.view())
 {
     owl_pke::decrypt(privkey, ctxt)
 }

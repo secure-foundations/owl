@@ -264,7 +264,7 @@ def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ clien
     case pkdec(get(seckeyCnew), msg) as Option Data<adv> {
         | None => ()
         | Some p' => 
-            parse p as ClientPKResponse(certA, vka, k, ksig) in { 
+            parse p' as ClientPKResponse(certA, vka, k, ksig) in { 
              // certA = signature of verkeyA signed by sigkeyCA
              // corr_case sigkeyCA in
                  case vrfy(vkCA, certA, vka) as Option Data<adv> {// get verkeyA = vk(sigkeyA)
@@ -379,7 +379,7 @@ def service_main () @ service
                  | None => ()
                  | Some u =>
                      if eq(u, get(uname)) then
-                         let _ = output 0 to endpoint(client) in ()
+                         let _ = output 0x to endpoint(client) in ()
                      else ()
                  otherwise => ()
              }

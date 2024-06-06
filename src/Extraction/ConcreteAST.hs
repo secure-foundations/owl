@@ -218,6 +218,8 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CASerializeWith t xs) = 
         let xs' = map (\(e, p) -> owlpretty e <+> owlpretty "as" <+> owlpretty p) xs in
         owlpretty "serialize" <> brackets (owlpretty t) <+> owlpretty "(" <> line <> vsep xs' <> owlpretty ")"
+    owlpretty (CAGetEncPK s) = owlpretty "get_enc_pk" <> parens (owlpretty s)
+    owlpretty (CAGetVK s) = owlpretty "get_vk" <> parens (owlpretty s)
 
 
 instance OwlPretty ParseKind where

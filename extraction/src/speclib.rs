@@ -182,7 +182,7 @@ pub closed spec(checked) fn pkenc(pubkey: Seq<u8>, msg: Seq<u8>) -> (ctxt: Seq<u
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Seq<u8>)
+pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Option<Seq<u8>>)
 { unimplemented!() }
 
 #[verifier(external_body)]

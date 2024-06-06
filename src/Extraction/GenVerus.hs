@@ -231,7 +231,9 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("mac", ([u8slice, u8slice], vecU8))
         , ("mac_vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
         , ("pkenc", ([u8slice, u8slice], vecU8))
-        , ("pkdec", ([u8slice, u8slice], vecU8))
+        , ("pkdec", ([u8slice, u8slice], RTOption vecU8))
+        , ("sign", ([u8slice, u8slice], vecU8))
+        , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
         , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
         , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
         , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
@@ -466,8 +468,13 @@ needsToplevelCast (RTStruct _ _) = True
 needsToplevelCast (RTEnum _ _) = True
 needsToplevelCast _ = False
 
+instance OwlPretty VerusTy where
+    owlpretty = pretty 
+
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
+    -- debugPrint $ "genVerusCExpr: "
+    -- debugPrint $ show (owlpretty expr)
     case expr ^. tval of
         CSkip -> return $ GenRustExpr RTUnit [di|()|]
         CRet ae -> do
