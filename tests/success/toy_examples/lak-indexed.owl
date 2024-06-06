@@ -41,9 +41,9 @@ enum macd_by_k {
     // | msg2 (__m:m3{happened(tag())})
 }
 
-name K<i> : mackey (macd_by_k<l:adv>) @ T, R
+name K<i> : mackey (macd_by_k) @ T, R
 
-table keys : adv -> (exists i. Name(K<i>)) @ R 
+table keys : (exists i. Name(K<i>)) @ R 
     // invariant forall i. Some?(keys(nR<i>)) ==> keys(nR<i>) = Some(k<i>)
 
 enum reader_response {
@@ -57,7 +57,7 @@ name tag2_tag : nonce @ T, R
 
 def R_main<i> () @ R
     requires ([nR<i>] /\ [tag1_tag] /\ [tag2_tag] <= adv)
-: reader_response<l:adv> =
+: reader_response =
     let tag1 = get(tag1_tag) in
     let tag2 = get(tag2_tag) in 
     let NR = get(nR<i>) in
@@ -69,9 +69,9 @@ def R_main<i> () @ R
     // let msg_to_mac_verify = msg1<idx i>(m1<idx i>(NR, NT, tag1)) in
     let msg_to_mac_verify = msg1(m1(NR, NT, tag1)) in
 
-    let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, NT) in
+    let x: Option(exists j. Name(K<j>)) = lookup(keys, NT) in
 
-    (case x 
+    case x {
         | None => No()
         | Some k_packed =>
             unpack j, k = k_packed in
@@ -81,7 +81,7 @@ def R_main<i> () @ R
             //   version?
 
             corr_case K<j> in
-            (case mac_vrfy(k, msg_to_mac_verify, mc) 
+            case mac_vrfy(k, msg_to_mac_verify, mc)  {
             | None => No()
             | Some m =>
                 let b = eq(length(mc), |maclen|) in
@@ -89,12 +89,13 @@ def R_main<i> () @ R
                     let mc : Data<adv>||maclen|| = mc in
                     let msg_to_mac = msg2(m3(mc, NR, tag2)) in
                     // let msg_to_mac = msg2<idx i>(m3<idx i>(inp, NR, tag2)) in
-                    let _ = output mac(k, msg_to_mac) to endpoint(T) in
+                    let mac_msg = mac(k, msg_to_mac) in
+                    let _ = output mac_msg to endpoint(T) in
                     Ok()
                 else 
                     No()
-            )
-    )
+            }
+    }
 
 def T_main<i> () @ T
     requires ([tag1_tag] /\ [nT<i>] <= adv)
