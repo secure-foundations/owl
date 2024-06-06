@@ -178,14 +178,18 @@ extractCStruct (CStruct n fs isVest) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                // cant autogenerate vest parser
+                todo!()
+            }
+            |]
+            let serInner = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 todo!()
             }
             |]
             let ser = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                // cant autogenerate vest serializer
                 todo!()
             }
             |]
@@ -196,7 +200,7 @@ extractCStruct (CStruct n fs isVest) = do
                 }
             }
             |]
-            return $ vsep [parse, ser, implOwlSpecSer]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
 
         genConstructor owlName specname specfields = do
@@ -544,12 +548,12 @@ extractExpr expr = do
                     let dstTyName = specName n
                     let parsedTypeMembers = map (specName . fst) fs
                     let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
-                    (parseCall, badk) <- case maybeOtw of
-                        Just otw -> do
+                    (parseCall, badk) <- case (maybeOtw, pkind) of
+                        (Just otw, PFromBuf) -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
                             return (parseCall, [di|otherwise (#{otw'})|])
-                        Nothing -> return (ae', [di||])
+                        _ -> return (ae', [di||])
                     return $ parens [__di|
                     parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
                     #{k'}
@@ -558,8 +562,8 @@ extractExpr expr = do
                 FEnum n cs -> do
                     let [x] = xs
                     let dstTyName = specName n
-                    case maybeOtw of
-                        Just otw -> do
+                    case (maybeOtw, pkind) of
+                        (Just otw, PFromBuf) -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
                             -- return (parseCall, [di|otherwise (#{otw'})|])
@@ -568,11 +572,10 @@ extractExpr expr = do
                             #{k'}
                             } otherwise #{otw'}
                             |]
-                        Nothing -> do
+                        _ -> do
                             return $ parens [__di|
-                            parse (#{ae'}) as (#{x} : #{dstTyName}) in {
+                            let #{x} = (#{ae'}) in
                             #{k'}
-                            }
                             |]
                 FOption t' -> do
                     let [x] = xs

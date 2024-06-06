@@ -505,18 +505,22 @@ concretifyExpr e = do
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do
                     let startT = e' ^. tty
+                    -- debugPrint $ show (owlpretty e')
+                    -- debugPrint $ show (owlpretty casevalT)
+                    -- debugPrint $ show (owlpretty startT)
                     otw' <- exprFromLets' <$> concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
-                    let fromBuf = case casevalT of
-                            -- Special case: sometimes, option types are given a type annotation, which 
-                            -- shows up in this case, but we are parsing authentically from an option type
-                            FOption _ -> PFromDatatype
-                            -- We are parsing as part of the case, so we need PFromBuf
-                            _ -> PFromBuf
-                    let p = Typed retTy $
-                            CParse fromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
-                                bind [(avar, ignore "caseval", casevalT)] caseStmt
-                    return (avar', p)
+                    case casevalT of
+                        -- Special case: sometimes, option types are given a type annotation, which 
+                        -- shows up in this case, but we are parsing authentically from an option type
+                        FOption _ -> return (avar, caseStmt)
+                        _ | casevalT == startT -> return (avar, caseStmt)
+                        -- We are parsing as part of the case, so we need PFromBuf
+                        _ -> do 
+                            let p = Typed retTy $
+                                    CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                                        bind [(avar, ignore "caseval", casevalT)] caseStmt
+                            return (avar', p)
                 Nothing -> return (avar, caseStmt)
             return $ noLets $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
@@ -729,7 +733,7 @@ rtyOfUserFunc ufName uf = do
 
 typeIsVest :: FormatTy -> Bool
 typeIsVest (FStruct _ fs) = all (typeIsVest . snd) fs
-typeIsVest (FEnum _ cs) = all (maybe True typeIsVest . snd) cs 
+typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs -- TODO: enum codegen
 typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False

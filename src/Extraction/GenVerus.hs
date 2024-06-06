@@ -585,7 +585,7 @@ genVerusCExpr info expr = do
                     Typed _ (CCall _ _ _) -> True
                     _ -> False
             -- Cast here, if necessary
-            if e' ^. eTy /= e ^. tty then do
+            if e' ^. eTy /= e ^. tty || needsToplevelCast (e' ^. eTy) then do
                 castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)
                 let lhs = if needsItreeLhs then [di|(tmp_#{rustX}, Tracked(itree))|] else [di|tmp_#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
@@ -593,13 +593,13 @@ genVerusCExpr info expr = do
                 let #{rustX} = #{castE'};
                 #{k' ^. code}
                 |]
-            else if needsToplevelCast $ e' ^. eTy then do
-                castE' <- castGRE e' (e ^. tty)
-                let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
-                return $ GenRustExpr (k' ^. eTy) [__di|
-                let #{lhs} = { #{castE'} };
-                #{k' ^. code}
-                |]
+            -- else if needsToplevelCast $ e' ^. eTy then do
+            --     castE' <- castGRE e' (e ^. tty)
+            --     let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
+            --     return $ GenRustExpr (k' ^. eTy) [__di|
+            --     let #{lhs} = { #{castE'} };
+            --     #{k' ^. code}
+            --     |]
             else do
                 let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
@@ -893,7 +893,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst else return [di||]
+    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where 
 
@@ -988,8 +988,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
         
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> EM (Doc ann)
-        genParsleyWrappers verusName specname structTy fields lifetimeConst = do
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname structTy fields lifetimeConst True = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
             let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
@@ -1080,6 +1080,46 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                 let res = #{execSerInner}(arg);
                 assume(res is Some);
                 res.unwrap()
+            }
+            |]
+            return $ vsep [parse, ser]
+        genParsleyWrappers verusName specname structTy fields lifetimeConst False = do
+            let specParse = [di|parse_#{specname}|] 
+            let execParse = [di|parse_#{verusName}|]
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                requires arg.len_valid()
+                ensures
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    res matches Some(x) ==> x.len_valid(),
+            {
+                todo!()
+            }
+            |]
+            let specSer = [di|serialize_#{specname}|]
+            let execSer = [di|serialize_#{verusName}|]
+            let specSerInner = [di|serialize_#{specname}_inner|]
+            let execSerInner = [di|serialize_#{verusName}_inner|]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+                requires arg.len_valid(),
+                ensures
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    // res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+            {
+                todo!()
+            }
+            \#[verifier::external_body]
+            pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+                requires arg.len_valid(),
+                ensures  res.view() == #{specSer}(arg.view())
+            {
+                todo!()
             }
             |]
             return $ vsep [parse, ser]

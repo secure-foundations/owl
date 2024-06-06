@@ -50,7 +50,7 @@ def A_main<i> () @ A
         | None => ()
         | Some hybridKB =>
             corr_case hybrid_skB in 
-            case adec(hybridKB, inp) as Option (exists j. m2<idx j>) {
+            case adec(hybridKB, inp) as Option Data<adv> {
                 | None => ()   
                 | Some _ => ()
                 otherwise => ()
@@ -69,7 +69,7 @@ def B_main<j> () @ B
         | None => ()
         | Some hybridKA => 
             corr_case hybrid_skA in 
-            case adec(hybridKA, inp) as Option (exists i. m1<idx i>) {
+            case adec(hybridKA, inp) as Option Data<adv> {
             | None => ()
             | Some m => {
                 unpack i, m' = m in
