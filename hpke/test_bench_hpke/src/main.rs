@@ -207,7 +207,7 @@ use test::Bencher;
 const PAYLOAD_SIZE: usize = 0;
 
 #[bench]
-fn bench_rust(b: &mut Bencher) {
+fn bench_rust_rust(b: &mut Bencher) {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
     let psk = gen_psk();
@@ -222,7 +222,37 @@ fn bench_rust(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_owl(b: &mut Bencher) {
+fn bench_rust_owl(b: &mut Bencher) {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
+
+    let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
+
+    b.iter(|| {
+        let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
+        test::black_box(owl_plaintext);
+    });
+}
+
+#[bench]
+fn bench_owl_rust(b: &mut Bencher) {
+    let (receiver_privkey, receiver_pubkey) = gen_keypair();
+    let (skS, pk_skS) = gen_keypair();
+    let psk = gen_psk();
+
+    let plaintext: Vec<u8> = owl_hpke::owl_util::gen_rand_bytes(PAYLOAD_SIZE);
+
+    b.iter(|| {
+        let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
+        let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
+        test::black_box(rust_plaintext);
+    });
+}
+
+#[bench]
+fn bench_owl_owl(b: &mut Bencher) {
     let (receiver_privkey, receiver_pubkey) = gen_keypair();
     let (skS, pk_skS) = gen_keypair();
     let psk = gen_psk();
