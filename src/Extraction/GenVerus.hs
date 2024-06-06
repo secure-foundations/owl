@@ -1327,6 +1327,28 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
+            let mkSerBranch ((caseName, topt), i) = do
+                    let (lhsX, lhsXLen,  rhsX) = case topt of
+                            Just _ -> ([di|x|], [di|x.len()|], [di|((), x.as_slice())|])
+                            Nothing -> ([di||], [di|0|], [di|((), &empty_vec.as_slice())|])
+                    rhs <- listIdxToEitherPat i l rhsX
+                    return [__di|
+                    #{verusName}::#{caseName}(#{lhsX}) => {                
+                        if no_usize_overflows![ 1, #{lhsXLen} ] {
+                            let mut obuf = vec_u8_of_len(1 + #{lhsXLen});
+                            let ser_result = exec_comb.serialize(#{rhs}, &mut obuf, 0);
+                            if let Ok((num_written)) = ser_result {
+                                vec_truncate(&mut obuf, num_written);
+                                Some(obuf)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
+                    |]
+            serBranches <- mapM mkSerBranch (zip (M.elems cases) [0..])
             let ser = [__di|
             \#[verifier(external_body)] 
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
@@ -1336,14 +1358,22 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
-                todo!()
+                reveal(#{specSerInner});
+                let empty_vec = mk_vec_u8![];
+                let exec_comb = #{execComb};
+                match arg {
+                    #{vsep serBranches}
+                }
             }
-            \#[verifier(external_body)]
+            \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
                 requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())
             {
-                todo!()
+                reveal(#{specSer});
+                let res = #{execSerInner}(arg);
+                assume(res is Some);
+                res.unwrap()
             }
             |]
             return $ vsep [parse, ser]
