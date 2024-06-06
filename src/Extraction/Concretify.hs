@@ -235,10 +235,11 @@ concreteTyOfApp (PRes pth) =
             (_, Nothing) -> return $ FBuf Nothing
             (Just x, Just y) -> return $ FBuf $ Just $ FLPlus x y
       PDot PTop "xor" -> \_ [x, y] -> do
-          t <- unifyFormatTy x y
-          case t of
-            FBuf _ -> return t
-            _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
+        return $ FBuf Nothing
+        --   t <- unifyFormatTy x y
+        --   case t of
+        --     FBuf _ -> return t
+        --     _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
       PDot PTop "cipherlen" -> \_ [x] -> return FInt
       PDot PTop "pk_cipherlen" -> \_ [x] -> return FInt
       PDot PTop "vk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "vk"
@@ -357,8 +358,8 @@ varsOfLets = map (\(x, _, e) -> (x, e ^. tty))
 
 concretifyExpr :: Expr -> EM (CExpr FormatTy, [CLetBinding])
 concretifyExpr e = do
-    -- debugPrint $ "Concretifying expr:"
-    -- debugPrint $ show $ owlpretty e
+    debugPrint $ "Concretifying expr:"
+    debugPrint $ show $ owlpretty e
     case e^.val of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
@@ -528,7 +529,7 @@ concretifyExpr e = do
       EFalseElim e _ -> concretifyExpr e
       ETLookup p a -> do
           c <- concretifyAExpr a
-          t <- typeOfTable p
+          t <- FOption <$> typeOfTable p
           s <- concretifyPath p
           return $ noLets $ Typed t $ CTLookup s c
       ETWrite p a1 a2 -> do

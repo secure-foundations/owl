@@ -45,10 +45,11 @@ struct pair<i> {
 }
 
 // table keys : adv -> (exists i. Name(K<i>)) @ R
-table keys : (exists i. pair<idx i>) @ R
+// table keys : (exists i. pair<idx i>) @ R
+def lookupKeys(x: Data<adv>) @ R : Option(exists i. pair<idx i>) 
 
 enum reader_response {
-    | Ok (exists i. (x:Data<adv>{sec(K<i>) ==> ((x == get(NT<i>)) /\ happened(T_main<i>()))}))
+    | Yes (exists i. (x:Data<adv>{sec(K<i>) ==> ((x == get(NT<i>)) /\ happened(T_main<i>()))}))
     | No
 }
 
@@ -61,7 +62,7 @@ def R_main<i>() @ R
     parse inp as m1_t(nT, mc) in 
 
     // let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, nT) in
-    let x: Option (exists j. pair<idx j>) = lookup(keys, nT) in
+    let x: Option (exists j. pair<idx j>) = call lookupKeys(nT) in
 
     case x {
         | None => No()
@@ -92,7 +93,7 @@ def R_main<i>() @ R
                     //  let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((x = get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
 
                     let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((p == get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
-                    Ok(res)
+                    Yes(res)
                     otherwise No()
                     // Ok(pack<j>(nT'))
             }
@@ -113,4 +114,4 @@ def T_main<i> () @ T
         let x = xor(id_i, m) in
         output m1_t(nT, x) to endpoint(R)
     else
-        output 0 to endpoint(R)
+        output 0x to endpoint(R)

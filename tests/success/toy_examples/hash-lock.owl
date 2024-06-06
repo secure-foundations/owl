@@ -34,7 +34,9 @@ struct s {
     // _u : Data<adv>
 }
 
-table keys : (exists i. Name(K<@i>)) @ R
+// table keys : (exists i. Name(K<@i>)) @ R
+def lookupKeys(x: Data<adv>) @ R : Option(exists i. Name(K<@i>))
+
 
 def T_main<@i> () @ T<i>
 : Unit =
@@ -54,6 +56,7 @@ enum reader_response {
     | No
 }
 
+
 def R_main () @ R
 : reader_response =
     let nR = get(NR) in
@@ -64,7 +67,7 @@ def R_main () @ R
 
     
     parse inp as s(nT, mc) in 
-    let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
+    let x: Option (exists i. Name(K<@i>)) = call lookupKeys(nT) in
 
     case x {
         | None => No()

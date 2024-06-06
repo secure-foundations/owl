@@ -27,10 +27,11 @@ struct s {
     // _u : Data<adv>
 }
 
-table keys : (exists i. Name(K<@i>)) @ R
+// table keys : (exists i. Name(K<@i>)) @ R
+def lookupKeys(x: Data<adv>) @ R : Option(exists i. Name(K<@i>))
 
 enum reader_response {
-    | Ok (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | Yes (exists i. (x:(Data<adv> | |nonce| |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
     | No
 }
 
@@ -45,7 +46,7 @@ def R_main () @ R
     input inp in
 
     parse inp as s(nT, mc) in {
-        let x: Option (exists i. Name(K<@i>)) = lookup(keys, nT) in
+        let x: Option (exists i. Name(K<@i>)) = call lookupKeys(nT) in
 
         case x {
             | None => No()
@@ -70,7 +71,7 @@ def R_main () @ R
                             let res : (exists i. (x:(Data<adv> | |nonce|
                             |){sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                               = pack<j>(mmm) in 
-                            Ok(res)
+                            Yes(res)
                         }
                         else
                             No()

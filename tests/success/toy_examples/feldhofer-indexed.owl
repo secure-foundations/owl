@@ -29,7 +29,8 @@ name NR<i> : nonce @ R
 corr adv ==> /\_i [NR<i>]
 name K<i> : enckey (x:Data<adv>{happened(T_main<i>())}) @ T, R
 
-table keys : (exists i. Name(K<i>)) @ R
+// table keys : (exists i. Name(K<i>)) @ R
+def lookupKeys(x: Data<adv>) @ R : Option (exists i. Name(K<i>))
 
 def T_main<i>() @ T
 : Unit =
@@ -40,7 +41,7 @@ def T_main<i>() @ T
 
 enum reader_response<i> {
     | No
-    | Ok (if sec(K<i>) then (x:Data<adv> {happened(T_main<i>())}) else Data<adv>)
+    | Yes (if sec(K<i>) then (x:Data<adv> {happened(T_main<i>())}) else Data<adv>)
 }
 
 // reader runs in session j, has a table of NR<j> to some K<i> for tag index i
@@ -51,7 +52,7 @@ def R_main<j>() @ R
 
     input inp in
 
-    let x : Option (exists i. Name(K<i>)) = lookup(keys, nR) in
+    let x : Option (exists i. Name(K<i>)) = call lookupKeys(nR) in
     case x {
         | None =>
             unpack i, _ = () in
@@ -64,7 +65,7 @@ def R_main<j>() @ R
                 | Some nR' => 
                     // let b = eq(length(inp), cipherlen(|nonce|)) in
                     // if b then
-                    pack<i>(Ok<idx i>(inp))
+                    pack<i>(Yes<idx i>(inp))
                     // else 
                     //     No<idx i>()
             }
