@@ -2,7 +2,7 @@ locality A
 locality B
 locality S
 
-name secret
+name secret : nonce
 
 name T : nonce @ A, B, S
 corr adv ==> [T]
