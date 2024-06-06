@@ -729,7 +729,7 @@ rtyOfUserFunc ufName uf = do
 
 typeIsVest :: FormatTy -> Bool
 typeIsVest (FStruct _ fs) = all (typeIsVest . snd) fs
-typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs -- TODO: add ordered choice combinator
+typeIsVest (FEnum _ cs) = all (maybe True typeIsVest . snd) cs 
 typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False

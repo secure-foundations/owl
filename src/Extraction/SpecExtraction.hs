@@ -359,6 +359,11 @@ extractCAExpr aexpr = do
                             a' <- extractCAExpr a
                             b' <- extractCAExpr b
                             return [di|#{a'} == #{b'}|]
+                        "checknonce" -> do
+                            let [a,b] = args
+                            a' <- extractCAExpr a
+                            b' <- extractCAExpr b
+                            return [di|#{a'} == #{b'}|]
                         "subrange" -> do
                             let [buf,start,end] = args
                             buf' <- extractCAExpr buf
@@ -407,6 +412,9 @@ extractCAExpr aexpr = do
         CAGet n -> do
             let rustN = execName n
             return [di|cfg.#{rustN}.view()|]
+        CAGetEncPK n -> do
+            let rustN = execName n
+            return [di|cfg.pk_#{rustN}.view()|]
         CAGetVK n -> do
             let rustN = execName n
             return [di|cfg.pk_#{rustN}.view()|]
@@ -418,11 +426,7 @@ extractCAExpr aexpr = do
                 return $ pretty "seq![" <> bytelist <> pretty "]"
         CACounter ctrname -> return [di|#{execName ctrname}|]
         CAInt flen -> return . pretty . lowerFLen $ flen
-        _ -> return [__di|
-        /*
-            TODO: SpecExtraction.extractCAExpr #{show aexpr}
-        */
-        |]
+        _ -> throwError $ ErrSomethingFailed $ "SpecExtraction: Unsupported CAExpr: " ++ show aexpr
 
 extractExpr :: CExpr FormatTy -> EM (Doc ann)
 extractExpr expr = do
@@ -583,7 +587,7 @@ extractExpr expr = do
             args' <- mapM extractCAExpr args
             let args'' = [di|cfg|] : [di|mut_state|] : args'
             return [di|call(#{f}_spec(#{hsep . punctuate comma $ args''}))|]
-        _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
+        _ -> throwError $ ErrSomethingFailed $ "SpecExtraction: Unsupported CExpr: " ++ show expr
 
 
 extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)

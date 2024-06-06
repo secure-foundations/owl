@@ -326,25 +326,8 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             x'' <- castGRE x' RTBool
                             return $ GenRustExpr RTBool [di|!(#{x''})|]
-                        ("eq", [x,y]) -> do
-                            x' <- genVerusCAExpr x
-                            y' <- genVerusCAExpr y
-                            let castXTo = castGRE x'
-                            let castYTo = castGRE y'
-                            case (x ^. tty, y ^. tty) of
-                                (RTVec RTU8, RTVec RTU8) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                (RTOwlBuf _, RTOwlBuf _) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
+                        ("eq", [x,y]) -> eqChecker x y
+                        ("checknonce", [x, y]) -> eqChecker x y                        
                         ("subrange", [buf, start, end]) -> do
                             buf' <- genVerusCAExpr buf
                             start' <- genVerusCAExpr start
@@ -384,6 +367,11 @@ genVerusCAExpr ae = do
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
+            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+        CAGetEncPK n -> do
+            let rustN = execName n
+            castN <- cast ([di|self.pk_#{rustN}|], nameTy) u8slice
             castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
         CAGetVK n -> do
@@ -444,12 +432,27 @@ genVerusCAExpr ae = do
                 }
             |]
             return $ GenRustExpr vecU8 ser_body
-        _ -> return  $ GenRustExpr (ae ^. tty) [__di|
-        /*
-            TODO: genVerusCAExpr #{show ae}
-        */
-        |]
-    
+        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCAExpr: " ++ show (owlpretty ae)
+    where
+        eqChecker x y = do
+            x' <- genVerusCAExpr x
+            y' <- genVerusCAExpr y
+            let castXTo = castGRE x'
+            let castYTo = castGRE y'
+            case (x ^. tty, y ^. tty) of
+                (RTVec RTU8, RTVec RTU8) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                (RTOwlBuf _, RTOwlBuf _) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
 
 -- Extra info needed just for `genVerusCExpr`
 data GenCExprInfo ann = GenCExprInfo { 
@@ -751,12 +754,7 @@ genVerusCExpr info expr = do
             #{vsep genArgVars}
             #{callMacro}(itree, *mut_state, #{specCall}, #{execCall})
             |]
-        _ -> do
-            return $ GenRustExpr (expr ^. tty) [__di|
-            /*
-                TODO: genVerusCExpr #{show expr}
-            */
-            |] 
+        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCExpr: " ++ show (owlpretty expr)
 
 
 -- Add lifetimes to references, structs, enums, OwlBufs for args/return types
@@ -1092,7 +1090,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
     debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
-    let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases
+    let needsLifetime = any tyNeedsLifetime . mapMaybe snd . M.assocs $ cases
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let verusCases = M.mapWithKey (\fname fty -> (execName fname, liftLifetime lifetimeConst fty)) cases
