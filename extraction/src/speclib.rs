@@ -292,7 +292,7 @@ pub mod itree {
 
         }
         pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
-            self matches ITree::Output(o, ev, _) // && self.get_Output_0() == o && self.get_Output_1() == ev
+            self matches ITree::Output(o_spec, ev_spec, _) && o == o_spec && ev == ev_spec // && self.get_Output_0() == o && self.get_Output_1() == ev
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o, ev| self.is_output(o, ev))
@@ -300,7 +300,7 @@ pub mod itree {
             *(self->Output_2)
         }
         pub open spec fn is_sample(&self, n: usize) -> bool {
-            self matches ITree::Sample(n, _)
+            self matches ITree::Sample(n_spec, _) && n == n_spec
         }
         pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
@@ -309,7 +309,7 @@ pub mod itree {
         }
         pub open spec(checked) fn results_in(&self, a: A) -> bool 
         {
-            self matches ITree::Ret(a) // && self.get_Ret_0() == a
+            self matches ITree::Ret(a_spec) && a == a_spec // && self.get_Ret_0() == a
         }
 
         pub open spec fn bind<B>(&self, next: spec_fn(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>

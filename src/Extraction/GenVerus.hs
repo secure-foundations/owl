@@ -588,8 +588,12 @@ genVerusCExpr info expr = do
             if e' ^. eTy /= e ^. tty || needsToplevelCast (e' ^. eTy) then do
                 castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)
                 let lhs = if needsItreeLhs then [di|(tmp_#{rustX}, Tracked(itree))|] else [di|tmp_#{rustX}|]
+                rhs <- case e of
+                    -- Special case to prevent "use of moved value" errors
+                    Typed _ (CRet (Typed _ (CAVar _ _))) | needsToplevelCast (e' ^. eTy) -> castGRE e' (e' ^. eTy) 
+                    _ -> return $ e' ^. code
                 return $ GenRustExpr (k' ^. eTy) [__di|
-                let #{lhs} = { #{e' ^. code} };
+                let #{lhs} = { #{rhs} };
                 let #{rustX} = #{castE'};
                 #{k' ^. code}
                 |]
