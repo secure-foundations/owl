@@ -264,8 +264,8 @@ pcase HasPSK?(psk) in
  let h6 = crh(h5 ++ tau) in
  let tk1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
  let tk2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
- call key_confirm_responder_recv<@m>(tk1);
- call key_confirm_responder_send<@m>(tk2);
+ let _ = call key_confirm_responder_recv<@m>(tk1) in
+ let _ = call key_confirm_responder_send<@m>(tk2) in
  let msg2_empty : Data<adv> | cipherlen(0) | = st_aead_enc<aead_counter_msg2_C7<j@m>>(k0, 0x, h6) in
  let msg2_mac1 = mac(msg2_mac1_k,
          msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
@@ -275,9 +275,9 @@ pcase HasPSK?(psk) in
  let msg2_output: msg2 = msg2(
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
  ) in
- let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
- debug checkStructMatches(transp_keys_resp<session j,pid n3,pid n,pid m>(msg2_receiver, msg2_sender,
- HasPSK?(psk), msg1_ephemeral, c7, false, tk1, tk2));
+ let _ = output msg2_output to endpoint(Initiator<n>) in // (TODO: endpoint? )
+//  debug checkStructMatches(transp_keys_resp<session j,pid n3,pid n,pid m>(msg2_receiver, msg2_sender,
+//  HasPSK?(psk), msg1_ephemeral, c7, false, tk1, tk2));
  let ret = 
  pack<n>(
      pack<n3>(

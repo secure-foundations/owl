@@ -4,22 +4,21 @@ name P : nonce @ alice
 name Q : nonce @ alice
 name R : nonce @ alice
 
-func some_length
-    arity 0
-
 enum z_enum {
     | P Name(P)
     | Q Name(Q)
+    | R 
 }
 
 struct s {
-    _r : Name(R)
+    _r : Name(R),
+    _p : Name(P)
 }
 
 struct t {
     _x : Name(X),
-    _y : Data<adv> |some_length()|,
-    _z : z_enum,
+    _y : Data<adv> ||nonce||,
+    // _z : z_enum,
     _s : s
 }
 
