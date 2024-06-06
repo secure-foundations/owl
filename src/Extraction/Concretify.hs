@@ -732,8 +732,8 @@ rtyOfUserFunc ufName uf = do
 
 
 typeIsVest :: FormatTy -> Bool
-typeIsVest (FStruct _ fs) = all (typeIsVest . snd) fs
-typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs -- TODO: enum codegen
+typeIsVest (FStruct _ fs) = False -- all (typeIsVest . snd) fs
+typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs 
 typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False

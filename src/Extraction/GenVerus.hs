@@ -998,11 +998,15 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let execParse = [di|parse_#{verusName}|]
             let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
             let mkField fname fty = do
-                    mkf <- (pretty fname, u8slice) `cast` fty
+                    mkf <- case fty of
+                            RTOwlBuf _ -> (pretty fname, u8slice) `cast` fty
+                            _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
             mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
             let mkFieldVec fname fty = do
-                    mkf <- ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
+                    mkf <- case fty of
+                            RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
+                            _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
             mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
             mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields

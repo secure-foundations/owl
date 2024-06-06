@@ -349,6 +349,37 @@ mkNestPattern l =
             [x] -> x
             x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
 
+nestOrdChoiceTy :: [Doc ann] -> Doc ann
+nestOrdChoiceTy l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
+
+nestOrdChoice :: [Doc ann] -> Doc ann
+nestOrdChoice l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
+
+-- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
+listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToEitherPat i l x = 
+    if i >= l then 
+        throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
+    else do
+        if l == 2 then
+            return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
+        else if i == l - 1 then
+            return [di|Either::Right(#{x})|]
+        else do
+            x' <- listIdxToEitherPat i (l-1) x
+            return [di|Either::Left(#{x'})|]
+
+withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
+withJustNothing f (Just x) = Just <$> f x
+withJustNothing f Nothing = return (Just Nothing)
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
 specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
@@ -358,6 +389,16 @@ specCombTyOf' (FStruct _ fs) = do
     case sequence fs' of
         Just fs'' -> do
             let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|SpecConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
@@ -374,6 +415,16 @@ execCombTyOf' (FStruct _ fs) = do
     case sequence fs' of
         Just fs'' -> do
             let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|ConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
@@ -400,6 +451,21 @@ specCombOf' constSuffix (FStruct _ fs) = do
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
+specCombOf' constSuffix (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|SpecConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
+            let nest = nestOrdChoice constCs
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
 specCombOf' constSuffix (FHexConst s) = do
     bl <- hexStringToByteList s
     let constSuffix' = map Data.Char.toUpper constSuffix
@@ -424,6 +490,21 @@ execCombOf' constSuffix (FStruct _ fs) = do
             let nest = mkNestPattern fs'
             -- We don't return the consts here, since they would already have been
             -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' constSuffix (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|ConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoice constCs
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
 execCombOf' constSuffix (FHexConst s) = do

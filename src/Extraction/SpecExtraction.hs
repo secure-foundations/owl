@@ -230,29 +230,98 @@ extractCEnum (CEnum n cs isVest) = do
     }
     use #{rn}::*;
     |]
-    parseSerializeDefs <- genParserSerializer (execName n) rn rfs
+    (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
+    parseSerializeDefs <- genParserSerializer (execName n) rn rfs specComb execComb
     constructors <- genConstructors n rn rfsOwlNames
     enumTests <- genEnumTests n rn rfsOwlNames
-    return $ vsep [enumDef, parseSerializeDefs, constructors, enumTests]
+    return $ vsep [enumDef, formatConsts, parseSerializeDefs, constructors, enumTests]
     where
-        genParserSerializer execname specname speccases = do
+        genFormatDefs owlN cs = do
+            let specname = specName owlN
+            let execname = execName owlN
+            let ctys = map snd cs
+            specCombTy <- specCombTyOf (FEnum owlN cs)
+            execCombTy <- execCombTyOf (FEnum owlN cs)
+            let constSuffix = owlN
+            (specComb, _) <- specCombOf constSuffix (FEnum owlN cs)
+            (_, specConsts) <- unzip <$> mapM (specCombOf constSuffix) (catMaybes ctys)
+            (execComb, _) <- execCombOf constSuffix (FEnum owlN cs)
+            (_, execConsts) <- unzip <$> mapM (execCombOf constSuffix) (catMaybes ctys)
+            let fieldVars = map ((++) "field_" . show) [1..length ctys]
+            -- let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
+            -- let mkSpecCombs = zipWith mkComb fieldVars specCombs
+            -- let mkExecCombs = zipWith mkComb fieldVars execCombs
+            -- let nest = mkNestPattern $ map pretty fieldVars
+            let specCombFnName = [di|spec_combinator_#{specname}|]
+            let execCombFnName = [di|exec_combinator_#{execname}|]
+            -- let combDefs = [__di|
+            -- spec fn #{specCombFnName}() -> #{specCombTy} {
+            --     #{specComb}
+            -- }
+            -- exec fn #{execCombFnName}() -> (res: #{execCombTy})
+            --     ensures res.view() == #{specCombFnName}()
+            -- {
+            --     #{execComb}
+            -- }
+            -- |]
+            return $ (vsep $ specConsts ++ execConsts, specComb, execComb)
+
+        genParserSerializer execname specname speccases specComb execComb = do
+            let l = length speccases
+            let mkParseBranch ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    return [__di|
+                    #{lhs} => #{specname}::#{caseName}(#{rhsX}),
+                    |]
+            parseBranches <- mapM mkParseBranch (zip speccases [0..])
             let parse = [__di|
-            \#[verifier::external_body]
+            \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                todo!()
+                let spec_comb = #{specComb};
+                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
+                    let v = match parsed {
+                        #{vsep parseBranches}
+                    };
+                    Some(v)
+                } else {
+                    None
+                }
             }
             |]
+            let mkSerBranch ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|x|], [di|((), x)|])
+                            Nothing -> ([di||], [di|((), seq![])|])
+                    rhs <- listIdxToEitherPat i l rhsX
+                    return [__di|
+                    #{specname}::#{caseName}(#{lhsX}) => #{rhs},
+                    |]
+            serBranches <- mapM mkSerBranch (zip speccases [0..])
             let serInner = [__di|
-            \#[verifier::external_body]
+            \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
-                todo!()
+                let spec_comb = #{specComb};
+                let val = match x {
+                    #{vsep serBranches}
+                };
+                if let Ok(serialized) = spec_comb.spec_serialize(val) {
+                    Some(serialized)
+                } else {
+                    None
+                }
             }
             |]
             let ser = [__di|
-            \#[verifier::external_body]
+            \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                todo!()
-            }
+                if let Some(val) = serialize_#{specname}_inner(x) {
+                    val
+                } else {
+                    seq![]
+                }            }
             |]
             let implOwlSpecSer = [__di|
             impl OwlSpecSerialize for #{specname} {
