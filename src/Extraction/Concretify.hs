@@ -358,8 +358,8 @@ varsOfLets = map (\(x, _, e) -> (x, e ^. tty))
 
 concretifyExpr :: Expr -> EM (CExpr FormatTy, [CLetBinding])
 concretifyExpr e = do
-    debugPrint $ "Concretifying expr:"
-    debugPrint $ show $ owlpretty e
+    -- debugPrint $ "Concretifying expr:"
+    -- debugPrint $ show $ owlpretty e
     case e^.val of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
