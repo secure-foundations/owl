@@ -390,6 +390,15 @@ extractCAExpr aexpr = do
                                     let ftys = map (fst . specFieldTyOf . snd) fs
                                     args'' <- zipWithM specCast (zip args' (map (^. tty) args)) ftys
                                     return [di|#{pretty f}(#{hsep . punctuate comma $ args''})|]
+                                FEnum n cs | elem f (map fst cs) && length args == 1 -> do
+                                    -- Special case for struct constructors
+                                    let [arg] = args
+                                    arg' <- extractCAExpr arg
+                                    cty <- case lookup f cs of
+                                            Just (Just t) -> return $ fst $ specFieldTyOf t
+                                            _ -> throwError $ ErrSomethingFailed "enum constructor case with no type"
+                                    arg'' <- specCast (arg', arg ^. tty) cty
+                                    return [di|#{pretty f}(#{arg''})|]
                                 _ -> do
                                     args' <- mapM extractCAExpr args
                                     return [__di|

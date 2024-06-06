@@ -92,7 +92,7 @@ def PFA_FW (gb : Ghost, k11:
     pcase (corr(skPDIS) /\ gb != dh_combine(dhpk(get(a)), get(b))) in
     pcase (corr(a) \/ corr(b)) in
     input inp in // from PDIS (actual non-KE)
-    case adec(k11, inp) as Option sign_request_response {
+    case adec(k11, inp) as Option Data<adv> {
         | None => ()
         | Some m' =>
             case m' as sign_request_response {
@@ -143,7 +143,7 @@ def PDIS_actual(gb : Ghost,
 
                 // get its input
                 input inp2 in
-                case adec(k11, inp2) as Option sign_request_response {
+                case adec(k11, inp2) as Option Data<adv> {
                     | None => ()
                     | Some m' =>
                         case m' as sign_request_response {
