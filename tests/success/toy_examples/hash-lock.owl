@@ -30,7 +30,7 @@ name K<@i> : mackey (t:nonces<idx i>{happened(T_main<i>())}) @ T<i>, R
 
 struct s {
     _nT2 : Data<adv> ||nonce||,
-    _m  : Data<adv> ||mackey||
+    _m  : Data<adv> ||maclen||
     // _u : Data<adv>
 }
 
@@ -40,7 +40,7 @@ def lookupKeys(x: Data<adv>) @ R : Option(exists i. Name(K<@i>))
 
 def T_main<@i> () @ T<i>
 : Unit =
-    let _ = output 0 to endpoint(R) in
+    let _ = output 0x to endpoint(R) in
     input inp in
     if eq(length(inp), |nonce|) then
         let inp':Data<adv> ||nonce|| = inp in
@@ -51,7 +51,7 @@ def T_main<@i> () @ T<i>
     else ()
 
 enum reader_response {
-    | Ok (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
+    | Yes (exists i. (x:(Data<adv> ||nonce||) {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
     // | Ok (exists i. (x:Data<adv> {sec(K<@i>) ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
     | No
 }
@@ -96,7 +96,7 @@ def R_main () @ R
                         ==> ((x == get(NT<@i>)) /\ happened(T_main<@i>()))}))
                             = pack<j>(m') in 
                         // assert(eq(length(res), |nonce|));
-                        Ok(res)
+                        Yes(res)
                     otherwise No()
             }
     }
