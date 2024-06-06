@@ -1134,7 +1134,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
-genVerusEnum (CEnum name casesFV isVest) = do
+genVerusEnum (CEnum name casesFV isVest execComb) = do
     debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
@@ -1157,7 +1157,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
     -- vestFormat <- genVestFormat verusName casesFV
     implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
+    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
     return $ (vsep [enumDef, implEnum, viewImpl, enumTests, parsleyWrappers])
     where 
@@ -1260,13 +1260,35 @@ genVerusEnum (CEnum name casesFV isVest) = do
                     }
                     |]
 
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> M.Map String (VerusName, Maybe VerusTy) -> String -> EM (Doc ann)
-        genParsleyWrappers verusName specname structTy fields lifetimeConst = do
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> M.Map String (VerusName, Maybe VerusTy) -> String -> String -> EM (Doc ann)
+        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
+            let l = length cases
+            let mkParseBranch ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    rhs <- case topt of
+                            Just (RTOwlBuf l) -> (rhsX, u8slice) `cast` RTOwlBuf l
+                            _ -> return rhsX
+                    return [__di|
+                    #{lhs} => #{verusName}::#{caseName}(#{rhs}),
+                    |]
+            parseBranches <- mapM mkParseBranch (zip (M.elems cases) [0..])
+            let mkParseBranchVec ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    rhs <- case topt of
+                            Just (RTOwlBuf l) -> ([di|slice_to_vec(#{rhsX})|], vecU8) `cast` RTOwlBuf l
+                            _ -> return rhsX
+                    return [di|#{lhs} => #{verusName}::#{caseName}(#{rhs}),|]
+            parseBranchesVecs <- mapM mkParseBranchVec (zip (M.elems cases) [0..])
             let parse = [__di|
-            \#[verifier::external_body]
-            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
                 requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
@@ -1274,7 +1296,31 @@ genVerusEnum (CEnum name casesFV isVest) = do
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     res matches Some(x) ==> x.len_valid(),
             {
-                todo!()
+                reveal(#{specParse});
+                let exec_comb = #{execComb};
+                match arg {
+                    OwlBuf::Borrowed(s) => {
+                        if let Ok((_, parsed)) = exec_comb.parse(s) {
+                            let v = match parsed {
+                                #{vsep parseBranches}
+                            };
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
+                    OwlBuf::Owned(v, start, len) => {
+                        reveal(OwlBuf::len_valid);
+                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
+                            let v = match parsed {
+                                #{vsep parseBranchesVecs}
+                            };
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
+                }
             }
             |]
             let specSer = [di|serialize_#{specname}|]

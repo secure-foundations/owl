@@ -472,7 +472,7 @@ lowerTyDef _ (CStructDef (CStruct name fields isVest)) = do
             return (n, (l, t'))
     fields' <- mapM lowerField fields
     return $ Just $ CStructDef $ CStruct name fields' isVest
-lowerTyDef _ (CEnumDef (CEnum name cases isVest)) = do
+lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
                 Just t -> do
@@ -482,7 +482,7 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest)) = do
                 Nothing -> return Nothing
             return (n, tt')
     cases' <- mapM lowerCase $ M.assocs cases
-    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest
+    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
 
 lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
 lowerName (n, l, i) = do

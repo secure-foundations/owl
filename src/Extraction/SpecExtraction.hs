@@ -218,7 +218,7 @@ extractCStruct (CStruct n fs isVest) = do
 
 
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
-extractCEnum (CEnum n cs isVest) = do
+extractCEnum (CEnum n cs isVest _) = do
     debugLog $ "Spec extraction enum: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
@@ -242,11 +242,10 @@ extractCEnum (CEnum n cs isVest) = do
             let ctys = map snd cs
             specCombTy <- specCombTyOf (FEnum owlN cs)
             execCombTy <- execCombTyOf (FEnum owlN cs)
-            let constSuffix = owlN
-            (specComb, _) <- specCombOf constSuffix (FEnum owlN cs)
-            (_, specConsts) <- unzip <$> mapM (specCombOf constSuffix) (catMaybes ctys)
-            (execComb, _) <- execCombOf constSuffix (FEnum owlN cs)
-            (_, execConsts) <- unzip <$> mapM (execCombOf constSuffix) (catMaybes ctys)
+            (specComb, _) <- specCombOf owlN (FEnum owlN cs)
+            (_, specConsts) <- unzip <$> mapM (specCombOf owlN) (catMaybes ctys)
+            (execComb, _) <- execCombOf owlN (FEnum owlN cs)
+            (_, execConsts) <- unzip <$> mapM (execCombOf owlN) (catMaybes ctys)
             let fieldVars = map ((++) "field_" . show) [1..length ctys]
             -- let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
             -- let mkSpecCombs = zipWith mkComb fieldVars specCombs

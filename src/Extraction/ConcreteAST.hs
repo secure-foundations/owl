@@ -138,7 +138,8 @@ makeLenses ''CStruct
 data CEnum t = CEnum {
     _enumName :: String,
     _enumCases :: M.Map String (Maybe t),
-    _enumIsVest :: Bool
+    _enumIsVest :: Bool,
+    _enumExecComb :: String 
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CEnum

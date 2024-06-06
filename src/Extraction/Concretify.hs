@@ -750,7 +750,10 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
             cot <- traverse concretifyTy ot
             return (s, cot)
         let isVest = all (maybe True typeIsVest . snd) cs
-        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
+        -- We generate the exec combinator here, so that we can use it in
+        -- GenVerus where format types have been erased
+        (execComb, _) <- execCombOf tname (FEnum tname cs)
+        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb))
 concretifyTyDef tname (TB.StructDef bnd) = do 
     debugLog $ "Concretifying struct: " ++ tname
     (idxs, dp) <- unbind bnd
@@ -773,7 +776,7 @@ setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
     case tdef of
         Nothing -> return ()
-        Just (CEnumDef (CEnum _ cases _)) -> do
+        Just (CEnumDef (CEnum _ cases _  _)) -> do
             -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
             let mkCase (cname, cty) = do
                     let argTys = case cty of
