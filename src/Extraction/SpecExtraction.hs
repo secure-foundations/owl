@@ -231,7 +231,9 @@ extractCEnum (CEnum n cs isVest _) = do
     use #{rn}::*;
     |]
     (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
-    parseSerializeDefs <- genParserSerializer (execName n) rn rfs specComb execComb
+    parseSerializeDefs <- if isVest then 
+                            genParserSerializer (execName n) rn rfs specComb execComb 
+                          else genParserSerializerNoVest (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
     enumTests <- genEnumTests n rn rfsOwlNames
     return $ vsep [enumDef, formatConsts, parseSerializeDefs, constructors, enumTests]
@@ -291,25 +293,30 @@ extractCEnum (CEnum n cs isVest _) = do
             }
             |]
             let mkSerBranch ((caseName, topt), i) = do
-                    let (lhsX, rhsX) = case topt of
-                            Just _ -> ([di|x|], [di|((), x)|])
-                            Nothing -> ([di||], [di|((), seq![])|])
+                    let (lhsX, lhsXLen, rhsX) = case topt of
+                            Just _ -> ([di|x|], [di|x.len()|], [di|((), x)|])
+                            Nothing -> ([di||], [di|0|], [di|((), seq![])|])
                     rhs <- listIdxToEitherPat i l rhsX
                     return [__di|
-                    #{specname}::#{caseName}(#{lhsX}) => #{rhs},
+                    #{specname}::#{caseName}(#{lhsX}) => {
+                        if no_usize_overflows_spec![ 1, #{lhsXLen} ] {
+                            if let Ok(serialized) = spec_comb.spec_serialize(#{rhs}) {
+                                Some(serialized)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
                     |]
             serBranches <- mapM mkSerBranch (zip speccases [0..])
             let serInner = [__di|
             \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 let spec_comb = #{specComb};
-                let val = match x {
+                match x {
                     #{vsep serBranches}
-                };
-                if let Ok(serialized) = spec_comb.spec_serialize(val) {
-                    Some(serialized)
-                } else {
-                    None
                 }
             }
             |]
@@ -320,7 +327,36 @@ extractCEnum (CEnum n cs isVest _) = do
                     val
                 } else {
                     seq![]
-                }            }
+                }            
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
+
+        genParserSerializerNoVest execname specname speccases = do
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                todo!()
+            }
+            |]
+            let serInner = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
+                todo!()
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                todo!()   
+            }
             |]
             let implOwlSpecSer = [__di|
             impl OwlSpecSerialize for #{specname} {
