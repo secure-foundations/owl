@@ -104,6 +104,11 @@ enum CertAuthMsgs {
 
 name sigkeyCA : sigkey CertAuthMsgs @ certauth
 
+corr [sigkeyCA] ==> [sigkeyA]
+corr [sigkeyCA] ==> [sigkeyC]
+corr [sigkeyCA] ==> [K]
+corr [sigkeyC] ==> [K]
+
 
 // client decrypts msg from authserver where
 // msg = concat(AuthCert, vk(sigkeyA), k, sign(sigkeyA, k))
@@ -238,7 +243,6 @@ Data<adv>, username : Data<adv>) @ client
 
 
 def client_pkinit (certC : Data<adv> ||signature||, vkCA : vk(sigkeyCA)) @ client
-    requires ([sigkeyA] <= [sigkeyCA]) /\ ([K] <= [sigkeyCA]) /\ ([K] <= [sigkeyA]) /\ (! ([sigkeyA] <= [K]))
     : Unit =
 
     // make username
@@ -386,8 +390,6 @@ def service_main () @ service
     otherwise ()
 
 def authserver_pkinit (certA : Data<adv> ||signature||, vkCA : vk(sigkeyCA), pkC : encpk(seckeyCnew)) @ authserver
-    requires    ([K] <= [sigkeyC]) /\
-                ([K] <= [sigkeyCA])
     : Unit =
 
     // i = {{verkeyC}}_CA, verkeyC, {{username}}_sigkeyC, username

@@ -7,6 +7,7 @@ use hmac::Hmac;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use vstd::prelude::*;
+use libcrux::digest::*;
 
 type HMACBlake2s = Hmac<Blake2s>;
 
@@ -80,6 +81,24 @@ pub fn hmac(mode: Mode, key: &[u8], data: &[u8], tag_length: Option<usize>) -> V
     return result;
 }
 
+const SIZE_MAC: usize = 16;
+
+#[verifier(external_body)]
+pub fn mac(key: &[u8], data: &[u8]) -> Vec<u8> {
+    // dbg!(hex::encode(key));
+    // dbg!(hex::encode(data));
+    use blake2::VarBlake2s;
+    use blake2::digest::{Update, VariableOutput};
+    let mut tag = [0u8; SIZE_MAC];
+    let mut mac = VarBlake2s::new_keyed(key, SIZE_MAC);
+    mac.update(data);
+    mac.finalize_variable(|buf| tag.copy_from_slice(buf));
+    // dbg!(hex::encode(tag));
+    tag.into()
+}
+
+
+
 #[verifier(external_body)]
 pub fn verify(
     mode: Mode,
@@ -94,10 +113,18 @@ pub fn verify(
 
 #[verifier(external_body)]
 pub fn blake2s(input: &[u8]) -> (res: Vec<u8>) {
-    use blake2::Digest;
-    let mut hsh = Blake2s::new();
-    hsh.update(input);
-    hsh.finalize().to_vec()
+    #[cfg(feature = "nonverif-crypto")]
+    {
+        use blake2::Digest;
+        let mut hsh = Blake2s::new();
+        hsh.update(input);
+        hsh.finalize().to_vec()
+    }
+    #[cfg(not(feature = "nonverif-crypto"))]
+    {
+        libcrux::digest::hash(Algorithm::Blake2s, input)
+    }
 }
+
 
 } // verus!

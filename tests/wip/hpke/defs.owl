@@ -3,15 +3,16 @@ locality receiver
 
 name channel_secret : nonce
 
-type plaintext_t = Data<[channel_secret] /\ adv, |adv|>
+def sent_message @ sender
+type plaintext_t = (x:Data<[channel_secret] /\ adv, |adv|>{happened(sent_message(x))})
 
 name skR : DH @ receiver
-name skE : DH @ sender
+name skE<i> : DH @ sender
 name skS : DH @ sender
 
 
-counter send_counter @ sender
-counter recv_counter @ receiver
+counter send_counter<i> @ sender
+counter recv_counter<j> @ receiver
 
 /*
 secret = Extract(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk))
@@ -38,7 +39,8 @@ base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk),
 */
 
 func hpke_v1() = 0x48504b452d7631
-func suite_id() = 0x1234 // dummy for now
+func hpke_suite_id() = 0x48504b45002000010003 // TODO
+func kem_suite_id() = 0x4b454d0020
 func secret_string() = 0x736563726574 // "secret"
 func shared_secret_string() = 0x7368617265645f736563726574 // "shared_secret"
 func key_string() = 0x6b6579 // "key"
@@ -47,60 +49,72 @@ func export_string() = 0x657870 // "exp"
 func info_hash_string() = 0x696e666f5f68617368 // "info_hash"
 func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
 func crh_labeled_extract_0salt(lbl, ikm) = 
-    crh(hpke_v1() ++ suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
+    crh(hpke_v1() ++ hpke_suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
 
 func psk_id() = (0x)
 
 func info() = (0x)
 
 func mode() = 0x03 // auth_psk
-func key_schedule_context() = 
-    mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
-    crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
+func key_schedule_context() = 0x03431df6cd95e11ff49d7013563baf7f11588c75a6611ee2a4404a49306ae4cfc555e7b39d7a73553c14eee3b605f8c4438fb8c4a5d32fb2bef735f26128ed5695
+    // mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
+    // crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
 
 func eae_prk() = 0x6561655f70726b
 
-func lbl_ikm(lbl, ikm) = 
-    hpke_v1() ++ suite_id() ++ lbl ++ ikm
+func lbl_ikm(suite_id, lbl, ikm) = 
+    hpke_v1() ++ suite_id ++ lbl ++ ikm
 
-func lbl_info(len, lbl, info) = 
-    len ++ hpke_v1() ++ suite_id() ++ lbl ++ info
+func lbl_info(suite_id, len, lbl, info) = 
+    len ++ hpke_v1() ++ suite_id ++ lbl ++ info
+
+func kdfkey_len() = 
+    0x0020
+
+func enckey_len() = 
+    0x0020
+
+func nonce_len() = 
+    0x000c
+
 
 func base_nonce_kdf_info() = 
-    lbl_info(|enckey|, base_nonce_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), nonce_len(), base_nonce_string(), key_schedule_context())
 
 func key_kdf_info() =                         
-    lbl_info(|enckey|, key_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), enckey_len(), key_string(), key_schedule_context())
 
 func export_kdf_info() = 
-    lbl_info(|enckey|, export_string(), key_schedule_context())
+    lbl_info(hpke_suite_id(), enckey_len(), export_string(), key_schedule_context())
 
-func dh_secret_kdf_ikm(psk_) = lbl_ikm(secret_string(), psk_)
+func dh_secret_kdf_ikm(psk_) = lbl_ikm(hpke_suite_id(), secret_string(), psk_)
 
-func AuthEncap_dh() =   
-    dh_combine(dhpk(get(skR)), get(skS))
+
+func AuthEncap_dh<i>() =   
+    dh_combine(dhpk(get(skR)), get(skE<i>))
     ++
-    dh_combine(dhpk(get(skR)), get(skE))
+    dh_combine(dhpk(get(skR)), get(skS))
 
-func AuthEncap_kem_context() =   
-    dhpk(get(skE)) 
+func AuthEncap_kem_context<i>() =   
+    dhpk(get(skE<i>)) 
     ++
     dhpk(get(skR)) 
     ++
     dhpk(get(skS)) 
 
-func AuthEncap_honest_info() = 
-    lbl_info(|kdfkey|, shared_secret_string(), AuthEncap_kem_context())
+func AuthEncap_honest_info<i>() = 
+    lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
 
-func AuthEncap_shared_secret() = 
-    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthEncap_dh()),
-                       lbl_info(|kdfkey|, shared_secret_string(),
-                       AuthEncap_kem_context()))
+func AuthEncap_shared_secret<i>() = 
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
+                       AuthEncap_kem_context<session i>()))
+
 
 func AuthDecap_dh(eph) = 
-    dh_combine(dhpk(get(skR)), get(skS))
-    ++
     dh_combine(eph, get(skR))
+    ++
+    dh_combine(dhpk(get(skR)), get(skS))
 
 func AuthDecap_kem_context(eph) =   
     eph
@@ -110,8 +124,8 @@ func AuthDecap_kem_context(eph) =
     dhpk(get(skS)) 
 
 func AuthDecap_shared_secret(eph) = 
-    gkdf<kdfkey;0>(0x, lbl_ikm(eae_prk(), AuthDecap_dh(eph)),
-                       lbl_info(|kdfkey|, shared_secret_string(),
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
 nametype hpke_corr_key_t = 
@@ -122,14 +136,14 @@ nametype hpke_corr_key_t =
 
 nametype psk_t = dualkdf {salt info self.
     (info == base_nonce_kdf_info()) -> public nonce |counter|,
-    (salt == AuthEncap_shared_secret() /\ info == key_kdf_info()) -> 
-     strict st_aead Data<[channel_secret] /\ adv, |adv|>
+    (exists i:idx. salt == AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
+     strict st_aead  plaintext_t
                               aad x. true
                               nonce send_counter
                               pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
                                 dh_secret_kdf_ikm(self),
                                 base_nonce_kdf_info())),
-    (salt != AuthEncap_shared_secret() /\ info == key_kdf_info()) -> 
+    (forall i:idx. salt != AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
          strict hpke_corr_key_t,
     (info == export_kdf_info()) -> strict nonce
 
@@ -137,16 +151,14 @@ nametype psk_t = dualkdf {salt info self.
 
 name psk : psk_t @ sender, receiver
 
-corr [skE] /\ [skS] /\ [psk] ==> [channel_secret]
+corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
 corr [skR] /\ [psk] ==> [channel_secret]
-corr [psk] ==> [channel_secret]
 
-
-nametype hpke_key_t = 
-    st_aead Data<[channel_secret] /\ adv, |adv|>
+nametype hpke_key_t<i> = 
+    st_aead plaintext_t
         aad x. true
         nonce send_counter
-        pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret(), 
+        pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret<session i>(), 
                                                 dh_secret_kdf_ikm(get(psk)),
                                                 base_nonce_kdf_info()))
 
@@ -162,7 +174,7 @@ nametype shared_secret_t =
         (ikm == dh_secret_kdf_ikm(get(psk)))
         /\
         info == key_kdf_info()
-        -> strict st_aead Data<[channel_secret] /\ adv, |adv|>
+        -> strict st_aead plaintext_t
                           aad x. true
                           nonce send_counter
                           pattern i. xor(i, gkdf<nonce |counter|;0>(self,
@@ -194,11 +206,16 @@ nametype shared_secret_corr_t =
 
 
 odh ss : skR, skS -> { salt info. 
-    (info == AuthEncap_honest_info()) -> strict shared_secret_t,
-    (info != AuthEncap_honest_info()) -> strict shared_secret_corr_t
+    (exists i:idx. info == AuthEncap_honest_info<session i>()) -> strict shared_secret_t,
+    (forall i:idx. info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
 } 
 
-odh se : skR, skE -> {salt info.
-    (info == AuthEncap_honest_info()) -> strict shared_secret_t,
-    (info != AuthEncap_honest_info()) -> strict shared_secret_corr_t
+odh se<i> : skR, skE<i> -> {salt info.
+    (info == AuthEncap_honest_info<session i>()) -> strict shared_secret_t,
+    (info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
+}
+
+struct hpke_ciphertext { 
+    hc_pk : Data<adv> | |group| |,
+    hc_cipher : Data<adv>
 }

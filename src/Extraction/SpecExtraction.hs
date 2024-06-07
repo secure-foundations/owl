@@ -13,6 +13,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
+import Data.Char
 import Control.Monad
 import Control.Monad.Except
 import Control.Lens
@@ -37,6 +38,9 @@ import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad FormatTy
 
+-- We construct both the spec and exec Parsley combinators in spec extraction, since here, we have access to the 
+-- format types which include hex consts
+
 seqU8 :: VerusTy
 seqU8 = RTSeq RTU8
 
@@ -49,6 +53,11 @@ specTyOf (FOption ft) = RTOption (specTyOf ft)
 specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n, specTyOf t)) ffs)
 specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
 specTyOf FGhost = RTVerusGhost
+specTyOf (FHexConst _) = seqU8
+
+specFieldTyOf :: FormatTy -> (VerusTy, Maybe Int)
+specFieldTyOf (FHexConst s) = (RTUnit, Just $ length s `div` 2)
+specFieldTyOf ft = (specTyOf ft, Nothing)
 
 specTyOfSerialized :: FormatTy -> VerusTy
 specTyOfSerialized (FStruct fn ffs) = seqU8
@@ -59,29 +68,55 @@ extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
 extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
 
-mkNestPattern :: [Doc ann] -> Doc ann
-mkNestPattern l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
-
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
 extractCStruct (CStruct n fs isVest) = do
+    debugLog $ "Spec extraction struct: " ++ show n
     let rn = specName n
-    let rfs = map (\(n, t) -> (specName n, specTyOf t)) fs
-    let structFields = vsep $ fmap (\(n, t) -> [di|pub #{n}: #{pretty t},|]) rfs
+    let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
+    let structFields = vsep $ fmap (\(n, (t, _)) -> [di|pub #{n}: #{pretty t},|]) rfs
     let structDef = [__di|
     pub struct #{rn} {
         #{structFields}
     }
     |]
+    formatDefs <- if isVest then genFormatDefs n fs else return [di||]
     parseSerializeDefs <- if isVest then 
                                 genParserSerializer (execName n) rn rfs 
                             else genParserSerializerNoVest (execName n) rn rfs
     constructor <- genConstructor n rn rfs
-    return $ vsep [structDef, parseSerializeDefs, constructor]
+    return $ vsep [formatDefs, structDef, parseSerializeDefs, constructor]
     where
+        genFormatDefs owlN fs = do
+            let specname = specName owlN
+            let execname = execName owlN
+            let ftys = map snd fs
+            specCombTy <- mkNestPattern <$> mapM specCombTyOf ftys
+            execCombTy <- mkNestPattern <$>  mapM execCombTyOf ftys
+            let constSuffix = owlN
+            (specCombs, specConsts) <- unzip <$> mapM (specCombOf constSuffix) ftys
+            (execCombs, execConsts) <- unzip <$> mapM (execCombOf constSuffix) ftys
+            let fieldVars = map ((++) "field_" . show) [1..length ftys]
+            let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
+            let mkSpecCombs = zipWith mkComb fieldVars specCombs
+            let mkExecCombs = zipWith mkComb fieldVars execCombs
+            let nest = mkNestPattern $ map pretty fieldVars
+            let specCombFnName = [di|spec_combinator_#{specname}|]
+            let execCombFnName = [di|exec_combinator_#{execname}|]
+            let combDefs = [__di|
+            spec fn #{specCombFnName}() -> #{specCombTy} {
+                #{vsep mkSpecCombs}
+                #{nest}
+            }
+            exec fn #{execCombFnName}() -> (res: #{execCombTy})
+                ensures res.view() == #{specCombFnName}()
+            {
+                #{vsep mkExecCombs}
+                #{nest}
+            }
+            |]
+            return $ vsep $ specConsts ++ execConsts ++ [combDefs]
+
+
         genParserSerializer execname specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
             let fieldNamesCommaSep = hsep . punctuate comma $ fieldNames
@@ -89,8 +124,8 @@ extractCStruct (CStruct n fs isVest) = do
             let parse = [__di|
             \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                let stream = parse_serialize::SpecStream { data: x, start: 0 };
-                if let Ok((_,_,parsed)) = parse_serialize::spec_parse_#{execname}(stream) {
+                let spec_comb = spec_combinator_#{specname}();
+                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
                     let (#{fieldNamesNestPattern}) = parsed;
                     Some(#{specname} { #{fieldNamesCommaSep} })
                 } else {
@@ -99,18 +134,19 @@ extractCStruct (CStruct n fs isVest) = do
             }
             |]
             let fieldSels = map (\n -> [di|x.#{n}|]) fieldNames
-            let fieldLens = map (\xn -> [di|#{xn}.len()|]) fieldSels
+            let mklen (fn, ftfl) = case ftfl of
+                    (RTUnit, Just usz) -> return [di|#{pretty usz}|]
+                    (RTUnit, Nothing) -> throwError $ ErrSomethingFailed "no size for const ty"
+                    _ -> return [di|x.#{fn}.len()|]
+            fieldLens <- mapM mklen specfields
             let serInner = [__di|
             \#[verifier::opaque]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 if no_usize_overflows_spec![ #{hsep . punctuate comma $ fieldLens} ] {
-                    let stream = parse_serialize::SpecStream {
-                        data: seq_u8_of_len(#{hsep . punctuate (pretty " + ") $ fieldLens}),
-                        start: 0,
-                    };
-                    if let Ok((serialized, n)) = parse_serialize::spec_serialize_#{execname}(stream, (#{mkNestPattern fieldSels})) 
+                    let spec_comb = spec_combinator_#{specname}();
+                    if let Ok(serialized) = spec_comb.spec_serialize((#{mkNestPattern fieldSels})) 
                     {
-                        Some(seq_truncate(serialized.data, n))
+                        Some(serialized)
                     } else {
                         None
                     }
@@ -142,14 +178,18 @@ extractCStruct (CStruct n fs isVest) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                // cant autogenerate vest parser
+                todo!()
+            }
+            |]
+            let serInner = [__di|
+            \#[verifier::external_body]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 todo!()
             }
             |]
             let ser = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                // cant autogenerate vest serializer
                 todo!()
             }
             |]
@@ -160,15 +200,14 @@ extractCStruct (CStruct n fs isVest) = do
                 }
             }
             |]
-            return $ vsep [parse, ser, implOwlSpecSer]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
 
 
         genConstructor owlName specname specfields = do
             let fieldNames = map (pretty . fst) $ specfields
-            let args = hsep . punctuate comma $ map (\(n,t) -> [di|arg_#{n}: #{pretty t}|]) specfields
+            let args = hsep . punctuate comma $ map (\(n,(t,_)) -> [di|arg_#{n}: #{pretty t}|]) specfields
             let mkFields = hsep . punctuate comma $ map (\(n,_) -> [di|#{n}: arg_#{n}|]) specfields
             let constructor = [__di|
-            // TODO: make sure the arg types line up
             pub open spec fn #{owlName}(#{args}) -> #{specname} {
                 #{specname} { 
                     #{mkFields} 
@@ -179,23 +218,128 @@ extractCStruct (CStruct n fs isVest) = do
 
 
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
-extractCEnum (CEnum n cs isVest) = do
+extractCEnum (CEnum n cs isVest _) = do
+    debugLog $ "Spec extraction enum: " ++ show n
     let rn = specName n
-    let rfs = map (\(n, t) -> (specName n, fmap specTyOf t)) $ M.assocs cs
-    let rfsOwlNames = map (\(n, t) -> (n, fmap specTyOf t)) $ M.assocs cs
+    let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
+    let rfsOwlNames = map (\(n, t) -> (n, fmap specFieldTyOf t)) $ M.assocs cs
     let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
     let enumDef = [__di|
     pub enum #{rn} {
         #{enumCases}
     }
-    use crate::#{rn}::*;
+    use #{rn}::*;
     |]
-    parseSerializeDefs <- genParserSerializer (execName n) rn rfs
+    (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
+    parseSerializeDefs <- if isVest then 
+                            genParserSerializer (execName n) rn rfs specComb execComb 
+                          else genParserSerializerNoVest (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
     enumTests <- genEnumTests n rn rfsOwlNames
-    return $ vsep [enumDef, parseSerializeDefs, constructors, enumTests]
+    return $ vsep [enumDef, formatConsts, parseSerializeDefs, constructors, enumTests]
     where
-        genParserSerializer execname specname speccases = do
+        genFormatDefs owlN cs = do
+            let specname = specName owlN
+            let execname = execName owlN
+            let ctys = map snd cs
+            specCombTy <- specCombTyOf (FEnum owlN cs)
+            execCombTy <- execCombTyOf (FEnum owlN cs)
+            (specComb, _) <- specCombOf owlN (FEnum owlN cs)
+            (_, specConsts) <- unzip <$> mapM (specCombOf owlN) (catMaybes ctys)
+            (execComb, _) <- execCombOf owlN (FEnum owlN cs)
+            (_, execConsts) <- unzip <$> mapM (execCombOf owlN) (catMaybes ctys)
+            let fieldVars = map ((++) "field_" . show) [1..length ctys]
+            -- let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
+            -- let mkSpecCombs = zipWith mkComb fieldVars specCombs
+            -- let mkExecCombs = zipWith mkComb fieldVars execCombs
+            -- let nest = mkNestPattern $ map pretty fieldVars
+            let specCombFnName = [di|spec_combinator_#{specname}|]
+            let execCombFnName = [di|exec_combinator_#{execname}|]
+            -- let combDefs = [__di|
+            -- spec fn #{specCombFnName}() -> #{specCombTy} {
+            --     #{specComb}
+            -- }
+            -- exec fn #{execCombFnName}() -> (res: #{execCombTy})
+            --     ensures res.view() == #{specCombFnName}()
+            -- {
+            --     #{execComb}
+            -- }
+            -- |]
+            return $ (vsep $ specConsts ++ execConsts, specComb, execComb)
+
+        genParserSerializer execname specname speccases specComb execComb = do
+            let l = length speccases
+            let mkParseBranch ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    return [__di|
+                    #{lhs} => #{specname}::#{caseName}(#{rhsX}),
+                    |]
+            parseBranches <- mapM mkParseBranch (zip speccases [0..])
+            let parse = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
+                let spec_comb = #{specComb};
+                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
+                    let v = match parsed {
+                        #{vsep parseBranches}
+                    };
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            |]
+            let mkSerBranch ((caseName, topt), i) = do
+                    let (lhsX, lhsXLen, rhsX) = case topt of
+                            Just _ -> ([di|x|], [di|x.len()|], [di|((), x)|])
+                            Nothing -> ([di||], [di|0|], [di|((), seq![])|])
+                    rhs <- listIdxToEitherPat i l rhsX
+                    return [__di|
+                    #{specname}::#{caseName}(#{lhsX}) => {
+                        if no_usize_overflows_spec![ 1, #{lhsXLen} ] {
+                            if let Ok(serialized) = spec_comb.spec_serialize(#{rhs}) {
+                                Some(serialized)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
+                    |]
+            serBranches <- mapM mkSerBranch (zip speccases [0..])
+            let serInner = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
+                let spec_comb = #{specComb};
+                match x {
+                    #{vsep serBranches}
+                }
+            }
+            |]
+            let ser = [__di|
+            \#[verifier::opaque]
+            pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+                if let Some(val) = serialize_#{specname}_inner(x) {
+                    val
+                } else {
+                    seq![]
+                }            
+            }
+            |]
+            let implOwlSpecSer = [__di|
+            impl OwlSpecSerialize for #{specname} {
+                open spec fn as_seq(self) -> Seq<u8> {
+                    serialize_#{specname}(self)
+                }
+            }
+            |]
+            return $ vsep [parse, serInner, ser, implOwlSpecSer]
+
+        genParserSerializerNoVest execname specname speccases = do
             let parse = [__di|
             \#[verifier::external_body]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
@@ -211,7 +355,7 @@ extractCEnum (CEnum n cs isVest) = do
             let ser = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                todo!()
+                todo!()   
             }
             |]
             let implOwlSpecSer = [__di|
@@ -283,13 +427,14 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
         , ("mac_vrfy", ([seqU8, seqU8, seqU8], RTOption seqU8))
         , ("pkenc", ([seqU8, seqU8], seqU8))
         , ("pkdec", ([seqU8, seqU8], seqU8))
-        -- , ("enc_st_aead", ([seqU8, seqU8, RTUsize, seqU8], seqU8)) -- special-cased
+        , ("enc_st_aead", ([seqU8, seqU8, seqU8, seqU8], seqU8))
         , ("dec_st_aead", ([seqU8, seqU8, seqU8, seqU8], RTOption seqU8))
         , ("is_group_elem", ([seqU8], RTBool))
         , ("crh", ([seqU8], seqU8))
         , ("bytes_as_counter", ([seqU8], RTUsize))
         , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
         , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
+        , ("xor", ([seqU8, seqU8], seqU8))
         ]
     -- diffNameBuiltins = M.fromList [
     --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
@@ -322,23 +467,28 @@ extractCAExpr aexpr = do
                             a' <- extractCAExpr a
                             b' <- extractCAExpr b
                             return [di|#{a'} == #{b'}|]
+                        "checknonce" -> do
+                            let [a,b] = args
+                            a' <- extractCAExpr a
+                            b' <- extractCAExpr b
+                            return [di|#{a'} == #{b'}|]
                         "subrange" -> do
                             let [buf,start,end] = args
                             buf' <- extractCAExpr buf
                             start' <- extractCAExpr start
                             end' <- extractCAExpr end
                             return [di|Seq::subrange(#{buf'}, #{start'}, #{end'})|]
-                        "enc_st_aead" -> do
-                            let [key, msg, nonce, aad] = args
-                            let extAndCast x dstty = do
-                                    x' <- extractCAExpr x
-                                    x'' <- specCast (x', x ^. tty) dstty
-                                    return x''
-                            key' <- extAndCast key seqU8
-                            msg' <- extAndCast msg seqU8
-                            nonce' <- extractCAExpr nonce
-                            aad' <- extAndCast aad seqU8
-                            return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
+                        -- "enc_st_aead" -> do
+                        --     let [key, msg, nonce, aad] = args
+                        --     let extAndCast x dstty = do
+                        --             x' <- extractCAExpr x
+                        --             x'' <- specCast (x', x ^. tty) dstty
+                        --             return x''
+                        --     key' <- extAndCast key seqU8
+                        --     msg' <- extAndCast msg seqU8
+                        --     nonce' <- extractCAExpr nonce
+                        --     aad' <- extAndCast aad seqU8
+                        --     return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
                         _ | "?" `isSuffixOf` f -> do
                             -- Special case for enum test functions
                             let f' = init f ++ "_enumtest"
@@ -346,17 +496,36 @@ extractCAExpr aexpr = do
                             return [__di|
                             #{pretty f'}(#{hsep . punctuate comma $ args'})
                             |]
-                        _ -> do
-                            args' <- mapM extractCAExpr args
-                            return [__di|
-                                #{pretty f}(#{hsep . punctuate comma $ args'})
-                            |]
+                        _ -> case aexpr ^. tty of
+                                FStruct n fs | n == f -> do
+                                    -- Special case for struct constructors
+                                    args' <- mapM extractCAExpr args
+                                    let ftys = map (fst . specFieldTyOf . snd) fs
+                                    args'' <- zipWithM specCast (zip args' (map (^. tty) args)) ftys
+                                    return [di|#{pretty f}(#{hsep . punctuate comma $ args''})|]
+                                FEnum n cs | elem f (map fst cs) && length args == 1 -> do
+                                    -- Special case for struct constructors
+                                    let [arg] = args
+                                    arg' <- extractCAExpr arg
+                                    cty <- case lookup f cs of
+                                            Just (Just t) -> return $ fst $ specFieldTyOf t
+                                            _ -> throwError $ ErrSomethingFailed "enum constructor case with no type"
+                                    arg'' <- specCast (arg', arg ^. tty) cty
+                                    return [di|#{pretty f}(#{arg''})|]
+                                _ -> do
+                                    args' <- mapM extractCAExpr args
+                                    return [__di|
+                                        #{pretty f}(#{hsep . punctuate comma $ args'})
+                                    |]
         CAGet n -> do
             let rustN = execName n
-            return [di|cfg.#{rustN}.dview()|]
+            return [di|cfg.#{rustN}.view()|]
+        CAGetEncPK n -> do
+            let rustN = execName n
+            return [di|cfg.pk_#{rustN}.view()|]
         CAGetVK n -> do
             let rustN = execName n
-            return [di|cfg.pk_#{rustN}.dview()|]
+            return [di|cfg.pk_#{rustN}.view()|]
         (CAHexConst s) -> do
             bytelist <- hexStringToByteList s
             if null s then
@@ -365,11 +534,7 @@ extractCAExpr aexpr = do
                 return $ pretty "seq![" <> bytelist <> pretty "]"
         CACounter ctrname -> return [di|#{execName ctrname}|]
         CAInt flen -> return . pretty . lowerFLen $ flen
-        _ -> return [__di|
-        /*
-            TODO: SpecExtraction.extractCAExpr #{show aexpr}
-        */
-        |]
+        _ -> throwError $ ErrSomethingFailed $ "SpecExtraction: Unsupported CAExpr: " ++ show aexpr
 
 extractExpr :: CExpr FormatTy -> EM (Doc ann)
 extractExpr expr = do
@@ -398,7 +563,7 @@ extractExpr expr = do
             return [__di|
             (output (#{ae''}) to #{dst'})
             |]
-        CSample fl ck -> do
+        CSample fl _ ck -> do
             let sz = pretty $ lowerFLen fl
             let (coins, k) = unsafeUnbind ck
             coins' <- extractVar coins
@@ -442,7 +607,7 @@ extractExpr expr = do
             e1' <- extractExpr e1
             e2' <- extractExpr e2
             return $ parens $
-                pretty "if" <+> parens a' <+> pretty "then" <+> parens e1' <+> pretty "else" <+> parens e2'
+                pretty "if" <+> parens a' <+> pretty "then" <> line <> parens e1' <> line <> pretty "else" <> line <> parens e2'
         CCase ae cases -> do
             ae' <- extractCAExpr ae
             translateCaseName <- case ae ^. tty of
@@ -487,18 +652,35 @@ extractExpr expr = do
                     let dstTyName = specName n
                     let parsedTypeMembers = map (specName . fst) fs
                     let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
-                    (parseCall, badk) <- case maybeOtw of
-                        Just otw -> do
+                    (parseCall, badk) <- case (maybeOtw, pkind) of
+                        (Just otw, PFromBuf) -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
                             return (parseCall, [di|otherwise (#{otw'})|])
-                        Nothing -> return (ae', [di||])
+                        _ -> return (ae', [di||])
                     return $ parens [__di|
                     parse (#{parseCall}) as (#{dstTyName}{#{hsep . punctuate comma $ patfields}}) in {
                     #{k'}
                     } #{badk}
                     |]
-                FEnum n cs -> throwError $ ErrSomethingFailed $ "TODO: spec enum parsing for " ++ show n
+                FEnum n cs -> do
+                    let [x] = xs
+                    let dstTyName = specName n
+                    case (maybeOtw, pkind) of
+                        (Just otw, PFromBuf) -> do
+                            let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                            otw' <- extractExpr otw
+                            -- return (parseCall, [di|otherwise (#{otw'})|])
+                            return $ parens [__di|
+                            parse (#{parseCall}) as (#{x} : #{dstTyName}) in {
+                            #{k'}
+                            } otherwise #{otw'}
+                            |]
+                        _ -> do
+                            return $ parens [__di|
+                            let #{x} = (#{ae'}) in
+                            #{k'}
+                            |]
                 FOption t' -> do
                     let [x] = xs
                     let PFromDatatype = pkind
@@ -506,17 +688,19 @@ extractExpr expr = do
                 _ -> throwError $ TypeError $ "Unsupported spec parse type: " ++ show t
         CGetCtr ctrname -> do
             return $ parens $ pretty "ret" <> parens (pretty "counter_as_bytes" <> parens (pretty "mut_state." <> pretty (execName ctrname)))
+        CIncCtr ctrname -> do
+            return $ parens $ parens (pretty "inc_counter" <> parens (pretty . execName $ ctrname))
         CCall f frty args -> do
             args' <- mapM extractCAExpr args
             let args'' = [di|cfg|] : [di|mut_state|] : args'
-            return [di|(call(#{f}_spec(#{hsep . punctuate comma $ args''})))|]
-        _ -> return [di|/* TODO: SpecExtraction.extractExpr #{show expr} */|]
+            return [di|call(#{f}_spec(#{hsep . punctuate comma $ args''}))|]
+        _ -> throwError $ ErrSomethingFailed $ "SpecExtraction: Unsupported CExpr: " ++ show expr
 
 
 extractDef :: LocalityName -> CDef FormatTy -> EM (Doc ann)
 extractDef locName (CDef defname b) = do
     let specname = defname ++ "_spec"
-    -- debugLog $ "Spec extracting def " ++ defname
+    debugLog $ "Spec extracting def " ++ defname
     (owlArgs, (retTy, body)) <- unbindCDepBind b
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
@@ -572,7 +756,7 @@ extractUserFunc (CUserFunc name b) = do
     where
         extractArg (cdvar, strname, ty) = do
             let specty = specTyOf ty
-            return [di|#{pretty strname} : #{pretty specty}|]
+            return [di|#{pretty . name2String $ cdvar} : #{pretty specty}|]
 
 
 specCast :: (Doc ann, FormatTy) -> VerusTy -> EM (Doc ann)
@@ -581,4 +765,5 @@ specCast (x, FEnum t _) (RTSeq RTU8) = return [di|serialize_#{specName t}(#{x})|
 specCast (x, FOption (FStruct _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
 specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as_seq(#{x})|]
 specCast (x, FInt) RTUsize = return [di|(#{x}) as usize|]
+specCast (x, _) RTUnit = return [di|()|]
 specCast (x, _) _ = return [di|#{x}|]

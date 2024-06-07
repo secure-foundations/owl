@@ -44,6 +44,7 @@ data FormatTy =
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
+    | FHexConst String
     | FDummy -- for when we can't infer the type locally
     deriving (Show, Eq, Generic, Typeable)
 
@@ -57,18 +58,26 @@ instance (Show v, Show t) => Show (Typed v t) where
 
 makeLenses ''Typed
 
+data ParsleyCombinator =
+    PCConstBytes Int String
+    | PCBytes FLen
+    | PCTail
+    | PCBuilder
+    deriving (Show, Eq, Generic, Typeable)
+
+
 type CDataVar t = Name (CAExpr t)
 
 data CAExpr' t = 
     CAVar (Ignore String) (CDataVar t)
-    -- TODO should the type be the variable's type, or the desired type for the func call?
     | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
     | CAGet String
     | CAGetEncPK String
     | CAGetVK String
-    | CAInt (FLen)
+    | CAInt FLen
     | CAHexConst String
     | CACounter String
+    | CASerializeWith t [(CAExpr t, ParsleyCombinator)]
     deriving (Show, Generic, Typeable)
 
 type CAExpr t = Typed (CAExpr' t) t
@@ -81,7 +90,7 @@ data CExpr' t =
     | CRet (CAExpr t)
     | CInput t (Bind (CDataVar t, EndpointVar) (CExpr t)) -- keep track of received buf type
     | COutput (CAExpr t) (Maybe Endpoint)
-    | CSample FLen (Bind (CDataVar t) (CExpr t))
+    | CSample FLen t (Bind (CDataVar t) (CExpr t))
     | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)
@@ -129,7 +138,8 @@ makeLenses ''CStruct
 data CEnum t = CEnum {
     _enumName :: String,
     _enumCases :: M.Map String (Maybe t),
-    _enumIsVest :: Bool
+    _enumIsVest :: Bool,
+    _enumExecComb :: String 
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CEnum
@@ -149,6 +159,7 @@ data CTyDef t =
 instance Alpha FLen
 instance Alpha FormatTy
 instance Alpha ParseKind
+instance Alpha ParsleyCombinator
 
 instance (Alpha v, Alpha t) => Alpha (Typed v t)
 instance (Subst b a, Subst b t) => Subst b (Typed a t)
@@ -184,12 +195,19 @@ instance OwlPretty FormatTy where
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
     owlpretty FGhost = owlpretty "ghost"
     owlpretty FDummy = owlpretty "dummy"
+    owlpretty (FHexConst s) = owlpretty "HexConst" <> parens (owlpretty "0x" <> owlpretty s)
 
 flagShouldPrettyTypes :: Bool
 flagShouldPrettyTypes = True
 
 instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
     owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
+
+instance OwlPretty ParsleyCombinator where
+    owlpretty (PCConstBytes n s) = owlpretty "ConstBytes" <> brackets (owlpretty n) <> parens (owlpretty s)
+    owlpretty (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
+    owlpretty PCTail = owlpretty "Tail"
+    owlpretty PCBuilder = owlpretty "BuilderCombinator"
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
@@ -198,6 +216,11 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
     owlpretty (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
+    owlpretty (CASerializeWith t xs) = 
+        let xs' = map (\(e, p) -> owlpretty e <+> owlpretty "as" <+> owlpretty p) xs in
+        owlpretty "serialize" <> brackets (owlpretty t) <+> owlpretty "(" <> line <> vsep xs' <> owlpretty ")"
+    owlpretty (CAGetEncPK s) = owlpretty "get_enc_pk" <> parens (owlpretty s)
+    owlpretty (CAGetVK s) = owlpretty "get_vk" <> parens (owlpretty s)
 
 
 instance OwlPretty ParseKind where
@@ -213,7 +236,7 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
-    owlpretty (CSample n xk) = 
+    owlpretty (CSample n t xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "sample" <> brackets (owlpretty n) <+> x <+> owlpretty "in" <+> k
     owlpretty (CLet e oanf xk) =
@@ -268,6 +291,7 @@ traverseCAExpr f a =
           CAInt i -> pure $ CAInt i
           CAHexConst i -> pure $ CAHexConst i
           CACounter s -> pure $ CACounter s
+          CASerializeWith t xs -> CASerializeWith <$> f t <*> traverse (\(e, p) -> (,) <$> traverseCAExpr f e <*> pure p) xs
 
 -- Does not take into account bound names
 traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)
@@ -280,9 +304,10 @@ traverseCExpr f a =
               t' <- f t
               CInput t' . bind (castName n, ep) <$> traverseCExpr f k
           COutput e k -> COutput <$> traverseCAExpr f e <*> pure k
-          CSample n xk -> do
+          CSample n t xk -> do
                 (x, k) <- unbind xk
-                CSample n . bind (castName x) <$> traverseCExpr f k
+                t' <- f t
+                CSample n t' . bind (castName x) <$> traverseCExpr f k
           CLet e a bk -> do
               (n, k) <- unbind bk
               CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)

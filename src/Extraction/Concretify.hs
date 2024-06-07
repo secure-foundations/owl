@@ -37,13 +37,17 @@ resolveLengthAnnot a = do
     case a^.val of
         AEInt i -> return $ FLConst i
         AELenConst s -> return $ FLNamed s
-        AEApp p _ [ae] -> do
+        AEApp p _ args -> do
             s <- concretifyPath p
-            if s == "cipherlen" then do
-                fl' <- resolveLengthAnnot ae
-                return $ FLCipherlen fl'
-            else do
-                throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
+            case (s, args) of
+                ("plus", [a1, a2]) -> do
+                    l1 <- resolveLengthAnnot a1
+                    l2 <- resolveLengthAnnot a2
+                    return $ FLPlus l1 l2
+                ("cipherlen", [a1]) -> do
+                    l1 <- resolveLengthAnnot a1
+                    return $ FLCipherlen l1
+                _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
         _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
 
 
@@ -95,14 +99,15 @@ concretifyTy t = do
       TUnit -> return $ FUnit
       TName ne -> formatTyOfNameExp ne
       TVK ne -> return $ FBuf $ Just $ FLNamed "vk"
-      TEnc_PK ne -> error "unimp"
+      TEnc_PK ne -> return $ FBuf $ Just $ FLNamed "pke_pk"
       TDH_PK ne -> return $ FBuf $ Just $ FLNamed "group"
       TSS ne1 ne2 -> return $ groupFormatTy
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
           (i, t) <- unbind it
-          concretifyTy t -- TODO keep track of indices?
-      THexConst s -> return $ hexConstType s
+          TB.withIndices [(i, (ignore $ show i, IdxGhost))] $ concretifyTy t
+      THexConst s -> return $ FHexConst s
+
 
 hexConstType :: String -> FormatTy
 hexConstType s = FBuf $ Just $ FLConst $ length s `div` 2
@@ -128,6 +133,12 @@ unifyFormatTy t1 t2 =
             return $ FOption t
         (FStruct n1 fs1, FStruct n2 fs2) | n1 == n2 -> return t1
         (FEnum n1 fs1, FEnum n2 fs2) | n1 == n2 -> return t1
+        (FHexConst s, FBuf (Just flen)) -> do
+            unifyFLen flen $ FLConst $ length s `div` 2
+            return $ FBuf $ Just flen
+        (FBuf (Just flen), FHexConst s) -> do
+            unifyFLen flen $ FLConst $ length s `div` 2
+            return $ FBuf $ Just flen
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ (show $ owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 unifyFLen :: FLen -> FLen -> EM FLen
@@ -211,7 +222,7 @@ concreteTyOfApp (PRes pth) =
                     return $ FOption FDummy
       PDot PTop "andb" -> \_ [x, y] -> return FBool
       PDot PTop "andp" -> \_ [x, y] -> return FGhost
-      PDot PTop "notb" -> \_ [x, y] -> return FBool
+      PDot PTop "notb" -> \_ [x] -> return FBool
       PDot PTop "length" -> \_ [x] -> return FInt
       PDot PTop "plus" -> \_ [x, y] -> return FInt
       PDot PTop "crh" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "crh"
@@ -224,12 +235,13 @@ concreteTyOfApp (PRes pth) =
             (_, Nothing) -> return $ FBuf Nothing
             (Just x, Just y) -> return $ FBuf $ Just $ FLPlus x y
       PDot PTop "xor" -> \_ [x, y] -> do
-          t <- unifyFormatTy x y
-          case t of
-            FBuf (Just _) -> return t
-            _ -> throwError $ ErrSomethingFailed $ "cannot extract xor"
+        return $ FBuf Nothing
+        --   t <- unifyFormatTy x y
+        --   case t of
+        --     FBuf _ -> return t
+        --     _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
       PDot PTop "cipherlen" -> \_ [x] -> return FInt
-      PDot PTop "pk_cipherlen" -> \_ [x] -> error "unimp"
+      PDot PTop "pk_cipherlen" -> \_ [x] -> return FInt
       PDot PTop "vk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "vk"
       PDot PTop "dhpk" -> \_ [x] -> return groupFormatTy
       PDot PTop "enc_pk" -> \_ [x] -> return $ FBuf $ Just $ FLNamed "enc_pk"
@@ -239,7 +251,7 @@ concreteTyOfApp (PRes pth) =
         --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
         --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
           return groupFormatTy
-      PDot PTop "checknonce" -> \_ [x, y] -> error "unimp"
+      PDot PTop "checknonce" -> \_ [x, y] -> return FBool
       PDot PTop p -> \_ args -> do
         fs <- use funcs
         case fs M.!? p of
@@ -267,16 +279,20 @@ concreteTyOfApp _ = \_ _ -> do
 
 -- Special case: Owl lets us implicitly cast exec values into ghost, but we must make this
 -- explicit in the concrete AST
-ghostifyArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
-ghostifyArgs (PRes (PDot PTop p)) args = do
+ghostifyAppArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
+ghostifyAppArgs (PRes (PDot PTop p)) args = do
     fs <- use funcs
     case fs M.!? p of
-        Just (argTys, _) -> do
-            forM (zip argTys args) $ \(t, a) -> do
-                if t == FGhost then return ghostUnit
-                else return a
+        Just (argTys, _) -> ghostifyArgs argTys args 
         Nothing -> return args
-ghostifyArgs _ args = return args
+ghostifyAppArgs _ args = return args
+
+ghostifyArgs :: [FormatTy] -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
+ghostifyArgs argTys args = do
+    forM (zip argTys args) $ \(t, a) -> do
+        if t == FGhost then return ghostUnit
+        else return a
+
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
@@ -309,7 +325,7 @@ concretifyAExpr a =
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
           t <- concreteTyOfApp p ps (map _tty vs)
-          args <- ghostifyArgs p vs
+          args <- ghostifyAppArgs p vs
           return $ Typed t $ CAApp s args
       AEVar s x -> do
           ot <- lookupVar $ castName x
@@ -358,14 +374,20 @@ concretifyExpr e = do
       ELet e1 _ oanf s xk -> do
           (c1, c1Lets) <- concretifyExpr e1
           (x, k) <- unbind xk
-          k' <- withVars ((castName x, _tty c1) : varsOfLets c1Lets) $ concretifyExpr k
-          let k'' = exprFromLets' k'
-          return $ noLets $ exprFromLets c1Lets $ Typed (_tty k'') $ CLet c1 oanf $ bind (castName x) k''
+          -- If the variable's Owl name is "_", and the expression is a ghost expression, we can skip the let
+          case (name2String x, c1 ^. tty) of
+            ("_", FGhost) -> concretifyExpr k
+            _ -> do
+                k' <- withVars ((castName x, _tty c1) : varsOfLets c1Lets) $ concretifyExpr k
+                let k'' = exprFromLets' k'
+                return $ noLets $ exprFromLets c1Lets $ Typed (_tty k'') $ CLet c1 oanf $ bind (castName x) k''
       ELetGhost _ s xk -> do
-          (x, k) <- unbind xk
-          k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
-          let k'' = exprFromLets' k'
-          return $ noLets $ Typed (_tty k'') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k''
+        (_,k) <- unbind xk
+        concretifyExpr k
+        --   (x, k) <- unbind xk
+        --   k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
+        --   let k'' = exprFromLets' k'
+        --   return $ noLets $ Typed (_tty k'') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k''
       EBlock e b -> do
           (c, clets) <- concretifyExpr e
           return $ noLets $ exprFromLets clets $ Typed (_tty c) $ CBlock c
@@ -403,7 +425,7 @@ concretifyExpr e = do
           return $ noLets $ Typed (FBuf $ Just $ FLNamed "counter") $ CGetCtr s
       EIncCtr p _ -> do
           s <- concretifyPath p
-          return $ noLets $ Typed FInt $ CIncCtr s
+          return $ noLets $ Typed FUnit $ CIncCtr s
       EDebug _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssert _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
@@ -415,8 +437,9 @@ concretifyExpr e = do
       ECall p _ aes -> do
           s <- concretifyPath p
           cs <- mapM concretifyAExpr aes
-          t <- returnTyOfCall p cs
-          return $ noLets $ Typed t $ CCall s t cs
+          (argtys, t) <- tySigOfCall p
+          cs' <- ghostifyArgs argtys cs
+          return $ noLets $ Typed t $ CCall s t cs'
       EParse a t_target otherwiseCase xsk -> do
             a' <- concretifyAExpr a
             t_target' <- concretifyTy t_target
@@ -483,18 +506,22 @@ concretifyExpr e = do
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do
                     let startT = e' ^. tty
+                    -- debugPrint $ show (owlpretty e')
+                    -- debugPrint $ show (owlpretty casevalT)
+                    -- debugPrint $ show (owlpretty startT)
                     otw' <- exprFromLets' <$> concretifyExpr otw
                     avar' <- fresh $ s2n "parseval"
-                    let fromBuf = case casevalT of
-                            -- Special case: sometimes, option types are given a type annotation, which 
-                            -- shows up in this case, but we are parsing authentically from an option type
-                            FOption _ -> PFromDatatype
-                            -- We are parsing as part of the case, so we need PFromBuf
-                            _ -> PFromBuf
-                    let p = Typed retTy $
-                            CParse fromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
-                                bind [(avar, ignore "caseval", casevalT)] caseStmt
-                    return (avar', p)
+                    case casevalT of
+                        -- Special case: sometimes, option types are given a type annotation, which 
+                        -- shows up in this case, but we are parsing authentically from an option type
+                        FOption _ -> return (avar, caseStmt)
+                        _ | casevalT == startT -> return (avar, caseStmt)
+                        -- We are parsing as part of the case, so we need PFromBuf
+                        _ -> do 
+                            let p = Typed retTy $
+                                    CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                                        bind [(avar, ignore "caseval", casevalT)] caseStmt
+                            return (avar', p)
                 Nothing -> return (avar, caseStmt)
             return $ noLets $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
@@ -502,7 +529,7 @@ concretifyExpr e = do
       EFalseElim e _ -> concretifyExpr e
       ETLookup p a -> do
           c <- concretifyAExpr a
-          t <- typeOfTable p
+          t <- FOption <$> typeOfTable p
           s <- concretifyPath p
           return $ noLets $ Typed t $ CTLookup s c
       ETWrite p a1 a2 -> do
@@ -520,17 +547,21 @@ typeOfTable (PRes (PDot p n)) = do
       Nothing -> error "table not found"
       Just (t, _) -> concretifyTy t
 
-returnTyOfCall :: Path -> [CAExpr FormatTy] -> EM FormatTy
-returnTyOfCall p cs = do
+tySigOfCall :: Path -> EM ([FormatTy], FormatTy)
+tySigOfCall p = do
     bfdef <- liftCheck $ TB.getDefSpec p
     ((bi1, bi2), dspec) <- unbind bfdef
     let (TB.DefSpec _ _ db) = dspec
-    go db
+    go [] db
         where
-            go (DPDone (_, t, _)) = concretifyTy t
-            go (DPVar _ _ xk) = do
+            go argtys (DPVar t _ xk) = do
+                t' <- concretifyTy t
                 (_, k) <- unbind xk
-                go k
+                go (argtys ++ [t']) k
+            go argtys (DPDone (_, t, _)) = do
+                t' <- concretifyTy t
+                return (argtys, t')
+
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
 concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
@@ -571,31 +602,52 @@ concretifyCryptOp _ CAEnc [k, x] = do
     let sampFLen = FLNamed "nonce"
     let coinsVar = Typed (FBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
     let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
-    return $ noLets $ Typed t $ CSample sampFLen $ bind coinsName doEnc
+    return $ noLets $ Typed t $ CSample sampFLen (FBuf $ Just sampFLen) $ bind coinsName doEnc
 concretifyCryptOp _ CADec [k, c] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
+    (patx, patbody) <- unbind xpat
     nonce <- concretifyPath np
     let t = case x ^. tty of
-              FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
-              _ -> FBuf Nothing
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+            FBuf (Just fl) -> FBuf $ Just $ FLCipherlen fl
+            _ -> FBuf Nothing
+    -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+    ctrVar <- fresh $ s2n nonce
+    let ctrTy = FBuf $ Just $ FLNamed "counter"
+    let getCtr = (ctrVar, Nothing, Typed ctrTy $ CGetCtr nonce)
+    incVar <- fresh $ s2n "_"
+    let incCtr = (incVar, Nothing, Typed FUnit $ CIncCtr nonce)
+    let getInc = [getCtr, incCtr]
+    (ivVar, mkIv) <- case patbody ^. val of
+        AEVar _ patx' | patx `aeq` patx' -> return (CAVar (ignore nonce) ctrVar, [])
+        _ -> do 
+            let patbodySubst = subst patx (mkSpanned $ AEVar (ignore nonce) (castName ctrVar)) patbody
+            iv <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
+            let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
+            return (CAVar (ignore $ name2String patx) $ castName patx, mkIv)
+    return $ withLets (getInc ++ mkIv) $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let t = FOption $ FBuf Nothing
     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
-concretifyCryptOp _ CPKEnc cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKEnc"
-concretifyCryptOp _ CPKDec cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CPKDec"
-concretifyCryptOp _ CMac cs = do
-    let t = FBuf $ Just $ FLNamed "maclen"
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" cs
-concretifyCryptOp _ CMacVrfy cs = throwError $ ErrSomethingFailed "TODO: concretifyCryptOp CMacVrfy"
-concretifyCryptOp _ CSign cs = do
-    let t = FBuf $ Just $ FLNamed "signature"
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" cs
-concretifyCryptOp _ CSigVrfy cs = do
+concretifyCryptOp _ CPKEnc [k, x] = do
+    let t = FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkenc" [k, x]
+concretifyCryptOp _ CPKDec [k, x] = do
     let t = FOption $ FBuf Nothing
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" cs
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkdec" [k, x]
+concretifyCryptOp _ CMac [k, x] = do
+    let t = FBuf $ Just $ FLNamed "maclen"
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" [k, x]
+concretifyCryptOp _ CMacVrfy [k, x, v] = do
+    let t = FOption $ FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac_vrfy" [k, x, v]
+concretifyCryptOp _ CSign [k, x] = do
+    let t = FBuf $ Just $ FLNamed "signature"
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" [k, x]
+concretifyCryptOp _ CSigVrfy [k, x, v] = do
+    let t = FOption $ FBuf Nothing
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" [k, x, v]
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
 
@@ -627,7 +679,7 @@ withDepBind (DPVar t s xd) k = do
 concretifyDef :: String -> TB.Def -> EM (Maybe (CDef FormatTy))
 concretifyDef defName (TB.DefHeader _) = return Nothing
 concretifyDef defName (TB.Def bd) = do
-    debugPrint $ "Concretifying def: " ++ defName
+    debugLog $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
     when (length sids > 1) $ throwError $ DefWithTooManySids defName
     ores <- 
@@ -655,7 +707,7 @@ userFuncArgTy = FBuf Nothing
 
 concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do
-    let ((_, args), body) = unsafeUnbind bd
+    ((_, args), body) <- unbind bd
     let argstys = zip (map castName args) (repeat userFuncArgTy)
     body' <- withVars argstys $ concretifyAExpr body
     let rty = body' ^. tty
@@ -681,28 +733,30 @@ rtyOfUserFunc ufName uf = do
 
 
 typeIsVest :: FormatTy -> Bool
-typeIsVest (FStruct _ fs) = all (typeIsVest . snd) fs
-typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs -- TODO: add ordered choice combinator
+typeIsVest (FStruct _ fs) = False -- all (typeIsVest . snd) fs
+typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs 
 typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False
 typeIsVest _ = True
 
-
 concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
 concretifyTyDef tname (TB.TyAbstract) = return Nothing
 concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
 concretifyTyDef tname (TB.EnumDef bnd) = do
-    -- debugPrint $ "Concretifying enum: " ++ tname
+    debugLog $ "Concretifying enum: " ++ tname
     (idxs, ts) <- unbind bnd
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
         cs <- forM ts $ \(s, ot) -> do
             cot <- traverse concretifyTy ot
             return (s, cot)
         let isVest = all (maybe True typeIsVest . snd) cs
-        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest)
+        -- We generate the exec combinator here, so that we can use it in
+        -- GenVerus where format types have been erased
+        (execComb, _) <- execCombOf tname (FEnum tname cs)
+        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb))
 concretifyTyDef tname (TB.StructDef bnd) = do 
-    -- debugPrint $ "Concretifying struct: " ++ tname
+    debugLog $ "Concretifying struct: " ++ tname
     (idxs, dp) <- unbind bnd
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
         let go dp = case dp of
@@ -723,7 +777,7 @@ setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
     case tdef of
         Nothing -> return ()
-        Just (CEnumDef (CEnum _ cases _)) -> do
+        Just (CEnumDef (CEnum _ cases _  _)) -> do
             -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
             let mkCase (cname, cty) = do
                     let argTys = case cty of

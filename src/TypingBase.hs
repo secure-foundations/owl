@@ -784,7 +784,7 @@ resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
       Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
       Just bnd -> do
           (((xs, ys), args), nt) <- unbind bnd
-          assert ("Wrong index arity on name type") $ (length is, length ps) == (length xs, length ys)
+          assert ("Wrong index arity on name type: " ++ show (owlpretty pth)) $ (length is, length ps) == (length xs, length ys)
           assert ("Wrong var arity on name type") $ length args == length as
           return $ substs (zip xs is) $ substs (zip ys ps) $ substs (zip args as) $ nt
 resolveNameTypeApp pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
@@ -803,9 +803,6 @@ getNameType ne = do
     case ntOpt of
         Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
-
-
-
 
 pushLogTypecheckScope :: Check' senv ()
 pushLogTypecheckScope = do
@@ -1130,9 +1127,9 @@ extractAAD ne a = do
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ _ -> do
-                (y, p) <- unbind yp
-                return $ subst y a p
+            NT_StAEAD _ ysp _ _ -> do
+                ((y, slf), p) <- unbind ysp
+                return $ subst y a $ subst slf (aeGet ne) $ p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
 
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check' senv Prop
@@ -1680,6 +1677,29 @@ getTyDataVars p = toListOf fv p
 
 getTyIdxVars :: Ty -> [IdxVar]
 getTyIdxVars p = toListOf fv p
+
+
+tyNonGhost :: Ty -> Check' senv Bool
+tyNonGhost t = do
+    l <- coveringLabel' t
+    lblNonGhost l
+
+lblNonGhost :: Label -> Check' senv Bool
+lblNonGhost l  =
+    case l^.val of
+      LName _ -> return True
+      LZero -> return True
+      LAdv -> return True
+      LTop -> return True
+      LGhost -> return False
+      LJoin l1 l2 -> liftM2 (&&) (lblNonGhost l1) (lblNonGhost l2)
+      LConst _ -> return True
+      LRangeIdx xl -> lblNonGhost $ snd $ unsafeUnbind xl
+      LRangeVar xl -> lblNonGhost $ snd $ unsafeUnbind xl
+
+
+
+
 
 
 -- get strongest type that doesn't mention x

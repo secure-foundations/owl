@@ -1,0 +1,90 @@
+
+locality alice
+locality bob
+
+name d : nonce @ alice
+name X : DH @ alice
+name Y : DH @ bob
+name skA : sigkey (dhpk(X)) @ alice
+name skB : sigkey (dhpk(Y)) @ bob
+odh L : X, Y -> 
+    {salt info.
+        True -> enckey Name(d)
+    }
+
+struct alice_msg {
+    _a1: dhpk(X),
+    _a2: Data<adv> ||signature||
+}
+
+struct bob_msg {
+    _b1: dhpk(Y),
+    _b2: Data<adv> ||signature||
+}
+
+enum DHKEResult { 
+    | SomeData Name(d)
+    | NoData
+}
+
+corr [X] ==> [d]
+corr [Y] ==> [d]
+corr [skB] ==> [d] /\ [X] /\ [Y]
+corr [skA] ==> [d] /\ [X] /\ [Y]
+
+def alice_main () @ alice 
+: Unit = 
+    let vkB: vk(skB) = get_vk(skB) in
+    let signed_x = sign(get(skA), dhpk(get(X))) in
+    let a = alice_msg(dhpk(get(X)), signed_x) in
+    let _ = output a to endpoint(bob) in
+    input i, _ in 
+    corr_case skB in
+    parse i as bob_msg(b1, b2) in 
+    case vrfy(vkB, b1, b2) {
+     | Some bobs_pk => 
+       corr_case X in
+       corr_case Y in
+       corr_case d in
+       let ss = dh_combine(bobs_pk, get(X)) in
+       let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
+       let c = aenc(k, get(d)) in
+       let _ = output c to endpoint(bob) in 
+       ()
+     | None => ()
+    }
+    otherwise ()
+
+
+
+def bob_main () @ bob 
+: Unit = 
+    let vkA: vk(skA) = get_vk(skA) in
+    let signed_y = sign(get(skB), dhpk(get(Y))) in
+    let b = bob_msg(dhpk(get(Y)), signed_y) in
+    let _ = output b to endpoint(alice) in
+    input i, _ in 
+    corr_case skA in
+
+    parse i as alice_msg(a1, a2) in 
+    case vrfy(vkA, a1, a2) {
+     | Some pkX => 
+       corr_case X in
+       corr_case Y in
+       corr_case d in
+       let ss = dh_combine(pkX, get(Y)) in
+       let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
+       corr_case nameOf(k) in 
+       input ii, _ in 
+       case adec(k, ii) /* as Option (Name(d)) */ {
+       | None => ()
+       | Some dd => 
+         let ddd : if (sec(X) /\ sec(Y) /\ sec(KDF<enckey;0; enckey
+         Name(d)>(0x, ss, 0x))) then
+            Name(d) else Data<adv> = dd in
+         ()
+       // otherwise => ()
+       }
+     | None => ()
+    }
+    otherwise ()

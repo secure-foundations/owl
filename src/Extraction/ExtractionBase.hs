@@ -52,6 +52,8 @@ liftCheck c = do
       Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "liftCheck error: "
       Right i -> return i
 
+
+
 data Env t = Env {
         _flags :: Flags
     ,   _path :: String
@@ -256,9 +258,9 @@ execName owlName = "owl_" ++ replacePrimes owlName
 specName :: String -> VerusName
 specName owlName = "owlSpec_" ++ replacePrimes owlName
 
--- specNameOf :: VerusName -> String
--- specNameOf (VN s _) = 
---     if "owl_" `isPrefixOf` s then drop 4 s else error "specNameOf: not an owl name: " ++ s
+specNameOfExecName :: VerusName -> String
+specNameOfExecName s = 
+    if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
 
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
 fLenOfNameKind nk = do
@@ -289,6 +291,11 @@ concreteLength (CUsizeConst s) = do
         "MACLEN_SIZE"    -> return 16
         "COUNTER_SIZE"   -> return 8
         "SIGNATURE_SIZE" -> return 64
+        -- The below are for compatibility with old Owl and probably should be updated
+        "VK_SIZE"        -> return 1219
+        "SIGKEY_SIZE"    -> return 1219
+        "PKEKEY_SIZE"    -> return 1219
+        "PKE_PK_SIZE"    -> return 1219
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
     debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
     return l
@@ -333,3 +340,212 @@ lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad t (Maybe (CDataVar t, 
 lookupKdfCall nks k = do
     hcs <- use memoKDF
     return $ lookupNameKindAExprMap hcs nks k
+
+
+mkNestPattern :: [Doc ann] -> Doc ann
+mkNestPattern l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
+
+nestOrdChoiceTy :: [Doc ann] -> Doc ann
+nestOrdChoiceTy l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
+
+nestOrdChoice :: [Doc ann] -> Doc ann
+nestOrdChoice l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
+
+-- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
+listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToEitherPat i l x = 
+    if i >= l then 
+        throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
+    else do
+        if l == 2 then
+            return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
+        else if i == l - 1 then
+            return [di|Either::Right(#{x})|]
+        else do
+            x' <- listIdxToEitherPat i (l-1) x
+            return [di|Either::Left(#{x'})|]
+
+withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
+withJustNothing f (Just x) = Just <$> f x
+withJustNothing f Nothing = return (Just Nothing)
+
+specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
+specCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+specCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (specCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|SpecConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
+specCombTyOf' _ = return Nothing
+
+specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+specCombTyOf = liftFromJust specCombTyOf'
+
+execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+execCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (execCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|ConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|ConstBytes<#{l}>|]
+execCombTyOf' _ = return Nothing
+
+execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+execCombTyOf = liftFromJust execCombTyOf'
+
+-- (combinator type, any constants that need to be defined)
+specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+specCombOf' _ (FBuf (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+specCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+specCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (specCombOf' constSuffix . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+specCombOf' constSuffix (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|SpecConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
+            let nest = nestOrdChoice constCs
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+specCombOf' constSuffix (FHexConst s) = do
+    bl <- hexStringToByteList s
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
+    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+specCombOf' _ _ = return Nothing
+
+specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+specCombOf s = liftFromJust (specCombOf' s)
+
+-- (combinator type, any constants that need to be defined)
+execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+execCombOf' _ (FBuf (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+execCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+execCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (execCombOf' constSuffix . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' constSuffix (FEnum _ cs) = do
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|ConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoice constCs
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' constSuffix (FHexConst s) = do
+    bl <- hexStringToByteList s
+    let l = length s `div` 2
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let const = [__di|
+    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
+    {
+        let arr: [u8; #{l}] = [#{bl}];
+        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
+        arr
+    }
+    |]
+    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+execCombOf' _ _ = return Nothing
+
+execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+execCombOf s = liftFromJust (execCombOf' s)
+
+
+execParsleyCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe ParsleyCombinator)
+execParsleyCombOf' _ (FBuf (Just flen)) = do
+    return $ Just $ PCBytes flen
+execParsleyCombOf' _ (FBuf Nothing) = return $ Just $ PCTail
+execParsleyCombOf' constSuffix (FHexConst s) = do
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let len = length s `div` 2
+    return $ Just $ PCConstBytes len $ "EXEC_BYTES_CONST_" ++ s ++ "_" ++ constSuffix'
+execParsleyCombOf' _ _ = return Nothing
+
+execParsleyCombOf :: String -> FormatTy -> ExtractionMonad t ParsleyCombinator
+execParsleyCombOf s = liftFromJust (execParsleyCombOf' s)
+
+noconst :: a -> Maybe (a, Doc ann)
+noconst x = Just (x, [di||])
+
+liftFromJust :: (a -> ExtractionMonad t (Maybe b)) -> a -> ExtractionMonad t b
+liftFromJust f x = do
+    res <- f x
+    case res of
+        Just r -> return r
+        Nothing -> throwError $ ErrSomethingFailed "liftFromJust failed"

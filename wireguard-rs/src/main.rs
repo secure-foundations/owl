@@ -60,6 +60,7 @@ fn main() {
     let mut name = None;
     let mut drop_privileges = true;
     let mut foreground = false;
+    let mut use_owl = false;
     let mut args = env::args();
 
     // skip path (argv[0])
@@ -71,6 +72,9 @@ fn main() {
             }
             "--disable-drop-privileges" => {
                 drop_privileges = false;
+            }
+            "--owl" | "-o" => {
+                use_owl = true;
             }
             dev => name = Some(dev.to_owned()),
         }
@@ -131,7 +135,7 @@ fn main() {
     profiler_start(name.as_str());
 
     // create WireGuard device
-    let wg: WireGuard<plt::Tun, plt::UDP> = WireGuard::new(writer);
+    let wg: WireGuard<plt::Tun, plt::UDP> = WireGuard::new(writer, use_owl);
 
     // add all Tun readers
     while let Some(reader) = readers.pop() {

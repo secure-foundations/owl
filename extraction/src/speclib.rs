@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
 pub use vstd::{modes::*, prelude::*, seq::*, *};
-pub use crate::DView;
+// pub use crate::View;
 
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////// CRYPTO ETC LIBRARY ///////////////////////////////////////
@@ -12,7 +12,7 @@ verus! {
 pub open spec fn options_match(s: Option<Seq<u8>>, v: Option<Vec<u8>>) -> bool
 {
     (v.is_None() && s.is_None()) ||
-    (v.is_Some() && s.is_Some() && v.get_Some_0().dview() == s.get_Some_0())
+    (v.is_Some() && s.is_Some() && v.get_Some_0().view() == s.get_Some_0())
 }
 
 pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
@@ -23,13 +23,6 @@ pub open spec fn view_option<T: View>(v: Option<T>) -> Option<T::V>
     }
 }
 
-pub open spec fn dview_option<T: DView>(v: Option<T>) -> Option<T::V>
-{
-    match v {
-        Option::Some(x) => Option::Some(x.dview()),
-        Option::None    => Option::None
-    }
-}
 
 pub open spec fn option_as_seq<T: OwlSpecSerialize>(v: Option<T>) -> Option<Seq<u8>>
 {
@@ -60,13 +53,13 @@ impl OwlSpecSerialize for bool {
     }
 }
 
-// hack
-impl DView for Ghost<()> {
-    type V = Ghost<()>;
-    open spec fn dview(&self) -> Ghost<()> {
-        Ghost(())
-    }
-}
+// // hack
+// impl View for Ghost<()> {
+//     type V = Ghost<()>;
+//     open spec fn view(&self) -> Ghost<()> {
+//         Ghost(())
+//     }
+// }
 
 
 pub trait OwlSpecAsCtr {
@@ -189,7 +182,7 @@ pub closed spec(checked) fn pkenc(pubkey: Seq<u8>, msg: Seq<u8>) -> (ctxt: Seq<u
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Seq<u8>)
+pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Option<Seq<u8>>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -201,15 +194,8 @@ pub closed spec(checked) fn mac_vrfy(mackey: Seq<u8>, msg: Seq<u8>, mac: Seq<u8>
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn enc_st_aead_inner(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad: Seq<u8>) -> (c: Seq<u8>)
+pub closed spec(checked) fn enc_st_aead(k: Seq<u8>, x: Seq<u8>, nonce: Seq<u8>, aad: Seq<u8>) -> (c: Seq<u8>)
 { unimplemented!() }
-
-pub open spec(checked) fn enc_st_aead(k: Seq<u8>, x: Seq<u8>, nonce: usize, aad: Seq<u8>) -> 
-    (res: (Seq<u8>, usize))
-{ 
-    // We ignore the possibility of overflow here
-    (enc_st_aead_inner(k,x,nonce, aad), #[verifier::truncate] ((nonce + 1usize) as usize))
-}
 
 #[verifier(external_body)]
 pub closed spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: Seq<u8>, aad: Seq<u8>) -> (x: Option<Seq<u8>>)
@@ -230,6 +216,12 @@ pub closed spec(checked) fn bytes_as_counter(x: Seq<u8>) -> usize
 #[verifier(external_body)]
 pub closed spec(checked) fn counter_as_bytes(x: usize) -> Seq<u8>
 { unimplemented!() }
+
+pub open spec fn xor(a: Seq<u8>, b: Seq<u8>) -> Seq<u8>
+{
+    Seq::new(a.len(), |i| a[i] ^ b[i])
+}
+
 
 pub open spec fn andb(x: bool, y: bool) -> bool
 {
@@ -300,7 +292,7 @@ pub mod itree {
 
         }
         pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
-            self matches ITree::Output(o, ev, _) // && self.get_Output_0() == o && self.get_Output_1() == ev
+            self matches ITree::Output(o_spec, ev_spec, _) && o == o_spec && ev == ev_spec // && self.get_Output_0() == o && self.get_Output_1() == ev
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o, ev| self.is_output(o, ev))
@@ -308,7 +300,7 @@ pub mod itree {
             *(self->Output_2)
         }
         pub open spec fn is_sample(&self, n: usize) -> bool {
-            self matches ITree::Sample(n, _)
+            self matches ITree::Sample(n_spec, _) && n == n_spec
         }
         pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
@@ -317,7 +309,7 @@ pub mod itree {
         }
         pub open spec(checked) fn results_in(&self, a: A) -> bool 
         {
-            self matches ITree::Ret(a) // && self.get_Ret_0() == a
+            self matches ITree::Ret(a_spec) && a == a_spec // && self.get_Ret_0() == a
         }
 
         pub open spec fn bind<B>(&self, next: spec_fn(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
@@ -501,7 +493,7 @@ pub mod itree {
     macro_rules! owl_call {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.dview().as_seq(), $($tail)*)
+                owl_call_internal!(res, res.view(), $($tail)*)
             }
         };
     }
@@ -511,7 +503,7 @@ pub mod itree {
     macro_rules! owl_call_ret_unit {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, res.dview(), $($tail)*)
+                owl_call_internal!(res, res.view(), $($tail)*)
             }
         };
     }
@@ -522,7 +514,7 @@ pub mod itree {
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
             ::builtin_macros::verus_exec_macro_exprs!{
-                owl_call_internal!(res, dview_option(res), $($tail)*)
+                owl_call_internal!(res, view_option(res), $($tail)*)
             }
         };
     }
@@ -616,13 +608,13 @@ pub mod itree {
             ($($e)*)
                 .bind( |tmp : (_, $mut_type)| ITree::Ret(tmp) )
         }};
-        // special case handling of `enc_st_aead`, which needs to increment the nonce counter, and so is stateful
-        ($mut_state:ident, $mut_type:ident, ret (enc_st_aead($k:expr, $x:expr, $nonce:ident, $aad:expr))) => { verus_proof_expr!{
-            {
-                let (c, new_nonce) = enc_st_aead($k, $x, $mut_state.$nonce, $aad);
-                ITree::Ret((c, $mut_type {$nonce: new_nonce, .. $mut_state}))
-            }
-        }};
+        // // special case handling of `enc_st_aead`, which needs to increment the nonce counter, and so is stateful
+        // ($mut_state:ident, $mut_type:ident, ret (enc_st_aead($k:expr, $x:expr, $nonce:ident, $aad:expr))) => { verus_proof_expr!{
+        //     {
+        //         let (c, new_nonce) = enc_st_aead($k, $x, $mut_state.$nonce, $aad);
+        //         ITree::Ret((c, $mut_type {$nonce: new_nonce, .. $mut_state}))
+        //     }
+        // }};
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => { verus_proof_expr!{
             ITree::Ret(($($e)*, $mut_state))
         }};
@@ -633,7 +625,7 @@ pub mod itree {
         {verus_proof_expr! {
             if let Some(parseval) = $parser($a) {
                 let $structTy { $($fieldName),* } = parseval;
-                $(let $varName = $fieldName.as_seq();)*
+                $(let $varName = $fieldName;)*
                 owl_spec!($mut_state, $mut_type, $($next)*)
             } else {
                 owl_spec!($mut_state, $mut_type, $($otw)*)
@@ -648,6 +640,26 @@ pub mod itree {
             $(let $varName = $fieldName;)*
             owl_spec!($mut_state, $mut_type, $($next)*)
         }}};
+        // ($mut_state:ident, $mut_type:ident, 
+        //     parse ($a:ident) as 
+        //         ($enumName:ident : $enumTy:ident) 
+        //     in { $($next:tt)* }) => 
+        // {verus_proof_expr! {
+        //     let $enumName = $a;
+        //     owl_spec!($mut_state, $mut_type, $($next)*)
+        // }};
+        ($mut_state:ident, $mut_type:ident, 
+            parse ($parser:ident($a:ident)) as 
+                ($enumName:ident : $enumTy:ident) 
+            in { $($next:tt)* } otherwise ($($otw:tt)*)) => 
+        {verus_proof_expr! {
+            if let Some(parseval) = $parser($a) {
+                let $enumName = parseval;
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            } else {
+                owl_spec!($mut_state, $mut_type, $($otw)*)
+            }
+        }};
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{

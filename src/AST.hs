@@ -244,7 +244,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce String 
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind DataVar Prop) Path (Bind DataVar AExpr) 
+    | NT_StAEAD Ty (Bind (DataVar, DataVar) Prop) Path (Bind DataVar AExpr) 
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx]) [AExpr]
@@ -476,6 +476,7 @@ data DebugCommand =
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
       | DebugPrintModules
+      | DebugCheckMatchesStruct [AExpr] Path [FuncParam]
     deriving (Show, Generic, Typeable)
 
 data IdxType = IdxSession | IdxPId | IdxGhost

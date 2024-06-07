@@ -5,8 +5,8 @@ set -euo pipefail
 function usage() {
     echo "Usage: ${0} [-n] <path-to-extraction-dir>"
     echo "You must have verus and verusfmt in your path,"
-    echo "and the VESTPATH environment variable set to the path"
-    echo "to the crate root of the vest codegen repo."
+    echo "and the PARSLEYPATH environment variable set to the path"
+    echo "to the crate root of the parsley repo."
     exit 2
 }
 
@@ -45,9 +45,9 @@ if [ $format = "true" ]; then
 fi
 
 echo ""
-echo "VEST CODEGEN" 
-pushd $VESTPATH
-cargo run -- $vest_file
+echo "VERIFYING, COMPILING, AND EXPORTING PARSLEY" 
+pushd $PARSLEYPATH
+make
 popd
 
 echo ""
@@ -58,7 +58,7 @@ popd
 
 echo ""
 echo "VERIFYING" 
-verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --multiple-errors=100 --rlimit=100 $main_file $verus_args
+verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern parsley=$PARSLEYPATH/libparsley.rlib --import parsley=$PARSLEYPATH/parsley.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all --time
 
 
 

@@ -1,5 +1,9 @@
 include "defs.owl"
 
+
+def init_sent_message<@n>(x : Ghost) @ Initiator<n> : Unit = ()
+def resp_sent_message<@m>(x : Ghost) @ Responder<m> : Unit = ()
+
 def init_recv<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>) @
 Initiator<n>
     : Option Data<adv /\ [channel_secret_resp_send<@n,m>]> = 
@@ -10,6 +14,16 @@ Initiator<n>
         guard eq(from, resp) in 
         pcase init_clean<i,n,m>[haspsk, eph] in 
         let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
+        {
+            let _ : Unit = case p as Option Data<adv> {
+                | None => ()
+                | Some m =>
+                    assert init_clean<i,n,m>[haspsk, eph] ==> happened(resp_sent_message<@m>(m));
+                    ()
+                otherwise => ()
+            } in
+            ()
+        };
         p
     }
     otherwise None<ty: Data<adv /\ [channel_secret_resp_send<@n,m>]>> ()
@@ -24,6 +38,7 @@ Initiator<n>
     resp_send) in 
     pcase init_clean<i,n,m>[haspsk, eph] in 
     let transp_counter = get_counter N_init_send<i@n> in
+    call init_sent_message<@n>(msg);
     let c = st_aead_enc<N_init_send<i@n>>(init_send, msg, 0x) in 
     let transp_tag = transp_tag_value() in 
     let o = transp(transp_tag, init, transp_counter, c) in 
@@ -46,7 +61,8 @@ def resp_recv<j@n,m>(
     resp_send) in 
     parse i as transp(tag, from, ctr, pkt) in {
         guard eq(from, init) in 
-        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in 
+        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in
+        pcase exists i:idx. eph == dhpk(get(E_init<i@n>)) when resp_clean<j,n_pk,n,m>[haspsk, eph] in 
         pcase n =idx n_pk in 
         case st_aead_dec(init_send, pkt, 0x, ctr) // as Option 
         // (Data<adv /\
@@ -63,6 +79,9 @@ def resp_recv<j@n,m>(
                 let ret = 
                 pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
                 m>(st', x)) in 
+                assert (resp_clean<j,n_pk,n,m>[haspsk,eph] /\ n =idx n_pk /\ exists i:idx. eph == dhpk(get(E_init<i@n>)))
+                       ==>
+                       happened(init_sent_message<@n>(x));
                 Some(ret)
             | None => None<ty: (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
     pid m>)>()
@@ -94,6 +113,7 @@ Responder<m>
     assume (n =idx npk);
 
     let transp_counter = get_counter N_resp_send<j@m> in
+    call resp_sent_message<@m>(msg);
     let c = st_aead_enc<N_resp_send<j@m>>(resp_send, msg, 0x) in 
     let transp_tag = transp_tag_value() in 
     let o = transp(transp_tag, resp, transp_counter, c) in 

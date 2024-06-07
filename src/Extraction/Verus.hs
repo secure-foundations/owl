@@ -45,6 +45,7 @@ data VerusTy =
     | RTParam VerusName [VerusTy] -- general-purpose parameterized types (we special-case Option and Vec)
     | RTWithLifetime VerusTy Lifetime
     | RTOwlBuf Lifetime
+    | RTStAeadBuilder
     | RTUnit
     | RTBool
     | RTU8

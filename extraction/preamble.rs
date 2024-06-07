@@ -15,9 +15,18 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub mod deep_view;
-pub use crate::deep_view::{*};
-pub mod parse_serialize;
+pub use parsley::{
+    *,
+    properties::*,
+    regular::*,
+    regular::builder::*,
+    regular::bytes::*,
+    regular::bytes_const::*,
+    regular::choice::*,
+    regular::tail::*,
+    regular::uints::*,
+    utils::*,
+};
 
 pub use extraction_lib::*;
 pub use std::collections::HashMap;
@@ -30,7 +39,6 @@ pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;
 pub use std::time::Instant;
-// pub use crate::parse_serialize::View as _;
 
 verus! {
 pub spec const SPEC_CIPHER: owl_aead::Mode = crate::owl_aead::Mode::Chacha20Poly1305;
@@ -40,7 +48,10 @@ pub spec const SPEC_NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);
 pub spec const SPEC_HMAC_MODE: owl_hmac::Mode = crate::owl_hmac::Mode::Sha512;
 pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
 pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
-    
+pub spec const SPEC_COUNTER_SIZE: usize = 8usize;
+pub spec const SPEC_SIGNATURE_SIZE: usize = 64usize;
+pub spec const SPEC_MACLEN_SIZE: usize = 16usize;    
+
 #[verifier::when_used_as_spec(SPEC_CIPHER)]
 pub exec const CIPHER: owl_aead::Mode ensures CIPHER == SPEC_CIPHER { crate::owl_aead::Mode::Chacha20Poly1305 }
 
@@ -62,6 +73,15 @@ pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { owl_
 #[verifier::when_used_as_spec(SPEC_KDFKEY_SIZE)]
 pub exec const KDFKEY_SIZE: usize ensures KDFKEY_SIZE == SPEC_KDFKEY_SIZE { owl_hkdf::kdfkey_size() }
 
+#[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
+pub exec const COUNTER_SIZE: usize ensures COUNTER_SIZE == SPEC_COUNTER_SIZE { 8usize }
+
+#[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
+pub exec const SIGNATURE_SIZE: usize ensures SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE { 64usize }
+
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16usize }
+
 #[verifier(external_type_specification)]
 #[verifier(external_body)]
 pub struct TcpListenerWrapper ( std::net::TcpListener );
@@ -71,13 +91,13 @@ pub struct OwlErrorWrapper ( OwlError );
 
 
 #[verifier(external_body)]
-pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
-    requires old(t).view().is_output(x.dview(), endpoint_of_addr(dest_addr.view()))
+pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &str, ret_addr: &str)
+    requires old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view()))
     ensures  t.view() == old(t).view().give_output()
 {
-    let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
+    let msg = msg { ret_addr: ret_addr.to_string(), payload: std::vec::Vec::from(x) };
     let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
+    let mut stream = TcpStream::connect(dest_addr).unwrap();
     stream.write_all(&serialized).unwrap();
     stream.flush().unwrap();
 }
@@ -85,23 +105,50 @@ pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8],
 #[verifier(external_body)]
 pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
     requires old(t).view().is_input()
-    ensures  t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view()))
+    ensures  t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view()))
 {
     let (mut stream, _addr) = listener.accept().unwrap();
     let mut reader = io::BufReader::new(&mut stream);
     let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
     reader.consume(received.len());
     let msg : msg = deserialize_msg(&received);
-    (msg.payload, String::from_rust_string(msg.ret_addr))
+    (msg.payload, msg.ret_addr)
 }
 
 #[verifier(external_body)]
 pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
     requires old(t).view().is_sample(n)
-    ensures  t.view() == old(t).view().get_sample(res.dview())
+    ensures  t.view() == old(t).view().get_sample(res.view())
 {
     owl_util::gen_rand_bytes(n)
 }
+
+
+#[verifier(external_body)]
+pub fn owl_output_serialize_fused<'a, A, C: Combinator<'a> + 'a>(
+    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    comb: C,
+    val: C::Result,
+    obuf: &mut Vec<u8>,
+    dest_addr: &str,
+    ret_addr: &str,
+)
+    requires
+        comb.spec_serialize(val.view()) matches Ok(b) ==> 
+            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+    ensures
+        t.view() == old(t).view().give_output(),
+        comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
+{
+    let ser_result = comb.serialize(val, obuf, 0);
+    assume(ser_result.is_ok());
+    if let Ok((num_written)) = ser_result {
+        vec_truncate(obuf, num_written);
+    } else {
+        assert(false);
+    }
+}
+
 
 // for debugging purposes, not used by the compiler
 #[verifier(external_body)]

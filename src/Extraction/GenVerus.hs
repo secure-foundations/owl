@@ -68,7 +68,7 @@ genVerusUserFunc (CUserFunc name b) = do
     let specname = name
     (args, (retTy, body)) <- unbindCDepBind b
     let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
-    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.dview()|]) args
+    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.view()|]) args
     body' <- genVerusCAExpr body
     body'' <- castGRE body' retTy
     let needsLifetime = tyNeedsLifetime retTy
@@ -76,6 +76,15 @@ genVerusUserFunc (CUserFunc name b) = do
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let retTy' = liftLifetime lifetimeConst retTy
     let retval = [di|res: #{pretty retTy'}|]
+    let mkArgLenVald (arg, s, argty) = case argty of
+            RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
+            RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
+            _ -> Nothing
+    let requiresLenValid = case mapMaybe mkArgLenVald args of
+            [] -> [di||]
+            xs -> [di|requires #{hsep . punctuate comma $ xs}|]
     let ensuresLenValid = case retTy of
             RTOwlBuf _ -> [di|res.len_valid()|]
             RTStruct _ _ -> [di|res.len_valid()|]
@@ -83,14 +92,17 @@ genVerusUserFunc (CUserFunc name b) = do
             _ -> [di||]
     return [__di|
     pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
+        #{requiresLenValid}
         ensures
-            res.dview() == #{specname}(#{viewArgs}),
+            res.view() == #{specname}(#{viewArgs}),
             #{ensuresLenValid}
     {
         reveal(#{specname});
         #{body''}
     }
     |]
+    where
+        prettyArgName = pretty . execName . show
 
 
 genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
@@ -110,10 +122,10 @@ genVerusEndpointDef lnames = do
     |]
     let mkLocAddr (lname, ipport) = [__di|
     \#[verifier(external_body)]
-    pub const fn #{lname}_addr() -> (a: StrSlice<'static>) 
+    pub const fn #{lname}_addr() -> (a: &'static str) 
         ensures endpoint_of_addr(a.view()) == Endpoint::#{locNameOf lname}
     {
-        new_strlit("127.0.0.1:#{pretty ipport}")
+        "127.0.0.1:#{pretty ipport}"
     }
     |]
     let locNameAddrs :: [(LocalityName, Int)] = zip lnames $ [9000 + x | x <- [1..]]
@@ -145,7 +157,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     pub struct #{cfgName} {
         pub listener: TcpListener,
         pub salt: Vec<u8>,
-        #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls},
+        #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
     impl #{cfgName} {
         // TODO: library routines for reading configs
@@ -219,12 +231,16 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("mac", ([u8slice, u8slice], vecU8))
         , ("mac_vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
         , ("pkenc", ([u8slice, u8slice], vecU8))
-        , ("pkdec", ([u8slice, u8slice], vecU8))
-        -- , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) -- special-cased
+        , ("pkdec", ([u8slice, u8slice], RTOption vecU8))
+        , ("sign", ([u8slice, u8slice], vecU8))
+        , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
+        , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
         , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
         , ("concat", ([u8slice, u8slice], vecU8))
+        , ("xor", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
@@ -250,22 +266,38 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
-                        ("enc_st_aead", [k, x, nonce, aad]) -> do
-                            k' <- genVerusCAExpr k
-                            x' <- genVerusCAExpr x
-                            nonce' <- genVerusCAExpr nonce
-                            aad' <- genVerusCAExpr aad
-                            castK <- castGRE k' u8slice
-                            castX <- castGRE x' u8slice
-                            castNonce <- castGRE nonce' (RTRef RMut RTUsize)
-                            castAad <- castGRE aad' u8slice
-                            castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
-                            return $ GenRustExpr (ae ^. tty) $ [__di|{ 
-                                match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                                    Ok(ctxt) => { #{castRes} },
-                                    Err(e) => { return Err(e) },
-                                }                                
-                            }|]
+                        -- ("enc_st_aead_builder", [k, x, nonce, aad]) -> do
+                        --     k' <- genVerusCAExpr k
+                        --     x' <- genVerusCAExpr x
+                        --     nonce' <- genVerusCAExpr nonce
+                        --     aad' <- genVerusCAExpr aad
+                        --     castK <- castGRE k' u8slice
+                        --     castX <- castGRE x' u8slice
+                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                        --     castAad <- castGRE aad' u8slice
+                        --     castRes <- cast ([di|ctxt|], RTStAeadBuilder) (ae ^. tty)
+                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
+                        --         match owl_enc_st_aead_builder(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                        --             Ok(ctxt) => { #{castRes} },
+                        --             Err(e) => { return Err(e) },
+                        --         }                                
+                        --     }|]
+                        -- ("enc_st_aead", [k, x, nonce, aad]) -> do
+                        --     k' <- genVerusCAExpr k
+                        --     x' <- genVerusCAExpr x
+                        --     nonce' <- genVerusCAExpr nonce
+                        --     aad' <- genVerusCAExpr aad
+                        --     castK <- castGRE k' u8slice
+                        --     castX <- castGRE x' u8slice
+                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
+                        --     castAad <- castGRE aad' u8slice
+                        --     castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
+                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
+                        --         match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
+                        --             Ok(ctxt) => { #{castRes} },
+                        --             Err(e) => { return Err(e) },
+                        --         }                                
+                        --     }|]
                         ("true", []) -> return $ GenRustExpr RTBool [di|true|] 
                         ("false", []) -> return $ GenRustExpr RTBool [di|false|] 
                         ("Some", [x]) -> do
@@ -277,7 +309,7 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             -- x'' <- castGRE x' (x ^. tty)
                             case x' ^. eTy of
-                                RTVec RTU8 -> return $ GenRustExpr RTUsize [di|vec_length(#{x' ^. code})|]
+                                RTVec RTU8 -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr RTUsize [di|{ slice_len(#{x' ^. code}) }|]
                                 RTOwlBuf _ -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 _ -> throwError $ ErrSomethingFailed $ "TODO: length for type: " ++ show (x' ^. eTy)
@@ -290,25 +322,12 @@ genVerusCAExpr ae = do
                         ("andp", [x,y]) -> do
                             -- Propositional `and`, which we just compile to ghost unit
                             return $ GenRustExpr RTVerusGhost [di|owl_ghost_unit()|]
-                        ("eq", [x,y]) -> do
+                        ("notb", [x]) -> do
                             x' <- genVerusCAExpr x
-                            y' <- genVerusCAExpr y
-                            let castXTo = castGRE x'
-                            let castYTo = castGRE y'
-                            case (x ^. tty, y ^. tty) of
-                                (RTVec RTU8, RTVec RTU8) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                (RTOwlBuf _, RTOwlBuf _) -> do
-                                    x'' <- castXTo u8slice
-                                    y'' <- castYTo u8slice
-                                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
-                                _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
+                            x'' <- castGRE x' RTBool
+                            return $ GenRustExpr RTBool [di|!(#{x''})|]
+                        ("eq", [x,y]) -> eqChecker x y
+                        ("checknonce", [x, y]) -> eqChecker x y                        
                         ("subrange", [buf, start, end]) -> do
                             buf' <- genVerusCAExpr buf
                             start' <- genVerusCAExpr start
@@ -316,7 +335,7 @@ genVerusCAExpr ae = do
                             castStart <- castGRE start' RTUsize
                             castEnd <- castGRE end' RTUsize
                             case buf' ^. eTy of
-                                RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ #{buf' ^. code}.subrange(#{castStart}, #{castEnd}) }|]
+                                RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ OwlBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         (f, [x]) | "?" `isSuffixOf` f -> do
@@ -325,13 +344,34 @@ genVerusCAExpr ae = do
                             x' <- genVerusCAExpr x
                             x'' <- castGRE x' (RTRef RShared (x ^. tty))
                             return $ GenRustExpr (ae ^. tty) [di|#{execName f'}(#{x''})|]
-                        _ -> do
-                            args' <- mapM genVerusCAExpr args
-                            args'' <- zipWithM castGRE args' (map (^. tty) args)
-                            return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
+                        _ -> case ae ^. tty of
+                                RTStruct n fs | n == execName f -> do
+                                    -- Special case for struct constructors
+                                    args' <- mapM genVerusCAExpr args
+                                    let ftys = map snd fs
+                                    args'' <- zipWithM castGRE args' ftys
+                                    return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
+                                RTEnum n cs | elem (execName f) (map fst cs) && length args == 1 -> do
+                                    -- Special case for struct constructors
+                                    let [arg] = args
+                                    arg' <- genVerusCAExpr arg
+                                    cty <- case lookup (execName f) cs of
+                                            Just (Just t) -> return t
+                                            _ -> throwError $ ErrSomethingFailed $ "enum constructor case with no type " ++ show (ae^.tty, execName f)
+                                    arg'' <- castGRE arg' cty
+                                    return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{arg''})|]
+                                _ -> do
+                                    args' <- mapM genVerusCAExpr args
+                                    args'' <- zipWithM castGRE args' (map (^. tty) args)
+                                    return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
         CAGet n -> do
             let rustN = execName n
             castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
+            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+        CAGetEncPK n -> do
+            let rustN = execName n
+            castN <- cast ([di|self.pk_#{rustN}|], nameTy) u8slice
             castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
         CAGetVK n -> do
@@ -348,12 +388,71 @@ genVerusCAExpr ae = do
             s' <- hexStringToByteList s
             castX <- ([di|x|], vecU8) `cast` (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
-        _ -> return  $ GenRustExpr (ae ^. tty) [__di|
-        /*
-            TODO: genVerusCAExpr #{show ae}
-        */
-        |]
-    
+        CASerializeWith (RTStruct n fs) args -> do
+            let ftys = map snd fs
+            let printComb arg comb = case comb of
+                    PCTail -> return [di|Tail|]
+                    PCBytes l -> do
+                        l' <- concreteLength $ lowerFLen l
+                        return [di|Bytes(#{l'})|]
+                    PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                    PCBuilder -> return [di|BuilderCombinator(#{arg})|]
+            let mkCombArg ((arg, comb), fty) = do
+                    arg' <- genVerusCAExpr arg
+                    let fty' = if comb == PCBuilder then RTUnit else fty
+                    arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                    argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                    comb' <- printComb arg'' comb
+                    len <- case comb of
+                        PCBytes l -> do
+                            return [di|#{arg''}.len()|]
+                        PCConstBytes l _ -> return [di|#{l}|]
+                        PCTail -> return [di|#{arg''}.len()|]
+                        PCBuilder -> return [di|#{arg''}.length()|]
+                    return (comb', (argForSer, len))
+            let acfs = zip args ftys
+            (combs, arglens) <- unzip <$> mapM mkCombArg acfs
+            let (args, lens) = unzip arglens
+            let execcomb = mkNestPattern combs
+            let execargs = mkNestPattern args
+            let ser_body = [__di|    
+                if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let mut ser_buf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
+                    let exec_comb = #{execcomb};
+                    let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
+                    if let Ok((num_written)) = ser_result {
+                        vec_truncate(&mut ser_buf, num_written);
+                        ser_buf
+                    } else {
+                        // TODO better error name
+                        return Err(OwlError::IntegerOverflow);
+                    }
+                } else {
+                    return Err(OwlError::IntegerOverflow);
+                }
+            |]
+            return $ GenRustExpr vecU8 ser_body
+        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCAExpr: " ++ show (owlpretty ae)
+    where
+        eqChecker x y = do
+            x' <- genVerusCAExpr x
+            y' <- genVerusCAExpr y
+            let castXTo = castGRE x'
+            let castYTo = castGRE y'
+            case (x ^. tty, y ^. tty) of
+                (RTVec RTU8, RTVec RTU8) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                (RTRef _ (RTSlice RTU8), RTRef _ (RTSlice RTU8)) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                (RTOwlBuf _, RTOwlBuf _) -> do
+                    x'' <- castXTo u8slice
+                    y'' <- castYTo u8slice
+                    return $ GenRustExpr RTBool [di|{ slice_eq(#{x''}, #{y''}) }|]
+                _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
 
 -- Extra info needed just for `genVerusCExpr`
 data GenCExprInfo ann = GenCExprInfo { 
@@ -365,8 +464,20 @@ data GenCExprInfo ann = GenCExprInfo {
     curLocality :: LocalityName
 } deriving (Show)
 
+needsToplevelCast :: VerusTy -> Bool
+needsToplevelCast (RTOwlBuf _)  = True
+needsToplevelCast (RTOption (RTOwlBuf _)) = True
+needsToplevelCast (RTStruct _ _) = True
+needsToplevelCast (RTEnum _ _) = True
+needsToplevelCast _ = False
+
+instance OwlPretty VerusTy where
+    owlpretty = pretty 
+
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
+    -- debugPrint $ "genVerusCExpr: "
+    -- debugPrint $ show (owlpretty expr)
     case expr ^. tval of
         CSkip -> return $ GenRustExpr RTUnit [di|()|]
         CRet ae -> do
@@ -375,8 +486,7 @@ genVerusCExpr info expr = do
                 -- On this side we cast as necessary
                 castRes <- castGRE ae' (expr ^. tty) 
                 return $ GenRustExpr (expr ^. tty) [di|(#{castRes}, Tracked(itree))|]
-            else 
-                return ae'
+            else return ae'
         CInput t xek -> do
             let ((x, ev), k) = unsafeUnbind xek
             let rustX = execName . show $ x
@@ -397,22 +507,73 @@ genVerusCExpr info expr = do
                 Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
                 Nothing -> throwError OutputWithUnknownDestination 
             let myAddr = [di|&#{curLocality info}_addr()|]
-            ae' <- genVerusCAExpr ae
-            aeCast <- ae' `castGRE` u8slice
-            let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
             let itreeTy = specItreeTy info
-            return $ GenRustExpr RTUnit [__di|
-            owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
-            #{retItree}
-            |]
-        CSample fl xk -> do
+            let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
+            case ae ^. tval of
+                CASerializeWith (RTStruct n fs) args -> do
+                    -- Special case for fused serialize-output operation
+                    let ftys = map snd fs
+                    let printComb arg comb = case comb of
+                            PCTail -> return [di|Tail|]
+                            PCBytes l -> do
+                                l' <- concreteLength $ lowerFLen l
+                                return [di|Bytes(#{l'})|]
+                            PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                            PCBuilder -> return [di|BuilderCombinator(#{arg})|]
+                    let printCombTy comb = case comb of
+                            PCTail -> [di|Tail|]
+                            PCBytes l -> [di|Bytes|]
+                            PCConstBytes l _ -> [di|ConstBytes<#{l}>|]
+                            PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
+                    let mkCombArg ((arg, comb), fty) = do
+                            arg' <- genVerusCAExpr arg
+                            let fty' = if comb == PCBuilder then RTUnit else fty
+                            arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                            argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                            comb' <- printComb arg'' comb
+                            len <- case comb of
+                                PCBytes l -> do
+                                    return [di|#{arg''}.len()|]
+                                PCConstBytes l _ -> return [di|#{l}|]
+                                PCTail -> return [di|#{arg''}.len()|]
+                                PCBuilder -> return [di|#{arg''}.length()|]
+                            return (comb', (argForSer, len))
+                    let acfs = zip args ftys
+                    (combs, arglens) <- unzip <$> mapM mkCombArg acfs
+                    let (verusArgs, lens) = unzip arglens
+                    let execcomb = mkNestPattern combs
+                    let combTy = mkNestPattern $ map (printCombTy . snd) args
+                    let execargs = mkNestPattern verusArgs
+                    let serout_body = [__di|    
+                        let exec_comb = #{execcomb};
+                        owl_output_serialize_fused::<#{itreeTy}, #{combTy}>(
+                            Tracked(&mut itree),
+                            exec_comb,
+                            #{execargs}, 
+                            obuf,
+                            #{dst'}, 
+                            #{myAddr}
+                        );
+                        #{retItree}
+                    |]
+                    return $ GenRustExpr RTUnit serout_body
+                _ -> do
+                    ae' <- genVerusCAExpr ae
+                    aeCast <- ae' `castGRE` u8slice
+                    return $ GenRustExpr RTUnit [__di|
+                    owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
+                    #{retItree}
+                    |]
+        CSample fl t xk -> do
             let (x, k) = unsafeUnbind xk
             let rustX = execName . show $ x
             let sz = lowerFLen fl
             k' <- genVerusCExpr info k
             let itreeTy = specItreeTy info
+            castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
             return $ GenRustExpr (k' ^. eTy) [__di|
-            let #{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
+            let tmp_#{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
+            let #{rustX} = #{castTmp};
             #{k' ^. code}
             |]
         CLet e oanf xk -> do
@@ -424,14 +585,25 @@ genVerusCExpr info expr = do
                     Typed _ (CCall _ _ _) -> True
                     _ -> False
             -- Cast here, if necessary
-            if e' ^. eTy /= e ^. tty then do
+            if e' ^. eTy /= e ^. tty || needsToplevelCast (e' ^. eTy) then do
                 castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)
                 let lhs = if needsItreeLhs then [di|(tmp_#{rustX}, Tracked(itree))|] else [di|tmp_#{rustX}|]
+                rhs <- case e of
+                    -- Special case to prevent "use of moved value" errors
+                    Typed _ (CRet (Typed _ (CAVar _ _))) | needsToplevelCast (e' ^. eTy) -> castGRE e' (e' ^. eTy) 
+                    _ -> return $ e' ^. code
                 return $ GenRustExpr (k' ^. eTy) [__di|
-                let #{lhs} = { #{e' ^. code} };
+                let #{lhs} = { #{rhs} };
                 let #{rustX} = #{castE'};
                 #{k' ^. code}
                 |]
+            -- else if needsToplevelCast $ e' ^. eTy then do
+            --     castE' <- castGRE e' (e ^. tty)
+            --     let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
+            --     return $ GenRustExpr (k' ^. eTy) [__di|
+            --     let #{lhs} = { #{castE'} };
+            --     #{k' ^. code}
+            --     |]
             else do
                 let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
@@ -533,7 +705,7 @@ genVerusCExpr info expr = do
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
                     otw' <- genVerusCExpr info otw
-                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` u8slice
+                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` RTOwlBuf (Lifetime "_")
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval_tmp = #{ae''};
                     if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}) {
@@ -554,6 +726,15 @@ genVerusCExpr info expr = do
             let rustCtr = execName ctrname
             -- castCtr <- ([di|#{tmpCtrName}|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
             return $ GenRustExpr (RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) [di|owl_counter_as_bytes(&mut_state.#{rustCtr})|]
+        CIncCtr ctrname -> do
+            let rustCtr = [di|mut_state.#{execName ctrname}|]
+            let incrExpr = [__di|
+            if #{rustCtr} > usize::MAX - 1 {
+                return Err(OwlError::IntegerOverflow);
+            };
+            #{rustCtr} = #{rustCtr} + 1;
+            |]
+            return $ GenRustExpr RTUnit incrExpr
         CCall f frty args -> do
             args' <- mapM genVerusCAExpr args
             let callMacro = case expr ^. tty of
@@ -577,12 +758,7 @@ genVerusCExpr info expr = do
             #{vsep genArgVars}
             #{callMacro}(itree, *mut_state, #{specCall}, #{execCall})
             |]
-        _ -> do
-            return $ GenRustExpr (expr ^. tty) [__di|
-            /*
-                TODO: genVerusCExpr #{show expr}
-            */
-            |] 
+        _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCExpr: " ++ show (owlpretty expr)
 
 
 -- Add lifetimes to references, structs, enums, OwlBufs for args/return types
@@ -598,7 +774,7 @@ addLifetime _ t = t
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
     let execname = execName $ cdef ^. defName
-    debugPrint $ "genVerusDef: " ++ cdef ^. defName
+    debugLog $ "genVerusDef: " ++ cdef ^. defName
     let specname = cdef ^. defName ++ "_spec"
     (defArgs', (rty', body)) <- unbindCDepBind $ cdef ^. defBody
     -- If any of the arguments or return type have a lifetime, we parameterize the whole function with lifetime 'a
@@ -667,28 +843,8 @@ genVerusDef lname cdef = do
         viewArg (cdvar, strname, ty) = viewVar (execName . show $ cdvar) ty
         prettyArgName = pretty . execName . show
 
-
-vestLayoutOf :: String -> Maybe ConstUsize -> VerusTy -> ExtractionMonad t (Maybe (Doc ann))
-vestLayoutOf name _ (RTArray RTU8 len) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTVec RTU8) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name (Just len) (RTOwlBuf (Lifetime _)) = do
-    lenConcrete <- concreteLength len
-    return $ Just [di|#{name}: [u8; #{pretty lenConcrete}]|]
-vestLayoutOf name _ (RTVec RTU8) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf name _ (RTOwlBuf (Lifetime _)) = return $ Just [di|#{name}: Tail|]
-vestLayoutOf name _ t = return Nothing
-
-vestLayoutOf' :: String -> Maybe ConstUsize -> VerusTy -> EM (Doc ann)
-vestLayoutOf' name len t = do
-    layout <- vestLayoutOf name len t
-    case layout of
-        Just l -> return l
-        Nothing -> throwError $ ErrSomethingFailed $ "TODO: vestLayoutOf " ++ show t
-
+---------------------------------------------------------------------------------------------------------------------------
+-- Structs and enums
 
 tyNeedsLifetime :: VerusTy -> Bool
 tyNeedsLifetime (RTOwlBuf _) = True
@@ -716,16 +872,9 @@ extraLt _ _ = pretty ""
 liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
 liftLifetime _ ty = ty
 
-mkNestPattern :: [Doc ann] -> Doc ann
-mkNestPattern l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl   
-
-genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusStruct (CStruct name fieldsFV isVest) = do
-    -- debugLog $ "genVerusStruct: " ++ name
+    debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
     let needsLifetime = any (tyNeedsLifetime . snd) fields
@@ -744,24 +893,24 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
+    -- vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
-    allLensValid <- genAllLensValid verusName verusFields emptyLifetimeAnnot
+    implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- if isVest then genParsleyWrappers verusName specname structTy verusFields lifetimeConst else return [di||]
-    return $ (vsep [structDef, constructorShortcut, allLensValid, viewImpl, parsleyWrappers], vestFormat)
+    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest
+    return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where 
 
-        genVestFormat name layoutFields = do
-            let genField (_, f, format, l) = do 
-                    layout <- vestLayoutOf' f format l
-                    return [di|    #{layout},|]
-            fields <- mapM genField layoutFields
-            return [__di|
-            #{name} = {
-            #{vsep fields}
-            }
-            |]
+        -- genVestFormat name layoutFields = do
+        --     let genField (_, f, format, l) = do 
+        --             layout <- vestLayoutOf' f format l
+        --             return [di|    #{layout},|]
+        --     fields <- mapM genField layoutFields
+        --     return [__di|
+        --     #{name} = {
+        --     #{vsep fields}
+        --     }
+        --     |]
 
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
@@ -774,7 +923,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                             RTEnum _ _ -> Just [di|arg_#{ename}.len_valid()|]
                             _ -> Nothing
                     ) $ fields
-            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.dview() == arg_#{ename}.dview()|]) fields
+            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) fields
             let enss = vsep . punctuate comma $ [di|res.len_valid()|] : fieldEnss
             return [__di|
             // Allows us to use function call syntax to construct members of struct types, a la Owl,
@@ -788,8 +937,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
 
-        genAllLensValid :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
-        genAllLensValid verusName fields lAnnot = do
+        genImplStruct :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
+        genImplStruct verusName fields lAnnot = do
             let fieldsValids = mapMaybe (\(_,fname, fty) -> 
                         case fty of 
                             RTWithLifetime (RTStruct _ _) _ -> Just [di|self.#{fname}.len_valid()|]
@@ -800,21 +949,42 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                             _ -> Nothing
                     ) fields
             let body = if null fieldsValids then [di|true|] else hsep . punctuate [di|&&|] $ fieldsValids
+            let anotherRefFields = map (\(_, fname, fty) -> case fty of 
+                        RTWithLifetime (RTStruct t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        RTWithLifetime (RTEnum t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        (RTStruct t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        (RTEnum t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
+                        RTOwlBuf _ -> [di|#{fname}: OwlBuf::another_ref(&self.#{fname})|]
+                        _ -> [di|#{fname}: self.#{fname}|]
+                    ) fields
             return [__di|
-            impl #{verusName}#{lAnnot} {
+            impl#{lAnnot} #{verusName}#{lAnnot} {
                 pub open spec fn len_valid(&self) -> bool {
                     #{body}
+                }
+
+                pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
+                    requires self.len_valid(),
+                    ensures result.view() == self.view(),
+                            result.len_valid(),
+                {
+                    #{verusName} { 
+                        #{vsep . punctuate comma $ anotherRefFields} 
+                    }
                 }
             }
             |]
 
         genViewImpl :: VerusName -> String -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname fields lAnnot = do
-            let body = vsep . punctuate [di|,|] . fmap (\(fname, ename, _) -> [di|#{specName fname}: self.#{ename}.dview()|]) $ fields
+            let viewField (fname, ename, fty) = case fty of
+                    RTVerusGhost -> [di|#{specName fname}: ghost_unit()|]
+                    _ -> [di|#{specName fname}: self.#{ename}.view()|]
+            let body = vsep . punctuate [di|,|] . fmap viewField $ fields
             return [__di|
-            impl DView for #{verusName}#{lAnnot} {
+            impl View for #{verusName}#{lAnnot} {
                 type V = #{specname};
-                open spec fn dview(&self) -> #{specname} {
+                open spec fn view(&self) -> #{specname} {
                     #{specname} { 
                         #{body}
                     }
@@ -822,31 +992,53 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
         
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, VerusTy)] -> String -> EM (Doc ann)
-        genParsleyWrappers verusName specname structTy fields lifetimeConst = do
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname structTy fields lifetimeConst True = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
-            let tupPatFields = mkNestPattern . fmap (\(_, fname, _) -> pretty fname) $ fields
+            let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
             let mkField fname fty = do
-                    mkf <- (pretty fname, u8slice) `cast` fty
+                    mkf <- case fty of
+                            RTOwlBuf _ -> (pretty fname, u8slice) `cast` fty
+                            _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
-            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
+            let mkFieldVec fname fty = do
+                    mkf <- case fty of
+                            RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
+                            _ -> return $ pretty fname
+                    return [di|#{fname}: #{mkf}|]
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
+            mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
             let parse = [__di|
-            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
-                // requires arg.len_valid()
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                requires arg.len_valid()
                 ensures
-                    res is Some ==> #{specParse}(arg.dview()) is Some,
-                    res is None ==> #{specParse}(arg.dview()) is None,
-                    res matches Some(x) ==> x.dview() == #{specParse}(arg.dview())->Some_0,
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     res matches Some(x) ==> x.len_valid(),
             {
                 reveal(#{specParse});
-                let stream = parse_serialize::Stream { data: arg, start: 0 };
-                if let Ok((_, _, parsed)) = parse_serialize::#{execParse}(stream) {
-                    let #{tupPatFields} = parsed;
-                    Some (#{verusName} { #{mkStructFields} })
-                } else {
-                    None
+                let exec_comb = exec_combinator_#{verusName}();
+                match arg {
+                    OwlBuf::Borrowed(s) => {
+                        if let Ok((_, parsed)) = exec_comb.parse(s) {
+                            let #{tupPatFields} = parsed;
+                            Some (#{verusName} { #{mkStructFields} })
+                        } else {
+                            None
+                        }
+                    }
+                    OwlBuf::Owned(v, start, len) => {
+                        reveal(OwlBuf::len_valid);
+                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
+                            let #{tupPatFields} = parsed;
+                            Some (#{verusName} { #{mkStructFieldsVecs} })
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
             |]
@@ -854,22 +1046,30 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
-            let lens = (map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields) ++ [pretty "0"]
-            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, fty) -> (pretty ("arg." ++ fname), fty) `cast` u8slice) fields
+            let mklen fname szopt fty = case (fty, szopt) of
+                    (RTUnit, Just usz) -> return [di|#{pretty usz}|]
+                    (RTUnit, Nothing) -> throwError $ ErrSomethingFailed "no size for const ty"
+                    _ -> return [di|arg.#{fname}.len()|]
+            lens' <- mapM (\(_, fname, szopt, fty) -> mklen fname szopt fty) fields
+            let lens = lens' ++ [pretty "0"]
+            let innerTyOf fty = case fty of
+                    RTUnit -> RTUnit
+                    _ -> u8slice
+            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             let ser = [__di|
-            \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 requires arg.len_valid(),
                 ensures
-                    res is Some ==> #{specSerInner}(arg.dview()) is Some,
-                    res is None ==> #{specSerInner}(arg.dview()) is None,
-                    res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    // res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
                 reveal(#{specSerInner});
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let exec_comb = exec_combinator_#{verusName}();
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
-                    let ser_result = parse_serialize::#{execSer}(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
-                    if let Ok((_new_start, num_written)) = ser_result {
+                    let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
+                    if let Ok((num_written)) = ser_result {
                         vec_truncate(&mut obuf, num_written);
                         Some(obuf)
                     } else {
@@ -879,9 +1079,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     None
                 }
             }
+            \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
                 requires arg.len_valid(),
-                ensures  res.dview() == #{specSer}(arg.dview())
+                ensures  res.view() == #{specSer}(arg.view())
             {
                 reveal(#{specSer});
                 let res = #{execSerInner}(arg);
@@ -890,14 +1091,54 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
             return $ vsep [parse, ser]
+        genParsleyWrappers verusName specname structTy fields lifetimeConst False = do
+            let specParse = [di|parse_#{specname}|] 
+            let execParse = [di|parse_#{verusName}|]
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                requires arg.len_valid()
+                ensures
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    res matches Some(x) ==> x.len_valid(),
+            {
+                todo!()
+            }
+            |]
+            let specSer = [di|serialize_#{specname}|]
+            let execSer = [di|serialize_#{verusName}|]
+            let specSerInner = [di|serialize_#{specname}_inner|]
+            let execSerInner = [di|serialize_#{verusName}_inner|]
+            let ser = [__di|
+            \#[verifier::external_body]
+            pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+                requires arg.len_valid(),
+                ensures
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    // res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+            {
+                todo!()
+            }
+            \#[verifier::external_body]
+            pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+                requires arg.len_valid(),
+                ensures  res.view() == #{specSer}(arg.view())
+            {
+                todo!()
+            }
+            |]
+            return $ vsep [parse, ser]
 
 
-genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
-genVerusEnum (CEnum name casesFV isVest) = do
-    -- debugLog $ "genVerusEnum: " ++ name
+genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
+genVerusEnum (CEnum name casesFV isVest execComb) = do
+    debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
-    let needsLifetime = any (\t -> case t of Just (RTOwlBuf _) -> True; Just (RTWithLifetime _ _) -> True; _ -> False) . map snd . M.assocs $ cases
+    let needsLifetime = any tyNeedsLifetime . mapMaybe snd . M.assocs $ cases
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let verusCases = M.mapWithKey (\fname fty -> (execName fname, liftLifetime lifetimeConst fty)) cases
@@ -910,22 +1151,22 @@ genVerusEnum (CEnum name casesFV isVest) = do
     pub enum #{verusName}#{lifetimeAnnot} {
         #{enumCases}
     }
-    use crate::#{verusName}::*;
+    use #{verusName}::*;
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    vestFormat <- genVestFormat verusName casesFV
-    allLensValid <- genAllLensValid verusName verusCases emptyLifetimeAnnot
+    -- vestFormat <- genVestFormat verusName casesFV
+    implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
-    -- parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst
+    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
-    return $ (vsep [enumDef, allLensValid, viewImpl, enumTests], vestFormat)
+    return $ (vsep [enumDef, implEnum, viewImpl, enumTests, parsleyWrappers])
     where 
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime _ ty = ty
 
-        genVestFormat name layoutCases = do
-            debugLog $ "No vest format for enum: " ++ name
-            return [__di||]
+        -- genVestFormat name layoutCases = do
+        --     debugLog $ "No vest format for enum: " ++ name
+        --     return [__di||]
             -- let genField (_, (f, l)) = do 
             --         layout <- vestLayoutOf f l
             --         return [di|    #{layout},|]
@@ -937,8 +1178,8 @@ genVerusEnum (CEnum name casesFV isVest) = do
             -- |]
 
 
-        genAllLensValid :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
-        genAllLensValid verusName cases lAnnot = do
+        genImplEnum :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
+        genImplEnum verusName cases lAnnot = do
             let casesValids = M.map (\(fname, fty) -> 
                         case fty of 
                             Just (RTWithLifetime (RTStruct _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
@@ -950,26 +1191,47 @@ genVerusEnum (CEnum name casesFV isVest) = do
                             Nothing -> [di|#{fname}() => true|]
                     ) cases
             let body = vsep . punctuate comma $ M.elems casesValids
+            let anotherRefFields = M.map (\(fname, fty) -> case fty of 
+                        Just (RTWithLifetime (RTStruct t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTWithLifetime (RTEnum t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTStruct t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTEnum t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
+                        Just (RTOwlBuf _) -> [di|#{fname}(x) => #{fname}(OwlBuf::another_ref(x))|]
+                        Just _ -> [di|#{fname}(x) => #{fname}(x)|]
+                        Nothing -> [di|#{fname}() => #{fname}()|]
+                    ) cases
+            let anotherRefBody = vsep . punctuate comma $ M.elems anotherRefFields
             return [__di|
-            impl #{verusName}#{lAnnot} {
+            impl#{lAnnot} #{verusName}#{lAnnot} {
                 pub open spec fn len_valid(&self) -> bool {
                     match self {
                         #{body}
                     }
                 }
+
+                pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
+                    requires self.len_valid(),
+                    ensures result.view() == self.view(),
+                            result.len_valid(),
+                {
+                    match self { 
+                        #{anotherRefBody} 
+                    }
+                }
             }
             |]
 
-        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.dview())|]
+        viewCase specname fname (ename, Just RTVerusGhost) = [di|#{ename}(v) => #{specname}::#{specName fname}(owl_ghost_unit())|]
+        viewCase specname fname (ename, Just fty) = [di|#{ename}(v) => #{specname}::#{specName fname}(v.view())|]
         viewCase specname fname (ename, Nothing) = [di|#{ename}() => #{specname}::#{specName fname}()|]
 
         genViewImpl :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genViewImpl verusName specname cases lAnnot = do
             let body = vsep . punctuate [di|,|] . M.elems . M.mapWithKey (viewCase specname) $ cases
             return [__di|
-            impl DView for #{verusName}#{lAnnot} {
+            impl View for #{verusName}#{lAnnot} {
                 type V = #{specname};
-                open spec fn dview(&self) -> #{specname} {
+                open spec fn view(&self) -> #{specname} {
                     match self { 
                         #{body}
                     }
@@ -989,7 +1251,7 @@ genVerusEnum (CEnum name casesFV isVest) = do
                     return [__di|
                     \#[inline]
                     pub fn #{fname}_enumtest(x: &#{verusName}#{lAnnot}) -> (res:bool)
-                        ensures res == #{cname}_enumtest(x.dview())
+                        ensures res == #{cname}_enumtest(x.view())
                     {
                         match x {
                             #{verusName}::#{fname}(#{var}) => true,
@@ -998,86 +1260,176 @@ genVerusEnum (CEnum name casesFV isVest) = do
                     }
                     |]
 
-        -- genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, VerusTy)] -> String -> EM (Doc ann)
-        -- genParsleyWrappers verusName specname structTy fields lifetimeConst = do
-        --     let specParse = [di|parse_#{specname}|] 
-        --     let execParse = [di|parse_#{verusName}|]
-        --     let tupPatFields = tupled . fmap (\(_, fname, _) -> pretty fname) $ fields
-        --     let mkField fname fty = do
-        --             mkf <- (pretty fname, u8slice) `cast` fty
-        --             return [di|#{fname}: #{mkf}|]
-        --     mkStructFields <- tupled <$> mapM (\(_, fname, fty) -> mkField fname fty) fields
-        --     let parse = [__di|
-        --     pub exec fn #{execParse}<'#{lifetimeConst}>(arg: &'#{lifetimeConst} [u8]) -> (res: Option<#{pretty structTy}>) 
-        --         // requires arg.len_valid()
-        --         ensures
-        --             res is Some ==> #{specParse}(arg.dview()) is Some,
-        --             res is None ==> #{specParse}(arg.dview()) is None,
-        --             res matches Some(x) ==> x.dview() == #{specParse}(arg.dview())->Some_0,
-        --             res matches Some(x) ==> x.len_valid(),
-        --     {
-        --         reveal(#{specParse});
-        --         let stream = parse_serialize::Stream { data: arg, start: 0 };
-        --         if let Ok((_, _, parsed)) = parse_serialize::parse_owl_t(stream) {
-        --             let #{tupPatFields} = parsed;
-        --             Some (#{verusName} { #{mkStructFields} })
-        --         } else {
-        --             None
-        --         }
-        --     }
-        --     |]
-        --     let specSer = [di|serialize_#{specname}|]
-        --     let execSer = [di|serialize_#{verusName}|]
-        --     let specSerInner = [di|serialize_#{specname}_inner|]
-        --     let execSerInner = [di|serialize_#{verusName}_inner|]
-        --     let lens = map (\(_, fname, _) -> [di|arg.#{fname}.len()|]) fields
-        --     fieldsAsSlices <- tupled <$> mapM (\(_, fname, fty) -> (pretty fname, fty) `cast` u8slice) fields
-        --     let ser = [__di|
-        --     \#[verifier(external_body)] // to allow `as_mut_slice` call, TODO fix
-        --     pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
-        --         requires arg.len_valid(),
-        --         ensures
-        --             res is Some ==> #{specSerInner}(arg.dview()) is Some,
-        --             res is None ==> #{specSerInner}(arg.dview()) is None,
-        --             res matches Some(x) ==> x.dview() == #{specSerInner}(arg.dview())->Some_0,
-        --     {
-        --         reveal(#{specSerInner});
-        --         if no_usize_overflows![ #{punctuate comma lens} ] {
-        --             let mut obuf = vec_u8_of_len(#{punctuate (pretty "+") lens});
-        --             let ser_result = parse_serialize::serialize_owl_t(obuf.as_mut_slice(), 0, (#{fieldsAsSlices}));
-        --             if let OK((_new_start, num_written)) = ser_result {
-        --                 vec_truncate(&mut obuf, num_written);
-        --                 Some(obuf)
-        --             } else {
-        --                 None
-        --             }
-        --         } else {
-        --             None
-        --         }
-        --     }
-        --     pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
-        --         requires arg.len_valid(),
-        --         ensures  res.dview() == #{specSer}(arg.dview())
-        --     {
-        --         reveal(#{specSer});
-        --         let res = #{execSerInner}(arg);
-        --         assume(res is Some);
-        --         res.unwrap();
-        --     }
-        --     |]
-        --     return $ vsep [parse, ser]
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> M.Map String (VerusName, Maybe VerusTy) -> String -> String -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb True = do
+            let specParse = [di|parse_#{specname}|] 
+            let execParse = [di|parse_#{verusName}|]
+            let l = length cases
+            let mkParseBranch ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    rhs <- case topt of
+                            Just (RTOwlBuf l) -> (rhsX, u8slice) `cast` RTOwlBuf l
+                            _ -> return rhsX
+                    return [__di|
+                    #{lhs} => #{verusName}::#{caseName}(#{rhs}),
+                    |]
+            parseBranches <- mapM mkParseBranch (zip (M.elems cases) [0..])
+            let mkParseBranchVec ((caseName, topt), i) = do
+                    let (lhsX, rhsX) = case topt of
+                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Nothing -> ([di|_|], [di||])
+                    lhs <- listIdxToEitherPat i l lhsX
+                    rhs <- case topt of
+                            Just (RTOwlBuf l) -> ([di|slice_to_vec(#{rhsX})|], vecU8) `cast` RTOwlBuf l
+                            _ -> return rhsX
+                    return [di|#{lhs} => #{verusName}::#{caseName}(#{rhs}),|]
+            parseBranchesVecs <- mapM mkParseBranchVec (zip (M.elems cases) [0..])
+            let parse = [__di|
+            \#[verifier(external_body)] 
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
+                requires arg.len_valid()
+                ensures
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    res matches Some(x) ==> x.len_valid(),
+            {
+                reveal(#{specParse});
+                let exec_comb = #{execComb};
+                match arg {
+                    OwlBuf::Borrowed(s) => {
+                        if let Ok((_, parsed)) = exec_comb.parse(s) {
+                            let v = match parsed {
+                                #{vsep parseBranches}
+                            };
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
+                    OwlBuf::Owned(v, start, len) => {
+                        reveal(OwlBuf::len_valid);
+                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
+                            let v = match parsed {
+                                #{vsep parseBranchesVecs}
+                            };
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+            |]
+            let specSer = [di|serialize_#{specname}|]
+            let execSer = [di|serialize_#{verusName}|]
+            let specSerInner = [di|serialize_#{specname}_inner|]
+            let execSerInner = [di|serialize_#{verusName}_inner|]
+            let mkSerBranch ((caseName, topt), i) = do
+                    let (lhsX, lhsXLen,  rhsX) = case topt of
+                            Just _ -> ([di|x|], [di|x.len()|], [di|((), x.as_slice())|])
+                            Nothing -> ([di||], [di|0|], [di|((), &empty_vec.as_slice())|])
+                    rhs <- listIdxToEitherPat i l rhsX
+                    return [__di|
+                    #{verusName}::#{caseName}(#{lhsX}) => {                
+                        if no_usize_overflows![ 1, #{lhsXLen} ] {
+                            let mut obuf = vec_u8_of_len(1 + #{lhsXLen});
+                            let ser_result = exec_comb.serialize(#{rhs}, &mut obuf, 0);
+                            if let Ok((num_written)) = ser_result {
+                                vec_truncate(&mut obuf, num_written);
+                                Some(obuf)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
+                    |]
+            serBranches <- mapM mkSerBranch (zip (M.elems cases) [0..])
+            let ser = [__di|
+            \#[verifier(external_body)] 
+            pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+                requires arg.len_valid(),
+                ensures
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+            {
+                reveal(#{specSerInner});
+                let empty_vec: Vec<u8> = mk_vec_u8![];
+                let exec_comb = #{execComb};
+                match arg {
+                    #{vsep serBranches}
+                }
+            }
+            \#[inline]
+            pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+                requires arg.len_valid(),
+                ensures  res.view() == #{specSer}(arg.view())
+            {
+                reveal(#{specSer});
+                let res = #{execSerInner}(arg);
+                assume(res is Some);
+                res.unwrap()
+            }
+            |]
+            return $ vsep [parse, ser]
+        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb False = do
+            let specParse = [di|parse_#{specname}|] 
+            let execParse = [di|parse_#{verusName}|]
+            let parse = [__di|
+            \#[verifier::external_body]
+            pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
+                requires arg.len_valid()
+                ensures
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    res matches Some(x) ==> x.len_valid(),
+            {
+                todo!()
+            }
+            |]
+            let specSer = [di|serialize_#{specname}|]
+            let execSer = [di|serialize_#{verusName}|]
+            let specSerInner = [di|serialize_#{specname}_inner|]
+            let execSerInner = [di|serialize_#{verusName}_inner|]
+            let ser = [__di|
+            \#[verifier(external_body)] 
+            pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+                requires arg.len_valid(),
+                ensures
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+            {
+                todo!()
+            }
+            \#[verifier(external_body)]
+            pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+                requires arg.len_valid(),
+                ensures  res.view() == #{specSer}(arg.view())
+            {
+                todo!()
+            }
+            |]
+            return $ vsep [parse, ser]
 
 
-genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann, Doc ann)
+genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
 genVerusTyDef (CStructDef s) = genVerusStruct s
 genVerusTyDef (CEnumDef e) = genVerusEnum e
 
 
-genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann, Doc ann)
+genVerusTyDefs :: [(String, CTyDef (Maybe ConstUsize, VerusTy))] -> EM (Doc ann)
 genVerusTyDefs tydefs = do
     -- debugLog "genVerusTyDefs"
-    (tyDefs, vestDefs) <- unzip <$> mapM (genVerusTyDef . snd) tydefs
-    return (vsep tyDefs, vsep vestDefs)
+    tyDefs <- mapM (genVerusTyDef . snd) tydefs
+    return $ vsep tyDefs
 
 
 -----------------------------------------------------------------------------
@@ -1085,6 +1437,11 @@ genVerusTyDefs tydefs = do
 
 castGRE :: GenRustExpr ann -> VerusTy -> EM (Doc ann)
 castGRE gre t2 = cast (gre ^. code, gre ^. eTy) t2
+
+-- castField :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
+-- castField (v, RTRef RShared (RTSlice RTU8)) RTUnit =
+--     return [di|()|]
+-- castField (v, t1) t2 = cast (v, t1) t2
 
 -- cast v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
@@ -1095,7 +1452,7 @@ cast (v, t1) t2 | t2 == RTRef RMut t1 =
 cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
-    return [di|vec_as_slice(&#{v})|]
+    return [di|#{v}.as_slice()|]
 cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
@@ -1129,10 +1486,25 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, RTOption (RTOwlBuf _)) (RTOption (RTOwlBuf _)) =
+    return [di|OwlBuf::another_ref_option(&#{v})|]
+cast (v, RTStruct s _) (RTStruct s' _) | s == s' =
+    return [di|#{s}::another_ref(&#{v})|]
+cast (v, RTEnum e _) (RTEnum e' _) | e == e' =
+    return [di|#{e}::another_ref(&#{v})|]
 cast (v, RTDummy) t = return v
 cast (v, RTOption RTDummy) (RTOption t) = return v
+cast (v, RTStAeadBuilder) (RTVec RTU8) = return [di|#{v}.into_fresh_vec()|]
+cast (v, RTStAeadBuilder) (RTRef RShared (RTSlice RTU8)) = do
+    c1 <- cast (v, RTStAeadBuilder) vecU8
+    cast (c1, vecU8) (RTRef RShared (RTSlice RTU8)) 
+cast (v, RTStAeadBuilder) (RTOwlBuf l) = do
+    c1 <- cast (v, RTStAeadBuilder) vecU8
+    cast (c1, vecU8) (RTOwlBuf l)
 cast (v, t1) t2 | t1 == t2 = return v
-cast (v, t1) t2 = throwError $ CantCastType (show v) (show . pretty $ t1) (show . pretty $ t2)
+cast (v, RTEnum e1 cs1) (RTEnum e2 cs2) | e1 == e2 && S.fromList cs1 == S.fromList cs2 = return v
+cast (v, _) RTUnit = return [di|()|]
+cast (v, t1) t2 = throwError $ CantCastType (show v) (show t1) (show t2)
 
 u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
@@ -1166,16 +1538,17 @@ specTyOfExecTySerialized t = t -- TODO: not true in general
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
-viewVar vname (RTNamed _) = return [di|#{vname}.dview()|]
-viewVar vname (RTStruct _ _) = return [di|#{vname}.dview()|]
-viewVar vname (RTEnum _ _) = return [di|#{vname}.dview()|]
-viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(dview_option(#{vname}))|]
-viewVar vname (RTOption _) = return [di|dview_option(#{vname})|]
-viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.dview()|]
-viewVar vname (RTVec RTU8) = return [di|#{vname}.dview()|]
-viewVar vname (RTArray RTU8 _) = return [di|#{vname}.dview()|]
-viewVar vname (RTOwlBuf _) = return [di|#{vname}.dview()|]
+viewVar vname (RTNamed _) = return [di|#{vname}.view()|]
+viewVar vname (RTStruct _ _) = return [di|#{vname}.view()|]
+viewVar vname (RTEnum _ _) = return [di|#{vname}.view()|]
+viewVar vname (RTOption (RTNamed _)) = return [di|option_as_seq(view_option(#{vname}))|]
+viewVar vname (RTOption _) = return [di|view_option(#{vname})|]
+viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.view()|]
+viewVar vname (RTVec RTU8) = return [di|#{vname}.view()|]
+viewVar vname (RTArray RTU8 _) = return [di|#{vname}.view()|]
+viewVar vname (RTOwlBuf _) = return [di|#{vname}.view()|]
 viewVar vname RTBool = return [di|#{vname}|]
 viewVar vname RTUsize = return [di|#{vname}|]
+viewVar vname RTVerusGhost = return [di|#{vname}|]
 viewVar vname (RTWithLifetime t _) = viewVar vname t
 viewVar vname ty = throwError $ ErrSomethingFailed $ "TODO: viewVar: " ++ vname ++ ": " ++ show ty

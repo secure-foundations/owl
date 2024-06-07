@@ -700,12 +700,6 @@ fn bench_send_recv(b: &mut Bencher, dev1_type: RouterDeviceType, dev2_type: Rout
 
     use crate::wireguard::router::{queue::ParallelJob, device::DecryptionState, anti_replay::AntiReplay};
     
-    const NUM_PACKETS: usize = 1000;
-
-    // const MAX_SIZE_BODY: usize = 1 << 15;
-
-    // inner payload of IPv4 packet is 1440 bytes
-    const BYTES_PER_PACKET: usize = 1440;
 
     #[cfg(feature = "memory_profile")]
     let heap_profiler_guard = heappy::HeapProfilerGuard::new(1).unwrap();
@@ -883,7 +877,7 @@ fn bench_send_recv_no_owl(b: &mut Bencher) {
 
 #[bench]
 fn bench_send_recv_owl(b: &mut Bencher) {
-    bench_send_recv(b, RouterDeviceType::OwlInitiator, RouterDeviceType::OwlResponder, true)
+    bench_send_recv(b, RouterDeviceType::OwlInitiator, RouterDeviceType::OwlInitiator, true)
 }
 
 
@@ -891,3 +885,11 @@ fn bench_send_recv_owl(b: &mut Bencher) {
 fn bench_send_recv_baseline(b: &mut Bencher) {
     bench_send_recv(b, RouterDeviceType::NoOwl, RouterDeviceType::NoOwl, false)
 }
+
+
+const NUM_PACKETS: usize = 1000;
+
+const BYTES_PER_PACKET: usize = 200;
+// Note: bench_send_recv.py will append the appropriate constant to this file, so the line above must be commented out
+// when using that script
+

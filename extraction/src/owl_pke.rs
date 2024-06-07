@@ -32,10 +32,13 @@ pub fn encrypt(pubkey: &[u8], msg: &[u8]) -> Vec<u8> {
 }
 
 #[verifier(external_body)]
-pub fn decrypt(privkey: &[u8], ctxt: &[u8]) -> Vec<u8> {
+pub fn decrypt(privkey: &[u8], ctxt: &[u8]) -> Option<Vec<u8>> {
     let padding = PaddingScheme::new_oaep::<sha2::Sha256>();
     let privkey_decoded = RsaPrivateKey::from_pkcs8_der(privkey).unwrap();
-    privkey_decoded.decrypt(padding, &ctxt[..]).unwrap()
+    match privkey_decoded.decrypt(padding, &ctxt[..]) {
+        Ok(plaintext) => Some(plaintext),
+        Err(_) => None,
+    }
 }
 
 #[verifier(external_body)]

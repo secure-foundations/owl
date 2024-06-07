@@ -14,6 +14,9 @@ predicate init_safe<i,n,m>() =
     \/
     (sec(S_resp<@m>) /\ sec(S_init<@n>)) 
 
+def key_confirm_initiator_send<@n>(k : Ghost) @ Initiator<n> : Unit = () 
+def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = () 
+
     
 struct init_sent_state<i,n,m> {
     iss_c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
@@ -170,7 +173,7 @@ def init_stage2<i@n,m>
         let c6 = kdf<0; odh L5<j@n,m>[0]; kdfkey; 0>(c5, 
             dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x
         ) in 
-        let c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
+        let ghost c6_ghost = gkdf<kdfkey;0>(c5_ghost, dh_combine(msg2_ephemeral, get(S_init<@n>)), 0x) in 
         forall i:idx,j:idx {
             kdf_inj_lemma(c6_ghost, honest_c6<session i, session j, pid n, pid
             n, pid m>())
@@ -222,6 +225,8 @@ def init_stage2<i@n,m>
                     false_elim in 
                     let k1 = kdf<0;; enckey || enckey; 0>(c7, 0x, 0x) in 
                     let k2 = kdf<0;; enckey || enckey; 1>(c7, 0x, 0x) in 
+                    let _ = call key_confirm_initiator_send<@n>(k1) in
+                    let _ = call key_confirm_initiator_recv<@n>(k2) in
                     Some(transp_keys_init<session i, pid n, pid
                     m>(msg2_receiver, msg2_sender, HasPSK?(opsk), msg2_ephemeral, c7, k1, k2))
                 }
