@@ -58,7 +58,7 @@ popd
 
 echo ""
 echo "VERIFYING" 
-verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern parsley=$PARSLEYPATH/libparsley.rlib --import parsley=$PARSLEYPATH/parsley.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all --time
+verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern parsley=$PARSLEYPATH/libparsley.rlib --import parsley=$PARSLEYPATH/parsley.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
 
 
 

@@ -552,7 +552,7 @@ tySigOfCall p = do
     bfdef <- liftCheck $ TB.getDefSpec p
     ((bi1, bi2), dspec) <- unbind bfdef
     let (TB.DefSpec _ _ db) = dspec
-    go [] db
+    TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) bi1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) bi2)  $ go [] db
         where
             go argtys (DPVar t _ xk) = do
                 t' <- concretifyTy t
