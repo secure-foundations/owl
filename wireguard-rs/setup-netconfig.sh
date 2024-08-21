@@ -16,17 +16,20 @@ set -euo pipefail
 
 function usage() {
     echo "Usage: ${0} [-o] <path-to-wireguard-rs-binary>"
-    echo "-o will use the owl option to wireguard-rs"
+    echo "-o will use the owl option to wireguard-rs (don't use with boringtun)"
+    echo "-b will pass the --disable-drop-privileges flag to boringtun (only for boringtun)"
     exit 2
 }
 
-wireguard_rs_bin=""
+wireguard_bin=""
 use_owl_routines="false"
+use_boringtun_args="false"
 
 # Parse command line options
-while getopts "o" opt; do
+while getopts "ob" opt; do
     case "${opt}" in
         o) use_owl_routines="true" ;;
+        b) use_boringtun_args="true" ;;
         \? ) usage ;;
         : ) usage ;;
     esac
@@ -35,7 +38,7 @@ shift $((OPTIND -1))
 
 # Check if there's a required argument provided
 if [[ -n $1 ]]; then
-    wireguard_rs_bin=$(realpath "$1")
+    wireguard_bin=$(realpath "$1")
 else
     echo "Path to wireguard-rs is missing" 1>&2
     exit 1
@@ -74,11 +77,17 @@ ip netns exec net1 route add default gw 10.100.1.1
 
 # Create Wireguard interfaces, wg1 in default namespace, wg1n in net1 namespace
 if [ $use_owl_routines = "true" ]; then
-    $wireguard_rs_bin --owl wg1
-    ip netns exec net1 $wireguard_rs_bin --owl wg1n
+    $wireguard_bin --owl wg1
+    ip netns exec net1 $wireguard_bin --owl wg1n
 else 
-    $wireguard_rs_bin wg1
-    ip netns exec net1 $wireguard_rs_bin wg1n
+    if [ $use_boringtun_args = "true" ]; then
+        echo "Using boringtun with --disable-drop-privileges"
+        $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
+        ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
+    else
+        $wireguard_bin wg1
+        ip netns exec net1 $wireguard_bin wg1n
+    fi
 fi
 
 # Use kernel wireguard instead:
