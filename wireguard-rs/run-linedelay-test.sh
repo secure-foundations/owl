@@ -106,8 +106,8 @@ if [ $use_owl_routines = "true" ]; then
 else 
     if [ $use_boringtun_args = "true" ]; then
         echo "Using boringtun with --disable-drop-privileges"
-        $wireguard_bin --disable-drop-privileges wg1
-        ip netns exec net1 $wireguard_bin --disable-drop-privileges wg1n
+        $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
+        ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
     else
         $wireguard_bin wg1
         ip netns exec net1 $wireguard_bin wg1n
