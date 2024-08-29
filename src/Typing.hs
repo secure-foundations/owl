@@ -294,6 +294,7 @@ initDetFuncs = withNormalizedTys $ [
                   nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
                     NT_Nonce _ -> do
+                        -- TODO: enforce that m's length label is public 
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
