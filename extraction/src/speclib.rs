@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
-pub use vstd::{modes::*, prelude::*, seq::*, *};
+pub use vstd::{modes::*, prelude::*, seq::*, assert_seqs_equal};
 // pub use crate::View;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -463,6 +463,35 @@ pub mod itree {
 
 
     //////////////////////////////////////////////////////
+    ///// ITree Tokens ///////////////////////////////////
+    //////////////////////////////////////////////////////
+
+    struct UnforgeableAux;
+
+    #[allow(dead_code)]
+    pub struct ITreeToken<T,Endpoint> {
+        token: UnforgeableAux,
+        inner: (T, Endpoint)
+    }
+
+    impl<T,Endpoint> ITreeToken<T,Endpoint> {
+        pub closed spec fn view(self) -> ITree<T,Endpoint>;
+
+        // Token constructor---this is only used to make the executable code typecheck.
+        // Verified code can never call this function (since it requires false), so it
+        // cannot forge tokens.
+        // We only need to return a token of type (), since we will use the subroutine call
+        // machinery to get the itree of the right type.
+        #[verifier(external_body)]
+        pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
+            requires false
+        { unimplemented!() }
+    }
+
+
+
+
+    //////////////////////////////////////////////////////
     ///// Handling subroutine calls //////////////////////
     //////////////////////////////////////////////////////
 
@@ -483,9 +512,9 @@ pub mod itree {
     { unimplemented!() }
 
     #[verifier(external_body)]
-    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: spec_fnAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: Tracked<ITreeToken<A, Endpoint>>)
+    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: spec_fnAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: ITreeToken<A, Endpoint>)
         requires st.view().results_in(v),
-        ensures  t.view() == kt(v)
+        ensures  t == kt(v)
     { unimplemented!() }
 
     #[allow(unused_macros)]
@@ -538,7 +567,7 @@ pub mod itree {
                     Err(e) => return Err(e),
                     Ok(r) => r,
                 };
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, ($view_res, $mut_state));
+                let tracked $itree = join_bind($spec($($specarg),*), call_token, cont_token, ($view_res, $mut_state));
                 ($res, Tracked($itree))
             }}
         };
@@ -547,29 +576,7 @@ pub mod itree {
         }
     }
 
-    struct UnforgeableAux;
-
-    #[allow(dead_code)]
-    pub struct ITreeToken<T,Endpoint> {
-        token: UnforgeableAux,
-        inner: (T, Endpoint)
-    }
-
-    impl<T,Endpoint> ITreeToken<T,Endpoint> {
-        pub closed spec fn view(self) -> ITree<T,Endpoint>;
-
-        // Token constructor---this is only used to make the executable code typecheck.
-        // Verified code can never call this function (since it requires false), so it
-        // cannot forge tokens.
-        // We only need to return a token of type (), since we will use the subroutine call
-        // machinery to get the itree of the right type.
-        #[verifier(external_body)]
-        pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
-            requires false
-        { unimplemented!() }
-    }
-
-
+ 
 
     //////////////////////////////////////////////////////
     ///// Parsing Owl code into an ITree /////////////////
