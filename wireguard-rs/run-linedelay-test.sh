@@ -101,16 +101,16 @@ ip netns exec net1 tc qdisc add dev veth1n root netem delay $delay
 # Create Wireguard interfaces, wg1 in default namespace, wg1n in net1 namespace
 if [ $use_owl_routines = "true" ]; then
     echo "Using owl routines"
-    $wireguard_bin --owl wg1
-    ip netns exec net1 $wireguard_bin --owl wg1n
+    WG_THREADS=1 $wireguard_bin --owl wg1
+    WG_THREADS=1 ip netns exec net1 $wireguard_bin --owl wg1n
 else 
     if [ $use_boringtun_args = "true" ]; then
         echo "Using boringtun with --disable-drop-privileges"
-        $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
-        ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
+        WG_THREADS=1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
+        WG_THREADS=1 ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
     else
-        $wireguard_bin wg1
-        ip netns exec net1 $wireguard_bin wg1n
+        WG_THREADS=1 $wireguard_bin wg1
+        WG_THREADS=1 ip netns exec net1 $wireguard_bin wg1n
     fi
 fi
 

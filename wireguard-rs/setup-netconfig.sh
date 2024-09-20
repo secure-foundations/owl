@@ -11,25 +11,27 @@
 # The keys therein were generated using `wg genkey` and `wg pubkey`, and their routing tables must
 # match the IP addresses assigned within this script.
 
-
 set -euo pipefail
 
 function usage() {
     echo "Usage: ${0} [-o] <path-to-wireguard-rs-binary>"
     echo "-o will use the owl option to wireguard-rs (don't use with boringtun)"
     echo "-b will pass the --disable-drop-privileges flag to boringtun (only for boringtun)"
+    echo "-k will use kernel wireguard"
     exit 2
 }
 
 wireguard_bin=""
 use_owl_routines="false"
 use_boringtun_args="false"
+use_kernel_wireguard="false"
 
 # Parse command line options
-while getopts "ob" opt; do
+while getopts "obk" opt; do
     case "${opt}" in
         o) use_owl_routines="true" ;;
         b) use_boringtun_args="true" ;;
+        k) use_kernel_wireguard=true ;;
         \? ) usage ;;
         : ) usage ;;
     esac
@@ -40,7 +42,7 @@ shift $((OPTIND -1))
 if [[ -n $1 ]]; then
     wireguard_bin=$(realpath "$1")
 else
-    echo "Path to wireguard-rs is missing" 1>&2
+    echo "Path to wireguard binary is missing" 1>&2
     exit 1
 fi
 
@@ -75,6 +77,9 @@ ip netns exec net1 route add default gw 10.100.1.1
 ##############################################################
 # Set up wireguard interfaces
 
+# export WG_THREADS=1
+# export GOMAXPROCS=1
+
 # Create Wireguard interfaces, wg1 in default namespace, wg1n in net1 namespace
 if [ $use_owl_routines = "true" ]; then
     $wireguard_bin --owl wg1
@@ -85,8 +90,13 @@ else
         $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
         ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
     else
-        $wireguard_bin wg1
-        ip netns exec net1 $wireguard_bin wg1n
+        if [ $use_kernel_wireguard = "true" ]; then
+            ip link add wg1 type wireguard
+            ip netns exec net1 ip link add wg1n type wireguard
+        else
+            $wireguard_bin wg1
+            ip netns exec net1 $wireguard_bin wg1n
+        fi
     fi
 fi
 
@@ -103,8 +113,8 @@ ip addr add 10.100.2.1/24 dev wg1
 ip netns exec net1 ip addr add 10.100.2.2/24 dev wg1n
 
 # Configure the Wireguard interfaces
-wg setconf wg1 wg1.conf
-ip netns exec net1 wg setconf wg1n wg1n.conf
+wg setconf wg1 wg1.conf &
+ip netns exec net1 wg setconf wg1n wg1n.conf &
 
 # Bring up the Wireguard interfaces
 ip link set wg1 up
