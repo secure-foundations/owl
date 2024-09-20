@@ -174,6 +174,9 @@ func init() {
 	mixHash(&InitialHash, &InitialChainKey, []byte(WGIdentifier))
 }
 
+/////////////////////////////////////////////////////////////////
+// owl-wireguard generate_msg1 routine goes here (?) ////////////
+/////////////////////////////////////////////////////////////////
 func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, error) {
 	device.staticIdentity.RLock()
 	defer device.staticIdentity.RUnlock()
@@ -227,7 +230,7 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 		handshake.chainKey[:],
 		handshake.precomputedStaticStatic[:],
 	)
-	timestamp := tai64n.Now()
+	timestamp := tai64n.Now() // need to pass this to owl-wireguard
 	aead, _ = chacha20poly1305.New(key[:])
 	aead.Seal(msg.Timestamp[:0], ZeroNonce[:], timestamp[:], handshake.hash[:])
 
@@ -244,6 +247,9 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 	return &msg, nil
 }
 
+/////////////////////////////////////////////////////////////////
+// owl-wireguard receive_msg1 routine goes here (?) /////////////
+/////////////////////////////////////////////////////////////////
 func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 	var (
 		hash     [blake2s.Size]byte
@@ -348,6 +354,9 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 	return peer
 }
 
+/////////////////////////////////////////////////////////////////
+// owl-wireguard generate_msg2 routine goes here (?) ////////////
+/////////////////////////////////////////////////////////////////
 func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error) {
 	handshake := &peer.handshake
 	handshake.mutex.Lock()
@@ -416,6 +425,9 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	return &msg, nil
 }
 
+/////////////////////////////////////////////////////////////////
+// owl-wireguard receive_msg2 routine goes here (?) /////////////
+/////////////////////////////////////////////////////////////////
 func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	if msg.Type != MessageResponseType {
 		return nil

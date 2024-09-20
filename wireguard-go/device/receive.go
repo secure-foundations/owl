@@ -244,6 +244,10 @@ func (device *Device) RoutineDecryption(id int) {
 
 	for elemsContainer := range device.queue.decryption.c {
 		for _, elem := range elemsContainer.elems {
+			/////////////////////////////////////////////////////////////////
+			// owl-wireguard transport receive routine goes here (?) ////////
+			/////////////////////////////////////////////////////////////////
+			
 			// split message into fields
 			counter := elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
 			content := elem.packet[MessageTransportOffsetContent:]

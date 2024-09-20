@@ -450,6 +450,10 @@ func (device *Device) RoutineEncryption(id int) {
 
 	for elemsContainer := range device.queue.encryption.c {
 		for _, elem := range elemsContainer.elems {
+			/////////////////////////////////////////////////////////////////
+			// owl-wireguard transport send routine goes here (?) ///////////
+			/////////////////////////////////////////////////////////////////
+			
 			// populate header fields
 			header := elem.buffer[:MessageTransportHeaderSize]
 
