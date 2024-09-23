@@ -7,6 +7,10 @@ all: generate-version-and-build
 
 MAKEFLAGS += --no-print-directory
 
+rustlib:
+	@cd lib/owl_wireguard && cargo build --release
+	@cp lib/owl_wireguard/target/release/libowl_wireguard.a lib/
+
 generate-version-and-build:
 	@export GIT_CEILING_DIRECTORIES="$(realpath $(CURDIR)/..)" && \
 	tag="$$(git describe --dirty 2>/dev/null)" && \
@@ -16,7 +20,7 @@ generate-version-and-build:
 	git update-index --assume-unchanged version.go || true
 	@$(MAKE) wireguard-go
 
-wireguard-go: $(wildcard *.go) $(wildcard */*.go)
+wireguard-go: $(wildcard *.go) $(wildcard */*.go) rustlib
 	go build -v -o "$@"
 
 install: wireguard-go
@@ -28,4 +32,4 @@ test:
 clean:
 	rm -f wireguard-go
 
-.PHONY: all clean test install generate-version-and-build
+.PHONY: all clean test install generate-version-and-build rustlib

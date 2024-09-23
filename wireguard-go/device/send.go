@@ -5,6 +5,13 @@
 
 package device
 
+/*
+#cgo LDFLAGS: ${SRCDIR}/../lib/libowl_wireguard.a -ldl
+#include "../lib/owl_wireguard.h"
+#include <stdlib.h>
+*/
+import "C"
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -13,6 +20,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"unsafe"
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
@@ -444,6 +452,10 @@ func calculatePaddingSize(packetSize, mtu int) int {
 func (device *Device) RoutineEncryption(id int) {
 	var paddingZeros [PaddingMultiple]byte
 	var nonce [chacha20poly1305.NonceSize]byte
+
+	str1 := C.CString("send")
+	defer C.free(unsafe.Pointer(str1))
+	C.test(str1)
 
 	defer device.log.Verbosef("Routine: encryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: encryption worker %d - started", id)
