@@ -8,7 +8,7 @@ all: generate-version-and-build
 MAKEFLAGS += --no-print-directory
 
 rustlib:
-	@cd lib/owl_wireguard && cargo build --release
+	@cd lib/owl_wireguard && cargo +nightly build --features=nonverif-crypto --release
 	@cp lib/owl_wireguard/target/release/libowl_wireguard.a lib/
 
 generate-version-and-build:
@@ -31,5 +31,6 @@ test:
 
 clean:
 	rm -f wireguard-go
+	@cd lib/owl_wireguard && cargo clean && rm -f ../libowl_wireguard.a
 
 .PHONY: all clean test install generate-version-and-build rustlib

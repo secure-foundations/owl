@@ -214,6 +214,7 @@ pub fn encrypt_combined_into(
             // ctxt.extend_from_slice(msg);
 
             let tag = key.seal_in_place_separate_tag(nonce, aad_ring, &mut data[pos..pos + msg.len()]).unwrap();
+            println!("data: {}", hex::encode(data.as_slice()));
             data[pos + msg.len()..pos + msg.len() + tag.as_ref().len()].copy_from_slice(&tag.as_ref());
             Ok(())
         } else {

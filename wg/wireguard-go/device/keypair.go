@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.zx2c4.com/wireguard/replay"
 )
 
@@ -30,6 +31,9 @@ type Keypair struct {
 	created      time.Time
 	localIndex   uint32
 	remoteIndex  uint32
+	// just for testing
+	sendKey 	 [chacha20poly1305.KeySize]byte
+	recvKey 	 [chacha20poly1305.KeySize]byte
 }
 
 type Keypairs struct {

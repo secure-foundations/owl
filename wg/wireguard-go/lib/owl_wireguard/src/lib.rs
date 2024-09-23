@@ -1,29 +1,85 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
+#![feature(vec_into_raw_parts)]
 
 mod speclib;
-pub mod execlib; // pub for testing
+mod execlib; 
 mod owl_aead;
 mod owl_dhke;
 mod owl_hkdf;
 mod owl_hmac;
 mod owl_pke;
 mod owl_util;
-pub mod owl_wireguard;
+mod owl_wireguard;
 
 use vstd::prelude::*;
-use std::ffi::CStr;
-use std::{thread, time};
+use std::slice;
+// use std::{thread, time};
+
+// #[no_mangle]
+// pub extern "C" fn test(name: *const libc::c_char) {
+//     let name_cstr = unsafe { CStr::from_ptr(name) };
+//     let name = name_cstr.to_str().unwrap();
+//     println!("Hello {}!", name);
+//     let t = time::Duration::from_millis(100);
+//     thread::sleep(t);
+// }
 
 #[no_mangle]
-pub extern "C" fn test(name: *const libc::c_char) {
-    let name_cstr = unsafe { CStr::from_ptr(name) };
-    let name = name_cstr.to_str().unwrap();
-    println!("Hello {}!", name);
-    let t = time::Duration::from_millis(100);
-    thread::sleep(t);
+pub extern "C" fn wg_send(
+    plaintext: *const u8,
+    plaintext_len: usize,
+    peer: u32,
+    send_key: *const u8,
+    send_key_len: usize,
+    nonce: usize,
+    obuf: *mut u8,
+    obuf_len: usize,
+) {
+    let plaintext = unsafe { slice::from_raw_parts(plaintext, plaintext_len) };
+    let send_key = unsafe { slice::from_raw_parts(send_key, send_key_len) };
+
+    // obuf_len needs to be right!
+    // let mut obuf_vec = unsafe { Vec::from_raw_parts(obuf, obuf_len, obuf_len) };
+    let mut local_obuf = vec![3; obuf_len];
+
+    // obuf_vec.clear();
+    // println!("owl obuf start:\n\t{}", hex::encode(&obuf_vec));
+
+    let cfg = owl_wireguard::cfg_Initiator {
+        owl_S_init: vec![],
+        owl_E_init: vec![],
+        pk_owl_S_resp: vec![],
+        pk_owl_S_init: vec![],
+        pk_owl_E_resp: vec![],
+        pk_owl_E_init: vec![],
+        salt: vec![],
+    };
+    let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+    state.owl_N_init_send = nonce;
+
+    cfg.owl_transp_send_init_wrapper(
+        &mut state, 
+        plaintext, 
+        &mut local_obuf, 
+        peer.to_le_bytes().as_slice(), 
+        [].as_slice(), 
+        send_key, 
+        [].as_slice()
+    );
+    println!("owl output:\n\t{}", hex::encode(&local_obuf));
+
+    // let (ptr, _, _) = obuf_vec.into_raw_parts();
+
+    if !obuf.is_null() && obuf_len > 0 {
+        let obuf_slice = unsafe { std::slice::from_raw_parts_mut(obuf, obuf_len) };
+        obuf_slice.copy_from_slice(&local_obuf);
+    } else {
+        panic!("bad obuf")
+    }
 }
+
 
 verus! {
 

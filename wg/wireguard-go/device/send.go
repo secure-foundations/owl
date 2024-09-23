@@ -15,6 +15,7 @@ import "C"
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"net"
 	"os"
@@ -452,7 +453,8 @@ func calculatePaddingSize(packetSize, mtu int) int {
 func (device *Device) RoutineEncryption(id int) {
 	var paddingZeros [PaddingMultiple]byte
 	var nonce [chacha20poly1305.NonceSize]byte
-
+	var tmpPacket []byte
+	
 	defer device.log.Verbosef("Routine: encryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: encryption worker %d - started", id)
 
@@ -462,9 +464,38 @@ func (device *Device) RoutineEncryption(id int) {
 			// owl-wireguard transport send routine goes here (?) ///////////
 			/////////////////////////////////////////////////////////////////
 			
-			str1 := C.CString("send")
-			C.test(str1)
-			C.free(unsafe.Pointer(str1))
+			// str1 := C.CString("send")
+			// C.test(str1)
+			// C.free(unsafe.Pointer(str1))
+			device.log.Verbosef("start plaintext: %s", hex.EncodeToString(elem.packet));
+
+
+			// // pad content to multiple of 16
+			// paddingSize := calculatePaddingSize(len(elem.packet), int(device.tun.mtu.Load()))
+			// elem.packet = append(elem.packet, paddingZeros[:paddingSize]...)
+			tmpPacket = make([]byte, len(elem.packet))
+			copy(tmpPacket, elem.packet)
+			device.log.Verbosef("tmpPacket plaintext: %s", hex.EncodeToString(tmpPacket));
+
+
+			plaintext_str := C.CBytes(tmpPacket);
+			key_str := C.CBytes(elem.keypair.sendKey[:]);
+			device.log.Verbosef("key: %s", hex.EncodeToString(elem.keypair.sendKey[:]));
+			// C.free(unsafe.Pointer(plaintext_str));
+
+			C.wg_send(
+				plaintext_str, // unsafe.Pointer(&elem.packet), 
+				C.ulong(len(tmpPacket)), 
+				C.uint(elem.keypair.remoteIndex), 
+				key_str, // unsafe.Pointer(&elem.keypair.sendKey),
+				C.ulong(len(elem.keypair.sendKey)),
+				C.ulong(elem.nonce), 
+				unsafe.Pointer(elem.buffer), 
+				C.ulong(len(tmpPacket) + MessageTransportHeaderSize));
+			
+			device.log.Verbosef("owl send:\n\t%s", hex.EncodeToString(elem.buffer[:32]));
+			C.free(unsafe.Pointer(plaintext_str));
+			C.free(unsafe.Pointer(key_str));
 
 			// populate header fields
 			header := elem.buffer[:MessageTransportHeaderSize]
@@ -484,12 +515,16 @@ func (device *Device) RoutineEncryption(id int) {
 			// encrypt content and release to consumer
 
 			binary.LittleEndian.PutUint64(nonce[4:], elem.nonce)
+			device.log.Verbosef("nonce: %s", hex.EncodeToString(nonce[:]));
+			device.log.Verbosef("plaintext: %s", hex.EncodeToString(tmpPacket));
 			elem.packet = elem.keypair.send.Seal(
 				header,
 				nonce[:],
 				elem.packet,
 				nil,
 			)
+
+			device.log.Verbosef("go send:\n\t%s", hex.EncodeToString(elem.buffer[:32]));
 		}
 		elemsContainer.Unlock()
 	}
