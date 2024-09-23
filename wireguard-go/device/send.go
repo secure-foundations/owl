@@ -453,10 +453,6 @@ func (device *Device) RoutineEncryption(id int) {
 	var paddingZeros [PaddingMultiple]byte
 	var nonce [chacha20poly1305.NonceSize]byte
 
-	str1 := C.CString("send")
-	defer C.free(unsafe.Pointer(str1))
-	C.test(str1)
-
 	defer device.log.Verbosef("Routine: encryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: encryption worker %d - started", id)
 
@@ -466,6 +462,10 @@ func (device *Device) RoutineEncryption(id int) {
 			// owl-wireguard transport send routine goes here (?) ///////////
 			/////////////////////////////////////////////////////////////////
 			
+			str1 := C.CString("send")
+			C.test(str1)
+			C.free(unsafe.Pointer(str1))
+
 			// populate header fields
 			header := elem.buffer[:MessageTransportHeaderSize]
 
