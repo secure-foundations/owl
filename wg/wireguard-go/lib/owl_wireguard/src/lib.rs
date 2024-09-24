@@ -41,8 +41,8 @@ pub extern "C" fn wg_send(
     let send_key = unsafe { slice::from_raw_parts(send_key, send_key_len) };
 
     // obuf_len needs to be right!
-    // let mut obuf_vec = unsafe { Vec::from_raw_parts(obuf, obuf_len, obuf_len) };
-    let mut local_obuf = vec![3; obuf_len];
+    let mut obuf_vec = unsafe { Vec::from_raw_parts(obuf, obuf_len, obuf_len) };
+    // let mut local_obuf = vec![3; obuf_len];
 
     // obuf_vec.clear();
     // println!("owl obuf start:\n\t{}", hex::encode(&obuf_vec));
@@ -63,7 +63,7 @@ pub extern "C" fn wg_send(
     cfg.owl_transp_send_init_wrapper(
         &mut state, 
         plaintext, 
-        &mut local_obuf, 
+        &mut obuf_vec, 
         peer.to_le_bytes().as_slice(), 
         [].as_slice(), 
         send_key, 
@@ -71,15 +71,16 @@ pub extern "C" fn wg_send(
     );
     // println!("owl output:\n\t{}", hex::encode(&local_obuf));
 
-    // let (ptr, _, _) = obuf_vec.into_raw_parts();
+    let (ptr, _, _) = obuf_vec.into_raw_parts();
 
-    if !obuf.is_null() && obuf_len > 0 {
-        let obuf_slice = unsafe { std::slice::from_raw_parts_mut(obuf, obuf_len) };
-        obuf_slice.copy_from_slice(&local_obuf);
-    } else {
-        panic!("bad obuf")
-    }
+    // if !obuf.is_null() && obuf_len > 0 {
+    //     let obuf_slice = unsafe { std::slice::from_raw_parts_mut(obuf, obuf_len) };
+    //     obuf_slice.copy_from_slice(&local_obuf);
+    // } else {
+    //     panic!("bad obuf")
+    // }
 }
+
 
 
 verus! {
