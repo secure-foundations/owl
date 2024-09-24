@@ -5,6 +5,13 @@
 
 package device
 
+/*
+#cgo LDFLAGS: ${SRCDIR}/../lib/libowl_wireguard.a -ldl
+#include "../lib/owl_wireguard.h"
+#include <stdlib.h>
+*/
+import "C"
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -12,8 +19,9 @@ import (
 	"net"
 	"sync"
 	"time"
+	"unsafe"
 
-	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 	"golang.zx2c4.com/wireguard/conn"
@@ -237,35 +245,55 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 }
 
 func (device *Device) RoutineDecryption(id int) {
-	var nonce [chacha20poly1305.NonceSize]byte
+	// var nonce [chacha20poly1305.NonceSize]byte
 
 	defer device.log.Verbosef("Routine: decryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: decryption worker %d - started", id)
 
 	for elemsContainer := range device.queue.decryption.c {
 		for _, elem := range elemsContainer.elems {
-			/////////////////////////////////////////////////////////////////
-			// owl-wireguard transport receive routine goes here (?) ////////
-			/////////////////////////////////////////////////////////////////
-			
-			// split message into fields
 			counter := elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
-			content := elem.packet[MessageTransportOffsetContent:]
-
-			// decrypt and release to consumer
-			var err error
 			elem.counter = binary.LittleEndian.Uint64(counter)
-			// copy counter to nonce
-			binary.LittleEndian.PutUint64(nonce[0x4:0xc], elem.counter)
-			elem.packet, err = elem.keypair.receive.Open(
-				content[:0],
-				nonce[:],
-				content,
-				nil,
-			)
-			if err != nil {
-				elem.packet = nil
-			}
+
+			peer := binary.LittleEndian.Uint32(elem.packet[MessageTransportOffsetReceiver:MessageTransportOffsetCounter])
+
+			key_str := C.CBytes(elem.keypair.recvKey[:]);
+
+			C.wg_recv(
+				C.uint(peer),
+				key_str,
+				C.ulong(len(elem.keypair.recvKey)),
+				C.ulong(elem.counter),
+				unsafe.Pointer(&elem.packet[0]),
+				C.ulong(len(elem.packet)));
+
+			C.free(key_str);
+
+			device.log.Verbosef("o: %x", elem.packet);
+			elem.packet = elem.packet[MessageTransportOffsetContent:len(elem.packet)-poly1305.TagSize]
+
+			device.log.Verbosef("buf: %x", elem.buffer[:128]);
+
+			device.log.Verbosef("p: %x", elem.packet);
+			
+			// // split message into fields
+			// // counter := elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
+			// content := elem.packet[MessageTransportOffsetContent:]
+
+			// // decrypt and release to consumer
+			// var err error
+			// elem.counter = binary.LittleEndian.Uint64(counter)
+			// // copy counter to nonce
+			// binary.LittleEndian.PutUint64(nonce[0x4:0xc], elem.counter)
+			// elem.packet, err = elem.keypair.receive.Open(
+			// 	content[:0],
+			// 	nonce[:],
+			// 	content,
+			// 	nil,
+			// )
+			// if err != nil {
+			// 	elem.packet = nil
+			// }
 		}
 		elemsContainer.Unlock()
 	}
@@ -475,6 +503,8 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 				continue
 			}
 			dataPacketReceived = true
+
+			device.log.Verbosef("%v - Receiving packet: %x", peer, elem.packet)
 
 			switch elem.packet[0] >> 4 {
 			case 4:

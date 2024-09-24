@@ -6,7 +6,6 @@
 package device
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -578,7 +577,7 @@ func (peer *Peer) BeginSymmetricSession() error {
 	keypair.send, _ = chacha20poly1305.New(sendKey[:])
 	keypair.receive, _ = chacha20poly1305.New(recvKey[:])
 
-	device.log.Verbosef("%v - BeginSymmetricSession: %s", peer, hex.EncodeToString(sendKey[:]))
+	// device.log.Verbosef("%v - BeginSymmetricSession: %s", peer, hex.EncodeToString(sendKey[:]))
 
 	setZero(sendKey[:])
 	setZero(recvKey[:])

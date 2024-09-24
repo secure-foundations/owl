@@ -81,6 +81,51 @@ pub extern "C" fn wg_send(
     // }
 }
 
+#[no_mangle]
+pub extern "C" fn wg_recv(
+    peer: u32,
+    recv_key: *const u8,
+    recv_key_len: usize,
+    nonce: usize,
+    buf: *mut u8,
+    buf_len: usize,
+) {
+    let recv_key = unsafe { slice::from_raw_parts(recv_key, recv_key_len) };
+    let mut buf = unsafe { slice::from_raw_parts_mut(buf, buf_len) };
+
+    let cfg = owl_wireguard::cfg_Initiator {
+        owl_S_init: vec![],
+        owl_E_init: vec![],
+        pk_owl_S_resp: vec![],
+        pk_owl_S_init: vec![],
+        pk_owl_E_resp: vec![],
+        pk_owl_E_init: vec![],
+        salt: vec![],
+    };
+    let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
+    state.owl_N_init_recv = nonce;
+
+    // println!("buf: {}", hex::encode(&buf));
+
+    let decrypt_opt = cfg.owl_transp_recv_init_wrapper(
+        &mut state, 
+        &mut buf, 
+        [].as_slice(), 
+        peer.to_le_bytes().as_slice(), 
+        [].as_slice(),
+        recv_key, 
+    );
+
+    match decrypt_opt {
+        Some(plaintext) => {
+            buf[16..(16+plaintext.as_slice().len())].copy_from_slice(&plaintext.as_slice());
+        },
+        None => {
+            panic!("decryption failed");
+        },
+    };
+}
+
 
 
 verus! {
