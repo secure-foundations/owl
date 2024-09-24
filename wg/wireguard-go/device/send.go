@@ -451,6 +451,7 @@ func calculatePaddingSize(packetSize, mtu int) int {
  */
 func (device *Device) RoutineEncryption(id int) {
 	var paddingZeros [PaddingMultiple]byte
+	// var nonce [chacha20poly1305.NonceSize]byte
 
 	defer device.log.Verbosef("Routine: encryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: encryption worker %d - started", id)
@@ -504,7 +505,7 @@ func (device *Device) RoutineEncryption(id int) {
 			// elem.packet = elem.keypair.send.Seal(
 			// 	header,
 			// 	nonce[:],
-			// 	tmpPacket,
+			// 	elem.packet,
 			// 	nil,
 			// )
 		}

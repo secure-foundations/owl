@@ -269,12 +269,7 @@ func (device *Device) RoutineDecryption(id int) {
 
 			C.free(key_str);
 
-			device.log.Verbosef("o: %x", elem.packet);
 			elem.packet = elem.packet[MessageTransportOffsetContent:len(elem.packet)-poly1305.TagSize]
-
-			device.log.Verbosef("buf: %x", elem.buffer[:128]);
-
-			device.log.Verbosef("p: %x", elem.packet);
 			
 			// // split message into fields
 			// // counter := elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
