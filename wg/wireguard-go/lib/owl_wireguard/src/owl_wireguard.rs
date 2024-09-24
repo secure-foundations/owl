@@ -2511,10 +2511,6 @@ impl cfg_Initiator {
                     OwlBuf::from_vec(x)
                 }
             };
-            // println!("owl_init_send: {}", hex::encode(&owl_init_send337.as_slice()));
-            // println!("owl_msg: {}", hex::encode(&owl_msg403.as_slice()));
-            // println!("owl_N_init_send: {}", mut_state.owl_N_init_send);
-            // println!("owl_hexconst: {}", hex::encode(&owl_hexconst345.as_slice()));
             let owl_c344 = {
                 {
                     match owl_enc_st_aead_builder(

@@ -46,6 +46,7 @@ pub extern "C" fn wg_send(
 
     // obuf_vec.clear();
     // println!("owl obuf start:\n\t{}", hex::encode(&obuf_vec));
+    // println!("plaintext_len:\n\t{}", plaintext.len());
 
     let cfg = owl_wireguard::cfg_Initiator {
         owl_S_init: vec![],
@@ -68,7 +69,7 @@ pub extern "C" fn wg_send(
         send_key, 
         [].as_slice()
     );
-    println!("owl output:\n\t{}", hex::encode(&local_obuf));
+    // println!("owl output:\n\t{}", hex::encode(&local_obuf));
 
     // let (ptr, _, _) = obuf_vec.into_raw_parts();
 
