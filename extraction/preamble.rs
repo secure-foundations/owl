@@ -4,7 +4,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
-pub use vstd::{modes::*, prelude::*, seq::*, string::*};
+pub use vstd::{modes::*, prelude::*, seq::*, view::*};
 pub mod speclib;
 pub use crate::speclib::{*, itree::*};
 pub mod execlib;
@@ -15,13 +15,14 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub use parsley::{
+pub use vest::{
     *,
     properties::*,
     regular::*,
     regular::builder::*,
     regular::bytes::*,
-    regular::bytes_const::*,
+    // regular::bytes_const::*,
+    regular::tag::*,
     regular::choice::*,
     regular::tail::*,
     regular::uints::*,
@@ -124,30 +125,30 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
 }
 
 
-#[verifier(external_body)]
-pub fn owl_output_serialize_fused<'a, A, C: Combinator<'a> + 'a>(
-    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    comb: C,
-    val: C::Result,
-    obuf: &mut Vec<u8>,
-    dest_addr: &str,
-    ret_addr: &str,
-)
-    requires
-        comb.spec_serialize(val.view()) matches Ok(b) ==> 
-            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
-    ensures
-        t.view() == old(t).view().give_output(),
-        comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
-{
-    let ser_result = comb.serialize(val, obuf, 0);
-    assume(ser_result.is_ok());
-    if let Ok((num_written)) = ser_result {
-        vec_truncate(obuf, num_written);
-    } else {
-        assert(false);
-    }
-}
+// #[verifier(external_body)]
+// pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
+//     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+//     comb: C,
+//     val: C::Result<'a>,
+//     obuf: &mut Vec<u8>,
+//     dest_addr: &str,
+//     ret_addr: &str,
+// ) where <C as vstd::view::View>::V: vest::properties::SecureSpecCombinator<SpecResult = <C::Owned as vstd::view::View>::V>
+//     requires
+//         comb.spec_serialize(val.view()) matches Ok(b) ==> 
+//             old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+//     ensures
+//         t.view() == old(t).view().give_output(),
+//         comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
+// {
+//     let ser_result = comb.serialize(val, obuf, 0);
+//     assume(ser_result.is_ok());
+//     if let Ok((num_written)) = ser_result {
+//         vec_truncate(obuf, num_written);
+//     } else {
+//         assert(false);
+//     }
+// }
 
 
 // for debugging purposes, not used by the compiler

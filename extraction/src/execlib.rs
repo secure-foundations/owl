@@ -1,7 +1,7 @@
 use std::rc::Rc;
-pub use vstd::{modes::*, prelude::*, seq::*, string::*, slice::*};
+pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
 use crate::{speclib, *};
-use parsley::regular::builder::*;
+use vest::regular::builder::*;
 
 verus! {
 

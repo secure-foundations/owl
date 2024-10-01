@@ -5,8 +5,8 @@ set -euo pipefail
 function usage() {
     echo "Usage: ${0} [-n] <path-to-extraction-dir>"
     echo "You must have verus and verusfmt in your path,"
-    echo "and the PARSLEYPATH environment variable set to the path"
-    echo "to the crate root of the parsley repo."
+    echo "and the VESTPATH environment variable set to the path"
+    echo "to the crate root of the vest crate in the vest repo."
     exit 2
 }
 
@@ -46,7 +46,7 @@ fi
 
 echo ""
 echo "VERIFYING, COMPILING, AND EXPORTING PARSLEY" 
-pushd $PARSLEYPATH
+pushd $VESTPATH
 make
 popd
 
@@ -58,8 +58,8 @@ popd
 
 echo ""
 echo "VERIFYING" 
-verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern parsley=$PARSLEYPATH/libparsley.rlib --import parsley=$PARSLEYPATH/parsley.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
-
+verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern vest=$VESTPATH/libvest.rlib --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
+# verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
 
 
 if [ -z $verus_args ]; then

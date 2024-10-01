@@ -395,7 +395,7 @@ specCombTyOf' (FEnum _ cs) = do
     cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|SpecConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
@@ -421,7 +421,7 @@ execCombTyOf' (FEnum _ cs) = do
     cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|ConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
@@ -460,7 +460,7 @@ specCombOf' constSuffix (FEnum _ cs) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|SpecConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag::spec_new(U8, #{i})|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
             let nest = nestOrdChoice constCs
@@ -501,7 +501,7 @@ execCombOf' constSuffix (FEnum _ cs) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|ConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag::new(U8, #{i})|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoice constCs
