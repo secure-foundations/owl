@@ -421,7 +421,6 @@ genVerusCAExpr ae = do
                     let exec_comb = #{execcomb};
                     let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
                     if let Ok((num_written)) = ser_result {
-                        vec_truncate(&mut ser_buf, num_written);
                         ser_buf
                     } else {
                         // TODO better error name
@@ -1070,7 +1069,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
                     if let Ok((num_written)) = ser_result {
-                        vec_truncate(&mut obuf, num_written);
+                        assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                         Some(obuf)
                     } else {
                         None
@@ -1339,7 +1338,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                             let mut obuf = vec_u8_of_len(1 + #{lhsXLen});
                             let ser_result = exec_comb.serialize(#{rhs}, &mut obuf, 0);
                             if let Ok((num_written)) = ser_result {
-                                vec_truncate(&mut obuf, num_written);
+                                assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                                 Some(obuf)
                             } else {
                                 None

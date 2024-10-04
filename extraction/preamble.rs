@@ -126,7 +126,7 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
 
 
 // #[verifier(external_body)]
-// pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
+// pub fn owl_output_serialize_fused<'a, A, C: View + Combinator + SpecCombinator>(
 //     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
 //     comb: C,
 //     val: C::Result<'a>,
@@ -144,7 +144,7 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
 //     let ser_result = comb.serialize(val, obuf, 0);
 //     assume(ser_result.is_ok());
 //     if let Ok((num_written)) = ser_result {
-//         vec_truncate(obuf, num_written);
+//         // assert(obuf.view() == comb.spec_serialize((arg.view()))->Ok_0);
 //     } else {
 //         assert(false);
 //     }

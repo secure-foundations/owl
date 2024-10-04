@@ -36,7 +36,6 @@ fi
 src_path=$ext_dir_path/src
 
 main_file=$src_path/main.rs
-vest_file=$src_path/parse_serialize.vest
 
 if [ $format = "true" ]; then
     echo ""

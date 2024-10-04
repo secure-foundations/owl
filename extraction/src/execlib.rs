@@ -231,7 +231,6 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
     v
 }
 
-
 #[verifier(external_body)]
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     ensures res.view() == Seq::new(n as nat, |i| e)
