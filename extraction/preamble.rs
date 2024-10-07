@@ -16,12 +16,11 @@ pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
 pub use vest::{
-    *,
     properties::*,
     regular::*,
     regular::builder::*,
     regular::bytes::*,
-    // regular::bytes_const::*,
+    regular::bytes_n::*,
     regular::tag::*,
     regular::choice::*,
     regular::tail::*,

@@ -418,7 +418,9 @@ specCombTyOf' (FEnum _ cs) = do
             let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
-specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
+specCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|Tag<BytesN<#{l}>, Seq<u8>>|]
 specCombTyOf' _ = return Nothing
 
 specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -446,7 +448,7 @@ execCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|ConstBytes<#{l}>|]
+    return $ Just [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
 execCombTyOf' _ = return Nothing
 
 execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -484,10 +486,11 @@ specCombOf' constSuffix (FEnum _ cs) = do
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
 specCombOf' constSuffix (FHexConst s) = do
+    let l = length s `div` 2
     bl <- hexStringToByteList s
     let constSuffix' = map Data.Char.toUpper constSuffix
     let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+    return $ Just ([di|Tag::spec_new(BytesN::<#{l}>, (SPEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
 specCombOf' _ _ = return Nothing
 
 specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -537,7 +540,7 @@ execCombOf' constSuffix (FHexConst s) = do
         arr
     }
     |]
-    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+    return $ Just ([di|Tag::new(BytesN::<#{l}>, (EXEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
 execCombOf' _ _ = return Nothing
 
 execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
