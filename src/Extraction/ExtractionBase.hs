@@ -351,31 +351,48 @@ mkNestPattern l =
 
 nestOrdChoiceTy :: [Doc ann] -> Doc ann
 nestOrdChoiceTy l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
+    [di|ord_choice_type!(#{hsep . punctuate comma $ l})|]
+        -- case l of
+        --     [] -> pretty ""
+        --     [x] -> x
+        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
 
 nestOrdChoice :: [Doc ann] -> Doc ann
 nestOrdChoice l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
+        [di|ord_choice!(#{hsep . punctuate comma $ l})|]
+        -- case l of
+        --     [] -> pretty ""
+        --     [x] -> x
+        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
 
--- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
-listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
-listIdxToEitherPat i l x = 
-    if i >= l then 
-        throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
-    else do
-        if l == 2 then
-            return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
-        else if i == l - 1 then
-            return [di|Either::Right(#{x})|]
-        else do
-            x' <- listIdxToEitherPat i (l-1) x
-            return [di|Either::Left(#{x'})|]
+-- injOrdChoice i l x macro prints the macro call for x in a list of length l at index i
+injOrdChoice :: Int -> Int -> Doc ann -> Doc ann -> Doc ann
+injOrdChoice i l x macro =
+    let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]] in
+    [di|#{macro}(#{starstr})|]   
+
+listIdxToInjPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjPat i l x = return $ injOrdChoice i l x [di|inj_ord_choice_pat!|]   
+
+listIdxToInjResult :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjResult i l x = return $ injOrdChoice i l x [di|inj_ord_choice_result!|]   
+
+
+-- -- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
+-- listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+-- listIdxToEitherPat i l x = do
+--     let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]]
+--     return [di|inj_ord_choice_pat!(#{starstr})|]   
+--     -- if i >= l then 
+--     --     throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
+--     -- else do
+--     --     if l == 2 then
+--     --         return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
+--     --     else if i == l - 1 then
+--     --         return [di|Either::Right(#{x})|]
+--     --     else do
+--     --         x' <- listIdxToEitherPat i (l-1) x
+--     --         return [di|Either::Left(#{x'})|]
 
 withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
 withJustNothing f (Just x) = Just <$> f x

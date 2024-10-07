@@ -1268,7 +1268,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, rhsX) = case topt of
                             Just _ -> ([di|(_,x)|], [di|x|])
                             Nothing -> ([di|_|], [di||])
-                    lhs <- listIdxToEitherPat i l lhsX
+                    lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
                             Just (RTOwlBuf l) -> (rhsX, u8slice) `cast` RTOwlBuf l
                             _ -> return rhsX
@@ -1280,7 +1280,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, rhsX) = case topt of
                             Just _ -> ([di|(_,x)|], [di|x|])
                             Nothing -> ([di|_|], [di||])
-                    lhs <- listIdxToEitherPat i l lhsX
+                    lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
                             Just (RTOwlBuf l) -> ([di|slice_to_vec(#{rhsX})|], vecU8) `cast` RTOwlBuf l
                             _ -> return rhsX
@@ -1331,7 +1331,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, lhsXLen,  rhsX) = case topt of
                             Just _ -> ([di|x|], [di|x.len()|], [di|((), x.as_slice())|])
                             Nothing -> ([di||], [di|0|], [di|((), &empty_vec.as_slice())|])
-                    rhs <- listIdxToEitherPat i l rhsX
+                    rhs <- listIdxToInjResult i l rhsX
                     return [__di|
                     #{verusName}::#{caseName}(#{lhsX}) => {                
                         if no_usize_overflows![ 1, #{lhsXLen} ] {

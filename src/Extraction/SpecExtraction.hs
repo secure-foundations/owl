@@ -223,13 +223,15 @@ extractCEnum (CEnum n cs isVest _) = do
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
     let rfsOwlNames = map (\(n, t) -> (n, fmap specFieldTyOf t)) $ M.assocs cs
-    let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty t}),|]) rfs
+    -- debugPrint $ "Enum fields: " ++ show rfs
+    let enumCases = vsep $ fmap (\(n, t) -> [di|#{n}(#{pretty . onlyTyOf $ t}),|]) rfs
     let enumDef = [__di|
     pub enum #{rn} {
         #{enumCases}
     }
     use #{rn}::*;
     |]
+    -- debugPrint $ "Enum def: " ++ show enumDef
     (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
     parseSerializeDefs <- if isVest then 
                             genParserSerializer (execName n) rn rfs specComb execComb 
@@ -238,6 +240,9 @@ extractCEnum (CEnum n cs isVest _) = do
     enumTests <- genEnumTests n rn rfsOwlNames
     return $ vsep [enumDef, formatConsts, parseSerializeDefs, constructors, enumTests]
     where
+        onlyTyOf (Just (t, _)) = Just t
+        onlyTyOf Nothing = Nothing
+
         genFormatDefs owlN cs = do
             let specname = specName owlN
             let execname = execName owlN
@@ -273,7 +278,7 @@ extractCEnum (CEnum n cs isVest _) = do
                     let (lhsX, rhsX) = case topt of
                             Just _ -> ([di|(_,x)|], [di|x|])
                             Nothing -> ([di|_|], [di||])
-                    lhs <- listIdxToEitherPat i l lhsX
+                    lhs <- listIdxToInjPat i l lhsX
                     return [__di|
                     #{lhs} => #{specname}::#{caseName}(#{rhsX}),
                     |]
@@ -296,7 +301,7 @@ extractCEnum (CEnum n cs isVest _) = do
                     let (lhsX, lhsXLen, rhsX) = case topt of
                             Just _ -> ([di|x|], [di|x.len()|], [di|((), x)|])
                             Nothing -> ([di||], [di|0|], [di|((), seq![])|])
-                    rhs <- listIdxToEitherPat i l rhsX
+                    rhs <- listIdxToInjResult i l rhsX
                     return [__di|
                     #{specname}::#{caseName}(#{lhsX}) => {
                         if no_usize_overflows_spec![ 1, #{lhsXLen} ] {
@@ -376,7 +381,7 @@ extractCEnum (CEnum n cs isVest _) = do
                 crate::#{specname}::#{specName caseName}()
             }
             |]
-        genConstructor owlName specname (caseName, Just caseTy) = do
+        genConstructor owlName specname (caseName, Just (caseTy, hexConstLen)) = do
             return [__di|
             pub open spec fn #{caseName}(x: #{pretty caseTy}) -> #{specname} {
                 crate::#{specname}::#{specName caseName}(x)
