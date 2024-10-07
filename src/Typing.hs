@@ -101,6 +101,24 @@ trivialTypeOfWithLength ts ae = do
     t <- trivialTypeOf ts
     return $ TRefined (mkSpanned t) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) ae
 
+checkPublicArguments :: String -> [Ty] -> Check ()
+checkPublicArguments errmsg ts = do
+    forM_ ts $ \t -> do
+        b <- tyFlowsTo t advLbl
+        assert errmsg b
+
+enforcePublicArguments :: String -> [Ty] -> Check TyX
+enforcePublicArguments errmsg ts = do
+    checkPublicArguments errmsg ts
+    return $ TData advLbl advLbl (ignore $ Nothing)
+
+enforcePublicArgumentsOption :: String -> [Ty] -> Check TyX
+enforcePublicArgumentsOption errmsg ts = do
+    checkPublicArguments errmsg ts
+    return $ TOption $ tData advLbl advLbl
+
+
+
 extractNameFromType :: Ty -> Maybe NameExp
 extractNameFromType t =
     case (stripRefinements t)^.val of
@@ -2480,10 +2498,10 @@ doAEnc t1 x t args =
               if b1 then
                   return $ mkSpanned $ TRefined (tData advLbl advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
               else
-                  mkSpanned <$> trivialTypeOf [t1, t]
+                  mkSpanned <$> enforcePublicArguments "Encryption ill typed, so all arguments must be public" [t1, t]
           _ -> typeError $ show $ ErrWrongNameType k "encryption key" nt
     _ -> do
-        mkSpanned <$> trivialTypeOf [t1, t]
+        mkSpanned <$> enforcePublicArguments "Encryption ill typed, so all arguments must be public" [t1, t]
 
 doADec t1 t args = do
     case extractNameFromType t1 of
@@ -2492,24 +2510,17 @@ doADec t1 t args = do
           case nt^.val of
             NT_Enc t' -> do
                 b <- tyFlowsTo t advLbl -- Public ciphertext
-                casePropTy (pFlow (nameLbl k) advLbl) $ \b2 -> 
-                    if ((not b2) && b) then do
+                casePropTy (pFlow (nameLbl k) advLbl) $ \b2 ->  -- b2 = k is corrupt
+                    if ((not b2) && b) then do -- k secret and cipher public
                         -- Honest
                         return $ mkSpanned $ TOption t'
-                    else if (b && b2) then do
-                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec"
+                    else if (b && b2) then do -- everything public
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Public adec"
                     else do
-                        l_corr <- coveringLabelOf [t1, t]
-                        -- Corrupt
-                        return $ tDataAnn l_corr l_corr "Corrupt adec"
+                        mkSpanned <$> enforcePublicArgumentsOption "Decryption ill typed, so all arguments must be public" [t1, t]
             _ -> typeError $ show $  ErrWrongNameType k "encryption key" nt
       _ -> do
-          b1 <- tyFlowsTo t1 advLbl
-          b2 <- tyFlowsTo t advLbl
-          if b1 && b2 then return (mkSpanned $ TOption $ tDataAnn advLbl advLbl "Corrupt adec")
-          else do 
-              l <- coveringLabelOf [t1, t]
-              return $ tData l l 
+          mkSpanned <$> enforcePublicArgumentsOption "Decryption ill typed, so all arguments must be public" [t1, t]
 
 owlprettyMaybe :: OwlPretty a => Maybe a -> OwlDoc
 owlprettyMaybe x = 
@@ -2929,7 +2940,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                     ikmResult <- findValidIKMCalls a b c oann2 j nks
                     unif <- unifyKDFCallResult [saltResult, ikmResult] 
                     resT <- case unif of 
-                      Left False -> mkSpanned <$> trivialTypeOf [snd a, snd b, snd c]
+                      Left False -> mkSpanned <$> enforcePublicArguments "KDF ill typed, so arguments must be public" [snd a, snd b, snd c]
                       Left True -> return $ tData advLbl advLbl
                       Right (strictness, ne) -> do 
                         let flowAx = case strictness of
@@ -2967,7 +2978,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       return $ tRefined t ".res" $ pEq (aeLength (aeVar ".res")) 
                         (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
           withCorrectLength $ case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOfAnn "Invalid key" (map snd args)
+            Nothing -> mkSpanned <$> enforcePublicArguments "Invalid key, so arguments must be public" (map snd args)
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -2988,19 +2999,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                                       (_, False, _, _) -> "Invalid AAD"
                                                       (_, _, False, _) -> "Nonce pattern not public"
                                                       (_, _, _, False) -> "Invalid nonce pattern"
-                                      mkSpanned <$> trivialTypeOfAnn err_msg (map snd args)
-                  _ -> mkSpanned <$> trivialTypeOfAnn "Name type invalid for key" (map snd args)
+                                      mkSpanned <$> enforcePublicArguments (err_msg ++ ", so arguments must be public") (map snd args)
+                  _ -> mkSpanned <$> enforcePublicArguments "Name type invalid for key, so arguments must be public" (map snd args)
       CDecStAEAD -> do
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
           let [(_, t1), (x, t), (y, t2), (xnonce, tnonce)] = args
           case extractNameFromType t1 of
-            Nothing -> do
-                      l <- coveringLabelOf [t1, t, t2, tnonce]
-                      b <- flowsTo l advLbl
-                      if b then 
-                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
-                      else 
-                          return $ tDataAnn l l "corrupt dec"
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -3012,23 +3017,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       if (not b1) && b2 && b3 && b4 then do
                             ((x, xslf), aad) <- unbind xaad
                             return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y $ subst xslf (aeGet k) $ aad
-                      else if (b1 && b2 && b3 && b4) then do 
-                          return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
-                      else do
-                          t <- trivialTypeOf (map snd args)
-                          return $ mkSpanned $ TOption $ mkSpanned t
-                  _ -> do
-                      l <- coveringLabelOf [t1, t, t2, tnonce]
-                      b <- flowsTo l advLbl
-                      if b then 
-                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt dec"
-                      else 
-                          return $ tDataAnn l l "corrupt dec"
+                      else  mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
+                  _ ->  mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
       CPKDec -> do 
           assert ("Wrong number of arguments to pk decryption") $ length args == 2
           let [(_, t1), (xm, t)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "pk dec ill-typed, so arguments must be public" [t1, t]
             Just k -> do
               nt <- local (set tcScope $ TcGhost False) $  getNameType k
               case nt^.val of
@@ -3037,20 +3032,16 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                     b1 <- flowsTo l advLbl
                     casePropTy (pFlow (nameLbl k) advLbl) $ \b2 -> 
                         if b1 && (not b2) then do
-                            -- TODO: is this complete?
                             return $ mkSpanned $ TOption $ mkSpanned $ 
                                 TCase (mkSpanned $ PHonestPKEnc k xm)
                                       t'
                                       (tDataAnn advLbl advLbl "adversarial message")
-                        else if b1 && b2 then do 
-                            let l_corr = joinLbl (nameLbl k) l
-                            return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt pkdec"
-                        else mkSpanned <$> trivialTypeOf [t1, t]
+                        else mkSpanned <$> enforcePublicArgumentsOption "pk dec ill-typed, so arguments must be public" [t1, t]
       CPKEnc -> do 
           assert ("Wrong number of arguments to pk encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
           case extractEncPKFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArguments "pk enc ill-typed, so arguments must be public" [t1, t]
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $  getNameType k
                 case nt^.val of
@@ -3058,8 +3049,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b <- isSubtype t t'
                       if (b) then
                           return $ mkSpanned $ TRefined (tData advLbl advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
-                      else
-                          mkSpanned <$> trivialTypeOf [t1, t] 
+                      else mkSpanned <$> enforcePublicArguments "pk enc ill-typed, so arguments must be public" [t1, t]
                   _ -> typeError $ show $ ErrWrongNameType k "encryption key" nt
       CMac -> do
           assert ("Wrong number of arguments to mac") $ length args == 2
@@ -3075,17 +3065,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       assertSubtype t t'
                       l <- coveringLabel t'
                       return $ tData l advLbl 
-                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+                  _ -> mkSpanned <$> enforcePublicArguments "mac ill-typed, so arguments must be public" [t1, t]
       CMacVrfy -> do
           assert ("Wrong number of arguments to mac_vrfy") $ length args == 3
           let [(xt1, t1), (m, mt), (xt, t)] = args
           case extractNameFromType t1 of
-            Nothing -> do
-                l <- coveringLabelOf [t1, mt, t] 
-                b <- flowsTo l advLbl
-                if b then 
-                    return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "corrupt mac"
-                else return $ tData l l
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "mac vrfy ill-typed, so arguments must be public" [t1, mt, t]
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -3097,16 +3082,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b3 <- flowsTo  (nameLbl k) advLbl
                       if (b1 && b2 && (not b3)) then
                         return $ mkSpanned $ TOption (tRefined t' ".res" $ (pEq (aeVar ".res") m))
-                      else if (b1 && b2 && b3) then 
-                        return $ mkSpanned $ TOption $ mkSpanned $ (TData advLbl advLbl (ignore $ Just "corrupt mac")) -- Change here
-                      else
-                        let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
-                        return $ mkSpanned $ (TData l_corr l_corr (ignore $ Just "corrupt mac")) -- Change here
+                      else mkSpanned <$> enforcePublicArgumentsOption "mac vrfy ill-typed, so arguments must be public" [t1, mt, t]
       CSign -> do
           assert ("Wrong number of arguments to sign") $ length args == 2
           let [(_, t1), (_, t)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArguments "sign ill-typed, so arguments must be public" [t1, t]
             Just sk -> do
                 nt <- local (set tcScope $ TcGhost False) $  getNameType sk
                 case nt^.val of
@@ -3114,18 +3095,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       assertSubtype t t'
                       l <- coveringLabel t'
                       return $ mkSpanned $ TRefined (tData l advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
-                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+                  _ -> mkSpanned <$> enforcePublicArguments "sign ill-typed, so arguments must be public" [t1, t]
       CSigVrfy -> do
           assert ("Wrong number of arguments to vrfy") $ length args == 3
           let [(_, t1), (_, t2), (_, t3)] = args
           case extractVKFromType t1 of
-            Nothing -> do
-                l <- coveringLabelOf [t1, t2, t3]
-                casePropTy (pFlow l advLbl) $ \b -> 
-                    if b then 
-                        return $ mkSpanned $ TOption $ mkSpanned $ TData advLbl advLbl (ignore $ Just $ "corrupt vrfy") 
-                    else 
-                        return $ mkSpanned $ TData l l (ignore $ Just $ "corrupt vrfy") 
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
             Just k -> do 
                 nt <-  local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -3136,13 +3111,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b2 <- tyFlowsTo t3 l'
                       casePropTy (pFlow (nameLbl k) advLbl) $ \b3 -> 
                           if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
-                          else do
-                              b1' <- tyFlowsTo t2 advLbl
-                              b2' <- tyFlowsTo t3 advLbl
-                              if (b1' && b2' && b3) then return $ mkSpanned $ TOption $ mkSpanned $ TData advLbl advLbl (ignore $ Just "corrupt vrfy")
-                              else do
-                                 l_corr <- coveringLabelOf [t1, t2, t3]
-                                 return $ mkSpanned $ (TData l_corr l_corr $ ignore $ Just "corrupt vrfy") 
+                          else mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
 findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]
