@@ -1,6 +1,6 @@
 use std::rc::Rc;
 pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
-use crate::{speclib, *};
+use crate::{*, speclib::*};
 use vest::regular::builder::*;
 
 verus! {

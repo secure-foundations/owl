@@ -204,7 +204,7 @@ instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
     owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
 
 instance OwlPretty ParsleyCombinator where
-    owlpretty (PCConstBytes n s) = owlpretty "ConstBytes" <> brackets (owlpretty n) <> parens (owlpretty s)
+    owlpretty (PCConstBytes n s) = owlpretty "Tag<BytesN" <> angles (owlpretty n) <> owlpretty ", [u8; " <> owlpretty n <> owlpretty "]" <> parens (owlpretty s)
     owlpretty (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
     owlpretty PCTail = owlpretty "Tail"
     owlpretty PCBuilder = owlpretty "BuilderCombinator"

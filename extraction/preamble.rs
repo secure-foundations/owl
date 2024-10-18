@@ -124,30 +124,30 @@ pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize)
 }
 
 
-// #[verifier(external_body)]
-// pub fn owl_output_serialize_fused<'a, A, C: View + Combinator + SpecCombinator>(
-//     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-//     comb: C,
-//     val: C::Result<'a>,
-//     obuf: &mut Vec<u8>,
-//     dest_addr: &str,
-//     ret_addr: &str,
-// ) where <C as vstd::view::View>::V: vest::properties::SecureSpecCombinator<SpecResult = <C::Owned as vstd::view::View>::V>
-//     requires
-//         comb.spec_serialize(val.view()) matches Ok(b) ==> 
-//             old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
-//     ensures
-//         t.view() == old(t).view().give_output(),
-//         comb.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
-// {
-//     let ser_result = comb.serialize(val, obuf, 0);
-//     assume(ser_result.is_ok());
-//     if let Ok((num_written)) = ser_result {
-//         // assert(obuf.view() == comb.spec_serialize((arg.view()))->Ok_0);
-//     } else {
-//         assert(false);
-//     }
-// }
+#[verifier(external_body)]
+pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
+    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    comb: C,
+    val: C::Result<'a>,
+    obuf: &mut Vec<u8>,
+    dest_addr: &str,
+    ret_addr: &str,
+) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result<'a> as View>::V>
+    requires
+        comb@.spec_serialize(val.view()) matches Ok(b) ==> 
+            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+    ensures
+        t.view() == old(t).view().give_output(),
+        comb@.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
+{
+    let ser_result = comb.serialize(val, obuf, 0);
+    assume(ser_result.is_ok());
+    if let Ok((num_written)) = ser_result {
+        // assert(obuf.view() == comb.spec_serialize((arg.view()))->Ok_0);
+    } else {
+        assert(false);
+    }
+}
 
 
 // for debugging purposes, not used by the compiler
