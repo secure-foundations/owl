@@ -1,7 +1,7 @@
 use std::rc::Rc;
-pub use vstd::{modes::*, prelude::*, seq::*, string::*, slice::*};
-use crate::{speclib, *};
-use parsley::regular::builder::*;
+pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
+use crate::{*, speclib::*};
+use vest::regular::builder::*;
 
 verus! {
 
@@ -230,7 +230,6 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
     extend_vec_u8(&mut v, b);
     v
 }
-
 
 #[verifier(external_body)]
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)

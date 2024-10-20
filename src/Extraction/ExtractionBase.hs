@@ -351,31 +351,48 @@ mkNestPattern l =
 
 nestOrdChoiceTy :: [Doc ann] -> Doc ann
 nestOrdChoiceTy l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
+    [di|ord_choice_type!(#{hsep . punctuate comma $ l})|]
+        -- case l of
+        --     [] -> pretty ""
+        --     [x] -> x
+        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
 
 nestOrdChoice :: [Doc ann] -> Doc ann
 nestOrdChoice l = 
-        case l of
-            [] -> pretty ""
-            [x] -> x
-            x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
+        [di|ord_choice!(#{hsep . punctuate comma $ l})|]
+        -- case l of
+        --     [] -> pretty ""
+        --     [x] -> x
+        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
 
--- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
-listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
-listIdxToEitherPat i l x = 
-    if i >= l then 
-        throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
-    else do
-        if l == 2 then
-            return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
-        else if i == l - 1 then
-            return [di|Either::Right(#{x})|]
-        else do
-            x' <- listIdxToEitherPat i (l-1) x
-            return [di|Either::Left(#{x'})|]
+-- injOrdChoice i l x macro prints the macro call for x in a list of length l at index i
+injOrdChoice :: Int -> Int -> Doc ann -> Doc ann -> Doc ann
+injOrdChoice i l x macro =
+    let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]] in
+    [di|#{macro}(#{starstr})|]   
+
+listIdxToInjPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjPat i l x = return $ injOrdChoice i l x [di|inj_ord_choice_pat!|]   
+
+listIdxToInjResult :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjResult i l x = return $ injOrdChoice i l x [di|inj_ord_choice_result!|]   
+
+
+-- -- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
+-- listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+-- listIdxToEitherPat i l x = do
+--     let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]]
+--     return [di|inj_ord_choice_pat!(#{starstr})|]   
+--     -- if i >= l then 
+--     --     throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
+--     -- else do
+--     --     if l == 2 then
+--     --         return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
+--     --     else if i == l - 1 then
+--     --         return [di|Either::Right(#{x})|]
+--     --     else do
+--     --         x' <- listIdxToEitherPat i (l-1) x
+--     --         return [di|Either::Left(#{x'})|]
 
 withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
 withJustNothing f (Just x) = Just <$> f x
@@ -395,13 +412,15 @@ specCombTyOf' (FEnum _ cs) = do
     cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|SpecConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
-specCombTyOf' (FHexConst _) = return $ Just [di|SpecConstBytes|]
+specCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|Tag<BytesN<#{l}>, Seq<u8>>|]
 specCombTyOf' _ = return Nothing
 
 specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -421,7 +440,7 @@ execCombTyOf' (FEnum _ cs) = do
     cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|ConstInt<u8, U8<#{i}>>|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
@@ -429,7 +448,7 @@ execCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|ConstBytes<#{l}>|]
+    return $ Just [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
 execCombTyOf' _ = return Nothing
 
 execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -460,17 +479,18 @@ specCombOf' constSuffix (FEnum _ cs) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|SpecConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag::spec_new(U8, #{i})|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
             let nest = nestOrdChoice constCs
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
 specCombOf' constSuffix (FHexConst s) = do
+    let l = length s `div` 2
     bl <- hexStringToByteList s
     let constSuffix' = map Data.Char.toUpper constSuffix
     let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|SpecConstBytes(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+    return $ Just ([di|Tag::spec_new(BytesN::<#{l}>, (SPEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
 specCombOf' _ _ = return Nothing
 
 specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -501,7 +521,7 @@ execCombOf' constSuffix (FEnum _ cs) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|ConstInt::new(U8::<#{i}>)|] | i <- [1 .. length cs'']]
+            let consts = [[di|Tag::new(U8, #{i})|] | i <- [1 .. length cs'']]
             let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoice constCs
@@ -520,7 +540,7 @@ execCombOf' constSuffix (FHexConst s) = do
         arr
     }
     |]
-    return $ Just ([di|ConstBytes(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+    return $ Just ([di|Tag::new(BytesN::<#{l}>, (EXEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
 execCombOf' _ _ = return Nothing
 
 execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)

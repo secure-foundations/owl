@@ -395,7 +395,7 @@ genVerusCAExpr ae = do
                     PCBytes l -> do
                         l' <- concreteLength $ lowerFLen l
                         return [di|Bytes(#{l'})|]
-                    PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                    PCConstBytes l s -> return [di|Tag::new(BytesN::<#{l}>, (#{s}))|]
                     PCBuilder -> return [di|BuilderCombinator(#{arg})|]
             let mkCombArg ((arg, comb), fty) = do
                     arg' <- genVerusCAExpr arg
@@ -415,13 +415,16 @@ genVerusCAExpr ae = do
             let (args, lens) = unzip arglens
             let execcomb = mkNestPattern combs
             let execargs = mkNestPattern args
+            let specSerInner = [di|serialize_#{specNameOfExecName n}_inner|]
+            let specSer = [di|serialize_#{specNameOfExecName n}|]
+            let reveals = [di|reveal(#{specSerInner}); reveal(#{specSer});|]
             let ser_body = [__di|    
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
                     let mut ser_buf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let exec_comb = #{execcomb};
+                    #{reveals}
                     let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
                     if let Ok((num_written)) = ser_result {
-                        vec_truncate(&mut ser_buf, num_written);
                         ser_buf
                     } else {
                         // TODO better error name
@@ -518,12 +521,12 @@ genVerusCExpr info expr = do
                             PCBytes l -> do
                                 l' <- concreteLength $ lowerFLen l
                                 return [di|Bytes(#{l'})|]
-                            PCConstBytes _ s -> return [di|ConstBytes(#{s})|]
+                            PCConstBytes l s -> return [di|Tag::new(BytesN::<#{l}>, (#{s}))|]
                             PCBuilder -> return [di|BuilderCombinator(#{arg})|]
                     let printCombTy comb = case comb of
                             PCTail -> [di|Tail|]
                             PCBytes l -> [di|Bytes|]
-                            PCConstBytes l _ -> [di|ConstBytes<#{l}>|]
+                            PCConstBytes l _ -> [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
                             PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
                     let mkCombArg ((arg, comb), fty) = do
                             arg' <- genVerusCAExpr arg
@@ -544,8 +547,12 @@ genVerusCExpr info expr = do
                     let execcomb = mkNestPattern combs
                     let combTy = mkNestPattern $ map (printCombTy . snd) args
                     let execargs = mkNestPattern verusArgs
+                    let specSerInner = [di|serialize_#{specNameOfExecName n}_inner|]
+                    let specSer = [di|serialize_#{specNameOfExecName n}|]
+                    let reveals = [di|reveal(#{specSerInner}); reveal(#{specSer});|]
                     let serout_body = [__di|    
                         let exec_comb = #{execcomb};
+                        #{reveals}
                         owl_output_serialize_fused::<#{itreeTy}, #{combTy}>(
                             Tracked(&mut itree),
                             exec_comb,
@@ -1070,7 +1077,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
                     if let Ok((num_written)) = ser_result {
-                        vec_truncate(&mut obuf, num_written);
+                        assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                         Some(obuf)
                     } else {
                         None
@@ -1269,7 +1276,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, rhsX) = case topt of
                             Just _ -> ([di|(_,x)|], [di|x|])
                             Nothing -> ([di|_|], [di||])
-                    lhs <- listIdxToEitherPat i l lhsX
+                    lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
                             Just (RTOwlBuf l) -> (rhsX, u8slice) `cast` RTOwlBuf l
                             _ -> return rhsX
@@ -1281,7 +1288,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, rhsX) = case topt of
                             Just _ -> ([di|(_,x)|], [di|x|])
                             Nothing -> ([di|_|], [di||])
-                    lhs <- listIdxToEitherPat i l lhsX
+                    lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
                             Just (RTOwlBuf l) -> ([di|slice_to_vec(#{rhsX})|], vecU8) `cast` RTOwlBuf l
                             _ -> return rhsX
@@ -1332,14 +1339,14 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     let (lhsX, lhsXLen,  rhsX) = case topt of
                             Just _ -> ([di|x|], [di|x.len()|], [di|((), x.as_slice())|])
                             Nothing -> ([di||], [di|0|], [di|((), &empty_vec.as_slice())|])
-                    rhs <- listIdxToEitherPat i l rhsX
+                    rhs <- listIdxToInjResult i l rhsX
                     return [__di|
                     #{verusName}::#{caseName}(#{lhsX}) => {                
                         if no_usize_overflows![ 1, #{lhsXLen} ] {
                             let mut obuf = vec_u8_of_len(1 + #{lhsXLen});
                             let ser_result = exec_comb.serialize(#{rhs}, &mut obuf, 0);
                             if let Ok((num_written)) = ser_result {
-                                vec_truncate(&mut obuf, num_written);
+                                assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                                 Some(obuf)
                             } else {
                                 None
