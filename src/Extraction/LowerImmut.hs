@@ -37,6 +37,8 @@ lowerTy FBool = return RTBool
 lowerTy FInt = return RTUsize
 lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
 lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
+lowerTy (FSecBuf Nothing) = return $ RTSecBuf (Lifetime "_")
+lowerTy (FSecBuf (Just flen)) = return $ RTSecBuf (Lifetime "_")
 lowerTy (FOption ft) = RTOption <$> lowerTy ft
 lowerTy (FStruct fn ffs) = do
     let rn = execName fn
@@ -127,10 +129,10 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     cases' <- mapM lowerCase $ M.assocs cases
     return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
 
-lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
-lowerName (n, l, i) = do
+lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
+lowerName (n, l, i, s) = do
     let l' = lowerFLen l
-    return (n, l', i)
+    return (n, l', i, s)
 
 
 

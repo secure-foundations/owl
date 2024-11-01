@@ -34,23 +34,24 @@ import Verus
 type EM = ExtractionMonad FormatTy
 
 lowerTy :: FormatTy -> EM VerusTy
-lowerTy FUnit = return RTUnit
-lowerTy FBool = return RTBool
-lowerTy FInt = return RTUsize
-lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FOption ft) = RTOption <$> lowerTy ft
-lowerTy (FStruct fn ffs) = do
-    let rn = execName fn
-    rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTy t) ffs
-    return $ RTStruct rn rfs
-lowerTy (FEnum n fcs) = do
-    let rn = execName n
-    rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTy t) fcs
-    return $ RTEnum rn rcs
-lowerTy FGhost = return $ RTVerusGhost
-lowerTy FDummy = return $ RTDummy
-lowerTy (FHexConst s) = return $ RTUnit
+lowerTy _ = throwError $ ErrSomethingFailed "TODO LowerBufOpt for side channels"
+-- lowerTy FUnit = return RTUnit
+-- lowerTy FBool = return RTBool
+-- lowerTy FInt = return RTUsize
+-- lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
+-- lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
+-- lowerTy (FOption ft) = RTOption <$> lowerTy ft
+-- lowerTy (FStruct fn ffs) = do
+--     let rn = execName fn
+--     rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTy t) ffs
+--     return $ RTStruct rn rfs
+-- lowerTy (FEnum n fcs) = do
+--     let rn = execName n
+--     rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTy t) fcs
+--     return $ RTEnum rn rcs
+-- lowerTy FGhost = return $ RTVerusGhost
+-- lowerTy FDummy = return $ RTDummy
+-- lowerTy (FHexConst s) = return $ RTUnit
 
 newtype LowerMonad t a = LowerMonad (StateT LowerEnv (ExtractionMonad t) a)
     deriving (Functor, Applicative, Monad, MonadState LowerEnv, MonadIO, MonadError ExtractionError)
@@ -484,10 +485,10 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     cases' <- mapM lowerCase $ M.assocs cases
     return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
 
-lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
-lowerName (n, l, i) = do
+lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
+lowerName (n, l, i, s) = do
     let l' = lowerFLen l
-    return (n, l', i)
+    return (n, l', i, s)
 
 
 

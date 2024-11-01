@@ -40,7 +40,8 @@ data FormatTy =
     | FBool
     | FGhost  -- For erased variables
     | FInt
-    | FBuf (Maybe FLen) -- TODO: maybe we want a data type for built-in length consts, instead of Int
+    | FBuf (Maybe FLen) 
+    | FSecBuf (Maybe FLen)
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
@@ -190,6 +191,8 @@ instance OwlPretty FormatTy where
     owlpretty FInt = owlpretty "int"
     owlpretty (FBuf Nothing) = owlpretty "buf[]"
     owlpretty (FBuf (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
+    owlpretty (FSecBuf Nothing) = owlpretty "secbuf[]"
+    owlpretty (FSecBuf (Just l)) = owlpretty "secbuf" <> brackets (owlpretty l)
     owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
     owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 

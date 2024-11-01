@@ -180,11 +180,11 @@ initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUse
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
 
-
+data BufSecrecy = BufSecret | BufPublic
 
 type LocalityName = String
-type NameData = (String, FLen, Int) -- name, type, number of processID indices
-type VNameData = (String, ConstUsize, Int)
+type NameData = (String, FLen, Int, BufSecrecy) -- name, type, number of processID indices, whether should be SecretBuf or OwlBuf
+type VNameData = (String, ConstUsize, Int, BufSecrecy)
 type OwlDefData = (String, TB.Def)
 data LocalityData nameData defData = LocalityData {
     _nLocIdxs :: Int, 

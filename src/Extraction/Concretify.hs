@@ -546,6 +546,7 @@ typeOfTable (PRes (PDot p n)) = do
     case lookup n (TB._tableEnv md) of
       Nothing -> error "table not found"
       Just (t, _) -> concretifyTy t
+typeOfTable _ = throwError $ TypeError "Unhandled case in typeOfTable"
 
 tySigOfCall :: Path -> EM ([FormatTy], FormatTy)
 tySigOfCall p = do

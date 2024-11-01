@@ -187,16 +187,20 @@ genVerusCtr counterName =
     let ctrInit = [di|#{counterName'} : 0|] in
     (ctrDecl, ctrInit)
 
-nameTy :: VerusTy
-nameTy = vecU8
+-- nameTy :: VerusTy
+-- nameTy = vecU8
 
 -- name decl, name initializer
 genVerusName :: Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusName fromConfig (vname, vsize, _) = 
+genVerusName fromConfig (vname, vsize, _, secrecy) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
-    let nameDecl = [di|pub #{execname} : #{pretty nameTy}|] in
+    let bufty = case secrecy of
+            BufSecret -> secBuf
+            BufPublic -> owlBuf
+        in
+    let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
@@ -205,11 +209,15 @@ genVerusName fromConfig (vname, vsize, _) =
 
 -- name decl, name initializer
 genVerusPk :: Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusPk fromConfig (vname, vsize, _) = 
+genVerusPk fromConfig (vname, vsize, _, secrecy) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = "pk_" ++ execName vname in
-    let nameDecl = [di|pub #{execname} : #{pretty nameTy}|] in
+    let bufty = case secrecy of
+            BufSecret -> secBuf
+            BufPublic -> owlBuf
+        in
+    let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
@@ -222,8 +230,8 @@ builtins :: M.Map String (String, [VerusTy], VerusTy)
 builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
     addExecName n (args, rty) = (execName n, args, rty)
     builtins' = M.fromList [
-          ("enc", ([u8slice, u8slice, u8slice], vecU8))
-        , ("dec", ([u8slice, u8slice], RTOption vecU8))
+          ("enc", ([secBuf, secBuf, secBuf], vecU8))
+        , ("dec", ([secBuf, owlBuf], RTOption secBuf))
         , ("sign", ([u8slice, u8slice], vecU8))
         , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
         , ("dhpk", ([u8slice], vecU8))
@@ -1518,6 +1526,12 @@ u8slice = RTRef RShared (RTSlice RTU8)
 
 vecU8 :: VerusTy
 vecU8 = RTVec RTU8
+
+secBuf :: VerusTy
+secBuf = RTSecBuf AnyLifetime
+
+owlBuf :: VerusTy
+owlBuf = RTOwlBuf AnyLifetime
 
 unifyVerusTys :: VerusTy -> VerusTy -> EM VerusTy
 unifyVerusTys t1 t2 | t1 == t2 = return t1

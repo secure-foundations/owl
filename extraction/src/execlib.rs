@@ -482,7 +482,7 @@ pub mod secret {
         let msg = msg.private_as_slice();
         let signature = signature.as_slice();
         if owl_pke::verify(pubkey, signature, msg) {
-            Some(OwlBuf::from_vec(signature).into_secret())
+            Some(OwlBuf::from_slice(signature).into_secret())
         } else {
             None
         }
