@@ -62,6 +62,7 @@ data Env t = Env {
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
+    ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local names so we know their types
 }
 
 
@@ -128,58 +129,6 @@ instance OwlPretty ExtractionError where
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
-makeLenses ''Env
-
-liftExtractionMonad :: ExtractionMonad t a -> ExtractionMonad t' a
-liftExtractionMonad m = do
-    tcEnv <- ask
-    env' <- get
-    let env = Env {
-            _flags = env' ^. flags,
-            _path = env' ^. path,
-            _freshCtr = env' ^. freshCtr,
-            _varCtx = M.empty,
-            _funcs = env' ^. funcs,
-            _owlUserFuncs = env' ^. owlUserFuncs,
-            _memoKDF = []
-        }
-    o <- liftIO $ runExtractionMonad tcEnv env m
-    case o of 
-        Left s -> throwError $ LiftedError s
-        Right i -> return i
-
-
-
-lookupVar :: CDataVar t -> ExtractionMonad t (Maybe t)
-lookupVar x = do
-    s <- use varCtx
-    return $ M.lookup x s
-
-printErr :: ExtractionError -> IO ()
-printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
-
-debugPrint :: String -> ExtractionMonad t ()
-debugPrint = liftIO . putStrLn
-
-debugLog :: String -> ExtractionMonad t ()
-debugLog s = do
-    fs <- use flags
-    when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
-
-instance Fresh (ExtractionMonad t) where
-    fresh (Fn s _) = do
-        n <- use freshCtr
-        freshCtr %= (+) 1
-        return $ Fn s n
-    fresh nm@(Bn {}) = return nm
-
-initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) []
-    where
-        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
-        mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
-
-
 data BufSecrecy = BufSecret | BufPublic
 
 type LocalityName = String
@@ -212,7 +161,57 @@ type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
 type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
 
 
+makeLenses ''Env
 
+liftExtractionMonad :: ExtractionMonad t a -> ExtractionMonad t' a
+liftExtractionMonad m = do
+    tcEnv <- ask
+    env' <- get
+    let env = Env {
+            _flags = env' ^. flags,
+            _path = env' ^. path,
+            _freshCtr = env' ^. freshCtr,
+            _varCtx = M.empty,
+            _funcs = env' ^. funcs,
+            _owlUserFuncs = env' ^. owlUserFuncs,
+            _memoKDF = [],
+            _genVerusNameEnv = M.empty
+        }
+    o <- liftIO $ runExtractionMonad tcEnv env m
+    case o of 
+        Left s -> throwError $ LiftedError s
+        Right i -> return i
+
+
+
+lookupVar :: CDataVar t -> ExtractionMonad t (Maybe t)
+lookupVar x = do
+    s <- use varCtx
+    return $ M.lookup x s
+
+printErr :: ExtractionError -> IO ()
+printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
+
+debugPrint :: String -> ExtractionMonad t ()
+debugPrint = liftIO . putStrLn
+
+debugLog :: String -> ExtractionMonad t ()
+debugLog s = do
+    fs <- use flags
+    when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
+
+instance Fresh (ExtractionMonad t) where
+    fresh (Fn s _) = do
+        n <- use freshCtr
+        freshCtr %= (+) 1
+        return $ Fn s n
+    fresh nm@(Bn {}) = return nm
+
+initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty
+    where
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
+        mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
 
 flattenResolvedPath :: ResolvedPath -> String

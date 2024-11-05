@@ -141,7 +141,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName True) $ ldata ^. sharedNames
     let (pkDecls, pkInits) = unzip . map (genVerusPk True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
-    execFns <- mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
+    execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
     pub struct #{stateName} {
         #{vsep . punctuate comma $ ctrDecls}
@@ -190,16 +190,32 @@ genVerusCtr counterName =
 -- nameTy :: VerusTy
 -- nameTy = vecU8
 
+withCurNameEnv :: [VNameData] -> EM a -> EM a
+withCurNameEnv vnames m = do
+    let vnameMap = M.fromList . map (\(n,l,i,s) -> (n, (n,l,i,s))) $ vnames
+    genVerusNameEnv .= vnameMap
+    res <- m
+    genVerusNameEnv .= M.empty
+    return res
+
+buftyOfSecrecy :: BufSecrecy -> VerusTy
+buftyOfSecrecy BufSecret = secBuf
+buftyOfSecrecy BufPublic = owlBuf
+
+lookupNameBufTy :: String -> EM VerusTy
+lookupNameBufTy n = do
+    vnameMap <- use genVerusNameEnv
+    case vnameMap M.!? n of
+        Just (_, _, _, secrecy) -> return $ buftyOfSecrecy secrecy
+        Nothing -> throwError $ UndefinedSymbol n
+
 -- name decl, name initializer
 genVerusName :: Bool -> VNameData -> (Doc ann, Doc ann)
 genVerusName fromConfig (vname, vsize, _, secrecy) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
-    let bufty = case secrecy of
-            BufSecret -> secBuf
-            BufPublic -> owlBuf
-        in
+    let bufty = buftyOfSecrecy secrecy in
     let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
@@ -213,10 +229,7 @@ genVerusPk fromConfig (vname, vsize, _, secrecy) =
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = "pk_" ++ execName vname in
-    let bufty = case secrecy of
-            BufSecret -> secBuf
-            BufPublic -> owlBuf
-        in
+    let bufty = buftyOfSecrecy secrecy in
     let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
@@ -374,19 +387,22 @@ genVerusCAExpr ae = do
                                     return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
         CAGet n -> do
             let rustN = execName n
-            castN <- cast ([di|self.#{rustN}|], nameTy) u8slice
-            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
-            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+            nameTy <- lookupNameBufTy n
+            castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
+            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetEncPK n -> do
             let rustN = execName n
-            castN <- cast ([di|self.pk_#{rustN}|], nameTy) u8slice
-            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
-            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+            nameTy <- lookupNameBufTy n
+            castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
+            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetVK n -> do
             let rustN = execName n
-            castN <- cast ([di|self.pk_#{rustN}|], nameTy) u8slice
-            castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
-            return $ GenRustExpr (ae ^. tty) [di|#{castN'}|]
+            nameTy <- lookupNameBufTy n
+            castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
+            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
+            return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAInt fl -> return  $ GenRustExpr (ae ^. tty) $ pretty $ lowerFLen fl
         CACounter ctrname -> do
             let rustCtr = execName ctrname
@@ -487,8 +503,8 @@ instance OwlPretty VerusTy where
 
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
-    -- debugPrint $ "genVerusCExpr: "
-    -- debugPrint $ show (owlpretty expr)
+    debugPrint $ "genVerusCExpr: "
+    debugPrint $ show (owlpretty expr)
     case expr ^. tval of
         CSkip -> return $ GenRustExpr RTUnit [di|()|]
         CRet ae -> do
