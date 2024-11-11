@@ -74,7 +74,7 @@ genVerusUserFunc (CUserFunc name b) = do
     let needsLifetime = tyNeedsLifetime retTy
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
-    let retTy' = liftLifetime lifetimeConst retTy
+    let retTy' = liftLifetime (Lifetime lifetimeConst) retTy
     let retval = [di|res: #{pretty retTy'}|]
     let mkArgLenVald (arg, s, argty) = case argty of
             RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
@@ -137,10 +137,16 @@ genVerusLocality :: [VNameData] -> (LocalityName, VerusLocalityData) -> EM (Doc 
 genVerusLocality pubkeys (lname, ldata) = do
     let stateName = pretty $ "state_" ++ lname
     let cfgName = pretty $ "cfg_" ++ lname
-    let (localNameDecls, localNameInits) = unzip . map (genVerusName False) $ ldata ^. localNames
-    let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName True) $ ldata ^. sharedNames
-    let (pkDecls, pkInits) = unzip . map (genVerusPk True) $ pubkeys
+    let lifetimeConst = lname
+    let locNeedsLifetime = any secrecyNeedsLifetime (ldata ^. localNames ++ ldata ^. sharedNames ++ pubkeys)
+    let maybeLt = if locNeedsLifetime then Just (Lifetime lifetimeConst) else Nothing
+    let lifetimeAnnot = pretty $ if locNeedsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
+    let emptyLifetimeAnnot = pretty $ if locNeedsLifetime then "<'_>" else ""
+    let (localNameDecls, localNameInits) = unzip . map (genVerusName maybeLt False) $ ldata ^. localNames
+    let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName maybeLt True) $ ldata ^. sharedNames
+    let (pkDecls, pkInits) = unzip . map (genVerusPk maybeLt True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
+    let lenValid = mkLocLenValid (ldata ^. localNames ++ ldata ^. sharedNames ++ pubkeys)
     execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
     pub struct #{stateName} {
@@ -154,12 +160,12 @@ genVerusLocality pubkeys (lname, ldata) = do
             }
         }
     }
-    pub struct #{cfgName} {
+    pub struct #{cfgName}#{lifetimeAnnot} {
         pub listener: TcpListener,
         pub salt: Vec<u8>,
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
-    impl #{cfgName} {
+    impl #{cfgName}#{emptyLifetimeAnnot} {
         // TODO: library routines for reading configs
         /*
         \#[verifier::external_body]
@@ -175,9 +181,30 @@ genVerusLocality pubkeys (lname, ldata) = do
         }
         */
 
+        #{lenValid}
+
         #{vsep . punctuate (line <> line) $ execFns}
     }
     |]
+    where
+        secrecyNeedsLifetime (_,_,_,BufSecret) = True
+        secrecyNeedsLifetime (_,_,_,BufPublic) = False -- this can change in future
+
+        mkLocLenValid vnames = 
+            let mkLenValid (vname, _, _, secrecy) = case secrecy of
+                    BufSecret -> Just [di|&&& self.#{execName vname}.len_valid()|]
+                    BufPublic -> Nothing 
+            in
+            let lenvalids = mapMaybe mkLenValid $ vnames in
+            let lenvalids' = if null lenvalids then [di|true|] else vsep lenvalids in
+            [__di|
+            pub open spec fn len_valid(self) -> bool {
+                #{lenvalids'}
+            }
+            |]
+
+
+
 
 -- ctr decl, ctr init
 genVerusCtr :: VerusName -> (Doc ann, Doc ann)
@@ -210,13 +237,16 @@ lookupNameBufTy n = do
         Nothing -> throwError $ UndefinedSymbol n
 
 -- name decl, name initializer
-genVerusName :: Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusName fromConfig (vname, vsize, _, secrecy) = 
+genVerusName :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
+genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
     let bufty = buftyOfSecrecy secrecy in
-    let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
+    let bufty' = case maybeLt of
+            Just lt -> liftLifetime lt bufty
+            Nothing -> bufty in
+    let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
@@ -224,13 +254,16 @@ genVerusName fromConfig (vname, vsize, _, secrecy) =
     (nameDecl, nameInit)
 
 -- name decl, name initializer
-genVerusPk :: Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusPk fromConfig (vname, vsize, _, secrecy) = 
+genVerusPk :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
+genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) = 
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = "pk_" ++ execName vname in
     let bufty = buftyOfSecrecy secrecy in
-    let nameDecl = [di|pub #{execname} : #{pretty bufty}|] in
+    let bufty' = case maybeLt of
+            Just lt -> liftLifetime lt bufty
+            Nothing -> bufty in
+    let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
     let nameInitBody = 
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
@@ -854,6 +887,7 @@ genVerusDef lname cdef = do
     pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
+            self.len_valid(),
             #{requiresLenValid}
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *mut_state)),
@@ -879,6 +913,7 @@ genVerusDef lname cdef = do
 
 tyNeedsLifetime :: VerusTy -> Bool
 tyNeedsLifetime (RTOwlBuf _) = True
+tyNeedsLifetime (RTSecBuf _) = True
 tyNeedsLifetime (RTWithLifetime _ _) = True
 tyNeedsLifetime (RTStruct n' fs') = structNeedsLifetime n' fs'
 tyNeedsLifetime (RTEnum n' cs') = enumNeedsLifetime n' cs'
@@ -900,7 +935,8 @@ extraLt lt (RTStruct name fields) = if structNeedsLifetime name fields then lt e
 extraLt lt (RTEnum name cases) = if enumNeedsLifetime name cases then lt else pretty ""
 extraLt _ _ = pretty ""
 
-liftLifetime a (RTOwlBuf _) = RTOwlBuf (Lifetime a)
+liftLifetime lt (RTOwlBuf _) = RTOwlBuf lt
+liftLifetime lt (RTSecBuf _) = RTSecBuf lt
 liftLifetime _ ty = ty
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
@@ -911,8 +947,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     let needsLifetime = any (tyNeedsLifetime . snd) fields
     let lifetimeConst = "a"
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
-    let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime lifetimeConst fty)) fields
-    let verusFieldsFV = fmap (\(fname, (formatty, fty)) -> (fname, execName fname, formatty, liftLifetime lifetimeConst fty)) fieldsFV
+    let verusFields = fmap (\(fname, fty) -> (fname, execName fname, liftLifetime (Lifetime lifetimeConst) fty)) fields
+    let verusFieldsFV = fmap (\(fname, (formatty, fty)) -> (fname, execName fname, formatty, liftLifetime (Lifetime lifetimeConst) fty)) fieldsFV
     let verusFields' = fmap (\(_, ename, fty) -> (ename, fty)) verusFields
     let verusName = execName name
     let specname = specName name
@@ -1193,6 +1229,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
     return $ (vsep [enumDef, implEnum, viewImpl, enumTests, parsleyWrappers])
     where 
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
+        liftLifetime a (Just (RTSecBuf _)) = Just $ RTSecBuf (Lifetime a)
         liftLifetime _ ty = ty
 
         -- genVestFormat name layoutCases = do
@@ -1228,6 +1265,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                         Just (RTStruct t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
                         Just (RTEnum t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
                         Just (RTOwlBuf _) -> [di|#{fname}(x) => #{fname}(OwlBuf::another_ref(x))|]
+                        Just (RTSecBuf _) -> [di|#{fname}(x) => #{fname}(SecretBuf::another_ref(x))|]
                         Just _ -> [di|#{fname}(x) => #{fname}(x)|]
                         Nothing -> [di|#{fname}() => #{fname}()|]
                     ) cases

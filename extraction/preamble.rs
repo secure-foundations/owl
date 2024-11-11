@@ -116,13 +116,15 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
 }
 
 #[verifier(external_body)]
-pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
-    requires old(t).view().is_sample(n)
-    ensures  t.view() == old(t).view().get_sample(res.view())
+pub fn owl_sample<A,'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize) -> (res: SecretBuf<'a>)
+    requires
+        old(t).view().is_sample(n),
+    ensures
+        t.view() == old(t).view().get_sample(res.view()),
+        res.len_valid(),
 {
-    owl_util::gen_rand_bytes(n)
+    OwlBuf::from_vec(owl_util::gen_rand_bytes(n)).into_secret()
 }
-
 
 #[verifier(external_body)]
 pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
