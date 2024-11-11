@@ -397,6 +397,10 @@ pub mod secret {
             todo!("implement ct_eq")
         }
         
+        // Private function for declassification---can only be used in the `secret` module
+        // needed to get values out of the SecretBuf to send to the crypto library
+        // TODO: if we ever have a Verus crypto library, we could connect the secret buffer type from
+        // that library directly
         fn private_as_slice(&self) -> (result: &[u8])
             requires self.len_valid()
             ensures  result.view() == self.view()
@@ -488,6 +492,7 @@ pub mod secret {
         }
     }
 
+    // secret -> public
     // #[verifier(external_body)]
     // pub exec fn owl_dhpk(privkey: SecretBuf) -> (pubkey: Vec<u8>)
     //     ensures pubkey.view() == dhpk(privkey.view())
@@ -496,6 +501,7 @@ pub mod secret {
     // }
 
 
+    // public -> secret -> secret
     // #[verifier(external_body)]
     // pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Vec<u8>)
     //     ensures

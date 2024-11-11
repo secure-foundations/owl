@@ -461,7 +461,7 @@ lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
-maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
+maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
@@ -505,4 +505,4 @@ u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
 
 getSerializedTy :: LM VerusTy
-getSerializedTy = lowerTy' $ FBuf Nothing
+getSerializedTy = lowerTy' $ FBuf BufPublic Nothing

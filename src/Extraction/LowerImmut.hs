@@ -35,10 +35,10 @@ lowerTy :: FormatTy -> EM VerusTy
 lowerTy FUnit = return RTUnit
 lowerTy FBool = return RTBool
 lowerTy FInt = return RTUsize
-lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FSecBuf Nothing) = return $ RTSecBuf (Lifetime "_")
-lowerTy (FSecBuf (Just flen)) = return $ RTSecBuf (Lifetime "_")
+lowerTy (FBuf BufPublic Nothing) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufPublic (Just flen)) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufSecret Nothing) = return $ RTSecBuf AnyLifetime
+lowerTy (FBuf BufSecret (Just flen)) = return $ RTSecBuf AnyLifetime
 lowerTy (FOption ft) = RTOption <$> lowerTy ft
 lowerTy (FStruct fn ffs) = do
     let rn = execName fn
@@ -105,7 +105,7 @@ lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
-maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
+maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 

@@ -28,6 +28,10 @@ import AST
 import Verus
 import qualified TypingBase as TB
 
+
+data BufSecrecy = BufSecret | BufPublic
+    deriving (Show, Eq, Generic, Typeable)
+
 data FLen = 
     FLConst Int
     | FLNamed String
@@ -40,8 +44,8 @@ data FormatTy =
     | FBool
     | FGhost  -- For erased variables
     | FInt
-    | FBuf (Maybe FLen) 
-    | FSecBuf (Maybe FLen)
+    | FBuf BufSecrecy (Maybe FLen) 
+    -- | FSecBuf (Maybe FLen)
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
@@ -158,6 +162,7 @@ data CTyDef t =
 --
 
 instance Alpha FLen
+instance Alpha BufSecrecy
 instance Alpha FormatTy
 instance Alpha ParseKind
 instance Alpha ParsleyCombinator
@@ -189,10 +194,10 @@ instance OwlPretty FormatTy where
     owlpretty FUnit = owlpretty "unit"
     owlpretty FBool = owlpretty "bool"
     owlpretty FInt = owlpretty "int"
-    owlpretty (FBuf Nothing) = owlpretty "buf[]"
-    owlpretty (FBuf (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
-    owlpretty (FSecBuf Nothing) = owlpretty "secbuf[]"
-    owlpretty (FSecBuf (Just l)) = owlpretty "secbuf" <> brackets (owlpretty l)
+    owlpretty (FBuf BufPublic Nothing) = owlpretty "buf[]"
+    owlpretty (FBuf BufPublic (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
+    owlpretty (FBuf BufSecret Nothing) = owlpretty "secbuf[]"
+    owlpretty (FBuf BufSecret (Just l)) = owlpretty "secbuf" <> brackets (owlpretty l)
     owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
     owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
     owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
@@ -340,6 +345,18 @@ traverseCExpr f a =
                         pure (s, Right $ bind (castName n) (t2, e'))) zs
               CCase <$> traverseCAExpr f x <*> pure zs'
           CRet e -> CRet <$> traverseCAExpr f e
+
+--------------------------------------------------------------------------------
+-- ConcreteAST utils
+
+fPBuf :: Maybe FLen -> FormatTy
+fPBuf = FBuf BufPublic
+
+fSBuf :: Maybe FLen -> FormatTy
+fSBuf = FBuf BufSecret
+
+
+
 {- 
 --------------------------------------------------------------------------------
 

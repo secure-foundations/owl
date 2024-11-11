@@ -129,8 +129,6 @@ instance OwlPretty ExtractionError where
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
-data BufSecrecy = BufSecret | BufPublic
-
 type LocalityName = String
 type NameData = (String, FLen, Int, BufSecrecy) -- name, type, number of processID indices, whether should be SecretBuf or OwlBuf
 type VNameData = (String, ConstUsize, Int, BufSecrecy)
@@ -265,7 +263,7 @@ fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
-        NK_DH -> "group"
+        NK_DH  -> "group"
         NK_Enc -> "enckey"
         NK_PKE -> "pkekey"
         NK_Sig -> "sigkey"
@@ -276,6 +274,23 @@ fLenOfNameTy :: NameType -> ExtractionMonad t FLen
 fLenOfNameTy nt = do
     nk <- liftCheck $ TB.getNameKind nt
     fLenOfNameKind nk
+
+
+secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
+secrecyOfNameKind nk = do
+    return $ case nk of
+        NK_KDF -> BufSecret
+        NK_DH  -> BufSecret
+        NK_Enc -> BufSecret
+        NK_PKE -> BufSecret
+        NK_Sig -> BufSecret
+        NK_MAC -> BufSecret
+        NK_Nonce _ -> BufSecret
+
+secrecyOfNameTy :: NameType -> ExtractionMonad t BufSecrecy
+secrecyOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    secrecyOfNameKind nk
 
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
@@ -398,8 +413,14 @@ withJustNothing f (Just x) = Just <$> f x
 withJustNothing f Nothing = return (Just Nothing)
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-specCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+specCombTyOf' (FBuf BufSecret (Just flen)) = do
+    debugPrint "WARNING: specCombTyOf': secret buf"
+    return $ Just [di|Bytes|]
+specCombTyOf' (FBuf BufSecret Nothing) = do
+    debugPrint "WARNING: specCombTyOf': secret buf"
+    return $ Just [di|Tail|]
+specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 specCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (specCombTyOf' . snd) fs
     case sequence fs' of
@@ -426,8 +447,14 @@ specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 specCombTyOf = liftFromJust specCombTyOf'
 
 execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-execCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufSecret (Just flen)) = do
+    debugPrint "WARNING: execCombTyOf': secret buf"
+    return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufSecret Nothing) = do
+    debugPrint "WARNING: execCombTyOf': secret buf"
+    return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (execCombTyOf' . snd) fs
     case sequence fs' of
@@ -455,10 +482,17 @@ execCombTyOf = liftFromJust execCombTyOf'
 
 -- (combinator type, any constants that need to be defined)
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-specCombOf' _ (FBuf (Just flen)) = do
+specCombOf' _ (FBuf BufSecret (Just flen)) = do
+    debugPrint "WARNING: specCombOf': secret buf"
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-specCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufSecret Nothing) = do
+    debugPrint "WARNING: specCombOf': secret buf"
+    return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 specCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (specCombOf' constSuffix . snd) fs
     case sequence fcs of
@@ -497,10 +531,17 @@ specCombOf s = liftFromJust (specCombOf' s)
 
 -- (combinator type, any constants that need to be defined)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-execCombOf' _ (FBuf (Just flen)) = do
+execCombOf' _ (FBuf BufSecret (Just flen)) = do
+    debugPrint "WARNING: execCombOf': secret buf"
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-execCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufSecret Nothing) = do
+    debugPrint "WARNING: execCombOf': secret buf"
+    return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 execCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (execCombOf' constSuffix . snd) fs
     case sequence fcs of
@@ -547,9 +588,9 @@ execCombOf s = liftFromJust (execCombOf' s)
 
 
 execParsleyCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe ParsleyCombinator)
-execParsleyCombOf' _ (FBuf (Just flen)) = do
+execParsleyCombOf' _ (FBuf BufPublic (Just flen)) = do
     return $ Just $ PCBytes flen
-execParsleyCombOf' _ (FBuf Nothing) = return $ Just $ PCTail
+execParsleyCombOf' _ (FBuf BufPublic Nothing) = return $ Just $ PCTail
 execParsleyCombOf' constSuffix (FHexConst s) = do
     let constSuffix' = map Data.Char.toUpper constSuffix
     let len = length s `div` 2

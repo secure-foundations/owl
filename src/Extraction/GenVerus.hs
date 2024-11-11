@@ -601,7 +601,7 @@ genVerusCExpr info expr = do
             let sz = lowerFLen fl
             k' <- genVerusCExpr info k
             let itreeTy = specItreeTy info
-            castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
+            castTmp <- ([di|tmp_#{rustX}|], RTSecBuf AnyLifetime) `cast` t
             return $ GenRustExpr (k' ^. eTy) [__di|
             let tmp_#{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
             let #{rustX} = #{castTmp};
@@ -1514,6 +1514,8 @@ cast (v, RTEnum t cs) (RTRef RShared (RTSlice RTU8)) = do
 cast (v, RTEnum t cs) (RTOwlBuf l) = do
     c1 <- cast (v, RTEnum t cs) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
+cast (v, RTOwlBuf _) (RTSecBuf _) = 
+    return [di|SecBuf::from_buf(#{v}.another_ref())|]
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]

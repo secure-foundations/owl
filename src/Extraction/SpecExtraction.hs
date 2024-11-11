@@ -48,7 +48,7 @@ specTyOf :: FormatTy -> VerusTy
 specTyOf FUnit = RTUnit
 specTyOf FBool = RTBool
 specTyOf FInt = RTVerusNat
-specTyOf (FBuf _) = seqU8
+specTyOf (FBuf _ _) = seqU8
 specTyOf (FOption ft) = RTOption (specTyOf ft)
 specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n, specTyOf t)) ffs)
 specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
