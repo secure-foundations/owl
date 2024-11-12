@@ -61,6 +61,8 @@ instance Pretty VerusTy where
     pretty RTVerusNat = pretty "nat"
     pretty RTVerusGhost = pretty "Ghost<()>"
     pretty RTStAeadBuilder = pretty "OwlSTAeadBuilder"
+    pretty RTDeclassifyTok = pretty "Tracked(DeclassifyingOpToken)"
+    pretty (RTVerusTracked ty) = pretty "Tracked" <> parens (pretty ty)
     pretty RTDummy = error "Cannot pretty print RTDummy"
 
 prettyTyAnnot :: Maybe VerusTy -> Doc ann

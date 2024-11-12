@@ -53,6 +53,8 @@ data VerusTy =
     | RTUsize
     | RTVerusNat
     | RTVerusGhost
+    | RTDeclassifyTok 
+    | RTVerusTracked VerusTy
     | RTDummy -- for cases when we don't know the type of something
     deriving (Eq, Ord, Show, Generic, Typeable)
 

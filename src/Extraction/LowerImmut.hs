@@ -51,6 +51,7 @@ lowerTy (FEnum n fcs) = do
 lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
 lowerTy (FHexConst s) = return $ RTUnit
+lowerTy FDeclassifyTok = return RTDeclassifyTok
 
 -- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
 -- lowerTyNoOwlBuf FUnit = return RTUnit

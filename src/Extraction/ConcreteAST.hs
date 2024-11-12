@@ -51,6 +51,7 @@ data FormatTy =
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
     | FHexConst String
     | FDummy -- for when we can't infer the type locally
+    | FDeclassifyTok
     deriving (Show, Eq, Generic, Typeable)
 
 data Typed v t = Typed {
@@ -87,6 +88,17 @@ data CAExpr' t =
 
 type CAExpr t = Typed (CAExpr' t) t
 
+data DeclassifyingOp t = 
+    ControlFlow (CAExpr t)
+    | EnumParse (CAExpr t)
+    | EqCheck (CAExpr t, CAExpr t)  
+    | ADec (CAExpr t, CAExpr t)
+    | StAeadDec (CAExpr t, CAExpr t, CAExpr t, CAExpr t)
+    | SigVrfy (CAExpr t, CAExpr t, CAExpr t)
+    | MacVrfy (CAExpr t, CAExpr t, CAExpr t)
+    | PkDec (CAExpr t, CAExpr t)
+    deriving (Show, Generic, Typeable)
+
 data ParseKind = PFromBuf | PFromDatatype
     deriving (Show, Eq, Generic, Typeable)
 
@@ -96,6 +108,7 @@ data CExpr' t =
     | CInput t (Bind (CDataVar t, EndpointVar) (CExpr t)) -- keep track of received buf type
     | COutput (CAExpr t) (Maybe Endpoint)
     | CSample FLen t (Bind (CDataVar t) (CExpr t))
+    | CItreeDeclassify (DeclassifyingOp t) (Bind (CDataVar t) (CExpr t))
     | CLet (CExpr t) (Maybe AExpr) (Bind (CDataVar t) (CExpr t)) -- rhs, ANF annotation, bind (var, cont)
     | CBlock (CExpr t) -- Boundary for scoping; introduced by { }; TODO do we need this?
     | CIf (CAExpr t) (CExpr t) (CExpr t)
@@ -166,6 +179,7 @@ instance Alpha BufSecrecy
 instance Alpha FormatTy
 instance Alpha ParseKind
 instance Alpha ParsleyCombinator
+instance (Typeable t, Alpha t) => Alpha (DeclassifyingOp t)
 
 instance (Alpha v, Alpha t) => Alpha (Typed v t)
 instance (Subst b a, Subst b t) => Subst b (Typed a t)
@@ -204,6 +218,7 @@ instance OwlPretty FormatTy where
     owlpretty FGhost = owlpretty "ghost"
     owlpretty FDummy = owlpretty "dummy"
     owlpretty (FHexConst s) = owlpretty "HexConst" <> parens (owlpretty "0x" <> owlpretty s)
+    owlpretty FDeclassifyTok = owlpretty "DeclassifyingOpToken"
 
 flagShouldPrettyTypes :: Bool
 flagShouldPrettyTypes = True
@@ -216,6 +231,16 @@ instance OwlPretty ParsleyCombinator where
     owlpretty (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
     owlpretty PCTail = owlpretty "Tail"
     owlpretty PCBuilder = owlpretty "BuilderCombinator"
+
+instance OwlPretty t => OwlPretty (DeclassifyingOp t) where
+    owlpretty (ControlFlow e) = owlpretty "ControlFlow" <> parens (owlpretty e)
+    owlpretty (EnumParse e) = owlpretty "EnumParse" <> parens (owlpretty e)
+    owlpretty (EqCheck (a, b)) = owlpretty "EqCheck" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty (ADec (a, b)) = owlpretty "ADec" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty (StAeadDec (a, b, c, d)) = owlpretty "StAeadDec" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c <> comma <+> owlpretty d)
+    owlpretty (SigVrfy (a, b, c)) = owlpretty "SigVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty (MacVrfy (a, b, c)) = owlpretty "MacVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty (PkDec (a, b)) = owlpretty "PkDec" <> parens (owlpretty a <> comma <+> owlpretty b)
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
@@ -247,6 +272,9 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (CSample n t xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "sample" <> brackets (owlpretty n) <+> x <+> owlpretty "in" <+> k
+    owlpretty (CItreeDeclassify dop xk) = 
+        let (x, k) = owlprettyBind xk in
+        owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty "itree_declassify" <> parens (owlpretty dop) <+> owlpretty "in" <+> k
     owlpretty (CLet e oanf xk) =
         let (x, k) = owlprettyBind xk in
         owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
@@ -286,6 +314,19 @@ castName :: Name a -> Name b
 castName (Fn x y) = Fn x y
 castName (Bn x y) = Bn x y
 
+traverseDeclassifyingOp :: Applicative f => (t -> f t2) -> DeclassifyingOp t -> f (DeclassifyingOp t2)
+traverseDeclassifyingOp f dop =
+    case dop of
+        ControlFlow e -> ControlFlow <$> traverseCAExpr f e
+        EnumParse e -> EnumParse <$> traverseCAExpr f e
+        EqCheck (a, b) -> EqCheck <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+        ADec (a, b) -> ADec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+        StAeadDec (a, b, c, d) -> StAeadDec <$> ((,,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c <*> traverseCAExpr f d)
+        SigVrfy (a, b, c) -> SigVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
+        MacVrfy (a, b, c) -> MacVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
+        PkDec (a, b) -> PkDec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+
+
 -- Does not take into account bound names
 traverseCAExpr :: Applicative f => (t -> f t2) -> CAExpr t -> f (CAExpr t2)
 traverseCAExpr f a =
@@ -316,6 +357,10 @@ traverseCExpr f a =
                 (x, k) <- unbind xk
                 t' <- f t
                 CSample n t' . bind (castName x) <$> traverseCExpr f k
+          CItreeDeclassify dop xk -> do
+              (x, k) <- unbind xk
+              dop' <- traverseDeclassifyingOp f dop
+              CItreeDeclassify dop' . bind (castName x) <$> traverseCExpr f k
           CLet e a bk -> do
               (n, k) <- unbind bk
               CLet <$> traverseCExpr f e <*> pure a <*> (bind (castName n) <$> traverseCExpr f k)

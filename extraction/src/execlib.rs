@@ -482,11 +482,11 @@ pub mod secret {
         ensures 
             view_option(x) == vrfy(pubkey.view(), msg.view(), signature.view())
     {
-        let pubkey = pubkey.private_as_slice();
-        let msg = msg.private_as_slice();
-        let signature = signature.as_slice();
-        if owl_pke::verify(pubkey, signature, msg) {
-            Some(OwlBuf::from_slice(signature).into_secret())
+        let pubkey_slice = pubkey.private_as_slice();
+        let msg_slice = msg.private_as_slice();
+        let signature_slice = signature.as_slice();
+        if owl_pke::verify(pubkey_slice, signature_slice, msg_slice) {
+            Some(signature.another_ref().into_secret())
         } else {
             None
         }

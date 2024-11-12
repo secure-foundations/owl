@@ -54,6 +54,7 @@ specTyOf (FStruct fn ffs) = RTStruct (specName fn) (fmap (\(n, t) -> (specName n
 specTyOf (FEnum n fcs) = RTEnum (specName n) (fmap (\(n, t) -> (specName n, fmap specTyOf t)) fcs)
 specTyOf FGhost = RTVerusGhost
 specTyOf (FHexConst _) = seqU8
+specTyOf FDeclassifyTok = RTDeclassifyTok
 
 specFieldTyOf :: FormatTy -> (VerusTy, Maybe Int)
 specFieldTyOf (FHexConst s) = (RTUnit, Just $ length s `div` 2)
@@ -62,7 +63,7 @@ specFieldTyOf ft = (specTyOf ft, Nothing)
 specTyOfSerialized :: FormatTy -> VerusTy
 specTyOfSerialized (FStruct fn ffs) = seqU8
 specTyOfSerialized (FEnum n fcs) = seqU8
-specTyOfSerialized f = specTyOf f 
+specTyOfSerialized f = specTyOf f
 
 extractCTyDef :: CTyDef FormatTy -> EM (Doc ann)
 extractCTyDef (CStructDef s) = extractCStruct s
@@ -80,8 +81,8 @@ extractCStruct (CStruct n fs isVest) = do
     }
     |]
     formatDefs <- if isVest then genFormatDefs n fs else return [di||]
-    parseSerializeDefs <- if isVest then 
-                                genParserSerializer (execName n) rn rfs 
+    parseSerializeDefs <- if isVest then
+                                genParserSerializer (execName n) rn rfs
                             else genParserSerializerNoVest (execName n) rn rfs
     constructor <- genConstructor n rn rfs
     return $ vsep [formatDefs, structDef, parseSerializeDefs, constructor]
@@ -233,8 +234,8 @@ extractCEnum (CEnum n cs isVest _) = do
     |]
     -- debugPrint $ "Enum def: " ++ show enumDef
     (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
-    parseSerializeDefs <- if isVest then 
-                            genParserSerializer (execName n) rn rfs specComb execComb 
+    parseSerializeDefs <- if isVest then
+                            genParserSerializer (execName n) rn rfs specComb execComb
                           else genParserSerializerNoVest (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
     enumTests <- genEnumTests n rn rfsOwlNames
@@ -387,7 +388,7 @@ extractCEnum (CEnum n cs isVest _) = do
                 crate::#{specname}::#{specName caseName}(x)
             }
             |]
-        
+
         genEnumTests owlName specname speccases = do
             tests <- mapM mkEnumTest speccases
             return $ vsep tests
@@ -418,6 +419,9 @@ extractVar n = do
         "_" -> pretty . show <$> fresh (string2Name "_unused")
         s -> return . pretty . replacePrimes $ s
 
+-- Note: we do not include the declassification tokens for `dec`, etc, in this list.
+-- Since we `zip` the arg types with the provided args, this means that in spec, the 
+-- declassification tokens are not printed in the function call, as required.
 specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
 specBuiltins = M.mapWithKey addSpecName builtins' where
     addSpecName n (args, rty) = (n, args, rty)
@@ -444,6 +448,45 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
     -- diffNameBuiltins = M.fromList [
     --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
     --     ]
+
+-- Extract the DeclassifyingOpToken and the function call
+extractDeclassifyingOp :: DeclassifyingOp FormatTy -> EM (Doc ann)
+extractDeclassifyingOp op = do
+    case op of
+        ControlFlow x -> do
+            x' <- extractCAExpr x
+            return [di|DeclassifyingOp::ControlFlow(#{x'})|]
+        EnumParse x -> do
+            x' <- extractCAExpr x
+            return [di|DeclassifyingOp::EnumParse(#{x'})|]
+        EqCheck (x, y) -> do
+            x' <- extractCAExpr x
+            y' <- extractCAExpr y
+            return [di|DeclassifyingOp::EqCheck(#{x'}, #{y'})|]
+        ADec (k, x) -> do
+            k' <- extractCAExpr k
+            x' <- extractCAExpr x
+            return [di|DeclassifyingOp::ADec(#{k'}, #{x'})|]
+        StAeadDec (k, x, nonce, aad) -> do
+            k' <- extractCAExpr k
+            x' <- extractCAExpr x
+            nonce' <- extractCAExpr nonce
+            aad' <- extractCAExpr aad
+            return [di|DeclassifyingOp::StAeadDec(#{k'}, #{x'}, #{nonce'}, #{aad'})|]
+        SigVrfy (pk, msg, sig) -> do
+            pk' <- extractCAExpr pk
+            msg' <- extractCAExpr msg
+            sig' <- extractCAExpr sig
+            return [di|DeclassifyingOp::SigVrfy(#{pk'}, #{msg'}, #{sig'})|]
+        MacVrfy (key, msg, mac) -> do
+            key' <- extractCAExpr key
+            msg' <- extractCAExpr msg
+            mac' <- extractCAExpr mac
+            return [di|DeclassifyingOp::MacVrfy(#{key'}, #{msg'}, #{mac'})|]
+        PkDec (sk, c) -> do
+            sk' <- extractCAExpr sk
+            c' <- extractCAExpr c
+            return [di|DeclassifyingOp::PkDec(#{sk'}, #{c'})|]
 
 extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
 extractCAExpr aexpr = do
@@ -585,6 +628,15 @@ extractExpr expr = do
                     (sample(#{sz}, enc(#{key''}, #{msg''})))
                     |]
                 _ -> throwError $ ErrSomethingFailed $ "Unsupported continuation after sample: " ++ show k
+        CItreeDeclassify dop xk -> do
+            let (x, k) = unsafeUnbind xk
+            dop' <- extractDeclassifyingOp dop
+            -- x' <- extractVar x
+            k' <- extractExpr k
+            return [__di|
+            (declassify(#{dop'})) in
+            #{k'}
+            |]
         CLet (Typed t (COutput a l)) _ xk -> do
             let (_, k) = unsafeUnbind xk
             o <- extractExpr (Typed t (COutput a l))
@@ -733,10 +785,10 @@ extractDef locName (CDef defname b) = do
         extractArg (cdvar, strname, ty) = do
             let specty = specTyOf ty
             return [di|#{pretty strname} : #{pretty specty}|]
-        pureDef owlName specArgs specRt = 
+        pureDef owlName specArgs specRt =
             line <>
-            pretty "#[verifier(external_body)] pub closed spec fn" <+> pretty owlName <> pretty "_pure" <> tupled specArgs <+> 
-            pretty "->" <+> pretty specRt <+> line <> 
+            pretty "#[verifier(external_body)] pub closed spec fn" <+> pretty owlName <> pretty "_pure" <> tupled specArgs <+>
+            pretty "->" <+> pretty specRt <+> line <>
             braces (pretty "unimplemented!()" )
 
 extractLoc :: (LocalityName, FormatLocalityData) -> EM (Doc ann)

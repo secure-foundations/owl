@@ -277,20 +277,18 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
     addExecName n (args, rty) = (execName n, args, rty)
     builtins' = M.fromList [
           ("enc", ([secBuf, secBuf, secBuf], vecU8))
-        , ("dec", ([secBuf, owlBuf], RTOption secBuf))
+        , ("dec", ([secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         , ("sign", ([u8slice, u8slice], vecU8))
-        , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("dhpk", ([u8slice], vecU8))
         , ("dh_combine", ([u8slice, u8slice], vecU8))
         , ("mac", ([u8slice, u8slice], vecU8))
-        , ("mac_vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("mac_vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("pkenc", ([u8slice, u8slice], vecU8))
-        , ("pkdec", ([u8slice, u8slice], RTOption vecU8))
-        , ("sign", ([u8slice, u8slice], vecU8))
-        , ("vrfy", ([u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
         , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
-        , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice], RTOption vecU8))
+        , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("is_group_elem", ([u8slice], RTBool))
         , ("crh", ([u8slice], vecU8))
         , ("concat", ([u8slice, u8slice], vecU8))
@@ -536,8 +534,8 @@ instance OwlPretty VerusTy where
 
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
-    debugPrint $ "genVerusCExpr: "
-    debugPrint $ show (owlpretty expr)
+    -- debugPrint $ "genVerusCExpr: "
+    -- debugPrint $ show (owlpretty expr)
     case expr ^. tval of
         CSkip -> return $ GenRustExpr RTUnit [di|()|]
         CRet ae -> do
@@ -638,6 +636,15 @@ genVerusCExpr info expr = do
             return $ GenRustExpr (k' ^. eTy) [__di|
             let tmp_#{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
             let #{rustX} = #{castTmp};
+            #{k' ^. code}
+            |]
+        CItreeDeclassify _ xk -> do
+            let itreeTy = specItreeTy info
+            let (x, k) = unsafeUnbind xk
+            let rustX = execName . show $ x
+            k' <- genVerusCExpr info k
+            return $ GenRustExpr (k' ^. eTy) [__di|
+            let tracked #{rustX} = consume_itree_declassify::<#{itreeTy}, Endpoint>(&mut itree);
             #{k' ^. code}
             |]
         CLet e oanf xk -> do
@@ -1255,6 +1262,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                             Just (RTStruct _ _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just (RTEnum _ _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just (RTOwlBuf _) -> [di|#{fname}(x) => x.len_valid()|]
+                            Just (RTSecBuf _) -> [di|#{fname}(x) => x.len_valid()|]
                             Just _ -> [di|#{fname}(_) => true|]
                             Nothing -> [di|#{fname}() => true|]
                     ) cases
@@ -1522,6 +1530,8 @@ cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
     return [di|#{v}.as_slice()|]
+cast (v, t1) t2 | t2 == RTVerusTracked t1 =
+    return [di|Tracked(#{v})|]
 cast (v, RTArray RTU8 _) (RTRef RShared (RTSlice RTU8)) =
     return [di|&#{v}.as_slice()|]
 cast (v, RTRef _ (RTSlice RTU8)) (RTArray RTU8 _) =
@@ -1553,10 +1563,12 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
     c1 <- cast (v, RTEnum t cs) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
 cast (v, RTOwlBuf _) (RTSecBuf _) = 
-    return [di|SecBuf::from_buf(#{v}.another_ref())|]
+    return [di|SecretBuf::from_buf(#{v}.another_ref())|]
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
+cast (v, RTSecBuf _) (RTSecBuf _) = 
+    return [di|SecretBuf::another_ref(&#{v})|]
 cast (v, RTOption (RTOwlBuf _)) (RTOption (RTOwlBuf _)) =
     return [di|OwlBuf::another_ref_option(&#{v})|]
 cast (v, RTStruct s _) (RTStruct s' _) | s == s' =

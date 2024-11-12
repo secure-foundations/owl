@@ -609,8 +609,12 @@ concretifyCryptOp _ CAEnc [k, x] = do
     let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
     return $ noLets $ Typed t $ CSample sampFLen (fSBuf $ Just sampFLen) $ bind coinsName doEnc
 concretifyCryptOp _ CADec [k, c] = do
-    let t = FOption $ fSBuf Nothing
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec" [k, c]
+    let plaintextT = FOption $ fSBuf Nothing
+    tokName <- fresh $ s2n "declassify_tok"
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    let dop = ADec (k, c)
+    let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "dec" [k, c, tokVar]
+    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
 -- concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
 --     (patx, patbody) <- unbind xpat
 --     nonce <- concretifyPath np

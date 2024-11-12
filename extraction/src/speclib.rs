@@ -53,14 +53,6 @@ impl OwlSpecSerialize for bool {
     }
 }
 
-// // hack
-// impl View for Ghost<()> {
-//     type V = Ghost<()>;
-//     open spec fn view(&self) -> Ghost<()> {
-//         Ghost(())
-//     }
-// }
-
 
 pub trait OwlSpecAsCtr {
     spec fn as_ctr(self) -> usize where Self: Sized;
