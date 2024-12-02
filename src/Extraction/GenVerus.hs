@@ -76,34 +76,15 @@ genVerusUserFunc (CUserFunc name b) = do
     let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
     let retTy' = liftLifetime (Lifetime lifetimeConst) retTy
     let retval = [di|res: #{pretty retTy'}|]
-    let mkArgLenVald (arg, s, argty) = case argty of
-            RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
-            _ -> Nothing
-    let requiresLenValid = case mapMaybe mkArgLenVald args of
-            [] -> [di||]
-            xs -> [di|requires #{hsep . punctuate comma $ xs}|]
-    let ensuresLenValid = case retTy of
-            RTOwlBuf _ -> [di|res.len_valid()|]
-            RTStruct _ _ -> [di|res.len_valid()|]
-            RTEnum _ _ -> [di|res.len_valid()|]
-            _ -> [di||]
     return [__di|
     pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
-        // #{requiresLenValid}
         ensures
             res.view() == #{specname}(#{viewArgs}),
-            // #{ensuresLenValid}
     {
         reveal(#{specname});
         #{body''}
     }
     |]
-    where
-        prettyArgName = pretty . execName . show
-
 
 genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
 genVerusEndpointDef lnames = do
@@ -146,7 +127,6 @@ genVerusLocality pubkeys (lname, ldata) = do
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName maybeLt True) $ ldata ^. sharedNames
     let (pkDecls, pkInits) = unzip . map (genVerusPk maybeLt True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
-    let lenValid = mkLocLenValid (ldata ^. localNames ++ ldata ^. sharedNames ++ pubkeys)
     execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
     pub struct #{stateName} {
@@ -181,29 +161,12 @@ genVerusLocality pubkeys (lname, ldata) = do
         }
         */
 
-        #{lenValid}
-
         #{vsep . punctuate (line <> line) $ execFns}
     }
     |]
     where
         secrecyNeedsLifetime (_,_,_,BufSecret) = True
         secrecyNeedsLifetime (_,_,_,BufPublic) = False -- this can change in future
-
-        mkLocLenValid vnames = 
-            let mkLenValid (vname, _, _, secrecy) = case secrecy of
-                    BufSecret -> Just [di|&&& self.#{execName vname}.len_valid()|]
-                    BufPublic -> Nothing 
-            in
-            let lenvalids = mapMaybe mkLenValid $ vnames in
-            let lenvalids' = if null lenvalids then [di|true|] else vsep lenvalids in
-            [__di|
-            pub open spec fn len_valid(self) -> bool {
-                #{lenvalids'}
-            }
-            |]
-
-
 
 
 -- ctr decl, ctr init
@@ -871,34 +834,14 @@ genVerusDef lname cdef = do
             return ([di||], body' ^. code, castResInner)
         Nothing -> return ([di|\#[verifier::external_body]|], [di|todo!(/* implement #{execname} by hand */)|], [di|res_inner|])
     viewRes <- viewVar "(r.0)" rty'
-    let mkArgLenVald (arg, s, argty) = case argty of
-            RTOwlBuf _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTStruct _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTEnum _ _ -> Just [di|#{prettyArgName arg}.len_valid()|]
-            RTWithLifetime t _ -> mkArgLenVald (arg, s, t)
-            _ -> Nothing
-    let requiresLenValid = hsep . punctuate comma $ mapMaybe mkArgLenVald defArgs'
-    let mkEnsuresLenValid rty'' = case rty'' of
-            RTOwlBuf _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
-            RTStruct _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
-            RTEnum _ _ -> [di|res matches Ok(r) ==> r.0.len_valid()|]
-            RTOption (RTOwlBuf _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
-            RTOption (RTStruct _ _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
-            RTOption (RTEnum _ _) -> [di|res matches Ok((Some(b),_)) ==> b.len_valid()|]
-            RTWithLifetime t _ -> mkEnsuresLenValid t
-            _ -> [di||]
-    let ensuresLenValid = mkEnsuresLenValid rty'
     return [__di|
     #{attr}
     \#[verifier::spinoff_prover]
     pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
-            // self.len_valid(),
-            // #{requiresLenValid}
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *mut_state)),
-            // #{ensuresLenValid}
     {
         let tracked mut itree = itree;
         let (res_inner, Tracked(itree)): (#{pretty rtyLt}, #{itreeTy}) = {
@@ -990,21 +933,12 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
         genConstructorShortcut verusName fields lAnnot = do
             let body = vsep . punctuate comma . fmap (\(_, ename, _) -> [di|#{ename}: arg_#{ename}|]) $ fields
             let args = hsep . punctuate comma . fmap (\(_, ename, fty) -> [di|arg_#{ename}: #{pretty fty}#{extraLt lAnnot fty}|]) $ fields
-            let reqs = vsep . punctuate comma . mapMaybe (
-                        \(_, ename, fty) -> case fty of
-                            RTOwlBuf _ -> Just [di|arg_#{ename}.len_valid()|]
-                            RTStruct _ _ -> Just [di|arg_#{ename}.len_valid()|]
-                            RTEnum _ _ -> Just [di|arg_#{ename}.len_valid()|]
-                            _ -> Nothing
-                    ) $ fields
-            let fieldEnss = map (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) fields
-            let enss = {- vsep . punctuate comma $ [di|res.len_valid()|] : -} fieldEnss
+            let enss = map (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) fields
             return [__di|
             // Allows us to use function call syntax to construct members of struct types, a la Owl,
             // so we don't have to special-case struct constructors in the compiler
             \#[inline]
             pub fn #{verusName}#{lAnnot}(#{args}) -> (res: #{verusName}#{lAnnot})
-                // requires #{reqs}
                 ensures  #{enss}
             {
                 #{verusName} { #{body} }
@@ -1013,16 +947,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
 
         genImplStruct :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genImplStruct verusName fields lAnnot = do
-            let fieldsValids = mapMaybe (\(_,fname, fty) -> 
-                        case fty of 
-                            RTWithLifetime (RTStruct _ _) _ -> Just [di|self.#{fname}.len_valid()|]
-                            RTWithLifetime (RTEnum _ _) _ -> Just [di|self.#{fname}.len_valid()|]
-                            (RTStruct _ _) -> Just [di|self.#{fname}.len_valid()|]
-                            (RTEnum _ _) -> Just [di|self.#{fname}.len_valid()|]
-                            RTOwlBuf _ -> Just [di|self.#{fname}.len_valid()|]
-                            _ -> Nothing
-                    ) fields
-            let body = if null fieldsValids then [di|true|] else hsep . punctuate [di|&&|] $ fieldsValids
             let anotherRefFields = map (\(_, fname, fty) -> case fty of 
                         RTWithLifetime (RTStruct t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
                         RTWithLifetime (RTEnum t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
@@ -1033,14 +957,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                     ) fields
             return [__di|
             impl#{lAnnot} #{verusName}#{lAnnot} {
-                // pub open spec fn len_valid(&self) -> bool {
-                //    #{body}
-                // }
-
                 pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
-                    // requires self.len_valid(),
                     ensures result.view() == self.view(),
-                            // result.len_valid(),
                 {
                     #{verusName} { 
                         #{vsep . punctuate comma $ anotherRefFields} 
@@ -1086,12 +1004,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
             let parse = [__di|
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
-                // requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
-                    // res matches Some(x) ==> x.len_valid(),
             {
                 reveal(#{specParse});
                 let exec_comb = exec_combinator_#{verusName}();
@@ -1105,7 +1021,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                         }
                     }
                     OwlBuf::Owned(v, start, len) => {
-                        // reveal(OwlBuf::len_valid);
                         if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
                             let #{tupPatFields} = parsed;
                             Some (#{verusName} { #{mkStructFieldsVecs} })
@@ -1132,7 +1047,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             let ser = [__di|
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
-                // requires arg.len_valid(),
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
                     // res is None ==> #{specSerInner}(arg.view()) is None,
@@ -1155,7 +1069,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
-                // requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())
             {
                 reveal(#{specSer});
@@ -1171,12 +1084,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
-                // requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
-                    // res matches Some(x) ==> x.len_valid(),
             {
                 todo!()
             }
@@ -1188,7 +1099,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let ser = [__di|
             \#[verifier::external_body]
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
-                // requires arg.len_valid(),
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
                     // res is None ==> #{specSerInner}(arg.view()) is None,
@@ -1198,7 +1108,6 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             \#[verifier::external_body]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
-                // requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())
             {
                 todo!()
@@ -1255,18 +1164,6 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
 
         genImplEnum :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genImplEnum verusName cases lAnnot = do
-            let casesValids = M.map (\(fname, fty) -> 
-                        case fty of 
-                            Just (RTWithLifetime (RTStruct _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just (RTWithLifetime (RTEnum _ _) _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just (RTStruct _ _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just (RTEnum _ _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just (RTOwlBuf _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just (RTSecBuf _) -> [di|#{fname}(x) => x.len_valid()|]
-                            Just _ -> [di|#{fname}(_) => true|]
-                            Nothing -> [di|#{fname}() => true|]
-                    ) cases
-            let body = vsep . punctuate comma $ M.elems casesValids
             let anotherRefFields = M.map (\(fname, fty) -> case fty of 
                         Just (RTWithLifetime (RTStruct t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
                         Just (RTWithLifetime (RTEnum t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
@@ -1280,16 +1177,8 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let anotherRefBody = vsep . punctuate comma $ M.elems anotherRefFields
             return [__di|
             impl#{lAnnot} #{verusName}#{lAnnot} {
-                /* pub open spec fn len_valid(&self) -> bool {
-                    match self {
-                        #{body}
-                    }
-                } */
-
                 pub fn another_ref<'other>(&'other self) -> (result: #{verusName}#{lAnnot})
-                    // requires self.len_valid(),
                     ensures result.view() == self.view(),
-                            // result.len_valid(),
                 {
                     match self { 
                         #{anotherRefBody} 
@@ -1368,12 +1257,10 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let parse = [__di|
             \#[verifier(external_body)] 
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
-                // requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
-                    // res matches Some(x) ==> x.len_valid(),
             {
                 reveal(#{specParse});
                 let exec_comb = #{execComb};
@@ -1416,7 +1303,6 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let ser = [__di|
             \#[verifier(external_body)] 
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
-                // requires arg.len_valid(),
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
                     res is None ==> #{specSerInner}(arg.view()) is None,
@@ -1432,7 +1318,6 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             }
             \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
-                // requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())
             {
                 reveal(#{specSer});
@@ -1448,12 +1333,10 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
-                // requires arg.len_valid()
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
-                    // res matches Some(x) ==> x.len_valid(),
             {
                 todo!()
             }
@@ -1465,7 +1348,6 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             let ser = [__di|
             \#[verifier(external_body)] 
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
-                // requires arg.len_valid(),
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
                     res is None ==> #{specSerInner}(arg.view()) is None,
@@ -1475,7 +1357,6 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
             }
             \#[verifier(external_body)]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
-                // requires arg.len_valid(),
                 ensures  res.view() == #{specSer}(arg.view())
             {
                 todo!()
