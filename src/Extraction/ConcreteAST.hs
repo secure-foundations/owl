@@ -99,7 +99,7 @@ data DeclassifyingOp t =
     | PkDec (CAExpr t, CAExpr t)
     deriving (Show, Generic, Typeable)
 
-data ParseKind = PFromBuf | PFromDatatype
+data ParseKind = PFromBuf | PFromDatatype | PFromSecBuf
     deriving (Show, Eq, Generic, Typeable)
 
 data CExpr' t = 
@@ -148,7 +148,8 @@ data CUserFunc t = CUserFunc {
 data CStruct t = CStruct {
     _structName :: String,
     _structFields :: [(String, t)],
-    _structIsVest :: Bool
+    _structIsVest :: Bool,
+    _structHasSecret :: Bool
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CStruct
@@ -259,6 +260,7 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
 instance OwlPretty ParseKind where
     owlpretty PFromBuf = owlpretty "FromBuf"
     owlpretty PFromDatatype = owlpretty "FromDatatype"
+    owlpretty PFromSecBuf = owlpretty "FromSecBuf"
 
 instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty CSkip = owlpretty "skip"

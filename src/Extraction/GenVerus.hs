@@ -749,6 +749,18 @@ genVerusCExpr info expr = do
                         #{otw' ^. code}
                     }
                     |]
+                (PFromSecBuf, Just otw) -> do
+                    otw' <- genVerusCExpr info otw
+                    castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` RTSecBuf (Lifetime "_")
+                    return $ GenRustExpr (k' ^. eTy) [__di|
+                    let parseval_tmp = #{ae''};
+                    if let Some(parseval) = secret_parse_#{dstTyName}(#{castParsevalTmp}) {
+                        #{vsep selectors}
+                        #{k' ^. code}
+                    } else {
+                        #{otw' ^. code}
+                    }
+                    |]
                 (PFromDatatype, _) -> do
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval = #{ae''};
@@ -890,7 +902,7 @@ liftLifetime lt (RTSecBuf _) = RTSecBuf lt
 liftLifetime _ ty = ty
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
-genVerusStruct (CStruct name fieldsFV isVest) = do
+genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
     debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
@@ -914,7 +926,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest
+    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecret
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where 
 
@@ -933,7 +945,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
         genConstructorShortcut verusName fields lAnnot = do
             let body = vsep . punctuate comma . fmap (\(_, ename, _) -> [di|#{ename}: arg_#{ename}|]) $ fields
             let args = hsep . punctuate comma . fmap (\(_, ename, fty) -> [di|arg_#{ename}: #{pretty fty}#{extraLt lAnnot fty}|]) $ fields
-            let enss = map (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) fields
+            let enss = vsep . punctuate comma . fmap (\(_, ename, _) -> [di|res.#{ename}.view() == arg_#{ename}.view()|]) $ fields
             return [__di|
             // Allows us to use function call syntax to construct members of struct types, a la Owl,
             // so we don't have to special-case struct constructors in the compiler
@@ -953,6 +965,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                         (RTStruct t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
                         (RTEnum t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
                         RTOwlBuf _ -> [di|#{fname}: OwlBuf::another_ref(&self.#{fname})|]
+                        RTSecBuf _ -> [di|#{fname}: SecretBuf::another_ref(&self.#{fname})|]
                         _ -> [di|#{fname}: self.#{fname}|]
                     ) fields
             return [__di|
@@ -984,24 +997,26 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             }
             |]
         
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> EM (Doc ann)
-        genParsleyWrappers verusName specname structTy fields lifetimeConst True = do
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname structTy fields lifetimeConst True isSecret = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
             let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
-            let mkField fname fty = do
+            let mkField argty fname fty = do
                     mkf <- case fty of
-                            RTOwlBuf _ -> (pretty fname, u8slice) `cast` fty
+                            RTOwlBuf _ -> (pretty fname, argty) `cast` fty
+                            RTSecBuf _ -> (pretty fname, argty) `cast` fty
                             _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
-            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
-            let mkFieldVec fname fty = do
-                    mkf <- case fty of
-                            RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
-                            _ -> return $ pretty fname
-                    return [di|#{fname}: #{mkf}|]
-            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
-            mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
+            mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTOwlBuf (Lifetime lifetimeConst)) fname fty) fields
+            mkStructFieldsSec <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTSecBuf (Lifetime lifetimeConst)) fname fty) fields
+            -- let mkFieldVec fname fty = do
+            --         mkf <- case fty of
+            --                 RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
+            --                 _ -> return $ pretty fname
+            --         return [di|#{fname}: #{mkf}|]
+            -- mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
+            -- mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
             let parse = [__di|
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
                 ensures
@@ -1011,26 +1026,31 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             {
                 reveal(#{specParse});
                 let exec_comb = exec_combinator_#{verusName}();
-                match arg {
-                    OwlBuf::Borrowed(s) => {
-                        if let Ok((_, parsed)) = exec_comb.parse(s) {
-                            let #{tupPatFields} = parsed;
-                            Some (#{verusName} { #{mkStructFields} })
-                        } else {
-                            None
-                        }
-                    }
-                    OwlBuf::Owned(v, start, len) => {
-                        if let Ok((_, parsed)) = exec_comb.parse(slice_subrange((*v).as_slice(), start, start + len),) {
-                            let #{tupPatFields} = parsed;
-                            Some (#{verusName} { #{mkStructFieldsVecs} })
-                        } else {
-                            None
-                        }
-                    }
+                if let Ok((_, parsed)) = <_ as Combinator<OwlBuf<'_>, Vec<u8>>>::parse(&exec_comb, arg) {
+                    let #{tupPatFields} = parsed;
+                    Some (#{verusName} { #{mkStructFields} })
+                } else {
+                    None
                 }
             }
             |]
+            let secretParse = if isSecret then [__di|
+            pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                ensures
+                    res is Some ==> #{specParse}(arg.view()) is Some,
+                    res is None ==> #{specParse}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+            {
+                reveal(#{specParse});
+                let exec_comb = exec_combinator_#{verusName}();
+                if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, Vec<u8>>>::parse(&exec_comb, arg) {
+                    let #{tupPatFields} = parsed;
+                    Some (#{verusName} { #{mkStructFieldsSec} })
+                } else {
+                    None
+                }
+            }
+            |] else [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
@@ -1043,8 +1063,10 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
             let lens = lens' ++ [pretty "0"]
             let innerTyOf fty = case fty of
                     RTUnit -> RTUnit
+                    RTOwlBuf l -> RTOwlBuf l
+                    RTSecBuf l -> RTSecBuf l
                     _ -> u8slice
-            fieldsAsSlices <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
+            fieldsAsInner <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             let ser = [__di|
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 ensures
@@ -1056,7 +1078,7 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
                     let exec_comb = exec_combinator_#{verusName}();
                     let mut obuf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
-                    let ser_result = exec_comb.serialize(#{fieldsAsSlices}, &mut obuf, 0);
+                    let ser_result = exec_comb.serialize(#{fieldsAsInner}, &mut obuf, 0);
                     if let Ok((num_written)) = ser_result {
                         assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                         Some(obuf)
@@ -1077,8 +1099,8 @@ genVerusStruct (CStruct name fieldsFV isVest) = do
                 res.unwrap()
             }
             |]
-            return $ vsep [parse, ser]
-        genParsleyWrappers verusName specname structTy fields lifetimeConst False = do
+            return $ vsep [parse, secretParse, ser]
+        genParsleyWrappers verusName specname structTy fields lifetimeConst False _ = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
             let parse = [__di|

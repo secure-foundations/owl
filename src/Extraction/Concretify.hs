@@ -461,6 +461,9 @@ concretifyExpr e = do
                         FBuf BufPublic _ -> return PFromBuf
                         FStruct _ _ -> return PFromDatatype
                         FEnum _ _ -> return PFromDatatype
+                        FBuf BufSecret _ -> do
+                            if hasSecParser t_target' then return PFromSecBuf
+                            else throwError $ TypeError $ "Can't generate secret parser for data type: " ++ (show . owlpretty) t_target'
                         _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
             k' <- withVars xtys $ concretifyExpr k
             let k'' = exprFromLets' k'
@@ -777,7 +780,8 @@ concretifyTyDef tname (TB.StructDef bnd) = do
                         return $ (s, c) : ck
         s <- go dp
         let isVest = all (typeIsVest . snd) s
-        return $ Just $ CStructDef (CStruct tname s isVest)
+        let isSecret = all (hasSecParser . snd) s
+        return $ Just $ CStructDef (CStruct tname s isVest isSecret)
 
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
@@ -795,7 +799,7 @@ setupEnv ((tname, td):tydefs) = do
                     let rty = FEnum tname $ M.assocs cases
                     funcs %= M.insert cname (argTys, rty)
             mapM_ mkCase (M.assocs cases)
-        Just (CStructDef (CStruct _ fields _)) -> do
+        Just (CStructDef (CStruct _ fields _ _)) -> do
             -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
             let fieldTys = map snd fields
             let rty = FStruct tname fields

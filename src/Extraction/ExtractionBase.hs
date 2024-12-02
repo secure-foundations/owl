@@ -356,6 +356,21 @@ lookupKdfCall nks k = do
     return $ lookupNameKindAExprMap hcs nks k
 
 
+
+------------------------------------------------------------------------------------------------------
+---- Vest stuff
+
+-- Any format that uses Vest's `uint` or `Tag` combinators cannot have a secret parser
+-- Enums use `Tag` for the enum tag
+-- Structs must have all secret-parsable fields to be secret-parsable 
+-- TODO: if we want to support secret-parsable structs with non-secret-parsable fields, we need
+-- some new declassification machinery
+hasSecParser :: FormatTy -> Bool
+hasSecParser (FBuf BufSecret _) = True
+hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
+hasSecParser _ = False 
+
+
 mkNestPattern :: [Doc ann] -> Doc ann
 mkNestPattern l = 
         case l of

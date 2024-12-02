@@ -70,7 +70,7 @@ extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
 
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
-extractCStruct (CStruct n fs isVest) = do
+extractCStruct (CStruct n fs isVest _) = do
     debugLog $ "Spec extraction struct: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
@@ -711,6 +711,10 @@ extractExpr expr = do
                     let patfields = zipWith (\p x -> [di|#{p} : #{x}|]) parsedTypeMembers xs
                     (parseCall, badk) <- case (maybeOtw, pkind) of
                         (Just otw, PFromBuf) -> do
+                            let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
+                            otw' <- extractExpr otw
+                            return (parseCall, [di|otherwise (#{otw'})|])
+                        (Just otw, PFromSecBuf) -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
                             return (parseCall, [di|otherwise (#{otw'})|])

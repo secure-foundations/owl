@@ -466,13 +466,13 @@ maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
-lowerTyDef _ (CStructDef (CStruct name fields isVest)) = do
+lowerTyDef _ (CStructDef (CStruct name fields isVest isSecret)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
             l <- maybeLenOf t
             return (n, (l, t'))
     fields' <- mapM lowerField fields
-    return $ Just $ CStructDef $ CStruct name fields' isVest
+    return $ Just $ CStructDef $ CStruct name fields' isVest isSecret
 lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
