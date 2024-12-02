@@ -44,7 +44,7 @@ if [ $format = "true" ]; then
 fi
 
 echo ""
-echo "VERIFYING, COMPILING, AND EXPORTING PARSLEY" 
+echo "VERIFYING, COMPILING, AND EXPORTING VEST" 
 pushd $VESTPATH
 make
 popd

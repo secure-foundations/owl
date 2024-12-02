@@ -2,24 +2,28 @@ use std::rc::Rc;
 pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
 use crate::{*, speclib::*};
 use vest::regular::builder::*;
-
-
+// use vest::secret::*;
 
 
 verus! {
     
-pub enum OwlBuf<'a> {
+enum OwlBufInner<'a> {
     Borrowed(&'a [u8]),
     Owned(Rc<Vec<u8>>, usize, usize), // buffer, start, len
-} 
+}
+
+#[repr(transparent)]
+pub struct OwlBuf<'a> {
+    inner: OwlBufInner<'a>
+}
 
 impl View for OwlBuf<'_> {
     type V = Seq<u8>;
 
-    open spec fn view(&self) -> Self::V {
-        match self {
-            OwlBuf::Borrowed(s) => s.view(),
-            OwlBuf::Owned(v, start, len) => (*v).view().subrange(*start as int, (*start + *len) as int),
+    closed spec fn view(&self) -> Self::V {
+        match self.inner {
+            OwlBufInner::Borrowed(s) => s.view(),
+            OwlBufInner::Owned(v, start, len) => v.view().subrange(start as int, (start + len) as int),
         }
     }
 }
@@ -27,12 +31,13 @@ impl View for OwlBuf<'_> {
 impl<'x> OwlBuf<'x> {
     // Invariants
     #[verifier::opaque]
-    pub open spec fn len_valid(&self) -> bool {
-        match self {
-            OwlBuf::Borrowed(s) => true,
-            OwlBuf::Owned(v, start, len) => 
-                (*start as int + *len as int <= (*v).view().len()) 
-                && (*v).view().len() <= usize::MAX as int,
+    #[verifier::type_invariant]
+    pub closed spec fn len_valid(&self) -> bool {
+        match self.inner {
+            OwlBufInner::Borrowed(s) => true,
+            OwlBufInner::Owned(v, start, len) => 
+                (start as int + len as int <= v.view().len()) 
+                && v.view().len() <= usize::MAX as int,
         }
     }
 
@@ -42,23 +47,21 @@ impl<'x> OwlBuf<'x> {
                 result.len_valid(),
     {
         reveal(OwlBuf::len_valid);
-        OwlBuf::Borrowed(s)
+        OwlBuf { inner: OwlBufInner::Borrowed(s) }
     }
 
     pub fn from_vec(v: Vec<u8>) -> (result: OwlBuf<'x>)
         ensures result.view() == v.view(),
-                result.len_valid(),
     {
         reveal(OwlBuf::len_valid);
         broadcast use axiom_spec_len;
         let len = v.len();
         proof { assert_seqs_equal!(v.view(), v.view().subrange(0int, len as int)); }
-        OwlBuf::Owned(Rc::new(v), 0, len)
+        OwlBuf { inner: OwlBufInner::Owned(Rc::new(v), 0, len) }
     }
     
     pub fn from_vec_option(v: Option<Vec<u8>>) -> (result: Option<OwlBuf<'x>>)
         ensures view_option(result) == view_option(v),
-                result.is_Some() ==> result.get_Some_0().len_valid(),
     {
         match v {
             Some(v) => Some(OwlBuf::from_vec(v)),
@@ -68,15 +71,15 @@ impl<'x> OwlBuf<'x> {
 
     // Member functions
     pub fn len(&self) -> (result: usize)
-        requires self.len_valid()
         ensures result == self.view().len()
     {
-        match self {
-            OwlBuf::Borrowed(s) => {
+        proof { use_type_invariant(&self) }
+        match &self.inner {
+            OwlBufInner::Borrowed(s) => {
                 proof { assert_seqs_equal!(s.view(), self.view()); }
                 slice_len(s)
             },
-            OwlBuf::Owned(v, start, len) => {
+            OwlBufInner::Owned(v, start, len) => {
                 reveal(OwlBuf::len_valid);
                 *len
             },
@@ -84,12 +87,12 @@ impl<'x> OwlBuf<'x> {
     }
 
     pub fn as_slice<'a>(&'a self) -> (result: &'a [u8])
-        requires self.len_valid()
         ensures  result.view() == self.view()
     {
-        match self {
-            OwlBuf::Borrowed(s) => s,
-            OwlBuf::Owned(v, start, len) => {
+        proof { use_type_invariant(&self) }
+        match &self.inner {
+            OwlBufInner::Borrowed(s) => s,
+            OwlBufInner::Owned(v, start, len) => {
                 reveal(OwlBuf::len_valid);
                 slice_subrange((**v).as_slice(), *start, *start + *len)
             },
@@ -97,15 +100,14 @@ impl<'x> OwlBuf<'x> {
     }
 
     pub fn subrange(self, start: usize, end: usize) -> (result: OwlBuf<'x>)
-        requires self.len_valid(),
-                    0 <= start <= end <= self.view().len(),
+        requires 0 <= start <= end <= self.view().len(),
         ensures  result.view() == self.view().subrange(start as int, end as int),
-                    result.len_valid(),
     {
+        proof { use_type_invariant(&self) }
         reveal(OwlBuf::len_valid);
-        match self {
-            OwlBuf::Borrowed(s) => OwlBuf::Borrowed(slice_subrange(s, start, end)),
-            OwlBuf::Owned(v, start0, _) => {
+        match &self.inner {
+            OwlBufInner::Borrowed(s) => OwlBuf { inner: OwlBufInner::Borrowed(slice_subrange(s, start, end)) },
+            OwlBufInner::Owned(v, start0, _) => {
                 let new_start = start0 + start;
                 let len = end - start;
                 proof { 
@@ -114,16 +116,18 @@ impl<'x> OwlBuf<'x> {
                         (*v).view().subrange(new_start as int, new_start as int + len as int)
                     ); 
                 }
-                OwlBuf::Owned(Rc::clone(&v), new_start, len)
+                OwlBuf { inner: OwlBufInner::Owned(Rc::clone(&v), new_start, len) }
             },
         }
     }
 
     pub fn eq_contents(&self, other: &OwlBuf) -> (result: bool)
-        requires self.len_valid(),
-                    other.len_valid(),
         ensures  result == (self.view() == other.view())
     {
+        proof { 
+            use_type_invariant(&self);
+            use_type_invariant(&other);
+        }
         reveal(OwlBuf::len_valid);
         let self_slice = self.as_slice();
         let other_slice = other.as_slice();
@@ -131,23 +135,20 @@ impl<'x> OwlBuf<'x> {
     }
 
     pub fn another_ref<'a>(&'a self) -> (result: OwlBuf<'x>)
-        requires self.len_valid(),
         ensures  result.view() == self.view(),
-                    result.len_valid(),
     {
+        proof { use_type_invariant(&self) }
         reveal(OwlBuf::len_valid);
-        match self {
-            OwlBuf::Borrowed(s) => OwlBuf::Borrowed(s),
-            OwlBuf::Owned(v, start, len) => {
-                OwlBuf::Owned(Rc::clone(v), *start, *len)
+        match &self.inner {
+            OwlBufInner::Borrowed(s) => OwlBuf { inner: OwlBufInner::Borrowed(s) },
+            OwlBufInner::Owned(v, start, len) => {
+                OwlBuf { inner: OwlBufInner::Owned(Rc::clone(&v), *start, *len) }
             },
         }
     }
 
     pub fn another_ref_option<'a>(x: &'a Option<Self>) -> (result: Option<OwlBuf<'x>>)
-        requires x.is_Some() ==> x.get_Some_0().len_valid(),
         ensures view_option(result) == view_option(*x),
-                result.is_Some() ==> result.get_Some_0().len_valid(),
     {
         match x {
             Some(x) => Some(OwlBuf::another_ref(x)),
@@ -156,26 +157,45 @@ impl<'x> OwlBuf<'x> {
     }
 
     pub fn into_owned(self) -> (result: OwlBuf<'x>)
-        requires self.len_valid(),
         ensures  result.view() == self.view(),
-                    result.len_valid(),
     {
+        proof { use_type_invariant(&self) }
         reveal(OwlBuf::len_valid);
-        match self {
-            OwlBuf::Borrowed(s) => OwlBuf::from_vec(slice_to_vec(s)),
-            OwlBuf::Owned(v, start, len) => OwlBuf::Owned(v, start, len),
+        match &self.inner {
+            OwlBufInner::Borrowed(s) => OwlBuf::from_vec(slice_to_vec(s)),
+            OwlBufInner::Owned(v, start, len) => OwlBuf { inner: OwlBufInner::Owned(Rc::clone(&v), *start, *len) },
         }
     }
 
     pub fn into_secret(self) -> (result: SecretBuf<'x>)
-        requires self.len_valid(),
         ensures  result.view() == self.view(),
-                    result.len_valid(),
     {
+        proof { use_type_invariant(&self) }
         reveal(OwlBuf::len_valid);
         SecretBuf::from_buf(self)
     }
 }
+
+impl vest::buf_traits::VestSecretInput for OwlBuf<'_> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn subrange(&self, start: usize, end: usize) -> Self {
+        OwlBuf::subrange(self.another_ref(), start, end)
+    }
+
+    fn clone(&self) -> Self {
+        self.another_ref()
+    }
+}
+
+impl vest::buf_traits::VestInput for OwlBuf<'_> {
+    fn as_byte_slice(&self) -> (res: &[u8]) {
+        self.as_slice()
+    }
+}
+
 
 pub fn owl_unit() -> (res: ())
 { () }
@@ -313,6 +333,7 @@ pub mod secret {
     
     verus! {
     
+    #[repr(transparent)]
     pub struct SecretBuf<'a> {
         buf: OwlBuf<'a>
     }
@@ -327,40 +348,40 @@ pub mod secret {
 
     impl<'x> SecretBuf<'x> {
         #[verifier::opaque]
+        #[verifier::type_invariant]
         pub closed spec fn len_valid(&self) -> bool {
             self.buf.len_valid()
         }
 
         pub fn from_buf(buf: OwlBuf<'x>) -> (result: SecretBuf<'x>)
-            requires buf.len_valid()
             ensures result.view() == buf.view(),
-                    result.len_valid(),
         {
             reveal(SecretBuf::len_valid);
             reveal(OwlBuf::len_valid);
+            proof { use_type_invariant(&buf) }
             SecretBuf { buf }
         }
 
         pub fn another_ref<'a>(&'a self) -> (result: SecretBuf<'x>)
-            requires self.len_valid()
             ensures  result.view() == self.view(),
-                     result.len_valid(),
         {
             reveal(SecretBuf::len_valid);
-            SecretBuf { buf: self.buf.another_ref() }
+            let buf = self.buf.another_ref();
+            proof { 
+                use_type_invariant(&buf);
+            }
+            SecretBuf { buf }
         }
 
         ///////// Declassifying operations on SecretBufs
 
         #[verifier::external_body]
         pub fn declassify<'a>(&'a self, Tracked(t): Tracked<DeclassifyingOpToken>) -> (result: OwlBuf<'x>)
-            requires self.len_valid(),
-                     t.view() matches DeclassifyingOp::ControlFlow(b) && b == self.view()
-            ensures result.len_valid(),
-                    result.view() == self.view(),
-                    // t.view() == old(t).view().do_declassify()
+            requires t.view() matches DeclassifyingOp::ControlFlow(b) && b == self.view()
+            ensures result.view() == self.view(),
         {
             reveal(SecretBuf::len_valid);
+            proof { use_type_invariant(&self) }
             self.buf.another_ref()
         }
 
@@ -369,13 +390,12 @@ pub mod secret {
             &'a self, 
             Tracked(t): Tracked<DeclassifyingOpToken>
         ) -> (result: Option<(u8, SecretBuf<'x>)>)
-            requires self.len_valid(),
-                     t.view() matches DeclassifyingOp::EnumParse(b) && b == self.view()
-            ensures result matches Some(p) ==> p.1.len_valid(), // && p.1.len() == self.len() - 1,
-                    result matches Some(p) ==> self.view() == view_first_byte_pair(p),
+            requires t.view() matches DeclassifyingOp::EnumParse(b) && b == self.view()
+            ensures result matches Some(p) ==> self.view() == view_first_byte_pair(p),
                     result is None ==> self.view().len() == 0,
                     // t.view() == old(t).view().do_declassify()
         {
+            proof { use_type_invariant(&self) }
             if self.buf.len() == 0 {
                 None
             } else {
@@ -387,9 +407,7 @@ pub mod secret {
 
         #[verifier::external_body]
         pub fn ct_eq(&self, other: &SecretBuf, Tracked(t): Tracked<DeclassifyingOpToken>) -> (result: bool)
-            requires self.len_valid(),
-                     other.len_valid(),
-                     t.view() matches DeclassifyingOp::EqCheck(l,r) && 
+            requires t.view() matches DeclassifyingOp::EqCheck(l,r) && 
                         ((self@ == l && other@ == r) || (self@ == r && other@ == l))
             ensures  result <==> self.view() == other.view()
         {
@@ -402,13 +420,45 @@ pub mod secret {
         // TODO: if we ever have a Verus crypto library, we could connect the secret buffer type from
         // that library directly
         fn private_as_slice(&self) -> (result: &[u8])
-            requires self.len_valid()
             ensures  result.view() == self.view()
         {
             reveal(SecretBuf::len_valid);
             self.buf.as_slice()
         }
     }
+
+    // TODO: is this fine? We don't expose `len` or `subrange` directly in the secret buf interface, 
+    // but we do via the `VestSecretInput` trait
+    // If not, Owl will need a `LessSecretBuf` type and some conversion functions
+    impl vest::buf_traits::VestSecretInput for SecretBuf<'_> {
+        fn len(&self) -> usize {
+            self.buf.len()
+        }
+
+        fn subrange(&self, start: usize, end: usize) -> Self {
+            let new_buf = self.buf.another_ref().subrange(start, end);
+            reveal(SecretBuf::len_valid);
+            proof {
+                use_type_invariant(&new_buf);
+            }
+            SecretBuf { buf: new_buf }
+        }
+
+        fn clone(&self) -> Self {
+            self.another_ref()
+        }
+    }
+
+    // impl vest::buf_traits::VestSecretOutput<SecretBuf<'_>> for Vec<u8> {
+    //     fn len(&self) -> usize {
+    //         Vec::len(self)
+    //     }
+
+    //     fn set_range(&mut self, i: usize, buf: &SecretBuf<'_>) {
+    //         let slice = buf.private_as_slice();
+    //         vest::utils::set_range(self, i, slice);
+    //     }
+    // }
 
     }
 

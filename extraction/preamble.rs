@@ -127,17 +127,19 @@ pub fn owl_sample<A,'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: us
 }
 
 #[verifier(external_body)]
-pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
+pub fn owl_output_serialize_fused<A, I: VestInput, C: View + Combinator<I, Vec<u8>>>(
     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
     comb: C,
-    val: C::Result<'a>,
+    val: C::Result,
     obuf: &mut Vec<u8>,
     dest_addr: &str,
     ret_addr: &str,
-) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result<'a> as View>::V>
+) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result as View>::V>
     requires
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> 
-            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+        comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
+            b,
+            endpoint_of_addr(dest_addr.view()),
+        ),
     ensures
         t.view() == old(t).view().give_output(),
         comb@.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
