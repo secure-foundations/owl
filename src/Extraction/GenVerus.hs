@@ -1043,7 +1043,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
             {
                 reveal(#{specParse});
                 let exec_comb = exec_combinator_#{verusName}();
-                if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, Vec<u8>>>::parse(&exec_comb, arg) {
+                if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
                     let #{tupPatFields} = parsed;
                     Some (#{verusName} { #{mkStructFieldsSec} })
                 } else {

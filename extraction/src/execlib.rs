@@ -449,16 +449,54 @@ pub mod secret {
         }
     }
 
-    // impl vest::buf_traits::VestSecretOutput<SecretBuf<'_>> for Vec<u8> {
-    //     fn len(&self) -> usize {
-    //         Vec::len(self)
-    //     }
+    #[repr(transparent)]
+    pub struct SecretOutputBuf {
+        obuf: Vec<u8>
+    }
 
-    //     fn set_range(&mut self, i: usize, buf: &SecretBuf<'_>) {
-    //         let slice = buf.private_as_slice();
-    //         vest::utils::set_range(self, i, slice);
-    //     }
-    // }
+    impl View for SecretOutputBuf {
+        type V = Seq<u8>;
+
+        closed spec fn view(&self) -> Self::V {
+            self.obuf.view()
+        }
+    }
+
+    impl SecretOutputBuf {
+        fn len(&self) -> (result: usize)
+            ensures result == self.view().len()
+        {
+            self.obuf.len()
+        }
+
+        fn set_range_from_secret_buf(&mut self, i: usize, input: &SecretBuf) 
+            requires
+                0 <= i + input@.len() <= old(self)@.len() <= usize::MAX,
+            ensures
+                self@.len() == old(self)@.len() && self@ == old(self)@.subrange(0, i as int).add(
+                    input@,
+                ).add(old(self)@.subrange(i + input@.len(), self@.len() as int)),
+        {
+            let slice = input.private_as_slice();
+            vest::utils::set_range(&mut self.obuf, i, slice);
+        }
+
+        fn into_secret_buf<'x>(self) -> (result: SecretBuf<'x>)
+            ensures result.view() == self.view()
+        {
+            SecretBuf::from_buf(OwlBuf::from_vec(self.obuf))
+        }
+    }
+
+    impl vest::buf_traits::VestSecretOutput<SecretBuf<'_>> for SecretOutputBuf {
+        fn len(&self) -> usize {
+            SecretOutputBuf::len(&self)
+        }
+
+        fn set_range(&mut self, i: usize, buf: &SecretBuf<'_>) {
+            self.set_range_from_secret_buf(i, buf)
+        }
+    }
 
     }
 
