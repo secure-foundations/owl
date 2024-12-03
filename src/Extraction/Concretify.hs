@@ -101,7 +101,7 @@ concretifyTy t = do
       TVK ne -> return $ fPBuf $ Just $ FLNamed "vk"
       TEnc_PK ne -> return $ fPBuf $ Just $ FLNamed "pke_pk"
       TDH_PK ne -> return $ fPBuf $ Just $ FLNamed "group"
-      TSS ne1 ne2 -> return $ groupFormatTy
+      TSS ne1 ne2 -> return $ groupFormatTy BufSecret
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
           (i, t) <- unbind it
@@ -112,8 +112,8 @@ concretifyTy t = do
 hexConstType :: String -> FormatTy
 hexConstType s = fPBuf $ Just $ FLConst $ length s `div` 2
 
-groupFormatTy :: FormatTy
-groupFormatTy = fPBuf $ Just $ FLNamed "group"
+groupFormatTy :: BufSecrecy -> FormatTy
+groupFormatTy secrecy = FBuf secrecy $ Just $ FLNamed "group"
 
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 =
@@ -247,14 +247,15 @@ concreteTyOfApp (PRes pth) =
       PDot PTop "cipherlen" -> \_ [x] -> return FInt
       PDot PTop "pk_cipherlen" -> \_ [x] -> return FInt
       PDot PTop "vk" -> \_ [x] -> return $ fPBuf $ Just $ FLNamed "vk"
-      PDot PTop "dhpk" -> \_ [x] -> return groupFormatTy
+      PDot PTop "dhpk" -> \_ [x] -> return $ groupFormatTy BufPublic
       PDot PTop "enc_pk" -> \_ [x] -> return $ fPBuf $ Just $ FLNamed "enc_pk"
       PDot PTop "dh_combine" -> \_ [x, y] -> do
         -- We may not have this information at concretization time, but the typechecker tells us it is sound
         -- to extract dh_combine, so we don't check it here
         --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
         --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
-          return groupFormatTy
+        -- DH shared secrets should be secret buffers
+        return $ groupFormatTy BufSecret
       PDot PTop "checknonce" -> \_ [x, y] -> return FBool
       PDot PTop p -> \_ args -> do
         fs <- use funcs
@@ -572,35 +573,35 @@ tySigOfCall p = do
 
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
--- concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
---     let nk = nks !! nkidx
---     kdfLen <- kdfLenOf nks
---     outLen <- fLenOfNameKind nk
---     let kdfTy = FBuf $ Just kdfLen
---     let outTy = FBuf $ Just outLen
---     startOffset <- offsetOf nks nkidx
---     endOffset <- offsetOf nks (nkidx + 1)
---     vtopt <- lookupKdfCall nks resolvedArgs
---     (kdfVar, lets) <- case vtopt of
---         Just (var, varty) -> do
---             -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
---             unifyFormatTy varty kdfTy
---             return (var, [])
---         Nothing -> do
---             kdfVar <- do
---                 vn' <- fresh $ s2n "kdfval"
---                 fresh $ s2n (show vn')
---             let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
---             let doKdfLetBinding = (kdfVar, Nothing, doKdf)
---             memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
---             return $ (kdfVar, [doKdfLetBinding])
---     let doSlice = Typed outTy $ CRet $ Typed outTy $ 
---             CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
---     return $ withLets lets doSlice
---     -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
---     where
---         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
---         offsetOf nks idx = kdfLenOf $ take idx nks
+concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
+    let nk = nks !! nkidx
+    kdfLen <- kdfLenOf nks
+    outLen <- fLenOfNameKind nk
+    let kdfTy = fSBuf $ Just kdfLen
+    let outTy = fSBuf $ Just outLen
+    startOffset <- offsetOf nks nkidx
+    endOffset <- offsetOf nks (nkidx + 1)
+    vtopt <- lookupKdfCall nks resolvedArgs
+    (kdfVar, lets) <- case vtopt of
+        Just (var, varty) -> do
+            -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
+            unifyFormatTy varty kdfTy
+            return (var, [])
+        Nothing -> do
+            kdfVar <- do
+                vn' <- fresh $ s2n "kdfval"
+                fresh $ s2n (show vn')
+            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+            let doKdfLetBinding = (kdfVar, Nothing, doKdf)
+            memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
+            return $ (kdfVar, [doKdfLetBinding])
+    let doSlice = Typed outTy $ CRet $ Typed outTy $ 
+            CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
+    return $ withLets lets doSlice
+    -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
+    where
+        kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
+        offsetOf nks idx = kdfLenOf $ take idx nks
 concretifyCryptOp _ (CLemma _) cs = return $ noLets $ Typed FGhost $ CRet ghostUnit
 concretifyCryptOp _ CAEnc [k, x] = do
     let t = case x ^. tty of
@@ -654,14 +655,18 @@ concretifyCryptOp _ CADec [k, c] = do
 -- concretifyCryptOp _ CMacVrfy [k, x, v] = do
 --     let t = FOption $ FBuf Nothing
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac_vrfy" [k, x, v]
--- concretifyCryptOp _ CSign [k, x] = do
---     let t = FBuf $ Just $ FLNamed "signature"
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" [k, x]
--- concretifyCryptOp _ CSigVrfy [k, x, v] = do
---     let t = FOption $ FBuf Nothing
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "vrfy" [k, x, v]
+concretifyCryptOp _ CSign [k, x] = do
+    let t = fPBuf $ Just $ FLNamed "signature"
+    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" [k, x]
+concretifyCryptOp _ CSigVrfy [k, x, v] = do
+    let plaintextT = FOption $ fSBuf Nothing
+    tokName <- fresh $ s2n "declassify_tok"
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    let dop = SigVrfy (k, x, v)
+    let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "vrfy" [k, x, v, tokVar]
+    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
-    "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args " ++ show (owlpretty cargs)
+    "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args: " ++ show (tupled . map owlpretty $ cargs)
 
 
 withVars :: [(CDataVar t, t)] -> ExtractionMonad t a -> ExtractionMonad t a

@@ -373,6 +373,17 @@ pub mod secret {
             SecretBuf { buf }
         }
 
+        pub fn subrange(self, start: usize, end: usize) -> (result: SecretBuf<'x>)
+            requires 0 <= start <= end <= self.view().len(),
+            ensures  result.view() == self.view().subrange(start as int, end as int),
+        {
+            reveal(SecretBuf::len_valid);
+            let buf = self.buf.subrange(start, end);
+            proof { use_type_invariant(&buf) }
+            SecretBuf { buf }
+        }
+
+
         ///////// Declassifying operations on SecretBufs
 
         #[verifier::external_body]
@@ -569,48 +580,50 @@ pub mod secret {
     }
 
     #[verifier(external_body)]
-    pub exec fn owl_vrfy<'a>(pubkey: SecretBuf<'_>, msg: SecretBuf<'_>, signature: OwlBuf<'a>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<SecretBuf<'a>>)
+    pub exec fn owl_vrfy<'a>(pubkey: OwlBuf<'_>, msg: SecretBuf<'a>, signature: OwlBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<SecretBuf<'a>>)
         requires
             t.view() matches DeclassifyingOp::SigVrfy(pubkey_spec, msg_spec, signature_spec) 
             && pubkey@ == pubkey_spec && msg@ == msg_spec && signature@ == signature_spec
         ensures 
             view_option(x) == vrfy(pubkey.view(), msg.view(), signature.view())
     {
-        let pubkey_slice = pubkey.private_as_slice();
+        let pubkey_slice = pubkey.as_slice();
         let msg_slice = msg.private_as_slice();
         let signature_slice = signature.as_slice();
         if owl_pke::verify(pubkey_slice, signature_slice, msg_slice) {
-            Some(signature.another_ref().into_secret())
+            Some(msg.another_ref())
         } else {
             None
         }
     }
 
     // secret -> public
-    // #[verifier(external_body)]
-    // pub exec fn owl_dhpk(privkey: SecretBuf) -> (pubkey: Vec<u8>)
-    //     ensures pubkey.view() == dhpk(privkey.view())
-    // {
-    //     owl_dhke::ecdh_dhpk(privkey)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_dhpk(privkey: SecretBuf) -> (pubkey: Vec<u8>)
+        ensures pubkey.view() == dhpk(privkey.view())
+    {
+        owl_dhke::ecdh_dhpk(privkey.private_as_slice())
+    }
 
 
     // public -> secret -> secret
-    // #[verifier(external_body)]
-    // pub exec fn owl_dh_combine(pubkey: &[u8], privkey: &[u8]) -> (ss: Vec<u8>)
-    //     ensures
-    //         ss.view() == dh_combine(pubkey.view(), privkey.view())
-    // {
-    //     owl_dhke::ecdh_combine(privkey, pubkey)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_dh_combine<'a>(pubkey: SecretBuf, privkey: SecretBuf) -> (ss: SecretBuf<'a>)
+        ensures
+            ss.view() == dh_combine(pubkey.view(), privkey.view())
+    {
+        let ss = owl_dhke::ecdh_combine(privkey.private_as_slice(), pubkey.private_as_slice());
+        OwlBuf::from_vec(ss).into_secret()
+    }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_extract_expand_to_len(len: usize, salt: &[u8], ikm: &[u8], info: &[u8]) -> (h: Vec<u8>) 
-    //     ensures h.view() == kdf(len.view(), salt.view(), ikm.view(), info.view()),
-    //             h.view().len() == len
-    // {
-    //     owl_hkdf::extract_expand_to_len(ikm, salt, info, len)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_extract_expand_to_len<'a>(len: usize, salt: SecretBuf, ikm: SecretBuf, info: SecretBuf) -> (h: SecretBuf<'a>) 
+        ensures h.view() == kdf(len.view(), salt.view(), ikm.view(), info.view()),
+                h.view().len() == len
+    {
+        let h = owl_hkdf::extract_expand_to_len(ikm.private_as_slice(), salt.private_as_slice(), info.private_as_slice(), len);
+        OwlBuf::from_vec(h).into_secret()
+    }
 
     // #[verifier(external_body)]
     // pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Vec<u8>)

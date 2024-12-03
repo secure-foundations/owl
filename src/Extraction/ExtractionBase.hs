@@ -62,7 +62,8 @@ data Env t = Env {
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
-    ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local names so we know their types
+    ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
+    ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
 }
 
 
@@ -173,7 +174,8 @@ liftExtractionMonad m = do
             _funcs = env' ^. funcs,
             _owlUserFuncs = env' ^. owlUserFuncs,
             _memoKDF = [],
-            _genVerusNameEnv = M.empty
+            _genVerusNameEnv = M.empty,
+            _genVerusPkEnv = M.empty
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -206,7 +208,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l

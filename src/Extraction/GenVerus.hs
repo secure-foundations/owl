@@ -127,7 +127,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName maybeLt True) $ ldata ^. sharedNames
     let (pkDecls, pkInits) = unzip . map (genVerusPk maybeLt True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
-    execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
+    execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) pubkeys $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
     return [__di|
     pub struct #{stateName} {
         #{vsep . punctuate comma $ ctrDecls}
@@ -180,12 +180,15 @@ genVerusCtr counterName =
 -- nameTy :: VerusTy
 -- nameTy = vecU8
 
-withCurNameEnv :: [VNameData] -> EM a -> EM a
-withCurNameEnv vnames m = do
+withCurNameEnv :: [VNameData] -> [VNameData] -> EM a -> EM a
+withCurNameEnv vnames pubkeys m = do
     let vnameMap = M.fromList . map (\(n,l,i,s) -> (n, (n,l,i,s))) $ vnames
+    let pkMap = M.fromList . map (\(n,l,i,s) -> (n, (n,l,i,s))) $ pubkeys
     genVerusNameEnv .= vnameMap
+    genVerusPkEnv .= pkMap
     res <- m
     genVerusNameEnv .= M.empty
+    genVerusPkEnv .= M.empty
     return res
 
 buftyOfSecrecy :: BufSecrecy -> VerusTy
@@ -196,6 +199,13 @@ lookupNameBufTy :: String -> EM VerusTy
 lookupNameBufTy n = do
     vnameMap <- use genVerusNameEnv
     case vnameMap M.!? n of
+        Just (_, _, _, secrecy) -> return $ buftyOfSecrecy secrecy
+        Nothing -> throwError $ UndefinedSymbol n
+
+lookupPkBufTy :: String -> EM VerusTy
+lookupPkBufTy n = do
+    pkMap <- use genVerusPkEnv
+    case pkMap M.!? n of
         Just (_, _, _, secrecy) -> return $ buftyOfSecrecy secrecy
         Nothing -> throwError $ UndefinedSymbol n
 
@@ -241,26 +251,26 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
     builtins' = M.fromList [
           ("enc", ([secBuf, secBuf, secBuf], vecU8))
         , ("dec", ([secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
-        , ("sign", ([u8slice, u8slice], vecU8))
-        , ("vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        , ("dhpk", ([u8slice], vecU8))
-        , ("dh_combine", ([u8slice, u8slice], vecU8))
-        , ("mac", ([u8slice, u8slice], vecU8))
-        , ("mac_vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        , ("pkenc", ([u8slice, u8slice], vecU8))
-        , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
-        , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
-        , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        , ("is_group_elem", ([u8slice], RTBool))
-        , ("crh", ([u8slice], vecU8))
-        , ("concat", ([u8slice, u8slice], vecU8))
-        , ("xor", ([u8slice, u8slice], vecU8))
+        , ("sign", ([secBuf, owlBuf], vecU8))
+        , ("vrfy", ([owlBuf, secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
+        , ("dhpk", ([secBuf], vecU8))
+        , ("dh_combine", ([secBuf, secBuf], secBuf))
+        -- , ("mac", ([u8slice, u8slice], vecU8))
+        -- , ("mac_vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
+        -- , ("pkenc", ([u8slice, u8slice], vecU8))
+        -- , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
+        -- , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
+        -- , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
+        -- , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
+        -- , ("is_group_elem", ([u8slice], RTBool))
+        -- , ("crh", ([u8slice], vecU8))
+        -- , ("concat", ([u8slice, u8slice], vecU8))
+        -- , ("xor", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
-          ("kdf", ("owl_extract_expand_to_len", [RTUsize, u8slice, u8slice, u8slice], vecU8))
+          ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, secBuf], secBuf))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)
@@ -351,6 +361,7 @@ genVerusCAExpr ae = do
                             castEnd <- castGRE end' RTUsize
                             case buf' ^. eTy of
                                 RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ OwlBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
+                                RTSecBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ SecretBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         (f, [x]) | "?" `isSuffixOf` f -> do
@@ -387,13 +398,13 @@ genVerusCAExpr ae = do
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetEncPK n -> do
             let rustN = execName n
-            nameTy <- lookupNameBufTy n
+            nameTy <- lookupPkBufTy $ n
             castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
             -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetVK n -> do
             let rustN = execName n
-            nameTy <- lookupNameBufTy n
+            nameTy <- lookupPkBufTy n
             castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
             -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
@@ -1009,7 +1020,6 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
                             _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
             mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTOwlBuf (Lifetime lifetimeConst)) fname fty) fields
-            mkStructFieldsSec <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTSecBuf (Lifetime lifetimeConst)) fname fty) fields
             -- let mkFieldVec fname fty = do
             --         mkf <- case fty of
             --                 RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
@@ -1034,23 +1044,26 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
                 }
             }
             |]
-            let secretParse = if isSecret then [__di|
-            pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
-                ensures
-                    res is Some ==> #{specParse}(arg.view()) is Some,
-                    res is None ==> #{specParse}(arg.view()) is None,
-                    res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
-            {
-                reveal(#{specParse});
-                let exec_comb = exec_combinator_#{verusName}();
-                if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
-                    let #{tupPatFields} = parsed;
-                    Some (#{verusName} { #{mkStructFieldsSec} })
-                } else {
-                    None
-                }
-            }
-            |] else [di||]
+            secretParse <- if isSecret then do
+                    mkStructFieldsSec <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTSecBuf (Lifetime lifetimeConst)) fname fty) fields
+                    return [__di|
+                    pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                        ensures
+                            res is Some ==> #{specParse}(arg.view()) is Some,
+                            res is None ==> #{specParse}(arg.view()) is None,
+                            res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    {
+                        reveal(#{specParse});
+                        let exec_comb = exec_combinator_#{verusName}();
+                        if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
+                            let #{tupPatFields} = parsed;
+                            Some (#{verusName} { #{mkStructFieldsSec} })
+                        } else {
+                            None
+                        }
+                    }
+                    |] 
+                else return [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
