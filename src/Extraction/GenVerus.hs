@@ -262,15 +262,15 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         -- , ("enc_st_aead", ([u8slice, u8slice, u8slice, u8slice], vecU8)) 
         -- , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
         -- , ("dec_st_aead", ([u8slice, u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        -- , ("is_group_elem", ([u8slice], RTBool))
-        -- , ("crh", ([u8slice], vecU8))
+        , ("is_group_elem", ([secBuf], RTBool))
+        , ("crh", ([secBuf], secBuf))
         -- , ("concat", ([u8slice, u8slice], vecU8))
         -- , ("xor", ([u8slice, u8slice], vecU8))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
-          ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, secBuf], secBuf))
+          ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, owlBuf], secBuf))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)

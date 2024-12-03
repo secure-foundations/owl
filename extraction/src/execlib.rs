@@ -515,6 +515,34 @@ pub mod secret {
         }
     }
 
+
+    impl<'a> vest::buf_traits::VestSecretOutput<&'a [u8]> for SecretOutputBuf {
+        fn len(&self) -> usize {
+            SecretOutputBuf::len(&self)
+        }
+
+        fn set_range(&mut self, i: usize, buf: &&[u8]) {
+            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(*buf).into_secret())
+        }
+    }
+
+    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
+        fn set_byte(&mut self, i: usize, value: u8) {
+            assume(self.obuf@.len() < usize::MAX); // TODO: why doesn't Verus figure this out?
+            let ghost old_self = self@;
+            let value_arr = [value];
+            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(value_arr.as_slice()).into_secret());
+            proof {
+                assert(self.obuf@[i as int] == value);
+                assert_seqs_equal!(self.obuf@, old_self.update(i as int, value));
+            }
+        }
+
+        fn set_byte_range(&mut self, i: usize, buf: &[u8]) {
+            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(buf).into_secret())
+        }
+    }
+
     }
 
 
@@ -617,11 +645,11 @@ pub mod secret {
     }
 
     #[verifier(external_body)]
-    pub exec fn owl_extract_expand_to_len<'a>(len: usize, salt: SecretBuf, ikm: SecretBuf, info: SecretBuf) -> (h: SecretBuf<'a>) 
+    pub exec fn owl_extract_expand_to_len<'a>(len: usize, salt: SecretBuf, ikm: SecretBuf, info: OwlBuf) -> (h: SecretBuf<'a>) 
         ensures h.view() == kdf(len.view(), salt.view(), ikm.view(), info.view()),
                 h.view().len() == len
     {
-        let h = owl_hkdf::extract_expand_to_len(ikm.private_as_slice(), salt.private_as_slice(), info.private_as_slice(), len);
+        let h = owl_hkdf::extract_expand_to_len(ikm.private_as_slice(), salt.private_as_slice(), info.as_slice(), len);
         OwlBuf::from_vec(h).into_secret()
     }
 
@@ -805,7 +833,7 @@ pub mod secret {
     // }
 
     #[verifier(external_body)]
-    pub exec fn owl_is_group_elem(x: &[u8]) -> (b: bool)
+    pub exec fn owl_is_group_elem(x: SecretBuf) -> (b: bool)
         ensures b == is_group_elem(x.view())
     {
         // todo!("implement is_group_elem")
@@ -813,10 +841,11 @@ pub mod secret {
     }
 
     #[verifier(external_body)]
-    pub exec fn owl_crh(x: &[u8]) -> (res: Vec<u8>)
+    pub exec fn owl_crh<'a>(x: SecretBuf) -> (res: SecretBuf<'a>)
         ensures res.view() == crh(x.view())
     {
-        owl_hmac::blake2s(x)
+        let h = owl_hmac::blake2s(x.private_as_slice());
+        OwlBuf::from_vec(h).into_secret()
     }
 
     #[verifier(external_body)]
