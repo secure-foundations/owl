@@ -1067,7 +1067,39 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
                     RTSecBuf l -> RTSecBuf l
                     _ -> u8slice
             fieldsAsInner <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
-            let ser = [__di|
+            ser <- if isSecret then return [__di|
+            pub exec fn #{execSerInner}<'#{lifetimeConst}>(arg: &#{verusName}<'#{lifetimeConst}>) -> (res: Option<SecretBuf<'#{lifetimeConst}>>)
+                ensures
+                    res is Some ==> #{specSerInner}(arg.view()) is Some,
+                    // res is None ==> #{specSerInner}(arg.view()) is None,
+                    res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+            {
+                reveal(#{specSerInner});
+                if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
+                    let exec_comb = exec_combinator_#{verusName}();
+                    let mut obuf = SecretOutputBuf::new_obuf(#{(hsep . punctuate (pretty "+")) lens});
+                    let ser_result = exec_comb.serialize(#{fieldsAsInner}, &mut obuf, 0);
+                    if let Ok((num_written)) = ser_result {
+                        assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
+                        Some(obuf.into_secret_buf())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            \#[inline]
+            pub exec fn #{execSer}<'#{lifetimeConst}>(arg: &#{verusName}<'#{lifetimeConst}>) -> (res: SecretBuf<'#{lifetimeConst}>)
+                ensures  res.view() == #{specSer}(arg.view())
+            {
+                reveal(#{specSer});
+                let res = #{execSerInner}(arg);
+                assume(res is Some);
+                res.unwrap()
+            }
+            |]
+            else return [__di|
             pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
@@ -1444,6 +1476,8 @@ cast (v, RTStruct t fs) (RTRef RShared (RTSlice RTU8)) = do
 cast (v, RTStruct t fs) (RTOwlBuf l) = do
     c1 <- cast (v, RTStruct t fs) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
+cast (v, RTStruct t fs) (RTSecBuf l) = -- TODO: Concretify should catch cases where this won't work
+    return [di|serialize_#{t}(&#{v})|]
 cast (v, RTEnum t cs) (RTVec RTU8) = 
     return [di|serialize_#{t}(&#{v})|]
 cast (v, RTEnum t cs) (RTRef RShared (RTSlice RTU8)) = do
