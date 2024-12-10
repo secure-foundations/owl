@@ -291,38 +291,6 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
-                        -- ("enc_st_aead_builder", [k, x, nonce, aad]) -> do
-                        --     k' <- genVerusCAExpr k
-                        --     x' <- genVerusCAExpr x
-                        --     nonce' <- genVerusCAExpr nonce
-                        --     aad' <- genVerusCAExpr aad
-                        --     castK <- castGRE k' u8slice
-                        --     castX <- castGRE x' u8slice
-                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
-                        --     castAad <- castGRE aad' u8slice
-                        --     castRes <- cast ([di|ctxt|], RTStAeadBuilder) (ae ^. tty)
-                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
-                        --         match owl_enc_st_aead_builder(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                        --             Ok(ctxt) => { #{castRes} },
-                        --             Err(e) => { return Err(e) },
-                        --         }                                
-                        --     }|]
-                        -- ("enc_st_aead", [k, x, nonce, aad]) -> do
-                        --     k' <- genVerusCAExpr k
-                        --     x' <- genVerusCAExpr x
-                        --     nonce' <- genVerusCAExpr nonce
-                        --     aad' <- genVerusCAExpr aad
-                        --     castK <- castGRE k' u8slice
-                        --     castX <- castGRE x' u8slice
-                        --     castNonce <- castGRE nonce' (RTRef RMut RTUsize)
-                        --     castAad <- castGRE aad' u8slice
-                        --     castRes <- cast ([di|ctxt|], vecU8) (ae ^. tty)
-                        --     return $ GenRustExpr (ae ^. tty) $ [__di|{ 
-                        --         match owl_enc_st_aead(#{castK}, #{castX}, #{castNonce}, #{castAad}) {
-                        --             Ok(ctxt) => { #{castRes} },
-                        --             Err(e) => { return Err(e) },
-                        --         }                                
-                        --     }|]
                         ("true", []) -> return $ GenRustExpr RTBool [di|true|] 
                         ("false", []) -> return $ GenRustExpr RTBool [di|false|] 
                         ("Some", [x]) -> do
@@ -378,7 +346,7 @@ genVerusCAExpr ae = do
                                     args'' <- zipWithM castGRE args' ftys
                                     return $ GenRustExpr (ae ^. tty) [di|#{execName f}(#{hsep . punctuate comma $ args''})|]
                                 RTEnum n cs | elem (execName f) (map fst cs) && length args == 1 -> do
-                                    -- Special case for struct constructors
+                                    -- Special case for enum constructors
                                     let [arg] = args
                                     arg' <- genVerusCAExpr arg
                                     cty <- case lookup (execName f) cs of
@@ -1458,6 +1426,8 @@ cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
 cast (v, RTArray RTU8 _) (RTOwlBuf _) =
     return [di|OwlBuf::from_slice(&#{v})|]
+cast (v, RTArray RTU8 _) (RTSecBuf _) =
+    return [di|OwlBuf::from_slice(&#{v}).into_secret()|]
 cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
 cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) = 

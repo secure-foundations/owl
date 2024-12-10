@@ -766,22 +766,22 @@ pub mod secret {
     // }
 
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_enc_st_aead(k: SecretBuf<'_>, msg: SecretBuf<'_>, iv: SecretBuf<'_>, aad: SecretBuf<'_>) -> (res: Vec<u8>)
-    //     ensures
-    //         res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
-    // {
-    //     let mut iv_sized = iv.to_vec();
-    //     iv_sized.resize(NONCE_SIZE, 0u8);
-    //     let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv_sized[..], aad) {
-    //         Ok(c) => c,
-    //         Err(_e) => {
-    //             // dbg!(e);
-    //             vec![]
-    //         }
-    //     };
-    //     res
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_enc_st_aead(k: SecretBuf<'_>, msg: SecretBuf<'_>, iv: SecretBuf<'_>, aad: SecretBuf<'_>) -> (res: Vec<u8>)
+        ensures
+            res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
+    {
+        let mut iv_sized = iv.private_as_slice().to_vec();
+        iv_sized.resize(NONCE_SIZE, 0u8);
+        let res = match owl_aead::encrypt_combined(CIPHER, k.private_as_slice(), msg.private_as_slice(), &iv_sized[..], aad.private_as_slice()) {
+            Ok(c) => c,
+            Err(_e) => {
+                // dbg!(e);
+                vec![]
+            }
+        };
+        res
+    }
 
     // // #[verifier(external_body)]
     // // pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Ghost<Seq<u8>>, OwlError>)
@@ -811,26 +811,26 @@ pub mod secret {
     // // }
 
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_dec_st_aead(k: SecretBuf<'_>, c: OwlBuf<'_>, nonce: SecretBuf<'_>, aad: SecretBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<Vec<u8>>)
-    //     requires
-    //         t.view() matches DeclassifyingOp::StAeadDec(k_spec, c_spec, nonce_spec, aad_spec) 
-    //         && k@ == k_spec && c@ == c_spec && nonce@ == nonce_spec && aad@ == aad_spec
-    //     ensures
-    //         view_option(x) == dec_st_aead(k.view(), c.view(), nonce.view(), aad.view())
-    //         // (k.view().len() == crate::KEY_SIZE && dec(k.view(), c.view()).is_Some()) ==>
-    //         //     x.is_Some() && x.get_Some_0().view() == dec(k.view(), c.view()).get_Some_0(),
-    //         // dec(k.view(), c.view()).is_None() ==> x.is_None(),
-    //         // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
-    // {
-    //     match owl_aead::decrypt_combined(CIPHER, k, &c, nonce, aad) {
-    //         Ok(p) => Some(p),
-    //         Err(_e) => {
-    //             // dbg!(e);
-    //             None
-    //         }
-    //     }
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_dec_st_aead<'a>(k: SecretBuf<'_>, c: OwlBuf<'a>, nonce: SecretBuf<'_>, aad: SecretBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<SecretBuf<'a>>)
+        requires
+            t.view() matches DeclassifyingOp::StAeadDec(k_spec, c_spec, nonce_spec, aad_spec) 
+            && k@ == k_spec && c@ == c_spec && nonce@ == nonce_spec && aad@ == aad_spec
+        ensures
+            view_option(x) == dec_st_aead(k.view(), c.view(), nonce.view(), aad.view())
+            // (k.view().len() == crate::KEY_SIZE && dec(k.view(), c.view()).is_Some()) ==>
+            //     x.is_Some() && x.get_Some_0().view() == dec(k.view(), c.view()).get_Some_0(),
+            // dec(k.view(), c.view()).is_None() ==> x.is_None(),
+            // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
+    {
+        match owl_aead::decrypt_combined(CIPHER, k.private_as_slice(), c.as_slice(), nonce.private_as_slice(), aad.private_as_slice()) {
+            Ok(p) => Some(OwlBuf::from_vec(p).into_secret()),
+            Err(_e) => {
+                // dbg!(e);
+                None
+            }
+        }
+    }
 
     #[verifier(external_body)]
     pub exec fn owl_is_group_elem(x: SecretBuf) -> (b: bool)

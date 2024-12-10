@@ -124,10 +124,6 @@ unifyFormatTy t1 t2 =
             return $ FBuf s1 $ Just l
         (FDummy, t2) -> return t2
         (t1, FDummy) -> return t1
-        (FBuf BufSecret Nothing, FBuf BufSecret _) -> return $ FBuf BufSecret Nothing
-        (FBuf BufSecret _, FBuf BufSecret Nothing) -> return $ FBuf BufSecret Nothing
-        (FBuf BufPublic Nothing, _) -> return $ FBuf BufPublic Nothing
-        (_, FBuf BufPublic Nothing) -> return $ FBuf BufPublic Nothing
         (FInt, FBuf BufPublic (Just (FLNamed "counter"))) -> return $ fPBuf $ Just $ FLNamed "counter"
         (FBuf BufPublic (Just (FLNamed "counter")), FInt) -> return $ fPBuf $ Just $ FLNamed "counter"
         (FOption t1', FOption t2') -> do
@@ -141,6 +137,16 @@ unifyFormatTy t1 t2 =
         (FBuf BufPublic (Just flen), FHexConst s) -> do
             unifyFLen flen $ FLConst $ length s `div` 2
             return $ fPBuf $ Just flen
+        (FBuf BufSecret Nothing, FBuf BufSecret _) -> return $ FBuf BufSecret Nothing
+        (FBuf BufSecret _, FBuf BufSecret Nothing) -> return $ FBuf BufSecret Nothing
+        (FBuf BufSecret l1, FBuf BufPublic l2) -> do
+            debugPrint $ "WARNING: unifying secret and public buffer as secret: " ++ show (owlpretty t1) ++ " and " ++ show (owlpretty t2)
+            unifyFormatTy (FBuf BufSecret l1) (FBuf BufSecret l2)
+        (FBuf BufPublic l1, FBuf BufSecret l2) -> do
+            debugPrint $ "WARNING: unifying secret and public buffer as secret: " ++ show (owlpretty t1) ++ " and " ++ show (owlpretty t2)
+            unifyFormatTy (FBuf BufSecret l1) (FBuf BufSecret l2)
+        (FBuf BufPublic Nothing, _) -> return $ FBuf BufPublic Nothing
+        (_, FBuf BufPublic Nothing) -> return $ FBuf BufPublic Nothing
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ show (owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 unifyFLen :: FLen -> FLen -> EM FLen
@@ -578,7 +584,7 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     kdfLen <- kdfLenOf nks
     outLen <- fLenOfNameKind nk
     let kdfTy = fSBuf $ Just kdfLen
-    let outTy = fSBuf $ Just outLen
+    let kdfOutTy = fSBuf $ Just outLen
     startOffset <- offsetOf nks nkidx
     endOffset <- offsetOf nks (nkidx + 1)
     vtopt <- lookupKdfCall nks resolvedArgs
@@ -595,9 +601,16 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
             let doKdfLetBinding = (kdfVar, Nothing, doKdf)
             memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
             return $ (kdfVar, [doKdfLetBinding])
-    let doSlice = Typed outTy $ CRet $ Typed outTy $ 
+    let doSlice = Typed kdfOutTy $ CRet $ Typed kdfOutTy $ 
             CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
-    return $ withLets lets doSlice
+    sec <- secrecyOfNameKind nk
+    case sec of
+        BufSecret -> return $ withLets lets doSlice
+        BufPublic -> do
+            sliceVar <- fresh $ s2n "kdf_slice"
+            let actualOutTy = fPBuf $ Just outLen
+            let dop = ControlFlow $ Typed kdfOutTy $ CAVar (ignore "kdf_slice") sliceVar
+            return $ withLets lets $ Typed actualOutTy $ CItreeDeclassify dop $ bind sliceVar doSlice
     -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
     where
         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
@@ -619,30 +632,34 @@ concretifyCryptOp _ CADec [k, c] = do
     let dop = ADec (k, c)
     let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "dec" [k, c, tokVar]
     return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
--- concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
---     (patx, patbody) <- unbind xpat
---     nonce <- concretifyPath np
---     let t = case x ^. tty of
---             FBuf BufSecret (Just fl) -> FBuf $ Just $ FLCipherlen fl
---             _ -> FBuf Nothing
---     -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
---     ctrVar <- fresh $ s2n nonce
---     let ctrTy = FBuf $ Just $ FLNamed "counter"
---     let getCtr = (ctrVar, Nothing, Typed ctrTy $ CGetCtr nonce)
---     incVar <- fresh $ s2n "_"
---     let incCtr = (incVar, Nothing, Typed FUnit $ CIncCtr nonce)
---     let getInc = [getCtr, incCtr]
---     (ivVar, mkIv) <- case patbody ^. val of
---         AEVar _ patx' | patx `aeq` patx' -> return (CAVar (ignore nonce) ctrVar, [])
---         _ -> do 
---             let patbodySubst = subst patx (mkSpanned $ AEVar (ignore nonce) (castName ctrVar)) patbody
---             iv <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
---             let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
---             return (CAVar (ignore $ name2String patx) $ castName patx, mkIv)
---     return $ withLets (getInc ++ mkIv) $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
--- concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
---     let t = FOption $ FBuf Nothing
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "dec_st_aead" [k, c, nonce, aad]
+concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
+    (patx, patbody) <- unbind xpat
+    nonce <- concretifyPath np
+    let t = case x ^. tty of
+            FBuf BufSecret (Just fl) -> FBuf BufPublic $ Just $ FLCipherlen fl
+            _ -> FBuf BufPublic Nothing
+    -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
+    ctrVar <- fresh $ s2n nonce
+    let ctrTy = fSBuf $ Just $ FLNamed "counter"
+    let getCtr = (ctrVar, Nothing, Typed ctrTy $ CGetCtr nonce)
+    incVar <- fresh $ s2n "_"
+    let incCtr = (incVar, Nothing, Typed FUnit $ CIncCtr nonce)
+    let getInc = [getCtr, incCtr]
+    (ivVar, mkIv) <- case patbody ^. val of
+        AEVar _ patx' | patx `aeq` patx' -> return (CAVar (ignore nonce) ctrVar, [])
+        _ -> do 
+            let patbodySubst = subst patx (mkSpanned $ AEVar (ignore nonce) (castName ctrVar)) patbody
+            iv <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
+            let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
+            return (CAVar (ignore $ name2String patx) $ castName patx, mkIv)
+    return $ withLets (getInc ++ mkIv) $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
+concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
+    let plaintextT = FOption $ fSBuf Nothing
+    tokName <- fresh $ s2n "declassify_tok"
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    let dop = StAeadDec (k, c, nonce, aad)
+    let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "dec_st_aead" [k, c, nonce, aad, tokVar]
+    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
 -- concretifyCryptOp _ CPKEnc [k, x] = do
 --     let t = FBuf Nothing
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkenc" [k, x]
