@@ -264,8 +264,10 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("dec_st_aead", ([secBuf, owlBuf, secBuf, secBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         , ("is_group_elem", ([secBuf], RTBool))
         , ("crh", ([secBuf], secBuf))
-        -- , ("concat", ([u8slice, u8slice], vecU8))
-        -- , ("xor", ([u8slice, u8slice], vecU8))
+        , ("concat", ([u8slice, u8slice], vecU8))
+        , ("secret_concat", ([secBuf, secBuf], secBuf))
+        , ("xor", ([u8slice, u8slice], vecU8))
+        , ("secret_xor", ([secBuf, secBuf], secBuf))
         -- , ("bytes_as_counter", ([u8slice], RTUsize))
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
@@ -277,6 +279,10 @@ genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCAExpr ae = do
     case ae ^. tval of
         CAVar s v -> return $ GenRustExpr { _code = pretty $ execName $ show v, _eTy = ae ^. tty }
+        CACast ae dstTy -> do
+            ae' <- genVerusCAExpr ae
+            ae'' <- castGRE ae' (ae' ^. eTy)
+            return $ GenRustExpr { _code = ae'', _eTy = dstTy }
         CAApp f args -> do
             case builtins M.!? f of
                 Just (fExecName, argDstTys, rSrcTy) -> do

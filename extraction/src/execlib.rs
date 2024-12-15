@@ -438,6 +438,13 @@ pub mod secret {
         }
     }
 
+    pub fn owl_secret_concat<'a>(a: SecretBuf<'a>, b: SecretBuf<'_>) -> (res: SecretBuf<'a>)
+        ensures res.view() == concat(a.view(), b.view())
+    {
+        let v = owl_concat(a.private_as_slice(), b.private_as_slice());
+        SecretBuf::from_buf(OwlBuf::from_vec(v))
+    }
+
     // TODO: is this fine? We don't expose `len` or `subrange` directly in the secret buf interface, 
     // but we do via the `VestSecretInput` trait
     // If not, Owl will need a `LessSecretBuf` type and some conversion functions
@@ -872,6 +879,14 @@ pub mod secret {
             res.set(i, a[i] ^ b[i]);
         }
         res
+    }
+
+    #[verifier(external_body)]
+    pub exec fn owl_secret_xor<'a>(a: SecretBuf<'a>, b: SecretBuf<'_>) -> (res: SecretBuf<'a>)
+        ensures res.view() == xor(a.view(), b.view())
+    {
+        let v = owl_xor(a.private_as_slice(), b.private_as_slice());
+        SecretBuf::from_buf(OwlBuf::from_vec(v))
     }
 
     } // verus!

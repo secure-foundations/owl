@@ -423,7 +423,7 @@ extractVar n = do
 -- Since we `zip` the arg types with the provided args, this means that in spec, the 
 -- declassification tokens are not printed in the function call, as required.
 specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
-specBuiltins = M.mapWithKey addSpecName builtins' where
+specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins where
     addSpecName n (args, rty) = (n, args, rty)
     builtins' = M.fromList [
           ("enc", ([seqU8, seqU8, seqU8], seqU8))
@@ -444,10 +444,12 @@ specBuiltins = M.mapWithKey addSpecName builtins' where
         , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
         , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
         , ("xor", ([seqU8, seqU8], seqU8))
+        , ("concat", ([seqU8, seqU8], seqU8))
         ]
-    -- diffNameBuiltins = M.fromList [
-    --       ("kdf", ("extract_expand_to_len", [seqU8, seqU8, seqU8, seqU8], seqU8))
-    --     ]
+    diffNameBuiltins = M.fromList [
+            ("secret_concat", ("concat", [seqU8, seqU8], seqU8))
+        ,   ("secret_xor", ("xor", [seqU8, seqU8], seqU8))
+        ]
 
 -- Extract the DeclassifyingOpToken and the function call
 extractDeclassifyingOp :: DeclassifyingOp FormatTy -> EM (Doc ann)

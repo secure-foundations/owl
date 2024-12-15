@@ -211,81 +211,92 @@ flenOfFormatTy FGhost = Just $ FLConst 0
 flenOfFormatTy FInt = Just $ FLConst 32 -- todo?
 flenOfFormatTy _ = Nothing
 
-concreteTyOfApp :: Path -> [FuncParam] -> [FormatTy] -> EM FormatTy
-concreteTyOfApp (PRes pth) =
-    case pth of
-      PDot PTop "unit" -> \_ _ -> return FUnit
-      PDot PTop "true" -> \_ _ -> return FBool
-      PDot PTop "false" -> \_ _ -> return FBool
-      PDot PTop "eq" -> \_ [x, y] -> do
-            unifyFormatTy x y
-            return FBool
-      PDot PTop "Some" -> \_ [x] -> return $ FOption x
-      PDot PTop "None" -> \params [] -> do
-            case params of
-                [ParamTy owlT] -> do
-                    t <- concretifyTy owlT
-                    return $ FOption t
-                _ -> do
-                    -- This is probably fine, since some other branch should constrain the type
-                    debugPrint "WARNING: Can't infer type of None, using dummy type"
-                    return $ FOption FDummy
-      PDot PTop "andb" -> \_ [x, y] -> return FBool
-      PDot PTop "andp" -> \_ [x, y] -> return FGhost
-      PDot PTop "notb" -> \_ [x] -> return FBool
-      PDot PTop "length" -> \_ [x] -> return FInt
-      PDot PTop "plus" -> \_ [x, y] -> return FInt
-      PDot PTop "crh" -> \_ [x] -> return $ fPBuf $ Just $ FLNamed "crh" -- TODO: secrecy for crh
-      PDot PTop "mult" -> \_ [x, y] -> return FInt
-      PDot PTop "zero" -> \_ [] -> return FInt
-      PDot PTop "is_group_elem" -> \_ [x] -> return FBool
-      PDot PTop "concat" -> \_ [x, y] -> do
-          case (flenOfFormatTy x, flenOfFormatTy y) of
-            (Nothing, _) -> return $ fPBuf Nothing
-            (_, Nothing) -> return $ fPBuf Nothing
-            (Just x, Just y) -> return $ fPBuf $ Just $ FLPlus x y -- TODO: concat must use public inputs
-      PDot PTop "xor" -> \_ [x, y] -> do
-        return $ fPBuf Nothing
-        --   t <- unifyFormatTy x y
-        --   case t of
-        --     FBuf _ -> return t
-        --     _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
-      PDot PTop "cipherlen" -> \_ [x] -> return FInt
-      PDot PTop "pk_cipherlen" -> \_ [x] -> return FInt
-      PDot PTop "vk" -> \_ [x] -> return $ fPBuf $ Just $ FLNamed "vk"
-      PDot PTop "dhpk" -> \_ [x] -> return $ groupFormatTy BufPublic
-      PDot PTop "enc_pk" -> \_ [x] -> return $ fPBuf $ Just $ FLNamed "enc_pk"
-      PDot PTop "dh_combine" -> \_ [x, y] -> do
-        -- We may not have this information at concretization time, but the typechecker tells us it is sound
-        -- to extract dh_combine, so we don't check it here
-        --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
-        --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
-        -- DH shared secrets should be secret buffers
-        return $ groupFormatTy BufSecret
-      PDot PTop "checknonce" -> \_ [x, y] -> return FBool
-      PDot PTop p -> \_ args -> do
-        fs <- use funcs
-        case fs M.!? p of
-            Just (argTys, retTy) -> do
-                when (length argTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
-                forM_ (zip argTys args) $ \(t, a) -> do
-                    if t == FGhost || a == FGhost then return ()
-                    else do
-                        unifyFormatTy t a
-                        return ()
-                return retTy
-            Nothing -> do
-                oufs <- use owlUserFuncs
-                case oufs M.!? p of
-                    Just (ufdef, rtyOpt) -> do
-                        case rtyOpt of
-                            Just rty -> return rty
-                            Nothing -> rtyOfUserFunc p ufdef
-                    Nothing -> do
-                        throwError $ UndefinedSymbol $ show . owlpretty $ p
-      _ -> \_ _ -> do
-        throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
-concreteTyOfApp _ = \_ _ -> do
+concretifyApp :: Path -> [FuncParam] -> [FormatTy] -> EM (String, FormatTy)
+concretifyApp (PRes (PDot PTop f)) =
+    case f of
+        "unit" -> \_ _ -> return $ (,) f FUnit
+        "true" -> \_ _ -> return $ (,) f FBool
+        "false" -> \_ _ -> return$ (,) f  FBool
+        "eq" -> \_ [x, y] -> do
+                unifyFormatTy x y
+                return $ (,) f FBool
+        "Some" -> \_ [x] -> return $ (,) f $ FOption x
+        "None" -> \params [] -> do
+                case params of
+                    [ParamTy owlT] -> do
+                        t <- concretifyTy owlT
+                        return $ (,) f $ FOption t
+                    _ -> do
+                        -- This is probably fine, since some other branch should constrain the type
+                        debugPrint "WARNING: Can't infer type of None, using dummy type"
+                        return $ (,) f $  FOption FDummy
+        "andb" -> \_ [x, y] -> return $ (,) f FBool
+        "andp" -> \_ [x, y] -> return $ (,) f FGhost
+        "notb" -> \_ [x] -> return $ (,) f FBool
+        "length" -> \_ [x] -> return $ (,) f FInt
+        "plus" -> \_ [x, y] -> return $ (,) f FInt
+        "crh" -> \_ [x] -> return $ (,) f $ fPBuf $ Just $ FLNamed "crh" -- TODO: secrecy for crh
+        "mult" -> \_ [x, y] -> return $ (,) f FInt
+        "zero" -> \_ [] -> return $ (,) f FInt
+        "is_group_elem" -> \_ [x] -> return $ (,) f FBool
+        "concat" -> \_ [x, y] -> do
+                let concatLen = case (flenOfFormatTy x, flenOfFormatTy y) of
+                        (Nothing, _) -> Nothing
+                        (_, Nothing) -> Nothing
+                        (Just x, Just y) -> Just $ FLPlus x y -- TODO: concat must use public inputs
+                let (concatName, concatSecrecy) = case (x, y) of
+                        -- TODO: need to account for serialization here
+                        (FBuf BufSecret _, _) -> ("secret_concat", BufSecret)
+                        (_, FBuf BufSecret _) -> ("secret_concat", BufSecret)
+                        _ -> ("concat", BufPublic)
+                return (concatName, FBuf concatSecrecy concatLen)
+        "xor" -> \_ [x, y] -> do
+            let (xorName, xorSecrecy) = case (x, y) of
+                    -- TODO: need to account for serialization here
+                    (FBuf BufSecret _, _) -> ("secret_xor", BufSecret)
+                    (_, FBuf BufSecret _) -> ("secret_xor", BufSecret)
+                    _ -> ("xor", BufPublic)
+            return (xorName, FBuf xorSecrecy Nothing)
+            --   t <- unifyFormatTy x y
+            --   case t of
+            --     FBuf _ -> return t
+            --     _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
+        "cipherlen" -> \_ [x] -> return $ (,) f FInt
+        "pk_cipherlen" -> \_ [x] -> return $ (,) f FInt
+        "vk" -> \_ [x] -> return $ (,) f $ fPBuf $ Just $ FLNamed "vk"
+        "dhpk" -> \_ [x] -> return $ (,) f $ groupFormatTy BufPublic
+        "enc_pk" -> \_ [x] -> return $ (,) f $ fPBuf $ Just $ FLNamed "enc_pk"
+        "dh_combine" -> \_ [x, y] -> do
+            -- We may not have this information at concretization time, but the typechecker tells us it is sound
+            -- to extract dh_combine, so we don't check it here
+            --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
+            --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
+            -- DH shared secrets should be secret buffers
+            return $ (,) f $ groupFormatTy BufSecret
+        "checknonce" -> \_ [x, y] -> return $ (,) f FBool
+        p -> \_ args -> do
+            fs <- use funcs
+            case fs M.!? p of
+                Just (argTys, retTy) -> do
+                    when (length argTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
+                    forM_ (zip argTys args) $ \(t, a) -> do
+                        if t == FGhost || a == FGhost then return ()
+                        else do
+                            unifyFormatTy t a
+                            return ()
+                    return $ (,) f retTy
+                Nothing -> do
+                    oufs <- use owlUserFuncs
+                    case oufs M.!? p of
+                        Just (ufdef, rtyOpt) -> do
+                            case rtyOpt of
+                                Just rty -> return $ (,) f rty
+                                Nothing -> do
+                                    rtUF <- rtyOfUserFunc p ufdef
+                                    return (f, rtUF)
+                        Nothing -> do
+                            throwError $ UndefinedSymbol $ show . owlpretty $ p
+concretifyApp _ = \_ _ -> do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
 -- Special case: Owl lets us implicitly cast exec values into ghost, but we must make this
@@ -335,9 +346,9 @@ concretifyAExpr a =
       AEApp p ps aes -> do
           vs <- mapM concretifyAExpr aes
           s <- concretifyPath p
-          t <- concreteTyOfApp p ps (map _tty vs)
+          (concreteF, t) <- concretifyApp p ps (map _tty vs)
           args <- ghostifyAppArgs p vs
-          return $ Typed t $ CAApp s args
+          return $ Typed t $ CAApp concreteF args
       AEVar s x -> do
           ot <- lookupVar $ castName x
           case ot of
@@ -477,8 +488,10 @@ concretifyExpr e = do
             return $ noLets $ Typed (k'' ^. tty) $ CParse pkind a' t_target' otw'' $ bind xtys' k''
       ECase e otherwiseCase xsk -> do
             e' <- exprFromLets' <$> concretifyExpr e
+            let startT = e' ^. tty
             casevalT <- case otherwiseCase of
-                Just (t, e) -> concretifyTy t
+                -- TODO: need to insert explicit declassification here
+                Just (t, _) -> concretifyTy t
                 Nothing -> case e' ^. tty of
                             FEnum _ _ -> return $ e' ^. tty
                             FOption _ -> return $ e' ^. tty
@@ -519,7 +532,6 @@ concretifyExpr e = do
             let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do
-                    let startT = e' ^. tty
                     -- debugPrint $ show (owlpretty e')
                     -- debugPrint $ show (owlpretty casevalT)
                     -- debugPrint $ show (owlpretty startT)

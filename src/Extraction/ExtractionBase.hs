@@ -358,6 +358,12 @@ lookupKdfCall nks k = do
     return $ lookupNameKindAExprMap hcs nks k
 
 
+---- Equality on FormatTys ignoring buffer secrecy
+eqUpToSecrecy :: FormatTy -> FormatTy -> Bool
+eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2
+eqUpToSecrecy f1 f2 = f1 == f2
+
+
 
 ------------------------------------------------------------------------------------------------------
 ---- Vest stuff

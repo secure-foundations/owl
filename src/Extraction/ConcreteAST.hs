@@ -84,6 +84,7 @@ data CAExpr' t =
     | CAHexConst String
     | CACounter String
     | CASerializeWith t [(CAExpr t, ParsleyCombinator)]
+    | CACast (CAExpr t) t -- (source expr, target type)
     deriving (Show, Generic, Typeable)
 
 type CAExpr t = Typed (CAExpr' t) t
@@ -255,6 +256,7 @@ instance OwlPretty t => OwlPretty (CAExpr' t) where
         owlpretty "serialize" <> brackets (owlpretty t) <+> owlpretty "(" <> line <> vsep xs' <> owlpretty ")"
     owlpretty (CAGetEncPK s) = owlpretty "get_enc_pk" <> parens (owlpretty s)
     owlpretty (CAGetVK s) = owlpretty "get_vk" <> parens (owlpretty s)
+    owlpretty (CACast e t) = parens $ owlpretty "cast" <+> owlpretty e <+> owlpretty "as" <+> owlpretty t
 
 
 instance OwlPretty ParseKind where
@@ -343,6 +345,7 @@ traverseCAExpr f a =
           CAHexConst i -> pure $ CAHexConst i
           CACounter s -> pure $ CACounter s
           CASerializeWith t xs -> CASerializeWith <$> f t <*> traverse (\(e, p) -> (,) <$> traverseCAExpr f e <*> pure p) xs
+          CACast e t -> CACast <$> traverseCAExpr f e <*> f t
 
 -- Does not take into account bound names
 traverseCExpr :: (Fresh f, Applicative f, Alpha t, Alpha t2, Typeable t, Typeable t2) => (t -> f t2) -> CExpr t -> f (CExpr t2)
