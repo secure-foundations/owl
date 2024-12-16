@@ -364,6 +364,20 @@ eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2
 eqUpToSecrecy f1 f2 = f1 == f2
 
 
+secrecyOfFTy :: FormatTy -> BufSecrecy
+secrecyOfFTy (FBuf s _) = s
+secrecyOfFTy (FStruct _ fs) = if all ((== BufPublic) . secrecyOfFTy . snd) fs then BufPublic else BufSecret
+secrecyOfFTy (FEnum _ cs) = if all ((== BufPublic) . secrecyOfFTy) (mapMaybe snd cs) then BufPublic else BufSecret
+secrecyOfFTy (FOption f) = secrecyOfFTy f
+secrecyOfFTy _ = BufPublic
+
+joinSecrecy :: BufSecrecy -> BufSecrecy -> BufSecrecy
+joinSecrecy BufPublic BufPublic = BufPublic
+joinSecrecy _ _ = BufSecret
+
+joinSecrecies :: [BufSecrecy] -> BufSecrecy
+joinSecrecies = foldr joinSecrecy BufPublic
+
 
 ------------------------------------------------------------------------------------------------------
 ---- Vest stuff

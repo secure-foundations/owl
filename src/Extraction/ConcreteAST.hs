@@ -45,7 +45,6 @@ data FormatTy =
     | FGhost  -- For erased variables
     | FInt
     | FBuf BufSecrecy (Maybe FLen) 
-    -- | FSecBuf (Maybe FLen)
     | FOption FormatTy
     | FStruct String [(String, FormatTy)]           -- name, fields
     | FEnum String [(String, Maybe FormatTy)]  -- name, cases
@@ -90,14 +89,14 @@ data CAExpr' t =
 type CAExpr t = Typed (CAExpr' t) t
 
 data DeclassifyingOp t = 
-    ControlFlow (CAExpr t)
-    | EnumParse (CAExpr t)
-    | EqCheck (CAExpr t, CAExpr t)  
-    | ADec (CAExpr t, CAExpr t)
-    | StAeadDec (CAExpr t, CAExpr t, CAExpr t, CAExpr t)
-    | SigVrfy (CAExpr t, CAExpr t, CAExpr t)
-    | MacVrfy (CAExpr t, CAExpr t, CAExpr t)
-    | PkDec (CAExpr t, CAExpr t)
+    DOControlFlow (CAExpr t)
+    | DOEnumParse (CAExpr t)
+    | DOEqCheck (CAExpr t, CAExpr t)  
+    | DOADec (CAExpr t, CAExpr t)
+    | DOStAeadDec (CAExpr t, CAExpr t, CAExpr t, CAExpr t)
+    | DOSigVrfy (CAExpr t, CAExpr t, CAExpr t)
+    | DOMacVrfy (CAExpr t, CAExpr t, CAExpr t)
+    | DOPkDec (CAExpr t, CAExpr t)
     deriving (Show, Generic, Typeable)
 
 data ParseKind = PFromBuf | PFromDatatype | PFromSecBuf
@@ -235,14 +234,14 @@ instance OwlPretty ParsleyCombinator where
     owlpretty PCBuilder = owlpretty "BuilderCombinator"
 
 instance OwlPretty t => OwlPretty (DeclassifyingOp t) where
-    owlpretty (ControlFlow e) = owlpretty "ControlFlow" <> parens (owlpretty e)
-    owlpretty (EnumParse e) = owlpretty "EnumParse" <> parens (owlpretty e)
-    owlpretty (EqCheck (a, b)) = owlpretty "EqCheck" <> parens (owlpretty a <> comma <+> owlpretty b)
-    owlpretty (ADec (a, b)) = owlpretty "ADec" <> parens (owlpretty a <> comma <+> owlpretty b)
-    owlpretty (StAeadDec (a, b, c, d)) = owlpretty "StAeadDec" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c <> comma <+> owlpretty d)
-    owlpretty (SigVrfy (a, b, c)) = owlpretty "SigVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
-    owlpretty (MacVrfy (a, b, c)) = owlpretty "MacVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
-    owlpretty (PkDec (a, b)) = owlpretty "PkDec" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty (DOControlFlow e) = owlpretty "ControlFlow" <> parens (owlpretty e)
+    owlpretty (DOEnumParse e) = owlpretty "EnumParse" <> parens (owlpretty e)
+    owlpretty (DOEqCheck (a, b)) = owlpretty "EqCheck" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty (DOADec (a, b)) = owlpretty "ADec" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty (DOStAeadDec (a, b, c, d)) = owlpretty "StAeadDec" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c <> comma <+> owlpretty d)
+    owlpretty (DOSigVrfy (a, b, c)) = owlpretty "SigVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty (DOMacVrfy (a, b, c)) = owlpretty "MacVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty (DOPkDec (a, b)) = owlpretty "PkDec" <> parens (owlpretty a <> comma <+> owlpretty b)
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
@@ -321,14 +320,14 @@ castName (Bn x y) = Bn x y
 traverseDeclassifyingOp :: Applicative f => (t -> f t2) -> DeclassifyingOp t -> f (DeclassifyingOp t2)
 traverseDeclassifyingOp f dop =
     case dop of
-        ControlFlow e -> ControlFlow <$> traverseCAExpr f e
-        EnumParse e -> EnumParse <$> traverseCAExpr f e
-        EqCheck (a, b) -> EqCheck <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
-        ADec (a, b) -> ADec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
-        StAeadDec (a, b, c, d) -> StAeadDec <$> ((,,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c <*> traverseCAExpr f d)
-        SigVrfy (a, b, c) -> SigVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
-        MacVrfy (a, b, c) -> MacVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
-        PkDec (a, b) -> PkDec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+        DOControlFlow e -> DOControlFlow <$> traverseCAExpr f e
+        DOEnumParse e -> DOEnumParse <$> traverseCAExpr f e
+        DOEqCheck (a, b) -> DOEqCheck <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+        DOADec (a, b) -> DOADec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
+        DOStAeadDec (a, b, c, d) -> DOStAeadDec <$> ((,,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c <*> traverseCAExpr f d)
+        DOSigVrfy (a, b, c) -> DOSigVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
+        DOMacVrfy (a, b, c) -> DOMacVrfy <$> ((,,) <$> traverseCAExpr f a <*> traverseCAExpr f b <*> traverseCAExpr f c)
+        DOPkDec (a, b) -> DOPkDec <$> ((,) <$> traverseCAExpr f a <*> traverseCAExpr f b)
 
 
 -- Does not take into account bound names

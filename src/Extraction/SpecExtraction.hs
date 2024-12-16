@@ -455,37 +455,37 @@ specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins whe
 extractDeclassifyingOp :: DeclassifyingOp FormatTy -> EM (Doc ann)
 extractDeclassifyingOp op = do
     case op of
-        ControlFlow x -> do
+        DOControlFlow x -> do
             x' <- extractCAExpr x
             return [di|DeclassifyingOp::ControlFlow(#{x'})|]
-        EnumParse x -> do
+        DOEnumParse x -> do
             x' <- extractCAExpr x
             return [di|DeclassifyingOp::EnumParse(#{x'})|]
-        EqCheck (x, y) -> do
+        DOEqCheck (x, y) -> do
             x' <- extractCAExpr x
             y' <- extractCAExpr y
             return [di|DeclassifyingOp::EqCheck(#{x'}, #{y'})|]
-        ADec (k, x) -> do
+        DOADec (k, x) -> do
             k' <- extractCAExpr k
             x' <- extractCAExpr x
             return [di|DeclassifyingOp::ADec(#{k'}, #{x'})|]
-        StAeadDec (k, x, nonce, aad) -> do
+        DOStAeadDec (k, x, nonce, aad) -> do
             k' <- extractCAExpr k
             x' <- extractCAExpr x
             nonce' <- extractCAExpr nonce
             aad' <- extractCAExpr aad
             return [di|DeclassifyingOp::StAeadDec(#{k'}, #{x'}, #{nonce'}, #{aad'})|]
-        SigVrfy (pk, msg, sig) -> do
+        DOSigVrfy (pk, msg, sig) -> do
             pk' <- extractCAExpr pk
             msg' <- extractCAExpr msg
             sig' <- extractCAExpr sig
             return [di|DeclassifyingOp::SigVrfy(#{pk'}, #{msg'}, #{sig'})|]
-        MacVrfy (key, msg, mac) -> do
+        DOMacVrfy (key, msg, mac) -> do
             key' <- extractCAExpr key
             msg' <- extractCAExpr msg
             mac' <- extractCAExpr mac
             return [di|DeclassifyingOp::MacVrfy(#{key'}, #{msg'}, #{mac'})|]
-        PkDec (sk, c) -> do
+        DOPkDec (sk, c) -> do
             sk' <- extractCAExpr sk
             c' <- extractCAExpr c
             return [di|DeclassifyingOp::PkDec(#{sk'}, #{c'})|]
