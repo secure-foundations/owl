@@ -361,6 +361,7 @@ lookupKdfCall nks k = do
 ---- Equality on FormatTys ignoring buffer secrecy
 eqUpToSecrecy :: FormatTy -> FormatTy -> Bool
 eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2
+eqUpToSecrecy (FOption t1) (FOption t2) = eqUpToSecrecy t1 t2
 eqUpToSecrecy f1 f2 = f1 == f2
 
 

@@ -449,6 +449,7 @@ specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins whe
     diffNameBuiltins = M.fromList [
             ("secret_concat", ("concat", [seqU8, seqU8], seqU8))
         ,   ("secret_xor", ("xor", [seqU8, seqU8], seqU8))
+        ,   ("buf_declassify", ("", [seqU8], seqU8)) -- buffer declassification is a no-op in specs
         ]
 
 -- Extract the DeclassifyingOpToken and the function call
@@ -584,6 +585,10 @@ extractCAExpr aexpr = do
                 return $ pretty "seq![" <> bytelist <> pretty "]"
         CACounter ctrname -> return [di|#{execName ctrname}|]
         CAInt flen -> return . pretty . lowerFLen $ flen
+        CACast ae ty -> do
+            ae' <- extractCAExpr ae
+            ae'' <- specCast (ae', ae ^. tty) $ specTyOf ty
+            return [di|#{ae''}|]
         _ -> throwError $ ErrSomethingFailed $ "SpecExtraction: Unsupported CAExpr: " ++ show aexpr
 
 extractExpr :: CExpr FormatTy -> EM (Doc ann)

@@ -338,6 +338,14 @@ genVerusCAExpr ae = do
                                 RTSecBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ SecretBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
+                        ("buf_declassify", [buf, tok]) -> do
+                            buf' <- genVerusCAExpr buf
+                            tok' <- genVerusCAExpr tok
+                            when (tok' ^. eTy /= RTDeclassifyTok) $ 
+                                throwError $ TypeError $ "got buf_declassify with bad token type " ++ show (owlpretty (tok' ^. eTy))
+                            castBuf <- castGRE buf' (RTSecBuf AnyLifetime)
+                            castTok <- castGRE tok' (RTVerusTracked RTDeclassifyTok)
+                            return $ GenRustExpr (ae ^. tty) [di|{ #{castBuf}.declassify(#{castTok}) }|]
                         (f, [x]) | "?" `isSuffixOf` f -> do
                             -- Special case for enum test functions
                             let f' = init f ++ "_enumtest"
