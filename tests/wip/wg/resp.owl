@@ -275,7 +275,7 @@ pcase HasPSK?(psk) in
  let msg2_output: msg2 = msg2(
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
  ) in
- let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
+ let _ = output msg2_output to endpoint(Initiator<n>) in // (TODO: endpoint? )
 //  debug checkStructMatches(transp_keys_resp<session j,pid n3,pid n,pid m>(msg2_receiver, msg2_sender,
 //  HasPSK?(psk), msg1_ephemeral, c7, false, tk1, tk2));
  let ret = 

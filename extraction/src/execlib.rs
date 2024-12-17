@@ -265,6 +265,13 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
 
 
 #[verifier(external_body)]
+pub exec fn owl_crh(x: &[u8]) -> (res: Vec<u8>)
+    ensures res.view() == crh(x.view())
+{
+    owl_hmac::blake2s(x)
+}
+
+#[verifier(external_body)]
 pub exec fn vec_u8_from_elem(e: u8, n: usize) -> (res: Vec<u8>)
     ensures res.view() == Seq::new(n as nat, |i| e)
 {
@@ -848,7 +855,7 @@ pub mod secret {
     }
 
     #[verifier(external_body)]
-    pub exec fn owl_crh<'a>(x: SecretBuf) -> (res: SecretBuf<'a>)
+    pub exec fn owl_secret_crh<'a>(x: SecretBuf) -> (res: SecretBuf<'a>)
         ensures res.view() == crh(x.view())
     {
         let h = owl_hmac::blake2s(x.private_as_slice());

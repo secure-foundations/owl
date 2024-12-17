@@ -269,7 +269,11 @@ concretifyApp (PRes (PDot PTop f)) params args = do
         ("notb", [x]) -> return $ mkAppNoLets f FBool
         ("length", [x]) -> return $ mkAppNoLets f FInt
         ("plus", [x, y]) -> return $ mkAppNoLets f FInt
-        ("crh", [x]) -> return $ mkAppNoLets f $ fSBuf $ Just $ FLNamed "crh" -- TODO: secrecy for crh
+        ("crh", [x]) -> do
+            let crhSecrecy = secrecyOfFTy x
+            case crhSecrecy of
+                BufSecret -> return $ mkSecretAppNoLets "crh" $ FBuf BufSecret Nothing
+                BufPublic -> return $ mkAppNoLets "crh" $ FBuf BufPublic Nothing
         ("mult", [x, y]) -> return $ mkAppNoLets f FInt
         ("zero", []) -> return $ mkAppNoLets f FInt
         ("is_group_elem", [x]) -> return $ mkAppNoLets f FBool
