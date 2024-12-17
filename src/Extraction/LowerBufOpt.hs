@@ -163,8 +163,8 @@ getSuspTy :: Suspendable CAWithLets -> [VerusTy]
 getSuspTy (Eager (Typed t _, _)) = [t]
 getSuspTy (Susp s) = scTyChoices s
 
-mkApp :: String -> FormatTy -> [VerusTy] -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
-mkApp f frty argtys args' = do
+mkApp :: String -> String -> FormatTy -> [VerusTy] -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
+mkApp f spec_f frty argtys args' = do
     case (f, frty) of
         ("enc_st_aead", _) -> do 
             (argrtys, arglets) <- forceAEs argtys args'
@@ -173,10 +173,10 @@ mkApp f frty argtys args' = do
             let suspcomp rt = do
                     case rt of
                         RTStAeadBuilder -> do
-                            let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" argrtys
+                            let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" spec_f argrtys
                             return ((ae, arglets), RTStAeadBuilder)
                         tt' | tt' == serializedTy -> do
-                            let ae = Typed serializedTy $ CAApp "enc_st_aead" argrtys
+                            let ae = Typed serializedTy $ CAApp "enc_st_aead" spec_f argrtys
                             return ((ae, arglets), serializedTy)
                         _ -> throwError $ ErrSomethingFailed "mkApp enc_st_aead_builder: got bad type"
             return $ Susp $ Suspended frtyChoices suspcomp
@@ -212,7 +212,7 @@ mkApp f frty argtys args' = do
                             RTStruct rn' rfs' | rn' == execName f' -> do
                                 -- We want the struct as an actual Rust struct, so return it as normal
                                 (argrtys, arglets) <- forceAEs argtys args'
-                                return ((Typed rStructTy' $ CAApp f argrtys, arglets), rStructTy')
+                                return ((Typed rStructTy' $ CAApp f spec_f argrtys, arglets), rStructTy')
                             rt' | rt' == serializedTy -> do
                                 -- We want the struct as a serialized buffer, so we serialize it using the builder combinator
                                 let parsleycombof (fieldFormatTy, argVerusTyChoices) =
@@ -229,11 +229,11 @@ mkApp f frty argtys args' = do
             else do
                 (argrtys, arglets) <- forceAEs argtys args'
                 frty' <- lowerTy' frty
-                return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
+                return $ addLets (Eager (Typed frty' $ CAApp f spec_f argrtys , [])) arglets
         _ -> do
             (argrtys, arglets) <- forceAEs argtys args'
             frty' <- lowerTy' frty
-            return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
+            return $ addLets (Eager (Typed frty' $ CAApp f spec_f argrtys , [])) arglets
 
 addLets :: Suspendable (CWithLets a) -> [CLetBinding] -> Suspendable (CWithLets a)
 addLets (Eager (x, lets)) lets' = Eager (x, lets ++ lets')
@@ -262,10 +262,10 @@ lowerCAExpr info aexpr = do
                             (lets, rt') <- scComputation sc rt
                             return ((Typed rt $ CAVar s (castName n), lets), rt')
                     return $ Susp $ Suspended (scTyChoices sc) suspcomp
-        CAApp f args -> do
+        CAApp f spec_f args -> do
             argtys <- mapM (lowerTy' . (^. tty)) args
             args' <- mapM (lowerCAExpr info { inArg = True }) args
-            mkApp f (aexpr ^. tty) argtys args'
+            mkApp f spec_f (aexpr ^. tty) argtys args'
         CAGet s -> lowerGet $ CAGet s
         CAGetEncPK s -> lowerGet $ CAGetEncPK s
         CAGetVK s -> lowerGet $ CAGetVK s
@@ -438,13 +438,18 @@ lowerDef' (CDef name b) = do
     return $ CDef name b'
 
 lowerUserFunc' :: CUserFunc FormatTy -> LM (CUserFunc VerusTy)
-lowerUserFunc' (CUserFunc name b) = do
-    (args, (retTy, body)) <- liftEM $ unbindCDepBind b
-    args' <- mapM lowerArg args
-    retTy' <- lowerTy' retTy
-    body' <- traverseCAExpr lowerTy' body
-    b' <- liftEM $ bindCDepBind args' (retTy', body')
-    return $ CUserFunc name b'
+lowerUserFunc' (CUserFunc specName pubName secName pubBody secBody) = do
+    pubBody' <- handleBody pubBody
+    secBody' <- handleBody secBody
+    return $ CUserFunc specName pubName secName pubBody' secBody'
+    where
+        handleBody b = do
+            (args, (retTy, body)) <- liftEM $ unbindCDepBind b
+            args' <- mapM lowerArg args
+            retTy' <- lowerTy' retTy
+            body' <- traverseCAExpr lowerTy' body
+            liftEM $ bindCDepBind args' (retTy', body')
+
 
 lowerDef :: CDef FormatTy -> EM (CDef VerusTy)
 lowerDef = runLowerMonad . lowerDef'

@@ -63,28 +63,31 @@ makeLenses ''GenRustExpr
 
 
 genVerusUserFunc :: CUserFunc VerusTy -> EM (Doc ann)
-genVerusUserFunc (CUserFunc name b) = do
-    let execname = execName name
-    let specname = name
-    (args, (retTy, body)) <- unbindCDepBind b
-    let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
-    let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.view()|]) args
-    body' <- genVerusCAExpr body
-    body'' <- castGRE body' retTy
-    let needsLifetime = tyNeedsLifetime retTy
-    let lifetimeConst = "a"
-    let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
-    let retTy' = liftLifetime (Lifetime lifetimeConst) retTy
-    let retval = [di|res: #{pretty retTy'}|]
-    return [__di|
-    pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
-        ensures
-            res.view() == #{specname}(#{viewArgs}),
-    {
-        reveal(#{specname});
-        #{body''}
-    }
-    |]
+genVerusUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
+    secUF <- mkUserFuncDef specName (execName secName) secBody
+    pubUF <- mkUserFuncDef specName (execName pubName) pubBody
+    return $ vsep [secUF, pubUF]    
+    where
+        mkUserFuncDef specname execname b = do
+            (args, (retTy, body)) <- unbindCDepBind b
+            let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
+            let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.view()|]) args
+            body' <- genVerusCAExpr body
+            body'' <- castGRE body' retTy
+            let needsLifetime = tyNeedsLifetime retTy
+            let lifetimeConst = "a"
+            let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
+            let retTy' = liftLifetime (Lifetime lifetimeConst) retTy
+            let retval = [di|res: #{pretty retTy'}|]
+            return [__di|
+            pub fn #{execname}#{lifetimeAnnot}(#{argdefs}) -> (#{retval})
+                ensures
+                    res.view() == #{specname}(#{viewArgs}),
+            {
+                reveal(#{specname});
+                #{body''}
+            }
+            |]
 
 genVerusEndpointDef :: [LocalityName] -> EM (Doc ann)
 genVerusEndpointDef lnames = do
@@ -281,9 +284,9 @@ genVerusCAExpr ae = do
         CAVar s v -> return $ GenRustExpr { _code = pretty $ execName $ show v, _eTy = ae ^. tty }
         CACast ae dstTy -> do
             ae' <- genVerusCAExpr ae
-            ae'' <- castGRE ae' (ae' ^. eTy)
+            ae'' <- castGRE ae' dstTy
             return $ GenRustExpr { _code = ae'', _eTy = dstTy }
-        CAApp f args -> do
+        CAApp f _ args -> do
             case builtins M.!? f of
                 Just (fExecName, argDstTys, rSrcTy) -> do
                     args' <- mapM genVerusCAExpr args

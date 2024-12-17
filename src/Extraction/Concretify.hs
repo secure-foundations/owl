@@ -227,17 +227,19 @@ bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPub
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOControlFlow ae
-    let doCFDeclassify = Typed t $ CRet $ Typed t $ CAApp "buf_declassify" [ae, tokVar]
+    let doCFDeclassify = Typed t $ CRet $ Typed t $ cAApp "buf_declassify" [ae, tokVar]
     let declassifyExpr = Typed t $ CItreeDeclassify dop $ bind tokName doCFDeclassify
     let declassifyLetBinding = (declassifiedBufName, Nothing, declassifyExpr)
     return $ withLets [declassifyLetBinding] $ Typed t $ CAVar (ignore "declassified_buf") declassifiedBufName
 bufcast ae t = do
-    if (ae ^. tty) `aeq` t then return $ noLets ae
+    if (ae ^. tty) `eqUpToBufLen` t then return $ noLets ae
     else do
         let ae' = Typed t $ CACast ae t
         return $ noLets ae'
 
-
+-- helper for when spec and exec functions have the same name
+cAApp :: String -> [CAExpr FormatTy] -> CAExpr' FormatTy
+cAApp f = CAApp f f 
 
 concretifyApp :: Path -> [FuncParam] -> [CAExpr FormatTy] -> EM (CAExpr FormatTy, [CLetBinding])
 concretifyApp (PRes (PDot PTop f)) params args = do
@@ -250,7 +252,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                 unifyFormatTy x y
                 let eqSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
                 case eqSecrecy of
-                    BufSecret -> return $ mkAppNoLets "ct_eq" FBool
+                    BufSecret -> return $ mkSecretAppNoLets "eq" FBool
                     BufPublic -> return $ mkAppNoLets "eq" FBool
         ("Some", [x]) -> return $ mkAppNoLets f $ FOption x
         ("None", []) -> 
@@ -277,16 +279,14 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                         (_, Nothing) -> Nothing
                         (Just x, Just y) -> Just $ FLPlus x y
                 let concatSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
-                let concatName = case concatSecrecy of
-                        BufSecret -> "secret_concat"
-                        BufPublic -> "concat"
-                return $ mkAppNoLets concatName $ FBuf concatSecrecy concatLen
+                case concatSecrecy of
+                        BufSecret -> return $ mkSecretAppNoLets "concat" $ FBuf concatSecrecy concatLen
+                        BufPublic -> return $ mkAppNoLets "concat" $ FBuf concatSecrecy concatLen
         ("xor", [x, y]) -> do
             let xorSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
-            let xorName = case xorSecrecy of
-                    BufSecret -> "secret_xor"
-                    BufPublic -> "xor"
-            return $ mkAppNoLets xorName $ FBuf xorSecrecy Nothing
+            case xorSecrecy of
+                    BufSecret -> return $ mkSecretAppNoLets "xor" $ FBuf xorSecrecy Nothing
+                    BufPublic -> return $ mkAppNoLets "xor" $ FBuf xorSecrecy Nothing
             --   t <- unifyFormatTy x y
             --   case t of
             --     FBuf _ -> return t
@@ -310,25 +310,37 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                 Just (fargTys, retTy) -> do
                     when (length fargTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
                     argsWithLets <- forM (zip fargTys args) $ \(t, a) -> do
-                        -- if t == FGhost || (a ^. tty == FGhost) then return (a, [])
-                        -- else do
                         unifyFormatTy t (a ^. tty) -- check types are compatible
                         bufcast a t
                     let (args', argsCastLets) = unzip argsWithLets
-                    return $ withLets (concat argsCastLets) $ Typed retTy $ CAApp f args'
+                    return $ withLets (concat argsCastLets) $ Typed retTy $ cAApp f args'
                 Nothing -> do
                     oufs <- use owlUserFuncs
                     case oufs M.!? p of
-                        Just (ufdef, rtyOpt) -> do
-                            case rtyOpt of
-                                Just rty -> return $ mkAppNoLets f rty
+                        Just (ufdef, rtysOpt) -> do
+                            let argSecrecy = joinSecrecies $ map (secrecyOfFTy . (^. tty)) args
+                            argsWithLets <- forM (zip (repeat (FBuf argSecrecy Nothing)) args) $ \(t, a) -> do
+                                unifyFormatTy t (a ^. tty) -- check types are compatible
+                                bufcast a t
+                            let (args', argsCastLets') = unzip argsWithLets
+                            let argsCastLets = concat argsCastLets'
+                            -- Sanity check: we should never be declassifying here. Bufcast only adds `CLetBinding`s if there is declassification
+                            when (length argsCastLets /= 0) $ throwError $ 
+                                ErrSomethingFailed $ "Unexpected declassification in userfunc call: " ++ show (owlpretty p <> tupled (map owlpretty args))
+                            case rtysOpt of
+                                Just (rtyPub, rtySec) -> do
+                                    if argSecrecy == BufSecret 
+                                    then return $ withLets argsCastLets $ Typed rtySec $ CAApp ("secret_" ++ f) f args'
+                                    else return $ withLets argsCastLets $ Typed rtyPub $ CAApp ("public_" ++ f) f args'
                                 Nothing -> do
-                                    rtUF <- rtyOfUserFunc p ufdef
-                                    return $ mkAppNoLets f rtUF
+                                    -- use args here since we need to generate the overall user func definition 
+                                    (ufExecName, ufSpecName, rtUF) <- rtyOfUserFunc p ufdef (map (^. tty) args)
+                                    return $ withLets argsCastLets $ Typed rtUF $ CAApp ufExecName ufSpecName args'
                         Nothing -> do
                             throwError $ UndefinedSymbol $ show . owlpretty $ p
     where
-        mkAppNoLets fname frty = noLets $ Typed frty $ CAApp fname args
+        mkAppNoLets fname frty = noLets $ Typed frty $ cAApp fname args
+        mkSecretAppNoLets fname frty = noLets $ Typed frty $ CAApp ("secret_" ++ fname) fname args
 concretifyApp _ _ _ = do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
@@ -351,11 +363,11 @@ ghostifyArgs argTys args = do
 
 -- () in ghost
 ghostUnit :: CAExpr FormatTy
-ghostUnit = Typed FGhost $ CAApp "ghost_unit" []
+ghostUnit = Typed FGhost $ cAApp "ghost_unit" []
 
 -- none()
 noneConcrete :: FormatTy -> CAExpr FormatTy
-noneConcrete rett = Typed rett $ CAApp "None" []
+noneConcrete rett = Typed rett $ cAApp "None" []
 
 concretifyAExprs :: [AExpr] -> EM ([CAExpr FormatTy], [CLetBinding])
 concretifyAExprs aes = do
@@ -648,12 +660,12 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
             kdfVar <- do
                 vn' <- fresh $ s2n "kdfval"
                 fresh $ s2n (show vn')
-            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ CAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ cAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
             let doKdfLetBinding = (kdfVar, Nothing, doKdf)
             memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
             return $ (kdfVar, [doKdfLetBinding])
     let doSlice = Typed kdfOutTy $ CRet $ Typed kdfOutTy $ 
-            CAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
+            cAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
     sec <- secrecyOfNameKind nk
     case sec of
         BufSecret -> return $ withLets lets doSlice
@@ -674,14 +686,14 @@ concretifyCryptOp _ CAEnc [k, x] = do
     coinsName <- fresh $ s2n "coins"
     let sampFLen = FLNamed "nonce"
     let coinsVar = Typed (fSBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
-    let doEnc = Typed t $ CRet $ Typed t $ CAApp "enc" [k, x, coinsVar]
+    let doEnc = Typed t $ CRet $ Typed t $ cAApp "enc" [k, x, coinsVar]
     return $ noLets $ Typed t $ CSample sampFLen (fSBuf $ Just sampFLen) $ bind coinsName doEnc
 concretifyCryptOp _ CADec [k, c] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOADec (k, c)
-    let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "dec" [k, c, tokVar]
+    let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec" [k, c, tokVar]
     return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     (patx, patbody) <- unbind xpat
@@ -703,13 +715,13 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
             (iv, ivLets) <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
             let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
             return (CAVar (ignore $ name2String patx) $ castName patx, mkIv, ivLets)
-    return $ withLets (getInc ++ ivLets ++ mkIv) $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
+    return $ withLets (getInc ++ ivLets ++ mkIv) $ Typed t $ CRet $ Typed t $ cAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOStAeadDec (k, c, nonce, aad)
-    let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "dec_st_aead" [k, c, nonce, aad, tokVar]
+    let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec_st_aead" [k, c, nonce, aad, tokVar]
     return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
 -- concretifyCryptOp _ CPKEnc [k, x] = do
 --     let t = FBuf Nothing
@@ -725,13 +737,13 @@ concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac_vrfy" [k, x, v]
 concretifyCryptOp _ CSign [k, x] = do
     let t = fPBuf $ Just $ FLNamed "signature"
-    return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "sign" [k, x]
+    return $ noLets $ Typed t $ CRet $ Typed t $ cAApp "sign" [k, x]
 concretifyCryptOp _ CSigVrfy [k, x, v] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOSigVrfy (k, x, v)
-    let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ CAApp "vrfy" [k, x, v, tokVar]
+    let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "vrfy" [k, x, v, tokVar]
     return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args: " ++ show (tupled . map owlpretty $ cargs)
@@ -787,35 +799,47 @@ concretifyDef defName (TB.Def bd) = do
         Just res -> return $ Just $ CDef defName res
 
 
-userFuncArgTy :: FormatTy
-userFuncArgTy = fPBuf Nothing
+-- userFuncArgTy :: FormatTy
+-- userFuncArgTy = fPBuf Nothing
 
-concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy)
+concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy, FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do
-    ((_, args), body) <- unbind bd
-    let argstys = zip (map castName args) (repeat userFuncArgTy)
-    (body', bodyLets) <- withVars argstys $ concretifyAExpr body
-    when (not $ null bodyLets) $ throwError $ ErrSomethingFailed "User function body should not have lets"
-    let rty = body' ^. tty
-    let bindArgs = map (\(a,t) -> (a, show a, t)) argstys
-    bd' <- bindCDepBind bindArgs (rty, body')
-    return $ (Just $ CUserFunc ufName bd', rty)
+    let specName = ufName
+    let pubName = "public_" ++ ufName
+    let secName = "secret_" ++ ufName
+    (pubBody, pubRt) <- mkBody bd (fPBuf Nothing)
+    (secBody, secRt) <- mkBody bd (fSBuf Nothing)
+    return $ (Just $ CUserFunc specName pubName secName pubBody secBody, pubRt, secRt)
+    where
+        mkBody bd argTy = do
+            ((_, args), body) <- unbind bd
+            let argstys = zip (map castName args) (repeat argTy)
+            (body', bodyLets) <- withVars argstys $ concretifyAExpr body
+            when (not $ null bodyLets) $ throwError $ ErrSomethingFailed "User function body should not have lets"
+            let rty = body' ^. tty
+            let bindArgs = map (\(a,t) -> (a, show a, t)) argstys
+            bd' <- bindCDepBind bindArgs (rty, body')
+            return (bd', rty)
 concretifyUserFunc' ufName (TB.EnumTest caseName enumName) = do
-    return (Nothing, FBool)
+    return (Nothing, FBool, FBool)
 concretifyUserFunc' ufName uf = do
     throwError $ ErrSomethingFailed $ "Unsupported user function: " ++ ufName ++ ": " ++ show (owlpretty uf)
 
 concretifyUserFunc :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy))
 concretifyUserFunc ufName uf = do
-    (uf', _) <- concretifyUserFunc' ufName uf
-    return uf'
+    (ufPub, _, _) <- concretifyUserFunc' ufName uf
+    return ufPub
 
-rtyOfUserFunc :: String -> TB.UserFunc -> EM FormatTy
-rtyOfUserFunc ufName uf = do
-    (_, rty) <- concretifyUserFunc' ufName uf
+rtyOfUserFunc :: String -> TB.UserFunc -> [FormatTy] -> EM (String, String, FormatTy)
+rtyOfUserFunc ufName uf args = do
+    let argSecrecy = joinSecrecies $ map secrecyOfFTy args
+    (ufDef, rtyPub, rtySec) <- concretifyUserFunc' ufName uf
     oufs <- use owlUserFuncs
-    owlUserFuncs %= M.insert ufName (uf, Just rty)
-    return rty
+    owlUserFuncs %= M.insert ufName (uf, Just (rtyPub, rtySec))
+    let ufExecName = case ufDef of
+            Just ufDef' -> if argSecrecy == BufSecret then ufDef' ^. ufSecName else ufDef' ^. ufPubName
+            Nothing -> ufName
+    return (ufExecName, ufName, if argSecrecy == BufSecret then rtySec else rtyPub)
 
 
 typeIsVest :: FormatTy -> Bool

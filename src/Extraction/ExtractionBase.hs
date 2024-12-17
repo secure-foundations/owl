@@ -60,7 +60,7 @@ data Env t = Env {
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
-    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
+    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy)) -- (return type for pub and sec (Just if needs extraction))
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
     ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
     ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
@@ -210,7 +210,7 @@ instance Fresh (ExtractionMonad t) where
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
 initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
     where
-        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
 
@@ -364,6 +364,11 @@ eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2
 eqUpToSecrecy (FOption t1) (FOption t2) = eqUpToSecrecy t1 t2
 eqUpToSecrecy f1 f2 = f1 == f2
 
+---- Equality on FormatTys ignoring FBuf length
+eqUpToBufLen :: FormatTy -> FormatTy -> Bool
+eqUpToBufLen (FBuf s1 _) (FBuf s2 _) = s1 == s2
+eqUpToBufLen (FOption t1) (FOption t2) = eqUpToSecrecy t1 t2
+eqUpToBufLen f1 f2 = f1 == f2
 
 secrecyOfFTy :: FormatTy -> BufSecrecy
 secrecyOfFTy (FBuf s _) = s

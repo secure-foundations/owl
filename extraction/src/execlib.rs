@@ -417,13 +417,13 @@ pub mod secret {
         }
 
         #[verifier::external_body]
-        pub fn ct_eq(&self, other: &SecretBuf, Tracked(t): Tracked<DeclassifyingOpToken>) -> (result: bool)
+        pub fn secret_eq(&self, other: &SecretBuf, Tracked(t): Tracked<DeclassifyingOpToken>) -> (result: bool)
             requires t.view() matches DeclassifyingOp::EqCheck(l,r) && 
                         ((self@ == l && other@ == r) || (self@ == r && other@ == l))
             ensures  result <==> self.view() == other.view()
         {
             // self.buf.eq_contents(&other.buf)
-            todo!("implement ct_eq")
+            todo!("implement secret_eq")
         }
         
         // Private function for declassification---can only be used in the `secret` module

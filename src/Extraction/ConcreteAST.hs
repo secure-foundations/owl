@@ -75,7 +75,8 @@ type CDataVar t = Name (CAExpr t)
 
 data CAExpr' t = 
     CAVar (Ignore String) (CDataVar t)
-    | CAApp String [CAExpr t] -- args are (expr, type) pairs; 
+    -- first String is the function name in exec, second String is the function name in spec, args are (expr, type) pairs; 
+    | CAApp String String [CAExpr t] 
     | CAGet String
     | CAGetEncPK String
     | CAGetVK String
@@ -140,10 +141,14 @@ data CDef t = CDef {
 makeLenses ''CDef
 
 data CUserFunc t = CUserFunc {
-    _ufName :: String,
-    _ufBody :: CDepBind t (t, CAExpr t) -- retT, body
+    _ufSpecName :: String,
+    _ufPubName :: String,
+    _ufSecName :: String,
+    _ufPubBody :: CDepBind t (t, CAExpr t), -- retT, body
+    _ufSecBody :: CDepBind t (t, CAExpr t) -- retT, body
 } deriving (Show, Generic, Typeable)
 
+makeLenses ''CUserFunc
 
 data CStruct t = CStruct {
     _structName :: String,
@@ -245,7 +250,7 @@ instance OwlPretty t => OwlPretty (DeclassifyingOp t) where
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
     owlpretty (CAVar _ v) = owlpretty v
-    owlpretty (CAApp f as) = owlpretty f <> tupled (map owlpretty as)
+    owlpretty (CAApp f spec_f as) = owlpretty f <> brackets (owlpretty spec_f) <> tupled (map owlpretty as)
     owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
     owlpretty (CAInt i) = owlpretty i
     owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
@@ -336,7 +341,7 @@ traverseCAExpr f a =
     traverseTyped a f $ \c ->
         case c of
           CAVar s n -> pure $ CAVar s $ castName n
-          CAApp s xs -> CAApp s <$> traverse (traverseCAExpr f) xs
+          CAApp s s' xs -> CAApp s s' <$> traverse (traverseCAExpr f) xs
           CAGet s -> pure $ CAGet s
           CAGetEncPK s -> pure $ CAGetEncPK s
           CAGetVK s -> pure $ CAGetVK s

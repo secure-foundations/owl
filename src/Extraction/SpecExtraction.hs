@@ -495,7 +495,7 @@ extractCAExpr :: CAExpr FormatTy -> EM (Doc ann)
 extractCAExpr aexpr = do
     case aexpr ^. tval of
         CAVar s v -> extractVar v
-        CAApp f args -> do
+        CAApp _ f args -> do
             case specBuiltins M.!? f of
                 Just (f, argDstTys, rSrcTy) -> do
                     args' <- mapM extractCAExpr args
@@ -626,7 +626,7 @@ extractExpr expr = do
                 -- need special-case handling of CSample to insert the right itree syntax
                 -- TODO: we could change the itree macro to handle sample more similarly to 
                 -- input and output, but that would break backwards compatibility
-                CRet (Typed t (CAApp "enc" [key, msg, coins])) -> do
+                CRet (Typed t (CAApp _ "enc" [key, msg, coins])) -> do
                     key' <- extractCAExpr key
                     key'' <- specCast (key', key ^. tty) seqU8
                     msg' <- extractCAExpr msg
@@ -652,13 +652,13 @@ extractExpr expr = do
         CLet (Typed _ CSkip) _ xk -> do
             let (_, k) = unsafeUnbind xk
             extractExpr k
-        CLet (Typed _ (CRet (Typed _ (CAApp "unit" _)))) _ xk -> do
+        CLet (Typed _ (CRet (Typed _ (CAApp _ "unit" _)))) _ xk -> do
             let (_, k) = unsafeUnbind xk
             extractExpr k
         CLet e _ xk -> do
             let (x, k) = unsafeUnbind xk
             case (name2String x, e ^. tval) of
-                ("_", CRet (Typed _ (CAApp "unit" _))) -> do
+                ("_", CRet (Typed _ (CAApp _ "unit" _))) -> do
                     extractExpr k
                 (_, _) -> do
                     x' <- extractVar x
@@ -809,15 +809,15 @@ extractLoc (locname, locdata) = do
 
 
 extractUserFunc :: CUserFunc FormatTy -> EM (Doc ann)
-extractUserFunc (CUserFunc name b) = do
-    let specname = name
-    (args, (retTy, body)) <- unbindCDepBind b
+extractUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
+    -- for spec extraction we only use the pub body (it should be the same in spec as the sec body)
+    (args, (retTy, body)) <- unbindCDepBind pubBody
     args' <- mapM extractArg args
     let specRetTy = specTyOf retTy
     body <- extractCAExpr body
     return [__di|
         \#[verifier::opaque]
-        pub closed spec fn #{specname}(#{hsep . punctuate comma $ args'}) -> (res: #{pretty specRetTy}) {
+        pub closed spec fn #{specName}(#{hsep . punctuate comma $ args'}) -> (res: #{pretty specRetTy}) {
             #{body}
         }
     |]
