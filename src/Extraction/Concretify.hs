@@ -318,24 +318,27 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                     oufs <- use owlUserFuncs
                     case oufs M.!? p of
                         Just (ufdef, rtysOpt) -> do
-                            let argSecrecy = joinSecrecies $ map (secrecyOfFTy . (^. tty)) args
-                            argsWithLets <- forM (zip (repeat (FBuf argSecrecy Nothing)) args) $ \(t, a) -> do
-                                unifyFormatTy t (a ^. tty) -- check types are compatible
-                                bufcast a t
-                            let (args', argsCastLets') = unzip argsWithLets
-                            let argsCastLets = concat argsCastLets'
-                            -- Sanity check: we should never be declassifying here. Bufcast only adds `CLetBinding`s if there is declassification
-                            when (length argsCastLets /= 0) $ throwError $ 
-                                ErrSomethingFailed $ "Unexpected declassification in userfunc call: " ++ show (owlpretty p <> tupled (map owlpretty args))
-                            case rtysOpt of
-                                Just (rtyPub, rtySec) -> do
-                                    if argSecrecy == BufSecret 
-                                    then return $ withLets argsCastLets $ Typed rtySec $ CAApp ("secret_" ++ f) f args'
-                                    else return $ withLets argsCastLets $ Typed rtyPub $ CAApp ("public_" ++ f) f args'
-                                Nothing -> do
-                                    -- use args here since we need to generate the overall user func definition 
-                                    (ufExecName, ufSpecName, rtUF) <- rtyOfUserFunc p ufdef (map (^. tty) args)
-                                    return $ withLets argsCastLets $ Typed rtUF $ CAApp ufExecName ufSpecName args'
+                            case ufdef of
+                                TB.EnumTest _ _ -> return $ mkAppNoLets f FBool
+                                _ -> do
+                                    let argSecrecy = joinSecrecies $ map (secrecyOfFTy . (^. tty)) args
+                                    argsWithLets <- forM (zip (repeat (FBuf argSecrecy Nothing)) args) $ \(t, a) -> do
+                                        unifyFormatTy t (a ^. tty) -- check types are compatible
+                                        bufcast a t
+                                    let (args', argsCastLets') = unzip argsWithLets
+                                    let argsCastLets = concat argsCastLets'
+                                    -- Sanity check: we should never be declassifying here. Bufcast only adds `CLetBinding`s if there is declassification
+                                    when (length argsCastLets /= 0) $ throwError $ 
+                                        ErrSomethingFailed $ "Unexpected declassification in userfunc call: " ++ show (owlpretty p <> tupled (map owlpretty args))
+                                    case rtysOpt of
+                                        Just (rtyPub, rtySec) -> do
+                                            if argSecrecy == BufSecret 
+                                            then return $ withLets argsCastLets $ Typed rtySec $ CAApp ("secret_" ++ f) f args'
+                                            else return $ withLets argsCastLets $ Typed rtyPub $ CAApp ("public_" ++ f) f args'
+                                        Nothing -> do
+                                            -- use args here since we need to generate the overall user func definition 
+                                            (ufExecName, ufSpecName, rtUF) <- rtyOfUserFunc p ufdef (map (^. tty) args)
+                                            return $ withLets argsCastLets $ Typed rtUF $ CAApp ufExecName ufSpecName args'
                         Nothing -> do
                             throwError $ UndefinedSymbol $ show . owlpretty $ p
     where
