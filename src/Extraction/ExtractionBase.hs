@@ -398,6 +398,13 @@ hasSecParser (FBuf BufSecret _) = True
 hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
 hasSecParser _ = False 
 
+-- For serialization, we don't care if the buf is secret or public to begin with, since we 
+-- may need to upcast the public buf to secret when serializing
+hasSecSerializer :: FormatTy -> Bool
+hasSecSerializer (FBuf _ _) = True
+hasSecSerializer (FStruct _ fs) = all (hasSecSerializer . snd) fs
+hasSecSerializer _ = False 
+
 
 mkNestPattern :: [Doc ann] -> Doc ann
 mkNestPattern l = 

@@ -898,7 +898,7 @@ liftLifetime lt (RTSecBuf _) = RTSecBuf lt
 liftLifetime _ ty = ty
 
 genVerusStruct :: CStruct (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
-genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
+genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
     debugLog $ "genVerusStruct: " ++ name
     let fields = map (\(fname, (formatty, fty)) -> (fname, fty)) fieldsFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
@@ -922,7 +922,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecret
+    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecretParse isSecretSer
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where 
 
@@ -993,8 +993,8 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
             }
             |]
         
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> Bool -> EM (Doc ann)
-        genParsleyWrappers verusName specname structTy fields lifetimeConst True isSecret = do
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> Bool -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname structTy fields lifetimeConst True isSecretParse isSecretSer = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
             let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
@@ -1029,7 +1029,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
                 }
             }
             |]
-            secretParse <- if isSecret then do
+            secretParse <- if isSecretParse then do
                     mkStructFieldsSec <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTSecBuf (Lifetime lifetimeConst)) fname fty) fields
                     return [__di|
                     pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
@@ -1061,12 +1061,13 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
             let lens = lens' ++ [pretty "0"]
             let innerTyOf fty = case fty of
                     RTUnit -> RTUnit
-                    RTOwlBuf l -> RTOwlBuf l
+                    -- if serializing to secret, we upcast the public fields to secret
+                    RTOwlBuf l -> if isSecretSer then RTSecBuf l else RTOwlBuf l
                     RTSecBuf l -> RTSecBuf l
                     _ -> u8slice
             fieldsAsInner <- mkNestPattern <$> mapM (\(_, fname, _, fty) -> (pretty ("arg." ++ fname), fty) `cast` innerTyOf fty) fields
             (outTy, obufConstructor, castObuf) <-
-                    if isSecret then return
+                    if isSecretSer then return
                         ( [di|SecretBuf<'#{lifetimeConst}>|]
                         , [di|SecretOutputBuf::new_obuf|]
                         , [di|obuf.into_secret_buf()|]
@@ -1111,7 +1112,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecret) = do
             }
             |]
             return $ vsep [parse, secretParse, ser]
-        genParsleyWrappers verusName specname structTy fields lifetimeConst False _ = do
+        genParsleyWrappers verusName specname structTy fields lifetimeConst False _ _ = do
             let specParse = [di|parse_#{specname}|] 
             let execParse = [di|parse_#{verusName}|]
             let parse = [__di|

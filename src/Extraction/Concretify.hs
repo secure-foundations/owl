@@ -877,9 +877,10 @@ concretifyTyDef tname (TB.StructDef bnd) = do
                         ck <- go k
                         return $ (s, c) : ck
         s <- go dp
+        let isSecretParse = all (hasSecParser . snd) s
+        let isSecretSer = all (hasSecSerializer . snd) s && any ((==) BufSecret . secrecyOfFTy . snd) s
         let isVest = all (typeIsVest . snd) s
-        let isSecret = all (hasSecParser . snd) s
-        return $ Just $ CStructDef (CStruct tname s isVest isSecret)
+        return $ Just $ CStructDef (CStruct tname s isVest isSecretParse isSecretSer)
 
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
@@ -897,7 +898,7 @@ setupEnv ((tname, td):tydefs) = do
                     let rty = FEnum tname $ M.assocs cases
                     funcs %= M.insert cname (argTys, rty)
             mapM_ mkCase (M.assocs cases)
-        Just (CStructDef (CStruct _ fields _ _)) -> do
+        Just (CStructDef (CStruct _ fields _ _ _)) -> do
             -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
             let fieldTys = map snd fields
             let rty = FStruct tname fields

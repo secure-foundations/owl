@@ -154,7 +154,8 @@ data CStruct t = CStruct {
     _structName :: String,
     _structFields :: [(String, t)],
     _structIsVest :: Bool,
-    _structHasSecret :: Bool
+    _structHasSecretParse :: Bool,
+    _structHasSecretSer :: Bool
 } deriving (Show, Generic, Typeable)
 
 makeLenses ''CStruct

@@ -70,7 +70,7 @@ extractCTyDef (CStructDef s) = extractCStruct s
 extractCTyDef (CEnumDef e) = extractCEnum e
 
 extractCStruct :: CStruct FormatTy -> EM (Doc ann)
-extractCStruct (CStruct n fs isVest _) = do
+extractCStruct (CStruct n fs isVest _ _) = do
     debugLog $ "Spec extraction struct: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, specFieldTyOf t)) fs
