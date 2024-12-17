@@ -497,12 +497,8 @@ specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 specCombTyOf = liftFromJust specCombTyOf'
 
 execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf BufSecret (Just flen)) = do
-    debugPrint "WARNING: execCombTyOf': secret buf"
-    return $ Just [di|Bytes|]
-execCombTyOf' (FBuf BufSecret Nothing) = do
-    debugPrint "WARNING: execCombTyOf': secret buf"
-    return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufSecret Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
 execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FStruct _ fs) = do
@@ -533,12 +529,9 @@ execCombTyOf = liftFromJust execCombTyOf'
 -- (combinator type, any constants that need to be defined)
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 specCombOf' _ (FBuf BufSecret (Just flen)) = do
-    debugPrint "WARNING: specCombOf': secret buf"
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-specCombOf' _ (FBuf BufSecret Nothing) = do
-    debugPrint "WARNING: specCombOf': secret buf"
-    return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 specCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
@@ -582,12 +575,9 @@ specCombOf s = liftFromJust (specCombOf' s)
 -- (combinator type, any constants that need to be defined)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 execCombOf' _ (FBuf BufSecret (Just flen)) = do
-    debugPrint "WARNING: execCombOf': secret buf"
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-execCombOf' _ (FBuf BufSecret Nothing) = do
-    debugPrint "WARNING: execCombOf': secret buf"
-    return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 execCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
