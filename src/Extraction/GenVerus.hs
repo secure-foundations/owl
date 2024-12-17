@@ -169,7 +169,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     |]
     where
         secrecyNeedsLifetime (_,_,_,BufSecret) = True
-        secrecyNeedsLifetime (_,_,_,BufPublic) = False -- this can change in future
+        secrecyNeedsLifetime (_,_,_,BufPublic) = True -- this can change in future
 
 
 -- ctr decl, ctr init
@@ -258,8 +258,8 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("vrfy", ([owlBuf, secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         , ("dhpk", ([secBuf], vecU8))
         , ("dh_combine", ([secBuf, secBuf], secBuf))
-        -- , ("mac", ([u8slice, u8slice], vecU8))
-        -- , ("mac_vrfy", ([u8slice, u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
+        , ("mac", ([secBuf, owlBuf], vecU8))
+        , ("mac_vrfy", ([secBuf, secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         -- , ("pkenc", ([u8slice, u8slice], vecU8))
         -- , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("enc_st_aead", ([secBuf, secBuf, secBuf, secBuf], vecU8)) 
@@ -1442,6 +1442,8 @@ cast (v, RTRef _ (RTSlice RTU8)) (RTOwlBuf _) =
     return [di|OwlBuf::from_slice(&#{v})|]
 cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
+cast (v, RTVec RTU8) (RTSecBuf _) =
+    return [di|OwlBuf::from_vec(#{v}).into_secret()|]
 cast (v, RTArray RTU8 _) (RTOwlBuf _) =
     return [di|OwlBuf::from_slice(&#{v})|]
 cast (v, RTArray RTU8 _) (RTSecBuf _) =
@@ -1541,6 +1543,7 @@ viewVar vname (RTRef _ (RTSlice RTU8)) = return [di|#{vname}.view()|]
 viewVar vname (RTVec RTU8) = return [di|#{vname}.view()|]
 viewVar vname (RTArray RTU8 _) = return [di|#{vname}.view()|]
 viewVar vname (RTOwlBuf _) = return [di|#{vname}.view()|]
+viewVar vname (RTSecBuf _) = return [di|#{vname}.view()|]
 viewVar vname RTBool = return [di|#{vname}|]
 viewVar vname RTUsize = return [di|#{vname}|]
 viewVar vname RTVerusGhost = return [di|#{vname}|]

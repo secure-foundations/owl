@@ -660,27 +660,27 @@ pub mod secret {
         OwlBuf::from_vec(h).into_secret()
     }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_mac(mackey: &[u8], msg: &[u8]) -> (mac_val: Vec<u8>)
-    //     ensures mac_val.view() == mac(mackey.view(), msg.view())
-    // {
-    //     owl_hmac::hmac(HMAC_MODE, mackey, msg, None)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_mac(mackey: SecretBuf, msg: OwlBuf) -> (mac_val: Vec<u8>)
+        ensures mac_val.view() == mac(mackey.view(), msg.view())
+    {
+        owl_hmac::hmac(HMAC_MODE, mackey.private_as_slice(), msg.as_slice(), None)
+    }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_mac_vrfy(mackey: &[u8], msg: &[u8], mac: &[u8], Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<Vec<u8>>)
-    //     requires
-    //         t.view() matches DeclassifyingOp::MacVrfy(mackey_spec, msg_spec, mac_spec)
-    //         && mackey@ == mackey_spec && msg@ == msg_spec && mac@ == mac_spec
-    //     ensures 
-    //         view_option(x) == mac_vrfy(mackey.view(), msg.view(), mac.view())
-    // {
-    //     if owl_hmac::verify(HMAC_MODE, mackey, msg, mac, None) {
-    //         Some(msg.to_vec())
-    //     } else {
-    //         None
-    //     }
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_mac_vrfy<'a>(mackey: SecretBuf<'_>, msg: SecretBuf<'a>, mac: OwlBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<SecretBuf<'a>>)
+        requires
+            t.view() matches DeclassifyingOp::MacVrfy(mackey_spec, msg_spec, mac_spec)
+            && mackey@ == mackey_spec && msg@ == msg_spec && mac@ == mac_spec
+        ensures 
+            view_option(x) == mac_vrfy(mackey.view(), msg.view(), mac.view())
+    {
+        if owl_hmac::verify(HMAC_MODE, mackey.private_as_slice(), msg.private_as_slice(), mac.as_slice(), None) {
+            Some(msg.another_ref())
+        } else {
+            None
+        }
+    }
 
     // #[verifier(external_body)]
     // pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)

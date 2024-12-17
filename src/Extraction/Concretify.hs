@@ -269,7 +269,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
         ("notb", [x]) -> return $ mkAppNoLets f FBool
         ("length", [x]) -> return $ mkAppNoLets f FInt
         ("plus", [x, y]) -> return $ mkAppNoLets f FInt
-        ("crh", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "crh" -- TODO: secrecy for crh
+        ("crh", [x]) -> return $ mkAppNoLets f $ fSBuf $ Just $ FLNamed "crh" -- TODO: secrecy for crh
         ("mult", [x, y]) -> return $ mkAppNoLets f FInt
         ("zero", []) -> return $ mkAppNoLets f FInt
         ("is_group_elem", [x]) -> return $ mkAppNoLets f FBool
@@ -732,12 +732,16 @@ concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
 -- concretifyCryptOp _ CPKDec [k, x] = do
 --     let t = FOption $ FBuf Nothing
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkdec" [k, x]
--- concretifyCryptOp _ CMac [k, x] = do
---     let t = FBuf $ Just $ FLNamed "maclen"
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac" [k, x]
--- concretifyCryptOp _ CMacVrfy [k, x, v] = do
---     let t = FOption $ FBuf Nothing
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "mac_vrfy" [k, x, v]
+concretifyCryptOp _ CMac [k, x] = do
+    let t = fPBuf $ Just $ FLNamed "maclen"
+    return $ noLets $ Typed t $ CRet $ Typed t $ cAApp "mac" [k, x]
+concretifyCryptOp _ CMacVrfy [k, x, v] = do
+    let plaintextT = FOption $ fSBuf Nothing
+    tokName <- fresh $ s2n "declassify_tok"
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    let dop = DOMacVrfy (k, x, v)
+    let doMacVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "mac_vrfy" [k, x, v, tokVar]
+    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doMacVrfy
 concretifyCryptOp _ CSign [k, x] = do
     let t = fPBuf $ Just $ FLNamed "signature"
     return $ noLets $ Typed t $ CRet $ Typed t $ cAApp "sign" [k, x]
