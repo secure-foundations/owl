@@ -70,12 +70,12 @@ genVerusUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
     where
         mkUserFuncDef specname execname b = do
             (args, (retTy, body)) <- unbindCDepBind b
-            let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty t}|]) args
+            let lifetimeConst = "a"
+            let argdefs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}: #{pretty (liftLifetime (Lifetime lifetimeConst) t)}|]) args
             let viewArgs = hsep . punctuate comma $ fmap (\(n, _, t) -> [di|#{execName . show $ n}.view()|]) args
             body' <- genVerusCAExpr body
             body'' <- castGRE body' retTy
             let needsLifetime = tyNeedsLifetime retTy
-            let lifetimeConst = "a"
             let lifetimeAnnot = pretty $ if needsLifetime then "<'" ++ lifetimeConst ++ ">" else ""
             let retTy' = liftLifetime (Lifetime lifetimeConst) retTy
             let retval = [di|res: #{pretty retTy'}|]
