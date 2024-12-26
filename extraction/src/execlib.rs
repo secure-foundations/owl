@@ -12,7 +12,7 @@ enum OwlBufInner<'a> {
     Owned(Rc<Vec<u8>>, usize, usize), // buffer, start, len
 }
 
-#[repr(transparent)]
+// #[repr(transparent)]
 pub struct OwlBuf<'a> {
     inner: OwlBufInner<'a>
 }
@@ -340,7 +340,7 @@ pub mod secret {
     
     verus! {
     
-    #[repr(transparent)]
+    // #[repr(transparent)]
     pub struct SecretBuf<'a> {
         buf: OwlBuf<'a>
     }
@@ -474,7 +474,7 @@ pub mod secret {
         }
     }
 
-    #[repr(transparent)]
+    // #[repr(transparent)]
     pub struct SecretOutputBuf {
         obuf: Vec<u8>
     }
