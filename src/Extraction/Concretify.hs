@@ -51,14 +51,18 @@ resolveLengthAnnot a = do
         _ -> throwError $ ErrSomethingFailed $ "Unsupported length annotation: " ++ show (owlpretty a)
 
 
+lblSecrecy :: Label -> BufSecrecy
+lblSecrecy lbl = if lbl `aeq` advLbl then BufPublic else BufSecret
+
 concretifyTy :: Ty -> EM FormatTy
 concretifyTy t = do
     -- debugPrint $ "Concretifying type:" ++ show (owlpretty t)
     case t^.val of
-      TData _ _ _ -> return $ fPBuf Nothing
-      TDataWithLength _ a -> do
+      TData lbl _ _ -> return $ FBuf (lblSecrecy lbl) Nothing
+      TDataWithLength lbl a -> do
           a' <- liftCheck $ TB.resolveANF a
-          fPBuf . Just <$> resolveLengthAnnot a'
+          let secrecy = lblSecrecy lbl
+          FBuf secrecy . Just <$> resolveLengthAnnot a'
       TGhost -> return $ FGhost
       TRefined t0 _ _ -> concretifyTy t0
       TOption t0 -> do
@@ -262,7 +266,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                         return $ mkAppNoLets f $ FOption t
                     _ -> do
                         -- This is probably fine, since some other branch should constrain the type
-                        debugPrint "WARNING: Can't infer type of None, using dummy type"
+                        -- debugPrint "WARNING: Can't infer type of None, using dummy type"
                         return $ mkAppNoLets f $  FOption FDummy
         ("andb", [x, y]) -> return $ mkAppNoLets f FBool
         ("andp", [x, y]) -> return $ mkAppNoLets f FGhost
@@ -513,11 +517,15 @@ concretifyExpr e = do
           -- resolvedArgs <- mapM resolveANF aes
           addLets argLets <$> concretifyCryptOp aes cop cs
       ECall p _ aes -> do
-          s <- concretifyPath p
-          (cs, argLets) <- concretifyAExprs aes
-          (argtys, t) <- tySigOfCall p
-          cs' <- ghostifyArgs argtys cs
-          return $ withLets argLets $ Typed t $ CCall s t cs'
+            s <- concretifyPath p
+            (cs, argLets) <- concretifyAExprs aes
+            (argtys, t) <- tySigOfCall p
+            cs' <- ghostifyArgs argtys cs
+            argsWithLets <- forM (zip argtys cs') $ \(t, a) -> do
+                        unifyFormatTy t (a ^. tty) -- check types are compatible
+                        bufcast a t
+            let (args', argsCastLets) = unzip argsWithLets
+            return $ withLets (argLets ++ concat argsCastLets) $ Typed t $ CCall s t args'
       EParse a t_target otherwiseCase xsk -> do
             (a', alets) <- concretifyAExpr a
             t_target' <- concretifyTy t_target
@@ -559,7 +567,7 @@ concretifyExpr e = do
                             FEnum _ cases -> do
                                 case lookup c cases of
                                     Just (Just t) -> return t :: EM FormatTy
-                                    _ -> throwError $ TypeError $ "attempted to take case " ++ c ++ " of enum type"
+                                    _ -> throwError $ TypeError $ "attempted to take case " ++ c ++ " of enum type " ++ show (owlpretty casevalT)
                             FOption t -> do
                                     if c == "Some" then return t else throwError $ TypeError $ "attempted to take case " ++ c ++ " of option type"
                             _ -> throwError $ ErrSomethingFailed "bad caseTyOf"
@@ -593,8 +601,6 @@ concretifyExpr e = do
                     -- debugPrint $ show (owlpretty e')
                     -- debugPrint $ show (owlpretty casevalT)
                     -- debugPrint $ show (owlpretty startT)
-                    otw' <- exprFromLets' <$> concretifyExpr otw
-                    avar' <- fresh $ s2n "parseval"
                     case casevalT of
                         -- Special case: sometimes, option types are given a type annotation, which 
                         -- shows up in this case, but we are parsing authentically from an option type
@@ -602,8 +608,10 @@ concretifyExpr e = do
                         _ | casevalT == startT -> return (avar, caseStmt)
                         -- We are parsing as part of the case, so we need PFromBuf
                         _ -> do 
+                            otw' <- exprFromLets' <$> concretifyExpr otw
+                            avar' <- fresh $ s2n "parseval"
                             let p = Typed retTy $
-                                    CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
+                                    CParse PFromBuf (Typed casevalT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
                                         bind [(avar, ignore "caseval", casevalT)] caseStmt
                             return (avar', p)
                 Nothing -> return (avar, caseStmt)
