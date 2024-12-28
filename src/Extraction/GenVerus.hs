@@ -484,6 +484,7 @@ data GenCExprInfo ann = GenCExprInfo {
 
 needsToplevelCast :: VerusTy -> Bool
 needsToplevelCast (RTOwlBuf _)  = True
+needsToplevelCast (RTSecBuf _)  = True
 needsToplevelCast (RTOption (RTOwlBuf _)) = True
 needsToplevelCast (RTStruct _ _) = True
 needsToplevelCast (RTEnum _ _) = True
@@ -655,14 +656,16 @@ genVerusCExpr info expr = do
             e1' <- genVerusCExpr info e1
             e2' <- genVerusCExpr info e2
             when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError $ "if true branch has different type than expected: " ++ show (e1' ^. eTy) ++ " vs " ++ show (e1 ^. tty) 
-            when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError "if false branch has different type than expected"
-            when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
-            ety <- unifyVerusTys (e1' ^. eTy) (e2' ^. eTy)
+            when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError $ "if false branch has different type than expected: " ++ show (e2' ^. eTy) ++ " vs " ++ show (e2 ^. tty) 
+            -- when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
+            ety <- unifyVerusTysUpToSecrecy (e1' ^. eTy) (e2' ^. eTy)
+            e1'' <- if e1' ^. eTy /= ety then castGRE e1' ety else return $ e1' ^. code
+            e2'' <- if e2' ^. eTy /= ety then castGRE e2' ety else return $ e2' ^. code
             return $ GenRustExpr ety [di|
             if #{ae''} {
-                #{e1' ^. code}
+                #{e1''}
             } else {
-                #{e2' ^. code}
+                #{e2''}
             }
             |]
         CCase ae cases -> do
@@ -679,11 +682,12 @@ genVerusCExpr info expr = do
                             let parens = case ae ^. tty of
                                     RTOption _ -> ""
                                     _ -> "()"
-                            return $ GenRustExpr (k' ^. eTy) [__di|
-                            #{aeTyPrefix}#{translateCaseName c}#{parens} => { 
-                                #{k' ^. code} 
-                            },
-                            |]
+                            return ([di|#{aeTyPrefix}#{translateCaseName c}#{parens} =>|], 
+                                GenRustExpr (k' ^. eTy) [__di|
+                                { 
+                                    #{k' ^. code} 
+                                }
+                                |])
                         Right xtk -> do
                             let (x, (t, k)) = unsafeUnbind xtk
                             let rustX = execName . show $ x
@@ -693,19 +697,26 @@ genVerusCExpr info expr = do
                             -- but the case body should have an OwlBuf or something)
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
                             k' <- genVerusCExpr info k
-                            return $ GenRustExpr (k' ^. eTy) [__di|
-                            #{aeTyPrefix}#{translateCaseName c}(tmp_#{rustX}) => {
-                                let #{rustX} = #{castTmp}; 
-                                #{k' ^. code} 
-                            },
-                            |]
+                            return ([di|#{aeTyPrefix}#{translateCaseName c}(tmp_#{rustX}) =>|],
+                                GenRustExpr (k' ^. eTy) [__di|
+                                {
+                                    let #{rustX} = #{castTmp}; 
+                                    #{k' ^. code} 
+                                }
+                                |])
             cases' <- mapM genCase cases
-            let casesCode = map (^. code) cases'
-            let casesEtys = map (^. eTy) cases'
-            stmtEty <- foldM unifyVerusTys (head casesEtys) (tail casesEtys)
+            -- let casesCode = map (^. code) cases'
+            let casesEtys = map ((^. eTy) . snd) cases'
+            stmtEty <- foldM unifyVerusTysUpToSecrecy (head casesEtys) (tail casesEtys)
+            let castCases (matchArm, c) = do
+                    if c ^. eTy /= stmtEty then do
+                        cCast <- castGRE c stmtEty
+                        return $ [__di| #{matchArm} #{cCast} |]
+                    else return $ [__di| #{matchArm} #{c ^. code} |]
+            casesCode' <- mapM castCases cases'
             return $ GenRustExpr stmtEty [__di|
             match #{ae''} {
-                #{vsep casesCode}
+                #{vsep . punctuate comma $ casesCode'}
             }
             |]
         -- special case: comes from type annotation when matching on an option type
@@ -1509,13 +1520,14 @@ secBuf = RTSecBuf AnyLifetime
 owlBuf :: VerusTy
 owlBuf = RTOwlBuf AnyLifetime
 
-unifyVerusTys :: VerusTy -> VerusTy -> EM VerusTy
-unifyVerusTys t1 t2 | t1 == t2 = return t1
-unifyVerusTys RTDummy t2 = return t2
-unifyVerusTys t1 RTDummy = return t1
-unifyVerusTys (RTOption t1) (RTOption t2) = RTOption <$> unifyVerusTys t1 t2
-unifyVerusTys t1 t2 = throwError $ ErrSomethingFailed $ "can't unify types: " ++ (show . pretty $ t1) ++ " and " ++ (show . pretty $ t2)
-
+unifyVerusTysUpToSecrecy :: VerusTy -> VerusTy -> EM VerusTy
+unifyVerusTysUpToSecrecy RTDummy t2 = return t2
+unifyVerusTysUpToSecrecy t1 t2 | t1 == t2 = return t1
+unifyVerusTysUpToSecrecy t1 RTDummy = return t1
+unifyVerusTysUpToSecrecy (RTOption t1) (RTOption t2) = RTOption <$> unifyVerusTysUpToSecrecy t1 t2
+unifyVerusTysUpToSecrecy (RTSecBuf l1) (RTOwlBuf _) = return $ RTSecBuf l1
+unifyVerusTysUpToSecrecy (RTOwlBuf _) (RTSecBuf l1) = return $ RTSecBuf l1
+unifyVerusTysUpToSecrecy t1 t2 = throwError $ ErrSomethingFailed $ "can't unify Verus types: " ++ (show . pretty $ t1) ++ " and " ++ (show . pretty $ t2)
 
 
 snOfEn n = if "owl_" `isPrefixOf` n then "owlSpec_" ++ drop 4 n else n
@@ -1523,6 +1535,7 @@ snOfEn n = if "owl_" `isPrefixOf` n then "owlSpec_" ++ drop 4 n else n
 specTyOfExecTySerialized :: VerusTy -> VerusTy
 specTyOfExecTySerialized (RTVec t) = RTSeq (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTOwlBuf _) = RTSeq RTU8
+specTyOfExecTySerialized (RTSecBuf _) = RTSeq RTU8
 specTyOfExecTySerialized (RTRef _ (RTSlice t)) = RTSeq (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTArray t _) = RTSeq (specTyOfExecTySerialized t)
 specTyOfExecTySerialized (RTOption t) = RTOption (specTyOfExecTySerialized t)
