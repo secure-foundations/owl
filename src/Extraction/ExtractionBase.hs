@@ -464,10 +464,8 @@ withJustNothing f Nothing = return (Just Nothing)
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
 specCombTyOf' (FBuf BufSecret (Just flen)) = do
-    debugPrint "WARNING: specCombTyOf': secret buf"
     return $ Just [di|Bytes|]
 specCombTyOf' (FBuf BufSecret Nothing) = do
-    debugPrint "WARNING: specCombTyOf': secret buf"
     return $ Just [di|Tail|]
 specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
 specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
@@ -490,7 +488,7 @@ specCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 specCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|Tag<BytesN<#{l}>, Seq<u8>>|]
+    return $ Just [di|OwlConstBytes<#{l}>|]
 specCombTyOf' _ = return Nothing
 
 specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -520,7 +518,7 @@ execCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
+    return $ Just [di|OwlConstBytes<#{l}>|]
 execCombTyOf' _ = return Nothing
 
 execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -565,8 +563,8 @@ specCombOf' constSuffix (FHexConst s) = do
     let l = length s `div` 2
     bl <- hexStringToByteList s
     let constSuffix' = map Data.Char.toUpper constSuffix
-    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|Tag::spec_new(BytesN::<#{l}>, (SPEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] = [#{bl}];|]
+    return $ Just ([di|OwlConstBytes::<#{l}>(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 specCombOf' _ _ = return Nothing
 
 specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -613,14 +611,14 @@ execCombOf' constSuffix (FHexConst s) = do
     let constSuffix' = map Data.Char.toUpper constSuffix
     let const = [__di|
     exec const EXEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] 
-        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'} == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
     {
         let arr: [u8; #{l}] = [#{bl}];
-        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
+        assert(arr == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
         arr
     }
     |]
-    return $ Just ([di|Tag::new(BytesN::<#{l}>, (EXEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
+    return $ Just ([di|OwlConstBytes::<#{l}>(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 execCombOf' _ _ = return Nothing
 
 execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)

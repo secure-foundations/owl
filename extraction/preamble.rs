@@ -9,6 +9,8 @@ pub mod speclib;
 pub use crate::speclib::{*, itree::*};
 pub mod execlib;
 pub use crate::execlib::{*};
+pub mod owl_const_bytes;
+pub use crate::owl_const_bytes::*;
 pub mod owl_aead;
 pub mod owl_dhke;
 pub mod owl_hkdf;

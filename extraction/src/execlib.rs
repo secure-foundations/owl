@@ -380,6 +380,15 @@ pub mod secret {
             SecretBuf { buf }
         }
 
+        pub fn another_ref_option<'a>(x: &'a Option<Self>) -> (result: Option<SecretBuf<'x>>)
+            ensures view_option(result) == view_option(*x),
+        {
+            match x {
+                Some(x) => Some(SecretBuf::another_ref(x)),
+                None => None,
+            }
+        }
+
         pub fn subrange(self, start: usize, end: usize) -> (result: SecretBuf<'x>)
             requires 0 <= start <= end <= self.view().len(),
             ensures  result.view() == self.view().subrange(start as int, end as int),

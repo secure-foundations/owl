@@ -486,6 +486,7 @@ needsToplevelCast :: VerusTy -> Bool
 needsToplevelCast (RTOwlBuf _)  = True
 needsToplevelCast (RTSecBuf _)  = True
 needsToplevelCast (RTOption (RTOwlBuf _)) = True
+needsToplevelCast (RTOption (RTSecBuf _)) = True
 needsToplevelCast (RTStruct _ _) = True
 needsToplevelCast (RTEnum _ _) = True
 needsToplevelCast _ = False
@@ -1490,6 +1491,8 @@ cast (v, RTSecBuf _) (RTSecBuf _) =
     return [di|SecretBuf::another_ref(&#{v})|]
 cast (v, RTOption (RTOwlBuf _)) (RTOption (RTOwlBuf _)) =
     return [di|OwlBuf::another_ref_option(&#{v})|]
+cast (v, RTOption (RTSecBuf _)) (RTOption (RTSecBuf _)) =
+    return [di|SecretBuf::another_ref_option(&#{v})|]
 cast (v, RTStruct s _) (RTStruct s' _) | s == s' =
     return [di|#{s}::another_ref(&#{v})|]
 cast (v, RTEnum e _) (RTEnum e' _) | e == e' =
