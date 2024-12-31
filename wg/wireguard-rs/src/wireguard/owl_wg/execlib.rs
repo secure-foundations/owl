@@ -5,7 +5,7 @@ use parsley::regular::builder::*;
 
 verus! {
 
-pub enum OwlBuf<'a> {
+pub(super) enum OwlBuf<'a> {
     Borrowed(&'a [u8]),
     Owned(Rc<Vec<u8>>, usize, usize), // buffer, start, len
 } 

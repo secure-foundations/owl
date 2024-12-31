@@ -44,7 +44,7 @@ if [ $format = "true" ]; then
 fi
 
 echo ""
-echo "VERIFYING, COMPILING, AND EXPORTING PARSLEY" 
+echo "VERIFYING, COMPILING, AND EXPORTING VEST" 
 pushd $VESTPATH
 make
 popd
@@ -57,7 +57,7 @@ popd
 
 echo ""
 echo "VERIFYING" 
-verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern vest=$VESTPATH/libvest.rlib --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
+verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern vest=$VESTPATH/libvest.rlib --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=1000 $main_file $verus_args -V spinoff-all 
 # verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
 
 

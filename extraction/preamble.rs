@@ -9,6 +9,8 @@ pub mod speclib;
 pub use crate::speclib::{*, itree::*};
 pub mod execlib;
 pub use crate::execlib::{*};
+pub mod owl_const_bytes;
+pub use crate::owl_const_bytes::*;
 pub mod owl_aead;
 pub mod owl_dhke;
 pub mod owl_hkdf;
@@ -116,26 +118,30 @@ pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: 
 }
 
 #[verifier(external_body)]
-pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
-    requires old(t).view().is_sample(n)
-    ensures  t.view() == old(t).view().get_sample(res.view())
+pub fn owl_sample<A,'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize) -> (res: SecretBuf<'a>)
+    requires
+        old(t).view().is_sample(n),
+    ensures
+        t.view() == old(t).view().get_sample(res.view()),
+        res.len_valid(),
 {
-    owl_util::gen_rand_bytes(n)
+    OwlBuf::from_vec(owl_util::gen_rand_bytes(n)).into_secret()
 }
 
-
 #[verifier(external_body)]
-pub fn owl_output_serialize_fused<'a, A, C: View + Combinator>(
+pub fn owl_output_serialize_fused<A, I: VestInput, C: View + Combinator<I, Vec<u8>>>(
     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
     comb: C,
-    val: C::Result<'a>,
+    val: C::Result,
     obuf: &mut Vec<u8>,
     dest_addr: &str,
     ret_addr: &str,
-) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result<'a> as View>::V>
+) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result as View>::V>
     requires
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> 
-            old(t).view().is_output(b, endpoint_of_addr(dest_addr.view())),
+        comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
+            b,
+            endpoint_of_addr(dest_addr.view()),
+        ),
     ensures
         t.view() == old(t).view().give_output(),
         comb@.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,

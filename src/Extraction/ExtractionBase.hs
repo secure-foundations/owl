@@ -60,8 +60,10 @@ data Env t = Env {
     ,   _freshCtr :: Integer
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
-    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe FormatTy) -- (return type (Just if needs extraction))
+    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy)) -- (return type for pub and sec (Just if needs extraction))
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
+    ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
+    ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
 }
 
 
@@ -128,6 +130,36 @@ instance OwlPretty ExtractionError where
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
+type LocalityName = String
+type NameData = (String, FLen, Int, BufSecrecy) -- name, type, number of processID indices, whether should be SecretBuf or OwlBuf
+type VNameData = (String, ConstUsize, Int, BufSecrecy)
+type OwlDefData = (String, TB.Def)
+data LocalityData nameData defData = LocalityData {
+    _nLocIdxs :: Int, 
+    _localNames :: [nameData], 
+    _sharedNames :: [nameData], 
+    _defs :: [defData], 
+    _tables :: [(String, Ty)], 
+    _counters :: [String]
+} deriving Show
+makeLenses ''LocalityData
+data ExtractionData defData tyData nameData userFuncData = ExtractionData {
+    _locMap :: M.Map LocalityName (LocalityData nameData defData),
+    _presharedNames :: [(nameData, [LocalityName])],
+    _pubKeys :: [nameData],
+    _tyDefs :: [(String, tyData)],
+    _userFuncs :: [userFuncData]
+} deriving Show
+makeLenses ''ExtractionData
+
+type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData (String, TB.UserFunc)
+type OwlLocalityData = LocalityData NameData OwlDefData
+type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData (CUserFunc FormatTy)
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData (CUserFunc VerusTy)
+type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
+type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
+
+
 makeLenses ''Env
 
 liftExtractionMonad :: ExtractionMonad t a -> ExtractionMonad t' a
@@ -141,7 +173,9 @@ liftExtractionMonad m = do
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
             _owlUserFuncs = env' ^. owlUserFuncs,
-            _memoKDF = []
+            _memoKDF = [],
+            _genVerusNameEnv = M.empty,
+            _genVerusPkEnv = M.empty
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -174,45 +208,10 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) []
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
     where
-        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe FormatTy)
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
-
-
-
-
-type LocalityName = String
-type NameData = (String, FLen, Int) -- name, type, number of processID indices
-type VNameData = (String, ConstUsize, Int)
-type OwlDefData = (String, TB.Def)
-data LocalityData nameData defData = LocalityData {
-    _nLocIdxs :: Int, 
-    _localNames :: [nameData], 
-    _sharedNames :: [nameData], 
-    _defs :: [defData], 
-    _tables :: [(String, Ty)], 
-    _counters :: [String]
-} deriving Show
-makeLenses ''LocalityData
-data ExtractionData defData tyData nameData userFuncData = ExtractionData {
-    _locMap :: M.Map LocalityName (LocalityData nameData defData),
-    _presharedNames :: [(nameData, [LocalityName])],
-    _pubKeys :: [nameData],
-    _tyDefs :: [(String, tyData)],
-    _userFuncs :: [userFuncData]
-} deriving Show
-makeLenses ''ExtractionData
-
-type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData (String, TB.UserFunc)
-type OwlLocalityData = LocalityData NameData OwlDefData
-type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData (CUserFunc FormatTy)
-type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData (CUserFunc VerusTy)
-type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
-type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
-
-
-
 
 
 flattenResolvedPath :: ResolvedPath -> String
@@ -266,7 +265,7 @@ fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
-        NK_DH -> "group"
+        NK_DH  -> "group"
         NK_Enc -> "enckey"
         NK_PKE -> "pkekey"
         NK_Sig -> "sigkey"
@@ -277,6 +276,23 @@ fLenOfNameTy :: NameType -> ExtractionMonad t FLen
 fLenOfNameTy nt = do
     nk <- liftCheck $ TB.getNameKind nt
     fLenOfNameKind nk
+
+
+secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
+secrecyOfNameKind nk = do
+    return $ case nk of
+        NK_KDF -> BufSecret
+        NK_DH  -> BufSecret
+        NK_Enc -> BufSecret
+        NK_PKE -> BufSecret
+        NK_Sig -> BufSecret
+        NK_MAC -> BufSecret
+        NK_Nonce _ -> BufSecret
+
+secrecyOfNameTy :: NameType -> ExtractionMonad t BufSecrecy
+secrecyOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    secrecyOfNameKind nk
 
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
@@ -342,6 +358,54 @@ lookupKdfCall nks k = do
     return $ lookupNameKindAExprMap hcs nks k
 
 
+---- Equality on FormatTys ignoring buffer secrecy
+eqUpToSecrecy :: FormatTy -> FormatTy -> Bool
+eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2 || l1 == Nothing || l2 == Nothing
+eqUpToSecrecy (FOption t1) (FOption t2) = eqUpToSecrecy t1 t2
+eqUpToSecrecy f1 f2 = f1 == f2
+
+---- Equality on FormatTys ignoring FBuf length
+eqUpToBufLen :: FormatTy -> FormatTy -> Bool
+eqUpToBufLen (FBuf s1 _) (FBuf s2 _) = s1 == s2
+eqUpToBufLen (FOption t1) (FOption t2) = eqUpToBufLen t1 t2
+eqUpToBufLen f1 f2 = f1 == f2
+
+secrecyOfFTy :: FormatTy -> BufSecrecy
+secrecyOfFTy (FBuf s _) = s
+secrecyOfFTy (FStruct _ fs) = if all ((== BufPublic) . secrecyOfFTy . snd) fs then BufPublic else BufSecret
+secrecyOfFTy (FEnum _ cs) = if all ((== BufPublic) . secrecyOfFTy) (mapMaybe snd cs) then BufPublic else BufSecret
+secrecyOfFTy (FOption f) = secrecyOfFTy f
+secrecyOfFTy _ = BufPublic
+
+joinSecrecy :: BufSecrecy -> BufSecrecy -> BufSecrecy
+joinSecrecy BufPublic BufPublic = BufPublic
+joinSecrecy _ _ = BufSecret
+
+joinSecrecies :: [BufSecrecy] -> BufSecrecy
+joinSecrecies = foldr joinSecrecy BufPublic
+
+
+------------------------------------------------------------------------------------------------------
+---- Vest stuff
+
+-- Any format that uses Vest's `uint` or `Tag` combinators cannot have a secret parser
+-- Enums use `Tag` for the enum tag
+-- Structs must have all secret-parsable fields to be secret-parsable 
+-- TODO: if we want to support secret-parsable structs with non-secret-parsable fields, we need
+-- some new declassification machinery
+hasSecParser :: FormatTy -> Bool
+hasSecParser (FBuf BufSecret _) = True
+hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
+hasSecParser _ = False 
+
+-- For serialization, we don't care if the buf is secret or public to begin with, since we 
+-- may need to upcast the public buf to secret when serializing
+hasSecSerializer :: FormatTy -> Bool
+hasSecSerializer (FBuf _ _) = True
+hasSecSerializer (FStruct _ fs) = all (hasSecSerializer . snd) fs
+hasSecSerializer _ = False 
+
+
 mkNestPattern :: [Doc ann] -> Doc ann
 mkNestPattern l = 
         case l of
@@ -399,8 +463,12 @@ withJustNothing f (Just x) = Just <$> f x
 withJustNothing f Nothing = return (Just Nothing)
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-specCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-specCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+specCombTyOf' (FBuf BufSecret (Just flen)) = do
+    return $ Just [di|Bytes|]
+specCombTyOf' (FBuf BufSecret Nothing) = do
+    return $ Just [di|Tail|]
+specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 specCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (specCombTyOf' . snd) fs
     case sequence fs' of
@@ -420,15 +488,17 @@ specCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 specCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|Tag<BytesN<#{l}>, Seq<u8>>|]
+    return $ Just [di|OwlConstBytes<#{l}>|]
 specCombTyOf' _ = return Nothing
 
 specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 specCombTyOf = liftFromJust specCombTyOf'
 
 execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf (Just flen)) = return $ Just [di|Bytes|]
-execCombTyOf' (FBuf Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufSecret Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (execCombTyOf' . snd) fs
     case sequence fs' of
@@ -448,7 +518,7 @@ execCombTyOf' (FEnum _ cs) = do
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
     let l = length s `div` 2
-    return $ Just [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
+    return $ Just [di|OwlConstBytes<#{l}>|]
 execCombTyOf' _ = return Nothing
 
 execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
@@ -456,10 +526,14 @@ execCombTyOf = liftFromJust execCombTyOf'
 
 -- (combinator type, any constants that need to be defined)
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-specCombOf' _ (FBuf (Just flen)) = do
+specCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-specCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 specCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (specCombOf' constSuffix . snd) fs
     case sequence fcs of
@@ -489,8 +563,8 @@ specCombOf' constSuffix (FHexConst s) = do
     let l = length s `div` 2
     bl <- hexStringToByteList s
     let constSuffix' = map Data.Char.toUpper constSuffix
-    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: Seq<u8> = seq![#{bl}];|]
-    return $ Just ([di|Tag::spec_new(BytesN::<#{l}>, (SPEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] = [#{bl}];|]
+    return $ Just ([di|OwlConstBytes::<#{l}>(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 specCombOf' _ _ = return Nothing
 
 specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -498,10 +572,14 @@ specCombOf s = liftFromJust (specCombOf' s)
 
 -- (combinator type, any constants that need to be defined)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
-execCombOf' _ (FBuf (Just flen)) = do
+execCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
     return $ noconst [di|Bytes(#{l})|]
-execCombOf' _ (FBuf Nothing) = return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Bytes(#{l})|]
+execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 execCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (execCombOf' constSuffix . snd) fs
     case sequence fcs of
@@ -533,14 +611,14 @@ execCombOf' constSuffix (FHexConst s) = do
     let constSuffix' = map Data.Char.toUpper constSuffix
     let const = [__di|
     exec const EXEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] 
-        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'}.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'} == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
     {
         let arr: [u8; #{l}] = [#{bl}];
-        assert(arr.view() == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
+        assert(arr == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
         arr
     }
     |]
-    return $ Just ([di|Tag::new(BytesN::<#{l}>, (EXEC_BYTES_CONST_#{s}_#{constSuffix'}))|], const)
+    return $ Just ([di|OwlConstBytes::<#{l}>(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
 execCombOf' _ _ = return Nothing
 
 execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
@@ -548,9 +626,9 @@ execCombOf s = liftFromJust (execCombOf' s)
 
 
 execParsleyCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe ParsleyCombinator)
-execParsleyCombOf' _ (FBuf (Just flen)) = do
+execParsleyCombOf' _ (FBuf BufPublic (Just flen)) = do
     return $ Just $ PCBytes flen
-execParsleyCombOf' _ (FBuf Nothing) = return $ Just $ PCTail
+execParsleyCombOf' _ (FBuf BufPublic Nothing) = return $ Just $ PCTail
 execParsleyCombOf' constSuffix (FHexConst s) = do
     let constSuffix' = map Data.Char.toUpper constSuffix
     let len = length s `div` 2

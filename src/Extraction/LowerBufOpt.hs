@@ -37,8 +37,10 @@ lowerTy :: FormatTy -> EM VerusTy
 lowerTy FUnit = return RTUnit
 lowerTy FBool = return RTBool
 lowerTy FInt = return RTUsize
-lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
+lowerTy (FBuf BufPublic Nothing) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufPublic (Just flen)) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufSecret Nothing) = return $ RTSecBuf AnyLifetime
+lowerTy (FBuf BufSecret (Just flen)) = return $ RTSecBuf AnyLifetime
 lowerTy (FOption ft) = RTOption <$> lowerTy ft
 lowerTy (FStruct fn ffs) = do
     let rn = execName fn
@@ -51,6 +53,7 @@ lowerTy (FEnum n fcs) = do
 lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
 lowerTy (FHexConst s) = return $ RTUnit
+lowerTy FDeclassifyTok = return RTDeclassifyTok
 
 newtype LowerMonad t a = LowerMonad (StateT LowerEnv (ExtractionMonad t) a)
     deriving (Functor, Applicative, Monad, MonadState LowerEnv, MonadIO, MonadError ExtractionError)
@@ -162,8 +165,8 @@ getSuspTy :: Suspendable CAWithLets -> [VerusTy]
 getSuspTy (Eager (Typed t _, _)) = [t]
 getSuspTy (Susp s) = scTyChoices s
 
-mkApp :: String -> FormatTy -> [VerusTy] -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
-mkApp f frty argtys args' = do
+mkApp :: String -> String -> FormatTy -> [VerusTy] -> [Suspendable CAWithLets] -> LM (Suspendable CAWithLets)
+mkApp f spec_f frty argtys args' = do
     case (f, frty) of
         ("enc_st_aead", _) -> do 
             (argrtys, arglets) <- forceAEs argtys args'
@@ -172,10 +175,10 @@ mkApp f frty argtys args' = do
             let suspcomp rt = do
                     case rt of
                         RTStAeadBuilder -> do
-                            let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" argrtys
+                            let ae = Typed RTStAeadBuilder $ CAApp "enc_st_aead_builder" spec_f argrtys
                             return ((ae, arglets), RTStAeadBuilder)
                         tt' | tt' == serializedTy -> do
-                            let ae = Typed serializedTy $ CAApp "enc_st_aead" argrtys
+                            let ae = Typed serializedTy $ CAApp "enc_st_aead" spec_f argrtys
                             return ((ae, arglets), serializedTy)
                         _ -> throwError $ ErrSomethingFailed "mkApp enc_st_aead_builder: got bad type"
             return $ Susp $ Suspended frtyChoices suspcomp
@@ -211,7 +214,7 @@ mkApp f frty argtys args' = do
                             RTStruct rn' rfs' | rn' == execName f' -> do
                                 -- We want the struct as an actual Rust struct, so return it as normal
                                 (argrtys, arglets) <- forceAEs argtys args'
-                                return ((Typed rStructTy' $ CAApp f argrtys, arglets), rStructTy')
+                                return ((Typed rStructTy' $ CAApp f spec_f argrtys, arglets), rStructTy')
                             rt' | rt' == serializedTy -> do
                                 -- We want the struct as a serialized buffer, so we serialize it using the builder combinator
                                 let parsleycombof (fieldFormatTy, argVerusTyChoices) =
@@ -228,11 +231,11 @@ mkApp f frty argtys args' = do
             else do
                 (argrtys, arglets) <- forceAEs argtys args'
                 frty' <- lowerTy' frty
-                return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
+                return $ addLets (Eager (Typed frty' $ CAApp f spec_f argrtys , [])) arglets
         _ -> do
             (argrtys, arglets) <- forceAEs argtys args'
             frty' <- lowerTy' frty
-            return $ addLets (Eager (Typed frty' $ CAApp f argrtys , [])) arglets
+            return $ addLets (Eager (Typed frty' $ CAApp f spec_f argrtys , [])) arglets
 
 addLets :: Suspendable (CWithLets a) -> [CLetBinding] -> Suspendable (CWithLets a)
 addLets (Eager (x, lets)) lets' = Eager (x, lets ++ lets')
@@ -250,7 +253,7 @@ lowerCAExpr info aexpr = do
     rt <- lowerTy' $ aexpr ^. tty
     let eager x = return $ Eager (x, [])
     let eagerRt x = eager $ Typed rt x :: LM (Suspendable CAWithLets)
-    let lowerGet ae = if inArg info then eager $ Typed u8slice ae else eagerRt ae
+    let lowerGet ae = eagerRt ae -- if inArg info then eager $ Typed u8slice ae else eagerRt ae
     case aexpr ^. tval of
         CAVar s n -> do
             ltcv <- lookupLTC n 
@@ -261,10 +264,10 @@ lowerCAExpr info aexpr = do
                             (lets, rt') <- scComputation sc rt
                             return ((Typed rt $ CAVar s (castName n), lets), rt')
                     return $ Susp $ Suspended (scTyChoices sc) suspcomp
-        CAApp f args -> do
+        CAApp f spec_f args -> do
             argtys <- mapM (lowerTy' . (^. tty)) args
             args' <- mapM (lowerCAExpr info { inArg = True }) args
-            mkApp f (aexpr ^. tty) argtys args'
+            mkApp f spec_f (aexpr ^. tty) argtys args'
         CAGet s -> lowerGet $ CAGet s
         CAGetEncPK s -> lowerGet $ CAGetEncPK s
         CAGetVK s -> lowerGet $ CAGetVK s
@@ -276,7 +279,16 @@ lowerCAExpr info aexpr = do
         CACounter s -> eagerRt $ CACounter s
         CASerializeWith t args -> do
             throwError $ ErrSomethingFailed "got CASerializeWith as input to lowering, it should not be emitted by Concretify"
-
+        CACast ae t -> do
+            ae' <- lowerCAExpr info ae
+            t' <- lowerTy' t
+            case ae' of
+                Eager (ae', aelets) -> eagerRt $ CACast ae' t'
+                Susp s -> do
+                    let suspcomp rt = do
+                            ((ae'', aelets), rt') <- scComputation s $ rt
+                            return ((Typed rt $ CACast ae'' t', aelets), rt')
+                    return $ Susp $ Suspended (scTyChoices s) suspcomp
 
 lowerExprNoSusp :: CExpr FormatTy -> LM (CExpr VerusTy)
 lowerExprNoSusp expr = do
@@ -337,6 +349,12 @@ lowerExpr expr = do
             k' <- withVars [(x, t')] $ lowerExprNoSusp k
             let xk' = bind (castName x) k'
             eagerNoLets $ Typed (k' ^. tty) $ CSample flen t' xk'
+        CItreeDeclassify dop xk -> do 
+            (x, k) <- unbind xk
+            k' <- withVars [(x, RTDeclassifyTok)] $ lowerExprNoSusp k
+            dop' <- traverseDeclassifyingOp lowerTy' dop
+            let xk' = bind (castName x) k'
+            eagerNoLets $ Typed (k' ^. tty) $ CItreeDeclassify dop' xk'
         CLet e oanf xk -> do
             (x, k) <- unbind xk
             e' <- lowerExpr e
@@ -437,13 +455,18 @@ lowerDef' (CDef name b) = do
     return $ CDef name b'
 
 lowerUserFunc' :: CUserFunc FormatTy -> LM (CUserFunc VerusTy)
-lowerUserFunc' (CUserFunc name b) = do
-    (args, (retTy, body)) <- liftEM $ unbindCDepBind b
-    args' <- mapM lowerArg args
-    retTy' <- lowerTy' retTy
-    body' <- traverseCAExpr lowerTy' body
-    b' <- liftEM $ bindCDepBind args' (retTy', body')
-    return $ CUserFunc name b'
+lowerUserFunc' (CUserFunc specName pubName secName pubBody secBody) = do
+    pubBody' <- handleBody pubBody
+    secBody' <- handleBody secBody
+    return $ CUserFunc specName pubName secName pubBody' secBody'
+    where
+        handleBody b = do
+            (args, (retTy, body)) <- liftEM $ unbindCDepBind b
+            args' <- mapM lowerArg args
+            retTy' <- lowerTy' retTy
+            body' <- traverseCAExpr lowerTy' body
+            liftEM $ bindCDepBind args' (retTy', body')
+
 
 lowerDef :: CDef FormatTy -> EM (CDef VerusTy)
 lowerDef = runLowerMonad . lowerDef'
@@ -460,18 +483,18 @@ lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
-maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
+maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
-lowerTyDef _ (CStructDef (CStruct name fields isVest)) = do
+lowerTyDef _ (CStructDef (CStruct name fields isVest isSecretParse isSecretSer)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
             l <- maybeLenOf t
             return (n, (l, t'))
     fields' <- mapM lowerField fields
-    return $ Just $ CStructDef $ CStruct name fields' isVest
+    return $ Just $ CStructDef $ CStruct name fields' isVest isSecretParse isSecretSer
 lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
@@ -484,10 +507,10 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     cases' <- mapM lowerCase $ M.assocs cases
     return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
 
-lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
-lowerName (n, l, i) = do
+lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
+lowerName (n, l, i, s) = do
     let l' = lowerFLen l
-    return (n, l', i)
+    return (n, l', i, s)
 
 
 
@@ -504,4 +527,4 @@ u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
 
 getSerializedTy :: LM VerusTy
-getSerializedTy = lowerTy' $ FBuf Nothing
+getSerializedTy = lowerTy' $ FBuf BufPublic Nothing

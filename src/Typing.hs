@@ -370,6 +370,7 @@ tysMatchStructDef pth sname args ps b = do
             go [] (DPDone ()) = return $ Just []
             go ((a, t):args) (DPVar t1 sx xk) = do
                 b1 <- isSubtype t t1 
+                checkTyPubLenOrGhost t
                 case b1 of
                   False -> return Nothing
                   True -> do

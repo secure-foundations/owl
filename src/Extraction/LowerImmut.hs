@@ -35,8 +35,10 @@ lowerTy :: FormatTy -> EM VerusTy
 lowerTy FUnit = return RTUnit
 lowerTy FBool = return RTBool
 lowerTy FInt = return RTUsize
-lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
-lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
+lowerTy (FBuf BufPublic Nothing) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufPublic (Just flen)) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufSecret Nothing) = return $ RTSecBuf AnyLifetime
+lowerTy (FBuf BufSecret (Just flen)) = return $ RTSecBuf AnyLifetime
 lowerTy (FOption ft) = RTOption <$> lowerTy ft
 lowerTy (FStruct fn ffs) = do
     let rn = execName fn
@@ -49,6 +51,7 @@ lowerTy (FEnum n fcs) = do
 lowerTy FGhost = return $ RTVerusGhost
 lowerTy FDummy = return $ RTDummy
 lowerTy (FHexConst s) = return $ RTUnit
+lowerTy FDeclassifyTok = return RTDeclassifyTok
 
 -- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
 -- lowerTyNoOwlBuf FUnit = return RTUnit
@@ -88,13 +91,17 @@ lowerDef (CDef name b) = do
     return $ CDef name b'
 
 lowerUserFunc :: CUserFunc FormatTy -> EM (CUserFunc VerusTy)
-lowerUserFunc (CUserFunc name b) = do
-    (args, (retTy, body)) <- unbindCDepBind b
-    args' <- mapM lowerArg args
-    retTy' <- lowerTy retTy
-    body' <- traverseCAExpr lowerTy body
-    b' <- bindCDepBind args' (retTy', body')
-    return $ CUserFunc name b'
+lowerUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
+    pubBody' <- handleBody pubBody
+    secBody' <- handleBody secBody
+    return $ CUserFunc specName pubName secName pubBody' secBody'
+    where
+        handleBody b = do
+            (args, (retTy, body)) <- unbindCDepBind b
+            args' <- mapM lowerArg args
+            retTy' <- lowerTy retTy
+            body' <- traverseCAExpr lowerTy body
+            bindCDepBind args' (retTy', body')
 
 
 lowerFieldTy :: FormatTy -> EM VerusTy
@@ -103,18 +110,18 @@ lowerFieldTy = lowerTy -- for now, probably need to change it later
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
-maybeLenOf (FBuf (Just flen)) = return $ Just $ lowerFLen flen
+maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
 lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
-lowerTyDef _ (CStructDef (CStruct name fields isVest)) = do
+lowerTyDef _ (CStructDef (CStruct name fields isVest isSecretParse isSecretSer)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
             l <- maybeLenOf t
             return (n, (l, t'))
     fields' <- mapM lowerField fields
-    return $ Just $ CStructDef $ CStruct name fields' isVest
+    return $ Just $ CStructDef $ CStruct name fields' isVest isSecretParse isSecretSer
 lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
@@ -127,10 +134,10 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
     cases' <- mapM lowerCase $ M.assocs cases
     return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
 
-lowerName :: (String, FLen, Int) -> EM (String, ConstUsize, Int)
-lowerName (n, l, i) = do
+lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
+lowerName (n, l, i, s) = do
     let l' = lowerFLen l
-    return (n, l', i)
+    return (n, l', i, s)
 
 
 
