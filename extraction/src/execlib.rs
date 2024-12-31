@@ -717,76 +717,84 @@ pub mod secret {
     // }
 
 
-    // // Builder for stateful AEAD encryption
-    // pub struct OwlStAEADBuilder<'a> {
-    //     pub k: &'a [u8],
-    //     pub msg: &'a [u8],
-    //     pub iv: &'a [u8],
-    //     pub aad: &'a [u8],
-    // }
+    // Builder for stateful AEAD encryption
+    pub struct OwlStAEADBuilder<'a> {
+        pub k: SecretBuf<'a>,
+        pub msg: SecretBuf<'a>,
+        pub iv: SecretBuf<'a>,
+        pub aad: SecretBuf<'a>,
+    }
 
-    // // Hack: due to https://github.com/verus-lang/verus/issues/1147, we cannot use `Builder::into_vec` directly,
-    // // so we have to define our own version with a different name.
-    // impl<'a> OwlStAEADBuilder<'a> {
-    //     pub fn into_fresh_vec(&self) -> (res: Vec<u8>)
-    //         ensures
-    //             res@ == self.value(),
-    //     {
-    //         let mut res = vec_u8_of_len(self.length());
-    //         self.into_mut_vec(&mut res, 0);
-    //         assert(res@.subrange(0, 0).add(self.value()).add(
-    //             res@.subrange(0 + self.value().len() as int, self.value().len() as int),
-    //         ) == res@);
-    //         assert(res@.subrange(0, 0).add(self.value()).add(
-    //             res@.subrange(0 + self.value().len() as int, self.value().len() as int),
-    //         ) == self.value());
-    //         res
-    //     }
-    // }
+    // Hack: due to https://github.com/verus-lang/verus/issues/1147, we cannot use `Builder::into_vec` directly,
+    // so we have to define our own version with a different name.
+    impl<'a> OwlStAEADBuilder<'a> {
+        pub fn into_fresh_vec(&self) -> (res: Vec<u8>)
+            ensures
+                res@ == self.value(),
+        {
+            let mut res = vec_u8_of_len(self.length());
+            self.into_mut_vec(&mut res, 0);
+            assert(res@.subrange(0, 0).add(self.value()).add(
+                res@.subrange(0 + self.value().len() as int, self.value().len() as int),
+            ) == res@);
+            assert(res@.subrange(0, 0).add(self.value()).add(
+                res@.subrange(0 + self.value().len() as int, self.value().len() as int),
+            ) == self.value());
+            res
+        }
+    }
 
 
-    // impl<'a> Builder for OwlStAEADBuilder<'a> {
-    //     open spec fn value(&self) -> Seq<u8> {
-    //         enc_st_aead(self.k.view(), self.msg.view(), self.iv.view(), self.aad.view())
-    //     }
+    impl<'a> Builder for OwlStAEADBuilder<'a> {
+        open spec fn value(&self) -> Seq<u8> {
+            enc_st_aead(self.k.view(), self.msg.view(), self.iv.view(), self.aad.view())
+        }
         
-    //     #[verifier::external_body]
-    //     proof fn value_wf(&self);
+        #[verifier::external_body]
+        proof fn value_wf(&self);
         
-    //     #[verifier::external_body]
-    //     fn length(&self) -> usize {
-    //         self.msg.len() + TAG_SIZE
-    //     }
+        #[verifier::external_body]
+        fn length(&self) -> usize {
+            self.msg.len() + TAG_SIZE
+        }
 
-    //     #[verifier::external_body]
-    //     fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
-    //         let mut iv_sized = self.iv.to_vec();
-    //         iv_sized.resize(NONCE_SIZE, 0u8);
-    //         match owl_aead::encrypt_combined_into(CIPHER, self.k, self.msg, &iv_sized[..], self.aad, data, pos) {
-    //             Ok(()) => (),
-    //             Err(_e) => {
-    //                 // dbg!(e);
-    //                 ()
-    //             }
-    //         };
-    //     }
-    // }
+        #[verifier::external_body]
+        fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
+            let mut iv_sized = self.iv.private_as_slice().to_vec();
+            iv_sized.resize(NONCE_SIZE, 0u8);
+            match owl_aead::encrypt_combined_into(
+                CIPHER, 
+                self.k.private_as_slice(), 
+                self.msg.private_as_slice(), 
+                &iv_sized[..], 
+                self.aad.private_as_slice(), 
+                data, 
+                pos,
+            ) {
+                Ok(()) => (),
+                Err(_e) => {
+                    // dbg!(e);
+                    ()
+                }
+            };
+        }
+    }
 
-    // impl View for OwlStAEADBuilder<'_> {
-    //     type V = Seq<u8>;
+    impl View for OwlStAEADBuilder<'_> {
+        type V = Seq<u8>;
 
-    //     open spec fn view(&self) -> Self::V {
-    //         self.value()
-    //     }
-    // }
+        open spec fn view(&self) -> Self::V {
+            self.value()
+        }
+    }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_enc_st_aead_builder<'a>(k: SecretBuf<'a>, msg: SecretBuf<'a>, iv: SecretBuf<'a>, aad: SecretBuf<'a>) -> (res: OwlStAEADBuilder<'a>)
-    //     ensures  
-    //         res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
-    // {
-    //     OwlStAEADBuilder { k, msg, iv, aad }
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_enc_st_aead_builder<'a>(k: SecretBuf<'a>, msg: SecretBuf<'a>, iv: SecretBuf<'a>, aad: SecretBuf<'a>) -> (res: OwlStAEADBuilder<'a>)
+        ensures  
+            res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
+    {
+        OwlStAEADBuilder { k, msg, iv, aad }
+    }
 
 
     #[verifier(external_body)]
