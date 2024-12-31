@@ -263,7 +263,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         -- , ("pkenc", ([u8slice, u8slice], vecU8))
         -- , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
         , ("enc_st_aead", ([secBuf, secBuf, secBuf, secBuf], vecU8)) 
-        -- , ("enc_st_aead_builder", ([u8slice, u8slice, u8slice, u8slice], RTStAeadBuilder)) 
+        , ("enc_st_aead_builder", ([secBuf, secBuf, secBuf, secBuf], RTStAeadBuilder)) 
         , ("dec_st_aead", ([secBuf, owlBuf, secBuf, secBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         , ("is_group_elem", ([secBuf], RTBool))
         , ("crh", ([u8slice], vecU8))
@@ -410,13 +410,13 @@ genVerusCAExpr ae = do
                     PCBytes l -> do
                         l' <- concreteLength $ lowerFLen l
                         return [di|Bytes(#{l'})|]
-                    PCConstBytes l s -> return [di|Tag::new(BytesN::<#{l}>, (#{s}))|]
+                    PCConstBytes l s -> return [di|OwlConstBytes:<#{l}>(#{s})|]
                     PCBuilder -> return [di|BuilderCombinator(#{arg})|]
             let mkCombArg ((arg, comb), fty) = do
                     arg' <- genVerusCAExpr arg
                     let fty' = if comb == PCBuilder then RTUnit else fty
                     arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
-                    argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                    argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                     comb' <- printComb arg'' comb
                     len <- case comb of
                         PCBytes l -> do
@@ -538,18 +538,18 @@ genVerusCExpr info expr = do
                             PCBytes l -> do
                                 l' <- concreteLength $ lowerFLen l
                                 return [di|Bytes(#{l'})|]
-                            PCConstBytes l s -> return [di|Tag::new(BytesN::<#{l}>, (#{s}))|]
+                            PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
                             PCBuilder -> return [di|BuilderCombinator(#{arg})|]
                     let printCombTy comb = case comb of
                             PCTail -> [di|Tail|]
                             PCBytes l -> [di|Bytes|]
-                            PCConstBytes l _ -> [di|Tag<BytesN<#{l}>, [u8; #{l}]>|]
+                            PCConstBytes l _ -> [di|OwlConstBytes<#{l}>|]
                             PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
                     let mkCombArg ((arg, comb), fty) = do
                             arg' <- genVerusCAExpr arg
                             let fty' = if comb == PCBuilder then RTUnit else fty
                             arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
-                            argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` u8slice
+                            argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                             comb' <- printComb arg'' comb
                             len <- case comb of
                                 PCBytes l -> do
@@ -570,7 +570,7 @@ genVerusCExpr info expr = do
                     let serout_body = [__di|    
                         let exec_comb = #{execcomb};
                         #{reveals}
-                        owl_output_serialize_fused::<#{itreeTy}, #{combTy}>(
+                        owl_output_serialize_fused::<#{itreeTy}, OwlBuf<'_>, #{combTy}>(
                             Tracked(&mut itree),
                             exec_comb,
                             #{execargs}, 

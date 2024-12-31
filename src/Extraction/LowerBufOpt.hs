@@ -34,24 +34,26 @@ import Verus
 type EM = ExtractionMonad FormatTy
 
 lowerTy :: FormatTy -> EM VerusTy
-lowerTy _ = throwError $ ErrSomethingFailed "TODO LowerBufOpt for side channels"
--- lowerTy FUnit = return RTUnit
--- lowerTy FBool = return RTBool
--- lowerTy FInt = return RTUsize
--- lowerTy (FBuf Nothing) = return $ RTOwlBuf (Lifetime "_")
--- lowerTy (FBuf (Just flen)) = return $ RTOwlBuf (Lifetime "_")
--- lowerTy (FOption ft) = RTOption <$> lowerTy ft
--- lowerTy (FStruct fn ffs) = do
---     let rn = execName fn
---     rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTy t) ffs
---     return $ RTStruct rn rfs
--- lowerTy (FEnum n fcs) = do
---     let rn = execName n
---     rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTy t) fcs
---     return $ RTEnum rn rcs
--- lowerTy FGhost = return $ RTVerusGhost
--- lowerTy FDummy = return $ RTDummy
--- lowerTy (FHexConst s) = return $ RTUnit
+lowerTy FUnit = return RTUnit
+lowerTy FBool = return RTBool
+lowerTy FInt = return RTUsize
+lowerTy (FBuf BufPublic Nothing) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufPublic (Just flen)) = return $ RTOwlBuf AnyLifetime
+lowerTy (FBuf BufSecret Nothing) = return $ RTSecBuf AnyLifetime
+lowerTy (FBuf BufSecret (Just flen)) = return $ RTSecBuf AnyLifetime
+lowerTy (FOption ft) = RTOption <$> lowerTy ft
+lowerTy (FStruct fn ffs) = do
+    let rn = execName fn
+    rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTy t) ffs
+    return $ RTStruct rn rfs
+lowerTy (FEnum n fcs) = do
+    let rn = execName n
+    rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTy t) fcs
+    return $ RTEnum rn rcs
+lowerTy FGhost = return $ RTVerusGhost
+lowerTy FDummy = return $ RTDummy
+lowerTy (FHexConst s) = return $ RTUnit
+lowerTy FDeclassifyTok = return RTDeclassifyTok
 
 newtype LowerMonad t a = LowerMonad (StateT LowerEnv (ExtractionMonad t) a)
     deriving (Functor, Applicative, Monad, MonadState LowerEnv, MonadIO, MonadError ExtractionError)
@@ -251,7 +253,7 @@ lowerCAExpr info aexpr = do
     rt <- lowerTy' $ aexpr ^. tty
     let eager x = return $ Eager (x, [])
     let eagerRt x = eager $ Typed rt x :: LM (Suspendable CAWithLets)
-    let lowerGet ae = if inArg info then eager $ Typed u8slice ae else eagerRt ae
+    let lowerGet ae = eagerRt ae -- if inArg info then eager $ Typed u8slice ae else eagerRt ae
     case aexpr ^. tval of
         CAVar s n -> do
             ltcv <- lookupLTC n 
@@ -277,7 +279,16 @@ lowerCAExpr info aexpr = do
         CACounter s -> eagerRt $ CACounter s
         CASerializeWith t args -> do
             throwError $ ErrSomethingFailed "got CASerializeWith as input to lowering, it should not be emitted by Concretify"
-
+        CACast ae t -> do
+            ae' <- lowerCAExpr info ae
+            t' <- lowerTy' t
+            case ae' of
+                Eager (ae', aelets) -> eagerRt $ CACast ae' t'
+                Susp s -> do
+                    let suspcomp rt = do
+                            ((ae'', aelets), rt') <- scComputation s $ rt
+                            return ((Typed rt $ CACast ae'' t', aelets), rt')
+                    return $ Susp $ Suspended (scTyChoices s) suspcomp
 
 lowerExprNoSusp :: CExpr FormatTy -> LM (CExpr VerusTy)
 lowerExprNoSusp expr = do
@@ -338,6 +349,12 @@ lowerExpr expr = do
             k' <- withVars [(x, t')] $ lowerExprNoSusp k
             let xk' = bind (castName x) k'
             eagerNoLets $ Typed (k' ^. tty) $ CSample flen t' xk'
+        CItreeDeclassify dop xk -> do 
+            (x, k) <- unbind xk
+            k' <- withVars [(x, RTDeclassifyTok)] $ lowerExprNoSusp k
+            dop' <- traverseDeclassifyingOp lowerTy' dop
+            let xk' = bind (castName x) k'
+            eagerNoLets $ Typed (k' ^. tty) $ CItreeDeclassify dop' xk'
         CLet e oanf xk -> do
             (x, k) <- unbind xk
             e' <- lowerExpr e
