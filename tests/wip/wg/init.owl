@@ -66,7 +66,7 @@ def init_stage1<i@n,m>
         msg1_tag ++ msg1_sender ++ e_init ++ msg1_static ++ msg1_timestamp) in
     let msg1_mac2 = zeros_16() in
     let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
-    output msg1_output // to endpoint(Responder<m>); // TODO: does it make sense to index the responder?
+    output msg1_output; // to endpoint(Responder<m>); // TODO: does it make sense to index the responder?
     init_sent_state<session i, pid n, pid m>(C2, psk, ss_S_resp_S_init, h4, c3)
 
 
