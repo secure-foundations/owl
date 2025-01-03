@@ -37,11 +37,10 @@ p256 = { version = "0.11.1", features = ["ecdh", "bits", "serde"] }
 rsa = "0.7.2"
 sha1 = "0.10.5"
 sha2 = "0.10.6"
+vest = { git = "https://github.com/secure-foundations/vest", rev = "74bf5a7" }
 builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
-# parsley = { git = "https://github.com/secure-foundations/parsley", branch = "main" }
-parsley = { path = "/usr0/home/prataps/src/parsley/parsley" }
 
 [dependencies.treebitmap]
 package = "ip_network_table-deps-treebitmap"

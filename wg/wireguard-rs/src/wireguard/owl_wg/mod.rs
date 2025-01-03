@@ -10,6 +10,7 @@ mod owl_hkdf;
 mod owl_hmac;
 mod owl_pke;
 mod owl_util;
+mod owl_const_bytes;
 pub mod owl_wireguard;
 
 
@@ -30,6 +31,12 @@ pub spec const SPEC_HMAC_MODE: owl_hmac::Mode = owl_hmac::Mode::Sha512;
 pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
 
 pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
+
+pub spec const SPEC_COUNTER_SIZE: usize = 8usize;
+
+pub spec const SPEC_SIGNATURE_SIZE: usize = 64usize;
+
+pub spec const SPEC_MACLEN_SIZE: usize = 16usize;
 
 #[verifier::when_used_as_spec(SPEC_CIPHER)]
 pub exec const CIPHER: owl_aead::Mode
@@ -86,6 +93,30 @@ pub exec const KDFKEY_SIZE: usize
         KDFKEY_SIZE == SPEC_KDFKEY_SIZE,
 {
     owl_hkdf::kdfkey_size()
+}
+
+#[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
+pub exec const COUNTER_SIZE: usize
+    ensures
+        COUNTER_SIZE == SPEC_COUNTER_SIZE,
+{
+    8usize
+}
+
+#[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
+pub exec const SIGNATURE_SIZE: usize
+    ensures
+        SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE,
+{
+    64usize
+}
+
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize
+    ensures
+        MACLEN_SIZE == SPEC_MACLEN_SIZE,
+{
+    16usize
 }
     
 

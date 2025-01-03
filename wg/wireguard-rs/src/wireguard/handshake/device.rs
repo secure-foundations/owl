@@ -485,16 +485,16 @@ impl<O> Device<O> {
                             .generate(msg.noise.as_bytes(), &mut msg.macs);
                     },
                     Device::Owl(owl_device) => {
-                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator {
-                            owl_S_init: owl_device.static_sk.clone(),
-                            owl_E_init: owl_device.eph_sk.clone(),
-                            pk_owl_S_resp: vec![],
-                            pk_owl_S_init: vec![],
-                            pk_owl_E_resp: vec![],
-                            pk_owl_E_init: vec![],
-                            salt: vec![],
-                            device: Some(&owl_device.inner)
-                        };
+                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator::mk_cfg_Initiator (
+                            vec![],
+                            &owl_device.static_sk[..],
+                            &owl_device.eph_sk[..],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            Some(&owl_device.inner)
+                        );
 
                         // println!("dhpk_S_init = {:?}", hex::encode(&*i.cfg.owl_S_init));
                         // println!("dhpk_E_init = {:?}", hex::encode(&*i.cfg.owl_E_init));
@@ -513,7 +513,7 @@ impl<O> Device<O> {
                         );
 
                         let hs: [u8; 32] = init_sent_state.owl_ss_h4.as_slice().try_into().unwrap();
-                        let ck: [u8; 32] = init_sent_state.owl_iss_c3.as_slice().try_into().unwrap();
+                        let ck: [u8; 32] = init_sent_state.owl_iss_c3.private_as_slice().try_into().unwrap();
                         let e_init_as_array: [u8; 32] = ((*owl_device.eph_sk)[..]).try_into().unwrap();
 
                         // save state
@@ -632,16 +632,16 @@ impl<O> Device<O> {
                         ))
                     },
                     Device::Owl(owl_device) => {
-                        let cfg: owl_wireguard::cfg_Responder<O> = owl_wireguard::cfg_Responder {
-                            owl_S_resp: owl_device.static_sk.clone(),
-                            owl_E_resp: owl_device.eph_sk.clone(),
-                            pk_owl_S_resp: vec![],
-                            pk_owl_S_init: vec![],
-                            pk_owl_E_resp: vec![],
-                            pk_owl_E_init: vec![],
-                            salt: vec![],
-                            device: Some(&owl_device.inner)
-                        };
+                        let cfg: owl_wireguard::cfg_Responder<O> = owl_wireguard::cfg_Responder::mk_cfg_Responder(
+                            vec![],
+                            &owl_device.static_sk[..],
+                            &owl_device.eph_sk[..],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            Some(&owl_device.inner)
+                        );
 
                         let mut dummy_state = owl_wireguard::state_Responder::init_state_Responder();
                         let msg1_val = cfg.owl_resp_stage1_wrapper(
@@ -674,11 +674,11 @@ impl<O> Device<O> {
                                 initiator: false,
                                 send: Key {
                                     id: u32::from_le_bytes(transp_keys.owl_tkr_msg2_receiver.as_slice().try_into().unwrap()),
-                                    key: transp_keys.owl_tkr_k_resp_send.as_slice().try_into().unwrap(),
+                                    key: transp_keys.owl_tkr_k_resp_send.private_as_slice().try_into().unwrap(),
                                 },
                                 recv: Key {
                                     id: local,
-                                    key: transp_keys.owl_tkr_k_init_send.as_slice().try_into().unwrap(),
+                                    key: transp_keys.owl_tkr_k_init_send.private_as_slice().try_into().unwrap(),
                                 },
                             }),
                         ))
@@ -732,17 +732,16 @@ impl<O> Device<O> {
                         }?;
                         let psk = peer.psk;
 
-                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator {
-                            owl_S_init: owl_device.static_sk.clone(),
-                            owl_E_init: owl_device.eph_sk.clone(),
-                            pk_owl_S_resp: vec![],
-                            pk_owl_S_init: vec![],
-                            pk_owl_E_resp: vec![],
-                            pk_owl_E_init: vec![],
-                            salt: vec![],
-                            device: Some(&owl_device.inner)
-                        };
-
+                        let cfg: owl_wireguard::cfg_Initiator<O> = owl_wireguard::cfg_Initiator::mk_cfg_Initiator (
+                            vec![],
+                            &owl_device.static_sk[..],
+                            &owl_device.eph_sk[..],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            Some(&owl_device.inner)
+                        );
 
                         // dbg!(hex::encode(e_init_as_array));
                         let mut dummy_state = owl_wireguard::state_Initiator::init_state_Initiator();
@@ -771,11 +770,11 @@ impl<O> Device<O> {
                                 initiator: true,
                                 send: Key {
                                     id: u32::from_le_bytes(transp_keys.owl_tki_msg2_sender.as_slice().try_into().unwrap()),
-                                    key: transp_keys.owl_tki_k_init_send.as_slice().try_into().unwrap(),
+                                    key: transp_keys.owl_tki_k_init_send.private_as_slice().try_into().unwrap(),
                                 },
                                 recv: Key {
                                     id: local,
-                                    key: transp_keys.owl_tki_k_resp_send.as_slice().try_into().unwrap(),
+                                    key: transp_keys.owl_tki_k_resp_send.private_as_slice().try_into().unwrap(),
                                 },
                             }),
                         ))

@@ -121,16 +121,16 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 packet[tag_offset..].copy_from_slice(tag.as_ref());
             },
             RouterDeviceType::OwlInitiator => {
-                let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
-                    owl_S_init: vec![],
-                    owl_E_init: vec![],
-                    pk_owl_S_resp: vec![],
-                    pk_owl_S_init: vec![],
-                    pk_owl_E_resp: vec![],
-                    pk_owl_E_init: vec![],
-                    salt: vec![],
-                    device: None
-                };
+                let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator::mk_cfg_Initiator(
+                    vec![],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    None
+                );
                 let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
                 state.owl_N_init_send = job.counter as usize;
 
@@ -159,16 +159,16 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                 // assert!(succeeded.is_some());
             },
             RouterDeviceType::OwlResponder => {
-                let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
-                    owl_S_resp: vec![],
-                    owl_E_resp: vec![],
-                    pk_owl_S_resp: vec![],
-                    pk_owl_S_init: vec![],
-                    pk_owl_E_resp: vec![],
-                    pk_owl_E_init: vec![],
-                    salt: vec![],
-                    device: None
-                };
+                let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder::mk_cfg_Responder(
+                    vec![],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    None
+                );
                 let mut state = owl_wireguard::state_Responder::init_state_Responder();
                 state.owl_N_resp_send = job.counter as usize;
 

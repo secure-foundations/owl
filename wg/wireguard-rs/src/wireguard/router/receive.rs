@@ -130,16 +130,16 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         packet.len() == SIZE_TAG || peer.device.table.check_route(&peer, &packet)
                     }
                     RouterDeviceType::OwlInitiator => {
-                        let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator {
-                            owl_S_init: vec![],
-                            owl_E_init: vec![],
-                            pk_owl_S_resp: vec![],
-                            pk_owl_S_init: vec![],
-                            pk_owl_E_resp: vec![],
-                            pk_owl_E_init: vec![],
-                            salt: vec![],
-                            device: None
-                        };
+                        let cfg: owl_wireguard::cfg_Initiator<u8> = owl_wireguard::cfg_Initiator::mk_cfg_Initiator(
+                            vec![],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            None
+                        );
                         let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
                         if (msg.1.len() < 16) {
                             return false;
@@ -161,7 +161,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         match res {
                             Some(ptxt) => {
                                 let msg_len = msg.1.len();
-                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.as_slice());
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.private_as_slice());
                                 
                                 // check crypto-key router
                                 msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])
@@ -170,16 +170,16 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         }
                     },
                     RouterDeviceType::OwlResponder => {
-                        let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder {
-                            owl_S_resp: vec![],
-                            owl_E_resp: vec![],
-                            pk_owl_S_resp: vec![],
-                            pk_owl_S_init: vec![],
-                            pk_owl_E_resp: vec![],
-                            pk_owl_E_init: vec![],
-                            salt: vec![],
-                            device: None
-                        };
+                        let cfg: owl_wireguard::cfg_Responder<u8> = owl_wireguard::cfg_Responder::mk_cfg_Responder(
+                            vec![],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            None
+                        );
                         let mut state = owl_wireguard::state_Responder::init_state_Responder();
                         if (msg.1.len() < 16) {
                             return false;
@@ -202,7 +202,7 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         match res {
                             Some(ptxt) => {
                                 let msg_len = msg.1.len();
-                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.as_slice());
+                                msg.1[16..(msg_len - SIZE_TAG)].copy_from_slice(&ptxt.private_as_slice());
                                 
                                 // check crypto-key router
                                 msg.1[16..].len() == SIZE_TAG || peer.device.table.check_route(&peer, &msg.1[16..])
