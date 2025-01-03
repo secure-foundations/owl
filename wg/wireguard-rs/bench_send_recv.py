@@ -91,6 +91,9 @@ def run_bench(base_args):
         
         (no_owl, owl) = prettyData(data)
         return (no_owl, owl)
+    else:
+        print("failed to get parsed output")
+        return (None, None)
 
 def run_benches():
     print("Benchmarks with unverified crypto:")
