@@ -30,40 +30,40 @@ fn gen_psk() -> Vec<u8> {
 fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], psk: &[u8], msg: &[u8]) -> Vec<u8> {
     let (skE, pk_skE) = gen_keypair();
 
-    let cfg = owl_hpke::cfg_sender {
-        salt: vec![],
-        owl_psk: psk.to_vec(),
-        owl_skS: skS.to_vec(),
-        owl_skE: skE,
-        pk_owl_skS: pk_skS.to_vec(),
-        pk_owl_skE: pk_skE,
-        pk_owl_skR: vec![]
-    };
+    let cfg = owl_hpke::cfg_sender::mk_cfg_sender (
+        vec![],
+        psk,
+        skS,
+        &skE[..],
+        pk_skS,
+        &pk_skE[..],
+        &[]
+    );
     let mut state = owl_hpke::state_sender::init_state_sender();
 
     let mut obuf = vec![0u8; ENCAPPED_KEY_SIZE + msg.len() + TAG_SIZE];
     
-    cfg.owl_SingleShotSeal_wrapper(&mut state, receiver_pk, msg, &mut obuf);
+    cfg.owl_SingleShotSeal_wrapper(&mut state, receiver_pk, &pk_skE[..], pk_skS, msg, &mut obuf);
 
     obuf
 }
 
 fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], psk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
-    let cfg = owl_hpke::cfg_receiver {
-        salt: vec![],
-        owl_psk: psk.to_vec(),
-        owl_skR: receiver_sk.to_vec(),
-        pk_owl_skR: vec![],
-        pk_owl_skE: vec![],
-        pk_owl_skS: vec![],
-    };
+    let cfg = owl_hpke::cfg_receiver::mk_cfg_receiver(
+        vec![],
+        psk,
+        receiver_sk,
+        &[],
+        &[],
+        &[],
+    );
     let mut state = owl_hpke::state_receiver::init_state_receiver();
 
     let res = cfg.owl_SingleShotOpen_wrapper(&mut state, pk_skS, enc_msg);
 
     match res.unwrap().owl_or_pt {
         owl_OpenMsg::owl_NoMsg() => panic!("owl_recv failed"),
-        owl_OpenMsg::owl_SomeMsg(pt) => pt.as_slice().to_vec(),
+        owl_OpenMsg::owl_SomeMsg(pt) => pt.private_as_slice().to_vec(),
     }
 }
 

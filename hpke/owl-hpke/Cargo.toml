@@ -21,10 +21,11 @@ libcrux = { git = "https://github.com/cryspen/libcrux", features = ["rand"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
+# vest = { git = "https://github.com/secure-foundations/vest", rev = "74bf5a7" } # rev = "54f57d1f85c71f13af3afa0a18fe622ca4ac2c5d" 
+vest = { path = "/usr0/home/prataps/src/vest/vest" }
 builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
-parsley = { git = "https://github.com/secure-foundations/parsley", branch = "main" }
 hex = "0.4"
 
 [features]

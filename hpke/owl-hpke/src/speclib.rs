@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
-pub use vstd::{modes::*, prelude::*, seq::*, *};
+pub use vstd::{modes::*, prelude::*, seq::*, assert_seqs_equal};
 // pub use crate::View;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -52,14 +52,6 @@ impl OwlSpecSerialize for bool {
         }
     }
 }
-
-// // hack
-// impl View for Ghost<()> {
-//     type V = Ghost<()>;
-//     open spec fn view(&self) -> Ghost<()> {
-//         Ghost(())
-//     }
-// }
 
 
 pub trait OwlSpecAsCtr {
@@ -182,7 +174,7 @@ pub closed spec(checked) fn pkenc(pubkey: Seq<u8>, msg: Seq<u8>) -> (ctxt: Seq<u
 { unimplemented!() }
 
 #[verifier(external_body)]
-pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Seq<u8>)
+pub closed spec(checked) fn pkdec(privkey: Seq<u8>, ctxt: Seq<u8>) -> (msg: Option<Seq<u8>>)
 { unimplemented!() }
 
 #[verifier(external_body)]
@@ -272,13 +264,27 @@ pub mod itree {
     use crate::*;
     use vstd::{modes::*, prelude::*, seq::*, *};
 
+ 
     verus! {
+
+    pub enum DeclassifyingOp {
+        ControlFlow (Seq<u8>),
+        EnumParse   (Seq<u8>),
+        EqCheck     (Seq<u8>, Seq<u8>),
+        ADec        (Seq<u8>, Seq<u8>), // key, ctxt
+        StAeadDec   (Seq<u8>, Seq<u8>, Seq<u8>, Seq<u8>), // key, ctxt, aad, nonce
+        SigVrfy     (Seq<u8>, Seq<u8>, Seq<u8>), // pubkey, msg, signature
+        MacVrfy     (Seq<u8>, Seq<u8>, Seq<u8>), // mackey, msg, mac
+        PkDec       (Seq<u8>, Seq<u8>), // key, ctxt
+    }
+
     #[verifier::reject_recursive_types(Endpoint)]
     pub enum ITree<A, Endpoint> {
-        Input  (spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>),
-        Output (Seq<u8>, Endpoint, Box<ITree<A, Endpoint>>),
-        Sample (usize, spec_fn(Seq<u8>) -> ITree<A, Endpoint>),
-        Ret    (A),
+        Input       (spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>),
+        Output      (Seq<u8>, Endpoint, Box<ITree<A, Endpoint>>),
+        Sample      (usize, spec_fn(Seq<u8>) -> ITree<A, Endpoint>),
+        Declassify  (DeclassifyingOp, Box<ITree<A, Endpoint>>),
+        Ret         (A),
     }
 
     impl<A, Endpoint> ITree<A, Endpoint> {
@@ -292,7 +298,7 @@ pub mod itree {
 
         }
         pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
-            self matches ITree::Output(o, ev, _) // && self.get_Output_0() == o && self.get_Output_1() == ev
+            self matches ITree::Output(o_spec, ev_spec, _) && o == o_spec && ev == ev_spec
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
             recommends (exists |o, ev| self.is_output(o, ev))
@@ -300,16 +306,24 @@ pub mod itree {
             *(self->Output_2)
         }
         pub open spec fn is_sample(&self, n: usize) -> bool {
-            self matches ITree::Sample(n, _)
+            self matches ITree::Sample(n_spec, _) && n == n_spec
         }
         pub open spec(checked) fn get_sample(&self, coins: Seq<u8>) -> ITree<A,Endpoint>
             recommends (exists |n| self.is_sample(n))
         {
             (self->Sample_1)(coins)
         }
+        pub open spec fn is_declassify(&self, op: DeclassifyingOp) -> bool {
+            self matches ITree::Declassify(op_spec, _) && op == op_spec
+        }
+        pub open spec(checked) fn do_declassify(&self) -> ITree<A,Endpoint>
+            recommends (self is Declassify)
+        {
+            *(self->Declassify_1)
+        }
         pub open spec(checked) fn results_in(&self, a: A) -> bool 
         {
-            self matches ITree::Ret(a) // && self.get_Ret_0() == a
+            self matches ITree::Ret(a_spec) && a == a_spec
         }
 
         pub open spec fn bind<B>(&self, next: spec_fn(A) -> ITree<B, Endpoint>) -> ITree<B, Endpoint>
@@ -324,6 +338,9 @@ pub mod itree {
                 },
                 ITree::Sample(n, k) => {
                     ITree::Sample(*n, |coins| k(coins).bind(next))
+                }
+                ITree::Declassify(v, t) => {
+                    ITree::Declassify(*v, Box::new((*t).bind(next)))
                 }
                 ITree::Ret(a) => {
                     next(*a)
@@ -356,11 +373,17 @@ pub mod itree {
             (#[trigger] ITree::Sample(n, f).bind(k)) == ITree::Sample(n, |coins| f(coins).bind(k))
     { }
 
+    #[verifier(external_body)]
+    pub broadcast proof fn axiom_bind_declassify<A, B, Endpoint>(op : DeclassifyingOp, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
+        ensures
+            (#[trigger] ITree::Declassify(op, f).bind(k)) == ITree::Declassify(op, Box::new((*f).bind(k)))
+    { }
     pub broadcast group itree_axioms {
         axiom_bind_ret,
         axiom_bind_input,
         axiom_bind_output,
         axiom_bind_sample,
+        axiom_bind_declassify,
     }
 
     //////////////////////////////////////////////////////
@@ -462,6 +485,63 @@ pub mod itree {
     {}
 
 
+
+    //////////////////////////////////////////////////////
+    ///// ITree Tokens ///////////////////////////////////
+    //////////////////////////////////////////////////////
+
+    struct UnforgeableAux;
+
+    #[allow(dead_code)]
+    pub struct ITreeToken<T,Endpoint> {
+        token: UnforgeableAux,
+        inner: (T, Endpoint)
+    }
+
+    impl<T,Endpoint> ITreeToken<T,Endpoint> {
+        pub closed spec fn view(self) -> ITree<T,Endpoint>;
+
+        // Token constructor---this is only used to make the executable code typecheck.
+        // Verified code can never call this function (since it requires false), so it
+        // cannot forge tokens.
+        // We only need to return a token of type (), since we will use the subroutine call
+        // machinery to get the itree of the right type.
+        #[verifier(external_body)]
+        pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
+            requires false
+        { unimplemented!() }
+    }
+
+
+    //////////////////////////////////////////////////////
+    ///// Declassification Tokens ////////////////////////
+    //////////////////////////////////////////////////////
+
+    #[allow(dead_code)]
+    pub struct DeclassifyingOpToken {
+        token: UnforgeableAux,
+    }
+
+    impl DeclassifyingOpToken {
+        pub closed spec fn view(self) -> DeclassifyingOp;
+
+        // TODO is this needed? Shouldn't be?
+        // // Token constructor---this is only used to make the executable code typecheck.
+        // // Verified code can never call this function (since it requires false), so it
+        // // cannot forge tokens.
+        // #[verifier(external_body)]
+        // pub fn dummy_declassify_token() -> DeclassifyingOpToken
+        //     requires false
+        // { unimplemented!() }
+    }
+
+    #[verifier::external_body]
+    pub proof fn consume_itree_declassify<A,Endpoint>(tracked itree_t: &mut ITreeToken<A,Endpoint>) -> (tracked declassify_t: DeclassifyingOpToken)
+	    requires old(itree_t).view() is Declassify
+	    ensures itree_t.view() == old(itree_t).view().do_declassify(),
+	            declassify_t.view() == old(itree_t).view()->Declassify_0
+    { unimplemented!() }
+
     //////////////////////////////////////////////////////
     ///// Handling subroutine calls //////////////////////
     //////////////////////////////////////////////////////
@@ -471,21 +551,21 @@ pub mod itree {
     type spec_fnAlias<A,B> = spec_fn(A) -> B;
 
 
-    pub open spec fn itree_conts_match<A,B>(k: spec_fn(A) -> ITree<B, Endpoint>, kt: spec_fn(A) -> ITreeToken<B, Endpoint>) -> bool
+    pub open spec fn itree_conts_match<A,B,Endpoint>(k: spec_fn(A) -> ITree<B, Endpoint>, kt: spec_fn(A) -> ITreeToken<B, Endpoint>) -> bool
     {
         forall |v: A| ((#[trigger] kt(v)).view() == k(v))
     }
 
     #[verifier(external_body)]
-    pub proof fn split_bind<A,B>(tracked t: ITreeToken<A, Endpoint>, s: ITree<B, Endpoint>) -> (tracked st_kt: (Tracked<ITreeToken<B, Endpoint>>, Tracked<spec_fnAlias<B, ITreeToken<A, Endpoint>>>))
+    pub proof fn split_bind<A,B,Endpoint>(tracked t: ITreeToken<A, Endpoint>, s: ITree<B, Endpoint>) -> (tracked st_kt: (Tracked<ITreeToken<B, Endpoint>>, Tracked<spec_fnAlias<B, ITreeToken<A, Endpoint>>>))
         requires exists |k| (t.view() == #[trigger] s.bind::<A>(k))
         ensures  forall |k| (t.view() == #[trigger] s.bind::<A>(k)) ==> ((st_kt.0).view().view() == s && itree_conts_match(k, (st_kt.1).view()))
     { unimplemented!() }
 
     #[verifier(external_body)]
-    pub proof fn join_bind<A,B>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: spec_fnAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: Tracked<ITreeToken<A, Endpoint>>)
+    pub proof fn join_bind<A,B,Endpoint>(s: ITree<B, Endpoint>, tracked st: ITreeToken<B, Endpoint>, tracked kt: spec_fnAlias<B, ITreeToken<A, Endpoint>>, v: B) -> (tracked t: ITreeToken<A, Endpoint>)
         requires st.view().results_in(v),
-        ensures  t.view() == kt(v)
+        ensures  t == kt(v)
     { unimplemented!() }
 
     #[allow(unused_macros)]
@@ -538,7 +618,7 @@ pub mod itree {
                     Err(e) => return Err(e),
                     Ok(r) => r,
                 };
-                let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, ($view_res, $mut_state));
+                let tracked $itree = join_bind($spec($($specarg),*), call_token, cont_token, ($view_res, $mut_state));
                 ($res, Tracked($itree))
             }}
         };
@@ -546,29 +626,6 @@ pub mod itree {
             compile_error!(concat!($("`", stringify!($tt), "`, "),*))
         }
     }
-
-    struct UnforgeableAux;
-
-    #[allow(dead_code)]
-    pub struct ITreeToken<T,Endpoint> {
-        token: UnforgeableAux,
-        inner: (T, Endpoint)
-    }
-
-    impl<T,Endpoint> ITreeToken<T,Endpoint> {
-        pub closed spec fn view(self) -> ITree<T,Endpoint>;
-
-        // Token constructor---this is only used to make the executable code typecheck.
-        // Verified code can never call this function (since it requires false), so it
-        // cannot forge tokens.
-        // We only need to return a token of type (), since we will use the subroutine call
-        // machinery to get the itree of the right type.
-        #[verifier(external_body)]
-        pub fn dummy_itree_token() -> ITreeToken<(), Endpoint>
-            requires false
-        { unimplemented!() }
-    }
-
 
 
     //////////////////////////////////////////////////////
@@ -599,6 +656,23 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => { verus_proof_expr!{
             (ITree::Sample($n, |coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))}))
         }};
+        ($mut_state:ident, $mut_type:ident, (declassify ($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
+            (ITree::Declassify($($e)*, Box::new({
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            })))
+        }};
+        // ($mut_state:ident, $mut_type:ident, (declassify ($($e:tt)*) as ($var:ident)) in $($next:tt)*) => { verus_proof_expr!{
+        //     (ITree::Declassify(DeclassifyingOp::ControlFlow($($e)*), Box::new({
+        //         let $var = $($e)*;
+        //         owl_spec!($mut_state, $mut_type, $($next)*)
+        //     })))
+        // }};
+        // ($mut_state:ident, $mut_type:ident, (declassify_first_byte ($($e:tt)*) as ($var:ident)) in $($next:tt)*) => { verus_proof_expr!{
+        //     (ITree::Declassify(DeclassifyingOp::EnumParse($($e)*), Box::new({
+        //         let $var = $($e)*;
+        //         owl_spec!($mut_state, $mut_type, $($next)*)
+        //     })))
+        // }};
         ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => { verus_exec_expr!{ // need `exec` so that + uses usize not nat
             ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1usize, .. $mut_state}))
         }};
@@ -640,6 +714,26 @@ pub mod itree {
             $(let $varName = $fieldName;)*
             owl_spec!($mut_state, $mut_type, $($next)*)
         }}};
+        // ($mut_state:ident, $mut_type:ident, 
+        //     parse ($a:ident) as 
+        //         ($enumName:ident : $enumTy:ident) 
+        //     in { $($next:tt)* }) => 
+        // {verus_proof_expr! {
+        //     let $enumName = $a;
+        //     owl_spec!($mut_state, $mut_type, $($next)*)
+        // }};
+        ($mut_state:ident, $mut_type:ident, 
+            parse ($parser:ident($a:ident)) as 
+                ($enumName:ident : $enumTy:ident) 
+            in { $($next:tt)* } otherwise ($($otw:tt)*)) => 
+        {verus_proof_expr! {
+            if let Some(parseval) = $parser($a) {
+                let $enumName = parseval;
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            } else {
+                owl_spec!($mut_state, $mut_type, $($otw)*)
+            }
+        }};
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{
