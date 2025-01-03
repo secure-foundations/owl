@@ -59,7 +59,7 @@ fn owl_recv(receiver_sk: &[u8], receiver_pk: &[u8], pk_skS: &[u8], psk: &[u8], e
     );
     let mut state = owl_hpke::state_receiver::init_state_receiver();
 
-    let res = cfg.owl_SingleShotOpen_wrapper(&mut state, pk_skS, enc_msg);
+    let res = cfg.owl_SingleShotOpen_wrapper(&mut state, pk_skS, receiver_pk, enc_msg);
 
     match res.unwrap().owl_or_pt {
         owl_OpenMsg::owl_NoMsg() => panic!("owl_recv failed"),

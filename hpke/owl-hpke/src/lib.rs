@@ -1720,6 +1720,7 @@ pk_owl_skR : (config.pk_owl_skR)
         &'a self,
         mut_state: &mut state_receiver,
         owl_pkS379: &'a [u8],
+        owl_pkR459: &'a [u8],
         msg: &'a [u8],
     ) -> Option<owl_OpenResult<'a>> {
         let tracked dummy_tok: ITreeToken<(), Endpoint> = ITreeToken::<
@@ -1734,6 +1735,7 @@ pk_owl_skR : (config.pk_owl_skR)
             Tracked(call_token),
             mut_state,
             OwlBuf::from_slice(owl_pkS379),
+            OwlBuf::from_slice(owl_pkR459),
             msg
         ).unwrap();
         res
@@ -1745,8 +1747,9 @@ pk_owl_skR : (config.pk_owl_skR)
         &'a self,
         Tracked(itree): Tracked<ITreeToken<(Option<owlSpec_OpenResult>, state_receiver), Endpoint>>,
         mut_state: &mut state_receiver,
-        owl_pkS451: OwlBuf<'a>,
-        ibuf: &'a [u8]
+        owl_pkS458: OwlBuf<'a>,
+        owl_pkR459: OwlBuf<'a>,
+        ibuf: &'a [u8],
     ) -> (res: Result<
         (
             Option<owl_OpenResult<'a>>,
@@ -1755,7 +1758,12 @@ pk_owl_skR : (config.pk_owl_skR)
         OwlError,
     >)
         requires
-            itree.view() == SingleShotOpen_spec(*self, *old(mut_state), owl_pkS451.view()),
+            itree.view() == SingleShotOpen_spec(
+                *self,
+                *old(mut_state),
+                owl_pkS458.view(),
+                owl_pkR459.view(),
+            ),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
     {
@@ -1767,46 +1775,47 @@ pk_owl_skR : (config.pk_owl_skR)
             broadcast use itree_axioms;
 
             reveal(SingleShotOpen_spec);
-            let (tmp_owl_i365, owl__364) = {
+            let (tmp_owl_i371, owl__370) = {
                 owl_input::<(Option<owlSpec_OpenResult>, state_receiver)>(
                     Tracked(&mut itree),
-                    ibuf,
+                    ibuf
                 )
             };
-            let owl_i365 = OwlBuf::from_slice(tmp_owl_i365);
-            let parseval_tmp = OwlBuf::another_ref(&owl_i365);
+            let owl_i371 = OwlBuf::from_slice(tmp_owl_i371);
+            let parseval_tmp = OwlBuf::another_ref(&owl_i371);
             if let Some(parseval) = parse_owl_hpke_ciphertext(OwlBuf::another_ref(&parseval_tmp)) {
-                let owl_eph367 = OwlBuf::another_ref(&parseval.owl_hc_pk);
-                let owl_ct366 = OwlBuf::another_ref(&parseval.owl_hc_cipher);
+                let owl_eph373 = OwlBuf::another_ref(&parseval.owl_hc_pk);
+                let owl_ct372 = OwlBuf::another_ref(&parseval.owl_hc_cipher);
                 {
-                    let (owl_oadr368, Tracked(itree)) = {
-                        let tmp_arg1452 = OwlBuf::another_ref(&owl_pkS451);
-                        let tmp_arg2453 = OwlBuf::another_ref(&owl_eph367);
-                        owl_call_ret_option!(itree, *mut_state, AuthDecap_spec(*self, *mut_state, tmp_arg1452.view(), tmp_arg2453.view()), self.owl_AuthDecap(mut_state, tmp_arg1452, tmp_arg2453))
+                    let (owl_oadr374, Tracked(itree)) = {
+                        let tmp_arg1460 = OwlBuf::another_ref(&owl_pkS458);
+                        let tmp_arg2461 = OwlBuf::another_ref(&owl_pkR459);
+                        let tmp_arg3462 = OwlBuf::another_ref(&owl_eph373);
+                        owl_call_ret_option!(itree, *mut_state, AuthDecap_spec(*self, *mut_state, tmp_arg1460.view(), tmp_arg2461.view(), tmp_arg3462.view()), self.owl_AuthDecap(mut_state, tmp_arg1460, tmp_arg2461, tmp_arg3462))
                     };
-                    let owl_caseval369 = { owl_oadr368 };
-                    match owl_caseval369 {
-                        Option::Some(tmp_owl_adr370) => {
-                            let owl_adr370 = owl_AuthDecapResult::another_ref(&tmp_owl_adr370);
+                    let owl_caseval375 = { owl_oadr374 };
+                    match owl_caseval375 {
+                        Option::Some(tmp_owl_adr376) => {
+                            let owl_adr376 = owl_AuthDecapResult::another_ref(&tmp_owl_adr376);
                             {
-                                let (tmp_owl_ctxt371, Tracked(itree)) = {
-                                    let tmp_arg1454 = owl_AuthDecapResult::another_ref(&owl_adr370);
-                                    owl_call!(itree, *mut_state, KeyScheduleR_spec(*self, *mut_state, tmp_arg1454.view()), self.owl_KeyScheduleR(mut_state, tmp_arg1454))
+                                let (tmp_owl_ctxt377, Tracked(itree)) = {
+                                    let tmp_arg1463 = owl_AuthDecapResult::another_ref(&owl_adr376);
+                                    owl_call!(itree, *mut_state, KeyScheduleR_spec(*self, *mut_state, tmp_arg1463.view()), self.owl_KeyScheduleR(mut_state, tmp_arg1463))
                                 };
-                                let owl_ctxt371 = owl_ContextR::another_ref(&tmp_owl_ctxt371);
-                                let (tmp_owl_res372, Tracked(itree)) = {
-                                    let tmp_arg1455 = owl_ContextR::another_ref(&owl_ctxt371);
-                                    let tmp_arg2456 = OwlBuf::another_ref(
+                                let owl_ctxt377 = owl_ContextR::another_ref(&tmp_owl_ctxt377);
+                                let (tmp_owl_res378, Tracked(itree)) = {
+                                    let tmp_arg1464 = owl_ContextR::another_ref(&owl_ctxt377);
+                                    let tmp_arg2465 = OwlBuf::another_ref(
                                         &{
                                             let x = mk_vec_u8![];
                                             OwlBuf::from_vec(x)
                                         },
                                     );
-                                    let tmp_arg3457 = OwlBuf::another_ref(&owl_ct366);
-                                    owl_call!(itree, *mut_state, Open_spec(*self, *mut_state, tmp_arg1455.view(), tmp_arg2456.view(), tmp_arg3457.view()), self.owl_Open(mut_state, tmp_arg1455, tmp_arg2456, tmp_arg3457))
+                                    let tmp_arg3466 = OwlBuf::another_ref(&owl_ct372);
+                                    owl_call!(itree, *mut_state, Open_spec(*self, *mut_state, tmp_arg1464.view(), tmp_arg2465.view(), tmp_arg3466.view()), self.owl_Open(mut_state, tmp_arg1464, tmp_arg2465, tmp_arg3466))
                                 };
-                                let owl_res372 = owl_OpenResult::another_ref(&tmp_owl_res372);
-                                (Some(owl_OpenResult::another_ref(&owl_res372)), Tracked(itree))
+                                let owl_res378 = owl_OpenResult::another_ref(&tmp_owl_res378);
+                                (Some(owl_OpenResult::another_ref(&owl_res378)), Tracked(itree))
                             }
                         },
                         Option::None => { (None, Tracked(itree)) },
@@ -2036,8 +2045,9 @@ pk_owl_skR : (config.pk_owl_skR)
             ITreeToken<(Option<owlSpec_AuthDecapResult>, state_receiver), Endpoint>,
         >,
         mut_state: &mut state_receiver,
-        owl_pkS462: OwlBuf<'a>,
-        owl_eph463: OwlBuf<'a>,
+        owl_pkS471: OwlBuf<'a>,
+        owl_pkR472: OwlBuf<'a>,
+        owl_eph473: OwlBuf<'a>,
     ) -> (res: Result<
         (
             Option<owl_AuthDecapResult<'a>>,
@@ -2049,8 +2059,9 @@ pk_owl_skR : (config.pk_owl_skR)
             itree.view() == AuthDecap_spec(
                 *self,
                 *old(mut_state),
-                owl_pkS462.view(),
-                owl_eph463.view(),
+                owl_pkS471.view(),
+                owl_pkR472.view(),
+                owl_eph473.view(),
             ),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in((view_option((r.0)), *mut_state)),
@@ -2064,38 +2075,32 @@ pk_owl_skR : (config.pk_owl_skR)
 
             reveal(AuthDecap_spec);
 
-            if owl_is_group_elem(SecretBuf::from_buf(owl_eph463.another_ref())) {
-                let tmp_owl_dh407 = {
+            if owl_is_group_elem(SecretBuf::from_buf(owl_eph473.another_ref())) {
+                let tmp_owl_dh414 = {
                     owl_secret_concat(
                         SecretBuf::another_ref(
                             &owl_dh_combine(
-                                SecretBuf::from_buf(owl_eph463.another_ref()),
+                                SecretBuf::from_buf(owl_eph473.another_ref()),
                                 SecretBuf::another_ref(&SecretBuf::another_ref(&self.owl_skR)),
                             ),
                         ),
                         SecretBuf::another_ref(
                             &owl_dh_combine(
-                                SecretBuf::from_buf(owl_pkS462.another_ref()),
+                                SecretBuf::from_buf(owl_pkS471.another_ref()),
                                 SecretBuf::another_ref(&SecretBuf::another_ref(&self.owl_skR)),
                             ),
                         ),
                     )
                 };
-                let owl_dh407 = SecretBuf::another_ref(&tmp_owl_dh407);
-                let tmp_owl_kem_context408 = {
+                let owl_dh414 = SecretBuf::another_ref(&tmp_owl_dh414);
+                let tmp_owl_kem_context415 = {
                     owl_concat(
-                        owl_concat(
-                            owl_eph463.as_slice(),
-                            // OwlBuf::another_ref(&self.pk_owl_skR).as_slice(),
-                            owl_dhpk(
-                                SecretBuf::another_ref(&SecretBuf::another_ref(&self.owl_skR)),
-                            ).as_slice(),
-                        ).as_slice(),
-                        owl_pkS462.as_slice(),
+                        owl_concat(owl_eph473.as_slice(), owl_pkR472.as_slice()).as_slice(),
+                        owl_pkS471.as_slice(),
                     )
                 };
-                let owl_kem_context408 = OwlBuf::from_vec(tmp_owl_kem_context408);
-                let tmp_owl_kdfval173409 = {
+                let owl_kem_context415 = OwlBuf::from_vec(tmp_owl_kem_context415);
+                let tmp_owl_kdfval176416 = {
                     owl_extract_expand_to_len(
                         0 + KDFKEY_SIZE,
                         SecretBuf::from_buf(
@@ -2112,7 +2117,7 @@ pk_owl_skR : (config.pk_owl_skR)
                                 SecretBuf::another_ref(
                                     &SecretBuf::from_buf(owl_public_eae_prk().another_ref()),
                                 ),
-                                SecretBuf::another_ref(&owl_dh407),
+                                SecretBuf::another_ref(&owl_dh414),
                             ),
                         ),
                         OwlBuf::another_ref(
@@ -2120,28 +2125,28 @@ pk_owl_skR : (config.pk_owl_skR)
                                 OwlBuf::another_ref(&owl_public_kem_suite_id()),
                                 OwlBuf::another_ref(&owl_public_kdfkey_len()),
                                 OwlBuf::another_ref(&owl_public_shared_secret_string()),
-                                OwlBuf::another_ref(&owl_kem_context408),
+                                OwlBuf::another_ref(&owl_kem_context415),
                             ),
                         ),
                     )
                 };
-                let owl_kdfval173409 = SecretBuf::another_ref(&tmp_owl_kdfval173409);
-                let tmp_owl_shared_secret410 = {
-                    { SecretBuf::another_ref(&owl_kdfval173409).subrange(0, 0 + KDFKEY_SIZE) }
+                let owl_kdfval176416 = SecretBuf::another_ref(&tmp_owl_kdfval176416);
+                let tmp_owl_shared_secret417 = {
+                    { SecretBuf::another_ref(&owl_kdfval176416).subrange(0, 0 + KDFKEY_SIZE) }
                 };
-                let owl_shared_secret410 = SecretBuf::another_ref(&tmp_owl_shared_secret410);
-                let owl_shared_secret_ghost411 = { owl_ghost_unit() };
-                let tmp_owl_res412 = {
+                let owl_shared_secret417 = SecretBuf::another_ref(&tmp_owl_shared_secret417);
+                let owl_shared_secret_ghost418 = { owl_ghost_unit() };
+                let tmp_owl_res419 = {
                     owl_AuthDecapResult(
                         owl_ghost_unit(),
-                        SecretBuf::another_ref(&owl_shared_secret410),
+                        SecretBuf::another_ref(&owl_shared_secret417),
                         owl_ghost_unit(),
                     )
                 };
-                let owl_res412 = owl_AuthDecapResult::another_ref(&tmp_owl_res412);
-                let tmp_owl_pres413 = { owl_AuthDecapResult::another_ref(&owl_res412) };
-                let owl_pres413 = owl_AuthDecapResult::another_ref(&tmp_owl_pres413);
-                (Some(owl_AuthDecapResult::another_ref(&owl_pres413)), Tracked(itree))
+                let owl_res419 = owl_AuthDecapResult::another_ref(&tmp_owl_res419);
+                let tmp_owl_pres420 = { owl_AuthDecapResult::another_ref(&owl_res419) };
+                let owl_pres420 = owl_AuthDecapResult::another_ref(&tmp_owl_pres420);
+                (Some(owl_AuthDecapResult::another_ref(&owl_pres420)), Tracked(itree))
             } else {
                 (None, Tracked(itree))
             }
