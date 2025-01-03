@@ -24,7 +24,7 @@ def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @
         else
             Data<adv> ||kdfkey||
             = shared_secret in 
-    AuthEncapResult<session i>(res, dhpk(get(skE<i>)))
+    AuthEncapResult<session i>(res, dhpk_skE)
 
 
 struct ContextS<i> {

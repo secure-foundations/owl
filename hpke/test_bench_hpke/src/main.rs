@@ -48,14 +48,14 @@ fn owl_send(receiver_pk: &[u8], skS: &[u8], pk_skS: &[u8], psk: &[u8], msg: &[u8
     obuf
 }
 
-fn owl_recv(receiver_sk: &[u8], pk_skS: &[u8], psk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
+fn owl_recv(receiver_sk: &[u8], receiver_pk: &[u8], pk_skS: &[u8], psk: &[u8], enc_msg: &[u8]) -> Vec<u8> {
     let cfg = owl_hpke::cfg_receiver::mk_cfg_receiver(
         vec![],
         psk,
         receiver_sk,
         &[],
         &[],
-        &[],
+        receiver_pk,
     );
     let mut state = owl_hpke::state_receiver::init_state_receiver();
 
@@ -156,13 +156,13 @@ fn basic_interop_test() {
     let rust_plaintext = rust_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
     dbg!(hex::encode(&rust_plaintext));
 
-    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
+    let owl_plaintext = owl_recv(&receiver_privkey, &receiver_pubkey, &pk_skS, &psk, &owl_ctxt);
     dbg!(hex::encode(&owl_plaintext));
 
     let rust_decrypt_owl = rust_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
     dbg!(hex::encode(&rust_decrypt_owl));
 
-    let owl_decrypt_rust = owl_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
+    let owl_decrypt_rust = owl_recv(&receiver_privkey, &receiver_pubkey, &pk_skS, &psk, &rust_ctxt);
     dbg!(hex::encode(&owl_decrypt_rust));
 
     assert_eq!(plaintext, rust_plaintext);
@@ -197,7 +197,7 @@ fn test_owl_owl() {
     let plaintext: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,];
 
     let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
-    let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
+    let owl_plaintext = owl_recv(&receiver_privkey, &receiver_pubkey, &pk_skS, &psk, &owl_ctxt);
 
     assert_eq!(plaintext, owl_plaintext);
 }
@@ -231,7 +231,7 @@ fn bench_rust_owl(b: &mut Bencher) {
 
     b.iter(|| {
         let rust_ctxt = rust_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
-        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &rust_ctxt);
+        let owl_plaintext = owl_recv(&receiver_privkey, &receiver_pubkey, &pk_skS, &psk, &rust_ctxt);
         test::black_box(owl_plaintext);
     });
 }
@@ -261,7 +261,7 @@ fn bench_owl_owl(b: &mut Bencher) {
 
     b.iter(|| {
         let owl_ctxt = owl_send(&receiver_pubkey, &skS, &pk_skS, &psk, &plaintext);
-        let owl_plaintext = owl_recv(&receiver_privkey, &pk_skS, &psk, &owl_ctxt);
+        let owl_plaintext = owl_recv(&receiver_privkey, &receiver_pubkey, &pk_skS, &psk, &owl_ctxt);
         test::black_box(owl_plaintext);
     });
 }

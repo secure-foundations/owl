@@ -2086,6 +2086,7 @@ pk_owl_skR : (config.pk_owl_skR)
                     owl_concat(
                         owl_concat(
                             owl_eph463.as_slice(),
+                            // OwlBuf::another_ref(&self.pk_owl_skR).as_slice(),
                             owl_dhpk(
                                 SecretBuf::another_ref(&SecretBuf::another_ref(&self.owl_skR)),
                             ).as_slice(),
@@ -2587,11 +2588,7 @@ pk_owl_skR : (config.pk_owl_skR)
                 owl_AuthEncapResult::another_ref(
                     &owl_AuthEncapResult(
                         SecretBuf::another_ref(&owl_res450),
-                        OwlBuf::from_vec(
-                            owl_dhpk(
-                                SecretBuf::another_ref(&SecretBuf::another_ref(&self.owl_skE)),
-                            ),
-                        ),
+                        OwlBuf::another_ref(&owl_dhpk_skE480),
                     ),
                 ),
                 Tracked(itree),
