@@ -683,7 +683,7 @@ pub mod secret {
     pub exec fn owl_mac(mackey: SecretBuf, msg: OwlBuf) -> (mac_val: Vec<u8>)
         ensures mac_val.view() == mac(mackey.view(), msg.view())
     {
-        owl_hmac::hmac(HMAC_MODE, mackey.private_as_slice(), msg.as_slice(), None)
+        owl_hmac::mac(mackey.private_as_slice(), msg.as_slice())
     }
 
     #[verifier(external_body)]

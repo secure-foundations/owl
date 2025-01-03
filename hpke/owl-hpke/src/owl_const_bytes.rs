@@ -88,7 +88,7 @@ impl<const N: usize, I, O> Combinator<I, O> for OwlConstBytes<N> where
         SerializeError,
     >) {
         let s = self.0.as_slice();
-        if s.len() <= data.len() && s.len() == N && pos < data.len() - s.len() {
+        if s.len() <= data.len() && s.len() == N && pos <= data.len() - s.len() {
             data.set_byte_range(pos, s);
             assert(data@.subrange(pos as int, pos + N as int) == self@.spec_serialize(v@).unwrap());
             Ok(N)
