@@ -11,6 +11,7 @@ mod owl_hkdf;
 mod owl_hmac;
 mod owl_pke;
 mod owl_util;
+mod owl_const_bytes;
 mod owl_wireguard;
 
 use vstd::prelude::*;
@@ -48,15 +49,15 @@ pub extern "C" fn wg_send(
     // println!("owl obuf start:\n\t{}", hex::encode(&obuf_vec));
     // println!("plaintext_len:\n\t{}", plaintext.len());
 
-    let cfg = owl_wireguard::cfg_Initiator {
-        owl_S_init: vec![],
-        owl_E_init: vec![],
-        pk_owl_S_resp: vec![],
-        pk_owl_S_init: vec![],
-        pk_owl_E_resp: vec![],
-        pk_owl_E_init: vec![],
-        salt: vec![],
-    };
+    let cfg = owl_wireguard::cfg_Initiator::mk_cfg_Initiator(
+        vec![],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    );
     let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
     state.owl_N_init_send = nonce;
 
@@ -93,15 +94,15 @@ pub extern "C" fn wg_recv(
     let recv_key = unsafe { slice::from_raw_parts(recv_key, recv_key_len) };
     let mut buf = unsafe { slice::from_raw_parts_mut(buf, buf_len) };
 
-    let cfg = owl_wireguard::cfg_Initiator {
-        owl_S_init: vec![],
-        owl_E_init: vec![],
-        pk_owl_S_resp: vec![],
-        pk_owl_S_init: vec![],
-        pk_owl_E_resp: vec![],
-        pk_owl_E_init: vec![],
-        salt: vec![],
-    };
+    let cfg = owl_wireguard::cfg_Initiator::mk_cfg_Initiator(
+        vec![],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    );
     let mut state = owl_wireguard::state_Initiator::init_state_Initiator();
     state.owl_N_init_recv = nonce;
 
@@ -118,7 +119,7 @@ pub extern "C" fn wg_recv(
 
     match decrypt_opt {
         Some(plaintext) => {
-            buf[16..(16+plaintext.as_slice().len())].copy_from_slice(&plaintext.as_slice());
+            buf[16..(16+plaintext.private_as_slice().len())].copy_from_slice(&plaintext.private_as_slice());
         },
         None => {
             panic!("decryption failed");
@@ -143,6 +144,12 @@ pub spec const SPEC_HMAC_MODE: owl_hmac::Mode = owl_hmac::Mode::Sha512;
 pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
 
 pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
+
+pub spec const SPEC_COUNTER_SIZE: usize = 8usize;
+
+pub spec const SPEC_SIGNATURE_SIZE: usize = 64usize;
+
+pub spec const SPEC_MACLEN_SIZE: usize = 16usize;
 
 #[verifier::when_used_as_spec(SPEC_CIPHER)]
 pub exec const CIPHER: owl_aead::Mode
@@ -200,6 +207,30 @@ pub exec const KDFKEY_SIZE: usize
 {
     owl_hkdf::kdfkey_size()
 }
+
+#[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
+pub exec const COUNTER_SIZE: usize
+    ensures
+        COUNTER_SIZE == SPEC_COUNTER_SIZE,
+{
+    8usize
+}
+
+#[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
+pub exec const SIGNATURE_SIZE: usize
+    ensures
+        SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE,
+{
+    64usize
+}
+
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize
+    ensures
+        MACLEN_SIZE == SPEC_MACLEN_SIZE,
+{
+    16usize
+}
     
 
 #[derive(Debug)]
@@ -208,3 +239,4 @@ pub enum OwlError {
 }
 
 }
+    

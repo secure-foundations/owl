@@ -5658,4 +5658,3 @@ pub fn owl_public_zeros_32<'a>() -> (res: OwlBuf<'a>)
 // ------------------------------------
 /* no entry point */
 } // verus!
-fn main() {}
