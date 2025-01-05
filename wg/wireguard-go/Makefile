@@ -1,6 +1,7 @@
 PREFIX ?= /usr
 DESTDIR ?=
 BINDIR ?= $(PREFIX)/bin
+RUSTLIB_ARGS ?= 
 export GO111MODULE := on
 
 all: generate-version-and-build
@@ -8,7 +9,7 @@ all: generate-version-and-build
 MAKEFLAGS += --no-print-directory
 
 rustlib:
-	@cd lib/owl_wireguard && cargo +nightly build --features=nonverif-crypto --release
+	@cd lib/owl_wireguard && cargo +nightly build $(RUSTLIB_ARGS) --release
 	@cp lib/owl_wireguard/target/release/libowl_wireguard.a lib/
 
 generate-version-and-build:

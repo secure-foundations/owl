@@ -17,7 +17,7 @@ set -euo pipefail
 function usage() {
     echo "Usage: ${0} [-o] [-s] <path-to-wireguard-binary>"
     echo "-o will use the owl option to wireguard-rs (don't use with boringtun)"
-    echo "-s SUFFIX" will suffix the output directory with SUFFIX
+    echo ""-s SUFFIX" will suffix the output directory with SUFFIX"
     echo "-b will pass the --disable-drop-privileges flag to boringtun (only for boringtun)"
     exit 2
 }
@@ -61,30 +61,13 @@ for delay in 0ms 0.5ms 1ms 1.5ms 2ms 3ms 4ms 5ms 6ms 7ms 8ms 9ms 10ms
 do
 
 ##############################################################
-# Set up virtual ethernet interface pair
+# Set up network configuration
 
-# Set up network namespace
-ip netns add net1
-
-# Set up virtual ethernet interface pair
-ip link add veth1 type veth peer veth1n
-
-# Move veth1n into the net1 namespace
-ip link set veth1n netns net1
-
-# Bring up loopback in the net1 namespace
-ip netns exec net1 ip link set dev lo up
-
-# Bring up the network interfaces
-ip link set dev veth1 up
-ip netns exec net1 ip link set dev veth1n up
-
-# Add IP addresses to veth1 and veth1n
-ip addr add 10.100.1.1/24 dev veth1
-ip netns exec net1 ip addr add 10.100.1.2/24 dev veth1n
-
-# Add default route to the net1 namespace
-ip netns exec net1 route add default gw 10.100.1.1
+if [ $use_owl_routines = "true" ]; then
+    ./setup-netconfig.sh -o $wireguard_bin
+else 
+    ./setup-netconfig.sh $wireguard_bin  
+fi
 
 ##############################################################
 # Configure link latencies
@@ -95,40 +78,11 @@ tc qdisc add dev veth1 root netem delay $delay
 # Set up link delay on inbound interface
 ip netns exec net1 tc qdisc add dev veth1n root netem delay $delay
 
-##############################################################
-# Set up wireguard interfaces
-
-# Create Wireguard interfaces, wg1 in default namespace, wg1n in net1 namespace
-if [ $use_owl_routines = "true" ]; then
-    echo "Using owl routines"
-    WG_THREADS=1 $wireguard_bin --owl wg1
-    WG_THREADS=1 ip netns exec net1 $wireguard_bin --owl wg1n
-else 
-    if [ $use_boringtun_args = "true" ]; then
-        echo "Using boringtun with --disable-drop-privileges"
-        WG_THREADS=1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1
-        WG_THREADS=1 ip netns exec net1 $wireguard_bin --disable-drop-privileges --disable-multi-queue --threads 1 wg1n
-    else
-        WG_THREADS=1 $wireguard_bin wg1
-        WG_THREADS=1 ip netns exec net1 $wireguard_bin wg1n
-    fi
-fi
-
-# Add IP addresses to Wireguard interfaces
-ip addr add 10.100.2.1/24 dev wg1
-ip netns exec net1 ip addr add 10.100.2.2/24 dev wg1n
-
-# Configure the Wireguard interfaces
-wg setconf wg1 wg1.conf
-ip netns exec net1 wg setconf wg1n wg1n.conf
-
-# Bring up the Wireguard interfaces
-ip link set wg1 up
-ip netns exec net1 ip link set wg1n up
-
 
 ##############################################################
 # Run test
+
+sleep 5
 
 echo "Running iperf line delay test with line delay $delay"
 logfile="$output_dir/iperf_$delay.json"
@@ -144,15 +98,7 @@ iperf3 -c 10.100.2.2 --zerocopy --time 60 --logfile $logfile --json
 ##############################################################
 # Clean up network configuration
 
-# Delete wg1 interface
-ip link del wg1
-ip netns exec net1 ip link del wg1n
-
-# Delete veth1 interface
-ip link del veth1
-
-# Delete net1 namespace. This deletes veth1n interface too
-ip netns del net1
+./cleanup-netconfig.sh
 
 done
 

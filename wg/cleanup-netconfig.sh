@@ -2,7 +2,7 @@
 
 # This script deletes the network configuration set up by setup-netconfig.sh
 
-set -euo pipefail
+set -uo pipefail
 
 # Delete wg1 interface
 ip link del wg1

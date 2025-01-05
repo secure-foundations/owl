@@ -46,15 +46,15 @@ func warning() {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "┌──────────────────────────────────────────────────────┐")
-	fmt.Fprintln(os.Stderr, "│                                                      │")
-	fmt.Fprintln(os.Stderr, "│   Running wireguard-go is not required because this  │")
-	fmt.Fprintln(os.Stderr, "│   kernel has first class support for WireGuard. For  │")
-	fmt.Fprintln(os.Stderr, "│   information on installing the kernel module,       │")
-	fmt.Fprintln(os.Stderr, "│   please visit:                                      │")
-	fmt.Fprintln(os.Stderr, "│         https://www.wireguard.com/install/           │")
-	fmt.Fprintln(os.Stderr, "│                                                      │")
-	fmt.Fprintln(os.Stderr, "└──────────────────────────────────────────────────────┘")
+	// fmt.Fprintln(os.Stderr, "┌──────────────────────────────────────────────────────┐")
+	// fmt.Fprintln(os.Stderr, "│                                                      │")
+	// fmt.Fprintln(os.Stderr, "│   Running wireguard-go is not required because this  │")
+	// fmt.Fprintln(os.Stderr, "│   kernel has first class support for WireGuard. For  │")
+	// fmt.Fprintln(os.Stderr, "│   information on installing the kernel module,       │")
+	// fmt.Fprintln(os.Stderr, "│   please visit:                                      │")
+	// fmt.Fprintln(os.Stderr, "│         https://www.wireguard.com/install/           │")
+	// fmt.Fprintln(os.Stderr, "│                                                      │")
+	// fmt.Fprintln(os.Stderr, "└──────────────────────────────────────────────────────┘")
 }
 
 func main() {
