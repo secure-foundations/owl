@@ -222,19 +222,23 @@ flenOfFormatTy FGhost = Just $ FLConst 0
 flenOfFormatTy FInt = Just $ FLConst 32 -- todo?
 flenOfFormatTy _ = Nothing
 
+doubleFresh :: String -> EM (Name a)
+doubleFresh s = do
+    n <- fresh $ s2n s
+    fresh $ s2n (show n)
 
 bufcast :: CAExpr FormatTy -> FormatTy -> EM (CAExpr FormatTy, [CLetBinding])
 bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPublic = do
     -- Need an explicit declassification here
-    declassifiedBufName <- fresh $ s2n "declassified_buf"
-    let decBufVar = Typed t $ CAVar (ignore "declassified_buf") declassifiedBufName
+    declassifiedBufName <- doubleFresh "declassified_buf"
+    let decBufVar = Typed t $ CAVar (ignore $ show declassifiedBufName) declassifiedBufName
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOControlFlow ae
     let doCFDeclassify = Typed t $ CRet $ Typed t $ cAApp "buf_declassify" [ae, tokVar]
     let declassifyExpr = Typed t $ CItreeDeclassify dop $ bind tokName doCFDeclassify
     let declassifyLetBinding = (declassifiedBufName, Nothing, declassifyExpr)
-    return $ withLets [declassifyLetBinding] $ Typed t $ CAVar (ignore "declassified_buf") declassifiedBufName
+    return $ withLets [declassifyLetBinding] $ decBufVar
 bufcast ae t = do
     if (ae ^. tty) `eqUpToBufLen` t then return $ noLets ae
     else do
@@ -256,7 +260,9 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                 unifyFormatTy x y
                 let eqSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
                 case eqSecrecy of
-                    BufSecret -> return $ mkSecretAppNoLets "eq" FBool
+                    BufSecret -> case args of
+                            [x, y] -> mkSecretEq x y
+                            _ -> throwError $ TypeError "Unexpected number of arguments to eq"
                     BufPublic -> return $ mkAppNoLets "eq" FBool
         ("Some", [x]) -> return $ mkAppNoLets f $ FOption x
         ("None", []) -> 
@@ -311,7 +317,14 @@ concretifyApp (PRes (PDot PTop f)) params args = do
             --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
             -- DH shared secrets should be secret buffers
             return $ mkAppNoLets f $ groupFormatTy BufSecret
-        ("checknonce", [x, y]) -> return $ mkAppNoLets f FBool
+        ("checknonce", [x, y]) -> do
+                unifyFormatTy x y
+                let eqSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
+                case eqSecrecy of
+                    BufSecret -> case args of
+                            [x, y] -> mkSecretEq x y
+                            _ -> throwError $ TypeError "Unexpected number of arguments to eq"
+                    BufPublic -> return $ mkAppNoLets "eq" FBool
         (p, _) -> do
             fs <- use funcs
             case fs M.!? p of
@@ -352,6 +365,16 @@ concretifyApp (PRes (PDot PTop f)) params args = do
     where
         mkAppNoLets fname frty = noLets $ Typed frty $ cAApp fname args
         mkSecretAppNoLets fname frty = noLets $ Typed frty $ CAApp ("secret_" ++ fname) fname args
+        mkSecretEq x y = do
+            eqBoolName <- doubleFresh "eq_bool"
+            let eqBoolVar = Typed FBool $ CAVar (ignore $ show eqBoolName) eqBoolName
+            tokName <- fresh $ s2n "declassify_tok"
+            let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+            let dop = DOEqCheck (x, y)
+            let doEqCheck = Typed FBool $ CRet $ Typed FBool $ cAApp "secret_eq" [x, y, tokVar]
+            let eqCheckExpr = Typed FBool $ CItreeDeclassify dop $ bind tokName doEqCheck
+            let eqCheckLetBinding = (eqBoolName, Nothing, eqCheckExpr)
+            return $ withLets [eqCheckLetBinding] $ Typed FBool $ CAVar (ignore "eq_bool") eqBoolName
 concretifyApp _ _ _ = do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
@@ -549,7 +572,7 @@ concretifyExpr e = do
                         _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
             k' <- withVars xtys $ concretifyExpr k
             let k'' = exprFromLets' k'
-            return $ withLets alets $ Typed (k'' ^. tty) $ CParse pkind a' t_target' otw'' $ bind xtys' k''
+            return $ withLets alets $ Typed (k'' ^. tty) $ CParse pkind a' [] t_target' otw'' $ bind xtys' k''
       ECase e otherwiseCase xsk -> do
             e' <- exprFromLets' <$> concretifyExpr e
             let startT = e' ^. tty
@@ -598,9 +621,6 @@ concretifyExpr e = do
             let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
             (avar', parseAndCase) <- case otherwiseCase of
                 Just (t, otw) -> do
-                    -- debugPrint $ show (owlpretty e')
-                    -- debugPrint $ show (owlpretty casevalT)
-                    -- debugPrint $ show (owlpretty startT)
                     case casevalT of
                         -- Special case: sometimes, option types are given a type annotation, which 
                         -- shows up in this case, but we are parsing authentically from an option type
@@ -610,10 +630,23 @@ concretifyExpr e = do
                         _ -> do 
                             otw' <- exprFromLets' <$> concretifyExpr otw
                             avar' <- fresh $ s2n "parseval"
-                            let p = Typed retTy $
-                                    CParse PFromBuf (Typed casevalT $ CAVar (ignore "parseval") avar') casevalT (Just otw') $
-                                        bind [(avar, ignore "caseval", casevalT)] caseStmt
-                            return (avar', p)
+                            case secrecyOfFTy startT of
+                                BufPublic -> do
+                                    let p = Typed retTy $
+                                            CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') [] casevalT (Just otw') $
+                                                bind [(avar, ignore "caseval", casevalT)] caseStmt
+                                    return (avar', p)
+                                BufSecret -> do
+                                    -- need to create a declassify token to parse the enum
+                                    tokName <- fresh $ s2n "declassify_tok"
+                                    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+                                    let startVar = Typed startT $ CAVar (ignore "parseval") avar'
+                                    let dop = DOEnumParse startVar
+                                    let p = Typed retTy $ 
+                                            CParse PFromSecBuf startVar [tokVar] casevalT (Just otw') $
+                                                bind [(avar, ignore "caseval", casevalT)] caseStmt
+                                    let declassifyExpr = Typed retTy $ CItreeDeclassify dop $ bind tokName p
+                                    return (avar', declassifyExpr)
                 Nothing -> return (avar, caseStmt)
             return $ noLets $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
@@ -883,7 +916,8 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
         -- We generate the exec combinator here, so that we can use it in
         -- GenVerus where format types have been erased
         (execComb, _) <- execCombOf tname (FEnum tname cs)
-        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb))
+        let isSecret = any (maybe True hasSecParser . snd) cs
+        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb) isSecret)
 concretifyTyDef tname (TB.StructDef bnd) = do 
     debugLog $ "Concretifying struct: " ++ tname
     (idxs, dp) <- unbind bnd
@@ -908,7 +942,7 @@ setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
     case tdef of
         Nothing -> return ()
-        Just (CEnumDef (CEnum _ cases _  _)) -> do
+        Just (CEnumDef (CEnum _ cases _ _ _)) -> do
             -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
             let mkCase (cname, cty) = do
                     let argTys = case cty of

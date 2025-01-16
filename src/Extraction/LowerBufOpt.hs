@@ -405,12 +405,15 @@ lowerExpr expr = do
             args' <- mapM lowerCAExpr' args
             (args'', arglets) <- forceAEs argtys args'
             eagerNoLets $ exprFromLets arglets $ Typed frty' $ CCall fn frty' args''
-        CParse pk ae dst_ty otw xtsk -> do
+        CParse pk ae extraArgs dst_ty otw xtsk -> do
             (xts, k) <- unbind xtsk
             xts' <- mapM (\(n, s, t) -> do t' <- lowerTy' t ; return (castName n, s, t')) xts
             let ctx = map (\(x, _, t) -> (castName x, t)) xts'
             aety <- lowerTy' $ ae ^. tty
             (ae', aeLets) <- lowerCAExpr' ae >>= forceAE aety
+            extraArgsSusp <- mapM lowerCAExpr' extraArgs
+            extraArgsTys <- mapM (lowerTy' . (^. tty)) extraArgs
+            (extraArgs', extraArgsLets) <- forceAEs extraArgsTys extraArgsSusp
             dst_ty' <- lowerTy' dst_ty
             otw' <- case otw of
                 Nothing -> return Nothing
@@ -419,7 +422,7 @@ lowerExpr expr = do
                     Just <$> (lowerExpr >=> forceE otwty) otw
             k' <- withVars ctx $ lowerExprNoSusp k
             let xtsk' = bind xts' k'
-            eagerNoLets $ exprFromLets aeLets $ Typed (k' ^. tty) $ CParse pk ae' dst_ty' otw' xtsk'
+            eagerNoLets $ exprFromLets (aeLets ++ extraArgsLets) $ Typed (k' ^. tty) $ CParse pk ae' extraArgs' dst_ty' otw' xtsk'
         CTLookup s ae -> do
             aety <- lowerTy' $ ae ^. tty
             (ae', aelets) <- lowerCAExpr' ae >>= forceAE aety
@@ -495,7 +498,7 @@ lowerTyDef _ (CStructDef (CStruct name fields isVest isSecretParse isSecretSer))
             return (n, (l, t'))
     fields' <- mapM lowerField fields
     return $ Just $ CStructDef $ CStruct name fields' isVest isSecretParse isSecretSer
-lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
+lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb isSecret)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
                 Just t -> do
@@ -505,7 +508,7 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb)) = do
                 Nothing -> return Nothing
             return (n, tt')
     cases' <- mapM lowerCase $ M.assocs cases
-    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb
+    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb isSecret
 
 lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
 lowerName (n, l, i, s) = do

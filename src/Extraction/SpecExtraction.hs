@@ -219,7 +219,7 @@ extractCStruct (CStruct n fs isVest _ _) = do
 
 
 extractCEnum :: CEnum FormatTy -> EM (Doc ann)
-extractCEnum (CEnum n cs isVest _) = do
+extractCEnum (CEnum n cs isVest _ _) = do
     debugLog $ "Spec extraction enum: " ++ show n
     let rn = specName n
     let rfs = map (\(n, t) -> (specName n, fmap specFieldTyOf t)) $ M.assocs cs
@@ -518,6 +518,11 @@ extractCAExpr aexpr = do
                             a' <- extractCAExpr a
                             b' <- extractCAExpr b
                             return [di|#{a'} == #{b'}|]
+                        "secret_eq" -> do
+                            let [a,b,_] = args -- ignore declassify token
+                            a' <- extractCAExpr a
+                            b' <- extractCAExpr b
+                            return [di|#{a'} == #{b'}|]
                         "checknonce" -> do
                             let [a,b] = args
                             a' <- extractCAExpr a
@@ -706,7 +711,7 @@ extractExpr expr = do
             }
             )
             |]
-        CParse pkind ae t maybeOtw xtsk -> do
+        CParse pkind ae extraArgs t maybeOtw xtsk -> do
             let (xts, k) = unsafeUnbind xtsk
             xs <- mapM (\(x,_,_) -> extractVar x) xts
             ae' <- extractCAExpr ae
@@ -735,7 +740,7 @@ extractExpr expr = do
                     let [x] = xs
                     let dstTyName = specName n
                     case (maybeOtw, pkind) of
-                        (Just otw, PFromBuf) -> do
+                        (Just otw, pkind) | pkind /= PFromDatatype -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
                             -- return (parseCall, [di|otherwise (#{otw'})|])

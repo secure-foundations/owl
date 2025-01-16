@@ -53,12 +53,12 @@ let x = OwlBuf::from_slice(&arr);
 ```
 The GenRustExpr structure allows us to do the `cast` operation at the top level, if necessary
 -}
-data GenRustExpr ann = GenRustExpr { 
+data GenRustExpr ann = GenRustExpr {
     -- The generated type for the expression
     _eTy :: VerusTy,
     -- The Rust code for evaluating the expression without the cast applied
     _code :: Doc ann
-} 
+}
 makeLenses ''GenRustExpr
 
 
@@ -66,7 +66,7 @@ genVerusUserFunc :: CUserFunc VerusTy -> EM (Doc ann)
 genVerusUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
     secUF <- mkUserFuncDef specName (execName secName) secBody
     pubUF <- mkUserFuncDef specName (execName pubName) pubBody
-    return $ vsep [secUF, pubUF]    
+    return $ vsep [secUF, pubUF]
     where
         mkUserFuncDef specname execname b = do
             (args, (retTy, body)) <- unbindCDepBind b
@@ -214,7 +214,7 @@ lookupPkBufTy n = do
 
 -- name decl, name initializer
 genVerusName :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) = 
+genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
@@ -223,7 +223,7 @@ genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
             Just lt -> liftLifetime lt bufty
             Nothing -> bufty in
     let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
-    let nameInitBody = 
+    let nameInitBody =
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
@@ -231,7 +231,7 @@ genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
 
 -- name decl, name initializer
 genVerusPk :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
-genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) = 
+genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) =
     -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = "pk_" ++ execName vname in
@@ -240,7 +240,7 @@ genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) =
             Just lt -> liftLifetime lt bufty
             Nothing -> bufty in
     let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
-    let nameInitBody = 
+    let nameInitBody =
             if fromConfig then [di|config.#{execname}|]
             else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
@@ -262,8 +262,8 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("mac_vrfy", ([secBuf, secBuf, owlBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         -- , ("pkenc", ([u8slice, u8slice], vecU8))
         -- , ("pkdec", ([u8slice, u8slice, RTVerusTracked RTDeclassifyTok], RTOption vecU8))
-        , ("enc_st_aead", ([secBuf, secBuf, secBuf, secBuf], vecU8)) 
-        , ("enc_st_aead_builder", ([secBuf, secBuf, secBuf, secBuf], RTStAeadBuilder)) 
+        , ("enc_st_aead", ([secBuf, secBuf, secBuf, secBuf], vecU8))
+        , ("enc_st_aead_builder", ([secBuf, secBuf, secBuf, secBuf], RTStAeadBuilder))
         , ("dec_st_aead", ([secBuf, owlBuf, secBuf, secBuf, RTVerusTracked RTDeclassifyTok], RTOption secBuf))
         , ("is_group_elem", ([secBuf], RTBool))
         , ("crh", ([u8slice], vecU8))
@@ -293,7 +293,7 @@ genVerusCAExpr ae = do
                     args' <- mapM genVerusCAExpr args
                     args'' <- zipWithM castGRE args' argDstTys
                     -- castRes <- cast ([di|val|], rSrcTy) (ae ^. tty)
-                    
+
                     -- Delay the cast to the "top level". We could do some analysis to figure out
                     -- if we can actually do it now
                     let code = [di|#{fExecName}(#{hsep . punctuate comma $ args''})|]
@@ -301,12 +301,12 @@ genVerusCAExpr ae = do
                 Nothing -> do
                     -- Special cases for things which aren't regular function calls in Rust
                     case (f, args) of
-                        ("true", []) -> return $ GenRustExpr RTBool [di|true|] 
-                        ("false", []) -> return $ GenRustExpr RTBool [di|false|] 
+                        ("true", []) -> return $ GenRustExpr RTBool [di|true|]
+                        ("false", []) -> return $ GenRustExpr RTBool [di|false|]
                         ("Some", [x]) -> do
                             x' <- genVerusCAExpr x
                             x'' <- castGRE x' (x ^. tty)
-                            return $ GenRustExpr (RTOption (x ^. tty)) [di|Some(#{x''})|] 
+                            return $ GenRustExpr (RTOption (x ^. tty)) [di|Some(#{x''})|]
                         ("None", []) -> return $ GenRustExpr (ae ^. tty) [di|None|]
                         ("length", [x]) -> do
                             x' <- genVerusCAExpr x
@@ -330,7 +330,15 @@ genVerusCAExpr ae = do
                             x'' <- castGRE x' RTBool
                             return $ GenRustExpr RTBool [di|!(#{x''})|]
                         ("eq", [x,y]) -> eqChecker x y
-                        ("checknonce", [x, y]) -> eqChecker x y                        
+                        ("secret_eq", [x, y, tok]) -> do
+                            x' <- genVerusCAExpr x
+                            y' <- genVerusCAExpr y
+                            tok' <- genVerusCAExpr tok
+                            x'' <- castGRE x' (RTRef RShared (RTSecBuf AnyLifetime))
+                            y'' <- castGRE y' (RTRef RShared (RTSecBuf AnyLifetime))
+                            tok'' <- castGRE tok' (RTVerusTracked RTDeclassifyTok)
+                            return $ GenRustExpr RTBool [di|{ SecretBuf::secret_eq(#{x''}, #{y''}, #{tok''}) }|]
+                        ("checknonce", [x, y]) -> eqChecker x y
                         ("subrange", [buf, start, end]) -> do
                             buf' <- genVerusCAExpr buf
                             start' <- genVerusCAExpr start
@@ -340,12 +348,12 @@ genVerusCAExpr ae = do
                             case buf' ^. eTy of
                                 RTOwlBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ OwlBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
                                 RTSecBuf _ -> return $ GenRustExpr (ae ^. tty) [di|{ SecretBuf::another_ref(&#{buf' ^. code}).subrange(#{castStart}, #{castEnd}) }|]
-                                RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|] 
+                                RTRef _ (RTSlice RTU8) -> return $ GenRustExpr (ae ^. tty) [di|{ slice_subrange(#{buf' ^. code}, #{castStart}, #{castEnd}) }|]
                                 t -> throwError $ ErrSomethingFailed $ "TODO: subrange for type: " ++ show t
                         ("buf_declassify", [buf, tok]) -> do
                             buf' <- genVerusCAExpr buf
                             tok' <- genVerusCAExpr tok
-                            when (tok' ^. eTy /= RTDeclassifyTok) $ 
+                            when (tok' ^. eTy /= RTDeclassifyTok) $
                                 throwError $ TypeError $ "got buf_declassify with bad token type " ++ show (owlpretty (tok' ^. eTy))
                             castBuf <- castGRE buf' (RTSecBuf AnyLifetime)
                             castTok <- castGRE tok' (RTVerusTracked RTDeclassifyTok)
@@ -402,7 +410,7 @@ genVerusCAExpr ae = do
         CAHexConst s -> do
             s' <- hexStringToByteList s
             castX <- ([di|x|], vecU8) `cast` (ae ^. tty)
-            return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|] 
+            return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|]
         CASerializeWith (RTStruct n fs) args -> do
             let ftys = map snd fs
             let printComb arg comb = case comb of
@@ -415,7 +423,7 @@ genVerusCAExpr ae = do
             let mkCombArg ((arg, comb), fty) = do
                     arg' <- genVerusCAExpr arg
                     let fty' = if comb == PCBuilder then RTUnit else fty
-                    arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                    arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty'
                     argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                     comb' <- printComb arg'' comb
                     len <- case comb of
@@ -473,10 +481,10 @@ genVerusCAExpr ae = do
                 _ -> return $ GenRustExpr RTBool [di|#{x' ^. code} == #{y' ^. code}|] -- might not always work
 
 -- Extra info needed just for `genVerusCExpr`
-data GenCExprInfo ann = GenCExprInfo { 
+data GenCExprInfo ann = GenCExprInfo {
     -- True if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
     -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
-    inK :: Bool, 
+    inK :: Bool,
     -- The spec itree type of the current function, which is needed because Rust type inference cannot infer it
     specItreeTy :: Doc ann,
     curLocality :: LocalityName
@@ -492,7 +500,7 @@ needsToplevelCast (RTEnum _ _) = True
 needsToplevelCast _ = False
 
 instance OwlPretty VerusTy where
-    owlpretty = pretty 
+    owlpretty = pretty
 
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do
@@ -504,7 +512,7 @@ genVerusCExpr info expr = do
             ae' <- genVerusCAExpr ae
             if inK info then do
                 -- On this side we cast as necessary
-                castRes <- castGRE ae' (expr ^. tty) 
+                castRes <- castGRE ae' (expr ^. tty)
                 return $ GenRustExpr (expr ^. tty) [di|(#{castRes}, Tracked(itree))|]
             else return ae'
         CInput t xek -> do
@@ -525,7 +533,7 @@ genVerusCExpr info expr = do
                     plname <- flattenPath lname
                     return [di|&#{plname}_addr()|]
                 Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
-                Nothing -> throwError OutputWithUnknownDestination 
+                Nothing -> throwError OutputWithUnknownDestination
             let myAddr = [di|&#{curLocality info}_addr()|]
             let itreeTy = specItreeTy info
             let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
@@ -548,7 +556,7 @@ genVerusCExpr info expr = do
                     let mkCombArg ((arg, comb), fty) = do
                             arg' <- genVerusCAExpr arg
                             let fty' = if comb == PCBuilder then RTUnit else fty
-                            arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty' 
+                            arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty'
                             argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                             comb' <- printComb arg'' comb
                             len <- case comb of
@@ -623,7 +631,7 @@ genVerusCExpr info expr = do
                 let lhs = if needsItreeLhs then [di|(tmp_#{rustX}, Tracked(itree))|] else [di|tmp_#{rustX}|]
                 rhs <- case e of
                     -- Special case to prevent "use of moved value" errors
-                    Typed _ (CRet (Typed _ (CAVar _ _))) | needsToplevelCast (e' ^. eTy) -> castGRE e' (e' ^. eTy) 
+                    Typed _ (CRet (Typed _ (CAVar _ _))) | needsToplevelCast (e' ^. eTy) -> castGRE e' (e' ^. eTy)
                     _ -> return $ e' ^. code
                 return $ GenRustExpr (k' ^. eTy) [__di|
                 let #{lhs} = { #{rhs} };
@@ -645,7 +653,7 @@ genVerusCExpr info expr = do
                 |]
         CBlock ebody -> do
             ebody' <- genVerusCExpr info ebody
-            when (ebody' ^. eTy /= expr ^. tty) $ throwError $ TypeError $ "block has different type than expected: " ++ show (ebody' ^. eTy) ++ " vs " ++ show (expr ^. tty) 
+            when (ebody' ^. eTy /= expr ^. tty) $ throwError $ TypeError $ "block has different type than expected: " ++ show (ebody' ^. eTy) ++ " vs " ++ show (expr ^. tty)
             return $ GenRustExpr (expr ^. tty) [__di|
             { 
                 #{ebody' ^. code} 
@@ -656,8 +664,8 @@ genVerusCExpr info expr = do
             ae'' <- castGRE ae' RTBool
             e1' <- genVerusCExpr info e1
             e2' <- genVerusCExpr info e2
-            when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError $ "if true branch has different type than expected: " ++ show (e1' ^. eTy) ++ " vs " ++ show (e1 ^. tty) 
-            when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError $ "if false branch has different type than expected: " ++ show (e2' ^. eTy) ++ " vs " ++ show (e2 ^. tty) 
+            when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError $ "if true branch has different type than expected: " ++ show (e1' ^. eTy) ++ " vs " ++ show (e1 ^. tty)
+            when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError $ "if false branch has different type than expected: " ++ show (e2' ^. eTy) ++ " vs " ++ show (e2 ^. tty)
             -- when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
             ety <- unifyVerusTysUpToSecrecy (e1' ^. eTy) (e2' ^. eTy)
             e1'' <- if e1' ^. eTy /= ety then castGRE e1' ety else return $ e1' ^. code
@@ -683,7 +691,7 @@ genVerusCExpr info expr = do
                             let parens = case ae ^. tty of
                                     RTOption _ -> ""
                                     _ -> "()"
-                            return ([di|#{aeTyPrefix}#{translateCaseName c}#{parens} =>|], 
+                            return ([di|#{aeTyPrefix}#{translateCaseName c}#{parens} =>|],
                                 GenRustExpr (k' ^. eTy) [__di|
                                 { 
                                     #{k' ^. code} 
@@ -721,11 +729,11 @@ genVerusCExpr info expr = do
             }
             |]
         -- special case: comes from type annotation when matching on an option type
-        CParse PFromDatatype ae (RTOption t') _ xtsk -> do
+        CParse PFromDatatype ae _ (RTOption t') _ xtsk -> do
             let ([(x,s,t)], k) = unsafeUnbind xtsk
             let xsk' = bind (castName x) k
-            genVerusCExpr info $ Typed (expr ^. tty) $ CLet (Typed (ae ^. tty) (CRet ae)) Nothing xsk'          
-        CParse pkind ae t maybeOtw xtsk -> do
+            genVerusCExpr info $ Typed (expr ^. tty) $ CLet (Typed (ae ^. tty) (CRet ae)) Nothing xsk'
+        CParse pkind ae extraArgs t maybeOtw xtsk -> do
             let (xts, k) = unsafeUnbind xtsk
             let castRustXs = map (\(x, _, t) -> (execName . show $ x, t)) xts
             (dstTyName, parsedTypeMembers) <- case t of
@@ -744,6 +752,8 @@ genVerusCExpr info expr = do
             selectors <- zipWithM genSelector parsedTypeMembers castRustXs
             ae' <- genVerusCAExpr ae
             ae'' <- castGRE ae' (ae ^. tty)
+            extraArgs' <- mapM genVerusCAExpr extraArgs
+            extraArgs'' <- zipWithM castGRE extraArgs' (map (\x -> if x^.tty == RTDeclassifyTok then RTVerusTracked RTDeclassifyTok else x^.tty) extraArgs)
             k' <- genVerusCExpr info k
             case (pkind, maybeOtw) of
                 (PFromBuf, Just otw) -> do
@@ -751,7 +761,7 @@ genVerusCExpr info expr = do
                     castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` RTOwlBuf (Lifetime "_")
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval_tmp = #{ae''};
-                    if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}) {
+                    if let Some(parseval) = parse_#{dstTyName}(#{castParsevalTmp}, #{(hsep . punctuate comma) extraArgs''}) {
                         #{vsep selectors}
                         #{k' ^. code}
                     } else {
@@ -763,7 +773,7 @@ genVerusCExpr info expr = do
                     castParsevalTmp <- ([di|parseval_tmp|], ae ^. tty) `cast` RTSecBuf (Lifetime "_")
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval_tmp = #{ae''};
-                    if let Some(parseval) = secret_parse_#{dstTyName}(#{castParsevalTmp}) {
+                    if let Some(parseval) = secret_parse_#{dstTyName}(#{castParsevalTmp}, #{(hsep . punctuate comma) extraArgs''}) {
                         #{vsep selectors}
                         #{k' ^. code}
                     } else {
@@ -771,6 +781,7 @@ genVerusCExpr info expr = do
                     }
                     |]
                 (PFromDatatype, _) -> do
+                    when (length extraArgs /= 0) $ throwError $ TypeError "parse from datatype with extra args"
                     return $ GenRustExpr (k' ^. eTy) [__di|
                     let parseval = #{ae''};
                     #{vsep selectors}
@@ -824,7 +835,7 @@ addLifetime lt (RTStruct s fs) = if structNeedsLifetime s fs then RTWithLifetime
 addLifetime lt (RTEnum s cs) = if enumNeedsLifetime s cs then RTWithLifetime (RTEnum s cs) lt else RTEnum s cs
 addLifetime lt (RTOwlBuf _) = RTOwlBuf lt
 addLifetime lt (RTOption ty) = RTOption (addLifetime lt ty)
-addLifetime _ t = t 
+addLifetime _ t = t
 
 genVerusDef :: VerusName -> CDef VerusTy -> EM (Doc ann)
 genVerusDef lname cdef = do
@@ -837,7 +848,7 @@ genVerusDef lname cdef = do
     let lt = Lifetime "a"
     let ltArgs = map (\(n, s, t) -> (n, s, addLifetime lt t)) defArgs'
     let ltRty = addLifetime lt rty'
-    let (defArgsLt, rtyLt, needsLt) = 
+    let (defArgsLt, rtyLt, needsLt) =
             if ltArgs == defArgs' && ltRty == rty' then (defArgs', rty', False) else (ltArgs, ltRty, True)
     verusArgs <- mapM compileArg defArgsLt
     let specRt = specTyOfExecTySerialized rty'
@@ -845,11 +856,11 @@ genVerusDef lname cdef = do
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
     let argdefs = hsep . punctuate comma $ [di|&#{if needsLt then pretty lt else pretty ""} self|] : itreeArg : mutStateArg : verusArgs
-    let retval = [di|(res: Result<(#{pretty rtyLt}, #{itreeTy}), OwlError>)|]    
+    let retval = [di|(res: Result<(#{pretty rtyLt}, #{itreeTy}), OwlError>)|]
     specargs <- mapM viewArg defArgs'
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
-    (attr, bodyCode, castResInner) <- case body of 
-        Just body -> do 
+    (attr, bodyCode, castResInner) <- case body of
+        Just body -> do
             body' <- genVerusCExpr genInfo body
             castResInner <- cast ([di|res_inner|], body' ^. eTy) rty'
             return ([di||], body' ^. code, castResInner)
@@ -888,16 +899,16 @@ tyNeedsLifetime (RTSecBuf _) = True
 tyNeedsLifetime (RTWithLifetime _ _) = True
 tyNeedsLifetime (RTStruct n' fs') = structNeedsLifetime n' fs'
 tyNeedsLifetime (RTEnum n' cs') = enumNeedsLifetime n' cs'
-tyNeedsLifetime _ = False 
+tyNeedsLifetime _ = False
 
 structNeedsLifetime :: VerusName -> [(VerusName, VerusTy)] -> Bool
-structNeedsLifetime _ = any (tyNeedsLifetime . snd) 
+structNeedsLifetime _ = any (tyNeedsLifetime . snd)
 
 enumNeedsLifetime :: VerusName -> [(VerusName, Maybe VerusTy)] -> Bool
-enumNeedsLifetime name cases = 
-    let checkCase t = case t of 
+enumNeedsLifetime name cases =
+    let checkCase t = case t of
             Just t' -> tyNeedsLifetime t'
-            Nothing -> False 
+            Nothing -> False
         in
     any (checkCase . snd) cases
 
@@ -937,7 +948,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecretParse isSecretSer
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
-    where 
+    where
 
         -- genVestFormat name layoutFields = do
         --     let genField (_, f, format, l) = do 
@@ -968,7 +979,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
 
         genImplStruct :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genImplStruct verusName fields lAnnot = do
-            let anotherRefFields = map (\(_, fname, fty) -> case fty of 
+            let anotherRefFields = map (\(_, fname, fty) -> case fty of
                         RTWithLifetime (RTStruct t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
                         RTWithLifetime (RTEnum t' _) _ -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
                         (RTStruct t' _) -> [di|#{fname}: #{t'}::another_ref(&self.#{fname})|]
@@ -1005,10 +1016,10 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                 }
             }
             |]
-        
+
         genParsleyWrappers :: VerusName -> String -> VerusTy -> [(String, VerusName, Maybe ConstUsize, VerusTy)] -> String -> Bool -> Bool -> Bool -> EM (Doc ann)
         genParsleyWrappers verusName specname structTy fields lifetimeConst True isSecretParse isSecretSer = do
-            let specParse = [di|parse_#{specname}|] 
+            let specParse = [di|parse_#{specname}|]
             let execParse = [di|parse_#{verusName}|]
             let tupPatFields = mkNestPattern . fmap (\(_, fname, _, _) -> pretty fname) $ fields
             let mkField argty fname fty = do
@@ -1060,7 +1071,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                             None
                         }
                     }
-                    |] 
+                    |]
                 else return [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
@@ -1091,7 +1102,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                                 , [di|vec_u8_of_len|]
                                 , castObuf
                                 )
-                    
+
             let ser = [__di|
             pub exec fn #{execSerInner}<'#{lifetimeConst}>(arg: &#{verusName}<'#{lifetimeConst}>) -> (res: Option<#{outTy}>)
                 ensures
@@ -1126,7 +1137,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             |]
             return $ vsep [parse, secretParse, ser]
         genParsleyWrappers verusName specname structTy fields lifetimeConst False _ _ = do
-            let specParse = [di|parse_#{specname}|] 
+            let specParse = [di|parse_#{specname}|]
             let execParse = [di|parse_#{verusName}|]
             let parse = [__di|
             \#[verifier::external_body]
@@ -1164,7 +1175,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
 
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
-genVerusEnum (CEnum name casesFV isVest execComb) = do
+genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
     debugLog $ "genVerusEnum: " ++ name
     let cases = M.mapWithKey (\fname opt -> case opt of Just (_, rty) -> Just rty; Nothing -> Nothing) casesFV
     -- Lift all member fields to have the lifetime annotation of the whole struct
@@ -1187,10 +1198,10 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
     -- vestFormat <- genVestFormat verusName casesFV
     implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest
+    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest isSecret
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
     return $ (vsep [enumDef, implEnum, viewImpl, enumTests, parsleyWrappers])
-    where 
+    where
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime a (Just (RTSecBuf _)) = Just $ RTSecBuf (Lifetime a)
         liftLifetime _ ty = ty
@@ -1211,7 +1222,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
 
         genImplEnum :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genImplEnum verusName cases lAnnot = do
-            let anotherRefFields = M.map (\(fname, fty) -> case fty of 
+            let anotherRefFields = M.map (\(fname, fty) -> case fty of
                         Just (RTWithLifetime (RTStruct t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
                         Just (RTWithLifetime (RTEnum t' _) _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
                         Just (RTStruct t' _) -> [di|#{fname}(x) => #{fname}(#{t'}::another_ref(x))|]
@@ -1251,14 +1262,14 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                 }
             }
             |]
-        
+
         mkEnumTests :: VerusName -> String -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         mkEnumTests verusName specname cases lAnnot = do
             tests <- mapM mkEnumTest (M.assocs cases)
             return $ vsep tests
             where
                 mkEnumTest (cname, (fname, topt)) = do
-                    let var = case topt of 
+                    let var = case topt of
                             Just _ -> [di|_|]
                             Nothing -> [di||]
                     return [__di|
@@ -1273,9 +1284,9 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                     }
                     |]
 
-        genParsleyWrappers :: VerusName -> String -> VerusTy -> M.Map String (VerusName, Maybe VerusTy) -> String -> String -> Bool -> EM (Doc ann)
-        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb True = do
-            let specParse = [di|parse_#{specname}|] 
+        genParsleyWrappers :: VerusName -> String -> VerusTy -> M.Map String (VerusName, Maybe VerusTy) -> String -> String -> Bool -> Bool -> EM (Doc ann)
+        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb True isSecret = do
+            let specParse = [di|parse_#{specname}|]
             let execParse = [di|parse_#{verusName}|]
             let l = length cases
             let mkParseBranch ((caseName, topt), i) = do
@@ -1321,6 +1332,33 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                 }
             }
             |]
+            secretParse <- if isSecret then do
+                    let parse = [__di|
+                    \#[verifier(external_body)] 
+                    pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (res: Option<#{pretty enumTy}>) 
+                        requires t.view() matches DeclassifyingOp::EnumParse(b) && b == arg.view()
+                        ensures
+                            res is Some ==> #{specParse}(arg.view()) is Some,
+                            res is None ==> #{specParse}(arg.view()) is None,
+                            res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    {
+                        reveal(#{specParse});
+                        todo!()
+                        /* 
+                        let exec_comb = #{execComb};
+                        if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
+                            let v = match parsed {
+                                #{vsep parseBranchesVecs}
+                            };
+                            Some(v)
+                        } else {
+                            None
+                        }
+                        */
+                    }
+                    |]
+                    return parse
+                else return [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
@@ -1373,9 +1411,9 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                 res.unwrap()
             }
             |]
-            return $ vsep [parse, ser]
-        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb False = do
-            let specParse = [di|parse_#{specname}|] 
+            return $ vsep [parse, secretParse, ser]
+        genParsleyWrappers verusName specname enumTy cases lifetimeConst execComb False _ = do
+            let specParse = [di|parse_#{specname}|]
             let execParse = [di|parse_#{verusName}|]
             let parse = [__di|
             \#[verifier::external_body]
@@ -1388,6 +1426,22 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                 todo!()
             }
             |]
+            secretParse <- if isSecret then do
+                    let parse = [__di|
+                    \#[verifier(external_body)] 
+                    pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (res: Option<#{pretty enumTy}>) 
+                        requires t.view() matches DeclassifyingOp::EnumParse(b) && b == arg.view()
+                        ensures
+                            res is Some ==> #{specParse}(arg.view()) is Some,
+                            res is None ==> #{specParse}(arg.view()) is None,
+                            res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    {
+                        reveal(#{specParse});
+                        todo!()
+                    }
+                    |]
+                    return parse
+                else return [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
@@ -1409,7 +1463,7 @@ genVerusEnum (CEnum name casesFV isVest execComb) = do
                 todo!()
             }
             |]
-            return $ vsep [parse, ser]
+            return $ vsep [parse, secretParse, ser]
 
 
 genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann)
@@ -1440,7 +1494,7 @@ cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
 cast (v, t1) t2 | t2 == RTRef RShared t1 =
     return [di|&#{v}|]
 cast (v, t1) t2 | t2 == RTRef RMut t1 =
-    return [di|&mut #{v}|]    
+    return [di|&mut #{v}|]
 cast (v, RTRef RMut t1) (RTRef RShared t2) | t1 == t2 =
     return [di|&#{v}|]
 cast (v, RTVec t1) (RTRef b (RTSlice t2)) | t1 == t2 =
@@ -1463,7 +1517,7 @@ cast (v, RTArray RTU8 _) (RTSecBuf _) =
     return [di|OwlBuf::from_slice(&#{v}).into_secret()|]
 cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
-cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) = 
+cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) =
     return [di|OwlBuf::from_vec_option(#{v})|]
 -- cast (v, RTStruct t fs) (RTVec RTU8) = 
 --     return [di|serialize_#{t}(&#{v})|]
@@ -1474,7 +1528,11 @@ cast (v, RTStruct t fs) (RTOwlBuf l) = do
     return [di|serialize_#{t}(&#{v})|]
 cast (v, RTStruct t fs) (RTSecBuf l) = do -- TODO: Concretify should catch cases where this won't work
     return [di|serialize_#{t}(&#{v})|]
-cast (v, RTEnum t cs) (RTVec RTU8) = 
+cast (v, RTEnum t cs) (RTOwlBuf l) = do
+    return [di|OwlBuf::from_vec(serialize_#{t}(&#{v}))|]
+cast (v, RTEnum t cs) (RTSecBuf l) = do -- TODO: Concretify should catch cases where this won't work
+    return [di|OwlBuf::from_vec(serialize_#{t}(&#{v})).into_secret()|]
+cast (v, RTEnum t cs) (RTVec RTU8) =
     return [di|serialize_#{t}(&#{v})|]
 cast (v, RTEnum t cs) (RTRef RShared (RTSlice RTU8)) = do
     c1 <- cast (v, RTEnum t cs) vecU8
@@ -1482,12 +1540,12 @@ cast (v, RTEnum t cs) (RTRef RShared (RTSlice RTU8)) = do
 cast (v, RTEnum t cs) (RTOwlBuf l) = do
     c1 <- cast (v, RTEnum t cs) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
-cast (v, RTOwlBuf _) (RTSecBuf _) = 
+cast (v, RTOwlBuf _) (RTSecBuf _) =
     return [di|SecretBuf::from_buf(#{v}.another_ref())|]
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
-cast (v, RTSecBuf _) (RTSecBuf _) = 
+cast (v, RTSecBuf _) (RTSecBuf _) =
     return [di|SecretBuf::another_ref(&#{v})|]
 cast (v, RTOption (RTOwlBuf _)) (RTOption (RTOwlBuf _)) =
     return [di|OwlBuf::another_ref_option(&#{v})|]
@@ -1502,7 +1560,7 @@ cast (v, RTOption RTDummy) (RTOption t) = return v
 cast (v, RTStAeadBuilder) (RTVec RTU8) = return [di|#{v}.into_fresh_vec()|]
 cast (v, RTStAeadBuilder) (RTRef RShared (RTSlice RTU8)) = do
     c1 <- cast (v, RTStAeadBuilder) vecU8
-    cast (c1, vecU8) (RTRef RShared (RTSlice RTU8)) 
+    cast (c1, vecU8) (RTRef RShared (RTSlice RTU8))
 cast (v, RTStAeadBuilder) (RTOwlBuf l) = do
     c1 <- cast (v, RTStAeadBuilder) vecU8
     cast (c1, vecU8) (RTOwlBuf l)
@@ -1547,7 +1605,7 @@ specTyOfExecTySerialized (RTStruct n fs) = RTStruct (snOfEn n) (fmap (\(f, t) ->
 specTyOfExecTySerialized (RTEnum n cs) = RTEnum (snOfEn n) (fmap (\(c, mt) -> (c, fmap specTyOfExecTySerialized mt)) cs)
 specTyOfExecTySerialized (RTWithLifetime t l) = specTyOfExecTySerialized t
 specTyOfExecTySerialized t = t -- TODO: not true in general
-        
+
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)
 viewVar vname RTUnit = return [di|()|]
