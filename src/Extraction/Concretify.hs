@@ -362,7 +362,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                 Just (fargTys, retTy) -> do
                     when (length fargTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
                     argsWithLets <- forM (zip fargTys args) $ \(t, a) -> do
-                        unifyFormatTy t (a ^. tty) -- check types are compatible
+                        -- unifyFormatTy t (a ^. tty) -- check types are compatible
                         bufcast a t
                     let (args', argsCastLets) = unzip argsWithLets
                     return $ withLets (concat argsCastLets) $ Typed retTy $ cAApp f args'
