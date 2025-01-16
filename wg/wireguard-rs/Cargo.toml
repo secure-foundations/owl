@@ -22,7 +22,7 @@ hex = "0.4"
 hjul = "0.2.2"
 hmac = "^0.10"
 log = {version = "0.4", features = ["max_level_trace", "release_max_level_info"]}
-libcrux = { git = "https://github.com/cryspen/libcrux", features = ["rand"] }
+libcrux = { git = "https://github.com/cryspen/libcrux", features = ["rand"], rev = "5bc3ad6" }
 num_cpus = "^1.10"
 parking_lot = "^0.11"
 rand = "^0.7"

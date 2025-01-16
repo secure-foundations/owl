@@ -77,8 +77,8 @@ ip netns exec net1 route add default gw 10.100.1.1
 ##############################################################
 # Set up wireguard interfaces
 
-# export WG_THREADS=1
-# export GOMAXPROCS=1
+export WG_THREADS=1
+export GOMAXPROCS=1
 
 # Create Wireguard interfaces, wg1 in default namespace, wg1n in net1 namespace
 if [ $use_owl_routines = "true" ]; then

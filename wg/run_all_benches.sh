@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+set -euxo pipefail
 
 function usage() {
     echo "Usage: ${0} [-s] SUFFIX [-g] VANILLA_WG_GO_PATH"
@@ -26,6 +26,8 @@ sleep=10
 
 ## prompt for sudo password if necessary
 sudo echo "sudo available"
+
+
 ## run wireguard-rs benchmarks with verified crypto
 
 pushd wireguard-rs
