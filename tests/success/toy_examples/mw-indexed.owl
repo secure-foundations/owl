@@ -18,13 +18,11 @@ corr adv ==> /\_i [NT<i>] // can remove this with xor property
 name id<i> : nonce @ T
 corr adv ==> /\_i [id<i>] // can remove this with xor property
 
-enum zero_or_one {
-| zz
-| oo
-}
+func zz() = 0x00
+func oo() = 0x01
 
 struct h1_t<i> {
-    h1_c  : zero_or_one,
+    h1_c  : Data<adv> |1|,
     h1_nr : Data<adv> ||nonce||,
     h1_nt : Name(NT<i>)
 }
