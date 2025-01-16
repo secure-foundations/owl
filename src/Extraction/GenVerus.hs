@@ -315,6 +315,8 @@ genVerusCAExpr ae = do
                                 RTVec RTU8 -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr RTUsize [di|{ slice_len(#{x' ^. code}) }|]
                                 RTOwlBuf _ -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
+                                -- All lengths are public, so we are allowed to take the len of a SecretBuf
+                                RTSecBuf _ -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 _ -> throwError $ ErrSomethingFailed $ "TODO: length for type: " ++ show (x' ^. eTy)
                         ("andb", [x,y]) -> do
                             x' <- genVerusCAExpr x

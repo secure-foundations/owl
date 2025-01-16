@@ -399,6 +399,11 @@ pub mod secret {
             SecretBuf { buf }
         }
 
+        pub fn len(&self) -> (result: usize)
+            ensures result == self.view().len()
+        {
+            self.buf.len()
+        }
 
         ///////// Declassifying operations on SecretBufs
 
@@ -461,9 +466,6 @@ pub mod secret {
         SecretBuf::from_buf(OwlBuf::from_vec(v))
     }
 
-    // TODO: is this fine? We don't expose `len` or `subrange` directly in the secret buf interface, 
-    // but we do via the `VestSecretInput` trait
-    // If not, Owl will need a `LessSecretBuf` type and some conversion functions
     impl vest::buf_traits::VestSecretInput for SecretBuf<'_> {
         fn len(&self) -> usize {
             self.buf.len()

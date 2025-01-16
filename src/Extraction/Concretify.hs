@@ -245,6 +245,11 @@ bufcast ae t = do
         let ae' = Typed t $ CACast ae t
         return $ noLets ae'
 
+bufcastSecrecy :: CAExpr FormatTy -> BufSecrecy -> EM (CAExpr FormatTy, [CLetBinding])
+bufcastSecrecy ae s = do
+    let t = FBuf s $ flenOfFormatTy $ ae ^. tty
+    bufcast ae t
+
 -- helper for when spec and exec functions have the same name
 cAApp :: String -> [CAExpr FormatTy] -> CAExpr' FormatTy
 cAApp f = CAApp f f 
@@ -708,10 +713,13 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
             kdfVar <- do
                 vn' <- fresh $ s2n "kdfval"
                 fresh $ s2n (show vn')
-            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ cAApp "kdf" [Typed FInt (CAInt kdfLen), salt, ikm, info]
+            (salt', saltLets) <- bufcastSecrecy salt BufSecret
+            (ikm', ikmLets) <- bufcastSecrecy ikm BufSecret
+            (info', infoLets) <- bufcastSecrecy info BufPublic
+            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ cAApp "kdf" [Typed FInt (CAInt kdfLen), salt', ikm', info']
             let doKdfLetBinding = (kdfVar, Nothing, doKdf)
             memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
-            return $ (kdfVar, [doKdfLetBinding])
+            return $ (kdfVar, saltLets ++ ikmLets ++ infoLets ++ [doKdfLetBinding])
     let doSlice = Typed kdfOutTy $ CRet $ Typed kdfOutTy $ 
             cAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
     sec <- secrecyOfNameKind nk
@@ -734,15 +742,19 @@ concretifyCryptOp _ CAEnc [k, x] = do
     coinsName <- fresh $ s2n "coins"
     let sampFLen = FLNamed "nonce"
     let coinsVar = Typed (fSBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
-    let doEnc = Typed t $ CRet $ Typed t $ cAApp "enc" [k, x, coinsVar]
-    return $ noLets $ Typed t $ CSample sampFLen (fSBuf $ Just sampFLen) $ bind coinsName doEnc
+    (k', klets) <- bufcastSecrecy k BufSecret
+    (x', xlets) <- bufcastSecrecy x BufSecret
+    let doEnc = Typed t $ CRet $ Typed t $ cAApp "enc" [k', x', coinsVar]
+    return $ withLets (klets ++ xlets) $ Typed t $ CSample sampFLen (fSBuf $ Just sampFLen) $ bind coinsName doEnc
 concretifyCryptOp _ CADec [k, c] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOADec (k, c)
-    let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec" [k, c, tokVar]
-    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
+    (k', klets) <- bufcastSecrecy k BufSecret
+    (c', clets) <- bufcastSecrecy c BufPublic
+    let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec" [k', c', tokVar]
+    return $ withLets (klets ++ clets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     (patx, patbody) <- unbind xpat
     nonce <- concretifyPath np
@@ -763,14 +775,22 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
             (iv, ivLets) <- withVars [(castName ctrVar, ctrTy)] $ concretifyAExpr patbodySubst
             let mkIv = [(castName patx, Nothing, Typed (iv ^. tty) $ CRet iv)]
             return (CAVar (ignore $ name2String patx) $ castName patx, mkIv, ivLets)
-    return $ withLets (getInc ++ ivLets ++ mkIv) $ Typed t $ CRet $ Typed t $ cAApp "enc_st_aead" [k, x, Typed ctrTy $ ivVar, aad]
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (x', xLets) <- bufcastSecrecy x BufSecret
+    (aad', aadLets) <- bufcastSecrecy aad BufSecret
+    return $ withLets (getInc ++ ivLets ++ mkIv ++ kLets ++ xLets ++ aadLets) $ 
+        Typed t $ CRet $ Typed t $ cAApp "enc_st_aead" [k', x', Typed ctrTy $ ivVar, aad']
 concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOStAeadDec (k, c, nonce, aad)
-    let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec_st_aead" [k, c, nonce, aad, tokVar]
-    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (c', cLets) <- bufcastSecrecy c BufPublic
+    (nonce', nonceLets) <- bufcastSecrecy nonce BufSecret
+    (aad', aadLets) <- bufcastSecrecy aad BufSecret
+    let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec_st_aead" [k', c', nonce', aad', tokVar]
+    return $ withLets (kLets ++ cLets ++ nonceLets ++ aadLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
 -- concretifyCryptOp _ CPKEnc [k, x] = do
 --     let t = FBuf Nothing
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkenc" [k, x]
@@ -779,24 +799,34 @@ concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
 --     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkdec" [k, x]
 concretifyCryptOp _ CMac [k, x] = do
     let t = fPBuf $ Just $ FLNamed "maclen"
-    return $ noLets $ Typed t $ CRet $ Typed t $ cAApp "mac" [k, x]
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (x', xLets) <- bufcastSecrecy x BufPublic
+    return $ withLets (kLets ++ xLets) $ Typed t $ CRet $ Typed t $ cAApp "mac" [k', x']
 concretifyCryptOp _ CMacVrfy [k, x, v] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOMacVrfy (k, x, v)
-    let doMacVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "mac_vrfy" [k, x, v, tokVar]
-    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doMacVrfy
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (x', xLets) <- bufcastSecrecy x BufSecret
+    (v', vLets) <- bufcastSecrecy v BufPublic
+    let doMacVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "mac_vrfy" [k', x', v', tokVar]
+    return $ withLets (kLets ++ xLets ++ vLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doMacVrfy
 concretifyCryptOp _ CSign [k, x] = do
     let t = fPBuf $ Just $ FLNamed "signature"
-    return $ noLets $ Typed t $ CRet $ Typed t $ cAApp "sign" [k, x]
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (x', xLets) <- bufcastSecrecy x BufPublic
+    return $ withLets (kLets ++ xLets) $ Typed t $ CRet $ Typed t $ cAApp "sign" [k', x']
 concretifyCryptOp _ CSigVrfy [k, x, v] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
     let dop = DOSigVrfy (k, x, v)
-    let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "vrfy" [k, x, v, tokVar]
-    return $ noLets $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
+    (k', kLets) <- bufcastSecrecy k BufPublic
+    (x', xLets) <- bufcastSecrecy x BufSecret
+    (v', vLets) <- bufcastSecrecy v BufPublic
+    let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "vrfy" [k', x', v', tokVar]
+    return $ withLets (kLets ++ xLets ++ vLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args: " ++ show (tupled . map owlpretty $ cargs)
 
