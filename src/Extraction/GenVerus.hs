@@ -1558,6 +1558,8 @@ cast (v, RTEnum t cs) (RTOwlBuf l) = do
     cast (c1, vecU8) (RTOwlBuf l)
 cast (v, RTOwlBuf _) (RTSecBuf _) =
     return [di|SecretBuf::from_buf(#{v}.another_ref())|]
+cast (v, RTOwlBuf _) (RTRef RShared (RTSecBuf _)) =
+    return [di|&SecretBuf::from_buf(#{v}.another_ref())|]
 -- Special case: the `cast` in the compiler approximately corresponds to where we need to call OwlBuf::another_ref
 cast (v, RTOwlBuf _) (RTOwlBuf _) =
     return [di|OwlBuf::another_ref(&#{v})|]
