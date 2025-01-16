@@ -254,11 +254,12 @@ bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPub
     let decBufVar = Typed t $ CAVar (ignore $ show declassifiedBufName) declassifiedBufName
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-    let dop = DOControlFlow ae
-    let doCFDeclassify = Typed t $ CRet $ Typed t $ cAApp "buf_declassify" [ae, tokVar]
+    (ae', ae'Lets) <- bufcastSecrecy ae BufSecret
+    let dop = DOControlFlow ae'
+    let doCFDeclassify = Typed t $ CRet $ Typed t $ cAApp "buf_declassify" [ae', tokVar]
     let declassifyExpr = Typed t $ CItreeDeclassify dop $ bind tokName doCFDeclassify
     let declassifyLetBinding = (declassifiedBufName, Nothing, declassifyExpr)
-    return $ withLets [declassifyLetBinding] $ decBufVar
+    return $ withLets (ae'Lets ++ [declassifyLetBinding]) $ decBufVar
 bufcast ae t = do
     if (ae ^. tty) `eqUpToBufLen` t then return $ noLets ae
     else do
@@ -783,9 +784,9 @@ concretifyCryptOp _ CADec [k, c] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-    let dop = DOADec (k, c)
     (k', klets) <- bufcastSecrecy k BufSecret
     (c', clets) <- bufcastSecrecy c BufPublic
+    let dop = DOADec (k', c')
     let doDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec" [k', c', tokVar]
     return $ withLets (klets ++ clets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doDec
 concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
@@ -817,11 +818,11 @@ concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-    let dop = DOStAeadDec (k, c, nonce, aad)
     (k', kLets) <- bufcastSecrecy k BufSecret
     (c', cLets) <- bufcastSecrecy c BufPublic
     (nonce', nonceLets) <- bufcastSecrecy nonce BufSecret
     (aad', aadLets) <- bufcastSecrecy aad BufSecret
+    let dop = DOStAeadDec (k', c', nonce', aad')
     let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec_st_aead" [k', c', nonce', aad', tokVar]
     return $ withLets (kLets ++ cLets ++ nonceLets ++ aadLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
 -- concretifyCryptOp _ CPKEnc [k, x] = do
@@ -854,10 +855,10 @@ concretifyCryptOp _ CSigVrfy [k, x, v] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-    let dop = DOSigVrfy (k, x, v)
     (k', kLets) <- bufcastSecrecy k BufPublic
     (x', xLets) <- bufcastSecrecy x BufSecret
     (v', vLets) <- bufcastSecrecy v BufPublic
+    let dop = DOSigVrfy (k', x', v')
     let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "vrfy" [k', x', v', tokVar]
     return $ withLets (kLets ++ xLets ++ vLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
@@ -1020,14 +1021,14 @@ setupEnv ((tname, td):tydefs) = do
                         let argTys = case cty of
                                 Just t -> [t]
                                 Nothing -> []
-                        let rty = FEnum tname $ M.assocs cases
+                        let rty = FEnum tname' $ M.assocs cases
                         funcs %= M.insert cname (argTys, rty)
                 mapM_ mkCase (M.assocs cases)
             CStructDef (CStruct _ fields _ _ _) -> do
                 -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
                 let fieldTys = map snd fields
-                let rty = FStruct tname fields
-                funcs %= M.insert tname (fieldTys, rty)
+                let rty = FStruct tname' fields
+                funcs %= M.insert tname' (fieldTys, rty)
     setupEnv tydefs
 
 
