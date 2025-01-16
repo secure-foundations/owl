@@ -616,6 +616,11 @@ concretifyExpr e = do
                             (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                             let k'' = exprFromLets' (k', k'Lets)
                             return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target' otw'' $ bind xtys k''
+                        else if secrecyOfFTy t_target' == BufPublic then do
+                            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                            let k'' = exprFromLets' (k', k'Lets)
+                            (a'', a''Lets) <- bufcastSecrecy a' BufPublic
+                            return $ withLets (alets ++ a''Lets) $ Typed (k'' ^. tty) $ CParse PFromBuf a'' [] t_target' otw'' $ bind xtys k''
                         else if canSecretParse t_target' then do 
                             let t_target'' = secretizeFTy t_target'
                             case t_target'' of
@@ -633,7 +638,7 @@ concretifyExpr e = do
                                     let k'' = exprFromLets' (k', concat bufcastLets ++ k'Lets)
                                     return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target'' otw'' $ bind xtysForParse k''
                                 _ -> throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
-                        else
+                        else 
                             throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
                     _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
 
@@ -1013,7 +1018,7 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
         -- We generate the exec combinator here, so that we can use it in
         -- GenVerus where format types have been erased
         (execComb, _) <- execCombOf tname (FEnum tname cs)
-        let isSecret = any (maybe True hasSecParser . snd) cs
+        let isSecret = any (maybe True canSecretParse . snd) cs
         return [(tname, CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb) isSecret))]
 concretifyTyDef tname (TB.StructDef bnd) = do 
     debugLog $ "Concretifying struct: " ++ tname
@@ -1035,9 +1040,12 @@ concretifyTyDef tname (TB.StructDef bnd) = do
         secretizedStructDef <- if shouldHaveSecretParser then do
                 let secretizedStructName = "secret_" ++ tname
                 let secretizedFields = map (\(n, t) -> (n, secretizeFTy t)) s
-                when (not (all (hasSecParser . snd) secretizedFields)) $ throwError $ TypeError $ "Failed to secretize struct " ++ tname
-                let secretizedStruct = (secretizedStructName, CStructDef (CStruct secretizedStructName secretizedFields isVest True isSecretSer))
-                return [secretizedStruct]
+                if not isVest || all (hasSecParser . snd) secretizedFields then do
+                    let secretizedStruct = (secretizedStructName, CStructDef (CStruct secretizedStructName secretizedFields isVest True isSecretSer))
+                    return [secretizedStruct]
+                else do 
+                    let secretizedStruct = (secretizedStructName, CStructDef (CStruct secretizedStructName secretizedFields isVest False isSecretSer))
+                    return [secretizedStruct]
             else return []
         return $ structDef : secretizedStructDef
 

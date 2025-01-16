@@ -23,7 +23,7 @@ enum pk {
 struct signed_by_pkS {
     _address : Data<adv> ||nonce||,
     _pk : pk,
-    _t  : Name(T)
+    _t  : Data<adv> ||nonce||
 }
 
 
@@ -76,7 +76,7 @@ def A_main() @ A
             case vrfy(get_vk(skS), t2, s2) {
                 | None => A_No()
                 | Some s =>
-                    parse s as signed_by_pkS(_, pks, _) in     
+                    parse s as signed_by_pkS(addr, pks, t_val) in     
                     case pks as pk {
                         | _pkA _ => A_No()
                         | _pkB o =>
@@ -112,7 +112,7 @@ def B_main() @ B
             case vrfy(get_vk(skS), t1, s1) {
                 | None => B_No()
                 | Some s =>
-                    parse s as signed_by_pkS(_, pks, _) in
+                    parse s as signed_by_pkS(addr, pks, t_val) in
                     case pks as pk {
                         | _pkB _ => B_No()
                         | _pkA o => B_Ok(o)
