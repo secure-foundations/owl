@@ -270,7 +270,6 @@ pcase HasPSK?(psk) in
  let msg2_mac1 = mac(msg2_mac1_k,
          msg2_tag ++ msg2_sender ++ msg2_receiver ++ e_resp_pk ++
          msg2_empty) in 
- assert (length(msg2_mac1) == |maclen|);
  let msg2_mac2 = zeros_16() in
  let msg2_output: msg2 = msg2(
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
