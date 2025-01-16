@@ -227,6 +227,26 @@ doubleFresh s = do
     n <- fresh $ s2n s
     fresh $ s2n (show n)
 
+bufcastVar :: (CDataVar FormatTy, Ignore String, FormatTy) -> FormatTy -> EM ((CDataVar FormatTy, Ignore String), [CLetBinding])
+bufcastVar (v, s, startT) t | secrecyOfFTy startT == BufSecret && secrecyOfFTy t == BufPublic = do
+    -- Need an explicit declassification here
+    declassifiedVarName <- doubleFresh "declassified_buf"
+    tokName <- fresh $ s2n "declassify_tok"
+    let ae = Typed startT $ CAVar s v
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    let dop = DOControlFlow ae
+    let doCFDeclassify = Typed t $ CRet $ Typed t $ cAApp "buf_declassify" [ae, tokVar]
+    let declassifyExpr = Typed t $ CItreeDeclassify dop $ bind tokName doCFDeclassify
+    let declassifyLetBinding = (declassifiedVarName, Nothing, declassifyExpr)
+    return $ withLets [declassifyLetBinding] $ (declassifiedVarName, ignore $ show declassifiedVarName)
+bufcastVar (v, s, startT) t = do
+    if startT `eqUpToBufLen` t then return $ noLets (v, s)
+    else do
+        castVarName <- doubleFresh "cast_var"
+        let castAE = Typed t $ CACast (Typed startT $ CAVar s v) t
+        let castLetBinding = (castVarName, Nothing, Typed t $ CRet castAE)
+        return $ withLets [castLetBinding] $ (castVarName, ignore $ show castVarName)
+
 bufcast :: CAExpr FormatTy -> FormatTy -> EM (CAExpr FormatTy, [CLetBinding])
 bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPublic = do
     -- Need an explicit declassification here
@@ -477,7 +497,8 @@ concretifyExpr e = do
           return $ withLets lets $ Typed (_tty k') $ CInput (fPBuf Nothing) $ bind (castName x, ep) k'
       EOutput a op -> do
           (c, clets) <- concretifyAExpr a
-          return $ withLets clets $ Typed FUnit $ COutput c op
+          (c', clets') <- bufcast c $ FBuf BufPublic Nothing
+          return $ withLets (clets ++ clets') $ Typed FUnit $ COutput c' op
       ERet a -> do
         (v, vlets) <- concretifyAExpr a
         return $ withLets vlets $ Typed (_tty v) $ CRet v
@@ -561,23 +582,35 @@ concretifyExpr e = do
             let otw'' = fmap exprFromLets' otw'
             (xs, k) <- unbind xsk
             let xs' = map (\(x, s) -> (castName x, s)) xs
-            (xtys, xtys') <- case t_target' of
-                        FStruct _ fields -> return (zip (map fst xs') (map snd fields), zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd fields))
+            xtys <- case t_target' of
+                        FStruct _ fields -> return $ zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd fields)
                         FEnum _ _ -> do
                             when (length xs' /= 1) $ throwError $ TypeError "Expected exactly one argument to EParse for enum"
-                            return ([(head xs' ^. _1, t_target')], [(head xs' ^. _1, head xs' ^. _2, t_target')])
+                            return [(head xs' ^. _1, head xs' ^. _2, t_target')]
                         _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
-            pkind <- case a' ^. tty of
-                        FBuf BufPublic _ -> return PFromBuf
-                        FStruct _ _ -> return PFromDatatype
-                        FEnum _ _ -> return PFromDatatype
+            (pkind, bufcastLets, xtysForK, xtysForParse, t_target'') <- case a' ^. tty of
+                        FBuf BufPublic _ -> return (PFromBuf, [], xtys, xtys, t_target')
+                        FStruct _ _ -> return (PFromDatatype, [], xtys, xtys, t_target')
+                        FEnum _ _ -> return (PFromDatatype, [], xtys, xtys, t_target')
                         FBuf BufSecret _ -> do
-                            if hasSecParser t_target' then return PFromSecBuf
-                            else throwError $ TypeError $ "Can't generate secret parser for data type: " ++ (show . owlpretty) t_target'
+                            if hasSecParser t_target' then return (PFromSecBuf, [], xtys, xtys, t_target')
+                            else if canSecretParse t_target' then do 
+                                let t_target'' = secretizeFTy t_target'
+                                case t_target'' of
+                                    (FStruct _ secretizedFields) -> do
+                                        casts <- forM (zip secretizedFields xtys) $ \((_, sTy), (startX, startS, startT)) -> do
+                                            ((bufcastX, bufcastS), bufcastLets) <- bufcastVar (startX, startS, sTy) startT
+                                            return ((bufcastX, bufcastS, startT), bufcastLets)
+                                        let (xtysForK, bufcastLets) = unzip casts
+                                        let xtysForParse = zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd secretizedFields)
+                                        return (PFromSecBuf, concat bufcastLets, xtysForK, xtysForParse, t_target'')
+                                    _ -> throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
+                            else
+                                throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
                         _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
-            k' <- withVars xtys $ concretifyExpr k
-            let k'' = exprFromLets' k'
-            return $ withLets alets $ Typed (k'' ^. tty) $ CParse pkind a' [] t_target' otw'' $ bind xtys' k''
+            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtysForK) $ concretifyExpr k
+            let k'' = exprFromLets' (k', bufcastLets ++ k'Lets)
+            return $ withLets alets $ Typed (k'' ^. tty) $ CParse pkind a' [] t_target'' otw'' $ bind xtysForParse k''
       ECase e otherwiseCase xsk -> do
             e' <- exprFromLets' <$> concretifyExpr e
             let startT = e' ^. tty
@@ -806,10 +839,10 @@ concretifyCryptOp _ CMacVrfy [k, x, v] = do
     let plaintextT = FOption $ fSBuf Nothing
     tokName <- fresh $ s2n "declassify_tok"
     let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-    let dop = DOMacVrfy (k, x, v)
     (k', kLets) <- bufcastSecrecy k BufSecret
     (x', xLets) <- bufcastSecrecy x BufSecret
     (v', vLets) <- bufcastSecrecy v BufPublic
+    let dop = DOMacVrfy (k', x', v')
     let doMacVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "mac_vrfy" [k', x', v', tokVar]
     return $ withLets (kLets ++ xLets ++ vLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doMacVrfy
 concretifyCryptOp _ CSign [k, x] = do
@@ -932,9 +965,9 @@ typeIsVest FBool = False
 typeIsVest (FOption t) = False
 typeIsVest _ = True
 
-concretifyTyDef :: String -> TB.TyDef -> EM (Maybe (CTyDef FormatTy))
-concretifyTyDef tname (TB.TyAbstract) = return Nothing
-concretifyTyDef tname (TB.TyAbbrev t) = return Nothing -- TODO: need to keep track of aliases
+concretifyTyDef :: String -> TB.TyDef -> EM [(String, CTyDef FormatTy)]
+concretifyTyDef tname (TB.TyAbstract) = return []
+concretifyTyDef tname (TB.TyAbbrev t) = return [] -- TODO: need to keep track of aliases
 concretifyTyDef tname (TB.EnumDef bnd) = do
     debugLog $ "Concretifying enum: " ++ tname
     (idxs, ts) <- unbind bnd
@@ -947,7 +980,7 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
         -- GenVerus where format types have been erased
         (execComb, _) <- execCombOf tname (FEnum tname cs)
         let isSecret = any (maybe True hasSecParser . snd) cs
-        return $ Just $ CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb) isSecret)
+        return [(tname, CEnumDef (CEnum tname (M.fromList cs) isVest (show execComb) isSecret))]
 concretifyTyDef tname (TB.StructDef bnd) = do 
     debugLog $ "Concretifying struct: " ++ tname
     (idxs, dp) <- unbind bnd
@@ -960,32 +993,41 @@ concretifyTyDef tname (TB.StructDef bnd) = do
                         ck <- go k
                         return $ (s, c) : ck
         s <- go dp
-        let isSecretParse = all (hasSecParser . snd) s
+        let hasVestSecretParser = all (hasSecParser . snd) s
+        let shouldHaveSecretParser = any ((==) BufSecret . secrecyOfFTy . snd) s
         let isSecretSer = all (hasSecSerializer . snd) s && any ((==) BufSecret . secrecyOfFTy . snd) s
         let isVest = all (typeIsVest . snd) s
-        return $ Just $ CStructDef (CStruct tname s isVest isSecretParse isSecretSer)
+        let structDef = (tname, CStructDef (CStruct tname s isVest hasVestSecretParser isSecretSer))
+        secretizedStructDef <- if shouldHaveSecretParser then do
+                let secretizedStructName = "secret_" ++ tname
+                let secretizedFields = map (\(n, t) -> (n, secretizeFTy t)) s
+                when (not (all (hasSecParser . snd) secretizedFields)) $ throwError $ TypeError $ "Failed to secretize struct " ++ tname
+                let secretizedStruct = (secretizedStructName, CStructDef (CStruct secretizedStructName secretizedFields isVest True isSecretSer))
+                return [secretizedStruct]
+            else return []
+        return $ structDef : secretizedStructDef
 
 
 setupEnv :: [(String, TB.TyDef)] -> EM ()
 setupEnv [] = return ()
 setupEnv ((tname, td):tydefs) = do
     tdef <- concretifyTyDef tname td
-    case tdef of
-        Nothing -> return ()
-        Just (CEnumDef (CEnum _ cases _ _ _)) -> do
-            -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
-            let mkCase (cname, cty) = do
-                    let argTys = case cty of
-                            Just t -> [t]
-                            Nothing -> []
-                    let rty = FEnum tname $ M.assocs cases
-                    funcs %= M.insert cname (argTys, rty)
-            mapM_ mkCase (M.assocs cases)
-        Just (CStructDef (CStruct _ fields _ _ _)) -> do
-            -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
-            let fieldTys = map snd fields
-            let rty = FStruct tname fields
-            funcs %= M.insert tname (fieldTys, rty)
+    forM_ tdef $ \(tname', tdef') -> do
+        case tdef' of 
+            CEnumDef (CEnum _ cases _ _ _) -> do
+                -- We only have case constructors for each case, since enum projectors are replaced by the `case` statement
+                let mkCase (cname, cty) = do
+                        let argTys = case cty of
+                                Just t -> [t]
+                                Nothing -> []
+                        let rty = FEnum tname $ M.assocs cases
+                        funcs %= M.insert cname (argTys, rty)
+                mapM_ mkCase (M.assocs cases)
+            CStructDef (CStruct _ fields _ _ _) -> do
+                -- We only have a struct constructor, since struct projectors are replaced by the `parse` statement
+                let fieldTys = map snd fields
+                let rty = FStruct tname fields
+                funcs %= M.insert tname (fieldTys, rty)
     setupEnv tydefs
 
 

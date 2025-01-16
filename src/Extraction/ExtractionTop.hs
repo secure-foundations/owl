@@ -190,7 +190,7 @@ preprocessModBody mb = do
 traverseExtractionData :: 
     (def -> ExtractionMonad t def') ->
     (name -> ExtractionMonad t name') ->
-    (String -> ty -> ExtractionMonad t (Maybe ty')) ->
+    (String -> ty -> ExtractionMonad t [(String, ty')]) ->
     (uf -> ExtractionMonad t uf') ->
     ExtractionData def ty name uf -> ExtractionMonad t (ExtractionData def' ty' name' uf')
 traverseExtractionData traverseDef traverseName traverseTyDef traverseUF extrData = do
@@ -200,12 +200,7 @@ traverseExtractionData traverseDef traverseName traverseTyDef traverseUF extrDat
         nameData' <- traverseName nameData
         return (nameData', locs)) (extrData ^. presharedNames)
     pubKeys' <- mapM traverseName (extrData ^. pubKeys)
-    tyDefs' <- catMaybes <$> mapM (\(name, ty) -> do
-            ty' <- traverseTyDef name ty
-            case ty' of
-                Nothing -> return Nothing
-                Just ty' -> return $ Just (name, ty')
-        ) (extrData ^. tyDefs)
+    tyDefs' <- concat <$> mapM (uncurry traverseTyDef) (extrData ^. tyDefs)
     return $ ExtractionData locMap' preshared' pubKeys' tyDefs' ufs'
     where
         traverseLoc lname locData = do

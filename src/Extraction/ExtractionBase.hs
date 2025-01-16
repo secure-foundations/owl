@@ -384,6 +384,12 @@ joinSecrecy _ _ = BufSecret
 joinSecrecies :: [BufSecrecy] -> BufSecrecy
 joinSecrecies = foldr joinSecrecy BufPublic
 
+secretizeFTy :: FormatTy -> FormatTy
+secretizeFTy (FBuf _ l) = FBuf BufSecret l
+secretizeFTy (FStruct n fs) = FStruct ("secret_" ++ n) $ map (fmap secretizeFTy) fs
+secretizeFTy (FEnum n cs) = FEnum n $ map (fmap (fmap secretizeFTy)) cs
+secretizeFTy (FOption f) = FOption $ secretizeFTy f
+secretizeFTy f = f
 
 ------------------------------------------------------------------------------------------------------
 ---- Vest stuff
@@ -397,6 +403,13 @@ hasSecParser :: FormatTy -> Bool
 hasSecParser (FBuf BufSecret _) = True
 hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
 hasSecParser _ = False 
+
+canSecretParse :: FormatTy -> Bool
+canSecretParse f =
+    hasSecParser f ||
+        case f of
+            FStruct _ fs -> any ((==) BufSecret . secrecyOfFTy . snd) fs
+            _ -> False
 
 -- For serialization, we don't care if the buf is secret or public to begin with, since we 
 -- may need to upcast the public buf to secret when serializing

@@ -490,15 +490,15 @@ maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen
 maybeLenOf (FHexConst s) = return $ Just $ CUsizeLit $ length s `div` 2
 maybeLenOf _ = return Nothing
 
-lowerTyDef :: String -> CTyDef FormatTy -> EM (Maybe (CTyDef (Maybe ConstUsize, VerusTy)))
-lowerTyDef _ (CStructDef (CStruct name fields isVest isSecretParse isSecretSer)) = do
+lowerTyDef :: String -> CTyDef FormatTy -> EM [(String, CTyDef (Maybe ConstUsize, VerusTy))]
+lowerTyDef sname (CStructDef (CStruct name fields isVest isSecretParse isSecretSer)) = do
     let lowerField (n, t) = do
             t' <- lowerFieldTy t
             l <- maybeLenOf t
             return (n, (l, t'))
     fields' <- mapM lowerField fields
-    return $ Just $ CStructDef $ CStruct name fields' isVest isSecretParse isSecretSer
-lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb isSecret)) = do
+    return [(sname, CStructDef $ CStruct name fields' isVest isSecretParse isSecretSer)]
+lowerTyDef sname (CEnumDef (CEnum name cases isVest execComb isSecret)) = do
     let lowerCase (n, t) = do
             tt' <- case t of
                 Just t -> do
@@ -508,7 +508,7 @@ lowerTyDef _ (CEnumDef (CEnum name cases isVest execComb isSecret)) = do
                 Nothing -> return Nothing
             return (n, tt')
     cases' <- mapM lowerCase $ M.assocs cases
-    return $ Just $ CEnumDef $ CEnum name (M.fromList cases') isVest execComb isSecret
+    return [(sname, CEnumDef $ CEnum name (M.fromList cases') isVest execComb isSecret)]
 
 lowerName :: (String, FLen, Int, BufSecrecy) -> EM (String, ConstUsize, Int, BufSecrecy)
 lowerName (n, l, i, s) = do
