@@ -1138,7 +1138,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             }
             |]
             return $ vsep [parse, secretParse, ser]
-        genParsleyWrappers verusName specname structTy fields lifetimeConst False _ _ = do
+        genParsleyWrappers verusName specname structTy fields lifetimeConst False isSecretParse _ = do
             let specParse = [di|parse_#{specname}|]
             let execParse = [di|parse_#{verusName}|]
             let parse = [__di|
@@ -1152,13 +1152,27 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                 todo!()
             }
             |]
+            let secretParse = if isSecretParse then
+                    [__di|
+                    \#[verifier::external_body]
+                    pub exec fn secret_#{execParse}<'#{lifetimeConst}>(arg: SecretBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
+                        ensures
+                            res is Some ==> #{specParse}(arg.view()) is Some,
+                            res is None ==> #{specParse}(arg.view()) is None,
+                            res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+                    {
+                        todo!()
+                    }
+                    |]
+                else [di||]
             let specSer = [di|serialize_#{specname}|]
             let execSer = [di|serialize_#{verusName}|]
             let specSerInner = [di|serialize_#{specname}_inner|]
             let execSerInner = [di|serialize_#{verusName}_inner|]
+            let outTy = if isSecretSer then [di|SecretBuf<'#{lifetimeConst}>|] else [di|OwlBuf<'#{lifetimeConst}>|]
             let ser = [__di|
             \#[verifier::external_body]
-            pub exec fn #{execSerInner}(arg: &#{verusName}) -> (res: Option<Vec<u8>>)
+            pub exec fn #{execSerInner}<'#{lifetimeConst}>(arg: &#{verusName}) -> (res: Option<#{outTy}>)
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
                     // res is None ==> #{specSerInner}(arg.view()) is None,
@@ -1167,13 +1181,13 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                 todo!()
             }
             \#[verifier::external_body]
-            pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
+            pub exec fn #{execSer}<'#{lifetimeConst}>(arg: &#{verusName}) -> (res: #{outTy})
                 ensures  res.view() == #{specSer}(arg.view())
             {
                 todo!()
             }
             |]
-            return $ vsep [parse, ser]
+            return $ vsep [parse, secretParse, ser]
 
 
 genVerusEnum :: CEnum (Maybe ConstUsize, VerusTy) -> EM (Doc ann)

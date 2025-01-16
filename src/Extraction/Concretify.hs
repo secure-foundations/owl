@@ -263,8 +263,13 @@ bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPub
 bufcast ae t = do
     if (ae ^. tty) `eqUpToBufLen` t then return $ noLets ae
     else do
-        let ae' = Typed t $ CACast ae t
-        return $ noLets ae'
+        if secrecyOfFTy (ae ^. tty) == BufPublic && secrecyOfFTy t == BufSecret && not (hasSecSerializer (ae ^. tty)) then do
+            (ae', ae'Lets) <- bufcastSecrecy ae BufPublic
+            (ae'', ae''Lets) <- bufcast ae' t
+            return $ withLets (ae'Lets ++ ae''Lets) ae''
+        else do
+            let ae' = Typed t $ CACast ae t
+            return $ noLets ae'
 
 bufcastSecrecy :: CAExpr FormatTy -> BufSecrecy -> EM (CAExpr FormatTy, [CLetBinding])
 bufcastSecrecy ae s = do

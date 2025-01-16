@@ -403,6 +403,7 @@ secretizeFTy f = f
 hasSecParser :: FormatTy -> Bool
 hasSecParser (FBuf BufSecret _) = True
 hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
+hasSecParser FGhost = True
 hasSecParser _ = False 
 
 canSecretParse :: FormatTy -> Bool
@@ -417,6 +418,7 @@ canSecretParse f =
 hasSecSerializer :: FormatTy -> Bool
 hasSecSerializer (FBuf _ _) = True
 hasSecSerializer (FStruct _ fs) = all (hasSecSerializer . snd) fs
+hasSecSerializer FGhost = True
 hasSecSerializer _ = False 
 
 
