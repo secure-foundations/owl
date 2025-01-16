@@ -461,7 +461,10 @@ concretifyAExpr a =
       AEVar s x -> do
           ot <- lookupVar $ castName x
           case ot of
-            Nothing -> error "Unknown var"
+            Nothing -> do
+                varmap <- use varCtx
+                debugPrint $ "Current env: " ++ show (M.keys varmap)
+                throwError $ UndefinedSymbol $ show x
             Just ct -> return $ noLets $ Typed ct $ CAVar s $ castName x
 
 -- To enable CSE/memoization optimization, we allow concretifyExpr to
@@ -589,29 +592,46 @@ concretifyExpr e = do
                             when (length xs' /= 1) $ throwError $ TypeError "Expected exactly one argument to EParse for enum"
                             return [(head xs' ^. _1, head xs' ^. _2, t_target')]
                         _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
-            (pkind, bufcastLets, xtysForK, xtysForParse, t_target'') <- case a' ^. tty of
-                        FBuf BufPublic _ -> return (PFromBuf, [], xtys, xtys, t_target')
-                        FStruct _ _ -> return (PFromDatatype, [], xtys, xtys, t_target')
-                        FEnum _ _ -> return (PFromDatatype, [], xtys, xtys, t_target')
-                        FBuf BufSecret _ -> do
-                            if hasSecParser t_target' then return (PFromSecBuf, [], xtys, xtys, t_target')
-                            else if canSecretParse t_target' then do 
-                                let t_target'' = secretizeFTy t_target'
-                                case t_target'' of
-                                    (FStruct _ secretizedFields) -> do
-                                        casts <- forM (zip secretizedFields xtys) $ \((_, sTy), (startX, startS, startT)) -> do
-                                            ((bufcastX, bufcastS), bufcastLets) <- bufcastVar (startX, startS, sTy) startT
-                                            return ((bufcastX, bufcastS, startT), bufcastLets)
-                                        let (xtysForK, bufcastLets) = unzip casts
-                                        let xtysForParse = zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd secretizedFields)
-                                        return (PFromSecBuf, concat bufcastLets, xtysForK, xtysForParse, t_target'')
-                                    _ -> throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
-                            else
-                                throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
-                        _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
-            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtysForK) $ concretifyExpr k
-            let k'' = exprFromLets' (k', bufcastLets ++ k'Lets)
-            return $ withLets alets $ Typed (k'' ^. tty) $ CParse pkind a' [] t_target'' otw'' $ bind xtysForParse k''
+            -- (pkind, bufcastLets, xtysForK, xtysForParse, t_target'') <- 
+            case a' ^. tty of
+                    FBuf BufPublic _ -> do
+                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        let k'' = exprFromLets' (k', k'Lets)
+                        return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromBuf a' [] t_target' otw'' $ bind xtys k''
+                    FStruct _ _ -> do
+                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        let k'' = exprFromLets' (k', k'Lets)
+                        return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromDatatype a' [] t_target' otw'' $ bind xtys k''
+                    FEnum _ _ -> do
+                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        let k'' = exprFromLets' (k', k'Lets)
+                        return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromDatatype a' [] t_target' otw'' $ bind xtys k''
+                    FBuf BufSecret _ -> do
+                        if hasSecParser t_target' then do
+                            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                            let k'' = exprFromLets' (k', k'Lets)
+                            return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target' otw'' $ bind xtys k''
+                        else if canSecretParse t_target' then do 
+                            let t_target'' = secretizeFTy t_target'
+                            case t_target'' of
+                                (FStruct _ secretizedFields) -> do
+                                    casts <- forM (zip secretizedFields xtys) $ \((_, sTy), (startX, startS, startT)) -> do
+                                        ((bufcastX, bufcastS), bufcastLets) <- bufcastVar (startX, startS, sTy) startT
+                                        return ((bufcastX, bufcastS, startT), bufcastLets)
+                                    let (xtysForK, bufcastLets) = unzip casts
+                                    let xtysForParse = zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd secretizedFields)
+                                    debugPrint $ "xtysForK: " ++ (show $ (map (\(a,_,_) -> a)) xtysForK)
+                                    let ksubsts = map (\((startX,_,_),(bufcastX,bufcastS,_)) -> (castName startX, (mkSpanned $ AEVar bufcastS $ castName bufcastX))) $ 
+                                                zip xtys xtysForK
+                                    let kSubstituted = substs ksubsts k
+                                    (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtysForK) $ concretifyExpr kSubstituted
+                                    let k'' = exprFromLets' (k', concat bufcastLets ++ k'Lets)
+                                    return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target'' otw'' $ bind xtysForParse k''
+                                _ -> throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
+                        else
+                            throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
+                    _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
+
       ECase e otherwiseCase xsk -> do
             e' <- exprFromLets' <$> concretifyExpr e
             let startT = e' ^. tty
@@ -825,12 +845,20 @@ concretifyCryptOp _ CDecStAEAD [k, c, aad, nonce] = do
     let dop = DOStAeadDec (k', c', nonce', aad')
     let doAeadDec = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "dec_st_aead" [k', c', nonce', aad', tokVar]
     return $ withLets (kLets ++ cLets ++ nonceLets ++ aadLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doAeadDec
--- concretifyCryptOp _ CPKEnc [k, x] = do
---     let t = FBuf Nothing
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkenc" [k, x]
--- concretifyCryptOp _ CPKDec [k, x] = do
---     let t = FOption $ FBuf Nothing
---     return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "pkdec" [k, x]
+concretifyCryptOp _ CPKEnc [k, x] = do
+    let t = fPBuf Nothing
+    (k', kLets) <- bufcastSecrecy k BufPublic
+    (x', xLets) <- bufcastSecrecy x BufSecret
+    return $ withLets (kLets ++ xLets) $ Typed t $ CRet $ Typed t $ cAApp "pkenc" [k', x']
+concretifyCryptOp _ CPKDec [k, x] = do
+    let t = FOption $ fSBuf Nothing
+    tokName <- fresh $ s2n "declassify_tok"
+    let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (x', xLets) <- bufcastSecrecy x BufPublic
+    let dop = DOPkDec (k', x')
+    let doPkDec = Typed t $ CRet $ Typed t $ cAApp "pkdec" [k', x', tokVar]
+    return $ withLets (kLets ++ xLets) $ Typed t $ CItreeDeclassify dop $ bind tokName doPkDec
 concretifyCryptOp _ CMac [k, x] = do
     let t = fPBuf $ Just $ FLNamed "maclen"
     (k', kLets) <- bufcastSecrecy k BufSecret

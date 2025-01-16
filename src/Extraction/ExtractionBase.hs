@@ -389,6 +389,7 @@ secretizeFTy (FBuf _ l) = FBuf BufSecret l
 secretizeFTy (FStruct n fs) = FStruct ("secret_" ++ n) $ map (fmap secretizeFTy) fs
 secretizeFTy (FEnum n cs) = FEnum n $ map (fmap (fmap secretizeFTy)) cs
 secretizeFTy (FOption f) = FOption $ secretizeFTy f
+secretizeFTy (FHexConst s) = FBuf BufSecret $ Just $ FLConst $ length s `div` 2
 secretizeFTy f = f
 
 ------------------------------------------------------------------------------------------------------

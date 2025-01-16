@@ -700,23 +700,24 @@ pub mod secret {
         }
     }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)
-    //     ensures ctxt.view() == pkenc(pubkey.view(), msg.view())
-    // {
-    //     owl_pke::encrypt(pubkey, msg)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_pkenc(pubkey: OwlBuf<'_>, msg: SecretBuf<'_>) -> (ctxt: Vec<u8>)
+        ensures ctxt.view() == pkenc(pubkey.view(), msg.view())
+    {
+        owl_pke::encrypt(pubkey.as_slice(), msg.private_as_slice())
+    }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8], Tracked(t): Tracked<DeclassifyingOpToken>) -> (msg: Option<Vec<u8>>)
-    //     requires
-    //         t.view() matches DeclassifyingOp::PkDec(privkey_spec, ctxt_spec) 
-    //         && privkey@ == privkey_spec && ctxt@ == ctxt_spec
-    //     ensures 
-    //         view_option(msg) == pkdec(privkey.view(), ctxt.view())
-    // {
-    //     owl_pke::decrypt(privkey, ctxt)
-    // }
+    #[verifier(external_body)]
+    pub exec fn owl_pkdec<'a>(privkey: SecretBuf<'_>, ctxt: OwlBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (msg: Option<SecretBuf<'a>>)
+        requires
+            t.view() matches DeclassifyingOp::PkDec(privkey_spec, ctxt_spec) 
+            && privkey@ == privkey_spec && ctxt@ == ctxt_spec
+        ensures 
+            view_option(msg) == pkdec(privkey.view(), ctxt.view())
+    {
+        let p = owl_pke::decrypt(privkey.private_as_slice(), ctxt.as_slice())?;
+        Some(OwlBuf::from_vec(p).into_secret())
+    }
 
 
     // Builder for stateful AEAD encryption

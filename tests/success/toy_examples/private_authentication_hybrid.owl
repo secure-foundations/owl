@@ -16,15 +16,17 @@ name r<i> : nonce @ B
 //     | m1_pkA_tag Data<adv>
 // }
 
-struct m1_pkA_tagged {
-    m1_pka_tag : Const(0x01),
-    m1_pkA_tag : Data<adv>
-}
+// struct m1_pkA_tagged {
+//     m1_pka_tag : Const(0x01),
+//     m1_pkA_tag : Data<adv>
+// }
 
 struct m1<i> {
     m1_n0 : Name(n0<i>),
     m1_r0: Name(r0<i>),
-    m1_pkA: m1_pkA_tagged
+    // m1_pkA: m1_pkA_tagged
+    m1_pka_tag : Data<adv> |1|,
+    m1_pkA_tag : Data<adv>
 }
 
 struct m2<j> {
@@ -44,7 +46,7 @@ def A_main<i> () @ A
     let hybridKA          = get(hybrid_skA) in
     let enc_hybridKA      =  pkenc(get_encpk(pkB), hybridKA) in
     let _ = output enc_hybridKA to endpoint(B) in
-    let m = pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tagged(0x01, get_encpk(pkA)))) in 
+    let m = pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), 0x01, get_encpk(pkA))) in 
     let encm              =  aenc(hybridKA, m) in 
     let _ = output encm to endpoint(B) in
 
@@ -78,8 +80,8 @@ def B_main<j> () @ B
             | None => ()
             | Some m => {
                 unpack i, m' = m in
-                parse m' as m1<idx i>(n0', _, m1_pkA_e) in 
-                parse m1_pkA_e as m1_pkA_tagged(_, m1_pkA) in {
+                parse m' as m1<idx i>(n0', foo, bar, m1_pkA) in {
+                //parse m1_pkA_e as m1_pkA_tagged(_, m1_pkA) in {
                     pcase (i =idx j) in 
                     if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
                         false_elim in 
@@ -93,7 +95,7 @@ def B_main<j> () @ B
                         ()
                     else ()
                 }
-                otherwise ()
+                // otherwise ()
                 otherwise ()
             }
             otherwise => ()
