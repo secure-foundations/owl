@@ -631,7 +631,6 @@ concretifyExpr e = do
                                         return ((bufcastX, bufcastS, startT), bufcastLets)
                                     let (xtysForK, bufcastLets) = unzip casts
                                     let xtysForParse = zipWith (curry (\((a,b),c) -> (a,b,c))) xs' (map snd secretizedFields)
-                                    debugPrint $ "xtysForK: " ++ (show $ (map (\(a,_,_) -> a)) xtysForK)
                                     let ksubsts = map (\((startX,_,_),(bufcastX,bufcastS,_)) -> (castName startX, (mkSpanned $ AEVar bufcastS $ castName bufcastX))) $ 
                                                 zip xtys xtysForK
                                     let kSubstituted = substs ksubsts k
