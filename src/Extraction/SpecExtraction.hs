@@ -682,7 +682,7 @@ extractExpr expr = do
             translateCaseName <- case ae ^. tty of
                     FEnum n _ -> return specName
                     FOption _ -> return id
-                    _ -> throwError $ TypeError "Unsupported spec case type"
+                    t -> throwError $ TypeError $ "Unsupported spec case type: " ++ show (owlpretty t)
             let extractCase (c, o) = do
                     case o of
                         Left e -> do

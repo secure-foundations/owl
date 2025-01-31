@@ -643,16 +643,21 @@ concretifyExpr e = do
                     _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
 
       ECase e otherwiseCase xsk -> do
-            (e', e'Lets) <- concretifyExpr e
-            let startT = e' ^. tty
+            (ae', ae'Lets) <- case e ^. val of
+                ERet a -> concretifyAExpr a
+                _ -> do
+                    (e', e'Lets) <- concretifyExpr e
+                    avar <- fresh $ s2n "caseval"
+                    return $ withLets (e'Lets ++ [(avar, Nothing, e')]) $ Typed (e' ^. tty) $ CAVar (ignore "caseval") avar
+            let startT = ae' ^. tty
             casevalT <- case otherwiseCase of
                 -- TODO: need to insert explicit declassification here
                 Just (t, _) -> do
                     t' <- concretifyTy t
                     if t' `eqUpToSecrecy` startT then return startT else return t'
-                Nothing -> case e' ^. tty of
-                            FEnum _ _ -> return $ e' ^. tty
-                            FOption _ -> return $ e' ^. tty
+                Nothing -> case ae' ^. tty of
+                            FEnum _ _ -> return $ ae' ^. tty
+                            FOption _ -> return $ ae' ^. tty
                             tt -> throwError $ TypeError $ "Expected enum or option type in ECase, got " ++ (show . owlpretty) tt
             let caseTyOf c = do
                     case casevalT of
@@ -675,7 +680,7 @@ concretifyExpr e = do
                         k' <- withVars [(x', caseTy)] $ concretifyExpr k
                         let k'' = exprFromLets' k'
                         return (c, Right $ bind x' (caseTy, k''))
-            avar <- fresh $ s2n "caseval"
+            -- avar <- fresh $ s2n "caseval"
             -- Assume the typechecker already checked that all branches return compatible types,
             -- so we just look at the first one to determine the return type
             let getCaseRt c = case c of
@@ -687,46 +692,47 @@ concretifyExpr e = do
                     let ct = getCaseRt c
                     unifyFormatTy acc ct
             retTy <- foldM unifyCaseRt (getCaseRt . head $ cases') (tail cases')
-            let caseStmt = Typed retTy $ CCase (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
-            (avar', parseAndCase) <- case otherwiseCase of
+            let mkCaseStmt a = Typed retTy $ CCase a cases' -- (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
+            (parseAndCase, parseAndCaseLets) <- case otherwiseCase of
+                Nothing -> return (mkCaseStmt ae', [])
                 Just (t, otw) -> do
                     case casevalT of
                         -- Special case: sometimes, option types are given a type annotation, which 
                         -- shows up in this case, but we are parsing authentically from an option type
-                        FOption _ -> return (avar, caseStmt)
-                        _ | casevalT == startT -> return (avar, caseStmt)
+                        FOption _ -> return (mkCaseStmt ae', [])
+                        _ | casevalT == startT -> return (mkCaseStmt ae', [])
                         -- We are parsing as part of the case, so we need PFromBuf
                         _ -> do 
                             otw' <- exprFromLets' <$> concretifyExpr otw
-                            avar' <- fresh $ s2n "parseval"
+                            avar' <- fresh $ s2n "parsed_caseval"
+                            let avar'Var = Typed casevalT $ CAVar (ignore "parsed_caseval") avar'
                             case secrecyOfFTy startT of
                                 BufPublic -> do
                                     let p = Typed retTy $
-                                            CParse PFromBuf (Typed startT $ CAVar (ignore "parseval") avar') [] casevalT (Just otw') $
-                                                bind [(avar, ignore "caseval", casevalT)] caseStmt
-                                    return (avar', p)
+                                            CParse PFromBuf ae' [] casevalT (Just otw') $
+                                                bind [(avar', ignore "parsed_caseval", casevalT)] $ mkCaseStmt avar'Var
+                                    return (p, [])
                                 BufSecret -> do
                                     if secrecyOfFTy casevalT == BufPublic then do
                                         -- can just declassify the whole buf
-                                        let startVar = Typed startT $ CAVar (ignore "parseval") avar'
-                                        (startVar', startVarLets) <- bufcastSecrecy startVar BufPublic
+                                        -- let startAE = ae' --Typed startT $ CAVar (ignore "parseval") avar'
+                                        (bufcastAE', bufcastAELets) <- bufcastSecrecy ae' BufPublic
                                         let p = Typed retTy $ 
-                                                CParse PFromBuf startVar' [] casevalT (Just otw') $
-                                                    bind [(avar, ignore "caseval", casevalT)] caseStmt
-                                        return (avar', exprFromLets startVarLets p)
+                                                CParse PFromBuf bufcastAE' [] casevalT (Just otw') $
+                                                    bind [(avar', ignore "parsed_caseval", casevalT)] $ mkCaseStmt avar'Var
+                                        return (p, bufcastAELets)
                                     else do
                                         -- need to create a declassify token to parse the enum
                                         tokName <- fresh $ s2n "declassify_tok"
                                         let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-                                        let startVar = Typed startT $ CAVar (ignore "parseval") avar'
-                                        let dop = DOEnumParse startVar
+                                        --let startAE = Typed startT $ CAVar (ignore "parseval") avar'
+                                        let dop = DOEnumParse ae'
                                         let p = Typed retTy $ 
-                                                CParse PFromSecBuf startVar [tokVar] casevalT (Just otw') $
-                                                    bind [(avar, ignore "caseval", casevalT)] caseStmt
+                                                CParse PFromSecBuf ae' [tokVar] casevalT (Just otw') $
+                                                    bind [(avar', ignore "parsed_caseval", casevalT)] $ mkCaseStmt avar'Var 
                                         let declassifyExpr = Typed retTy $ CItreeDeclassify dop $ bind tokName p
-                                        return (avar', declassifyExpr)
-                Nothing -> return (avar, caseStmt)
-            return $ withLets e'Lets $ Typed retTy $ CLet e' Nothing $ bind avar' parseAndCase
+                                        return (declassifyExpr, [])
+            return $ withLets (ae'Lets ++ parseAndCaseLets) parseAndCase--Typed retTy $ CLet (Typed startT $ CRet ae') Nothing $ bind avar' parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
       EFalseElim e _ -> concretifyExpr e
