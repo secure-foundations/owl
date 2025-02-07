@@ -1,0 +1,170 @@
+// Losely following a simple example of TLS 1.3 handshake: tls13.xargs.org
+
+locality client
+locality server
+
+name client_data : nonce @ client
+name client_random : nonce @ client
+name client_dh_sk : DH @ client
+
+name server_data : nonce @ server
+name server_random : nonce @ server
+name server_dh_sk : DH @ server
+
+// ClientRandom and ServerRandom in the hello messages are public
+corr adv ==> [client_random]
+corr adv ==> [server_random]
+
+// Highly simplified version of TLS ClientHello
+// GAP: cipher suite negotiation, extensions, etc.
+struct client_hello {
+    client_hello_random: Name(client_random),
+    client_hello_pk: dhpk(client_dh_sk)
+}
+
+// Highly simplified version of TLS ServerHello
+struct server_hello {
+    server_hello_random: Name(server_random),
+    server_hello_pk: dhpk(server_dh_sk)
+}
+
+// GAP: X.509 certificate simplified to a signing key
+name server_cert_key : sigkey dhpk(server_dh_sk) @ server
+corr [server_cert_key] ==> [server_dh_sk] /\ [client_dh_sk] // TODO: is this correct?
+
+// Merged version of Server Certificate and Certificate Verify
+struct server_certificate {
+    server_certificate_cert: vk(server_cert_key),
+    server_certificate_signature: Data<adv> ||signature||
+}
+
+// name kdf_init: kdf {ikm info.
+//     // Handshake Secret
+//     info == 0x00 -> strict kdf {ikm info.
+//         // client_handshake_traffic_secret
+//         // GAP: I'm conflating client_handshake_traffic_secret and client_write_key here
+//         // since the latter is derived from the former via another HKDF-Expand call
+//         info == 0x00 -> nonce, // TODO: ClientHandshakeFinished
+
+//         // server_handshake_traffic_secret
+//         info == 0x01 -> enckey server_certificate,
+
+//         // Master Secret
+//         info == 0x02 -> strict kdf {ikm info.
+//             // client_application_traffic_secret_0
+//             info == 0x00 -> nonce,
+
+//             // server_application_traffic_secret_0
+//             info == 0x01 -> nonce
+//         }
+//     }
+// } @ client, server
+
+odh early_secret : client_dh_sk, server_dh_sk -> {salt info.
+    // client_handshake_traffic_secret
+    // GAP: I'm conflating client_handshake_traffic_secret and client_write_key here
+    // since the latter is derived from the former via another HKDF-Expand call
+    info == 0x00 -> nonce, // TODO: ClientHandshakeFinished
+
+    // server_handshake_traffic_secret
+    info == 0x01 -> enckey server_certificate,
+
+    // Master Secret
+    info == 0x02 -> strict kdf {ikm info.
+        // client_application_traffic_secret_0
+        info == 0x00 -> nonce,
+
+        // server_application_traffic_secret_0
+        info == 0x01 -> nonce
+    }
+}
+
+// The initial salt is a constant 0
+// GAP: how to actually use 0 as the salt in execution?
+// corr adv ==> [kdf_init]
+
+// struct handshake_result {
+//     client_handshake_traffic_secret: nonce,
+//     server_handshake_traffic_secret: nonce,
+//     client_application_traffic_secret_0: nonce,
+//     server_application_traffic_secret_0: nonce
+// }
+
+// State machine
+// struct ...
+
+def server_handshake(msg: client_hello) @ server : Unit
+    =
+    // input msg in
+    parse msg as client_hello(_, client_dh_pk) in
+        let server_hello = server_hello(get(server_random), dhpk(get(server_dh_sk))) in
+        let _ = output server_hello to endpoint(client) in
+        let sk = dh_combine(client_dh_pk, get(server_dh_sk)) in
+
+        // TODO: should I use maclen here? (want the length to be the length of the hash output)
+        // GAP: what's the length of ikm here?
+        // GAP: taking info = 0x00 here, but it should include an encoding of `HkdfLabel` in Section 7.1
+        //      and I'm omitting, e.g., transcript hash, and a "tls13 derived" label
+        let early_secret_derived = kdf<0;;nonce;0>(0x00, 0x00, 0x00) in
+
+        corr_case client_dh_sk in
+        corr_case server_dh_sk in
+
+        // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
+        let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
+        let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
+        let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
+
+        let client_application_traffic_secret_0 = kdf<0;;nonce;0>(handshake_secret_derived, sk, 0x00) in
+        let server_application_traffic_secret_0 = kdf<1;;nonce;0>(handshake_secret_derived, sk, 0x01) in
+
+        // Send certificate and certificate verify
+        // TODO: this needs to sign the server_hello message instead of just the DH key
+        let sig = sign(get(server_cert_key), dhpk(get(server_dh_sk))) in
+        let server_certificate = server_certificate(get_vk(server_cert_key), sig) in
+
+        // GAP: change to AEAD
+        let server_certificate_enc = aenc(server_handshake_traffic_secret, server_certificate) in
+        let _ = output server_certificate_enc to endpoint(client) in
+
+
+
+        ()
+    otherwise ()
+
+def client_handshake() @ client : Unit
+    =
+    let hello = client_hello(get(client_random), dhpk(get(client_dh_sk))) in
+    let _ = output hello to endpoint(server) in
+    input msg in
+    parse msg as server_hello(_, server_dh_pk) in
+        // Before we derive the keys, we want to receive server's certificate
+        // and verify that the server's public key is trusted and the there is
+        // a valid signature using that key on the server's hello message
+        input server_certificate_enc in
+        parse server_certificate_enc as server_certificate(_, sig) in
+
+            corr_case server_cert_key in
+            case vrfy(get_vk(server_cert_key), server_dh_pk, sig) {
+                | Some server_dh_pk_verified =>
+                    // Server DH key is not verified, so the result of dh_combine is correct
+                    let sk = dh_combine(server_dh_pk_verified, get(client_dh_sk)) in
+
+                    // Same process as the server
+                    corr_case client_dh_sk in
+                    corr_case server_dh_sk in
+
+                    // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
+                    let early_secret_derived = kdf<0;;nonce;0>(0x00, 0x00, 0x00) in
+                    let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
+                    let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
+                    let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
+
+                    let client_application_traffic_secret_0 = kdf<0;;nonce;0>(handshake_secret_derived, sk, 0x00) in
+                    let server_application_traffic_secret_0 = kdf<1;;nonce;0>(handshake_secret_derived, sk, 0x01) in
+
+                    ()
+                | None => ()
+            }
+        otherwise ()
+    otherwise ()
