@@ -1329,7 +1329,6 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                     return [di|#{lhs} => #{verusName}::#{caseName}(#{rhs}),|]
             parseBranchesVecs <- mapM mkParseBranchVec (zip (M.elems cases) [0..])
             let parse = [__di|
-            \#[verifier(external_body)] 
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty enumTy}>) 
                 ensures
                     res is Some ==> #{specParse}(arg.view()) is Some,

@@ -283,6 +283,7 @@ extractCEnum (CEnum n cs isVest _ _) = do
                     return [__di|
                     #{lhs} => #{specname}::#{caseName}(#{rhsX}),
                     |]
+            debugPrint $ show $ owlpretty $ map fst speccases
             parseBranches <- mapM mkParseBranch (zip speccases [0..])
             let parse = [__di|
             \#[verifier::opaque]

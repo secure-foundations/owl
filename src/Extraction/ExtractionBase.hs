@@ -478,6 +478,9 @@ withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMo
 withJustNothing f (Just x) = Just <$> f x
 withJustNothing f Nothing = return (Just Nothing)
 
+compareByFieldNames :: (String, a) -> (String, a) -> Ordering
+compareByFieldNames (a, _) (b, _) = compare a b
+
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
 specCombTyOf' (FBuf BufSecret (Just flen)) = do
     return $ Just [di|Bytes|]
@@ -492,7 +495,8 @@ specCombTyOf' (FStruct _ fs) = do
             let nest = mkNestPattern fs''
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
-specCombTyOf' (FEnum _ cs) = do
+specCombTyOf' (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
     cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
@@ -522,7 +526,8 @@ execCombTyOf' (FStruct _ fs) = do
             let nest = mkNestPattern fs''
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
-execCombTyOf' (FEnum _ cs) = do
+execCombTyOf' (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
     cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
@@ -560,7 +565,8 @@ specCombOf' constSuffix (FStruct _ fs) = do
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
-specCombOf' constSuffix (FEnum _ cs) = do
+specCombOf' constSuffix (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
     cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
     case sequence cs' of
         Just ccs'' -> do
@@ -606,7 +612,8 @@ execCombOf' constSuffix (FStruct _ fs) = do
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
-execCombOf' constSuffix (FEnum _ cs) = do
+execCombOf' constSuffix (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
     cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
     case sequence cs' of
         Just ccs'' -> do

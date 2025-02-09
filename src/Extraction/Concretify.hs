@@ -1026,9 +1026,10 @@ concretifyTyDef tname (TB.EnumDef bnd) = do
     debugLog $ "Concretifying enum: " ++ tname
     (idxs, ts) <- unbind bnd
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) idxs) $ do
-        cs <- forM ts $ \(s, ot) -> do
+        csStart <- forM ts $ \(s, ot) -> do
             cot <- traverse concretifyTy ot
             return (s, cot)
+        let cs = sortBy compareByFieldNames csStart
         let isVest = all (maybe True typeIsVest . snd) cs
         -- We generate the exec combinator here, so that we can use it in
         -- GenVerus where format types have been erased
