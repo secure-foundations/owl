@@ -38,27 +38,8 @@ struct server_certificate {
     server_certificate_signature: Data<adv> ||signature||
 }
 
-// name kdf_init: kdf {ikm info.
-//     // Handshake Secret
-//     info == 0x00 -> strict kdf {ikm info.
-//         // client_handshake_traffic_secret
-//         // GAP: I'm conflating client_handshake_traffic_secret and client_write_key here
-//         // since the latter is derived from the former via another HKDF-Expand call
-//         info == 0x00 -> nonce, // TODO: ClientHandshakeFinished
-
-//         // server_handshake_traffic_secret
-//         info == 0x01 -> enckey server_certificate,
-
-//         // Master Secret
-//         info == 0x02 -> strict kdf {ikm info.
-//             // client_application_traffic_secret_0
-//             info == 0x00 -> nonce,
-
-//             // server_application_traffic_secret_0
-//             info == 0x01 -> nonce
-//         }
-//     }
-// } @ client, server
+counter client_data_counter @ client
+counter server_data_counter @ server
 
 odh early_secret : client_dh_sk, server_dh_sk -> {salt info.
     // client_handshake_traffic_secret
@@ -67,33 +48,33 @@ odh early_secret : client_dh_sk, server_dh_sk -> {salt info.
     info == 0x00 -> nonce, // TODO: ClientHandshakeFinished
 
     // server_handshake_traffic_secret
+    // TODO: change to AEAD
     info == 0x01 -> enckey server_certificate,
 
     // Master Secret
     info == 0x02 -> strict kdf {ikm info.
         // client_application_traffic_secret_0
-        info == 0x00 -> nonce,
+        info == 0x00 -> st_aead Name(client_data)
+            aad x. true // TODO: header
+            nonce client_data_counter, // TODO: xor with client_write_iv
 
         // server_application_traffic_secret_0
-        info == 0x01 -> nonce
+        info == 0x01 -> st_aead Name(server_data)
+            aad x. true // TODO: header
+            nonce server_data_counter // TODO: xor with server_write_iv
     }
 }
 
-// The initial salt is a constant 0
-// GAP: how to actually use 0 as the salt in execution?
-// corr adv ==> [kdf_init]
+struct handshake_result {
+    client_handshake_traffic_secret:
+        // SecName(KDF<nonce;0;nonce>(0x00, 0x00, 0x00))
+        SecName(KDF<nonce;0;nonce>(gkdf<nonce;0>(0x00, 0x00, 0x00), dh_combine(get(client_dh_sk), get(server_dh_sk)), 0x00))
+}
 
-// struct handshake_result {
-//     client_handshake_traffic_secret: nonce,
-//     server_handshake_traffic_secret: nonce,
-//     client_application_traffic_secret_0: nonce,
-//     server_application_traffic_secret_0: nonce
+// struct tls_state {
 // }
 
-// State machine
-// struct ...
-
-def server_handshake(msg: client_hello) @ server : Unit
+def server_handshake(msg: client_hello) @ server : Option(handshake_result)
     =
     // input msg in
     parse msg as client_hello(_, client_dh_pk) in
@@ -111,12 +92,21 @@ def server_handshake(msg: client_hello) @ server : Unit
         corr_case server_dh_sk in
 
         // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
-        let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
+        let client_handshake_traffic_secret
+            // : if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            //     SecName(KDF<nonce;0;nonce>(
+            //         gkdf<nonce;0>(0x00, 0x00, 0x00),
+            //         dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
+            //         0x00))
+            // else
+            //     Data<adv>
+            = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
+
         let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
         let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
 
-        let client_application_traffic_secret_0 = kdf<0;;nonce;0>(handshake_secret_derived, sk, 0x00) in
-        let server_application_traffic_secret_0 = kdf<1;;nonce;0>(handshake_secret_derived, sk, 0x01) in
+        let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk, 0x00) in
+        let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk, 0x01) in
 
         // Send certificate and certificate verify
         // TODO: this needs to sign the server_hello message instead of just the DH key
@@ -127,10 +117,13 @@ def server_handshake(msg: client_hello) @ server : Unit
         let server_certificate_enc = aenc(server_handshake_traffic_secret, server_certificate) in
         let _ = output server_certificate_enc to endpoint(client) in
 
+        // let result: handshake_result = handshake_result(early_secret_derived) in
+        // debug printTyOf(result);
+        // Some(result)
 
-
-        ()
-    otherwise ()
+        None()
+    otherwise
+        None()
 
 def client_handshake() @ client : Unit
     =
@@ -160,8 +153,8 @@ def client_handshake() @ client : Unit
                     let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
                     let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
 
-                    let client_application_traffic_secret_0 = kdf<0;;nonce;0>(handshake_secret_derived, sk, 0x00) in
-                    let server_application_traffic_secret_0 = kdf<1;;nonce;0>(handshake_secret_derived, sk, 0x01) in
+                    let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk, 0x00) in
+                    let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk, 0x01) in
 
                     ()
                 | None => ()
