@@ -67,8 +67,13 @@ odh early_secret : client_dh_sk, server_dh_sk -> {salt info.
 
 struct handshake_result {
     client_handshake_traffic_secret:
-        // SecName(KDF<nonce;0;nonce>(0x00, 0x00, 0x00))
-        SecName(KDF<nonce;0;nonce>(gkdf<nonce;0>(0x00, 0x00, 0x00), dh_combine(get(client_dh_sk), get(server_dh_sk)), 0x00))
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+                Name(KDF<nonce;0;nonce>(
+                    gkdf<nonce;0>(0x00, 0x00, 0x00),
+                    dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
+                    0x00))
+            else
+                Data<adv>
 }
 
 // struct tls_state {
@@ -93,13 +98,13 @@ def server_handshake(msg: client_hello) @ server : Option(handshake_result)
 
         // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
         let client_handshake_traffic_secret
-            // : if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            //     SecName(KDF<nonce;0;nonce>(
-            //         gkdf<nonce;0>(0x00, 0x00, 0x00),
-            //         dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
-            //         0x00))
-            // else
-            //     Data<adv>
+            : if sec(client_dh_sk) /\ sec(server_dh_sk) then
+                Name(KDF<nonce;0;nonce>(
+                    gkdf<nonce;0>(0x00, 0x00, 0x00),
+                    dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
+                    0x00))
+            else
+                Data<adv>
             = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
 
         let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
@@ -117,11 +122,11 @@ def server_handshake(msg: client_hello) @ server : Option(handshake_result)
         let server_certificate_enc = aenc(server_handshake_traffic_secret, server_certificate) in
         let _ = output server_certificate_enc to endpoint(client) in
 
-        // let result: handshake_result = handshake_result(early_secret_derived) in
+        let result: handshake_result = handshake_result(client_handshake_traffic_secret) in
         // debug printTyOf(result);
-        // Some(result)
+        Some(result)
 
-        None()
+        //None()
     otherwise
         None()
 
