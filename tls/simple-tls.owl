@@ -16,7 +16,7 @@ corr adv ==> [client_random]
 corr adv ==> [server_random]
 
 // Highly simplified version of TLS ClientHello
-// GAP: cipher suite negotiation, extensions, etc.
+// TODO: cipher suite negotiation, extensions, etc.
 struct client_hello {
     client_hello_random: Name(client_random),
     client_hello_pk: dhpk(client_dh_sk)
@@ -28,7 +28,7 @@ struct server_hello {
     server_hello_pk: dhpk(server_dh_sk)
 }
 
-// GAP: X.509 certificate simplified to a signing key
+// TODO: X.509 certificate simplified to a signing key
 name server_cert_key : sigkey dhpk(server_dh_sk) @ server
 corr [server_cert_key] ==> [server_dh_sk] /\ [client_dh_sk] // TODO: is this correct?
 
@@ -41,44 +41,103 @@ struct server_certificate {
 counter client_data_counter @ client
 counter server_data_counter @ server
 
+// TODO: change to AEAD
+nametype client_handshake_traffic_key_t = nonce
+nametype server_handshake_traffic_key_t = enckey server_certificate
+
+nametype client_application_traffic_key_t = st_aead Name(client_data)
+    aad x. true // TODO: header
+    nonce client_data_counter // TODO: xor with client_write_iv
+
+nametype server_application_traffic_key_t = st_aead Name(server_data)
+    aad x. true // TODO: header
+    nonce server_data_counter // TODO: xor with server_write_iv
+
+// Some constant labels (Section 7.1)
+func const_tls13_() = 0x746c73313320
+func const_derived() = 0x64657269766564
+func const_c_hs_traffic() = 0x632068732074726166666963
+func const_s_hs_traffic() = 0x732068732074726166666963
+func const_c_ap_traffic() = 0x632061702074726166666963
+func const_s_ap_traffic() = 0x732061702074726166666963
+
+// TODO: add context (hash of previous messages)
+//Ssee Section 7.1
+func kdf_label_info(lbl) = const_tls13_() ++ lbl
+
 odh early_secret : client_dh_sk, server_dh_sk -> {salt info.
     // client_handshake_traffic_secret
-    // GAP: I'm conflating client_handshake_traffic_secret and client_write_key here
+    // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
     // since the latter is derived from the former via another HKDF-Expand call
-    info == 0x00 -> nonce, // TODO: ClientHandshakeFinished
+    info == kdf_label_info(const_c_hs_traffic()) -> client_handshake_traffic_key_t, // TODO: ClientHandshakeFinished
 
     // server_handshake_traffic_secret
-    // TODO: change to AEAD
-    info == 0x01 -> enckey server_certificate,
+    info == kdf_label_info(const_s_hs_traffic()) -> server_handshake_traffic_key_t,
 
     // Master Secret
-    info == 0x02 -> strict kdf {ikm info.
+    info == kdf_label_info(const_derived()) -> strict kdf {ikm info.
         // client_application_traffic_secret_0
-        info == 0x00 -> st_aead Name(client_data)
-            aad x. true // TODO: header
-            nonce client_data_counter, // TODO: xor with client_write_iv
+        info == kdf_label_info(const_c_ap_traffic()) -> client_application_traffic_key_t,
 
         // server_application_traffic_secret_0
-        info == 0x01 -> st_aead Name(server_data)
-            aad x. true // TODO: header
-            nonce server_data_counter // TODO: xor with server_write_iv
+        info == kdf_label_info(const_s_ap_traffic()) -> server_application_traffic_key_t
     }
 }
 
+// We don't support PSK yet
+// TODO: should we pad it to a certain length?
+func psk() = 0x00
+
+func early_secret_derived_ghost() = gkdf<nonce;0>(0x00, psk(), kdf_label_info(const_c_hs_traffic()))
+func dh_shared_secret() = dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk))
+
+// Resulting secrets from the handshake
 struct handshake_result {
     client_handshake_traffic_secret:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-                Name(KDF<nonce;0;nonce>(
-                    gkdf<nonce;0>(0x00, 0x00, 0x00),
-                    dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
-                    0x00))
-            else
-                Data<adv>
+            Name(KDF<nonce;0;client_handshake_traffic_key_t>(
+                early_secret_derived_ghost(),
+                dh_shared_secret(),
+                kdf_label_info(const_c_hs_traffic())))
+        else
+            Data<adv>,
+
+    server_handshake_traffic_secret:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            Name(KDF<enckey;0;server_handshake_traffic_key_t>(
+                early_secret_derived_ghost(),
+                dh_shared_secret(),
+                kdf_label_info(const_s_hs_traffic())))
+        else
+            Data<adv>,
+
+    client_application_traffic_secret_0:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            Name(KDF<enckey;0;client_application_traffic_key_t>(
+                gkdf<kdfkey;0>(
+                    early_secret_derived_ghost(),
+                    dh_shared_secret(),
+                    kdf_label_info(const_derived())),
+                dh_shared_secret(),
+                kdf_label_info(const_c_ap_traffic())))
+        else
+            Data<adv>,
+
+    server_application_traffic_secret_0:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            Name(KDF<enckey;0;server_application_traffic_key_t>(
+                gkdf<kdfkey;0>(
+                    early_secret_derived_ghost(),
+                    dh_shared_secret(),
+                    kdf_label_info(const_derived())),
+                dh_shared_secret(),
+                kdf_label_info(const_s_ap_traffic())))
+        else
+            Data<adv>
 }
 
-// struct tls_state {
-// }
-
+// client_hello is given has argument since we don't
+// know if client_dh_sk <= adv
 def server_handshake(msg: client_hello) @ server : Option(handshake_result)
     =
     // input msg in
@@ -87,50 +146,46 @@ def server_handshake(msg: client_hello) @ server : Option(handshake_result)
         let _ = output server_hello to endpoint(client) in
         let sk = dh_combine(client_dh_pk, get(server_dh_sk)) in
 
-        // TODO: should I use maclen here? (want the length to be the length of the hash output)
-        // GAP: what's the length of ikm here?
-        // GAP: taking info = 0x00 here, but it should include an encoding of `HkdfLabel` in Section 7.1
-        //      and I'm omitting, e.g., transcript hash, and a "tls13 derived" label
-        let early_secret_derived = kdf<0;;nonce;0>(0x00, 0x00, 0x00) in
-
         corr_case client_dh_sk in
         corr_case server_dh_sk in
 
-        // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
-        let client_handshake_traffic_secret
-            : if sec(client_dh_sk) /\ sec(server_dh_sk) then
-                Name(KDF<nonce;0;nonce>(
-                    gkdf<nonce;0>(0x00, 0x00, 0x00),
-                    dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk)),
-                    0x00))
-            else
-                Data<adv>
-            = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
+        // Key schedule in Section 7.1
+        let early_secret_derived = kdf<0;;nonce;0>(0x00, psk(), kdf_label_info(const_c_hs_traffic())) in
+        let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(
+            early_secret_derived, sk, kdf_label_info(const_c_hs_traffic())) in
+        let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(
+            early_secret_derived, sk, kdf_label_info(const_s_hs_traffic())) in
 
-        let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
-        let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
+        let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(
+            early_secret_derived, sk, kdf_label_info(const_derived())) in
 
-        let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk, 0x00) in
-        let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk, 0x01) in
+        let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk,
+            kdf_label_info(const_c_ap_traffic())) in
+        let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk,
+            kdf_label_info(const_s_ap_traffic())) in
+
+        // TODO: derive client/server_write_key/iv
+        // by another HKDF-Expand call
 
         // Send certificate and certificate verify
         // TODO: this needs to sign the server_hello message instead of just the DH key
         let sig = sign(get(server_cert_key), dhpk(get(server_dh_sk))) in
         let server_certificate = server_certificate(get_vk(server_cert_key), sig) in
 
-        // GAP: change to AEAD
+        // TODO: change to AEAD
         let server_certificate_enc = aenc(server_handshake_traffic_secret, server_certificate) in
         let _ = output server_certificate_enc to endpoint(client) in
 
-        let result: handshake_result = handshake_result(client_handshake_traffic_secret) in
-        // debug printTyOf(result);
-        Some(result)
-
-        //None()
+        Some(handshake_result(
+            client_handshake_traffic_secret,
+            server_handshake_traffic_secret,
+            client_application_traffic_secret_0,
+            server_application_traffic_secret_0
+        ))
     otherwise
         None()
 
-def client_handshake() @ client : Unit
+def client_handshake() @ client : Option(handshake_result)
     =
     let hello = client_hello(get(client_random), dhpk(get(client_dh_sk))) in
     let _ = output hello to endpoint(server) in
@@ -152,17 +207,28 @@ def client_handshake() @ client : Unit
                     corr_case client_dh_sk in
                     corr_case server_dh_sk in
 
-                    // GAP: info should be `HkdfLabel` in Section 7.1 (instead of 0x00, 0x01, and 0x02)
-                    let early_secret_derived = kdf<0;;nonce;0>(0x00, 0x00, 0x00) in
-                    let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(early_secret_derived, sk, 0x00) in
-                    let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(early_secret_derived, sk, 0x01) in
-                    let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(early_secret_derived, sk, 0x02) in
+                    // Key schedule in Section 7.1
+                    let early_secret_derived = kdf<0;;nonce;0>(0x00, psk(), kdf_label_info(const_c_hs_traffic())) in
+                    let client_handshake_traffic_secret = kdf<;odh early_secret[0];nonce;0>(
+                        early_secret_derived, sk, kdf_label_info(const_c_hs_traffic())) in
+                    let server_handshake_traffic_secret = kdf<;odh early_secret[1];enckey;0>(
+                        early_secret_derived, sk, kdf_label_info(const_s_hs_traffic())) in
 
-                    let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk, 0x00) in
-                    let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk, 0x01) in
+                    let handshake_secret_derived = kdf<;odh early_secret[2];kdfkey;0>(
+                        early_secret_derived, sk, kdf_label_info(const_derived())) in
 
-                    ()
-                | None => ()
+                    let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk,
+                        kdf_label_info(const_c_ap_traffic())) in
+                    let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk,
+                        kdf_label_info(const_s_ap_traffic())) in
+
+                    Some(handshake_result(
+                        client_handshake_traffic_secret,
+                        server_handshake_traffic_secret,
+                        client_application_traffic_secret_0,
+                        server_application_traffic_secret_0
+                    ))
+                | None => None()
             }
-        otherwise ()
-    otherwise ()
+        otherwise None()
+    otherwise None()
