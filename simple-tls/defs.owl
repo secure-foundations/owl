@@ -1,0 +1,102 @@
+/**
+ * Naming conventions:
+ * 1. Names, odh, kdf, procedure, counter declarations use snake_case
+ * 2. Structs, enums, and name types use CamelCase
+ * 3. Functions use capitalized SNAKE_CASE
+ * 4. Fields of a struct are named as <StructName>_<field_name>
+ * 5. Local variables are snake_case
+ */
+
+locality client
+locality server
+
+// Some constant labels (Section 7.1)
+func TLS13_() = 0x746c73313320
+func DERIVED() = 0x64657269766564
+func C_HS_TRAFFIC() = 0x632068732074726166666963
+func S_HS_TRAFFIC() = 0x732068732074726166666963
+func C_AP_TRAFFIC() = 0x632061702074726166666963
+func S_AP_TRAFFIC() = 0x732061702074726166666963
+
+// TODO: add context (hash of previous messages)
+//Ssee Section 7.1
+func KDF_LABEL(lbl) = TLS13_() ++ lbl
+
+// We don't support PSK yet
+// TODO: should we pad it to a certain length?
+func PSK() = 0x00
+
+name client_data : nonce @ client
+name client_random : nonce @ client
+name client_dh_sk : DH @ client
+
+name server_data : nonce @ server
+name server_random : nonce @ server
+name server_dh_sk : DH @ server
+
+func EARLY_SECRET_DERIVED_GHOST() = gkdf<nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC()))
+func DH_SHARED_SECRET() = dh_combine(dhpk(get(client_dh_sk)), get(server_dh_sk))
+
+// TODO: X.509 certificate simplified to a signing key
+name server_cert_key : sigkey dhpk(server_dh_sk) @ server
+
+// Highly simplified version of TLS ClientHello
+// TODO: cipher suite negotiation, extensions, etc.
+struct ClientHello {
+    ClientHello_random: Name(client_random),
+    ClientHello_pk: dhpk(client_dh_sk)
+}
+
+// Highly simplified version of TLS ServerHello
+struct ServerHello {
+    ServerHello_random: Name(server_random),
+    ServerHello_pk: dhpk(server_dh_sk)
+}
+
+// Merged version of Server Certificate and Certificate Verify
+struct ServerCertificate {
+    ServerCertificate_cert: vk(server_cert_key),
+    ServerCertificate_sig: Data<adv> ||signature||
+}
+
+counter client_application_traffic_counter @ client
+counter server_application_traffic_counter @ server
+
+// TODO: change to AEAD
+nametype ClientHandshakeTrafficKey = nonce
+nametype ServerHandshakeTrafficKey = enckey ServerCertificate
+
+nametype ClientApplicationTrafficKey = st_aead Name(client_data)
+    aad x. true // TODO: header
+    nonce client_application_traffic_counter // TODO: xor with client_write_iv
+
+nametype ServerApplicationTrafficKey = st_aead Name(server_data)
+    aad x. true // TODO: header
+    nonce server_application_traffic_counter // TODO: xor with server_write_iv
+
+odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
+    // client_handshake_traffic_secret
+    // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
+    // since the latter is derived from the former via another HKDF-Expand call
+    info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficKey, // TODO: ClientHandshakeFinished
+
+    // server_handshake_traffic_secret
+    info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficKey,
+
+    // Master Secret
+    info == KDF_LABEL(DERIVED()) -> strict kdf {ikm info.
+        // client_application_traffic_secret_0
+        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict ClientApplicationTrafficKey,
+
+        // server_application_traffic_secret_0
+        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict ServerApplicationTrafficKey
+    }
+}
+
+// ClientRandom and ServerRandom in the hello messages are public
+corr adv ==> [client_random]
+corr adv ==> [server_random]
+
+// If the certificate key is corrupted, we are susceptible to MITM
+// TODO: is this correct?
+corr [server_cert_key] ==> [server_dh_sk] /\ [client_dh_sk]

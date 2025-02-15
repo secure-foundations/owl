@@ -1,0 +1,144 @@
+// A highly simplified TLS handshake process
+
+include "defs.owl"
+
+// Resulting secrets from the handshake
+struct HandshakeResult {
+    HandshakeResult_client_handshake_key:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(KDF<nonce;0;ClientHandshakeTrafficKey>(
+                EARLY_SECRET_DERIVED_GHOST(),
+                DH_SHARED_SECRET(),
+                KDF_LABEL(C_HS_TRAFFIC())))
+        else
+            Data<adv>,
+
+    HandshakeResult_server_handshake_key:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(KDF<enckey;0;ServerHandshakeTrafficKey>(
+                EARLY_SECRET_DERIVED_GHOST(),
+                DH_SHARED_SECRET(),
+                KDF_LABEL(S_HS_TRAFFIC())))
+        else
+            Data<adv>,
+
+    HandshakeResult_client_app_key:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(KDF<enckey;0;ClientApplicationTrafficKey>(
+                gkdf<kdfkey;0>(
+                    EARLY_SECRET_DERIVED_GHOST(),
+                    DH_SHARED_SECRET(),
+                    KDF_LABEL(DERIVED())),
+                DH_SHARED_SECRET(),
+                KDF_LABEL(C_AP_TRAFFIC())))
+        else
+            Data<adv>,
+
+    HandshakeResult_server_app_key:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(KDF<enckey;0;ServerApplicationTrafficKey>(
+                gkdf<kdfkey;0>(
+                    EARLY_SECRET_DERIVED_GHOST(),
+                    DH_SHARED_SECRET(),
+                    KDF_LABEL(DERIVED())),
+                DH_SHARED_SECRET(),
+                KDF_LABEL(S_AP_TRAFFIC())))
+        else
+            Data<adv>
+}
+
+// client_hello is given has argument since we don't
+// know if client_dh_sk <= adv
+def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
+    =
+    parse msg as ClientHello(_, client_dh_pk) in
+        let _ = output ServerHello(get(server_random), dhpk(get(server_dh_sk))) to endpoint(client) in
+        let sk = dh_combine(client_dh_pk, get(server_dh_sk)) in
+
+        corr_case client_dh_sk in
+        corr_case server_dh_sk in
+
+        // Key schedule in Section 7.1
+        let early_secret_derived = kdf<0;;nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC())) in
+        let client_handshake_traffic_secret = kdf<;odh key_schedule[0];nonce;0>(
+            early_secret_derived, sk, KDF_LABEL(C_HS_TRAFFIC())) in
+        let server_handshake_traffic_secret = kdf<;odh key_schedule[1];enckey;0>(
+            early_secret_derived, sk, KDF_LABEL(S_HS_TRAFFIC())) in
+
+        let handshake_secret_derived = kdf<;odh key_schedule[2];kdfkey;0>(
+            early_secret_derived, sk, KDF_LABEL(DERIVED())) in
+
+        let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk,
+            KDF_LABEL(C_AP_TRAFFIC())) in
+        let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk,
+            KDF_LABEL(S_AP_TRAFFIC())) in
+
+        // TODO: derive client/server_write_key/iv
+        // by another HKDF-Expand call
+
+        // Send certificate and certificate verify
+        // TODO: this needs to sign the server_hello message instead of just the DH key
+        let sig = sign(get(server_cert_key), dhpk(get(server_dh_sk))) in
+        let msg = ServerCertificate(get_vk(server_cert_key), sig) in
+
+        // TODO: change to AEAD
+        let msg = aenc(server_handshake_traffic_secret, msg) in
+        let _ = output msg to endpoint(client) in
+
+        Some(HandshakeResult(
+            client_handshake_traffic_secret,
+            server_handshake_traffic_secret,
+            client_application_traffic_secret_0,
+            server_application_traffic_secret_0
+        ))
+    otherwise
+        None()
+
+def client_handshake() @ client : Option(HandshakeResult)
+    =
+    let _ = output ClientHello(get(client_random), dhpk(get(client_dh_sk))) to endpoint(server) in
+    input msg in
+    parse msg as ServerHello(_, server_dh_pk) in
+        let sk = dh_combine(server_dh_pk, get(client_dh_sk)) in
+
+        // Same process as the server
+        corr_case client_dh_sk in
+        corr_case server_dh_sk in
+
+        // TODO: prfodh
+        assume(server_dh_pk == dhpk(get(server_dh_sk)));
+
+        // Key schedule in Section 7.1
+        let early_secret_derived = kdf<0;;nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC())) in
+        let client_handshake_traffic_secret = kdf<;odh key_schedule[0];nonce;0>(
+            early_secret_derived, sk, KDF_LABEL(C_HS_TRAFFIC())) in
+        let server_handshake_traffic_secret = kdf<;odh key_schedule[1];enckey;0>(
+            early_secret_derived, sk, KDF_LABEL(S_HS_TRAFFIC())) in
+
+        let handshake_secret_derived = kdf<;odh key_schedule[2];kdfkey;0>(
+            early_secret_derived, sk, KDF_LABEL(DERIVED())) in
+
+        let client_application_traffic_secret_0 = kdf<0;;enckey;0>(handshake_secret_derived, sk,
+            KDF_LABEL(C_AP_TRAFFIC())) in
+        let server_application_traffic_secret_0 = kdf<1;;enckey;0>(handshake_secret_derived, sk,
+            KDF_LABEL(S_AP_TRAFFIC())) in
+
+        input msg in
+        case adec(server_handshake_traffic_secret, msg) {
+            | None => None()
+            | Some msg =>
+                parse msg as ServerCertificate(_, sig) in
+                    corr_case server_cert_key in
+                    case vrfy(get_vk(server_cert_key), server_dh_pk, sig) {
+                        | Some server_dh_pk_verified =>
+                            Some(HandshakeResult(
+                                client_handshake_traffic_secret,
+                                server_handshake_traffic_secret,
+                                client_application_traffic_secret_0,
+                                server_application_traffic_secret_0
+                            ))
+                        | None => None()
+                    }
+                otherwise None()
+        }
+    otherwise None()
