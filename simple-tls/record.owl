@@ -1,0 +1,69 @@
+// A highly simplified TLS record layer
+
+include "defs.owl"
+include "handshake.owl"
+
+// Section 5.2, RFC 8446
+struct Record {
+    Record_type: Data<adv> |1|,
+    Record_version: Const(0x0303),
+    Record_length: Data<adv> |2|,
+    Record_encrypted: Data<adv>
+}
+
+struct ServerState {
+    ServerState_keys: HandshakeResult,
+    ServerState_counter: Data<adv> ||counter||, // counter for client's messages
+    ServerState_buffer: Data<adv>
+}
+
+struct NewData {
+    NewData_state: ServerState,
+    NewData_data:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            Name(client_data)
+        else
+            Data<adv>
+}
+
+enum ProcessResult {
+    | ProcessResult_NoData ServerState
+    | ProcessResult_NewData NewData
+    | ProcessResult_Error
+}
+
+// Process incoming message
+def server_process(state: ServerState) @ server : ProcessResult
+    =
+    parse state as ServerState(keys, counter, buffer) in
+    parse keys as HandshakeResult(_, _, client_app_key, _) in
+        input msg in
+        parse buffer ++ msg as Record(ctype, _, len, encrypted) in
+            if eq(length(encrypted), len) then
+                corr_case client_dh_sk in
+                corr_case server_dh_sk in
+
+                // TODO: aad
+                case st_aead_dec(client_app_key, encrypted, 0x, counter) {
+                    | None => ProcessResult_Error()
+                    | Some decrypted =>
+                        // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
+                        ProcessResult_NewData(NewData(ServerState(keys, counter + 1, 0x), decrypted))
+                }
+
+            else
+                // Similar to the case of parsing error
+                // Distinguish between correct message (length(msg) >= len)
+                // incomplete message (length(msg) < len),
+                // and parsing errors
+                ProcessResult_NoData(ServerState(keys, counter, buffer ++ msg))
+
+        otherwise
+            // Append more data to wait for a complete package
+            // TODO: distinguish between parsing errors and incomplete data
+            // by checking the length
+            ProcessResult_NoData(ServerState(keys, counter, buffer ++ msg))
+
+    // TODO: can we eliminate these cases?
+    otherwise ProcessResult_Error()
+    otherwise ProcessResult_Error()
