@@ -31,9 +31,11 @@ struct HandshakeResult {
                 KDF_LABEL(KEY())))
         else
             Data<adv>,
+
+    // TODO: PubName or SecName?
     HandshakeResult_client_app_iv:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<nonce;0;nonce>(
+            PubName(KDF<nonce |counter|;0;nonce |counter|>(
                 CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
                 DH_SHARED_SECRET(),
                 KDF_LABEL(IV())))
@@ -49,9 +51,10 @@ struct HandshakeResult {
                 KDF_LABEL(KEY())))
         else
             Data<adv>,
+
     HandshakeResult_server_app_iv:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<nonce;0;nonce>(
+            PubName(KDF<nonce |counter|;0;nonce |counter|>(
                 SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
                 DH_SHARED_SECRET(),
                 KDF_LABEL(IV())))
@@ -87,12 +90,12 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
 
         let client_write_key_0 = kdf<0;;enckey;0>(client_application_traffic_secret_0, sk,
             KDF_LABEL(KEY())) in
-        let client_write_iv_0 = kdf<1;;nonce;0>(client_application_traffic_secret_0, sk,
+        let client_write_iv_0 = kdf<1;;nonce |counter|;0>(client_application_traffic_secret_0, sk,
             KDF_LABEL(IV())) in
 
         let server_write_key_0 = kdf<0;;enckey;0>(server_application_traffic_secret_0, sk,
             KDF_LABEL(KEY())) in
-        let server_write_iv_0 = kdf<1;;nonce;0>(server_application_traffic_secret_0, sk,
+        let server_write_iv_0 = kdf<1;;nonce |counter|;0>(server_application_traffic_secret_0, sk,
             KDF_LABEL(IV())) in
 
         // Send certificate and certificate verify
@@ -144,12 +147,12 @@ def client_handshake() @ client : Option(HandshakeResult)
 
         let client_write_key_0 = kdf<0;;enckey;0>(client_application_traffic_secret_0, sk,
             KDF_LABEL(KEY())) in
-        let client_write_iv_0 = kdf<1;;nonce;0>(client_application_traffic_secret_0, sk,
+        let client_write_iv_0 = kdf<1;;nonce |counter|;0>(client_application_traffic_secret_0, sk,
             KDF_LABEL(IV())) in
 
         let server_write_key_0 = kdf<0;;enckey;0>(server_application_traffic_secret_0, sk,
             KDF_LABEL(KEY())) in
-        let server_write_iv_0 = kdf<1;;nonce;0>(server_application_traffic_secret_0, sk,
+        let server_write_iv_0 = kdf<1;;nonce |counter|;0>(server_application_traffic_secret_0, sk,
             KDF_LABEL(IV())) in
 
         input msg in
