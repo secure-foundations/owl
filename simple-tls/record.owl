@@ -5,7 +5,7 @@ include "handshake.owl"
 
 // Section 5.2, RFC 8446
 struct Record {
-    Record_type: Data<adv> |1|,
+    Record_type: Const(0x17), // CTYPE_APPLICATION_DATA()
     Record_version: Const(0x0303),
     Record_length: Data<adv> |2|,
     Record_encrypted: Data<adv>
@@ -16,24 +16,24 @@ struct ServerState {
     ServerState_buffer: Data<adv>
 }
 
-struct NewData {
-    NewData_state: ServerState,
-    NewData_data:
+struct ServerNewData {
+    ServerNewData_state: ServerState,
+    ServerNewData_data:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
             Name(client_data) // Should I use this here? Should it be indexed?
         else
             Data<adv>
 }
 
-enum ProcessResult {
-    | ProcessResult_NoData ServerState
-    | ProcessResult_NewData NewData
-    | ProcessResult_Error
+enum ServerRecvResult {
+    | ServerRecvResult_NoData ServerState
+    | ServerRecvResult_ServerNewData ServerNewData
+    | ServerRecvResult_Error
 }
 
 // Process incoming message on the server side
 // TODO: the client side should roughly be the same
-def server_process(state: ServerState) @ server : ProcessResult
+def server_recv(state: ServerState) @ server : ServerRecvResult
     =
     parse state as ServerState(keys, buffer) in
     parse keys as HandshakeResult(_, _, client_app_key, _) in
@@ -46,40 +46,63 @@ def server_process(state: ServerState) @ server : ProcessResult
                 // which may require recursion?
                 let rest = subrange(encrypted, len, minus(length(encrypted), len)) in
 
-                if eq(ctype, CTYPE_APPLICATION_DATA()) then
-                    corr_case client_dh_sk in
-                    corr_case server_dh_sk in
+                corr_case client_dh_sk in
+                corr_case server_dh_sk in
 
-                    let counter = get_counter client_application_traffic_counter_recv in
+                let counter = get_counter client_application_traffic_counter_recv in
 
-                    // aad is the record header
-                    case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, counter) {
-                        | None => ProcessResult_Error()
-                        | Some decrypted =>
+                // aad is the record header
+                case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, counter) {
+                    | None => ServerRecvResult_Error()
+                    | Some decrypted =>
+                        parse decrypted as ClientInnerRecord(decrypted) in
                             // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
                             inc_counter client_application_traffic_counter_recv;
 
                             // Check overflow
-                            ProcessResult_NewData(NewData(ServerState(keys, rest), decrypted))
-                    }
+                            ServerRecvResult_ServerNewData(ServerNewData(ServerState(keys, rest), decrypted))
 
-                else if eq(ctype, CTYPE_HANDSHAKE()) then
-                    // TODO: process key updates
-                    ProcessResult_NoData(ServerState(keys, rest))
-
-                else
-                    // TODO: unsupported content type
-                    ProcessResult_Error()
+                        otherwise ServerRecvResult_Error()
+                }
 
             else
                 // Not enough data
-                ProcessResult_NoData(ServerState(keys, buffer ++ msg))
+                ServerRecvResult_NoData(ServerState(keys, buffer ++ msg))
 
         otherwise
             // Append more data to wait for a complete package
             // TODO: this is assuming that the header always arrives in one piece
-            ProcessResult_Error()
+            ServerRecvResult_Error()
 
     // TODO: can we eliminate these cases?
-    otherwise ProcessResult_Error()
-    otherwise ProcessResult_Error()
+    otherwise ServerRecvResult_Error()
+    otherwise ServerRecvResult_Error()
+
+enum ClientSendResult {
+    | ClientSendResult_Success
+    | ClientSendResult_Error
+}
+
+// Send new message on the client side
+// TODO: assume that data's length is less than 2^16
+def client_send(
+    keys: HandshakeResult,
+    // Client data is public unless both DH secrets are secure
+    data: if sec(client_dh_sk) /\ sec(server_dh_sk) then Name(client_data) else Data<adv>
+) @ client : ClientSendResult
+    =
+    parse keys as HandshakeResult(_, _, client_app_key, _) in
+        corr_case client_dh_sk in
+        corr_case server_dh_sk in
+
+        // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
+        let encrypted = st_aead_enc<client_application_traffic_counter>(
+            client_app_key,
+            ClientInnerRecord(data),
+            CTYPE_APPLICATION_DATA() ++ 0x0303 ++ 0x0000
+        ) in
+
+        let _ = output Record(CTYPE_APPLICATION_DATA(), 0x0303, length(encrypted), encrypted) to endpoint(server) in
+        ClientSendResult_Success()
+
+    otherwise ClientSendResult_Error()
