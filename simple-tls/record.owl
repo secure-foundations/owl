@@ -36,7 +36,7 @@ enum ServerRecvResult {
 def server_recv(state: ServerState) @ server : ServerRecvResult
     =
     parse state as ServerState(keys, buffer) in
-    parse keys as HandshakeResult(_, _, client_app_key, _) in
+    parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
         input msg in
         parse buffer ++ msg as Record(ctype, version, len, encrypted) in
             if geq(length(encrypted), len) then
@@ -91,7 +91,7 @@ def client_send(
     data: if sec(client_dh_sk) /\ sec(server_dh_sk) then Name(client_data) else Data<adv>
 ) @ client : ClientSendResult
     =
-    parse keys as HandshakeResult(_, _, client_app_key, _) in
+    parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
         corr_case client_dh_sk in
         corr_case server_dh_sk in
 
