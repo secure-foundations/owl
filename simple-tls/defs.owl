@@ -17,6 +17,8 @@ func C_HS_TRAFFIC() = 0x632068732074726166666963
 func S_HS_TRAFFIC() = 0x732068732074726166666963
 func C_AP_TRAFFIC() = 0x632061702074726166666963
 func S_AP_TRAFFIC() = 0x732061702074726166666963
+func KEY() = 0x6b6579
+func IV() = 0x6976
 
 // ContentType's
 func CTYPE_ALERT() = 0x15
@@ -89,9 +91,24 @@ struct ClientInnerRecord {
 nametype ClientHandshakeTrafficKey = nonce
 nametype ServerHandshakeTrafficKey = enckey ServerCertificate
 
+// Similar to the exec version of key derivation, but in ghost mode
+func CLIENT_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gkdf<nonce;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(C_HS_TRAFFIC()))
+func SERVER_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gkdf<enckey;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(S_HS_TRAFFIC()))
+func HANDSHAKE_SECRET_DERIVED_GHOST() = gkdf<kdfkey;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(DERIVED()))
+
+func CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gkdf<kdfkey;0>(HANDSHAKE_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(C_AP_TRAFFIC()))
+func SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gkdf<kdfkey;0>(HANDSHAKE_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(S_AP_TRAFFIC()))
+
+func CLIENT_WRITE_KEY_0_GHOST() = gkdf<enckey;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(KEY()))
+func CLIENT_WRITE_IV_0_GHOST() = gkdf<nonce;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(IV()))
+
+func SERVER_WRITE_KEY_0_GHOST() = gkdf<enckey;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(KEY()))
+func SERVER_WRITE_IV_0_GHOST() = gkdf<nonce;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(IV()))
+
 nametype ClientApplicationTrafficKey = st_aead ClientInnerRecord
     aad x. true // TODO: header
-    nonce client_application_traffic_counter // TODO: xor with client_write_iv
+    nonce client_application_traffic_counter
+    // pattern i. xor(i, CLIENT_WRITE_IV_0_GHOST()) // TODO: xor with server_write_iv
 
 nametype ServerApplicationTrafficKey = st_aead Name(server_data)
     aad x. true // TODO: header
@@ -109,10 +126,26 @@ odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
     // Master Secret
     info == KDF_LABEL(DERIVED()) -> strict kdf {ikm info.
         // client_application_traffic_secret_0
-        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict ClientApplicationTrafficKey,
+        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict kdf {ikm info.
+            // client_write_key_0
+            // TODO: technically this should not be a full kdf call
+            // but rather a partial HKDF-Expand call
+            info == KDF_LABEL(KEY()) -> strict ClientApplicationTrafficKey,
+
+            // client_write_iv_0
+            info == KDF_LABEL(IV()) -> strict nonce
+        },
 
         // server_application_traffic_secret_0
-        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict ServerApplicationTrafficKey
+        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict kdf {ikm info.
+            // server_write_key_0
+            // TODO: technically this should not be a full kdf call
+            // but rather a partial HKDF-Expand call
+            info == KDF_LABEL(KEY()) -> strict ServerApplicationTrafficKey,
+
+            // server_write_iv_0
+            info == KDF_LABEL(IV()) -> strict nonce
+        }
     }
 }
 
