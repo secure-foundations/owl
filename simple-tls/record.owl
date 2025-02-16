@@ -13,7 +13,6 @@ struct Record {
 
 struct ServerState {
     ServerState_keys: HandshakeResult,
-    ServerState_counter: Data<adv> ||counter||, // counter for client's messages
     ServerState_buffer: Data<adv>
 }
 
@@ -21,7 +20,7 @@ struct NewData {
     NewData_state: ServerState,
     NewData_data:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            Name(client_data)
+            Name(client_data) // Should I use this here? Should it be indexed?
         else
             Data<adv>
 }
@@ -32,37 +31,54 @@ enum ProcessResult {
     | ProcessResult_Error
 }
 
-// Process incoming message
+// Process incoming message on the server side
+// TODO: the client side should roughly be the same
 def server_process(state: ServerState) @ server : ProcessResult
     =
-    parse state as ServerState(keys, counter, buffer) in
+    parse state as ServerState(keys, buffer) in
     parse keys as HandshakeResult(_, _, client_app_key, _) in
         input msg in
-        parse buffer ++ msg as Record(ctype, _, len, encrypted) in
-            if eq(length(encrypted), len) then
-                corr_case client_dh_sk in
-                corr_case server_dh_sk in
+        parse buffer ++ msg as Record(ctype, version, len, encrypted) in
+            if geq(length(encrypted), len) then
+                let encrypted = subrange(encrypted, 0, len) in
 
-                // TODO: aad
-                case st_aead_dec(client_app_key, encrypted, 0x, counter) {
-                    | None => ProcessResult_Error()
-                    | Some decrypted =>
-                        // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
-                        ProcessResult_NewData(NewData(ServerState(keys, counter + 1, 0x), decrypted))
-                }
+                // TODO: Need to repeatedly process messages since multiple records can arrive at once
+                // which may require recursion?
+                let rest = subrange(encrypted, len, minus(length(encrypted), len)) in
+
+                if eq(ctype, CTYPE_APPLICATION_DATA()) then
+                    corr_case client_dh_sk in
+                    corr_case server_dh_sk in
+
+                    let counter = get_counter client_application_traffic_counter_recv in
+
+                    // aad is the record header
+                    case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, counter) {
+                        | None => ProcessResult_Error()
+                        | Some decrypted =>
+                            // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
+                            inc_counter client_application_traffic_counter_recv;
+
+                            // Check overflow
+                            ProcessResult_NewData(NewData(ServerState(keys, rest), decrypted))
+                    }
+
+                else if eq(ctype, CTYPE_HANDSHAKE()) then
+                    // TODO: process key updates
+                    ProcessResult_NoData(ServerState(keys, rest))
+
+                else
+                    // TODO: unsupported content type
+                    ProcessResult_Error()
 
             else
-                // Similar to the case of parsing error
-                // Distinguish between correct message (length(msg) >= len)
-                // incomplete message (length(msg) < len),
-                // and parsing errors
-                ProcessResult_NoData(ServerState(keys, counter, buffer ++ msg))
+                // Not enough data
+                ProcessResult_NoData(ServerState(keys, buffer ++ msg))
 
         otherwise
             // Append more data to wait for a complete package
-            // TODO: distinguish between parsing errors and incomplete data
-            // by checking the length
-            ProcessResult_NoData(ServerState(keys, counter, buffer ++ msg))
+            // TODO: this is assuming that the header always arrives in one piece
+            ProcessResult_Error()
 
     // TODO: can we eliminate these cases?
     otherwise ProcessResult_Error()
