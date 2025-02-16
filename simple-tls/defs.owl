@@ -2,7 +2,7 @@
  * Naming conventions:
  * 1. Names, odh, kdf, procedure, counter declarations use snake_case
  * 2. Structs, enums, and name types use CamelCase
- * 3. Functions use capitalized SNAKE_CASE
+ * 3. Functions use capitalized SNAKE_CASE (except for uninterpreted functions)
  * 4. Fields of a struct are named as <StructName>_<field_name>
  * 5. Local variables are snake_case
  */
@@ -18,6 +18,11 @@ func S_HS_TRAFFIC() = 0x732068732074726166666963
 func C_AP_TRAFFIC() = 0x632061702074726166666963
 func S_AP_TRAFFIC() = 0x732061702074726166666963
 
+// ContentType's
+func CTYPE_ALERT() = 0x15
+func CTYPE_HANDSHAKE() = 0x16
+func CTYPE_APPLICATION_DATA() = 0x17
+
 // TODO: add context (hash of previous messages)
 //Ssee Section 7.1
 func KDF_LABEL(lbl) = TLS13_() ++ lbl
@@ -25,6 +30,12 @@ func KDF_LABEL(lbl) = TLS13_() ++ lbl
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?
 func PSK() = 0x00
+
+// Placeholder for unsupported functions in Owl
+func leq arity 2
+func geq arity 2
+func minus arity 2
+func subrange arity 3
 
 name client_data : nonce @ client
 name client_random : nonce @ client
@@ -59,8 +70,13 @@ struct ServerCertificate {
     ServerCertificate_sig: Data<adv> ||signature||
 }
 
+// For sending
 counter client_application_traffic_counter @ client
 counter server_application_traffic_counter @ server
+
+// For receiving
+counter client_application_traffic_counter_recv @ server
+counter server_application_traffic_counter_recv @ client
 
 // TODO: change to AEAD
 nametype ClientHandshakeTrafficKey = nonce
