@@ -37,45 +37,40 @@ def server_recv(state: ServerState) @ server : ServerRecvResult
     =
     parse state as ServerState(keys, buffer) in
     parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
-        input msg in
-        parse buffer ++ msg as Record(ctype, version, len, encrypted) in
-            if geq(length(encrypted), len) then
-                let encrypted = subrange(encrypted, 0, len) in
+    input msg in
+    parse buffer ++ msg as Record(ctype, version, len, encrypted) in
+        if geq(length(encrypted), len) then
+            let encrypted = subrange(encrypted, 0, len) in
 
-                // TODO: Need to repeatedly process messages since multiple records can arrive at once
-                // which may require recursion?
-                let rest = subrange(encrypted, len, minus(length(encrypted), len)) in
+            // TODO: Need to repeatedly process messages since multiple records can arrive at once
+            // which may require recursion?
+            let rest = subrange(encrypted, len, minus(length(encrypted), len)) in
 
-                corr_case client_dh_sk in
-                corr_case server_dh_sk in
+            corr_case client_dh_sk in
+            corr_case server_dh_sk in
 
-                let counter = get_counter client_application_traffic_counter_recv in
+            let counter = get_counter client_application_traffic_counter_recv in
 
-                // aad is the record header
-                case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, counter) {
-                    | None => ServerRecvResult_Error()
-                    | Some decrypted =>
-                        parse decrypted as ClientInnerRecord(decrypted) in
-                            // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
-                            inc_counter client_application_traffic_counter_recv;
+            // aad is the record header
+            case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, xor(counter, client_app_iv)) {
+                | None => ServerRecvResult_Error()
+                | Some decrypted =>
+                    parse decrypted as ClientInnerRecord(decrypted) in
+                        // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
+                        inc_counter client_application_traffic_counter_recv;
 
-                            // Check overflow
-                            ServerRecvResult_ServerNewData(ServerNewData(ServerState(keys, rest), decrypted))
+                        // Check overflow
+                        ServerRecvResult_ServerNewData(ServerNewData(ServerState(keys, rest), decrypted))
 
-                        otherwise ServerRecvResult_Error()
-                }
+                    otherwise ServerRecvResult_Error()
+            }
 
-            else
-                // Not enough data
-                ServerRecvResult_NoData(ServerState(keys, buffer ++ msg))
+        else
+            // Not enough data
+            ServerRecvResult_NoData(ServerState(keys, buffer ++ msg))
 
-        otherwise
-            // Append more data to wait for a complete package
-            // TODO: this is assuming that the header always arrives in one piece
-            ServerRecvResult_Error()
-
-    // TODO: can we eliminate these cases?
-    otherwise ServerRecvResult_Error()
+    // Append more data to wait for a complete package
+    // TODO: this is assuming that the header always arrives in one piece
     otherwise ServerRecvResult_Error()
 
 enum ClientSendResult {
@@ -92,17 +87,15 @@ def client_send(
 ) @ client : ClientSendResult
     =
     parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
-        corr_case client_dh_sk in
-        corr_case server_dh_sk in
+    corr_case client_dh_sk in
+    corr_case server_dh_sk in
 
-        // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
-        let encrypted = st_aead_enc<client_application_traffic_counter>(
-            client_app_key,
-            ClientInnerRecord(data),
-            CTYPE_APPLICATION_DATA() ++ 0x0303 ++ 0x0000
-        ) in
+    // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
+    let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
+        client_app_key,
+        ClientInnerRecord(data),
+        CTYPE_APPLICATION_DATA() ++ 0x0303 ++ 0x0000
+    ) in
 
-        let _ = output Record(CTYPE_APPLICATION_DATA(), 0x0303, length(encrypted), encrypted) to endpoint(server) in
-        ClientSendResult_Success()
-
-    otherwise ClientSendResult_Error()
+    let _ = output Record(CTYPE_APPLICATION_DATA(), 0x0303, length(encrypted), encrypted) to endpoint(server) in
+    ClientSendResult_Success()
