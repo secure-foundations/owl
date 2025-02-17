@@ -25,6 +25,9 @@ func CTYPE_ALERT() = 0x15
 func CTYPE_HANDSHAKE() = 0x16
 func CTYPE_APPLICATION_DATA() = 0x17
 
+// AlertDescription's
+func ALERT_DESC_CLOSE_NOTIFY() = 0x00
+
 // TODO: add context (hash of previous messages)
 //Ssee Section 7.1
 func KDF_LABEL(lbl) = TLS13_() ++ lbl
@@ -83,7 +86,7 @@ counter server_application_traffic_counter_recv @ client
 // TODO: is this the correct definition?
 struct ClientInnerRecord {
     InnerRecord_content: Name(client_data),
-    InnerRecord_type: Data<adv> |1|
+    InnerRecord_type: Data<adv> |1| // TODO: need to be public since we want to branch on it?
     // TODO: padding
 }
 
