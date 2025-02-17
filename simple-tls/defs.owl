@@ -37,6 +37,7 @@ func PSK() = 0x00
 func leq arity 2
 func geq arity 2
 func minus arity 2
+func as_u16 arity 1
 func subrange arity 3
 
 name client_data : nonce @ client
