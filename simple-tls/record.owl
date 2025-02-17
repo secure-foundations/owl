@@ -11,65 +11,68 @@ struct Record {
     Record_encrypted: Data<adv>
 }
 
-struct ServerState {
-    ServerState_keys: HandshakeResult,
-    ServerState_buffer: Data<adv>
-}
-
-struct ServerNewData {
-    ServerNewData_state: ServerState,
-    ServerNewData_data:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+enum ServerReadResult {
+    | ServerReadResult_Data
+        (if sec(client_dh_sk) /\ sec(server_dh_sk) then
             Name(client_data) // Should I use this here? Should it be indexed?
         else
-            Data<adv>
+            Data<adv>)
+    | ServerReadResult_End
+    | ServerReadResult_Error
 }
 
-enum ServerRecvResult {
-    | ServerRecvResult_NoData ServerState
-    | ServerRecvResult_ServerNewData ServerNewData
-    | ServerRecvResult_Error
-}
+// struct Alert {
+//     Alert_level: Data<adv> |1|,
+//     Alert_desc: Data<adv> |1|
+// }
 
-// Process incoming message on the server side
+// Process incoming records on the server side
+// Fragmentation is expected to be handled by the caller of this process
 // TODO: the client side should roughly be the same
-def server_recv(state: ServerState) @ server : ServerRecvResult
+def server_read(
+    keys: HandshakeResult,
+    record: Record
+) @ server : ServerReadResult
     =
-    parse state as ServerState(keys, buffer) in
     parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
-    input msg in
-    parse buffer ++ msg as Record(ctype, version, len, encrypted) in
-        if geq(length(encrypted), len) then
-            let encrypted = subrange(encrypted, 0, len) in
+    parse record as Record(ctype, version, len, encrypted) in
+        corr_case client_dh_sk in
+        corr_case server_dh_sk in
 
-            // TODO: Need to repeatedly process messages since multiple records can arrive at once
-            // which may require recursion?
-            let rest = subrange(encrypted, len, minus(length(encrypted), len)) in
+        let counter = get_counter client_application_traffic_counter_recv in
+        let header = ctype ++ version ++ len in
 
-            corr_case client_dh_sk in
-            corr_case server_dh_sk in
-
-            let counter = get_counter client_application_traffic_counter_recv in
-
-            // aad is the record header
-            case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, xor(counter, client_app_iv)) {
-                | None => ServerRecvResult_Error()
-                | Some decrypted =>
-                    parse decrypted as ClientInnerRecord(decrypted, ctype) in
-                        // TODO: process different ctypes
+        case st_aead_dec(client_app_key, encrypted, header, xor(counter, client_app_iv)) {
+            | None => ServerReadResult_Error()
+            | Some decrypted =>
+                parse decrypted as ClientInnerRecord(decrypted, ctype) in
+                    if eq(ctype, CTYPE_APPLICATION_DATA()) then
+                        // New application data
                         inc_counter client_application_traffic_counter_recv;
-                        ServerRecvResult_ServerNewData(ServerNewData(ServerState(keys, rest), decrypted))
+                        ServerReadResult_Data(decrypted)
 
-                    otherwise ServerRecvResult_Error()
-            }
+                    else if eq(ctype, CTYPE_ALERT()) then
+                        // Alert, either throw an error or indicate the end of stream
 
-        else
-            // Not enough data
-            ServerRecvResult_NoData(ServerState(keys, buffer ++ msg))
+                        // TODO: ideally case case on the alert description to
+                        // distinguish between close_notify and other alerts
+                        // but that would require branching on a secret value `decrypted`
 
-    // Append more data to wait for a complete package
-    // TODO: this is assuming that the header always arrives in one piece
-    otherwise ServerRecvResult_Error()
+                        ServerReadResult_Error()
+
+                        // parse decrypted as Alert(level, desc) in
+                        //     let x = eq(desc, ALERT_DESC_CLOSE_NOTIFY()) in
+                        //     debug printTyOf(x);
+                        //     if x then
+                        //         ServerReadResult_End()
+                        //     else
+                        //         ServerReadResult_Error()
+                        // otherwise ServerReadResult_Error()
+
+                    else
+                        ServerReadResult_Error()
+                otherwise ServerReadResult_Error()
+        }
 
 enum ClientSendResult {
     | ClientSendResult_Success
