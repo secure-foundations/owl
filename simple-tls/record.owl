@@ -82,8 +82,11 @@ enum ClientSendResult {
 // TODO: assume that data's length is less than 2^16
 def client_send(
     keys: HandshakeResult,
+
     // Client data is public unless both DH secrets are secure
-    data: if sec(client_dh_sk) /\ sec(server_dh_sk) then Name(client_data) else Data<adv>
+    // and it should be less than equal to 2^14 bytes (Section 5.1, RFC 8446)
+    data: d : if sec(client_dh_sk) /\ sec(server_dh_sk) then Name(client_data) else Data<adv>
+        { leq(length(d), 16384) }
 ) @ client : ClientSendResult
     =
     parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
@@ -91,10 +94,14 @@ def client_send(
     corr_case server_dh_sk in
 
     // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
+    let enc_data = ClientInnerRecord(data) in
+    let enc_len = cipherlen(length(enc_data)) in
     let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
         client_app_key,
         ClientInnerRecord(data),
-        CTYPE_APPLICATION_DATA() ++ 0x0303 ++ 0x0000
+
+        // TODO: is enc_len correct? how to pad it into two bytes?
+        CTYPE_APPLICATION_DATA() ++ 0x0303 ++ as_u16(enc_len)
     ) in
 
     let _ = output Record(CTYPE_APPLICATION_DATA(), 0x0303, length(encrypted), encrypted) to endpoint(server) in
