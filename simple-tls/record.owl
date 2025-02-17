@@ -55,11 +55,9 @@ def server_recv(state: ServerState) @ server : ServerRecvResult
             case st_aead_dec(client_app_key, encrypted, ctype ++ version ++ len, xor(counter, client_app_iv)) {
                 | None => ServerRecvResult_Error()
                 | Some decrypted =>
-                    parse decrypted as ClientInnerRecord(decrypted) in
-                        // TODO: decrypted needs to be parsed as TLSInnerPlaintext in RFC 8446
+                    parse decrypted as ClientInnerRecord(decrypted, ctype) in
+                        // TODO: process different ctypes
                         inc_counter client_application_traffic_counter_recv;
-
-                        // Check overflow
                         ServerRecvResult_ServerNewData(ServerNewData(ServerState(keys, rest), decrypted))
 
                     otherwise ServerRecvResult_Error()
@@ -94,11 +92,11 @@ def client_send(
     corr_case server_dh_sk in
 
     // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
-    let enc_data = ClientInnerRecord(data) in
+    let enc_data = ClientInnerRecord(data, CTYPE_APPLICATION_DATA()) in
     let enc_len = cipherlen(length(enc_data)) in
     let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
         client_app_key,
-        ClientInnerRecord(data),
+        enc_data,
 
         // TODO: is enc_len correct? how to pad it into two bytes?
         CTYPE_APPLICATION_DATA() ++ 0x0303 ++ as_u16(enc_len)
