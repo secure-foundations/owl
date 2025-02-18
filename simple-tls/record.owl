@@ -14,17 +14,17 @@ struct Record {
 enum ServerReadResult {
     | ServerReadResult_Data
         (if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            Name(client_data) // Should I use this here? Should it be indexed?
+            Data<adv /\ [client_data]> // Should I use this here? Should it be indexed?
         else
             Data<adv>)
     | ServerReadResult_End
     | ServerReadResult_Error
 }
 
-// struct Alert {
-//     Alert_level: Data<adv> |1|,
-//     Alert_desc: Data<adv> |1|
-// }
+struct Alert {
+    Alert_level: Data<adv> |1|, // "the level field can safely be ignored" in TLS 1.3
+    Alert_desc: Data<adv> |1|
+}
 
 // Process incoming records on the server side
 // Fragmentation is expected to be handled by the caller of this process
@@ -45,7 +45,7 @@ def server_read(
         case st_aead_dec(client_app_key, encrypted, header, xor(counter, client_app_iv)) {
             | None => ServerReadResult_Error()
             | Some decrypted =>
-                parse decrypted as ClientInnerRecord(decrypted, ctype) in
+                parse decrypted as ClientInnerRecord(ctype, decrypted) in
                     if eq(ctype, CTYPE_APPLICATION_DATA()) then
                         // New application data
                         inc_counter client_application_traffic_counter_recv;
@@ -53,21 +53,12 @@ def server_read(
 
                     else if eq(ctype, CTYPE_ALERT()) then
                         // Alert, either throw an error or indicate the end of stream
-
-                        // TODO: ideally case case on the alert description to
-                        // distinguish between close_notify and other alerts
-                        // but that would require branching on a secret value `decrypted`
-
-                        ServerReadResult_Error()
-
-                        // parse decrypted as Alert(level, desc) in
-                        //     let x = eq(desc, ALERT_DESC_CLOSE_NOTIFY()) in
-                        //     debug printTyOf(x);
-                        //     if x then
-                        //         ServerReadResult_End()
-                        //     else
-                        //         ServerReadResult_Error()
-                        // otherwise ServerReadResult_Error()
+                        parse decrypted as Alert(level, desc) in
+                            if eq(desc, ALERT_DESC_CLOSE_NOTIFY()) then
+                                ServerReadResult_End()
+                            else
+                                ServerReadResult_Error()
+                        otherwise ServerReadResult_Error()
 
                     else
                         ServerReadResult_Error()
@@ -86,7 +77,11 @@ def client_send(
 
     // Client data is public unless both DH secrets are secure
     // and it should be less than equal to 2^14 bytes (Section 5.1, RFC 8446)
-    data: d : if sec(client_dh_sk) /\ sec(server_dh_sk) then Name(client_data) else Data<adv>
+    data: d :
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            ClientData
+        else
+            Data<adv>
         { leq(length(d), 16384) }
 ) @ client : ClientSendResult
     =
@@ -95,7 +90,7 @@ def client_send(
     corr_case server_dh_sk in
 
     // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
-    let enc_data = ClientInnerRecord(data, CTYPE_APPLICATION_DATA()) in
+    let enc_data = ClientInnerRecord(CTYPE_APPLICATION_DATA(), data) in
     let enc_len = cipherlen(length(enc_data)) in
     let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
         client_app_key,
