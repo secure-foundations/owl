@@ -28,9 +28,17 @@ func CTYPE_APPLICATION_DATA() = 0x17
 // AlertDescription's
 func ALERT_DESC_CLOSE_NOTIFY() = 0x00
 
+// struct HKDFContext {
+//     HKDFContext_len: Data<adv> |2|,
+//     HKDFContext_label_pref: Const(0x746c73313320), // "tls13 "
+//     HKDFContext_label: Data<adv>
+//     // HKDFContext_context: Data<adv> ||maclen||
+// }
+
+// TODO: make sure |maclen| has the correct length (u16)
 // TODO: add context (hash of previous messages)
-//Ssee Section 7.1
-func KDF_LABEL(lbl) = TLS13_() ++ lbl
+// see Section 7.1
+func KDF_LABEL(lbl) = |crh| ++ TLS13_() ++ lbl
 
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?
@@ -92,18 +100,13 @@ struct ClientInnerRecord {
     // but we assume that this permutation is handled in Vest
     InnerRecord_type: Data<adv> |1|,
 
-    InnerRecord_content: // ClientData
+    InnerRecord_content:
         if InnerRecord_type == CTYPE_APPLICATION_DATA() then
             ClientData
         else
             Data<adv>
 
-    // InnerRecord_ghost_type: x:Ghost { length(x) == 1 },
-    // InnerRecord_content: if InnerRecord_ghost_type ... ,
-    // InnerRecord_type: x:Data<adv> |1| { eq(x, InnerRecord_ghost_type) }
-    // TODO: need to be public since we want to branch on it?
-
-    // TODO: padding
+    // TODO: padding handled in Vest
 }
 
 // TODO: change to AEAD
