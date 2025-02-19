@@ -53,7 +53,7 @@ def server_read(
 
                     else if eq(ctype, CTYPE_ALERT()) then
                         // Alert, either throw an error or indicate the end of stream
-                        parse decrypted as Alert(level, desc) in
+                        parse decrypted as Alert(_, desc) in
                             if eq(desc, ALERT_DESC_CLOSE_NOTIFY()) then
                                 ServerReadResult_End()
                             else
