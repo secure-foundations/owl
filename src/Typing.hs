@@ -1378,7 +1378,13 @@ nameTypeUniform nt =
       NT_Nonce _ -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
-      NT_App p ps as -> resolveNameTypeApp p ps as >>= nameTypeUniform
+      NT_App p@(PRes (PDot _ n)) ps as -> do
+        cur_def <- view curNameDef
+        case cur_def of
+            Just (n', _) | n == n' ->
+            -- TODO: check that ps contains strictly increasing indices
+                return ()
+            _ -> resolveNameTypeApp p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
       NT_KDF _ _ -> return ()
       _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
@@ -1492,8 +1498,13 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTy t
         checkNoTopTy False t
         checkTyPubLen t
-      NT_App p ps as -> do
-          resolveNameTypeApp p ps as >>= checkNameType
+      NT_App p@(PRes (PDot _ n)) ps as -> do
+          cur_def <- view curNameDef
+          case cur_def of
+            Just (n', _) | n == n' ->
+              -- TODO: check that ps contains strictly increasing indices
+              return ()
+            _ -> resolveNameTypeApp p ps as >>= checkNameType
       NT_StAEAD t xsaad p ypat -> do
           checkTy t
           checkNoTopTy False t

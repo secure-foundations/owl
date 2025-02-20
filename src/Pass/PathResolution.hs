@@ -162,20 +162,22 @@ resolveDecls (d:ds) =
       DeclName s ixs -> do
           (is, ndecl) <- unbind ixs
           p <- view curPath
-          local (over namePaths $ T.insert s p) $ do
-            ndecl' <- case ndecl of
-                        DeclAbstractName -> return DeclAbstractName
-                        DeclAbbrev bne2 -> do
-                            (xs, ne2) <- unbind bne2
-                            ne2' <- resolveNameExp ne2
-                            return $ DeclAbbrev $ bind xs ne2'
-                        DeclBaseName nt ls -> do
-                            nt' <- resolveNameType nt
-                            ls' <- mapM (resolveLocality (d^.spanOf)) ls
-                            return $ DeclBaseName nt' ls'
-            let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl'
-            ds' <- resolveDecls ds
-            return $ d' : ds'
+          -- TODO: adding both name and nameType paths for now
+          local (over namePaths $ T.insert s p) $
+            local (over nameTypePaths $ T.insert s p) $ do
+                ndecl' <- case ndecl of
+                            DeclAbstractName -> return DeclAbstractName
+                            DeclAbbrev bne2 -> do
+                                (xs, ne2) <- unbind bne2
+                                ne2' <- resolveNameExp ne2
+                                return $ DeclAbbrev $ bind xs ne2'
+                            DeclBaseName nt ls -> do
+                                nt' <- resolveNameType nt
+                                ls' <- mapM (resolveLocality (d^.spanOf)) ls
+                                return $ DeclBaseName nt' ls'
+                let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl'
+                ds' <- resolveDecls ds
+                return $ d' : ds'
       DeclDefHeader s isl -> do
           (is, l) <- unbind isl
           l' <- resolveLocality (d^.spanOf) l

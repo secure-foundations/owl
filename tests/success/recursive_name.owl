@@ -1,0 +1,12 @@
+name n<i> : nonce
+name k1<i> : enckey Name(n<succ(i)>)
+
+// Should fail parser
+// name k2<succ(i)> : nonce
+
+name k2<i> : enckey Name(k2<succ(i)>)
+
+name k3<i> : kdf {ikm info.
+    info == 0x01 -> nonce,
+    info == 0x02 -> k3<succ(i)> 
+}
