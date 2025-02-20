@@ -168,6 +168,7 @@ data Env senv = Env {
     -- These below must only be modified by the trusted functions, since memoization
     -- depends on them
     _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
+    _curNameDef :: Maybe (String, Bind ([IdxVar], [IdxVar]) NameDef),
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
     _pathCondition :: [Prop],
     _expectedTy :: Maybe Ty,
@@ -503,6 +504,12 @@ inferIdx (IVar pos iname i) = do
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
           Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) 
+inferIdx (ISucc pos i) = do
+    t <- inferIdx i
+    case t of
+        IdxSession -> return t
+        IdxPId -> typeError $ "Successor can only be applied to session or ghost indices: " ++ show (owlpretty i)
+        IdxGhost -> return t
 
 checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
@@ -510,7 +517,7 @@ checkIdx i = do
     return ()
 
 checkIdxSession :: Idx -> Check' senv ()
-checkIdxSession i@(IVar pos _ _) = do
+checkIdxSession i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -518,7 +525,7 @@ checkIdxSession i@(IVar pos _ _) = do
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check' senv ()
-checkIdxPId i@(IVar pos _ _) = do
+checkIdxPId i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -697,32 +704,42 @@ pushRoutine s k = do
         local (over tcRoutineStack $ (s:)) k
     else k
 
+lookupNameDef :: Path -> Check' senv (Bind ([IdxVar], [IdxVar]) NameDef)
+lookupNameDef pth@(PRes (PDot p n)) = do
+    md <- view curMod
+    case lookup n (md^.nameDefs) of
+      Just b -> return b
+      Nothing -> do
+        cur_def <- view curNameDef
+        case cur_def of
+            Just (n', b) | n == n' -> return b
+            _ -> typeError $ show $ ErrUnknownName pth
+
 getNameInfo :: NameExp -> Check' senv (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
 getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
-    res <- case ne^.val of 
+    res <- case ne^.val of
              NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
-                 md <- openModule p
-                 tc <- view tcScope
-                 forM_ vs1 checkIdxSession
-                 forM_ vs2 checkIdxPId
-                 case lookup n (md^.nameDefs)  of
-                   Nothing -> typeError $ show $ ErrUnknownName pth
-                   Just b_nd -> do
-                       ((is, ps), nd') <- unbind b_nd
-                       assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
-                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
-                       case nd of
-                         AbbrevNameDef bne2 -> do
-                             (xs, ne2) <- unbind bne2
-                             assert ("Wrong arity for name abbreviation") $ length as == length xs
-                             _ <- mapM inferAExpr as
-                             getNameInfo $ substs (zip xs as) ne2
-                         AbstractName -> do
-                             assert ("Value parameters not allowed for abstract names") $ length as == 0
-                             return Nothing
-                         BaseDef (nt, lcls) -> do
-                             assert ("Value parameters not allowed for base names") $ length as == 0
-                             return $ Just (nt, Just (PDot p n, lcls)) 
+                tc <- view tcScope
+                forM_ vs1 checkIdxSession
+                forM_ vs2 checkIdxPId
+
+                b_nd <- lookupNameDef pth
+                ((is, ps), nd') <- unbind b_nd
+                assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+                let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
+                case nd of
+                    AbbrevNameDef bne2 -> do
+                        (xs, ne2) <- unbind bne2
+                        assert ("Wrong arity for name abbreviation") $ length as == length xs
+                        _ <- mapM inferAExpr as
+                        getNameInfo $ substs (zip xs as) ne2
+                    AbstractName -> do
+                        assert ("Value parameters not allowed for abstract names") $ length as == 0
+                        return Nothing
+                    BaseDef (nt, lcls) -> do
+                        assert ("Value parameters not allowed for base names") $ length as == 0
+                        return $ Just (nt, Just (PDot p n, lcls))
+
              KDFName a b c nks j nt ib -> do
                  _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
                  when (not $ unignore ib) $ do
@@ -1307,25 +1324,22 @@ owlprettyContext e =
 --              _ -> return False
 
 normalizeNameExp :: NameExp -> Check' senv NameExp
-normalizeNameExp ne = 
+normalizeNameExp ne =
     case ne^.val of
-      NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
-          md <- openModule p
-          case lookup n (md^.nameDefs) of
-            Nothing -> typeError $ show $ ErrUnknownName pth
-            Just b_nd -> do 
-                       ((is, ps), nd') <- unbind b_nd
-                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
-                       case nd of
-                         AbbrevNameDef bne2 -> do
-                             (xs, ne2) <- unbind bne2
-                             assert ("Wrong arity") $ length xs == length as
-                             normalizeNameExp $ substs (zip xs as) ne2
-                         _ -> return ne
+      NameConst (vs1, vs2) pth as -> do
+          b_nd <- lookupNameDef pth
+          ((is, ps), nd') <- unbind b_nd
+          let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
+          case nd of
+              AbbrevNameDef bne2 -> do
+                  (xs, ne2) <- unbind bne2
+                  assert ("Wrong arity") $ length xs == length as
+                  normalizeNameExp $ substs (zip xs as) ne2
+              _ -> return ne
       KDFName a b c nks j nt ib -> do
-          a' <- resolveANF a >>= normalizeAExpr 
-          b' <- resolveANF b >>= normalizeAExpr 
-          c' <- resolveANF c >>= normalizeAExpr 
+          a' <- resolveANF a >>= normalizeAExpr
+          b' <- resolveANF b >>= normalizeAExpr
+          c' <- resolveANF c >>= normalizeAExpr
           nt' <- normalizeNameType nt
           return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 

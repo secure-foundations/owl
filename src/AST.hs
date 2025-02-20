@@ -96,6 +96,7 @@ instance Show ResolvedPath where
 
 
 data Idx = IVar (Ignore Position) (Ignore String) IdxVar
+         | ISucc (Ignore Position) Idx
     deriving (Show, Generic, Typeable)
 
 
