@@ -32,10 +32,10 @@ func ALERT_DESC_CLOSE_NOTIFY() = 0x00
 //     HKDFContext_len: Data<adv> |2|,
 //     HKDFContext_label_pref: Const(0x746c73313320), // "tls13 "
 //     HKDFContext_label: Data<adv>
-//     // HKDFContext_context: Data<adv> ||maclen||
+//     // HKDFContext_context: Data<adv> ||crh||
 // }
 
-// TODO: make sure |maclen| has the correct length (u16)
+// TODO: make sure |crh| has the correct length (u16)
 // TODO: add context (hash of previous messages)
 // see Section 7.1
 func KDF_LABEL(lbl) = |crh| ++ TLS13_() ++ lbl
