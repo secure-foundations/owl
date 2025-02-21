@@ -1,12 +1,30 @@
+locality alice
+
 name n<i> : nonce
 name k1<i> : enckey Name(n<succ(i)>)
 
-// Should fail parser
+// Parser should fail
 // name k2<succ(i)> : nonce
 
+// TODO: do we want to allow this?
 name k2<i> : enckey Name(k2<succ(i)>)
 
-name k3<i> : kdf {ikm info.
+nametype rec3<i> = kdf {ikm info.
     info == 0x01 -> nonce,
-    info == 0x02 -> k3<succ(i)> 
+    info == 0x02 -> rec3<succ(i)>
 }
+name k3<i> : rec3<i>
+
+nametype rec4<i> = kdf {ikm info.
+    info == 0x01 -> nonce,
+    info == 0x02 -> kdf {ikm info.
+        info == 0x01 -> rec4<succ(i)>
+    }
+}
+name k4<i> : rec4<i>
+
+def derive<i>(k: Name(k3<i>)) @ alice : Unit
+    =
+    let k1 = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let _ = kdf<0;;nonce;0>(k1, 0x00, 0x01) in
+    ()

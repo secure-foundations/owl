@@ -51,6 +51,8 @@ instance (OwlPretty a, OwlPretty b) => OwlPretty (a, b) where
 
 instance OwlPretty Idx where
     owlpretty (IVar _ s _) = pretty $ unignore s
+    owlpretty (ISucc _ i) = pretty "succ(" <> owlpretty i <> pretty ")"
+    owlpretty (IZero _) = pretty "0"
 
 owlprettyIdxParams :: ([Idx], [Idx]) -> Doc AnsiStyle
 owlprettyIdxParams  ([], []) = mempty

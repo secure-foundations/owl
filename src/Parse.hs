@@ -1772,6 +1772,11 @@ parseIdxExp =
         symbol ")"
         p' <- getPosition
         return $ ISucc (ignore $ mkPos p p') i
+    ) <|> (do
+        p <- getPosition
+        reserved "0"
+        p' <- getPosition
+        return $ IZero (ignore $ mkPos p p')
     )
 
 

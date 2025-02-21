@@ -97,6 +97,7 @@ instance Show ResolvedPath where
 
 data Idx = IVar (Ignore Position) (Ignore String) IdxVar
          | ISucc (Ignore Position) Idx
+         | IZero (Ignore Position)
     deriving (Show, Generic, Typeable)
 
 
@@ -507,6 +508,7 @@ instance Alpha Idx
 instance Alpha Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ _ v) = Just (SubstName v)
+    isvar _ = Nothing
 instance Subst AExpr Idx
 instance Subst ResolvedPath Idx
 

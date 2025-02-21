@@ -169,6 +169,7 @@ data Env senv = Env {
     -- depends on them
     _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
     _curNameDef :: Maybe (String, Bind ([IdxVar], [IdxVar]) NameDef),
+    _curNameTypeDef :: Maybe (String, Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
     _pathCondition :: [Prop],
     _expectedTy :: Maybe Ty,
@@ -510,6 +511,7 @@ inferIdx (ISucc pos i) = do
         IdxSession -> return t
         IdxPId -> typeError $ "Successor can only be applied to session or ghost indices: " ++ show (owlpretty i)
         IdxGhost -> return t
+-- TODO: inferIdx (IZero _) = ...
 
 checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
@@ -677,11 +679,15 @@ inODHProp salt ikm info = do
 --                return $ substs (zip xs as) p
 --            _ -> typeError $ "Not an RO name: " ++ n
 
--- Resolves all App nodes
-normalizeNameType :: NameType -> Check' senv NameType
-normalizeNameType nt = pushRoutine "normalizeNameType" $  
+-- Resolves all App nodes (except for recursive name types)
+-- TODO: assuming no mutually recursive name types yet
+normalizeNameType' :: Maybe String -> NameType -> Check' senv NameType
+normalizeNameType' rec_nt nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
-      NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
+      NT_App p@(PRes (PDot _ n)) is as ->
+        case rec_nt of
+          Just n' | n == n' -> return nt -- Recursive name types are unfolded at most once
+          _ -> resolveNameTypeApp p is as >>= normalizeNameType' (Just n)
       NT_KDF pos bcases -> do
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
           cases' <- withVars 
@@ -691,11 +697,14 @@ normalizeNameType nt = pushRoutine "normalizeNameType" $
                 (is, (p, nts)) <- unbind bcase
                 withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
                     nts' <- forM nts $ \(str, nt) -> do
-                        nt' <- normalizeNameType nt
+                        nt' <- normalizeNameType' rec_nt nt
                         return (str, nt')
                     return $ bind is (p, nts')
           return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
       _ -> return nt
+
+normalizeNameType :: NameType -> Check' senv NameType
+normalizeNameType = normalizeNameType' Nothing
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
 pushRoutine s k = do

@@ -67,7 +67,7 @@ emptyEnv f = do
     m <- newIORef $ M.empty
     rs <- newIORef []
     memo <- mkMemoEntry 
-    return $ Env mempty Nothing mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
+    return $ Env mempty Nothing Nothing mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
         interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
 
 
@@ -815,48 +815,62 @@ allM (x:xs) f = do
 
 subNameType :: NameType -> NameType -> Check Bool
 subNameType nt1 nt2 = do
-    res <- withPushLog $ case (nt1^.val, nt2^.val) of
-             _ | nt1 `aeq` nt2 -> return True
-             (NT_DH, NT_DH) -> return True
-             (NT_Sig t1, NT_Sig t2) -> isSubtype t1 t2
-             (NT_Nonce s1, NT_Nonce s2) -> return $ s1 == s2
-             (NT_Enc t1, NT_Enc t2) -> isSubtype t1 t2
-             (NT_StAEAD t1 xp1 pth1 xpat1, NT_StAEAD t2 xp2 pth2 xpat2) -> do
-                 b1 <- isSubtype t1 t2
-                 ((x, slf), p1) <- unbind xp1
-                 ((x', slf'), p2_) <- unbind xp2
-                 let p2 = subst x' (aeVar' x) $ subst slf' (aeVar' slf) $ p2_
-                 b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
-                 b3 <- return $ pth1 `aeq` pth2
-                 (z, pat1) <- unbind xpat1
-                 (w, pat2) <- unbind xpat2
-                 b4 <- withVars [(z, (ignore $ show z, Nothing, tGhost))] $ decideProp $ pat1 `pEq` (subst w (aeVar' z) pat2)
-                 return $ b1 && (b2 == Just True) && b3 && (b4 == Just True)
-             (NT_KDF pos1 body1, NT_KDF pos2 body2) -> do
-                 (((sx, x), (sy, y), (sz, z)), bnds) <- unbind body1
-                 (((sx', x'), (sy', y'), (sz', z')), bnds') <- unbind body2
-                 withVars [(x, (ignore sx, Nothing, tGhost)), (y, (ignore sy, Nothing, tGhost)), (z, (ignore sz, Nothing, tGhost))] $ 
-                     if pos1 == pos2 && length bnds == length bnds' then go bnds (substs [(x', aeVar' x), (y', aeVar' y), (z', aeVar' z)] bnds') else return False
-                     where
-                         go :: [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
-                               [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
-                               Check Bool
-                         go [] [] = return True
-                         go (b1:xs) (b2:ys) = do
-                             (is1, rest1) <- unbind b1
-                             (is2, rest2_) <- unbind b2
-                             bhere <- if length is1 == length is2 then do
-                                 let rest2 = substs (map (\(i1, i2) -> (i2, mkIVar i1)) (zip is1 is2)) rest2_
-                                 withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is1) $ do
-                                     b1 <- decideProp $ pImpl (fst rest1) (fst rest2)
-                                     if (b1 == Just True) then do 
-                                         allM (zip (snd rest1) (snd rest2)) $ \(nt1, nt2) -> 
-                                             if (fst nt1 == fst nt2) then subNameType (snd nt1) (snd nt2) else return False
-                                     else return False
-                                 else return False
-                             if bhere then go xs ys else return False
-             _ -> return False                                
-    return res
+    -- Some special handling of recursive name types
+    case (nt1^.val, nt2^.val) of
+        -- If both are applications, it suffices to directly check names and arguments
+        (NT_App _ _ _, NT_App _ _ _) -> return $ nt1 `aeq` nt2
+
+        -- Otherwise we unfold one of them and continue
+        -- Since we don't have mutually recursive types, this should terminate
+        (NT_App p@(PRes (PDot _ n)) is as, _) ->
+            resolveNameTypeApp p is as >>= (`subNameType` nt2)
+
+        (_, NT_App p@(PRes (PDot _ n)) is as) ->
+            resolveNameTypeApp p is as >>= (nt1 `subNameType`)
+
+        _ -> do
+            res <- withPushLog $ case (nt1^.val, nt2^.val) of
+                    _ | nt1 `aeq` nt2 -> return True
+                    (NT_DH, NT_DH) -> return True
+                    (NT_Sig t1, NT_Sig t2) -> isSubtype t1 t2
+                    (NT_Nonce s1, NT_Nonce s2) -> return $ s1 == s2
+                    (NT_Enc t1, NT_Enc t2) -> isSubtype t1 t2
+                    (NT_StAEAD t1 xp1 pth1 xpat1, NT_StAEAD t2 xp2 pth2 xpat2) -> do
+                        b1 <- isSubtype t1 t2
+                        ((x, slf), p1) <- unbind xp1
+                        ((x', slf'), p2_) <- unbind xp2
+                        let p2 = subst x' (aeVar' x) $ subst slf' (aeVar' slf) $ p2_
+                        b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
+                        b3 <- return $ pth1 `aeq` pth2
+                        (z, pat1) <- unbind xpat1
+                        (w, pat2) <- unbind xpat2
+                        b4 <- withVars [(z, (ignore $ show z, Nothing, tGhost))] $ decideProp $ pat1 `pEq` (subst w (aeVar' z) pat2)
+                        return $ b1 && (b2 == Just True) && b3 && (b4 == Just True)
+                    (NT_KDF pos1 body1, NT_KDF pos2 body2) -> do
+                        (((sx, x), (sy, y), (sz, z)), bnds) <- unbind body1
+                        (((sx', x'), (sy', y'), (sz', z')), bnds') <- unbind body2
+                        withVars [(x, (ignore sx, Nothing, tGhost)), (y, (ignore sy, Nothing, tGhost)), (z, (ignore sz, Nothing, tGhost))] $ 
+                            if pos1 == pos2 && length bnds == length bnds' then go bnds (substs [(x', aeVar' x), (y', aeVar' y), (z', aeVar' z)] bnds') else return False
+                            where
+                                go :: [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                                    [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                                    Check Bool
+                                go [] [] = return True
+                                go (b1:xs) (b2:ys) = do
+                                    (is1, rest1) <- unbind b1
+                                    (is2, rest2_) <- unbind b2
+                                    bhere <- if length is1 == length is2 then do
+                                        let rest2 = substs (map (\(i1, i2) -> (i2, mkIVar i1)) (zip is1 is2)) rest2_
+                                        withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is1) $ do
+                                            b1 <- decideProp $ pImpl (fst rest1) (fst rest2)
+                                            if (b1 == Just True) then do 
+                                                allM (zip (snd rest1) (snd rest2)) $ \(nt1, nt2) -> 
+                                                    if (fst nt1 == fst nt2) then subNameType (snd nt1) (snd nt2) else return False
+                                            else return False
+                                        else return False
+                                    if bhere then go xs ys else return False
+                    _ -> return False                                
+            return res
 
                                                          
 
@@ -1285,9 +1299,10 @@ checkDecl d cont = withSpan (d^.spanOf) $
           tds <- view $ curMod . nameTypeDefs
           assert ("Duplicate name type name: " ++ s) $ not $ member s tds
           (((is, ps), xs), nt) <- unbind bnt
-          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
-                    checkNameType nt
+          local (over curNameTypeDef $ \_ -> Just (s, bnt)) $
+            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
+                    withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                        checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclODH s b -> do
           ensureNoConcreteDefs
@@ -1379,10 +1394,10 @@ nameTypeUniform nt =
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
       NT_App p@(PRes (PDot _ n)) ps as -> do
-        cur_def <- view curNameDef
-        case cur_def of
+        nt_def <- view curNameTypeDef
+        case nt_def of
             Just (n', _) | n == n' ->
-            -- TODO: check that ps contains strictly increasing indices
+                -- TODO: check that ps contains strictly increasing indices
                 return ()
             _ -> resolveNameTypeApp p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
@@ -1462,10 +1477,11 @@ checkNoTopTy allowGhost t =
       _ -> return ()      
           
 
-
-
 checkNameType :: NameType -> Check ()
-checkNameType nt = withSpan (nt^.spanOf) $ 
+checkNameType = checkNameType' Nothing
+
+checkNameType' :: Maybe String -> NameType -> Check ()
+checkNameType' rec_nt nt = withSpan (nt^.spanOf) $ 
     case nt^.val of
       NT_DH -> return ()
       NT_Sig t -> do
@@ -1488,7 +1504,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
                               not $ xself `elem` (toListOf fv p)
                       checkProp p
                       forM_ nts $ \(str, nt) -> do
-                          checkNameType nt
+                          checkNameType' rec_nt nt
                           nameTypeUniform nt
                       return $ mkExistsIdx ixs p 
               (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
@@ -1499,12 +1515,14 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkNoTopTy False t
         checkTyPubLen t
       NT_App p@(PRes (PDot _ n)) ps as -> do
-          cur_def <- view curNameDef
-          case cur_def of
+          nt_def <- view curNameTypeDef
+          case nt_def of
             Just (n', _) | n == n' ->
               -- TODO: check that ps contains strictly increasing indices
               return ()
-            _ -> resolveNameTypeApp p ps as >>= checkNameType
+            _ -> case rec_nt of
+                Just n' | n == n' -> return ()
+                _ -> resolveNameTypeApp p ps as >>= checkNameType' (Just n)
       NT_StAEAD t xsaad p ypat -> do
           checkTy t
           checkNoTopTy False t

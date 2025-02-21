@@ -163,21 +163,20 @@ resolveDecls (d:ds) =
           (is, ndecl) <- unbind ixs
           p <- view curPath
           -- TODO: adding both name and nameType paths for now
-          local (over namePaths $ T.insert s p) $
-            local (over nameTypePaths $ T.insert s p) $ do
-                ndecl' <- case ndecl of
-                            DeclAbstractName -> return DeclAbstractName
-                            DeclAbbrev bne2 -> do
-                                (xs, ne2) <- unbind bne2
-                                ne2' <- resolveNameExp ne2
-                                return $ DeclAbbrev $ bind xs ne2'
-                            DeclBaseName nt ls -> do
-                                nt' <- resolveNameType nt
-                                ls' <- mapM (resolveLocality (d^.spanOf)) ls
-                                return $ DeclBaseName nt' ls'
-                let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl'
-                ds' <- resolveDecls ds
-                return $ d' : ds'
+          local (over namePaths $ T.insert s p) $ do
+            ndecl' <- case ndecl of
+                        DeclAbstractName -> return DeclAbstractName
+                        DeclAbbrev bne2 -> do
+                            (xs, ne2) <- unbind bne2
+                            ne2' <- resolveNameExp ne2
+                            return $ DeclAbbrev $ bind xs ne2'
+                        DeclBaseName nt ls -> do
+                            nt' <- resolveNameType nt
+                            ls' <- mapM (resolveLocality (d^.spanOf)) ls
+                            return $ DeclBaseName nt' ls'
+            let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl'
+            ds' <- resolveDecls ds
+            return $ d' : ds'
       DeclDefHeader s isl -> do
           (is, l) <- unbind isl
           l' <- resolveLocality (d^.spanOf) l
@@ -224,13 +223,13 @@ resolveDecls (d:ds) =
                     Right dcls -> local (over includes $ S.insert fn) $ resolveDecls (dcls ++ ds)
             _ -> resolveError (d^.spanOf) $ "include statements only allowed at top level"
       DeclNameType s b -> do
-          (is, nt) <- unbind b
-          nt' <- resolveNameType nt
-          let d' = Spanned (d^.spanOf) $ DeclNameType s $ bind is nt'
           p <- view curPath
-          ds' <- local (over nameTypePaths $ T.insert s p) $ 
-              resolveDecls ds
-          return (d' : ds')
+          local (over nameTypePaths $ T.insert s p) $ do
+            (is, nt) <- unbind b
+            nt' <- resolveNameType nt
+            let d' = Spanned (d^.spanOf) $ DeclNameType s $ bind is nt'
+            ds' <- resolveDecls ds
+            return (d' : ds')
       DeclStruct  s xs -> do
           (is, vs) <- unbind xs
           vs' <- resolveDepBind vs $ \_ -> return ()
