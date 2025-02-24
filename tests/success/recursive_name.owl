@@ -11,7 +11,7 @@ name k2<i> : enckey Name(k2<succ(i)>)
 
 nametype rec3<i> = kdf {ikm info.
     info == 0x01 -> nonce,
-    info == 0x02 -> rec3<succ(i)>
+    info == 0x02 -> strict rec3<succ(i)>
 }
 name k3<i> : rec3<i>
 
