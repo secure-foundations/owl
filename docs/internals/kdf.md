@@ -61,14 +61,16 @@ Here, "`kdfCasePat` conforms with `nks`" means that the row of name kinds in `nk
 compatible with the row of name types defined by the `kdfCasePat`.
 
 **Well-typed, key corrupt case**
+_TODO_ can only use this rule if the "good case" rule does not apply.
+_TODO_ do we add more IFC annotations based on the arguments that are secret
 ```
 G |- c <= adv
-G |- validKDFKey((ann1,ann2,a,b,c), kdfkey, kdfCasePat, kdfCaseStrictness)
-G |- kdfkey <= adv
+G |- validIKM_ODHKey((ann1,ann2,a,b,c), kdfkey, kdfCasePat, kdfCaseStrictness)
+G |- pubIKM(kdfkey)
 kdfCasePat conforms with nks
 ---------------------------------------------------------------------------
 G |- kdf<ann1,ann2,nks,j>(a,b,c) : 
-    x:Data<adv>{ 
+    x:Data<adv /\ [a] /\ [b] /\ [c]>{ 
         /\ |x| = |nks[j]| 
         /\ x = gkdf<nks,j>(a,b,c)
     }
@@ -121,8 +123,8 @@ See `findValidSaltCalls` and `matchKDF` in the code.
 ```
 i ∈ saltAnn
 G |- salt : Name(kdfkey) // modulo refinements, etc
-G[kdfkey] = kdf {ikm info self. ..., p -> kdfCaseStrictness kdfCasePat, ... }
-p[ikm := b, info := c, self := salt] is true
+G[kdfkey] = kdf {ikm info self. ..., i: p -> kdfCaseStrictness kdfCasePat, ... }
+G |- p[ikm := b, info := c, self := salt] is true
 --------------------------------------------------------------------------------
 G |- validSaltKey((saltAnn,salt,b,c), kdfkey, kdfCasePat, kdfCaseStrictness)
 ```
@@ -137,10 +139,10 @@ it seems like we enforce that the `ikm'` must be an honest name sandwiched betwe
 i ∈ ikmAnn
 ikm = preIkm ++ ikm' ++ postIkm
 G |- pubIKM(a, preIkm, c)
-G |- pubIKM(a, postIkm. c)
+G |- pubIKM(a, postIkm, c)
 G |- ikm' : Name(kdfkey) // modulo refinements, etc
 G[kdfkey] = kdf {salt info self. ..., p -> kdfCaseStrictness kdfCasePat, ... }
-p[salt := a, info := c, self := ikm] is true
+G |- p[salt := a, info := c, self := ikm] is true
 --------------------------------------------------------------------------------
 G |- validIKMKey((ikmAnn,a,ikm,c), kdfkey, kdfCasePat, kdfCaseStrictness)
 ```
@@ -160,7 +162,7 @@ G |- pubIKM(a, postIkm. c)
 G |- ikm' = dh_combine(X, Y)
 G |- X !<= adv
 G |- Y !<= adv
-p[salt := a, info := c, self := ikm] is true
+G |- p[salt := a, info := c, self := ikm] is true
 --------------------------------------------------------------------------------
 G |- validODHKey((ikmAnn,a,ikm,c), [X,Y], kdfCasePat, kdfCaseStrictness)
 ```
@@ -196,7 +198,7 @@ G |- pubIKM(a,b,c)
 
 ```
 G |- in_odh(a,b,c)
-b = dh_combine(X, Y)
+G |- b = dh_combine(X, Y)
 G |- Y <= adv
 -----------------------------
 G |- pubIKM(a,b,c)
@@ -209,6 +211,11 @@ G |- pubIKM(a,b,c)
 ### `in_odh(a,b,c)`:
 _TODO_ fill this in formally. Checks whether `kdf(a,b,c)` corresponds to any valid ODH call, i.e.,
 `b = dh_combine(X, Y)` for some `X` and `Y` that appear as `odh X, Y -> {...}` somewhere in scope.
+
+Owl restricts `odh` declarations to only have pairs of keys that appear in the local module 
+(so we can iterate through all of them). All names must be defined before any `def`s appear, so
+that we can't add a later `odh` call that invalidates the `in_odh` assumption. See `ensureNoConcreteDefs`
+
 
 ### `strictnessOf(N, strictness)`:
 So as to not have three copies of the good-case typing rule, we separate out the 
