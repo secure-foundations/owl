@@ -2604,6 +2604,8 @@ proveDisjointContents x y = do
                         _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (owlpretty f)
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
+-- Check that multiple computed KDF case results are consistent (i.e., they compute the same value).
+-- Need to use SMT for this since they may not be syntactically equal
 unifyValidKDFResults :: [(KDFStrictness, NameExp)] -> Check (Maybe (KDFStrictness, NameExp))
 unifyValidKDFResults valids = do
     if length valids == 0 then return Nothing else Just <$> go valids
@@ -2628,6 +2630,16 @@ unifyValidKDFResults valids = do
                  _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness" 
                  _ | not b -> typeError $ "KDF results inconsistent: result name types not equal" 
 
+-- `Either Bool (KDFStrictness, NameExp)` is used to represent the result of a KDF call.
+-- If the result is `Right _`, we matched a case in the KDF/ODH declaration.
+-- If the result is `Left True`, the KDF key is public (either flows to adv or is an out-of-bounds DH shared secret).
+-- If the result is `Left False`, the KDF call is ill-typed in some way.
+
+
+-- Unify the results of multiple KDF calls (sort of inverse to `findBestKDFCallResult`).
+-- Used to join the results of checking multiple candidate concats in IKM position (so all must either be public or match a KDF case).
+-- If we got any bad KDF calls from the concats, then we have an ill-typed KDF call overall.
+-- Otherwise, try to find a matching case from the KDF declaration; if unsuccessful, we have a public KDF key.
 unifyKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
 unifyKDFCallResult xs = do
     -- If any are (Left False), return Nothing
@@ -2641,6 +2653,10 @@ unifyKDFCallResult xs = do
           Nothing -> return $ Left True
           Just v -> return $ Right v
 
+-- Used to find the best result from trying several annotations (so any of the annotations working is fine).
+-- The "best" KDF call result (from `findValidSaltCalls` or `findValidIKMCalls`) is defined as follows.
+-- Exact names are best (corresponding to cases that appear in the KDF declaration).
+-- If no exact names are found, check if all results correspond to public data (in which case the KDF call is public).
 findBestKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
 findBestKDFCallResult xs = do
     let valids = catMaybes $ map (\e -> case e of                           
@@ -2653,7 +2669,9 @@ findBestKDFCallResult xs = do
                                                     Left b -> b
                                                     Right _ -> True) xs
                
-
+-- Find all possible KDF salt position calls that match the given annotations `anns` and choose the best one.
+-- Attempt to extract a KDF key from the salt position argument `a`. If successful, use `matchKDF`
+-- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the salt argument is public.
 findValidSaltCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [KDFSelector] -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
 findValidSaltCalls a b c anns j nks = do
     results <- forM anns $ \(i, is_case) -> do
@@ -2667,7 +2685,10 @@ findValidSaltCalls a b c anns j nks = do
                 _ -> Left <$> kdfArgPublic [] KDF_SaltPos a b c
     findBestKDFCallResult results
 
-
+-- Find all possible KDF IKM position calls that match the given annotations `anns` and choose the best one.
+-- Use `unconcatIKM` to split out all concats from the IKM position arg `b`. For each subrange `b'` of `b`, try to find
+-- a name in `b'`; if successful, use either `matchKDF` or `matchODH` (depending on the selectors in the annotation)
+-- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the IKM argument is public.
 findValidIKMCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)] 
                   -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
 findValidIKMCalls a b c anns j nks = do
@@ -2699,6 +2720,16 @@ findValidIKMCalls a b c anns j nks = do
         findBestKDFCallResult b'_res
     unifyKDFCallResult $ b_results
 
+
+-- Compute the result name exp for an ODH call using a particular ODH selector. Arguments:
+--  dhs: DH key pairs from the odh declaration
+--  a: salt argument
+--  ((bFull, b), bt): ikm argument (`bFull` is the original argument, `b` is the concat component to analyze, `bt` is the type of `b`)
+--  c: info argument
+--  (s, ips, i): ODH selector (ODH name, sid/pid arguments, selector)
+--  j: index into the name kind row `nks`
+--  nks: output name kind row
+-- Returns either a boolean indicating whether the ODH call is public (if it doesn't match the case), or the strictness and the name exp of the result
 matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> (String, ([Idx], [Idx]), KDFSelector) -> Int -> [NameKind] -> 
     Check (Either Bool (KDFStrictness, NameExp))
 matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
@@ -2727,6 +2758,18 @@ matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
       _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
 
 
+-- Compute the result name exp for a KDF call using a particular selector. Arguments:
+--  dhs: DH key pairs from the annotation (used to check public args)
+--  pos: KDF position (salt or IKM)
+--  ne: name exp extracted from the KDF key (either salt or IKM position)
+--  bcases: KDF body corresponding to `ne` in the environment
+--  a: salt argument
+--  ((bFull, b), bt): ikm argument (`bFull` is the original argument, `b` is the concat component to analyze, `bt` is the type of `b`)
+--  c: info argument
+--  (i, is_case): KDF selector (selector into `bcases` and index arguments)
+--  j: index into the name kind row `nks`
+--  nks: output name kind row
+-- Returns either a boolean indicating whether the KDF call is public (if it doesn't match the case), or the strictness and the name exp of the result
 matchKDF :: [(NameExp, NameExp)] -> KDFPos -> NameExp -> KDFBody -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> KDFSelector -> Int -> [NameKind] ->
     Check (Either Bool (KDFStrictness, NameExp))
 matchKDF dhs pos ne bcases a ((bFull, b), bt) c (i, is_case) j nks = do 
@@ -2751,6 +2794,9 @@ matchKDF dhs pos ne bcases a ((bFull, b), bt) c (i, is_case) j nks = do
       else Left <$> kdfArgPublic dhs pos a (b, bt) c
     else Left <$> kdfArgPublic dhs pos a (b, bt) c
 
+-- check if the key position argument to a KDF call is public
+-- salt must flow to adv
+-- ikm must either flow to adv or be an out-of-bounds DH shared secret
 kdfArgPublic dhs pos a b c = do
     case pos of
       KDF_SaltPos -> tyFlowsTo (snd a) advLbl
@@ -2761,6 +2807,10 @@ pubIKM dhs a b c = do
     p <- tyFlowsTo (snd b) advLbl
     if p then return True else kdfOOB dhs (fst a) (fst b) (fst c)
 
+-- Check if an ODH call to kdf is out of bounds (i.e., the DH shared secret is not
+-- defined in the relevant `odh` name definition), or if it is, 
+-- matchedSecrets: list of DH pairs to try based on the `odh` annotation from the user
+-- returns true if the call is out of bounds, so result should be `Data<adv>` by PRF-ODH
 kdfOOB :: [(NameExp, NameExp)] -> AExpr -> AExpr -> AExpr -> Check Bool
 kdfOOB matchedSecrets a b c = do
     dhComp <- getLocalDHComputation b
@@ -2814,6 +2864,13 @@ getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
 -- Resolve the AExpr and split it up into its concat components. For soundness,
 -- we restrict the computations that can show up in IKMs, so we cannot smuggle
 -- in a concat that is not caught
+-- Values that can appear in an IKM expression:
+-- - A name (`TName`/`get(_)`)
+-- - A DH public key (`TDH_PK`/`dhpk(_)`)
+-- - A DH shared secret (`TSS`/`dh_combine(_,_)`)
+-- - A hex const (`THexConst`)
+-- - A DH group element (`is_group_elem(_)` checked by SMT)
+-- - Concats of the above
 unconcatIKM :: AExpr -> Check [AExpr]
 unconcatIKM a = do
     a' <- resolveANF a >>= normalizeAExpr
@@ -2960,12 +3017,14 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
 --      - Split it into components
 --      - For each component, ensure it matches a secret, or is public
 --  3. Collect the secret ann's, make sure they are consistent
+      -- oann1: which case of the kdf to use for kdfkey in salt position
+      -- oann2: which case of the kdf to use for kdfkey in ikm position (also for odh name in ikm position)
       CKDF oann1 oann2 nks j -> do
           assert ("KDF must take three arguments") $ length args == 3
-          let [a, b, c] = args
-          cpub <- tyFlowsTo (snd c) advLbl
+          let [a, b, c] = args -- a == salt, b == ikm, c == info
+          cpub <- tyFlowsTo (snd c) advLbl -- check that info is public
           assert ("Third argument to KDF must flow to adv") cpub
-          kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j
+          kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j 
           resT <- manyCasePropTy kdfCaseSplits $ local (set tcScope $ TcGhost False) $ do 
               falseCase <- doAssertFalse
               case falseCase of
@@ -3149,6 +3208,9 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                           else mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
+-- Find all names that appear in any of the arguments to the KDF, as well as any
+-- DH pairs that appear in the ODH annotation.
+-- Return a list of props for whether each of the above names flows to the adv.
 findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]
 findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
     names1 <- do
