@@ -70,7 +70,7 @@ G |- pubIKM(kdfkey)
 kdfCasePat conforms with nks
 ---------------------------------------------------------------------------
 G |- kdf<ann1,ann2,nks,j>(a,b,c) : 
-    x:Data<adv /\ [a] /\ [b] /\ [c]>{ 
+    x:Data<adv>{ 
         /\ |x| = |nks[j]| 
         /\ x = gkdf<nks,j>(a,b,c)
     }
