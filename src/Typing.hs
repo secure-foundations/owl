@@ -1393,12 +1393,18 @@ nameTypeUniform nt =
       NT_Nonce _ -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
-      NT_App p@(PRes (PDot _ n)) ps as -> do
+      NT_App p@(PRes (PDot _ n)) ps@(sess_ids, _) as -> do
         nt_def <- view curNameTypeDef
         case nt_def of
             Just (n', _) | n == n' ->
-                -- TODO: check that ps contains strictly increasing indices
-                return ()
+                -- Check that ps contains strictly increasing indices
+                if any (\i -> case i of
+                        ISucc _ _ -> True
+                        _ -> False) sess_ids then
+                    return ()
+                else
+                    typeError $ "Recursive name type application should have at least one strictly increasing index: "
+                        ++ show (owlpretty nt)
             _ -> resolveNameTypeApp p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
       NT_KDF _ _ -> return ()
