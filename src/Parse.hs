@@ -1738,7 +1738,7 @@ parseParam =
             (reserved "session" >> (return $ Just IdxSession))
             <|>
             (reserved "pid" >> (return $ Just IdxPId))
-        i <- parseIdx
+        i <- parseIdxExp
         return $ ParamIdx i ot)
     <|>
     (try $ do
@@ -1768,7 +1768,7 @@ parseIdxExp =
         p <- getPosition
         reserved "succ"
         symbol "("
-        i <- parseIdx
+        i <- parseIdxExp
         symbol ")"
         p' <- getPosition
         return $ ISucc (ignore $ mkPos p p') i
@@ -1808,7 +1808,7 @@ parseIdxParams1 = do
 parseIdxParamsNoAngles :: Parser ([Idx], [Idx])
 parseIdxParamsNoAngles = do
     inds <- optionMaybe $ do
-        is <- parseIdx `sepBy` symbol ","
+        is <- parseIdxExp `sepBy` symbol ","
         ps <- optionMaybe $ do
             symbol "@"
             parseIdx `sepBy` symbol ","

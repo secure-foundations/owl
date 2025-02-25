@@ -7,7 +7,10 @@ name k1<i> : enckey Name(n<succ(i)>)
 // name k2<succ(i)> : nonce
 
 // TODO: do we want to allow this?
-name k2<i> : enckey Name(k2<succ(i)>)
+name k2<i>: enckey Name(k2<succ(i)>)
+
+// Should fail
+// name k3<i> : enckey Name(k3<i>)
 
 nametype rec3<i> = kdf {ikm info.
     info == 0x01 -> nonce,
@@ -15,16 +18,55 @@ nametype rec3<i> = kdf {ikm info.
 }
 name k3<i> : rec3<i>
 
-nametype rec4<i> = kdf {ikm info.
-    info == 0x01 -> nonce,
-    info == 0x02 -> kdf {ikm info.
-        info == 0x01 -> rec4<succ(i)>
-    }
-}
-name k4<i> : rec4<i>
+name a : DH @ alice
+name b : DH @ alice
+name data : nonce @ alice
 
-def derive<i>(k: Name(k3<i>)) @ alice : Unit
+nametype rec4<i> = kdf {ikm info.
+    info == 0x01 -> enckey Name(data),
+    // info == 0x02 -> strict kdf {ikm info.
+    //     info == 0x01 -> strict rec4<succ(i)>
+    // }
+    info == 0x02 -> strict rec4<succ(i)>
+}
+
+odh schedule : a, b -> {salt info.
+    info == 0x01 -> enckey Name(data),
+    info == 0x02 -> strict rec4<0>
+} 
+
+def pasta<i>(k: Name(k3<i>)) @ alice : Unit
     =
-    let k1 = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
-    let _ = kdf<0;;nonce;0>(k1, 0x00, 0x01) in
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let _ = kdf<0;;nonce;0>(k, 0x00, 0x01) in
     ()
+
+def pasta2<i>(k_pre: Ghost, k: SecName(KDF<kdfkey; 0; rec3<i>>(k_pre, 0x00, 0x02))) @ alice
+    : SecName(KDF<kdfkey; 0; rec3<succ(i)>>(k, 0x00, 0x02))
+    = kdf<1;;kdfkey;0>(k, 0x00, 0x02)
+
+def pasta3<i>(k_pre: Ghost, k: SecName(KDF<kdfkey; 0; rec3<i>>(k_pre, 0x00, 0x02))) @ alice
+    : SecName(KDF<kdfkey; 0; rec3<succ(succ(i))>>(gkdf<kdfkey;0>(k, 0x00, 0x02), 0x00, 0x02))
+    =
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    let k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+    k
+
+struct Ticket<i> {
+    k_pre: Ghost,
+    k: SecName(KDF<kdfkey; 0; rec4<i>>(k_pre, 0x00, 0x02))
+}
+
+def pasta4<i>(ticket: Option(Ticket<session i>)) @ alice
+    : Option(Ticket<session succ(i)>)
+    =
+    case ticket {
+        | Some ticket =>
+            parse ticket as Ticket<session i>(k_pre, k) in
+            let new_k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
+            Some(Ticket<session succ(i)>(k, new_k))
+        | None => None()
+    }

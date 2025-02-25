@@ -511,7 +511,7 @@ inferIdx (ISucc pos i) = do
         IdxSession -> return t
         IdxPId -> typeError $ "Successor can only be applied to session or ghost indices: " ++ show (owlpretty i)
         IdxGhost -> return t
--- TODO: inferIdx (IZero _) = ...
+inferIdx (IZero _) = return IdxSession
 
 checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
@@ -713,15 +713,16 @@ pushRoutine s k = do
         local (over tcRoutineStack $ (s:)) k
     else k
 
-lookupNameDef :: Path -> Check' senv (Bind ([IdxVar], [IdxVar]) NameDef)
+-- Returns (is_recursive, definition)
+lookupNameDef :: Path -> Check' senv (Bool, Bind ([IdxVar], [IdxVar]) NameDef)
 lookupNameDef pth@(PRes (PDot p n)) = do
-    md <- view curMod
+    md <- openModule p
     case lookup n (md^.nameDefs) of
-      Just b -> return b
+      Just b -> return (False, b)
       Nothing -> do
         cur_def <- view curNameDef
         case cur_def of
-            Just (n', b) | n == n' -> return b
+            Just (n', b) | n == n' -> return (True, b)
             _ -> typeError $ show $ ErrUnknownName pth
 
 getNameInfo :: NameExp -> Check' senv (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
@@ -732,7 +733,14 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                 forM_ vs1 checkIdxSession
                 forM_ vs2 checkIdxPId
 
-                b_nd <- lookupNameDef pth
+                (is_rec, b_nd) <- lookupNameDef pth
+
+                -- If recursive, check that the indices are strictly increasing
+                assert ("Recursive name uses should have at least one strictly increasing index: " ++ show (owlpretty ne)) $
+                    not is_rec || any (\i -> case i of
+                            ISucc _ _ -> True
+                            _ -> False) vs1
+
                 ((is, ps), nd') <- unbind b_nd
                 assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
                 let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
@@ -1336,7 +1344,7 @@ normalizeNameExp :: NameExp -> Check' senv NameExp
 normalizeNameExp ne =
     case ne^.val of
       NameConst (vs1, vs2) pth as -> do
-          b_nd <- lookupNameDef pth
+          (_, b_nd) <- lookupNameDef pth
           ((is, ps), nd') <- unbind b_nd
           let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
           case nd of
