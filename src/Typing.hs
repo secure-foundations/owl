@@ -205,6 +205,24 @@ initDetFuncs = withNormalizedTys $ [
                       TOption _ -> return $ t^.val
                       _ -> typeError $ show $ owlpretty "Expected type is not option type: " <> owlpretty t
           _ -> typeError $ show $ ErrBadArgs "None" (map snd args))),
+    mkSimpleFunc "Some?" 1 $ \args -> 
+            case args of
+            [t] -> 
+                case (stripRefinements t)^.val of
+                    TOption t' -> return $ TBool advLbl
+                    _ -> do
+                        l <- coveringLabel t
+                        return $ TBool l
+            _ -> typeError $ show $ ErrBadArgs "Some?" args,
+    mkSimpleFunc "None?" 1 $ \args -> 
+            case args of
+            [t] -> 
+                case (stripRefinements t)^.val of
+                    TOption t' -> return $ TBool advLbl
+                    _ -> do
+                        l <- coveringLabel t
+                        return $ TBool l
+            _ -> typeError $ show $ ErrBadArgs "None?" args,
     ("andb", (2, \ps args -> do
         assert ("Bad params") $ length ps == 0
         case args of

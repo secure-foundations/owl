@@ -15,4 +15,7 @@ def alice<i>() @ A : Unit =
     let tst3 : Data<[M]> = Some<type Name(N<i>)>(get(M)) in 
     // None always requires the option
     let tst4 : Option Name(N<i>) = None<type Name(N<i>)>() in
+    let tst5 : Bool<adv> = None?(tst4) in
+    let tst6 : Bool<adv> = Some?(tst4) in
+    let tst7 : Bool<[M]> = Some?(tst3) in // ill-typed case
     ()

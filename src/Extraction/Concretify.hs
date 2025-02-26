@@ -305,6 +305,8 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                         -- This is probably fine, since some other branch should constrain the type
                         -- debugPrint "WARNING: Can't infer type of None, using dummy type"
                         return $ mkAppNoLets f $  FOption FDummy
+        ("Some?", [x]) -> return $ mkAppNoLets "is_some" $ FBool
+        ("None?", [x]) -> return $ mkAppNoLets "is_none" $ FBool
         ("andb", [x, y]) -> return $ mkAppNoLets f FBool
         ("andp", [x, y]) -> return $ mkAppNoLets f FGhost
         ("notb", [x]) -> return $ mkAppNoLets f FBool
