@@ -327,6 +327,19 @@ pub open spec fn view_first_byte_pair_opt(x: Option<(u8, SecretBuf<'_>)>) -> Seq
     }
 }
 
+
+pub fn owl_is_some<T>(x: Option<T>) -> (res: bool)
+    ensures res <==> x.is_some()
+{
+    x.is_some()   
+}
+
+pub fn owl_is_none<T>(x: Option<T>) -> (res: bool)
+    ensures res <==> x.is_none()
+{
+    x.is_none()   
+}
+
 }
 
 
