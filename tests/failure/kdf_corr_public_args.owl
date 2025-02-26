@@ -1,0 +1,18 @@
+locality alice
+
+name kSalt : kdf {ikm info.
+    True -> nonce
+} @ alice
+
+name kIKM : dualkdf {salt info.
+    True -> nonce
+} @ alice
+
+name n : nonce @ alice
+
+def foo(x: Data<adv /\ [n]>) @ alice : Unit =
+  let xSalt = kdf<0;;nonce;0>(get(kSalt), get(n), 0x00) in
+  let xIKM = kdf<;0;nonce;0>(get(n), get(kIKM), 0x00) in
+  debug printTyOf(xSalt);
+  debug printTyOf(xIKM);
+  ()

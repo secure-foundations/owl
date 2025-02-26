@@ -2665,7 +2665,14 @@ findValidSaltCalls a b c anns j nks = do
           Just ne -> do
               nt <- getNameType ne
               case nt^.val of
-                NT_KDF KDF_SaltPos kdfbody -> matchKDF [] KDF_SaltPos ne kdfbody a ((fst b, fst b), snd b) c (i, is_case) j nks
+                NT_KDF KDF_SaltPos kdfbody -> do
+                    kdfMatch <- matchKDF [] KDF_SaltPos ne kdfbody a ((fst b, fst b), snd b) c (i, is_case) j nks
+                    case kdfMatch of
+                        Left True -> do
+                            -- We are in the "well-typed but key corrupt" case. Check that the IKM is public
+                            b <- pubIKM [] a b c
+                            if b then return kdfMatch else typeError "KDF salt position key corrupt, but IKM not public"
+                        _ -> return kdfMatch
                 _ -> Left <$> kdfArgPublic [] KDF_SaltPos a b c
     findBestKDFCallResult results
 
@@ -2697,7 +2704,13 @@ findValidIKMCalls a b c anns j nks = do
                         nt <- getNameType ne
                         case nt^.val of
                           NT_KDF KDF_IKMPos kdfbody -> do
-                              matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
+                              kdfMatch <- matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
+                              case kdfMatch of 
+                                  Left True -> do
+                                      -- We are in the "well-typed but key corrupt" case. Check that the salt is public
+                                      b <- tyFlowsTo (snd a) advLbl
+                                      if b then return kdfMatch else typeError "KDF IKM position key corrupt, but salt not public"
+                                  _ -> return kdfMatch
                           _ -> do
                               Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
               Right (s, ips, i) -> matchODH dhs a ((fst b, b'), bt') c (s, ips, i) j nks
