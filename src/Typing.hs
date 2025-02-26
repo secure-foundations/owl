@@ -2668,10 +2668,10 @@ findValidSaltCalls a b c anns j nks = do
                 NT_KDF KDF_SaltPos kdfbody -> do
                     kdfMatch <- matchKDF [] KDF_SaltPos ne kdfbody a ((fst b, fst b), snd b) c (i, is_case) j nks
                     case kdfMatch of
-                        Left True -> do
-                            -- We are in the "well-typed but key corrupt" case. Check that the IKM is public
-                            b <- pubIKM [] a b c
-                            if b then return kdfMatch else typeError "KDF salt position key corrupt, but IKM not public"
+                        -- Left True -> do
+                        --     -- We are in the "well-typed but key corrupt" case. Check that the IKM is public
+                        --     b <- pubIKM [] a b c
+                        --     if b then return kdfMatch else typeError "KDF salt position key corrupt, but IKM not public"
                         _ -> return kdfMatch
                 _ -> Left <$> kdfArgPublic [] KDF_SaltPos a b c
     findBestKDFCallResult results
@@ -2706,10 +2706,10 @@ findValidIKMCalls a b c anns j nks = do
                           NT_KDF KDF_IKMPos kdfbody -> do
                               kdfMatch <- matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
                               case kdfMatch of 
-                                  Left True -> do
-                                      -- We are in the "well-typed but key corrupt" case. Check that the salt is public
-                                      b <- tyFlowsTo (snd a) advLbl
-                                      if b then return kdfMatch else typeError "KDF IKM position key corrupt, but salt not public"
+                                --   Left True -> do
+                                --       -- We are in the "well-typed but key corrupt" case. Check that the salt is public
+                                --       b <- tyFlowsTo (snd a) advLbl
+                                --       if b then return kdfMatch else typeError "KDF IKM position key corrupt, but salt not public"
                                   _ -> return kdfMatch
                           _ -> do
                               Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
@@ -3032,7 +3032,14 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                     unif <- unifyKDFCallResult [saltResult, ikmResult] 
                     resT <- case unif of 
                       Left False -> mkSpanned <$> enforcePublicArguments "KDF ill typed, so arguments must be public" [snd a, snd b, snd c]
-                      Left True -> return $ tData advLbl advLbl
+                      Left True -> do
+                        -- Well-typed but corrupt key case
+                        -- Compute the covering label for the arguments
+                        l1 <- coveringLabel (snd a)
+                        l2 <- coveringLabel (snd b)
+                        l3 <- coveringLabel (snd c)
+                        let lAll = l1 `joinLbl` l2 `joinLbl` l3
+                        return $ tData lAll lAll
                       Right (strictness, ne) -> do 
                         let flowAx = case strictness of
                                        KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
