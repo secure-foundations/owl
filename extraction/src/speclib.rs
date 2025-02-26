@@ -249,6 +249,17 @@ pub open spec fn ghost_unit() -> Ghost<()>
     Ghost(())
 }
 
+pub open spec fn is_some<T>(x: Option<T>) -> bool
+{
+    vstd::std_specs::option::is_some(&x)
+}
+
+pub open spec fn is_none<T>(x: Option<T>) -> bool
+{
+    vstd::std_specs::option::is_none(&x)
+}
+
+
 // pub open spec fn owl_ghost_unit() -> Ghost<()>
 // {
 //     Ghost(())

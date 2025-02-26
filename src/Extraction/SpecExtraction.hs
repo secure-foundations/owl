@@ -283,7 +283,7 @@ extractCEnum (CEnum n cs isVest _ _) = do
                     return [__di|
                     #{lhs} => #{specname}::#{caseName}(#{rhsX}),
                     |]
-            debugPrint $ show $ owlpretty $ map fst speccases
+            -- debugPrint $ show $ owlpretty $ map fst speccases
             parseBranches <- mapM mkParseBranch (zip speccases [0..])
             let parse = [__di|
             \#[verifier::opaque]
@@ -513,7 +513,10 @@ extractCAExpr aexpr = do
                             let [a] = args
                             a' <- extractCAExpr a
                             return [di|Option::Some(#{a'})|]
-                        "None" -> return [di|Option::None|]
+                        "None" -> case aexpr ^. tty of
+                                FOption FDummy -> return [di|Option::None|]
+                                FOption t -> return [di|Option::<#{pretty $ specTyOf t}>::None|]
+                                _ -> throwError $ TypeError $ "None on non-option type: " ++ show (owlpretty $ aexpr ^. tty)
                         "eq" -> do
                             let [a,b] = args
                             a' <- extractCAExpr a
