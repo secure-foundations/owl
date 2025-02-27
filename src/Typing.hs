@@ -2317,21 +2317,15 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           forM_ cases $ \(c, cse) -> do 
               let (Just otcase) = lookup c tcases
               case (otcase, cse) of
-                (Nothing, Left ek) -> 
-                    case c of
-                      "None" -> checkExpr (Just retT) ek >>= \_ -> return ()
-                      "Some" -> checkExpr (Just retT) ek >>= \_ -> return ()
-                      _ -> do 
-                          x <- freshVar
-                          _ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]))] $ checkExpr (Just retT) ek
-                          return ()
+                (Nothing, Left ek) -> do
+                    x <- freshVar
+                    _ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]))] $
+                        checkExpr (Just retT) ek
+                    return ()
                 (Just t1, Right (xs, bnd)) -> do
                     (x, k) <- unbind bnd
                     xt <- normalizeTy =<< computeEnumDataType tEnum t t1 caseNameArities c
-                    let xt_refined = case c of
-                                       "Some" -> xt
-                                       "None" -> xt
-                                       _ -> tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]
+                    let xt_refined = tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]
                     _ <- withVars [(x, (xs, Nothing, xt_refined))] $ checkExpr (Just retT) k
                     return ()
                 _ -> do

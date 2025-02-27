@@ -161,6 +161,9 @@
 (define-fun TestEnumTag ((x Int) (y Bits)) Bits
     (eq (Prefix y 2) (EnumTag x)))
 
+(define-fun None? ((x Bits)) Bits (TestEnumTag 0 x))
+(define-fun Some? ((x Bits)) Bits (TestEnumTag 1 x))
+
 (declare-sort Name)
 (declare-fun ValueOf (Name) Bits)
 (declare-fun TName (Name) Type)

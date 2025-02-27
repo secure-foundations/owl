@@ -279,7 +279,7 @@ lookupIndex x xs = go 0 xs
                            | otherwise = go (i + 1) ys
 
 builtInSMTFuncs :: [String]
-builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor"]
+builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor", "Some?", "None?"]
 
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()
