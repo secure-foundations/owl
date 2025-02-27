@@ -48,9 +48,18 @@ removeGhost l =
       LTop -> return l
 
 nameDefFlows :: NameExp -> NameType -> Sym SExp
-nameDefFlows n nt = do
+nameDefFlows = nameDefFlows' Nothing
+
+nameDefFlows' :: Maybe String -> NameExp -> NameType -> Sym SExp
+nameDefFlows' rec_nt n nt = do
     case nt^.val of 
-      NT_App p is as -> (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows n
+      NT_App p@(PRes (PDot _ name)) is as ->
+        case rec_nt of
+            -- For recursive name types
+            -- TODO: is this right?
+            Just name' | name == name' -> return sTrue
+            _ ->
+                (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows' (Just name) n
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do
@@ -94,7 +103,7 @@ nameDefFlows n nt = do
                                          mkSpanned $ KDFName (mkSpanned $ AEGet n) (aeVar' x) (aeVar' y) nks j nt (ignore True)
                                      KDF_IKMPos -> 
                                          mkSpanned $ KDFName (aeVar' x) (mkSpanned $ AEGet n) (aeVar' y) nks j nt (ignore True)
-                          nameDefFlows ne nt
+                          nameDefFlows' rec_nt ne nt
                       ctr <- getFreshCtr
                       vp <- interpretProp p
                       return $ sForall (map (\i -> (SAtom $ cleanSMTIdent $ show i, indexSort)) ixs) 

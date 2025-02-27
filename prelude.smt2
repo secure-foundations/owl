@@ -499,6 +499,7 @@
 
 (declare-sort Index)
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
+(declare-fun IndexSucc (Index) Index)
 
 ;; Builtin function axioms
 (assert (distinct TRUE FALSE UNIT))
