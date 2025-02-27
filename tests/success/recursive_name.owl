@@ -56,17 +56,32 @@ def pasta3<i>(k_pre: Ghost, k: SecName(KDF<kdfkey; 0; rec3<i>>(k_pre, 0x00, 0x02
     k
 
 struct Ticket<i> {
-    k_pre: Ghost,
-    k: SecName(KDF<kdfkey; 0; rec4<i>>(k_pre, 0x00, 0x02))
+    pre_salt: Ghost,
+    pre_ikm: Ghost,
+    k: SecName(KDF<kdfkey; 0; rec4<i>>(pre_salt, pre_ikm, 0x02))
 }
 
-def pasta4<i>(ticket: Option(Ticket<session i>)) @ alice
-    : Option(Ticket<session succ(i)>)
+enum Maybe<i> {
+    | Just Ticket<session i>
+    | Nothing
+}
+
+def pasta4<i>(ticket: Maybe<session i>) @ alice
+    : if Just?(ticket) then Ticket<session succ(i)>
+      else (if sec(a) /\ sec(b) then Ticket<session 0> else Data<adv>)
     =
     case ticket {
-        | Some ticket =>
-            parse ticket as Ticket<session i>(k_pre, k) in
+        | Just t =>
+            parse t as Ticket<session i>(_, _, k) in
             let new_k = kdf<1;;kdfkey;0>(k, 0x00, 0x02) in
-            Some(Ticket<session succ(i)>(k, new_k))
-        | None => None()
+            Ticket<session succ(i)>(k, 0x00, new_k)
+        | Nothing =>
+        
+            let a = get(a) in
+            let b = get(b) in
+            let secret = dh_combine(dhpk(a), b) in
+            corr_case a in
+            corr_case b in
+            let k = kdf<;odh schedule[1];kdfkey;0>(0x00, secret, 0x02) in
+            Ticket<session 0>(0x00, secret, k)
     }
