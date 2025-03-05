@@ -443,7 +443,7 @@ specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins whe
         , ("crh", ([seqU8], seqU8))
         , ("bytes_as_counter", ([seqU8], RTUsize))
         , ("counter_as_bytes", ([RTRef RShared RTUsize], seqU8))
-        , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
+        -- , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
         , ("xor", ([seqU8, seqU8], seqU8))
         , ("concat", ([seqU8, seqU8], seqU8))
         ]

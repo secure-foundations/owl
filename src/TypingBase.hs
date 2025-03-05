@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
+    -- _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -600,28 +600,28 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
-inKDFBody kdfBody salt info self = do
-    (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
-    let cases = subst x salt $ subst y info $ subst z self $ cases'
-    bs <- forM cases $ \bcase -> do
-        (xs, (p, _)) <- unbind bcase
-        return $ mkExistsIdx xs p
-    return $ foldr pOr pFalse bs
-
-inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
-inODHProp salt ikm info = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    cur_odh <- view $ curMod . odh
-    ps <- forM cur_odh $ \(_, bnd2) -> do
-        ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
-        let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
-                                                          (mkSpanned $ AEGet ne2)
-                                               )
-        pd2 <- inKDFBody kdfBody salt info ikm
-        return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
-    return $ foldr pOr pFalse ps
+-- inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
+-- inKDFBody kdfBody salt info self = do
+--     (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
+--     let cases = subst x salt $ subst y info $ subst z self $ cases'
+--     bs <- forM cases $ \bcase -> do
+--         (xs, (p, _)) <- unbind bcase
+--         return $ mkExistsIdx xs p
+--     return $ foldr pOr pFalse bs
+-- 
+-- inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
+-- inODHProp salt ikm info = do
+--     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+--     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+--     cur_odh <- view $ curMod . odh
+--     ps <- forM cur_odh $ \(_, bnd2) -> do
+--         ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
+--         let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
+--                                                           (mkSpanned $ AEGet ne2)
+--                                                )
+--         pd2 <- inKDFBody kdfBody salt info ikm
+--         return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
+--     return $ foldr pOr pFalse ps
 
 --getROStrictness :: NameExp -> Check' senv ROStrictness 
 --getROStrictness ne = 
@@ -675,19 +675,19 @@ normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
-      NT_KDF pos bcases -> do
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
-          cases' <- withVars 
-            [(x, (ignore sx, Nothing, tGhost)), 
-             (y, (ignore sy, Nothing, tGhost)), 
-             (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
-                (is, (p, nts)) <- unbind bcase
-                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-                    nts' <- forM nts $ \(str, nt) -> do
-                        nt' <- normalizeNameType nt
-                        return (str, nt')
-                    return $ bind is (p, nts')
-          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
+      -- NT_KDF pos bcases -> do
+      --     (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
+      --     cases' <- withVars 
+      --       [(x, (ignore sx, Nothing, tGhost)), 
+      --        (y, (ignore sy, Nothing, tGhost)), 
+      --        (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
+      --           (is, (p, nts)) <- unbind bcase
+      --           withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+      --               nts' <- forM nts $ \(str, nt) -> do
+      --                   nt' <- normalizeNameType nt
+      --                   return (str, nt')
+      --               return $ bind is (p, nts')
+      --     return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
       _ -> return nt
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
@@ -723,42 +723,42 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName a b c nks j nt ib -> do
-                 _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
-                 when (not $ unignore ib) $ do
-                     nth <- view checkNameTypeHook
-                     nth nt
-                 assert ("Name kind row index out of scope") $ j < length nks
-                 return $ Just (nt, Nothing)
+             -- KDFName a b c nks j nt ib -> do
+             --     _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
+             --     when (not $ unignore ib) $ do
+             --         nth <- view checkNameTypeHook
+             --         nth nt
+             --     assert ("Name kind row index out of scope") $ j < length nks
+             --     return $ Just (nt, Nothing)
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    mapM_ checkIdxSession is
-    mapM_ checkIdxPId ps
-    mapM_ inferIdx is_case
-    md <- openModule p
-    case lookup s (md^.odh) of
-      Nothing -> typeError $ "Unknown ODH handle: " ++ show s
-      Just bd -> do
-          ((ixs, pxs), bdy) <- unbind bd
-          assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
-          let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
-          assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
-          (xs_case, pcases')  <- unbind bpcases
-          assert ("KDF case index arity mismatch") $ length xs_case == length is_case
-          let (p, cases') = substs (zip xs_case is_case) pcases'
-          assert ("KDF name row mismatch") $ j < length cases'
-          return (ne1, ne2, p, cases')
+-- getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+-- getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
+--     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+--     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+--     mapM_ checkIdxSession is
+--     mapM_ checkIdxPId ps
+--     mapM_ inferIdx is_case
+--     md <- openModule p
+--     case lookup s (md^.odh) of
+--       Nothing -> typeError $ "Unknown ODH handle: " ++ show s
+--       Just bd -> do
+--           ((ixs, pxs), bdy) <- unbind bd
+--           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
+--           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
+--           let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
+--           (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
+--           assert ("Number of KDF case mismatch") $ i < length cases
+--           let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
+--           (xs_case, pcases')  <- unbind bpcases
+--           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
+--           let (p, cases') = substs (zip xs_case is_case) pcases'
+--           assert ("KDF name row mismatch") $ j < length cases'
+--           return (ne1, ne2, p, cases')
 
 
 getNameKind :: NameType -> Check' senv NameKind
@@ -772,7 +772,7 @@ getNameKind nt =
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
-      NT_KDF _ _ -> return $ NK_KDF
+      -- NT_KDF _ _ -> return $ NK_KDF
     
 resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
@@ -898,7 +898,7 @@ lenConstOfUniformName ne = do
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    -- NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
@@ -908,11 +908,11 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
       AEVar _ _ -> return ae
       AEHex _ -> return ae
       AEInt _ -> return ae
-      AEKDF a b c nks j -> do
-          a' <- normalizeAExpr a
-          b' <- normalizeAExpr b
-          c' <- normalizeAExpr c
-          return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
+      -- AEKDF a b c nks j -> do
+      --     a' <- normalizeAExpr a
+      --     b' <- normalizeAExpr b
+      --     c' <- normalizeAExpr c
+      --     return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
       AELenConst _ -> return ae
       AEGetVK ne -> do
           ne' <- normalizeNameExp ne
@@ -971,10 +971,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
-      (AEKDF a b c nks j) -> do
-          _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b, c]
-          assert ("name kind index out of bounds") $ j < length nks
-          return $ tGhost
+      -- (AEKDF a b c nks j) -> do
+      --     _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b, c]
+      --     assert ("name kind index out of bounds") $ j < length nks
+      --     return $ tGhost
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` lengthConstants 
           return $ tData zeroLbl zeroLbl
@@ -1061,11 +1061,11 @@ resolveANF a = do
       AEGetVK _ -> return a
       AELenConst _ -> return a
       AEInt _ -> return a
-      AEKDF a b c nks j -> do
-          a' <- resolveANF a
-          b' <- resolveANF b
-          c' <- resolveANF c
-          return $ mkSpanned $ AEKDF a' b' c' nks j
+      -- AEKDF a b c nks j -> do
+      --     a' <- resolveANF a
+      --     b' <- resolveANF b
+      --     c' <- resolveANF c
+      --     return $ mkSpanned $ AEKDF a' b' c' nks j
 
 isConstant :: AExpr -> Bool
 isConstant a = 
@@ -1262,7 +1262,7 @@ quantFree p =
       PQuantIdx _ _ _ -> return False
       PQuantBV _ _ _ -> return False
       PAADOf ne a -> extractAAD ne a >>= quantFree
-      PInODH a b c -> return True -- Abstracted by a predicate in SMT
+      -- PInODH a b c -> return True -- Abstracted by a predicate in SMT
       PApp ps is xs -> return True -- Abstracted by a predicate in SMT
       PAnd p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
       POr p1 p2 -> liftM2 (&&) (quantFree p1) (quantFree p2)
@@ -1322,12 +1322,12 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName a b c nks j nt ib -> do
-          a' <- resolveANF a >>= normalizeAExpr 
-          b' <- resolveANF b >>= normalizeAExpr 
-          c' <- resolveANF c >>= normalizeAExpr 
-          nt' <- normalizeNameType nt
-          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+      -- KDFName a b c nks j nt ib -> do
+      --     a' <- resolveANF a >>= normalizeAExpr 
+      --     b' <- resolveANF b >>= normalizeAExpr 
+      --     c' <- resolveANF c >>= normalizeAExpr 
+      --     nt' <- normalizeNameType nt
+      --     return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 -- Traversing modules to collect global info
 
@@ -1652,13 +1652,13 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName a b c nks j nt ib -> do
-          a' <- resolveANF a
-          b' <- resolveANF b
-          c' <- resolveANF c
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
-             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt ib
+      -- KDFName a b c nks j nt ib -> do
+      --     a' <- resolveANF a
+      --     b' <- resolveANF b
+      --     c' <- resolveANF c
+      --     if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
+      --        typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+      --     else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt ib
       
 stripLabel :: DataVar -> Label -> Check' senv Label
 stripLabel x l = return l

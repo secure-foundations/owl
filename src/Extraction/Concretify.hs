@@ -192,17 +192,17 @@ formatTyOfNameExp ne = do
             fl <- fLenOfNameTy nt
             sec <- secrecyOfNameTy nt
             return $ FBuf sec $ Just fl
-        KDFName _ _ _ nks i _ _ -> do
-            let nk = nks !! i
-            sec <- secrecyOfNameKind nk
-            FBuf sec . Just <$> fLenOfNameKind nk
+        -- KDFName _ _ _ nks i _ _ -> do
+        --     let nk = nks !! i
+        --     sec <- secrecyOfNameKind nk
+        --     FBuf sec . Just <$> fLenOfNameKind nk
 
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
 concretifyNameExpLoc n = do
     case n ^. val of
         NameConst _ p _ -> flattenPath p
-        KDFName {} -> throwError $ UnsupportedNameExp n
+        -- KDFName {} -> throwError $ UnsupportedNameExp n
 
 concretifyPath :: Path -> EM String
 concretifyPath (PRes rp) = do
@@ -451,7 +451,7 @@ concretifyAExpr a =
       AELenConst s -> return $ noLets $ Typed FInt $ CAInt $ FLNamed s
       AEInt i ->  return $ noLets $ Typed FInt $ CAInt $ FLConst i
       AEHex s -> return $ noLets $ Typed (hexConstType s) $ CAHexConst s
-      AEKDF _ _ _ _ _ -> return $ noLets ghostUnit
+      -- AEKDF _ _ _ _ _ -> return $ noLets ghostUnit
       AEGetEncPK n -> do
           encPKFormatTy <- concretifyTy $ mkSpanned $ TEnc_PK n
           s <- concretifyNameExpLoc n
@@ -776,45 +776,45 @@ tySigOfCall p = do
 
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
-concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
-    let nk = nks !! nkidx
-    kdfLen <- kdfLenOf nks
-    outLen <- fLenOfNameKind nk
-    let kdfTy = fSBuf $ Just kdfLen
-    let kdfOutTy = fSBuf $ Just outLen
-    startOffset <- offsetOf nks nkidx
-    endOffset <- offsetOf nks (nkidx + 1)
-    vtopt <- lookupKdfCall nks resolvedArgs
-    (kdfVar, lets) <- case vtopt of
-        Just (var, varty) -> do
-            -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
-            unifyFormatTy varty kdfTy
-            return (var, [])
-        Nothing -> do
-            kdfVar <- do
-                vn' <- fresh $ s2n "kdfval"
-                fresh $ s2n (show vn')
-            (salt', saltLets) <- bufcastSecrecy salt BufSecret
-            (ikm', ikmLets) <- bufcastSecrecy ikm BufSecret
-            (info', infoLets) <- bufcastSecrecy info BufPublic
-            let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ cAApp "kdf" [Typed FInt (CAInt kdfLen), salt', ikm', info']
-            let doKdfLetBinding = (kdfVar, Nothing, doKdf)
-            memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
-            return $ (kdfVar, saltLets ++ ikmLets ++ infoLets ++ [doKdfLetBinding])
-    let doSlice = Typed kdfOutTy $ CRet $ Typed kdfOutTy $ 
-            cAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
-    sec <- secrecyOfNameKind nk
-    case sec of
-        BufSecret -> return $ withLets lets doSlice
-        BufPublic -> do
-            sliceVar <- fresh $ s2n "kdf_slice"
-            let actualOutTy = fPBuf $ Just outLen
-            let dop = DOControlFlow $ Typed kdfOutTy $ CAVar (ignore "kdf_slice") sliceVar
-            return $ withLets lets $ Typed actualOutTy $ CItreeDeclassify dop $ bind sliceVar doSlice
-    -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
-    where
-        kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
-        offsetOf nks idx = kdfLenOf $ take idx nks
+-- concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
+--     let nk = nks !! nkidx
+--     kdfLen <- kdfLenOf nks
+--     outLen <- fLenOfNameKind nk
+--     let kdfTy = fSBuf $ Just kdfLen
+--     let kdfOutTy = fSBuf $ Just outLen
+--     startOffset <- offsetOf nks nkidx
+--     endOffset <- offsetOf nks (nkidx + 1)
+--     vtopt <- lookupKdfCall nks resolvedArgs
+--     (kdfVar, lets) <- case vtopt of
+--         Just (var, varty) -> do
+--             -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
+--             unifyFormatTy varty kdfTy
+--             return (var, [])
+--         Nothing -> do
+--             kdfVar <- do
+--                 vn' <- fresh $ s2n "kdfval"
+--                 fresh $ s2n (show vn')
+--             (salt', saltLets) <- bufcastSecrecy salt BufSecret
+--             (ikm', ikmLets) <- bufcastSecrecy ikm BufSecret
+--             (info', infoLets) <- bufcastSecrecy info BufPublic
+--             let doKdf = Typed kdfTy $ CRet $ Typed kdfTy $ cAApp "kdf" [Typed FInt (CAInt kdfLen), salt', ikm', info']
+--             let doKdfLetBinding = (kdfVar, Nothing, doKdf)
+--             memoKDF %= (:) ((nks, resolvedArgs), (kdfVar, kdfTy))
+--             return $ (kdfVar, saltLets ++ ikmLets ++ infoLets ++ [doKdfLetBinding])
+--     let doSlice = Typed kdfOutTy $ CRet $ Typed kdfOutTy $ 
+--             cAApp "subrange" [Typed kdfTy $ CAVar (ignore . show $ kdfVar) kdfVar, Typed FInt (CAInt startOffset), Typed FInt (CAInt endOffset)]
+--     sec <- secrecyOfNameKind nk
+--     case sec of
+--         BufSecret -> return $ withLets lets doSlice
+--         BufPublic -> do
+--             sliceVar <- fresh $ s2n "kdf_slice"
+--             let actualOutTy = fPBuf $ Just outLen
+--             let dop = DOControlFlow $ Typed kdfOutTy $ CAVar (ignore "kdf_slice") sliceVar
+--             return $ withLets lets $ Typed actualOutTy $ CItreeDeclassify dop $ bind sliceVar doSlice
+--     -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
+--     where
+--         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
+--         offsetOf nks idx = kdfLenOf $ take idx nks
 concretifyCryptOp _ (CLemma _) cs = return $ noLets $ Typed FGhost $ CRet ghostUnit
 concretifyCryptOp _ CAEnc [k, x] = do
     let t = case x ^. tty of

@@ -119,18 +119,18 @@ data AExprX =
     | AEGetVK NameExp
     | AELenConst String
     | AEInt Int
-    | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
+    -- | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
     deriving (Show, Generic, Typeable)
 
 type AExpr = Spanned AExprX
 
-data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
-    deriving (Show, Generic, Typeable, Eq)
+-- data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
+--     deriving (Show, Generic, Typeable, Eq)
 
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+--     | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
            -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
 
@@ -193,11 +193,12 @@ data PropX =
     | PIsConstant AExpr -- Internal use
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
-    | PInODH AExpr AExpr AExpr
+    -- | PInODH AExpr AExpr AExpr
     | PHonestPKEnc NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
+data NameKind = -- NK_KDF | 
+                NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
 
 type Prop = Spanned PropX
@@ -226,8 +227,8 @@ pEq x y = mkSpanned $ PEq x y
 pNot :: Prop -> Prop
 pNot p = mkSpanned $ PNot p
 
-pKDF a b c nks j res = 
-    pEq res (mkSpanned $ AEKDF a b c nks j)
+-- pKDF a b c nks j res = 
+--     pEq res (mkSpanned $ AEKDF a b c nks j)
 
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2
@@ -236,8 +237,8 @@ pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
 
-data KDFPos = KDF_SaltPos | KDF_IKMPos
-    deriving (Show, Generic, Typeable, Eq)
+-- data KDFPos = KDF_SaltPos | KDF_IKMPos
+--     deriving (Show, Generic, Typeable, Eq)
 
 data NameTypeX =
     NT_DH
@@ -248,9 +249,9 @@ data NameTypeX =
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx]) [AExpr]
-    | NT_KDF KDFPos 
-        -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
-        KDFBody
+    -- | NT_KDF KDFPos 
+    --     (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
+    --    KDFBody
     deriving (Show, Generic, Typeable)
 
 
@@ -319,8 +320,8 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
-type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
-        [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
+-- type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
+--         [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
 
 
 -- Decls are surface syntax
@@ -338,7 +339,7 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
-    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
+    -- | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
@@ -435,13 +436,13 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
-type KDFSelector = (Int, [Idx])
+-- type KDFSelector = (Int, [Idx])
 
 data CryptOp = 
-      CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
-           [NameKind]
-           Int 
-      | CLemma BuiltinLemma
+--       CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
+--            [NameKind]
+--            Int |
+      CLemma BuiltinLemma
       | CAEnc 
       | CADec 
       | CEncStAEAD Path ([Idx], [Idx]) (Bind DataVar AExpr)
@@ -456,7 +457,7 @@ data CryptOp =
 
 data BuiltinLemma = 
       LemmaCRH 
-      | LemmaKDFInj 
+      -- | LemmaKDFInj 
       | LemmaConstant 
       | LemmaDisjNotEq 
       | LemmaCrossDH NameExp 
@@ -516,10 +517,10 @@ instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
 
-instance Alpha KDFStrictness
-instance Subst AExpr KDFStrictness
-instance Subst Idx KDFStrictness
-instance Subst ResolvedPath KDFStrictness
+-- instance Alpha KDFStrictness
+-- instance Subst AExpr KDFStrictness
+-- instance Subst Idx KDFStrictness
+-- instance Subst ResolvedPath KDFStrictness
 
 instance Alpha a => Alpha (DepBind a)
 instance (Alpha a, Subst ResolvedPath a) => Subst ResolvedPath (DepBind a)
@@ -550,10 +551,10 @@ instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
 
-instance Alpha KDFPos
-instance Subst Idx KDFPos
-instance Subst AExpr KDFPos
-instance Subst ResolvedPath KDFPos
+-- instance Alpha KDFPos
+-- instance Subst Idx KDFPos
+-- instance Subst AExpr KDFPos
+-- instance Subst ResolvedPath KDFPos
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX

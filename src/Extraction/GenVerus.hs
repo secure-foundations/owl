@@ -276,7 +276,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
         ]
     diffNameBuiltins = M.fromList [
-          ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, owlBuf], secBuf))
+          -- ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, owlBuf], secBuf))
         ]
 
 genVerusCAExpr :: CAExpr VerusTy -> EM (GenRustExpr ann)

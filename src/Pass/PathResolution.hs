@@ -244,22 +244,22 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclODH s b -> do
-          (is, (ne1, ne2, kdfBody)) <- unbind b
-          ne1' <- resolveNameExp ne1
-          ne2' <- resolveNameExp ne2
-          (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \bpnts -> do 
-              (ixs, (p, nts)) <- unbind bpnts 
-              p' <- resolveProp p
-              nts' <- forM nts $ \(str, nt) -> do
-                  nt' <- resolveNameType nt
-                  return (str, nt')
-              return $ bind ixs $ (p', nts')
-          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
-          p <- view curPath
-          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
-          return (d' : ds')
+      -- DeclODH s b -> do
+      --     (is, (ne1, ne2, kdfBody)) <- unbind b
+      --     ne1' <- resolveNameExp ne1
+      --     ne2' <- resolveNameExp ne2
+      --     (args, cases) <- unbind kdfBody
+      --     cases' <- forM cases $ \bpnts -> do 
+      --         (ixs, (p, nts)) <- unbind bpnts 
+      --         p' <- resolveProp p
+      --         nts' <- forM nts $ \(str, nt) -> do
+      --             nt' <- resolveNameType nt
+      --             return (str, nt')
+      --         return $ bind ixs $ (p', nts')
+      --     let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+      --     p <- view curPath
+      --     ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
+      --     return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
@@ -349,16 +349,16 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
-                  NT_KDF pos b -> do
-                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
-                      cases' <- forM cases $ \bpnts -> do 
-                          (is, (p, nts)) <- unbind bpnts
-                          p' <- resolveProp p
-                          nts' <- forM nts $ \(str, nt) -> do
-                              nt' <- resolveNameType nt
-                              return (str, nt')
-                          return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
+                 --  NT_KDF pos b -> do
+                 --      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
+                 --      cases' <- forM cases $ \bpnts -> do 
+                 --          (is, (p, nts)) <- unbind bpnts
+                 --          p' <- resolveProp p
+                 --          nts' <- forM nts $ \(str, nt) -> do
+                 --              nt' <- resolveNameType nt
+                 --              return (str, nt')
+                 --          return $ bind is (p', nts')
+                 --      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -413,12 +413,12 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName a b c nks j nt ib -> do
-            a' <- resolveAExpr a
-            b' <- resolveAExpr b
-            c' <- resolveAExpr c
-            nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+        -- KDFName a b c nks j nt ib -> do
+        --     a' <- resolveAExpr a
+        --     b' <- resolveAExpr b
+        --     c' <- resolveAExpr c
+        --     nt' <- resolveNameType nt
+        --     return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -537,17 +537,17 @@ resolveAExpr a =
           return $ Spanned (a^.spanOf) $ AEGetVK ne'
       AELenConst _ -> return a
       AEInt _ -> return a
-      AEKDF a2 b c nks j -> do
-          a2' <- resolveAExpr a2
-          b' <- resolveAExpr b
-          c' <- resolveAExpr c
-          return $ Spanned (a^.spanOf) $ AEKDF a2' b' c' nks j 
+      -- AEKDF a2 b c nks j -> do
+      --     a2' <- resolveAExpr a2
+      --     b' <- resolveAExpr b
+      --     c' <- resolveAExpr c
+      --     return $ Spanned (a^.spanOf) $ AEKDF a2' b' c' nks j 
 
 resolveLemma :: Ignore Position -> BuiltinLemma -> Resolve BuiltinLemma
 resolveLemma pos lem =
     case lem of
       LemmaCRH -> return lem
-      LemmaKDFInj -> return lem
+      -- LemmaKDFInj -> return lem
       LemmaConstant -> return lem
       LemmaDisjNotEq -> return lem
       LemmaCrossDH n1 -> do
@@ -561,7 +561,7 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF x y nks i -> return cop
+      -- CKDF x y nks i -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat
@@ -771,11 +771,11 @@ resolveProp p =
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a
           return $ Spanned (p^.spanOf) $ PAADOf ne' a'
-      PInODH s ikm info -> do
-          s' <- resolveAExpr s
-          ikm' <- resolveAExpr ikm
-          info' <- resolveAExpr info
-          return $ Spanned (p^.spanOf) $ PInODH s' ikm' info'
+      -- PInODH s ikm info -> do
+      --     s' <- resolveAExpr s
+      --     ikm' <- resolveAExpr ikm
+      --     info' <- resolveAExpr info
+      --     return $ Spanned (p^.spanOf) $ PInODH s' ikm' info'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp

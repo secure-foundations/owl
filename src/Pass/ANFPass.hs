@@ -47,7 +47,7 @@ anfAExpr a =
       AEGetVK _ -> return $ Spanned (a^.spanOf) $ ERet a
       AELenConst _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEInt _ -> return $ Spanned (a^.spanOf) $ ERet a
-      AEKDF _ _ _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
+      -- AEKDF _ _ _ _ _ -> return $ Spanned (a^.spanOf) $ ERet a
       AEApp f ps args -> anfAExprList (a^.spanOf) args $ \xs -> 
         Spanned (a^.spanOf) $ ERet $ Spanned (a^.spanOf) $ AEApp f ps xs
 

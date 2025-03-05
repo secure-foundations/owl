@@ -61,7 +61,7 @@ data Env t = Env {
     ,   _varCtx :: M.Map (CDataVar t) t
     ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
     ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy)) -- (return type for pub and sec (Just if needs extraction))
-    ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
+    -- ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
     ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
     ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
 }
@@ -173,7 +173,7 @@ liftExtractionMonad m = do
             _varCtx = M.empty,
             _funcs = env' ^. funcs,
             _owlUserFuncs = env' ^. owlUserFuncs,
-            _memoKDF = [],
+            -- _memoKDF = [],
             _genVerusNameEnv = M.empty,
             _genVerusPkEnv = M.empty
         }
@@ -208,7 +208,8 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) -- [] 
+    M.empty M.empty
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
@@ -264,7 +265,7 @@ specNameOfExecName s =
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
-        NK_KDF -> "kdfkey"
+        -- NK_KDF -> "kdfkey"
         NK_DH  -> "group"
         NK_Enc -> "enckey"
         NK_PKE -> "pkekey"
@@ -281,7 +282,7 @@ fLenOfNameTy nt = do
 secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
 secrecyOfNameKind nk = do
     return $ case nk of
-        NK_KDF -> BufSecret
+        -- NK_KDF -> BufSecret
         NK_DH  -> BufSecret
         NK_Enc -> BufSecret
         NK_PKE -> BufSecret
@@ -298,7 +299,7 @@ concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
 concreteLength (CUsizeConst s) = do
     l <- case s of
-        "KDFKEY_SIZE"    -> return 32
+        -- "KDFKEY_SIZE"    -> return 32
         "GROUP_SIZE"     -> return 32
         "ENCKEY_SIZE"    -> return 32
         "MACKEY_SIZE"    -> return 64
@@ -352,10 +353,10 @@ lookupNameKindAExprMap (((lnks, largs), r) : tl) nks args =
     else lookupNameKindAExprMap tl nks args
 
 
-lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad t (Maybe (CDataVar t, t))
-lookupKdfCall nks k = do
-    hcs <- use memoKDF
-    return $ lookupNameKindAExprMap hcs nks k
+-- lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad t (Maybe (CDataVar t, t))
+-- lookupKdfCall nks k = do
+--     hcs <- use memoKDF
+--     return $ lookupNameKindAExprMap hcs nks k
 
 
 ---- Equality on FormatTys ignoring buffer secrecy
