@@ -120,6 +120,7 @@ data AExprX =
     | AELenConst String
     | AEInt Int
     | AE_Expand AExpr AExpr [NameKind] Int
+    | AE_Extract AExpr AExpr
     -- | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
     deriving (Show, Generic, Typeable)
 
@@ -133,6 +134,7 @@ data NameExpX =
     NameConst ([Idx], [Idx]) Path [AExpr]
     --            key   info
     | ExpandName AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+    | ExtractName AExpr AExpr NameType (Ignore Bool)
 --     | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
            -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
@@ -200,7 +202,7 @@ data PropX =
     | PHonestPKEnc NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = NK_ExpandKey | 
+data NameKind = NK_ExpandKey | NK_ExtractKey | 
                 NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
 
@@ -254,7 +256,7 @@ data NameTypeX =
     | NT_App Path ([Idx], [Idx]) [AExpr]
     --                         info                 key
     | NT_ExpandKey (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]) 
-    | NT_ExtractKey (Bind ((String, DataVar)) NameType) -- Must be an ExpandKey
+    | NT_ExtractKey NameType -- output must be an expand, strict by default
     -- | NT_KDF KDFPos 
     --    KDFBody
     deriving (Show, Generic, Typeable)
@@ -443,11 +445,11 @@ type Expr = Spanned ExprX
 
 -- type KDFSelector = (Int, [Idx])
 
+type ODHAnn = (String, ([Idx], [Idx]))
+
 data CryptOp = 
+     CExtract [ODHAnn] | 
      CExpand Int [NameKind] Int | 
---       CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
---            [NameKind]
---            Int |
       CLemma BuiltinLemma
       | CAEnc 
       | CADec 

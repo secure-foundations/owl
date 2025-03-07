@@ -190,6 +190,7 @@
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
 (declare-const Expandkey NameKind)
+(declare-const Extractkey NameKind)
 (declare-const MACkey NameKind)
 (declare-fun HasNameKind (Name NameKind) Bool)
 (assert (forall ((n Name) (k NameKind)) (!
@@ -331,6 +332,9 @@
 
 (declare-fun Expand (Bits Bits Int Int) Bits)
 (declare-fun ExpandName (Bits Bits Int Int) Name)
+
+(declare-fun Extract (Bits Bits) Bits)
+(declare-fun ExtractName (Bits Bits) Name)
 
 (assert (forall ((x Bits) (y Bits) (i Int) (j Int)) (!
     (=>

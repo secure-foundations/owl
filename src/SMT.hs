@@ -337,6 +337,10 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
+                             ExtractName a b _ _ -> do
+                                 va <- interpretAExp a
+                                 vb <- interpretAExp a
+                                 return $ xv `sEq` (SApp [SAtom "Extract", va, vb])
                              ExpandName a b nks j nt _ -> do 
                                  (va, vb, start, segment) <- getExpandArgs a b nks j
                                  -- p <- kdfPerm va vb vc start segment nt

@@ -78,6 +78,18 @@ nameDefFlows n nt = do
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
+      NT_ExtractKey nt -> do 
+        xn <- freshSMTName
+        let x = s2n xn
+        axs <- withSMTVars [x] $ do
+            let ne = mkSpanned $ ExtractName (aeGet n) (aeVar' x) nt (ignore True)
+            let ne' = mkSpanned $ ExtractName (aeVar' x) (aeGet n) nt (ignore True)
+            a <- nameDefFlows ne nt
+            a' <- nameDefFlows ne' nt
+            return $ sAnd2 a a'
+        ctr <- getFreshCtr
+        let vx = SAtom (show x)
+        return $ sForall [(vx, bitstringSort)] axs [] ("extractFlows_" ++ show ctr)
       NT_ExpandKey b -> do
           (((sx, x), (sself, self)), cases) <- liftCheck $ unbind b
           axs <- withSMTVars [x, self] $ do
@@ -87,7 +99,7 @@ nameDefFlows n nt = do
                   axijs <- forM [0 .. (length nts - 1)] $ \j -> do
                       let (strictness, nt) = nts !! j
                       ne_axioms <- do -- $ withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
-                          let ne = mkSpanned $ ExpandName (aeVar' self) (aeVar' x) nks j nt (ignore True)
+                          let ne = mkSpanned $ ExpandName (aeGet n) (aeVar' x) nks j nt (ignore True)
                           nameDefFlows ne nt
                       ctr <- getFreshCtr
                       vp <- interpretProp p
@@ -97,7 +109,7 @@ nameDefFlows n nt = do
           ctr <- getFreshCtr
           let vx = SAtom (show x)
           let vself = SAtom (show self)
-          return $ sForall [(vx, bitstringSort), (vself, bitstringSort)] axs [] ("kdfFlows_" ++ show ctr)
+          return $ sForall [(vx, bitstringSort), (vself, bitstringSort)] axs [] ("expandFlows_" ++ show ctr)
 
       -- NT_KDF pos bnd -> do 
       --     ctr <- getFreshCtr

@@ -86,6 +86,19 @@ parseSpanned k = do
 parseNameExp :: Parser NameExp
 parseNameExp = 
      (parseSpanned $ do
+         reserved "Extract"
+         symbol "<"
+         nt <- parseNameType
+         symbol ">"
+         symbol "("
+         a <- parseAExpr
+         symbol ","
+         b <- parseAExpr
+         symbol ")"
+         return $ ExtractName a b nt (ignore False)
+     )
+     <|>
+     (parseSpanned $ do
          reserved "Expand"
          symbol "<"
          nks <- parseNameKind `sepBy1` (symbol "||")
@@ -674,6 +687,11 @@ parseNameType =
         reserved "mackey"
         t <- parseTy
         return $ NT_MAC t)
+    <|>
+    (parseSpanned $ do
+        reserved "extractkey"
+        nt <- parseNameType
+        return $ NT_ExtractKey nt)
     <|>
     (parseSpanned $ do
         reserved "expandkey"
@@ -1599,8 +1617,26 @@ parseROHint = do
                Just v -> v
     return (p, inds, xs)
 
+parseODHAnn = do
+    s <- identifier
+    p <- parseIdxParams
+    return (s, p)
+
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
+    (do
+        reserved "extract"
+        odhs <- optionMaybe $ do
+            symbol "<"
+            o <- parseODHAnn `sepBy1` (symbol ",")
+            symbol ">"
+            return o
+        let odhs' = case odhs of
+                      Just v -> v
+                      Nothing -> []
+        return $ CExtract odhs' 
+    )
+    <|>
     (do
         reserved "expand"
         symbol "<"
@@ -1924,6 +1960,16 @@ parseAExprTerm =
         x <- many1 (alphaNum <|> oneOf "_'")
         symbol "|"
         return $ AELenConst x
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "gextract"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ")"
+        return $ AE_Extract a b
     )
     <|>
     (parseSpanned $ do

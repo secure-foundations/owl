@@ -675,6 +675,9 @@ normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
+      NT_ExtractKey nt -> do
+          nt' <- normalizeNameType nt
+          return $ Spanned (nt^.spanOf) $ NT_ExtractKey nt'
       NT_ExpandKey b -> do
           (((sx, x), (sinfo, info)), cases) <- unbind b
           cases' <- withVars
@@ -721,6 +724,12 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
+             ExtractName a b nt ib -> do
+                 _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b]
+                 when (not $ unignore ib) $ do
+                     nth <- view checkNameTypeHook
+                     nth nt
+                 return $ Just (nt, Nothing)
              ExpandName a b nks j nt ib -> do
                  _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b]
                  when (not $ unignore ib) $ do
@@ -771,6 +780,7 @@ getNameKind nt =
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
       NT_ExpandKey _ -> return $ NK_ExpandKey
+      NT_ExtractKey _ -> return $ NK_ExtractKey
     
 resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
@@ -897,6 +907,7 @@ lenConstOfUniformName ne = do
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_ExpandKey _ -> return $ mkSpanned $ AELenConst "expandkey"
+                    NT_ExtractKey _ -> return $ mkSpanned $ AELenConst "extractkey"
                     NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
@@ -906,6 +917,10 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
       AEVar _ _ -> return ae
       AEHex _ -> return ae
       AEInt _ -> return ae
+      AE_Extract a b -> do
+          a' <- normalizeAExpr a
+          b' <- normalizeAExpr b
+          return $ Spanned (ae^.spanOf) $ AE_Extract a' b'
       AE_Expand a b nks j -> do
           a' <- normalizeAExpr a
           b' <- normalizeAExpr b
@@ -944,7 +959,7 @@ withMemoize lns k x = do
           return v
 
 lengthConstants :: [String]
-lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "expandkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "extractkey",  "expandkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
 
 inferAExpr :: AExpr -> Check' senv Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
@@ -968,6 +983,9 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
+      (AE_Extract a b) -> do 
+           _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b]
+           return $ tGhost
       (AE_Expand a b nks j) -> do 
            _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b]
            assert ("name kind index out of bounds") $ j < length nks
@@ -1058,6 +1076,10 @@ resolveANF a = do
       AEGetVK _ -> return a
       AELenConst _ -> return a
       AEInt _ -> return a
+      AE_Extract a b -> do
+          a' <- resolveANF a
+          b' <- resolveANF b
+          return $ mkSpanned $ AE_Extract a' b' 
       AE_Expand a b nks i -> do
           a' <- resolveANF a
           b' <- resolveANF b
@@ -1318,6 +1340,11 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
+      ExtractName a b nt ib -> do 
+          a' <- resolveANF a >>= normalizeAExpr 
+          b' <- resolveANF b >>= normalizeAExpr 
+          nt' <- normalizeNameType nt
+          return $ Spanned (ne^.spanOf) $ ExtractName a' b' nt' ib
       ExpandName a b nks j nt ib -> do
           a' <- resolveANF a >>= normalizeAExpr 
           b' <- resolveANF b >>= normalizeAExpr 
@@ -1647,6 +1674,12 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
+      ExtractName a b nt ib -> do 
+          a' <- resolveANF a
+          b' <- resolveANF b
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ toListOf fv nt) then 
+             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
+          else return $ Spanned (e^.spanOf) $ ExtractName a' b' nt ib
       ExpandName a b nks j nt ib -> do
           a' <- resolveANF a
           b' <- resolveANF b

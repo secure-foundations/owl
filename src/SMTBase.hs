@@ -491,6 +491,8 @@ getTopLevelFunc s = do
 lengthConstant :: String -> SExp
 lengthConstant s = 
     case s of
+      "expandkey" -> SApp [SAtom "NameKindLength", SAtom "Expandkey"]
+      "extractkey" -> SApp [SAtom "NameKindLength", SAtom "Extractkey"]
       "nonce" -> SAtom "NonceLength"
       "DH" -> SApp [SAtom "NameKindLength", SAtom "DHkey"]
       "enckey" ->  SApp [SAtom "NameKindLength", SAtom "Enckey"]
@@ -556,6 +558,10 @@ interpretAExp = withAExpMemo $ \ae' -> do
       AEHex s -> makeHex s
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
+      AE_Extract a b -> do 
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          return $ SApp [SAtom "Extract", va, vb]
       AE_Expand a b nks j -> do 
           va <- interpretAExp a
           vb <- interpretAExp b
@@ -690,6 +696,10 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
+      ExtractName a b nt _ -> do
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          return $ SApp [SAtom "ExtractName", va, vb]
       ExpandName a b nks j nt _ -> do
           va <- interpretAExp a
           vb <- interpretAExp b
@@ -866,6 +876,7 @@ instance SMTNameKindOf NameType where
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
           NT_ExpandKey _ -> return $ SAtom "Expandkey"
+          NT_ExtractKey _ -> return $ SAtom "Extractkey"
           -- NT_KDF _ _ -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
@@ -879,6 +890,7 @@ instance SMTNameKindOf NameKind where
           NK_DH ->    return $ SAtom "DHkey"
           NK_Enc ->   return $ SAtom "Enckey"
           NK_ExpandKey ->   return $ SAtom "Expandkey"
+          NK_ExtractKey ->   return $ SAtom "Extractkey"
           NK_PKE ->   return $ SAtom "PKEkey" 
           NK_Sig ->   return $ SAtom "Sigkey"
           NK_MAC ->   return $ SAtom "MACkey"

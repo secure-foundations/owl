@@ -349,6 +349,9 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
+                  NT_ExtractKey nt -> do
+                      nt' <- resolveNameType nt
+                      return $ NT_ExtractKey nt'
                   NT_ExpandKey b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
                       cases' <- forM cases $ \(p, nts) -> do 
@@ -561,6 +564,7 @@ resolveCryptOp pos cop =
           l' <- resolveLemma pos l
           return $ CLemma l'
       CExpand  i nks j -> return cop
+      CExtract  _ -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat

@@ -65,6 +65,10 @@ tyColor = Magenta
 -- owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
+    owlpretty (ExtractName a b nt _) = 
+        Prettyprinter.group $ 
+            owlpretty "Extract<" <> owlpretty nt <> owlpretty ">"
+            <>   tupled (map owlpretty [a, b])
     owlpretty (ExpandName a b nks j nt _) = 
         Prettyprinter.group $ 
         owlpretty "Expand<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
@@ -260,18 +264,15 @@ owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map
 
 
 instance  OwlPretty NameTypeX where
-    -- owlpretty (NT_KDF kpos cases) = 
-    --     let (((sx, _), (sy, _), (sself, _)), c) = unsafeUnbind cases in 
-    --     let pcases = map (\b ->
-    --                         let (is, (p, nts)) = unsafeUnbind b in 
-    --                         owlprettyIdxBinds1 is <> owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
-    --                                                                 map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
-    --     in
-    --     let hd = case kpos of
-    --                KDF_SaltPos -> owlpretty "KDF"
-    --                KDF_IKMPos -> owlpretty "DualKDF"
-    --     in
-    --     hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
+    owlpretty (NT_ExpandKey cases) = 
+        let (((sx, _), (sself, _)), c) = unsafeUnbind cases in 
+        let pcases = map (\b ->
+                            let (p, nts) = b in 
+                            owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
+                                                                    map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
+        in
+        owlpretty "expandkey" <> owlpretty "{" <> owlpretty sx <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
+    owlpretty (NT_ExtractKey nt) = owlpretty "extractkey" <+> owlpretty nt
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
     owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in
@@ -323,6 +324,7 @@ instance  OwlPretty AExprX where
     owlpretty (AEGet ne) = owlpretty "get" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetEncPK ne) = owlpretty "get_encpk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
     owlpretty (AEGetVK ne) = owlpretty "get_vk" <> owlpretty "(" <> owlpretty ne <> owlpretty ")"
+    owlpretty (AE_Extract a b) = owlpretty "gextract" <> (Prettyprinter.group $ tupled (map owlpretty [a, b]))
 
 instance  OwlPretty BuiltinLemma where
     owlpretty (LemmaConstant) = owlpretty "is_constant_lemma"

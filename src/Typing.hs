@@ -918,7 +918,7 @@ tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) ->
 -- A more precise version of tyFlowsTo, taking into account concats
 isIKMDerivable :: AExpr -> Check Bool
 isIKMDerivable a = do
-    xs <- unconcatIKM a
+    xs <- unconcat a
     ts <- mapM inferAExpr xs
     bs <- mapM (\t -> tyFlowsTo t advLbl) ts
     return $ foldr (&&) True bs
@@ -1485,6 +1485,12 @@ checkNameType nt = withSpan (nt^.spanOf) $
       NT_Nonce l -> do
           assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
           return ()
+      NT_ExtractKey nt -> do
+          checkNameType nt
+          nt' <- normalizeNameType nt
+          case nt'^.val of
+            NT_ExpandKey _ -> return ()
+            _ -> typeError $ "Extract must return expand"
       NT_ExpandKey b -> do 
           (((sx, x), (sy, y)), cases) <- unbind b 
           withVars [(x, (ignore sx, Nothing, tGhost)), 
@@ -2836,46 +2842,21 @@ proveDisjointContents x y = do
 --             _ -> go_from_ty
 --       _ -> go_from_ty
 
--- Resolve the AExpr and split it up into its concat components. For soundness,
--- we restrict the computations that can show up in IKMs, so we cannot smuggle
--- in a concat that is not caught
--- Values that can appear in an IKM expression:
--- - A name (`TName`/`get(_)`)
--- - A DH public key (`TDH_PK`/`dhpk(_)`)
--- - A DH shared secret (`TSS`/`dh_combine(_,_)`)
--- - A hex const (`THexConst`)
--- - A DH group element (`is_group_elem(_)` checked by SMT)
--- - Concats of the above
-unconcatIKM :: AExpr -> Check [AExpr]
-unconcatIKM a = do
+-- Resolve the AExpr and split it up into its concat components. 
+unconcat :: AExpr -> Check [AExpr]
+unconcat a = do
     a' <- resolveANF a >>= normalizeAExpr
     case a'^.val of
      AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
-         liftM2 (++) (unconcatIKM x) (unconcatIKM y)
-     AEGet _ -> return [a']
-     AEApp (PRes (PDot PTop "dh_combine")) _ _ -> return [a']
-     AEApp (PRes (PDot PTop "dhpk")) _ _ -> return [a']
-     AEHex _ -> return [a']
-     _ -> do
-         t <- inferAExpr a >>= normalizeTy
-         case (stripRefinements t)^.val of
-           TSS _ _ -> return [a']
-           TDH_PK _ -> return [a']
-           THexConst _ -> return [a']
-           TName _ -> return [a']
-           _ -> do
-               wf <- decideProp $ pEq (builtinFunc "is_group_elem" [a']) (builtinFunc "true" [])
-               case wf of
-                 Just True -> return [a']
-                 _ -> typeError $ "Unsupported computation for IKM: " ++ show (owlpretty a') ++ " with type " ++ show (owlpretty t)
-
-
-
+         liftM2 (++) (unconcat x) (unconcat y)
+     _ -> return [a']
 
 nameKindLength :: NameKind -> AExpr
 nameKindLength nk =
     aeLenConst $ case nk of
                                -- NK_KDF -> "kdfkey"
+                               NK_ExpandKey -> "expandkey"
+                               NK_ExtractKey -> "extractkey"
                                NK_DH -> "dhkey"
                                NK_Enc -> "enckey"
                                NK_PKE -> "pkekey"
@@ -2923,7 +2904,52 @@ patternPublicAndEquivalent pat1 pat2 = do
               return (True, b2)
         else return (False, False)
 
+allEqualNametypes :: [NameType] -> Check Bool
+allEqualNametypes [] = return True
+allEqualNametypes (n:nt) = do
+    b1 <- allEqualNametypes nt 
+    b2 <- allM nt (\n' -> return (n `aeq` n')) 
+    return $ b1 && b2
 
+
+
+-- Salt is either a secret Extract key, or public
+extractSalt :: (AExpr, Ty) -> Check (Maybe NameType)
+extractSalt salt = do
+    let emsg = "Extract cannot find valid key for salt; argument must be public"
+    case extractNameFromType (snd salt) of
+      Just n -> do
+          nt <- getNameType n
+          case nt^.val of
+            NT_ExtractKey nt -> do
+                b <- flowsTo (nameLbl n) advLbl
+                case b of
+                  False -> return $ Just nt
+                  True -> return Nothing
+            _ -> checkPublicArguments emsg [snd salt] >> return Nothing
+      _ -> checkPublicArguments emsg [snd salt] >> return Nothing
+
+
+
+extractIKM :: (AExpr, Ty) -> Check [NameType]
+extractIKM ikm = do
+    let emsg = "Extract cannot find valid key for IKM; argument must be public"
+    -- TODO: handle odh
+    xs <- unconcat (fst ikm)
+    ys <- forM xs $ \x -> do
+        t <- inferAExpr x
+        case extractNameFromType t of
+          Just n -> do
+              nt <- getNameType n
+              case nt^.val of
+                NT_ExtractKey nt -> do
+                    b <- flowsTo (nameLbl n) advLbl
+                    case b of
+                      False -> return $ Just nt
+                      True -> return Nothing
+                _ -> checkPublicArguments emsg [t] >> return Nothing
+          _ -> checkPublicArguments emsg [t] >> return Nothing
+    return $ catMaybes ys
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -2985,42 +3011,83 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
+      CExtract anns -> do
+          assert ("ODH not supported yet") $ length anns == 0
+          assert ("Extract takes two arguments") $ length args == 2
+          let [salt, ikm] = args
+          hints1 <- findGoodKDFSplits (fst salt)
+          hints2 <- findGoodKDFSplits (fst ikm)
+          manyCasePropTy (hints1 ++ hints2) $ do    
+              (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+              if bad then return tAdmit else do
+                  ont <- extractSalt salt
+                  let nts1 = case ont of
+                              Just v -> [v]
+                              Nothing -> []
+                  nts2 <- extractIKM ikm
+                  b <- allEqualNametypes (nts1 ++ nts2)
+                  assert ("Name types for extract must be equivalent") b
+                  let nts = nts1 ++ nts2
+                  case nts of
+                    [] -> do
+                        saltPub <- tyFlowsTo (snd salt) advLbl
+                        ikmPub <- tyFlowsTo (snd ikm) advLbl
+                        assert ("No secret eligible for extract; arguments must be public") $ saltPub && ikmPub
+                        return $ tData advLbl advLbl
+                    _ -> do 
+                        let ne = mkSpanned $ ExtractName (fst salt) (fst ikm) (head nts) (ignore True)
+                        let flowAx = pNot $ pFlow (nameLbl ne) advLbl
+                        outLen <- nameKindLength <$> getNameKind (head nts)
+                        ghostProp <- do
+                            salt' <- resolveANF (fst salt)
+                            ikm' <- resolveANF (fst ikm)
+                            return $ pEq (aeVar ".res") $ mkSpanned $ AE_Extract salt' ikm'
+                        normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                             pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
       CExpand i nks j -> do
           assert ("Expand takes two arguments") $ length args == 2
           let [k, info] = args
           infoPub <- tyFlowsTo (snd info) advLbl
           assert ("Info must flow to adv") infoPub
-          case extractNameFromType (snd k) of
-            Just n -> do
-                nt <- local (set tcScope $ TcGhost False) $  getNameType n
-                case nt^.val of
-                  NT_ExpandKey bdy -> do
-                      (((_, xinfo), (_, xself)), cases') <- unbind bdy
-                      let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
-                      assert ("Out of bounds") $ i < length cases
-                      let (p, row) = cases !! i
-                      nks' <- mapM (\(_, nt) -> getNameKind nt) row
-                      assert ("Name kinds must match") $ nks `aeq` nks'
-                      b <- decideProp p
-                      case b of
-                        Just True -> do
-                            assert ("Out of bounds") $ j < length row
-                            let (str, nt) = row !! j
-                            let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
-                            let flowAx = case str of
-                                           KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
-                                           KDFPub -> pFlow (nameLbl ne) advLbl 
-                                           KDFNormal -> pTrue
-                            let outLen = nameKindLength $ nks !! j
-                            ghostProp <- do
-                                k' <- resolveANF (fst k)
-                                info' <- resolveANF (fst info)
-                                return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
-                            normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                                 pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
-                        _ -> typeError $ "Cannot prove prop for expand"
-                  _ -> typeError $ "Not an expand key"
-            _ -> typeError $ "Cannot determine name from key of expand"
+          hints1 <- findGoodKDFSplits (fst k)
+          hints2 <- findGoodKDFSplits (fst info)
+          manyCasePropTy (hints1 ++ hints2) $ do 
+              (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+              if bad then return tAdmit else do
+                  case extractNameFromType (snd k) of
+                    Just n -> do
+                        nt <- local (set tcScope $ TcGhost False) $  getNameType n
+                        case nt^.val of
+                          NT_ExpandKey bdy -> do
+                              (((_, xinfo), (_, xself)), cases') <- unbind bdy
+                              let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
+                              assert ("Out of bounds") $ i < length cases
+                              let (p, row) = cases !! i
+                              nks' <- mapM (\(_, nt) -> getNameKind nt) row
+                              assert ("Name kinds must match") $ nks `aeq` nks'
+                              b <- decideProp p
+                              case b of
+                                Just True -> do
+                                    assert ("Out of bounds") $ j < length row
+                                    let (str, nt) = row !! j
+                                    let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
+                                    let flowAx = case str of
+                                                   KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                                   KDFPub -> pFlow (nameLbl ne) advLbl 
+                                                   KDFNormal -> pTrue
+                                    let outLen = nameKindLength $ nks !! j
+                                    ghostProp <- do
+                                        k' <- resolveANF (fst k)
+                                        info' <- resolveANF (fst info)
+                                        return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
+                                    normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                                         pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
+                                _ -> typeError $ "Cannot prove prop for expand"
+                          _ -> typeError $ "Not an expand key"
+                    _ -> do
+                        b <- tyFlowsTo (snd k) advLbl
+                        if b then return (tData advLbl advLbl) else 
+                            typeError $ "Cannot determine name from key of expand"
 -- -- For CKDF:
 -- --  0. Ensure that info is public
 -- --  1. For the salt:
@@ -3221,7 +3288,18 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
 -- Find all names that appear in any of the arguments to the KDF, as well as any
--- DH pairs that appear in the ODH annotation.
+-- DH pairs that we see
+findGoodKDFSplits :: AExpr -> Check [Prop]
+findGoodKDFSplits a = do
+    as <- unconcat a
+    ts <- mapM (inferAExpr >=> normalizeTy) as
+    ps <- forM ts $ \t -> do
+        case (stripRefinements t)^.val of
+          TName n -> return [pFlow (nameLbl n) advLbl]
+          TSS n m -> return [pFlow (nameLbl n) advLbl, pFlow (nameLbl m) advLbl]
+          _ -> return []
+    return $ concat ps
+
 -- Return a list of props for whether each of the above names flows to the adv.
 -- findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]
 -- findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
