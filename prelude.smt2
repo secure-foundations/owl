@@ -189,7 +189,7 @@
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
-(declare-const KDFkey NameKind)
+(declare-const ExpandKey NameKind)
 (declare-const MACkey NameKind)
 (declare-fun HasNameKind (Name NameKind) Bool)
 (assert (forall ((n Name) (k NameKind)) (!
@@ -329,21 +329,17 @@
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
 
-(declare-fun KDF (Bits Bits Bits Int Int) Bits)
-(declare-fun KDFName (Bits Bits Bits Int Int) Name)
+(declare-fun Expand (Bits Bits Int Int) Bits)
+(declare-fun ExpandName (Bits Bits Int Int) Name)
 
-(assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
+(assert (forall ((x Bits) (y Bits) (i Int) (j Int)) (!
     (=>
         (and (>= j 0) (>= i 0))
-        (= (length (KDF x y z i j)) (I2B j)
+        (= (length (Expand x y i j)) (I2B j)
     ))
-    :pattern ((KDF x y z i j))
-    :qid kdf_length
+    :pattern ((Expand x y i j))
+    :qid expand_length
 )))
-
-; Abstract permission that the specified KDF hash has a certain name type
-; (name type given by last argument counter)
-(declare-fun KDFPerm (Bits Bits Bits Int Int Int) Bool)
 
 (assert (forall ((n1 Name) (n2 Name)) (!
     (=> (= TRUE (eq (ValueOf n1) (ValueOf n2)))
@@ -359,15 +355,15 @@
     :qid isconstant_neq_name
 )))
 
-; The below can be generalized
-(assert (forall ((a Bits) (x Bits) (y Bits) (n Name) (i Int) (j Int)) (!
-    (=> (and 
-            (HasNameKind n DHkey)
-            (IsConstant a))
-         (not (= TRUE (eq a (KDF x (dhpk (ValueOf n)) y i j)))))
-    :pattern ((IsConstant a) (eq a (KDF x (dhpk (ValueOf n)) y i j)))
-    :qid isconstant_neq_kdf_dhpk
-)))
+; TODO: fix for extract
+; (assert (forall ((a Bits) (x Bits) (y Bits) (n Name) (i Int) (j Int)) (!
+;     (=> (and 
+;             (HasNameKind n DHkey)
+;             (IsConstant a))
+;          (not (= TRUE (eq a (KDF x (dhpk (ValueOf n)) y i j)))))
+;     :pattern ((IsConstant a) (eq a (KDF x (dhpk (ValueOf n)) y i j)))
+;     :qid isconstant_neq_kdf_dhpk
+; )))
 
 
 (declare-fun andb (Bits Bits) Bits)

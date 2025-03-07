@@ -2988,6 +2988,39 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
+      CExpand i nks j -> do
+          assert ("Expand takes two arguments") $ length args == 2
+          let [k, info] = args
+          infoPub <- tyFlowsTo (snd info) advLbl
+          assert ("Info must flow to adv") infoPub
+          case extractNameFromType (snd k) of
+            Just n -> do
+                nt <- local (set tcScope $ TcGhost False) $  getNameType n
+                case nt^.val of
+                  NT_ExpandKey bdy -> do
+                      (((_, xinfo), (_, xself)), cases') <- unbind bdy
+                      let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
+                      assert ("Out of bounds") $ i < length cases
+                      let (p, row) = cases !! i
+                      nks' <- mapM (\(_, nt) -> getNameKind nt) row
+                      assert ("Name kinds must match") $ nks `aeq` nks'
+                      b <- decideProp p
+                      case b of
+                        Just True -> do
+                            assert ("Out of bounds") $ j < length row
+                            let (str, nt) = row !! j
+                            let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
+                            let flowAx = case str of
+                                           KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                           KDFPub -> pFlow (nameLbl ne) advLbl 
+                                           KDFNormal -> pTrue
+                            -- TODO: incorporate length, ghost information as
+                            -- below
+                            normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                                 flowAx 
+                        _ -> typeError $ "Cannot prove prop for expand"
+                  _ -> typeError $ "Not an expand key"
+            _ -> typeError $ "Cannot determine name from key of expand"
 -- -- For CKDF:
 -- --  0. Ensure that info is public
 -- --  1. For the salt:

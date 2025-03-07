@@ -119,17 +119,19 @@ data AExprX =
     | AEGetVK NameExp
     | AELenConst String
     | AEInt Int
+    | AE_Expand AExpr AExpr [NameKind] Int
     -- | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
     deriving (Show, Generic, Typeable)
 
 type AExpr = Spanned AExprX
 
--- data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
---     deriving (Show, Generic, Typeable, Eq)
+data KDFStrictness = KDFStrict | KDFPub | KDFNormal
+     deriving (Show, Generic, Typeable, Eq)
 
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
+      | ExpandName AExpr AExpr [NameKind] Int NameType (Ignore Bool)
 --     | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
            -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
@@ -249,8 +251,9 @@ data NameTypeX =
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx]) [AExpr]
+    | NT_ExpandKey (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]) 
+    | NT_ExtractKey (Bind ((String, DataVar)) NameType) -- Must be an ExpandKey
     -- | NT_KDF KDFPos 
-    --     (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
     --    KDFBody
     deriving (Show, Generic, Typeable)
 
@@ -439,6 +442,7 @@ type Expr = Spanned ExprX
 -- type KDFSelector = (Int, [Idx])
 
 data CryptOp = 
+     CExpand Int [NameKind] Int | 
 --       CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
 --            [NameKind]
 --            Int |
@@ -517,10 +521,10 @@ instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
 
--- instance Alpha KDFStrictness
--- instance Subst AExpr KDFStrictness
--- instance Subst Idx KDFStrictness
--- instance Subst ResolvedPath KDFStrictness
+instance Alpha KDFStrictness
+instance Subst AExpr KDFStrictness
+instance Subst Idx KDFStrictness
+instance Subst ResolvedPath KDFStrictness
 
 instance Alpha a => Alpha (DepBind a)
 instance (Alpha a, Subst ResolvedPath a) => Subst ResolvedPath (DepBind a)

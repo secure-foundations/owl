@@ -673,15 +673,14 @@ sPlus xs = SApp $ (SAtom "+") : xs
 sNameKindLength :: SExp -> SExp
 sNameKindLength n = SApp [SAtom "NameKindLength", n]
 
--- getKDFArgs :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym (SExp, SExp, SExp, SExp, SExp)
--- getKDFArgs a b c nks j = do
---     va <- interpretAExp a
---     vb <- interpretAExp b
---     vc <- interpretAExp c
---     nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
---     let start = sPlus $ take j nk_lengths
---     let segment = nk_lengths !! j
---     return (va, vb, vc, start, segment)
+getExpandArgs :: SMTNameKindOf a => AExpr -> AExpr -> [a] -> Int -> Sym (SExp, SExp, SExp, SExp)
+getExpandArgs a b nks j = do
+    va <- interpretAExp a
+    vb <- interpretAExp b
+    nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+    let start = sPlus $ take j nk_lengths
+    let segment = nk_lengths !! j
+    return (va, vb, start, segment)
 
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
@@ -692,14 +691,13 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
-      -- KDFName a b c nks j nt _ -> do
-      --     va <- interpretAExp a
-      --     vb <- interpretAExp b
-      --     vc <- interpretAExp c
-      --     nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-      --     let start = sPlus $ take j nk_lengths
-      --     let segment = nk_lengths !! j
-      --     return $ SApp [SAtom "KDFName", va, vb, vc, start, segment]
+      ExpandName a b nks j nt _ -> do
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+          let start = sPlus $ take j nk_lengths
+          let segment = nk_lengths !! j
+          return $ SApp [SAtom "ExpandName", va, vb, start, segment]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do

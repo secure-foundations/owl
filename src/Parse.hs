@@ -85,25 +85,23 @@ parseSpanned k = do
 
 parseNameExp :: Parser NameExp
 parseNameExp = 
---     (parseSpanned $ do
---         reserved "KDF"
---         symbol "<"
---         nks <- parseNameKind `sepBy1` (symbol "||")
---         symbol ";"
---         j <- many1 digit
---         symbol ";"
---         nt <- parseNameType
---         symbol ">"
---         symbol "("
---         a <- parseAExpr
---         symbol ","
---         b <- parseAExpr
---         symbol ","
---         c <- parseAExpr
---         symbol ")"
---         return $ KDFName a b c nks (read j) nt (ignore False)
---     )
---     <|>
+     (parseSpanned $ do
+         reserved "Expand"
+         symbol "<"
+         nks <- parseNameKind `sepBy1` (symbol "||")
+         symbol ";"
+         j <- many1 digit
+         symbol ";"
+         nt <- parseNameType
+         symbol ">"
+         symbol "("
+         a <- parseAExpr
+         symbol ","
+         b <- parseAExpr
+         symbol ")"
+         return $ ExpandName a b nks (read j) nt (ignore False)
+     )
+    <|>
     (parseSpanned $ do
         i <- parsePath
         ps <- parseIdxParams 
@@ -677,21 +675,20 @@ parseNameType =
         t <- parseTy
         return $ NT_MAC t)
     <|>
-    -- (parseSpanned $ do
-    --     kpos <- alt (reserved "kdf" >> return KDF_SaltPos) (reserved "dualkdf" >> return KDF_IKMPos)
-    --     symbol "{"
-    --     x <- identifier
-    --     y <- identifier
-    --     oz <- optionMaybe identifier
-    --     let z = case oz of
-    --               Just v -> v
-    --               Nothing -> "%self"
-    --     symbol "."
-    --     kdfCases <- kdfCase `sepBy1` (symbol ",")
-    --     symbol "}"
-    --     return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
-    -- )
-    -- <|>
+    (parseSpanned $ do
+        reserved "expandkey"
+        symbol "{"
+        x <- identifier
+        oy <- optionMaybe identifier
+        let y = case oy of
+                  Just v -> v
+                  Nothing -> "%self"
+        symbol "."
+        expandCases <- expandCase `sepBy1` (symbol ",")
+        symbol "}"
+        return $ NT_ExpandKey (bind ((x, s2n x), (y, s2n y)) expandCases)
+    )
+    <|>
     (parseSpanned $ do
         p <- parsePath
         ps <- parseIdxParams
@@ -706,25 +703,24 @@ parseNameType =
         return $ NT_App p ps as
     )
 
--- parseKDFStrictness = 
---     (reserved "strict" >> return KDFStrict)
---     <|>
---     (reserved "public" >> return KDFPub)
+parseKDFStrictness = 
+    (reserved "strict" >> return KDFStrict)
+    <|>
+    (reserved "public" >> return KDFPub)
 
 
--- kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
--- kdfCase = do 
---     ois <- parseIdxParamBinds1
---     p <- parseProp
---     symbol "->"
---     nts <- (do
---         ostrict <- optionMaybe $ parseKDFStrictness
---         nt <- parseNameType
---         let strictness = case ostrict of 
---                             Nothing -> KDFUnstrict
---                             Just v -> v
---         return (strictness, nt)) `sepBy` (symbol "||")
---     return $ bind ois (p, nts)
+expandCase :: Parser (Prop, [(KDFStrictness, NameType)])
+expandCase = do
+    p <- parseProp
+    symbol "->"
+    nts <- (do
+        ostrict <- optionMaybe $ parseKDFStrictness
+        nt <- parseNameType
+        let strictness = case ostrict of 
+                            Nothing -> KDFNormal
+                            Just v -> v
+        return (strictness, nt)) `sepBy` (symbol "||")
+    return (p, nts)
 
 -- parseKDFHint :: Parser (NameExp, Int, Int)
 -- parseKDFHint = do 
@@ -1605,6 +1601,17 @@ parseROHint = do
 
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
+    (do
+        reserved "expand"
+        symbol "<"
+        i <- many1 digit
+        symbol ";"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        return $ CExpand (read i) nks (read j))
+    <|>
     -- (do
     --     reserved "kdf"
     --     symbol "<"

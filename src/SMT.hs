@@ -315,17 +315,6 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
--- kdfPerm va vb vc start segment nt_ = do
---     nt <- liftCheck $ normalizeNameType nt_
---     permctr <- use kdfPermCounter
---     case M.lookup (AlphaOrd nt) permctr of
---       Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
---       Nothing -> do
---           nv <- getFreshCtr
---           kdfPermCounter %= M.insert (AlphaOrd nt) (SAtom $ show nv)
---           return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, (SAtom $ show nv)]
-
-
 
 smtTy :: SExp -> Ty -> Sym SExp
 smtTy xv t = 
@@ -348,10 +337,10 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             -- KDFName a b c nks j nt _ -> do 
-                             --     (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
-                             --     -- p <- kdfPerm va vb vc start segment nt
-                             --     return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             ExpandName a b nks j nt _ -> do 
+                                 (va, vb, start, segment) <- getExpandArgs a b nks j
+                                 -- p <- kdfPerm va vb vc start segment nt
+                                 return $ xv `sEq` (SApp [SAtom "Expand", va, vb, start, segment])
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do

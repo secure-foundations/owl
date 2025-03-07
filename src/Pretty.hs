@@ -249,10 +249,10 @@ instance  OwlPretty PropX where
         owlpretty "happened(" <> owlpretty s <> pids <> tupled (map owlpretty xs) <> owlpretty ")"
     owlpretty (PNot p) = owlpretty "!" <+> owlpretty p
 
--- instance OwlPretty KDFStrictness where                                      
---     owlpretty (KDFStrict) = owlpretty "strict"
---     owlpretty (KDFPub) = owlpretty "public"
---     owlpretty KDFUnstrict = mempty
+instance OwlPretty KDFStrictness where                                      
+    owlpretty (KDFStrict) = owlpretty "strict"
+    owlpretty (KDFPub) = owlpretty "public"
+    owlpretty KDFNormal = mempty
 
 owlprettyIdxBinds1 :: [IdxVar] -> OwlDoc
 owlprettyIdxBinds1 [] = mempty
