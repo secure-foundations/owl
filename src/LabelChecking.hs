@@ -78,6 +78,27 @@ nameDefFlows n nt = do
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
+      NT_ExpandKey b -> do
+          (((sx, x), (sself, self)), cases) <- liftCheck $ unbind b
+          axs <- withSMTVars [x, self] $ do
+              axis <- forM [0 .. (length cases - 1)] $ \i -> do
+                  let (p, nts) = cases !! i
+                  nks <- liftCheck $ mapM (\(_, nt) -> getNameKind nt) nts
+                  axijs <- forM [0 .. (length nts - 1)] $ \j -> do
+                      let (strictness, nt) = nts !! j
+                      ne_axioms <- do -- $ withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
+                          let ne = mkSpanned $ ExpandName (aeVar' self) (aeVar' x) nks j nt (ignore True)
+                          nameDefFlows ne nt
+                      ctr <- getFreshCtr
+                      vp <- interpretProp p
+                      return $ sImpl vp ne_axioms 
+                  return $ sAnd axijs
+              return $ sAnd axis
+          ctr <- getFreshCtr
+          let vx = SAtom (show x)
+          let vself = SAtom (show self)
+          return $ sForall [(vx, bitstringSort), (vself, bitstringSort)] axs [] ("kdfFlows_" ++ show ctr)
+
       -- NT_KDF pos bnd -> do 
       --     ctr <- getFreshCtr
       --     (((sx, x), (sy, y), (sz, z)), cases) <- liftCheck $ unbind bnd

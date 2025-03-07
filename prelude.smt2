@@ -189,7 +189,7 @@
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
 (declare-const PKEkey NameKind)
-(declare-const ExpandKey NameKind)
+(declare-const Expandkey NameKind)
 (declare-const MACkey NameKind)
 (declare-fun HasNameKind (Name NameKind) Bool)
 (assert (forall ((n Name) (k NameKind)) (!

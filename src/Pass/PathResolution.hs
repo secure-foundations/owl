@@ -349,16 +349,15 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
-                 --  NT_KDF pos b -> do
-                 --      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
-                 --      cases' <- forM cases $ \bpnts -> do 
-                 --          (is, (p, nts)) <- unbind bpnts
-                 --          p' <- resolveProp p
-                 --          nts' <- forM nts $ \(str, nt) -> do
-                 --              nt' <- resolveNameType nt
-                 --              return (str, nt')
-                 --          return $ bind is (p', nts')
-                 --      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
+                  NT_ExpandKey b -> do
+                      (((s, x), (s2, y)), cases) <- unbind b
+                      cases' <- forM cases $ \(p, nts) -> do 
+                          p' <- resolveProp p
+                          nts' <- forM nts $ \(str, nt) -> do
+                              nt' <- resolveNameType nt
+                              return (str, nt')
+                          return (p', nts')
+                      return $ NT_ExpandKey $ bind ((s, x), (s2, y)) cases'
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -561,7 +560,7 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      -- CKDF x y nks i -> return cop
+      CExpand  i nks j -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat

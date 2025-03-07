@@ -1485,26 +1485,23 @@ checkNameType nt = withSpan (nt^.spanOf) $
       NT_Nonce l -> do
           assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
           return ()
-      -- NT_KDF kdfPos b -> do 
-      --     (((sx, x), (sy, y), (sself, xself)), cases) <- unbind b 
-      --     withVars [(x, (ignore sx, Nothing, tGhost)), 
-      --               (y, (ignore sy, Nothing, tGhost)),
-      --               (xself, (ignore sself, Nothing, tGhost))] $ do
-      --         assert ("KDF cases must be non-empty") $ not $ null cases
-      --         ps <- forM cases $ \bcase -> do
-      --             (ixs, (p, nts)) <- unbind bcase 
-      --             withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) ixs) $ do 
-      --                 withSpan (p^.spanOf) $ 
-      --                     assert ("Self variable must not appear in precondition") $ 
-      --                         not $ xself `elem` (toListOf fv p)
-      --                 checkProp p
-      --                 forM_ nts $ \(str, nt) -> do
-      --                     checkNameType nt
-      --                     nameTypeUniform nt
-      --                 return $ mkExistsIdx ixs p 
-      --         (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
-      --         assert ("KDF disjointness check failed") b
-      --     return ()
+      NT_ExpandKey b -> do 
+          (((sx, x), (sy, y)), cases) <- unbind b 
+          withVars [(x, (ignore sx, Nothing, tGhost)), 
+                    (y, (ignore sy, Nothing, tGhost))] $ do
+              assert ("Expand cases must be non-empty") $ not $ null cases
+              ps <- forM cases $ \(p, nts) -> do
+                      withSpan (p^.spanOf) $ 
+                          assert ("Self variable must not appear in precondition") $ 
+                              not $ y `elem` (toListOf fv p)
+                      checkProp p
+                      forM_ nts $ \(str, nt) -> do
+                          checkNameType nt
+                          nameTypeUniform nt
+                      return p
+              (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
+              assert ("Expand disjointness check failed") b
+          return ()
       NT_Enc t -> do
         checkTy t
         checkNoTopTy False t
@@ -3014,10 +3011,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                            KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
                                            KDFPub -> pFlow (nameLbl ne) advLbl 
                                            KDFNormal -> pTrue
-                            -- TODO: incorporate length, ghost information as
-                            -- below
+                            let outLen = nameKindLength $ nks !! j
+                            ghostProp <- do
+                                k' <- resolveANF (fst k)
+                                info' <- resolveANF (fst info)
+                                return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
                             normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                                 flowAx 
+                                 pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
                         _ -> typeError $ "Cannot prove prop for expand"
                   _ -> typeError $ "Not an expand key"
             _ -> typeError $ "Cannot determine name from key of expand"

@@ -1926,23 +1926,21 @@ parseAExprTerm =
         return $ AELenConst x
     )
     <|>
-   --      (parseSpanned $ do
-   --          reserved "gkdf"
-   --          symbol "<"
-   --          nks <- parseNameKind `sepBy1` (symbol "||")
-   --          symbol ";"
-   --          j <- many1 digit
-   --          symbol ">"
-   --          symbol "("
-   --          a <- parseAExpr
-   --          symbol ","
-   --          b <- parseAExpr
-   --          symbol ","
-   --          c <- parseAExpr
-   --          symbol ")"
-   --          return $ AEKDF a b c nks (read j) 
-   --          )
-   --  <|>
+    (parseSpanned $ do
+        reserved "gexpand"
+        symbol "<"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ")"
+        return $ AE_Expand a b nks (read j) 
+        )
+    <|>
     --(parseSpanned $ do 
     --    reserved "preimage"
     --    symbol "("

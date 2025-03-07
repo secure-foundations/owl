@@ -65,20 +65,20 @@ tyColor = Magenta
 -- owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
 
 instance  OwlPretty NameExpX where
-    -- owlpretty (KDFName a b c nks j nt _) = 
-    --     Prettyprinter.group $ 
-    --     owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
-    --                         <>
-    --                         owlpretty ";"
-    --                         <>
-    --                         owlpretty j
-    --                         <>
-    --                         owlpretty ";"
-    --                         <>
-    --                         -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-    --                         owlpretty nt
-    --                         <> owlpretty ">"
-    --                         <> tupled (map owlpretty [a, b, c])
+    owlpretty (ExpandName a b nks j nt _) = 
+        Prettyprinter.group $ 
+        owlpretty "Expand<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
+                            <>
+                            owlpretty ";"
+                            <>
+                            owlpretty j
+                            <>
+                            owlpretty ";"
+                            <>
+                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            owlpretty nt
+                            <> owlpretty ">"
+                            <> tupled (map owlpretty [a, b])
     owlpretty (NameConst vs n xs) = 
         let pxs = case xs of
                     [] -> mempty
@@ -310,10 +310,10 @@ instance  OwlPretty AExprX where
         owlpretty "0x" <> ps
     owlpretty (AELenConst s) = owlpretty "|" <> owlpretty s <> owlpretty "|"
     owlpretty (AEInt i) = owlpretty i
-    -- owlpretty (AEKDF a b c nks j) = owlpretty "gkdf" <>
-    --     angles ((hsep $ intersperse (owlpretty "||") $ map owlpretty nks) <> owlpretty ";" <> owlpretty j)
-    --     <>
-    --     (Prettyprinter.group $ tupled (map owlpretty [a, b, c]))
+    owlpretty (AE_Expand a b nks j) = owlpretty "gexpand" <>
+        angles ((hsep $ intersperse (owlpretty "||") $ map owlpretty nks) <> owlpretty ";" <> owlpretty j)
+        <>
+        (Prettyprinter.group $ tupled (map owlpretty [a, b]))
     --owlpretty (AEPreimage p ps xs) = 
     --    let pxs = case xs of
     --                [] -> mempty

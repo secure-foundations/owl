@@ -675,20 +675,18 @@ normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
-      -- NT_KDF pos bcases -> do
-      --     (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
-      --     cases' <- withVars 
-      --       [(x, (ignore sx, Nothing, tGhost)), 
-      --        (y, (ignore sy, Nothing, tGhost)), 
-      --        (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
-      --           (is, (p, nts)) <- unbind bcase
-      --           withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-      --               nts' <- forM nts $ \(str, nt) -> do
-      --                   nt' <- normalizeNameType nt
-      --                   return (str, nt')
-      --               return $ bind is (p, nts')
-      --     return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
-      _ -> return nt
+      NT_ExpandKey b -> do
+          (((sx, x), (sinfo, info)), cases) <- unbind b
+          cases' <- withVars
+             [(x, (ignore sx, Nothing, tGhost)), 
+             (info, (ignore sinfo, Nothing, tGhost))] $ forM cases $ \cse -> do 
+                 let (p, nts) = cse
+                 nts' <- forM nts $ \(str, nt) -> do
+                     nt' <- normalizeNameType nt
+                     return (str, nt')
+                 return $ (p, nts')
+          return $ Spanned (nt^.spanOf) $ NT_ExpandKey (bind ((sx, x), (sinfo, info)) cases')
+      _ -> return nt 
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
 pushRoutine s k = do
@@ -772,7 +770,7 @@ getNameKind nt =
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
-      -- NT_KDF _ _ -> return $ NK_KDF
+      NT_ExpandKey _ -> return $ NK_ExpandKey
     
 resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
@@ -898,7 +896,7 @@ lenConstOfUniformName ne = do
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-                    -- NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    NT_ExpandKey _ -> return $ mkSpanned $ AELenConst "expandkey"
                     NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
@@ -908,11 +906,10 @@ normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $
       AEVar _ _ -> return ae
       AEHex _ -> return ae
       AEInt _ -> return ae
-      -- AEKDF a b c nks j -> do
-      --     a' <- normalizeAExpr a
-      --     b' <- normalizeAExpr b
-      --     c' <- normalizeAExpr c
-      --     return $ Spanned (ae^.spanOf) $ AEKDF a' b' c' nks j
+      AE_Expand a b nks j -> do
+          a' <- normalizeAExpr a
+          b' <- normalizeAExpr b
+          return $ Spanned (ae^.spanOf) $ AE_Expand a' b' nks j
       AELenConst _ -> return ae
       AEGetVK ne -> do
           ne' <- normalizeNameExp ne
@@ -947,7 +944,7 @@ withMemoize lns k x = do
           return v
 
 lengthConstants :: [String]
-lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "expandkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group"]
 
 inferAExpr :: AExpr -> Check' senv Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
@@ -971,10 +968,10 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           assert ("HexConst must have even length") $ length s `mod` 2 == 0
           return $ tData zeroLbl zeroLbl
       (AEInt i) -> return $ tData zeroLbl zeroLbl
-      -- (AEKDF a b c nks j) -> do
-      --     _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b, c]
-      --     assert ("name kind index out of bounds") $ j < length nks
-      --     return $ tGhost
+      (AE_Expand a b nks j) -> do 
+           _ <- local (set expectedTy Nothing) $ mapM inferAExpr [a, b]
+           assert ("name kind index out of bounds") $ j < length nks
+           return $ tGhost
       (AELenConst s) -> do
           assert ("Unknown length constant: " ++ s) $ s `elem` lengthConstants 
           return $ tData zeroLbl zeroLbl
@@ -1061,11 +1058,10 @@ resolveANF a = do
       AEGetVK _ -> return a
       AELenConst _ -> return a
       AEInt _ -> return a
-      -- AEKDF a b c nks j -> do
-      --     a' <- resolveANF a
-      --     b' <- resolveANF b
-      --     c' <- resolveANF c
-      --     return $ mkSpanned $ AEKDF a' b' c' nks j
+      AE_Expand a b nks i -> do
+          a' <- resolveANF a
+          b' <- resolveANF b
+          return $ mkSpanned $ AE_Expand a' b' nks i
 
 isConstant :: AExpr -> Bool
 isConstant a = 

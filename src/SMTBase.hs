@@ -556,14 +556,13 @@ interpretAExp = withAExpMemo $ \ae' -> do
       AEHex s -> makeHex s
       AELenConst s -> symLenConst s
       AEInt i -> return $ SApp [SAtom "I2B", SAtom (show i)]
-      -- AEKDF a b c nks j -> do
-      --     va <- interpretAExp a
-      --     vb <- interpretAExp b
-      --     vc <- interpretAExp c
-      --     nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-      --     let start = sPlus $ take j nk_lengths
-      --     let segment = nk_lengths !! j
-      --     return $ SApp [SAtom "KDF", va, vb, vc, start, segment]
+      AE_Expand a b nks j -> do 
+          va <- interpretAExp a
+          vb <- interpretAExp b
+          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
+          let start = sPlus $ take j nk_lengths
+          let segment = nk_lengths !! j
+          return $ SApp [SAtom "Expand", va, vb, start, segment]
       --AEPreimage p ps as -> do
       --    aes <- liftCheck $ getROPreimage p ps as
       --    interpretAExp aes
@@ -866,6 +865,7 @@ instance SMTNameKindOf NameType where
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
+          NT_ExpandKey _ -> return $ SAtom "Expandkey"
           -- NT_KDF _ _ -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
@@ -878,7 +878,7 @@ instance SMTNameKindOf NameKind where
         case nk of
           NK_DH ->    return $ SAtom "DHkey"
           NK_Enc ->   return $ SAtom "Enckey"
-          -- NK_KDF ->   return $ SAtom "KDFkey"
+          NK_ExpandKey ->   return $ SAtom "Expandkey"
           NK_PKE ->   return $ SAtom "PKEkey" 
           NK_Sig ->   return $ SAtom "Sigkey"
           NK_MAC ->   return $ SAtom "MACkey"

@@ -131,7 +131,8 @@ data KDFStrictness = KDFStrict | KDFPub | KDFNormal
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-      | ExpandName AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+    --            key   info
+    | ExpandName AExpr AExpr [NameKind] Int NameType (Ignore Bool)
 --     | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
            -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
@@ -199,7 +200,7 @@ data PropX =
     | PHonestPKEnc NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
-data NameKind = -- NK_KDF | 
+data NameKind = NK_ExpandKey | 
                 NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
 
@@ -251,6 +252,7 @@ data NameTypeX =
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx]) [AExpr]
+    --                         info                 key
     | NT_ExpandKey (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]) 
     | NT_ExtractKey (Bind ((String, DataVar)) NameType) -- Must be an ExpandKey
     -- | NT_KDF KDFPos 
