@@ -244,22 +244,15 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      -- DeclODH s b -> do
-      --     (is, (ne1, ne2, kdfBody)) <- unbind b
-      --     ne1' <- resolveNameExp ne1
-      --     ne2' <- resolveNameExp ne2
-      --     (args, cases) <- unbind kdfBody
-      --     cases' <- forM cases $ \bpnts -> do 
-      --         (ixs, (p, nts)) <- unbind bpnts 
-      --         p' <- resolveProp p
-      --         nts' <- forM nts $ \(str, nt) -> do
-      --             nt' <- resolveNameType nt
-      --             return (str, nt')
-      --         return $ bind ixs $ (p', nts')
-      --     let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
-      --     p <- view curPath
-      --     ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
-      --     return (d' : ds')
+      DeclODH s b -> do
+          (is, (ne1, ne2, nt)) <- unbind b
+          ne1' <- resolveNameExp ne1
+          ne2' <- resolveNameExp ne2
+          nt' <- resolveNameType nt
+          let d' = Spanned (d'^.spanOf) $ DeclODH s $ bind is (ne1', ne2', nt')
+          p <- view curPath
+          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
+          return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
@@ -415,11 +408,19 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
+        ExtractName a b nt ib -> do
+             a' <- resolveAExpr a
+             b' <- resolveAExpr b
+             nt' <- resolveNameType nt
+             return $ Spanned (ne^.spanOf) $ ExtractName a' b' nt' ib
+        ExpandName a b nks i nt ib -> do
+             a' <- resolveAExpr a
+             b' <- resolveAExpr b
+             nt' <- resolveNameType nt
+             return $ Spanned (ne^.spanOf) $ ExpandName a' b' nks i nt' ib
+             
         -- KDFName a b c nks j nt ib -> do
-        --     a' <- resolveAExpr a
-        --     b' <- resolveAExpr b
         --     c' <- resolveAExpr c
-        --     nt' <- resolveNameType nt
         --     return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam

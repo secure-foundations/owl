@@ -8,51 +8,50 @@ name data<@h> : nonce @ client<h>
 corr<i> [X<@i>] ==> [data<@i>]
 corr<i> [Y] ==> [data<@i>]
 
+nametype data_key<@f> = enckey Name(data<@f>)
+
+nametype ekey<@f> = expandkey { info. 
+    True -> strict data_key<@f>
+}
+
 odh L<@f> : 
-    X<@f>, Y -> {salt info.
-        True -> enckey Name(data<@f>)
-    }
+    X<@f>, Y -> ekey<@f>
 
 def client_main<@i>(pky : dhpk(Y)) @ client<i> : Unit = 
     let h = dhpk(get(X<@i>)) in
     output h;
     corr_case X<@i> in 
     corr_case Y in 
-    let y = kdf<;odh L<@i>[0]; enckey; 0>(0x, dh_combine(pky, get(X<@i>)), 0x)
-    in 
+    let k0 = extract<L<@i>>(0x, dh_combine(pky, get(X<@i>))) in 
+    let y =  expand<0;enckey;0>(k0, 0x) in 
     let c = aenc(y, get(data<@i>)) in 
     output c
 
 struct server_getkey_result<j> {
     sgr_h : (x:Data<adv>{is_group_elem(x)}),
-    sgr_k : if 
-            dh_combine(sgr_h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y))
-            /\
-            sec(X<@j>)
-            /\ sec(Y)
-        then
-        Name(KDF<enckey;0;enckey Name(data<@j>)>(0x,
-        dh_combine(dhpk(get(X<@j>)), get(Y)), 0x))
-        else Data<adv>
+    sgr_ek : Ghost,
+    sgr_k : if sgr_h == dhpk(get(X<@j>)) /\ sec(X<@j>) /\ sec(Y) then
+        SecName(Expand<enckey; 0; data_key<@j>>(sgr_ek, 0x))
+        else
+            Data<adv>
 }
 
-def server_getkey() @ server : Option (exists j. server_getkey_result<session j>)
+def server_getkey() @ server : Option (exists j. server_getkey_result<session
+j>)
 =
     input h in 
     if is_group_elem(h) then {
-        pcase (exists j:idx. dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y))) in 
-        choose_idx j | dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y)) in 
-        let ss 
-            = dh_combine(h, get(Y)) in 
+        pcase (exists j:idx. h == dhpk(get(X<@j>))) in 
+        choose_idx j | h == dhpk(get(X<@j>)) in 
+        let ss = dh_combine(h, get(Y)) in 
         corr_case X<@j> in 
         corr_case Y in 
-        let y = kdf<;odh L<@j>[0]; enckey; 0>(0x, ss, 0x) in 
-        let res = pack<j>(server_getkey_result<session j>(h, y))
-        in
-        Some(res)
+        let y0 = extract<L<@j>>(0x, ss) in 
+        let y = expand<0;enckey;0>(y0, 0x) in 
+        let z = pack<j>(server_getkey_result<idx j>(h, y0, y)) in 
+        Some(z)
     }
     else None()
-
 
 def server_main() @ server :
 Unit = 
@@ -61,9 +60,9 @@ Unit =
     | None => ()
     | Some x_ => 
         unpack j, x = x_ in 
-        parse x as server_getkey_result<session j>(h, k) in {
+        parse x as server_getkey_result<session j>(h, _, k) in {
             input c in 
-            pcase (dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y))) in 
+            pcase (h == dhpk(get(X<@j>))) in 
             corr_case X<@j> in 
             corr_case Y in
             corr_case nameOf(k) in 
@@ -78,8 +77,5 @@ Unit =
         }
         // TODO parse x as server_getkey_result<session j>(h, )
     }
-        
-
-
 
 

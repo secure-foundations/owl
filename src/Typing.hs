@@ -51,7 +51,7 @@ import Data.Typeable (Typeable)
 type Check = Check' SMT.SolverEnv
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 doAssertFalse :: Check Bool
 doAssertFalse = do
@@ -915,16 +915,6 @@ tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) ->
             Nothing -> return False
             Just b -> return b
 
--- A more precise version of tyFlowsTo, taking into account concats
-isIKMDerivable :: AExpr -> Check Bool
-isIKMDerivable a = do
-    xs <- unconcat a
-    ts <- mapM inferAExpr xs
-    bs <- mapM (\t -> tyFlowsTo t advLbl) ts
-    return $ foldr (&&) True bs
-
-
-
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
 isSubtype t1 t2 = go (t1, t2)
@@ -1306,24 +1296,23 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
-      -- DeclODH s b -> do
-      --     ensureNoConcreteDefs
-      --     ((is, ps), (ne1, ne2, kdf)) <- unbind b
-      --     withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
-      --           nt <- getNameType ne1
-      --           nt2 <- getNameType ne2
-      --           assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
-      --           assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
-      --           b1 <- nameExpIsLocal ne1
-      --           b2 <- nameExpIsLocal ne2
-
-      --           assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
-      --           assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
-      --           let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
-      --           assert ("All indices in odh must appear in name expressions") indsLocal
-      --           checkNameType $ Spanned (d^.spanOf) $ NT_KDF KDF_IKMPos kdf
-      --     ensureODHDisjoint (bind (is, ps) (ne1, ne2))
-      --     local (over (curMod . odh) $ insert s b) $ cont
+      DeclODH s b -> do
+           ((is, ps), (ne1, ne2, odhnt)) <- unbind b
+           withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
+                 nt <- getNameType ne1
+                 nt2 <- getNameType ne2
+                 assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
+                 assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
+                 b1 <- nameExpIsLocal ne1
+                 b2 <- nameExpIsLocal ne2
+                 assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
+                 assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
+                 let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
+                 assert ("All indices in odh must appear in name expressions") indsLocal
+                 withSpan (d^.spanOf) $ 
+                     checkNameType $ Spanned (d^.spanOf) $ NT_ExtractKey odhnt
+           ensureODHDisjoint (bind (is, ps) (ne1, ne2))
+           local (over (curMod . odh) $ insert s b) $ cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -1347,21 +1336,21 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
--- ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
--- ensureODHDisjoint b = do
---     cur_odh <- view $ curMod . odh
---     ((is, ps), (ne1, ne2)) <- unbind b
---     withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
---             forM_ cur_odh $ \(_, bnd2) -> do
---                     ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
---                     withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps2) $ do
---                             let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
---                                             (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
---                             let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
---                                             (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
---                             let pdisj = pNot $ pOr peq1 peq2
---                             (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
---                             assert ("ODH Disjointness") b
+ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
+ensureODHDisjoint b = do
+    cur_odh <- view $ curMod . odh
+    ((is, ps), (ne1, ne2)) <- unbind b
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
+            forM_ cur_odh $ \(_, bnd2) -> do
+                    ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
+                    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps2) $ do
+                            let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+                            let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
+                            let pdisj = pNot $ pOr peq1 peq2
+                            (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+                            assert ("ODH Disjointness") b
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -1485,12 +1474,12 @@ checkNameType nt = withSpan (nt^.spanOf) $
       NT_Nonce l -> do
           assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
           return ()
-      NT_ExtractKey nt -> do
-          checkNameType nt
-          nt' <- normalizeNameType nt
+      NT_ExtractKey nt2 -> do
+          checkNameType nt2
+          nt' <- normalizeNameType nt2
           case nt'^.val of
             NT_ExpandKey _ -> return ()
-            _ -> typeError $ "Extract must return expand"
+            _ -> typeError $ "Extract must return expand: " ++ show (owlpretty nt')
       NT_ExpandKey b -> do 
           (((sx, x), (sy, y)), cases) <- unbind b 
           withVars [(x, (ignore sx, Nothing, tGhost)), 
@@ -2811,36 +2800,6 @@ proveDisjointContents x y = do
 --                 else return False
 --             return $ or bs
 
--- Try to infer a valid local DH computation (pk, sk) from input
--- (local = sk name is local to the module)
--- getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
--- getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
---     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
---     let go_from_ty = do
---             t <- inferAExpr a >>= normalizeTy
---             case (stripRefinements t)^.val of
---               TSS n m -> do
---                   m_local <- nameExpIsLocal m
---                   n_local <- nameExpIsLocal n
---                   if m_local then return (Just (dhpk (aeGet n), m)) else 
---                      if n_local then return (Just (dhpk (aeGet m), n)) else return Nothing
---               _ -> return Nothing
---     a' <- resolveANF a
---     case a'^.val of
---       AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
---           tx <- inferAExpr x >>= normalizeTy
---           xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
---           ty <- inferAExpr y >>= normalizeTy
---           case extractNameFromType ty of
---             Just ny -> do
---                 ny_local <- nameExpIsLocal ny
---                 nty <- getNameType ny
---                 case nty^.val of
---                   NT_DH -> 
---                       if (xwf == Just True) && ny_local then return (Just (x, ny)) else go_from_ty
---                   _ -> return Nothing
---             _ -> go_from_ty
---       _ -> go_from_ty
 
 -- Resolve the AExpr and split it up into its concat components. 
 unconcat :: AExpr -> Check [AExpr]
@@ -2929,26 +2888,99 @@ extractSalt salt = do
             _ -> checkPublicArguments emsg [snd salt] >> return Nothing
       _ -> checkPublicArguments emsg [snd salt] >> return Nothing
 
+getMatchingODH :: Maybe ODHAnn -> AExpr -> Check (Maybe (NameExp, NameExp, NameType))
+getMatchingODH Nothing _ = return Nothing
+getMatchingODH (Just (s, (is, ps))) a = do
+    (a', ne1, ne2, nt) <- getODHNameInfo (PRes $ PDot PTop s) (is, ps)
+    b <- decideProp (pEq a a')
+    if (b == Just True) then return (Just (ne1, ne2, nt)) else return Nothing
 
 
-extractIKM :: (AExpr, Ty) -> Check [NameType]
-extractIKM ikm = do
+-- Try to infer a valid local DH computation (pk, sk) from input
+-- (local = sk name is local to the module)
+getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
+getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    let go_from_ty = do
+            t <- inferAExpr a >>= normalizeTy
+            case (stripRefinements t)^.val of
+              TSS n m -> do
+                  m_local <- nameExpIsLocal m
+                  n_local <- nameExpIsLocal n
+                  if m_local then return (Just (dhpk (aeGet n), m)) else 
+                     if n_local then return (Just (dhpk (aeGet m), n)) else return Nothing
+              _ -> return Nothing
+    a' <- resolveANF a
+    case a'^.val of
+      AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
+          tx <- inferAExpr x >>= normalizeTy
+          xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
+          ty <- inferAExpr y >>= normalizeTy
+          case extractNameFromType ty of
+            Just ny -> do
+                ny_local <- nameExpIsLocal ny
+                nty <- getNameType ny
+                case nty^.val of
+                  NT_DH -> 
+                      if (xwf == Just True) && ny_local then return (Just (x, ny)) else go_from_ty
+                  _ -> return Nothing
+            _ -> go_from_ty
+      _ -> go_from_ty
+
+odhOOB :: AExpr -> Check Prop
+odhOOB a = do
+    o <- getLocalDHComputation a
+    case o of
+      Nothing -> return $ pFalse
+      Just (g, x) -> do 
+         let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+         let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+         cur_odh <- view $ curMod . odh
+         ps <- forM cur_odh $ \(_, b) -> do
+             ((is, ps), (ne1, ne2, _)) <- unbind b
+             return $ mkForallIdx (is ++ ps) $ pNot $ pEq a (dhCombine (dhpk $ aeGet ne1) (aeGet ne2))
+         return $ foldr pAnd pTrue ps
+
+-- Returns a list of name types that succeeded for the extract call. Also
+-- enforces that all arguments that don't succeed are public. 
+extractIKM :: Maybe ODHAnn -> (AExpr, Ty) -> Check [NameType]
+extractIKM anns ikm = do
     let emsg = "Extract cannot find valid key for IKM; argument must be public"
     -- TODO: handle odh
     xs <- unconcat (fst ikm)
+    -- For each element of the concat,
     ys <- forM xs $ \x -> do
         t <- inferAExpr x
         case extractNameFromType t of
+          -- If it is a name, 
           Just n -> do
               nt <- getNameType n
               case nt^.val of
+                -- And the name is an extract key,
                 NT_ExtractKey nt -> do
                     b <- flowsTo (nameLbl n) advLbl
                     case b of
-                      False -> return $ Just nt
-                      True -> return Nothing
-                _ -> checkPublicArguments emsg [t] >> return Nothing
-          _ -> checkPublicArguments emsg [t] >> return Nothing
+                      False -> return $ Just nt -- If secret, return it as a good output;
+                      True -> return Nothing -- Otherwse, argument is public; return empty
+                -- If name is not extract key, it must be public
+                _ -> checkPublicArguments emsg [t] >> return Nothing 
+          -- If it is not a name, 
+          _ -> do 
+              -- See if it is a secure ODH.
+              odh <- getMatchingODH anns x
+              case odh of
+                -- If it is, see whether it's secret or public. 
+                Just (ne1, ne2, nt) -> do
+                    b2 <- decideProp $ pAnd (pNot $ pFlow (nameLbl ne1) advLbl) (pNot $ pFlow (nameLbl ne2) advLbl)
+                    if b2 == Just True then return (Just nt) else return Nothing
+                -- If none fit, it must be either an out of bound ODH, or a
+                -- public value. 
+                Nothing -> do
+                    oobProp <- odhOOB x
+                    oob <- decideProp oobProp
+                    case oob of
+                      Just True -> return Nothing 
+                      _ -> checkPublicArguments emsg [t] >> return Nothing
     return $ catMaybes ys
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
@@ -3012,28 +3044,23 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
       CExtract anns -> do
-          assert ("ODH not supported yet") $ length anns == 0
           assert ("Extract takes two arguments") $ length args == 2
           let [salt, ikm] = args
           hints1 <- findGoodKDFSplits (fst salt)
           hints2 <- findGoodKDFSplits (fst ikm)
-          manyCasePropTy (hints1 ++ hints2) $ do    
+          manyCasePropTy (hints1 ++ hints2) $ local (set tcScope $ TcGhost False) $ do    
               (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
               if bad then return tAdmit else do
                   ont <- extractSalt salt
                   let nts1 = case ont of
                               Just v -> [v]
                               Nothing -> []
-                  nts2 <- extractIKM ikm
+                  nts2 <- extractIKM anns ikm
                   b <- allEqualNametypes (nts1 ++ nts2)
                   assert ("Name types for extract must be equivalent") b
                   let nts = nts1 ++ nts2
                   case nts of
-                    [] -> do
-                        saltPub <- tyFlowsTo (snd salt) advLbl
-                        ikmPub <- tyFlowsTo (snd ikm) advLbl
-                        assert ("No secret eligible for extract; arguments must be public") $ saltPub && ikmPub
-                        return $ tData advLbl advLbl
+                    [] -> return $ tData advLbl advLbl
                     _ -> do 
                         let ne = mkSpanned $ ExtractName (fst salt) (fst ikm) (head nts) (ignore True)
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
@@ -3051,7 +3078,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Info must flow to adv") infoPub
           hints1 <- findGoodKDFSplits (fst k)
           hints2 <- findGoodKDFSplits (fst info)
-          manyCasePropTy (hints1 ++ hints2) $ do 
+          manyCasePropTy (hints1 ++ hints2) $  local (set tcScope $ TcGhost False) $ do 
               (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
               if bad then return tAdmit else do
                   case extractNameFromType (snd k) of

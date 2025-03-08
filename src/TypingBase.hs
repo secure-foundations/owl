@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    -- _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
+    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, NameType)),
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -600,6 +600,7 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
+
 -- inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
 -- inKDFBody kdfBody salt info self = do
 --     (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
@@ -743,30 +744,23 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
--- getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
--- getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
---     let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
---     let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
---     mapM_ checkIdxSession is
---     mapM_ checkIdxPId ps
---     mapM_ inferIdx is_case
---     md <- openModule p
---     case lookup s (md^.odh) of
---       Nothing -> typeError $ "Unknown ODH handle: " ++ show s
---       Just bd -> do
---           ((ixs, pxs), bdy) <- unbind bd
---           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
---           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
---           let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
---           (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
---           assert ("Number of KDF case mismatch") $ i < length cases
---           let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
---           (xs_case, pcases')  <- unbind bpcases
---           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
---           let (p, cases') = substs (zip xs_case is_case) pcases'
---           assert ("KDF name row mismatch") $ j < length cases'
---           return (ne1, ne2, p, cases')
-
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> Check' senv (AExpr, NameExp, NameExp, NameType)
+getODHNameInfo (PRes (PDot p s)) (is, ps) = do
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    mapM_ checkIdxSession is
+    mapM_ checkIdxPId ps
+    md <- openModule p
+    case lookup s (md^.odh) of
+      Nothing -> typeError $ "Unknown ODH handle: " ++ show s
+      Just bd -> do
+          ((ixs, pxs), bdy) <- unbind bd
+          assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
+          let (ne1, ne2, nt) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
+          return (dhCombine (dhpk (aeGet ne1)) (aeGet ne2), 
+                   ne1,
+                   ne2, 
+                   nt)
 
 getNameKind :: NameType -> Check' senv NameKind
 getNameKind nt = 

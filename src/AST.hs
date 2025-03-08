@@ -346,7 +346,7 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
-    -- | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
+    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, NameType)) -- nametype needs to be an expand key 
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
@@ -448,7 +448,7 @@ type Expr = Spanned ExprX
 type ODHAnn = (String, ([Idx], [Idx]))
 
 data CryptOp = 
-     CExtract [ODHAnn] | 
+     CExtract (Maybe ODHAnn) | 
      CExpand Int [NameKind] Int | 
       CLemma BuiltinLemma
       | CAEnc 

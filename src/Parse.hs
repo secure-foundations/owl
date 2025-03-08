@@ -862,28 +862,19 @@ parseDecls =
         return $ DeclTy n t
     )
     <|>
-    -- (parseSpanned $ do
-    --     reserved "odh"
-    --     n <- identifier
-    --     ps <- parseIdxParamBinds
-    --     symbol ":"
-    --     ne1 <- parseNameExp
-    --     symbol ","
-    --     ne2 <- parseNameExp
-    --     symbol "->"
-    --     symbol "{"
-    --     x <- identifier
-    --     y <- identifier
-    --     oz <- optionMaybe identifier
-    --     let z = case oz of
-    --               Just v -> v
-    --               Nothing -> "%self"
-    --     symbol "."
-    --     kdfCases <- kdfCase `sepBy1` (symbol ",")
-    --     symbol "}"
-    --     return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
-    -- )
-    -- <|>
+    (parseSpanned $ do
+        reserved "odh"
+        n <- identifier
+        ps <- parseIdxParamBinds
+        symbol ":"
+        ne1 <- parseNameExp
+        symbol ","
+        ne2 <- parseNameExp
+        symbol "->"
+        nt <- parseNameType
+        return $ DeclODH n (bind ps $ (ne1, ne2, nt))
+    )
+    <|>
     (parseSpanned $ do
         reserved "nametype"
         n <- identifier
@@ -1628,13 +1619,10 @@ parseCryptOp =
         reserved "extract"
         odhs <- optionMaybe $ do
             symbol "<"
-            o <- parseODHAnn `sepBy1` (symbol ",")
+            o <- parseODHAnn 
             symbol ">"
             return o
-        let odhs' = case odhs of
-                      Just v -> v
-                      Nothing -> []
-        return $ CExtract odhs' 
+        return $ CExtract odhs 
     )
     <|>
     (do
