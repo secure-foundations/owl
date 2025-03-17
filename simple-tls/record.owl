@@ -45,24 +45,40 @@ def server_read(
         case st_aead_dec(client_app_key, encrypted, header, xor(counter, client_app_iv)) {
             | None => ServerReadResult_Error()
             | Some decrypted =>
-                parse decrypted as ClientInnerRecord(ctype, decrypted) in
-                    if eq(ctype, CTYPE_APPLICATION_DATA()) then
-                        // New application data
+                case decrypted as ClientInnerRecord {
+                    | ClientInnerRecord_ApplicationData data =>
                         inc_counter client_application_traffic_counter_recv;
                         ServerReadResult_Data(decrypted)
 
-                    else if eq(ctype, CTYPE_ALERT()) then
-                        // Alert, either throw an error or indicate the end of stream
-                        parse decrypted as Alert(_, desc) in
+                    | ClientInnerRecord_Alert alert =>
+                        parse alert as Alert(_, desc) in
                             if eq(desc, ALERT_DESC_CLOSE_NOTIFY()) then
                                 ServerReadResult_End()
                             else
                                 ServerReadResult_Error()
                         otherwise ServerReadResult_Error()
 
-                    else
-                        ServerReadResult_Error()
-                otherwise ServerReadResult_Error()
+                    otherwise => ServerReadResult_Error()
+                }
+
+                // parse decrypted as ClientInnerRecord(ctype, decrypted) in
+                //     if eq(ctype, CTYPE_APPLICATION_DATA()) then
+                //         // New application data
+                //         inc_counter client_application_traffic_counter_recv;
+                //         ServerReadResult_Data(decrypted)
+
+                //     else if eq(ctype, CTYPE_ALERT()) then
+                //         // Alert, either throw an error or indicate the end of stream
+                //         parse decrypted as Alert(_, desc) in
+                //             if eq(desc, ALERT_DESC_CLOSE_NOTIFY()) then
+                //                 ServerReadResult_End()
+                //             else
+                //                 ServerReadResult_Error()
+                //         otherwise ServerReadResult_Error()
+
+                //     else
+                //         ServerReadResult_Error()
+                // otherwise ServerReadResult_Error()
         }
 
 enum ClientSendResult {
@@ -90,7 +106,7 @@ def client_send(
     corr_case server_dh_sk in
 
     // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
-    let enc_data = ClientInnerRecord(CTYPE_APPLICATION_DATA(), data) in
+    let enc_data = ClientInnerRecord_ApplicationData(data) in
     let enc_len = cipherlen(length(enc_data)) in
     let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
         client_app_key,

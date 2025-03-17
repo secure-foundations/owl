@@ -94,19 +94,24 @@ counter server_application_traffic_counter_recv @ client
 def client_send @ client
 type ClientData = x : Data<adv /\ [client_data], |adv|> { happened(client_send(x)) }
 
-struct ClientInnerRecord {
-    // TODO: in the actual definition (TLSInnerPlaintext in RFC 8446)
-    // this content type actually comes after content
-    // but we assume that this permutation is handled in Vest
-    InnerRecord_type: Data<adv> |1|,
+// struct ClientInnerRecord {
+//     // TODO: in the actual definition (TLSInnerPlaintext in RFC 8446)
+//     // this content type actually comes after content
+//     // but we assume that this permutation is handled in Vest
+//     InnerRecord_type: Data<adv> |1|,
 
-    InnerRecord_content:
-        if InnerRecord_type == CTYPE_APPLICATION_DATA() then
-            ClientData
-        else
-            Data<adv>
+//     InnerRecord_content:
+//         if InnerRecord_type == CTYPE_APPLICATION_DATA() then
+//             ClientData
+//         else
+//             Data<adv>
 
-    // TODO: padding handled in Vest
+//     // TODO: padding handled in Vest
+// }
+
+enum ClientInnerRecord {
+    | ClientInnerRecord_ApplicationData ClientData
+    | ClientInnerRecord_Alert Data<adv>
 }
 
 // TODO: change to AEAD
