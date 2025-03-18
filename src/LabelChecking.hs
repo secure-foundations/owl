@@ -50,7 +50,7 @@ removeGhost l =
 nameDefFlows :: NameExp -> NameType -> Sym SExp
 nameDefFlows n nt = do
     case nt^.val of 
-      NT_App p is as -> (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows n
+      NT_App p is as -> (liftCheck $ resolveNameTypeApp False p is as) >>= nameDefFlows n
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do
@@ -94,17 +94,20 @@ nameDefFlows n nt = do
           (((sx, x), (sself, self)), cases) <- liftCheck $ unbind b
           axs <- withSMTVars [x, self] $ do
               axis <- forM [0 .. (length cases - 1)] $ \i -> do
-                  let (p, nts) = cases !! i
-                  nks <- liftCheck $ mapM (\(_, nt) -> getNameKind nt) nts
-                  axijs <- forM [0 .. (length nts - 1)] $ \j -> do
-                      let (strictness, nt) = nts !! j
-                      ne_axioms <- do -- $ withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
-                          let ne = mkSpanned $ ExpandName (aeGet n) (aeVar' x) nks j nt (ignore True)
-                          nameDefFlows ne nt
-                      ctr <- getFreshCtr
-                      vp <- interpretProp p
-                      return $ sImpl vp ne_axioms 
-                  return $ sAnd axijs
+                  (xs, (p, nts)) <- liftCheck $ unbind $ cases !! i
+                  res <- withSMTVars (map snd xs) $ do 
+                      nks <- liftCheck $ mapM (\(_, nt) -> getNameKind nt) nts
+                      axijs <- forM [0 .. (length nts - 1)] $ \j -> do
+                          let (strictness, nt) = nts !! j
+                          ne_axioms <- do -- $ withSMTIndices (map (\i -> (i, IdxGhost)) ixs) $ do
+                              let ne = mkSpanned $ ExpandName (aeGet n) (aeVar' x) nks j nt (ignore True)
+                              nameDefFlows ne nt
+                          ctr <- getFreshCtr
+                          vp <- interpretProp p
+                          return $ sImpl vp ne_axioms 
+                      return $ sAnd axijs
+                  ctr <- getFreshCtr
+                  return $ sForall (map (\(_, x) -> (SAtom (show x), bitstringSort)) xs) res [] ("exandFlowsInner_" ++ show ctr)
               return $ sAnd axis
           ctr <- getFreshCtr
           let vx = SAtom (show x)

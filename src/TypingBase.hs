@@ -675,7 +675,9 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
 normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
-      NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
+      NT_App p is as -> do
+          x <- resolveNameTypeApp False p is as
+          normalizeNameType x
       NT_ExtractKey nt -> do
           nt' <- normalizeNameType nt
           return $ Spanned (nt^.spanOf) $ NT_ExtractKey nt'
@@ -684,11 +686,11 @@ normalizeNameType nt = pushRoutine "normalizeNameType" $
           cases' <- withVars
              [(x, (ignore sx, Nothing, tGhost)), 
              (info, (ignore sinfo, Nothing, tGhost))] $ forM cases $ \cse -> do 
-                 let (p, nts) = cse
+                 (xs, (p, nts)) <- unbind cse
                  nts' <- forM nts $ \(str, nt) -> do
                      nt' <- normalizeNameType nt
                      return (str, nt')
-                 return $ (p, nts')
+                 return $ bind xs $ (p, nts')
           return $ Spanned (nt^.spanOf) $ NT_ExpandKey (bind ((sx, x), (sinfo, info)) cases')
       _ -> return nt 
 
@@ -772,15 +774,34 @@ getNameKind nt =
       NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
-      NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
+      NT_App p ps as -> resolveNameTypeApp False p ps as >>= getNameKind
       NT_ExpandKey _ -> return $ NK_ExpandKey
       NT_ExtractKey _ -> return $ NK_ExtractKey
+
+withLog :: (OwlPretty a, OwlPretty b) => String -> (a -> Check' senv b) -> a -> Check' senv b
+withLog s k x =  do
+    liftIO $ putStrLn $ s ++ ": " ++ show (owlpretty x)
+    r <- k x
+    liftIO $ putStrLn $ s ++ "finished: " ++ show (owlpretty r)
+    return r
+
+withLog0 :: String -> Check' senv a -> Check' senv a
+withLog0 s k = do
+    r <- view $ typeCheckLogDepth
+    n <- liftIO $ readIORef r
+    if (n > 20) then error "Recursion depth limit reached" else do 
+        let padding = (replicate n ' ') 
+        liftIO $ putStrLn $ padding ++ "begin " ++ s
+        r <- withPushLog k
+        liftIO $ putStrLn $ padding ++ "finished:" ++ s
+        return r
     
-resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
-resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
-    forM_ is checkIdxSession
-    forM_ ps checkIdxPId
-    forM_ as inferAExpr
+resolveNameTypeApp :: Bool -> Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
+resolveNameTypeApp doChecks pth@(PRes (PDot p s)) (is, ps) as = do  
+    when doChecks $ do 
+        forM_ is checkIdxSession
+        forM_ ps checkIdxPId
+        forM_ as inferAExpr
     md <- openModule p
     case lookup s (md ^. nameTypeDefs) of 
       Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
@@ -789,7 +810,7 @@ resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
           assert ("Wrong index arity on name type: " ++ show (owlpretty pth)) $ (length is, length ps) == (length xs, length ys)
           assert ("Wrong var arity on name type") $ length args == length as
           return $ substs (zip xs is) $ substs (zip ys ps) $ substs (zip args as) $ nt
-resolveNameTypeApp pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
+resolveNameTypeApp _ pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
 
 
 getNameTypeOpt :: NameExp -> Check' senv (Maybe NameType)
@@ -902,7 +923,7 @@ lenConstOfUniformName ne = do
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_ExpandKey _ -> return $ mkSpanned $ AELenConst "expandkey"
                     NT_ExtractKey _ -> return $ mkSpanned $ AELenConst "extractkey"
-                    NT_App p ps as -> resolveNameTypeApp p ps as >>= go
+                    NT_App p ps as -> resolveNameTypeApp False p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check' senv AExpr
@@ -1671,13 +1692,15 @@ stripNameExp x e =
       ExtractName a b nt ib -> do 
           a' <- resolveANF a
           b' <- resolveANF b
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ toListOf fv nt) then 
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ toListOf fv nt) then do 
+             liftIO $ putStrLn $ "Error condition here"
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else return $ Spanned (e^.spanOf) $ ExtractName a' b' nt ib
       ExpandName a b nks j nt ib -> do
           a' <- resolveANF a
           b' <- resolveANF b
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ toListOf fv nt) then 
+          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ toListOf fv nt) then do
+             liftIO $ putStrLn $ "Error condition here"
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else return $ Spanned (e^.spanOf) $ ExpandName a' b' nks j nt ib
       

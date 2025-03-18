@@ -317,7 +317,7 @@ setupAllFuncs = do
 
 
 smtTy :: SExp -> Ty -> Sym SExp
-smtTy xv t = 
+smtTy xv t = do
     case t^.val of
       TData _ _ _ -> return sTrue
       TGhost -> return sTrue
@@ -366,7 +366,7 @@ smtTy xv t =
           dh_combine <- getTopLevelFunc ("dh_combine")
           return $ xv `sEq` (SApp [dh_combine, SApp [dhpk, vn], vm])
       TUnit -> return $ xv `sHasType` (SAtom "Unit")
-      TAdmit -> return $ sTrue
+      TAdmit -> return $ sFalse
       TCase p t1 t2 -> do
           vp <- interpretProp p
           vt1 <- smtTy xv t1

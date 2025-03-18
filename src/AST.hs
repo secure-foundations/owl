@@ -255,7 +255,7 @@ data NameTypeX =
     | NT_MAC Ty
     | NT_App Path ([Idx], [Idx]) [AExpr]
     --                         info                 key
-    | NT_ExpandKey (Bind ((String, DataVar), (String, DataVar)) [(Prop, [(KDFStrictness, NameType)])]) 
+    | NT_ExpandKey (Bind ((String, DataVar), (String, DataVar)) [Bind [(String, DataVar)] (Prop, [(KDFStrictness, NameType)])]) 
     | NT_ExtractKey NameType -- output must be an expand, strict by default
     -- | NT_KDF KDFPos 
     --    KDFBody
@@ -448,8 +448,8 @@ type Expr = Spanned ExprX
 type ODHAnn = (String, ([Idx], [Idx]))
 
 data CryptOp = 
-     CExtract (Maybe ODHAnn) | 
-     CExpand Int [NameKind] Int | 
+     CExtract [ODHAnn] | 
+     CExpand (Int, [AExpr]) [NameKind] Int | 
       CLemma BuiltinLemma
       | CAEnc 
       | CADec 

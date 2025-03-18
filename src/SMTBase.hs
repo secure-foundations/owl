@@ -63,6 +63,8 @@ renderSExp (SQid s) = T.pack " :qid " <> T.pack s
 renderSExp (SNamed s) = T.pack " :named " <> T.pack s
 renderSExp (SOption x y) = T.pack ":" <> T.pack x <> T.pack " " <> T.pack y
 
+instance Show SExp where
+    show e = show (renderSExp e)
 
 bitstringSort :: SExp
 bitstringSort = SAtom "Bits"
@@ -155,6 +157,10 @@ liftCheck c = do
       Left s -> Sym $ lift $ throwError $ "SMT ERROR" 
       Right i -> return i
 
+liftCheckWrapped :: String -> Check a -> Sym a
+liftCheckWrapped s k = do
+    r <- liftCheck $ withLog0 s k
+    return r
 
 
 class SmtName a where
@@ -453,11 +459,11 @@ sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
+allPairs :: [a] -> [(a, a)]
+allPairs l = [(x,y) | (x:ys) <- tails l, y <- ys]
+
 sAtMostOne :: [SExp] -> SExp
-sAtMostOne xs = 
-    let sum = SApp $ SAtom "+" : (map (\x -> SApp [SAtom "ite", x, SAtom "1", SAtom "0"]) xs) 
-    in
-    SApp [SAtom "<=", sum, SAtom "1"]
+sAtMostOne xs = sAnd $ map (\(x, y) -> sNot $ sAnd2 x y) $ allPairs xs  
 
 makeHex :: String -> Sym SExp
 makeHex s = do
@@ -882,7 +888,7 @@ instance SMTNameKindOf NameType where
           NT_Nonce l -> do
               let v = lengthConstant l 
               return $ SApp [SAtom "Nonce", v]
-          NT_App p ps as -> resolveNameTypeApp p ps as >>= smtNameKindOf
+          NT_App p ps as -> resolveNameTypeApp False p ps as >>= smtNameKindOf
 
 instance SMTNameKindOf NameKind where
     smtNameKindOf nk = 

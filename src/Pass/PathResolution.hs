@@ -347,12 +347,13 @@ resolveNameType e = do
                       return $ NT_ExtractKey nt'
                   NT_ExpandKey b -> do
                       (((s, x), (s2, y)), cases) <- unbind b
-                      cases' <- forM cases $ \(p, nts) -> do 
+                      cases' <- forM cases $ \bnd -> do
+                          (xs, (p, nts)) <- unbind bnd 
                           p' <- resolveProp p
                           nts' <- forM nts $ \(str, nt) -> do
                               nt' <- resolveNameType nt
                               return (str, nt')
-                          return (p', nts')
+                          return (bind xs (p', nts'))
                       return $ NT_ExpandKey $ bind ((s, x), (s2, y)) cases'
 
 resolveTy :: Ty -> Resolve Ty
@@ -540,6 +541,15 @@ resolveAExpr a =
           return $ Spanned (a^.spanOf) $ AEGetVK ne'
       AELenConst _ -> return a
       AEInt _ -> return a
+      AE_Extract b c -> do
+          b' <- resolveAExpr b
+          c' <- resolveAExpr c
+          return $ Spanned (a^.spanOf) $ AE_Extract b' c'
+      AE_Expand b c nks i -> do
+          b' <- resolveAExpr b
+          c' <- resolveAExpr c
+          return $ Spanned (a^.spanOf) $ AE_Expand b' c' nks i
+
       -- AEKDF a2 b c nks j -> do
       --     a2' <- resolveAExpr a2
       --     b' <- resolveAExpr b
@@ -564,7 +574,9 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CExpand  i nks j -> return cop
+      CExpand (i, as) nks j -> do
+          as' <- mapM resolveAExpr as
+          return $ CExpand (i, as') nks j
       CExtract  _ -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do

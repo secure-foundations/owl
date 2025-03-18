@@ -63,6 +63,9 @@ tyColor = Magenta
 -- owlprettyKDFSelector :: KDFSelector -> OwlDoc
 -- owlprettyKDFSelector (i, []) = owlpretty i
 -- owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
+--
+instance OwlPretty () where
+    owlpretty _ = owlpretty "()"
 
 instance  OwlPretty NameExpX where
     owlpretty (ExtractName a b nt _) = 
@@ -191,6 +194,8 @@ instance OwlPretty NameKind where
     owlpretty n = 
         owlpretty $ case n of
                       -- NK_KDF -> "kdfkey"
+                      NK_ExpandKey -> "expandkey"
+                      NK_ExtractKey -> "extractkey"
                       NK_DH -> "dhkey"
                       NK_Enc -> "enckey"
                       NK_PKE -> "pkekey"
@@ -267,8 +272,8 @@ instance  OwlPretty NameTypeX where
     owlpretty (NT_ExpandKey cases) = 
         let (((sx, _), (sself, _)), c) = unsafeUnbind cases in 
         let pcases = map (\b ->
-                            let (p, nts) = b in 
-                            owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
+                            let (xs, (p, nts)) = unsafeUnbind b in 
+                            (angles $ mconcat $ map owlpretty xs) <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
                                                                     map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
         in
         owlpretty "expandkey" <> owlpretty "{" <> owlpretty sx <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"

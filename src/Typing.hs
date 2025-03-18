@@ -606,6 +606,7 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
 -- nested refinement, and to normalize a case whether a name n is honest.
 
 
+
 normalizeTy :: Ty -> Check Ty
 normalizeTy = withMemoize (memoNormalizeTy) $ \t0 -> 
      withSpan (t0^.spanOf) $ local (set tcScope $ TcGhost False) $ do
@@ -725,11 +726,12 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
       falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
          (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
          return b
-      if falseTy then return True else 
+      if falseTy then do { logTypecheck (owlpretty "Got false"); return True } else 
           case (t1^.val, t2^.val) of
             (t1', t2') | t1' `aeq` t2' -> return True
             (_, TGhost) -> return True
-            (TAdmit, _) -> return True
+            (TAdmit, _) -> do
+                return True
             (TCase p t1' t2', _) -> do
                 p' <- normalizeProp p
                 (fn, r) <- SMT.symDecideProp p'
@@ -745,8 +747,10 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                       isSubtype' t1 r1 (if b then t1' else t2') r2
                   Nothing -> byCasesProp p' $ \b -> isSubtype' t1 r1 (if b then t1' else t2') r2
             (TOption t1, TOption t2) -> isSubtype' t1 r1 t2 r2
-            (_, TRefined t s p) -> isSubtype' t1 r1 t ((s,p):r2)
-            (TRefined t s p, _) -> isSubtype' t ((s,p):r1) t2 r2
+            (_, TRefined t s p) -> do
+                isSubtype' t1 r1 t ((s,p):r2)
+            (TRefined t s p, _) -> do
+                isSubtype' t ((s,p):r1) t2 r2
             (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
                 (xi, t1) <- unbind xt1
                 (xi', t2) <- unbind xt2
@@ -759,11 +763,20 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                 case ob of
                   Nothing -> return False
                   Just b -> return b
-            -- (_, TName (Spanned _ (KDFName a2 b2 c2 nks2 j2 nt2 _))) ->
-            --     case (stripRefinements t1)^.val of
-            --       TName (Spanned _ (KDFName a1 b1 c1 nks1 j1 nt1 _)) | (nks1 == nks2 && j1 == j2) 
-            --           -> subKDFName a1 b1 c1 nt1 a2 b2 c2 nt2
-            --       _ -> return False
+            (_, TName (Spanned _ (ExpandName a2 b2 nks2 i2 nt2 _))) ->
+                case (stripRefinements t1)^.val of
+                  (TName (Spanned _ (ExpandName a1 b1 nks1 i1 nt1 _))) -> do
+                      r1 <- decideProp $ pAnd (pEq a1 a2) (pEq b1 b2)
+                      r2 <- subNameType nt1 nt2
+                      return $ (r1 == Just True) && r2 && (nks1 == nks2) && (i1 == i2)
+                  _ -> return False
+            (_, TName (Spanned _ (ExtractName a2 b2 nt2 _))) ->
+                case (stripRefinements t1)^.val of
+                  (TName (Spanned _ (ExtractName a1 b1 nt1 _))) -> do
+                      r1 <- decideProp $ pAnd (pEq a1 a2) (pEq b1 b2)
+                      r2 <- subNameType nt1 nt2
+                      return $ (r1 == Just True) && r2 
+                  _ -> return False
             _ | isSingleton t2 -> return True
             (TConst x ps1, TConst y ps2) -> do
                 x' <- normalizePath x
@@ -802,7 +815,9 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
             _ -> do
                 return False
     let t2Leaf = isSubtypeLeaf t2 
-    if res then if t2Leaf then checkSubRefinement t1 r1 t2 r2 else return True else return False
+    res2 <- if res then if t2Leaf then checkSubRefinement t1 r1 t2 r2 else return True else return False
+    return res2
+
 
 isSubtypeLeaf t = 
     case t^.val of
@@ -884,8 +899,8 @@ isSingleton t =
     case t^.val of
       TName ne -> 
           case ne^.val of
-            -- KDFName _ _ _ _ _ _ _ -> False
             NameConst _ _ _ -> True
+            _ -> False -- We handle this separately
       TVK _ -> True
       TDH_PK _ -> True
       TEnc_PK _ -> True
@@ -898,6 +913,7 @@ tyFlowsTo t0 l = do
     t <- normalizeTy t0
     tyFlowsTo' (t, l)
 
+tyFlowsTo' :: (Ty, Label) -> Check Bool
 tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) -> 
     case t^.val of
       TRefined t0 s xp -> do
@@ -917,12 +933,14 @@ tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) ->
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
-isSubtype t1 t2 = go (t1, t2)
+isSubtype t1 t2 = do
+    go (t1, t2)
     where
         go = withMemoize (memoisSubtype') $ \(t1, t2) -> do 
             t1' <- normalizeTy t1
             t2' <- normalizeTy t2
-            isSubtype' t1' [] t2' []
+            res <- isSubtype' t1' [] t2' []
+            return res
 
 
 
@@ -1384,8 +1402,10 @@ nameTypeUniform nt =
       NT_Nonce _ -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
-      NT_App p ps as -> resolveNameTypeApp p ps as >>= nameTypeUniform
+      NT_App p ps as -> resolveNameTypeApp False p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
+      NT_ExtractKey _ -> return ()
+      NT_ExpandKey _ -> return ()
       -- NT_KDF _ _ -> return ()
       _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
 
@@ -1462,6 +1482,10 @@ checkNoTopTy allowGhost t =
       _ -> return ()      
           
 
+mkManyExists :: [(String, DataVar)] -> Prop -> Prop
+mkManyExists [] p = p
+mkManyExists ((s, x):xs) p = 
+    mkSpanned $ PQuantBV Exists (ignore s) $ bind x $ mkManyExists xs p
 
 
 checkNameType :: NameType -> Check ()
@@ -1485,15 +1509,17 @@ checkNameType nt = withSpan (nt^.spanOf) $
           withVars [(x, (ignore sx, Nothing, tGhost)), 
                     (y, (ignore sy, Nothing, tGhost))] $ do
               assert ("Expand cases must be non-empty") $ not $ null cases
-              ps <- forM cases $ \(p, nts) -> do
-                      withSpan (p^.spanOf) $ 
-                          assert ("Self variable must not appear in precondition") $ 
-                              not $ y `elem` (toListOf fv p)
-                      checkProp p
-                      forM_ nts $ \(str, nt) -> do
-                          checkNameType nt
-                          nameTypeUniform nt
-                      return p
+              ps <- forM cases $ \b -> do 
+                      (xs, (p, nts)) <- unbind b 
+                      withVars (map (\(s, x) -> (x, (ignore s, Nothing, tGhost))) xs) $ do 
+                          withSpan (p^.spanOf) $ 
+                              assert ("Self variable must not appear in precondition") $ 
+                                  not $ y `elem` (toListOf fv p)
+                          checkProp p
+                          forM_ nts $ \(str, nt) -> do
+                              checkNameType nt
+                              nameTypeUniform nt
+                      return $ mkManyExists xs p
               (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
               assert ("Expand disjointness check failed") b
           return ()
@@ -1502,7 +1528,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkNoTopTy False t
         checkTyPubLen t
       NT_App p ps as -> do
-          resolveNameTypeApp p ps as >>= checkNameType
+          resolveNameTypeApp True p ps as >>= checkNameType
       NT_StAEAD t xsaad p ypat -> do
           checkTy t
           checkNoTopTy False t
@@ -1806,6 +1832,7 @@ tryFlowsTo l1' l2' = do
     l2 <- normalizeLabel l2'
     tryFlowsTo' (l1, l2)
 
+tryFlowsTo' :: (Label, Label) -> Check (Maybe Bool)
 tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2
     return b
@@ -1846,7 +1873,7 @@ checkEndpoint (EndpointLocality l) = do
     return ()
 
 getOutTy :: Maybe Ty -> Ty -> Check Ty
-getOutTy ot t1 = 
+getOutTy ot t1 = do
     case ot of 
       Nothing -> return t1
       Just t2 -> do
@@ -1992,7 +2019,8 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           tc <- view tcScope
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
-          stripTy x t2 >>= normalizeTy
+          res <- (stripTy x t2 >>= normalizeTy)
+          return res
       ELetGhost a sx xk -> do
           t <- local (set tcScope $ TcGhost False) $ inferAExpr a
           t'' <- ghostifyTy a t
@@ -2484,7 +2512,7 @@ getValidatedTy albl t = local (set tcScope $ TcGhost False) $ do
                         case nt^.val of
                             NT_Nonce l -> return $ mkSpanned $ AELenConst l
                             NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
-                            NT_App p ps as -> resolveNameTypeApp p ps as >>= go
+                            NT_App p ps as -> resolveNameTypeApp False p ps as >>= go
                             NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                             NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                             NT_DH -> return $ mkSpanned $ AELenConst "group"
@@ -2888,9 +2916,8 @@ extractSalt salt = do
             _ -> checkPublicArguments emsg [snd salt] >> return Nothing
       _ -> checkPublicArguments emsg [snd salt] >> return Nothing
 
-getMatchingODH :: Maybe ODHAnn -> AExpr -> Check (Maybe (NameExp, NameExp, NameType))
-getMatchingODH Nothing _ = return Nothing
-getMatchingODH (Just (s, (is, ps))) a = do
+getMatchingODH :: ODHAnn -> AExpr -> Check (Maybe (NameExp, NameExp, NameType))
+getMatchingODH (s, (is, ps)) a = do
     (a', ne1, ne2, nt) <- getODHNameInfo (PRes $ PDot PTop s) (is, ps)
     b <- decideProp (pEq a a')
     if (b == Just True) then return (Just (ne1, ne2, nt)) else return Nothing
@@ -2943,13 +2970,13 @@ odhOOB a = do
 
 -- Returns a list of name types that succeeded for the extract call. Also
 -- enforces that all arguments that don't succeed are public. 
-extractIKM :: Maybe ODHAnn -> (AExpr, Ty) -> Check [NameType]
+extractIKM :: [ODHAnn] -> (AExpr, Ty) -> Check [NameType]
 extractIKM anns ikm = do
     let emsg = "Extract cannot find valid key for IKM; argument must be public"
     -- TODO: handle odh
     xs <- unconcat (fst ikm)
     -- For each element of the concat,
-    ys <- forM xs $ \x -> do
+    res <- forM xs $ \x -> do
         t <- inferAExpr x
         case extractNameFromType t of
           -- If it is a name, 
@@ -2960,28 +2987,31 @@ extractIKM anns ikm = do
                 NT_ExtractKey nt -> do
                     b <- flowsTo (nameLbl n) advLbl
                     case b of
-                      False -> return $ Just nt -- If secret, return it as a good output;
-                      True -> return Nothing -- Otherwse, argument is public; return empty
+                      False -> return [nt] -- If secret, return it as a good output;
+                      True -> return []-- Otherwse, argument is public; return empty
                 -- If name is not extract key, it must be public
-                _ -> checkPublicArguments emsg [t] >> return Nothing 
+                _ -> checkPublicArguments emsg [t] >> return [] 
           -- If it is not a name, 
           _ -> do 
-              -- See if it is a secure ODH.
-              odh <- getMatchingODH anns x
-              case odh of
-                -- If it is, see whether it's secret or public. 
-                Just (ne1, ne2, nt) -> do
-                    b2 <- decideProp $ pAnd (pNot $ pFlow (nameLbl ne1) advLbl) (pNot $ pFlow (nameLbl ne2) advLbl)
-                    if b2 == Just True then return (Just nt) else return Nothing
-                -- If none fit, it must be either an out of bound ODH, or a
-                -- public value. 
-                Nothing -> do
+              -- Find all of the matching ODH's. 
+              odhs' <- mapM (\ann -> getMatchingODH ann x) anns
+              let odhs = catMaybes odhs'
+              case odhs of
+                (_:_) -> do
+                    -- If there was a match, then for each match, 
+                    res <- forM odhs $ \(ne1, ne2, nt) -> do
+                        -- see whether it's secret or public. 
+                        b2 <- decideProp $ pAnd (pNot $ pFlow (nameLbl ne1) advLbl) 
+                                                (pNot $ pFlow (nameLbl ne2) advLbl)
+                        if b2 == Just True then return [nt] else return []
+                    return $ concat res
+                [] -> do -- If no matches, it must either be an out of bound ODH, or a public value.
                     oobProp <- odhOOB x
                     oob <- decideProp oobProp
                     case oob of
-                      Just True -> return Nothing 
-                      _ -> checkPublicArguments emsg [t] >> return Nothing
-    return $ catMaybes ys
+                      Just True -> return [] 
+                      _ -> checkPublicArguments emsg [t] >> return []
+    return $ concat res
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
@@ -3048,36 +3078,50 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let [salt, ikm] = args
           hints1 <- findGoodKDFSplits (fst salt)
           hints2 <- findGoodKDFSplits (fst ikm)
+          ghostProp <- do 
+              salt' <- resolveANF (fst salt)
+              ikm' <- resolveANF (fst ikm)
+              let outLen = mkSpanned $ AELenConst "expandkey" 
+              return $ pAnd (pEq (aeVar ".res") $ mkSpanned $ AE_Extract salt' ikm')
+                            (pEq (aeLength (aeVar ".res")) outLen)
           manyCasePropTy (hints1 ++ hints2) $ local (set tcScope $ TcGhost False) $ do    
               (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
               if bad then return tAdmit else do
+                  -- Get the valid output name types for the salt
+                  -- Throws an error if it's either not valid and secret, or
+                  -- public
                   ont <- extractSalt salt
                   let nts1 = case ont of
                               Just v -> [v]
                               Nothing -> []
+                  -- Get the valid output name types for the IKM
+                  -- Throws an error if it's either not valid and secret, or
+                  -- public
                   nts2 <- extractIKM anns ikm
+                  -- Are they all consistent?
                   b <- allEqualNametypes (nts1 ++ nts2)
                   assert ("Name types for extract must be equivalent") b
                   let nts = nts1 ++ nts2
                   case nts of
-                    [] -> return $ tData advLbl advLbl
+                    -- If none worked, return adv. sound since we enforce all
+                    -- public in this case
+                    [] -> return $ mkSpanned $ TRefined (tData advLbl advLbl) ".res" $ bind (s2n ".res") $ ghostProp
                     _ -> do 
                         let ne = mkSpanned $ ExtractName (fst salt) (fst ikm) (head nts) (ignore True)
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
-                        outLen <- nameKindLength <$> getNameKind (head nts)
-                        ghostProp <- do
-                            salt' <- resolveANF (fst salt)
-                            ikm' <- resolveANF (fst ikm)
-                            return $ pEq (aeVar ".res") $ mkSpanned $ AE_Extract salt' ikm'
                         normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                             pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
-      CExpand i nks j -> do
+                            ghostProp
+      CExpand (i, iargs) nks j -> do
           assert ("Expand takes two arguments") $ length args == 2
           let [k, info] = args
           infoPub <- tyFlowsTo (snd info) advLbl
           assert ("Info must flow to adv") infoPub
           hints1 <- findGoodKDFSplits (fst k)
           hints2 <- findGoodKDFSplits (fst info)
+          ghostProp <- do
+              k' <- resolveANF (fst k)
+              info' <- resolveANF (fst info)
+              return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
           manyCasePropTy (hints1 ++ hints2) $  local (set tcScope $ TcGhost False) $ do 
               (_, bad) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
               if bad then return tAdmit else do
@@ -3089,9 +3133,12 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                               (((_, xinfo), (_, xself)), cases') <- unbind bdy
                               let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
                               assert ("Out of bounds") $ i < length cases
-                              let (p, row) = cases !! i
+                              (xs, (p', row')) <- unbind $ cases !! i
+                              assert ("Wrong number of arguments") $ length xs == length iargs
+                              mapM_ inferAExpr iargs
+                              let (p, row) = substs (zip (map snd xs) iargs) (p', row')
                               nks' <- mapM (\(_, nt) -> getNameKind nt) row
-                              assert ("Name kinds must match") $ nks `aeq` nks'
+                              assert ("Name kinds must match: annotation says " ++ show (owlpretty nks) ++ " but type says " ++ show (owlpretty nks')) $ nks `aeq` nks'
                               b <- decideProp p
                               case b of
                                 Just True -> do
@@ -3103,17 +3150,17 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                                    KDFPub -> pFlow (nameLbl ne) advLbl 
                                                    KDFNormal -> pTrue
                                     let outLen = nameKindLength $ nks !! j
-                                    ghostProp <- do
-                                        k' <- resolveANF (fst k)
-                                        info' <- resolveANF (fst info)
-                                        return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
                                     normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                                          pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
                                 _ -> typeError $ "Cannot prove prop for expand"
                           _ -> typeError $ "Not an expand key"
                     _ -> do
                         b <- tyFlowsTo (snd k) advLbl
-                        if b then return (tData advLbl advLbl) else 
+                        assert ("Out of bounds") $ j < length nks
+                        let outLen = nameKindLength $ nks !! j
+                        let t = tRefined (tData advLbl advLbl) ".res" $ 
+                                    pAnd ghostProp $ pEq (aeLength (aeVar ".res")) outLen
+                        if b then return t else 
                             typeError $ "Cannot determine name from key of expand"
 -- -- For CKDF:
 -- --  0. Ensure that info is public

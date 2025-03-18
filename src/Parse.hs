@@ -1,6 +1,8 @@
 module Parse where
 
 import Debug.Trace
+import Numeric
+import Data.Char
 import Text.Parsec
 import Text.Parsec.Language
 import Text.Parsec.Expr
@@ -727,8 +729,16 @@ parseKDFStrictness =
     (reserved "public" >> return KDFPub)
 
 
-expandCase :: Parser (Prop, [(KDFStrictness, NameType)])
+expandCase :: Parser (Bind [(String, DataVar)] (Prop, [(KDFStrictness, NameType)]))
 expandCase = do
+    oxs <- optionMaybe $ do
+        symbol "<"
+        xs <- identifier `sepBy1` (symbol ",")
+        symbol ">"
+        return (map (\x -> (x, s2n x)) xs)
+    let xs = case oxs of
+               Nothing -> []
+               Just vs -> vs
     p <- parseProp
     symbol "->"
     nts <- (do
@@ -738,7 +748,7 @@ expandCase = do
                             Nothing -> KDFNormal
                             Just v -> v
         return (strictness, nt)) `sepBy` (symbol "||")
-    return (p, nts)
+    return (bind xs (p, nts))
 
 -- parseKDFHint :: Parser (NameExp, Int, Int)
 -- parseKDFHint = do 
@@ -1594,6 +1604,18 @@ parseArgs :: Parser [AExpr]
 parseArgs = 
     parseAExpr `sepBy` (reservedOp ",")
 
+parseOptionArgs :: Parser [AExpr]
+parseOptionArgs = do
+    r <- optionMaybe $ do
+        symbol "("
+        res <- parseArgs
+        symbol ")"
+        return res
+    case r of
+      Nothing -> return []
+      Just v -> return v
+
+
 parseROHint :: Parser (Path, ([Idx], [Idx]), [AExpr])
 parseROHint = do
     p <- parsePath
@@ -1613,15 +1635,20 @@ parseODHAnn = do
     p <- parseIdxParams
     return (s, p)
 
+
+
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
     (do
         reserved "extract"
-        odhs <- optionMaybe $ do
+        o <- optionMaybe $ do
             symbol "<"
-            o <- parseODHAnn 
+            o <- parseODHAnn `sepBy1` (symbol ",")
             symbol ">"
             return o
+        let odhs = case o of
+                     Nothing -> []
+                     Just v -> v
         return $ CExtract odhs 
     )
     <|>
@@ -1629,12 +1656,13 @@ parseCryptOp =
         reserved "expand"
         symbol "<"
         i <- many1 digit
+        iargs <- parseOptionArgs
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
         symbol ">"
-        return $ CExpand (read i) nks (read j))
+        return $ CExpand (read i, iargs) nks (read j))
     <|>
     -- (do
     --     reserved "kdf"
@@ -1727,8 +1755,10 @@ parseCryptOp =
     (reserved "vrfy" >> return CSigVrfy)
 
 parseNameKind =
-    -- (reserved "kdfkey" >> return NK_KDF)
-    -- <|>
+    (reserved "extractkey" >> return NK_ExtractKey)
+    <|>
+    (reserved "expandkey" >> return NK_ExtractKey)
+    <|>
     (reserved "enckey" >> return NK_Enc)
     <|>
     (reserved "mackey" >> return NK_MAC)
@@ -1921,6 +1951,15 @@ parseAExprTerm =
     )
     <|>
     (parseSpanned $ do
+        char '\"'
+        whiteSpace
+        s <- many $ alphaNum <|> oneOf ":_-."
+        whiteSpace
+        char '\"'
+        whiteSpace
+        return $ AEHex $ concat (map (\i -> showHex (ord i) "") s))
+    <|>
+    (parseSpanned $ do
         whiteSpace
         x <- digit
         case x of 
@@ -1974,6 +2013,25 @@ parseAExprTerm =
         symbol ")"
         return $ AE_Expand a b nks (read j) 
         )
+    <|>
+    (parseSpanned $ do
+        reserved "gkdf"
+        symbol "<"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ","
+        c <- parseAExpr
+        symbol ")"
+        return $ AE_Expand (Spanned (ignore $ joinPosition (unignore $ a^.spanOf) (unignore $ b^.spanOf)) (AE_Extract a b))
+                           c
+                           nks
+                           (read j))
     <|>
     --(parseSpanned $ do 
     --    reserved "preimage"
