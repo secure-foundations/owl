@@ -1655,14 +1655,17 @@ parseCryptOp =
     (do
         reserved "expand"
         symbol "<"
-        i <- many1 digit
-        iargs <- parseOptionArgs
+        ianns <- (do 
+            i <- many1 digit
+            iargs <- parseOptionArgs
+            return (read i, iargs)
+                  ) `sepBy1` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
         symbol ">"
-        return $ CExpand (read i, iargs) nks (read j))
+        return $ CExpand ianns nks (read j))
     <|>
     -- (do
     --     reserved "kdf"

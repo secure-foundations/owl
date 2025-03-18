@@ -449,7 +449,7 @@ type ODHAnn = (String, ([Idx], [Idx]))
 
 data CryptOp = 
      CExtract [ODHAnn] | 
-     CExpand (Int, [AExpr]) [NameKind] Int | 
+     CExpand [(Int, [AExpr])] [NameKind] Int | 
       CLemma BuiltinLemma
       | CAEnc 
       | CADec 

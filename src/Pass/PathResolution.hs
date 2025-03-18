@@ -574,9 +574,11 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CExpand (i, as) nks j -> do
-          as' <- mapM resolveAExpr as
-          return $ CExpand (i, as') nks j
+      CExpand iann nks j -> do
+          iann' <- forM iann $ \(i, as) -> do 
+              as' <- mapM resolveAExpr as
+              return (i, as')
+          return $ CExpand iann' nks j
       CExtract  _ -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do

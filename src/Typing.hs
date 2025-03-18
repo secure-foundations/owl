@@ -3011,6 +3011,35 @@ extractIKM anns ikm = do
                       _ -> checkPublicArguments emsg [t] >> return []
     return $ concat res
 
+handleExpandCases :: (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> [(Int, [AExpr])] -> [Bind [(String, DataVar)] (Prop, [(KDFStrictness, NameType)])] -> Check Ty 
+handleExpandCases _ _ _ _ [] _ = typeError $ "Cannot find valid case for expand"
+handleExpandCases k info nks j ((i, iargs):icases) cases = do
+      ghostProp <- do
+          k' <- resolveANF (fst k)
+          info' <- resolveANF (fst info)
+          return $ pEq (aeVar ".res") $ mkSpanned $ AE_Expand k' info' nks j 
+      assert ("Out of bounds") $ i < length cases
+      (xs, (p', row')) <- unbind $ cases !! i
+      assert ("Wrong number of arguments") $ length xs == length iargs
+      mapM_ inferAExpr iargs
+      let (p, row) = substs (zip (map snd xs) iargs) (p', row')
+      nks' <- mapM (\(_, nt) -> getNameKind nt) row
+      assert ("Name kinds must match: annotation says " ++ show (owlpretty nks) ++ " but type says " ++ show (owlpretty nks')) $ nks `aeq` nks'
+      b <- decideProp p
+      case b of
+        Just True -> do
+            assert ("Out of bounds") $ j < length row
+            let (str, nt) = row !! j
+            let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
+            let flowAx = case str of
+                           KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                           KDFPub -> pFlow (nameLbl ne) advLbl 
+                           KDFNormal -> pTrue
+            let outLen = nameKindLength $ nks !! j
+            normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                 pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
+        _ -> handleExpandCases k info nks j icases cases
+
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
     tcs <- view tcScope
@@ -3109,7 +3138,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
                         normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
                             pAnd flowAx ghostProp
-      CExpand (i, iargs) nks j -> do
+      CExpand ecases nks j -> do
           assert ("Expand takes two arguments") $ length args == 2
           let [k, info] = args
           infoPub <- tyFlowsTo (snd info) advLbl
@@ -3133,27 +3162,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                                 Just True -> do
                                   (((_, xinfo), (_, xself)), cases') <- unbind bdy
                                   let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
-                                  assert ("Out of bounds") $ i < length cases
-                                  (xs, (p', row')) <- unbind $ cases !! i
-                                  assert ("Wrong number of arguments") $ length xs == length iargs
-                                  mapM_ inferAExpr iargs
-                                  let (p, row) = substs (zip (map snd xs) iargs) (p', row')
-                                  nks' <- mapM (\(_, nt) -> getNameKind nt) row
-                                  assert ("Name kinds must match: annotation says " ++ show (owlpretty nks) ++ " but type says " ++ show (owlpretty nks')) $ nks `aeq` nks'
-                                  b <- decideProp p
-                                  case b of
-                                    Just True -> do
-                                        assert ("Out of bounds") $ j < length row
-                                        let (str, nt) = row !! j
-                                        let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
-                                        let flowAx = case str of
-                                                       KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
-                                                       KDFPub -> pFlow (nameLbl ne) advLbl 
-                                                       KDFNormal -> pTrue
-                                        let outLen = nameKindLength $ nks !! j
-                                        normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                                             pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
-                                    _ -> typeError $ "Cannot prove prop for expand"
+                                  handleExpandCases k info nks j ecases cases
                                 Just False -> do
                                     let outLen = nameKindLength $ nks !! j
                                     return $ tRefined (tData advLbl advLbl) ".res" $ 

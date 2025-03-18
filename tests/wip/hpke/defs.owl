@@ -70,7 +70,12 @@ nametype dh_shared_secret_expand_t = expandkey {info self.
         info == labeled_info("shared_secret",
             dhpk(get(skE<i>)) ++ dhpk(get(skR)) ++ dhpk(get(skS)),
             kdfkey_len())) -> 
-    strict secret_extract_t
+        strict secret_extract_t,
+    (forall i:idx. 
+        info != labeled_info("shared_secret",
+            dhpk(get(skE<i>)) ++ dhpk(get(skR)) ++ dhpk(get(skS)),
+            kdfkey_len())) -> 
+        public secret_extract_t
 }
 
     

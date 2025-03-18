@@ -43,22 +43,28 @@ struct AuthDecapResult<i> {
 def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver :
 Option (exists i.AuthDecapResult<session i>) = 
     guard is_group_elem(eph) in         
-    assume (exists i:idx. eph == dhpk(get(skE<i>))); // in 
-    // pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
+    pcase (exists i:idx. eph == dhpk(get(skE<i>))) in
+    pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
     choose_idx i | eph == dhpk(get(skE<i>)) in 
     corr_case skE<i> when (exists i:idx. eph == dhpk(get(skE<i>)))  in
     corr_case skR in 
     let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ pkR ++ pkS in
-    let shared_secret_ext :
-        if eph == dhpk(get(skE<i>)) then
+    let shared_secret_ext 
+    /*
+        : if eph == dhpk(get(skE<i>)) then
             if secret_dh<i>[] then
                 SecName(Extract<dh_shared_secret_expand_t>(0x, labeled_ikm("eae_prk", dh)))
             else Data<adv>
-        else Data<adv>
+        else 
+            if sec(skS) /\ sec(skR) then 
+                SecName(Extract<dh_shared_secret_expand_t>(0x, labeled_ikm("eae_prk", dh)))
+            else
+                Data<adv>
+                */
     = extract<ss, se<i>>(0x, labeled_ikm("eae_prk", dh)) in 
     let info = labeled_info("shared_secret", kem_context, kdfkey_len()) in 
-    let shared_secret = expand<0; extractkey;0>(shared_secret_ext,
+    let shared_secret = expand<0,1; extractkey;0>(shared_secret_ext,
     info) in
     let res = AuthDecapResult<session i>(shared_secret_ext, info, eph,
     shared_secret) in
