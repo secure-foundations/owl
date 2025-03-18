@@ -2973,7 +2973,6 @@ odhOOB a = do
 extractIKM :: [ODHAnn] -> (AExpr, Ty) -> Check [NameType]
 extractIKM anns ikm = do
     let emsg = "Extract cannot find valid key for IKM; argument must be public"
-    -- TODO: handle odh
     xs <- unconcat (fst ikm)
     -- For each element of the concat,
     res <- forM xs $ \x -> do
@@ -2993,19 +2992,18 @@ extractIKM anns ikm = do
                 _ -> checkPublicArguments emsg [t] >> return [] 
           -- If it is not a name, 
           _ -> do 
-              -- Find all of the matching ODH's. 
-              odhs' <- mapM (\ann -> getMatchingODH ann x) anns
-              let odhs = catMaybes odhs'
-              case odhs of
-                (_:_) -> do
-                    -- If there was a match, then for each match, 
-                    res <- forM odhs $ \(ne1, ne2, nt) -> do
-                        -- see whether it's secret or public. 
-                        b2 <- decideProp $ pAnd (pNot $ pFlow (nameLbl ne1) advLbl) 
-                                                (pNot $ pFlow (nameLbl ne2) advLbl)
-                        if b2 == Just True then return [nt] else return []
-                    return $ concat res
-                [] -> do -- If no matches, it must either be an out of bound ODH, or a public value.
+              matchingAnns <- mapM (\ann -> getMatchingODH ann x) anns
+              case (catMaybes matchingAnns) of
+                ((ne1, ne2, nt) : _) -> do -- If there is a match, 
+                    -- see whether it's secret or public. 
+                    let dhSecretProp = pAnd (pNot $ pFlow (nameLbl ne1) advLbl) 
+                                            (pNot $ pFlow (nameLbl ne2) advLbl)
+                    b2 <- decideProp dhSecretProp 
+                    case b2 of
+                      Just True -> return [nt]
+                      Just False -> return []
+                      Nothing   -> typeError $ show $ owlpretty "Inconclusive: " <> owlpretty dhSecretProp
+                [] -> do -- If no match, must either be OOB or public
                     oobProp <- odhOOB x
                     oob <- decideProp oobProp
                     case oob of
@@ -3110,7 +3108,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                         let ne = mkSpanned $ ExtractName (fst salt) (fst ikm) (head nts) (ignore True)
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
                         normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                            ghostProp
+                            pAnd flowAx ghostProp
       CExpand (i, iargs) nks j -> do
           assert ("Expand takes two arguments") $ length args == 2
           let [k, info] = args
@@ -3130,29 +3128,37 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                         nt <- local (set tcScope $ TcGhost False) $  getNameType n
                         case nt^.val of
                           NT_ExpandKey bdy -> do
-                              (((_, xinfo), (_, xself)), cases') <- unbind bdy
-                              let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
-                              assert ("Out of bounds") $ i < length cases
-                              (xs, (p', row')) <- unbind $ cases !! i
-                              assert ("Wrong number of arguments") $ length xs == length iargs
-                              mapM_ inferAExpr iargs
-                              let (p, row) = substs (zip (map snd xs) iargs) (p', row')
-                              nks' <- mapM (\(_, nt) -> getNameKind nt) row
-                              assert ("Name kinds must match: annotation says " ++ show (owlpretty nks) ++ " but type says " ++ show (owlpretty nks')) $ nks `aeq` nks'
-                              b <- decideProp p
-                              case b of
+                              nSec <- decideProp $ pNot $ pFlow (nameLbl n) advLbl
+                              case nSec of
                                 Just True -> do
-                                    assert ("Out of bounds") $ j < length row
-                                    let (str, nt) = row !! j
-                                    let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
-                                    let flowAx = case str of
-                                                   KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
-                                                   KDFPub -> pFlow (nameLbl ne) advLbl 
-                                                   KDFNormal -> pTrue
+                                  (((_, xinfo), (_, xself)), cases') <- unbind bdy
+                                  let cases = subst xinfo (fst info) $ subst xself (fst k) $ cases'
+                                  assert ("Out of bounds") $ i < length cases
+                                  (xs, (p', row')) <- unbind $ cases !! i
+                                  assert ("Wrong number of arguments") $ length xs == length iargs
+                                  mapM_ inferAExpr iargs
+                                  let (p, row) = substs (zip (map snd xs) iargs) (p', row')
+                                  nks' <- mapM (\(_, nt) -> getNameKind nt) row
+                                  assert ("Name kinds must match: annotation says " ++ show (owlpretty nks) ++ " but type says " ++ show (owlpretty nks')) $ nks `aeq` nks'
+                                  b <- decideProp p
+                                  case b of
+                                    Just True -> do
+                                        assert ("Out of bounds") $ j < length row
+                                        let (str, nt) = row !! j
+                                        let ne = mkSpanned $ ExpandName (fst k) (fst info) nks j nt (ignore True)
+                                        let flowAx = case str of
+                                                       KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                                       KDFPub -> pFlow (nameLbl ne) advLbl 
+                                                       KDFNormal -> pTrue
+                                        let outLen = nameKindLength $ nks !! j
+                                        normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                                             pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
+                                    _ -> typeError $ "Cannot prove prop for expand"
+                                Just False -> do
                                     let outLen = nameKindLength $ nks !! j
-                                    normalizeTy $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                                         pAnd ghostProp $ pAnd flowAx $ (pEq (aeLength (aeVar ".res")) outLen)
-                                _ -> typeError $ "Cannot prove prop for expand"
+                                    return $ tRefined (tData advLbl advLbl) ".res" $ 
+                                                pAnd ghostProp $ pEq (aeLength (aeVar ".res")) outLen
+                                Nothing -> typeError $ "Inconclusive: " ++ show (owlpretty (pNot $ pFlow (nameLbl n) advLbl))
                           _ -> typeError $ "Not an expand key"
                     _ -> do
                         b <- tyFlowsTo (snd k) advLbl
@@ -3364,15 +3370,21 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
 -- Find all names that appear in any of the arguments to the KDF, as well as any
 -- DH pairs that we see
 findGoodKDFSplits :: AExpr -> Check [Prop]
-findGoodKDFSplits a = do
-    as <- unconcat a
-    ts <- mapM (inferAExpr >=> normalizeTy) as
-    ps <- forM ts $ \t -> do
+findGoodKDFSplits x = do
+    x' <- resolveANF x
+    as <- unconcat x'
+    res <- forM as $ \a -> do
+        a' <- resolveANF a
+        t <- inferAExpr a'
         case (stripRefinements t)^.val of
           TName n -> return [pFlow (nameLbl n) advLbl]
           TSS n m -> return [pFlow (nameLbl n) advLbl, pFlow (nameLbl m) advLbl]
-          _ -> return []
-    return $ concat ps
+          _ -> do
+              o <- getLocalDHComputation x
+              case o of
+                Nothing -> return []
+                Just (_, n) -> return [pFlow (nameLbl n) advLbl]
+    return $ concat res
 
 -- Return a list of props for whether each of the above names flows to the adv.
 -- findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]

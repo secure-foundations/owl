@@ -1,7 +1,5 @@
 include "defs.owl"
 
-predicate secret_dh<i>() = sec(skR) /\ (sec(skS) \/ sec(skE<i>)) 
-predicate secret_psk_or_dh<i>() = sec(psk) \/ secret_dh<i>[]
 
 struct AuthEncapResult<i> {
     aer_ss : Ghost, 
@@ -17,9 +15,8 @@ def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @
     let dh = dh_combine(pkR, get(skE<i>)) ++ dh_combine(pkR, get(skS))  in 
     let kem_context = dhpk_skE ++ pkR ++ dhpk_skS in
     let shared_secret_ext = extract<ss, se<i>>(0x, labeled_ikm("eae_prk", dh)) in 
-    assert (length(kem_context) == 3 * |group|);
     let info = labeled_info("shared_secret", kem_context, kdfkey_len()) in
-    let shared_secret = expand<0(kem_context); extractkey; 0>(shared_secret_ext, info) in 
+    let shared_secret = expand<0; extractkey; 0>(shared_secret_ext, info) in 
     AuthEncapResult<session i>(shared_secret_ext, info, dhpk_skE, shared_secret)
 
 

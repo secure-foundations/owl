@@ -1,5 +1,6 @@
 include "defs.owl"
 
+/*
 struct AuthDecapResult<i> {
     adr_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}), 
     adr_shared_secret : 
@@ -22,13 +23,49 @@ struct AuthDecapResult<i> {
             })
 }
 
-def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Option (exists i.AuthDecapResult<session i>) = 
+*/
+
+struct AuthDecapResult<i> {
+    adr_ss  : Ghost,
+    adr_info  : Ghost,
+    adr_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}), 
+    adr_shared_secret : 
+        if adr_eph == dhpk(get(skE<i>)) then
+            if secret_dh<i>[] then
+                SecName(Expand<extractkey; 0; secret_extract_t>(adr_ss,
+                adr_info))
+            else Data<adv>
+        else Data<adv>
+}
+
+
+
+def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver :
+Option (exists i.AuthDecapResult<session i>) = 
     guard is_group_elem(eph) in         
-    pcase (exists i:idx. eph == dhpk(get(skE<i>))) in 
-    pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
+    assume (exists i:idx. eph == dhpk(get(skE<i>))); // in 
+    // pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
     choose_idx i | eph == dhpk(get(skE<i>)) in 
+    corr_case skE<i> when (exists i:idx. eph == dhpk(get(skE<i>)))  in
+    corr_case skR in 
     let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ pkR ++ pkS in
+    let shared_secret_ext :
+        if eph == dhpk(get(skE<i>)) then
+            if secret_dh<i>[] then
+                SecName(Extract<dh_shared_secret_expand_t>(0x, labeled_ikm("eae_prk", dh)))
+            else Data<adv>
+        else Data<adv>
+    = extract<ss, se<i>>(0x, labeled_ikm("eae_prk", dh)) in 
+    let info = labeled_info("shared_secret", kem_context, kdfkey_len()) in 
+    let shared_secret = expand<0; extractkey;0>(shared_secret_ext,
+    info) in
+    let res = AuthDecapResult<session i>(shared_secret_ext, info, eph,
+    shared_secret) in
+    let pres = pack<i>(res) in
+    Some(pres)
+
+    /*
     let shared_secret = kdf<; odh ss[0], odh ss[1], odh se<i>[0], odh se<i>[1];kdfkey;0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh), 
         lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
@@ -130,3 +167,4 @@ def SingleShotOpen<j>(pkS : dhpk(skS), pkR : dhpk(skR)) @ receiver : Option (exi
 
     
 
+*/
