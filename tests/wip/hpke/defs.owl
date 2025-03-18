@@ -79,6 +79,11 @@ name psk : secret_extract_t @ sender, receiver
 
 corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
 corr [skR] /\ [psk] ==> [channel_secret]
+
+struct hpke_ciphertext { 
+    hc_pk : Data<adv> | |group| |,
+    hc_cipher : Data<adv>
+}
         
 /*
 ------ here ------
@@ -455,9 +460,5 @@ odh se<i> : skR, skE<i> -> {salt info.
     (info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
 }
 
-struct hpke_ciphertext { 
-    hc_pk : Data<adv> | |group| |,
-    hc_cipher : Data<adv>
-}
 
 */
