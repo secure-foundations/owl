@@ -55,17 +55,21 @@ def KeyScheduleS<i>(aer : AuthEncapResult<session i>) @ sender : ContextS<sessio
     ContextS<session i>(kss, secret, base_nonce, key, exp)
 
 def sent_message(x : Ghost) @ sender : Unit = ()
+def sent_message_aad(x : Ghost) @ sender : Unit = ()
 
-def Seal<i>(ctxt : ContextS<session i>, x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Data<adv> = 
+def Seal<i>(ctxt : ContextS<session i>, x : Data<[channel_secret] /\ adv,
+|adv|>, _aad : Data<adv>) @ sender : Data<adv> = 
     pcase secret_psk_or_dh<i>[] in 
     parse ctxt as ContextS<session i>(f, g, base, sk, h) in 
     assert (secret_psk_or_dh<i>[] ==> base == gexpand<nonce |counter|; 0>(g, base_info(f))); 
     call sent_message(x);
-    st_aead_enc<send_counter<i>, pattern i. xor(i, base)>(sk, x, 0x) 
+    call sent_message_aad(_aad);
+    st_aead_enc<send_counter<i>, pattern i. xor(i, base)>(sk, x, _aad) 
 
-def SingleShotSeal<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS), x : Data<[channel_secret] /\ adv, |adv|>) @ sender : Unit = 
+def SingleShotSeal<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS:
+dhpk(skS), x : Data<[channel_secret] /\ adv, |adv|>, _aad : Data<adv>) @ sender : Unit = 
     let aer = call AuthEncap<i>(pkR, dhpk_skE, dhpk_skS) in
     let context = call KeyScheduleS<i>(aer) in 
-    let c = call Seal<i>(context, x) in 
+    let c = call Seal<i>(context, x, _aad) in 
     parse aer as AuthEncapResult<session i>(_, _, pk, _) in 
     output hpke_ciphertext(pk, c) to endpoint(receiver)
