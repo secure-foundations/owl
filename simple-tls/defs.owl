@@ -11,14 +11,13 @@ locality client
 locality server
 
 // Some constant labels (Section 7.1)
-func TLS13_() = 0x746c73313320
-func DERIVED() = 0x64657269766564
-func C_HS_TRAFFIC() = 0x632068732074726166666963
-func S_HS_TRAFFIC() = 0x732068732074726166666963
-func C_AP_TRAFFIC() = 0x632061702074726166666963
-func S_AP_TRAFFIC() = 0x732061702074726166666963
-func KEY() = 0x6b6579
-func IV() = 0x6976
+func DERIVED() = "derived"
+func C_HS_TRAFFIC() = "c hs traffic"
+func S_HS_TRAFFIC() = "s hs traffic"
+func C_AP_TRAFFIC() = "c ap traffic"
+func S_AP_TRAFFIC() = "s ap traffic"
+func KEY() = "key"
+func IV() = "iv"
 
 // ContentType's
 func CTYPE_ALERT() = 0x15
@@ -38,7 +37,7 @@ func ALERT_DESC_CLOSE_NOTIFY() = 0x00
 // TODO: make sure |crh| has the correct length (u16)
 // TODO: add context (hash of previous messages)
 // see Section 7.1
-func KDF_LABEL(lbl) = |crh| ++ TLS13_() ++ lbl
+func KDF_LABEL(lbl) = |crh| ++ "tls13 " ++ lbl
 
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?

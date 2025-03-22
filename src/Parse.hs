@@ -1955,9 +1955,7 @@ parseAExprTerm =
     <|>
     (parseSpanned $ do
         char '\"'
-        whiteSpace
-        s <- many $ alphaNum <|> oneOf ":_-."
-        whiteSpace
+        s <- many $ alphaNum <|> oneOf ":_-. \t"
         char '\"'
         whiteSpace
         return $ AEHex $ concat (map (\i -> showHex (ord i) "") s))
