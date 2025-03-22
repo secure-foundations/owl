@@ -43,6 +43,7 @@ func KDF_LABEL(lbl) = |crh| ++ TLS13_() ++ lbl
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?
 func PSK() = 0x00
+func HASH_LEN_0() = 0x00 // TODO: pad it to |crh|
 
 // Placeholder for unsupported functions in Owl
 func leq arity 2
@@ -115,19 +116,21 @@ nametype ServerHandshakeTrafficKey = enckey ServerCertificate
 
 // Similar to the exec version of key derivation, but in ghost mode
 // so that they can be used in types
-func EARLY_SECRET_DERIVED_GHOST() = gkdf<nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC()))
-func CLIENT_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gkdf<nonce;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(C_HS_TRAFFIC()))
-func SERVER_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gkdf<enckey;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(S_HS_TRAFFIC()))
-func HANDSHAKE_SECRET_DERIVED_GHOST() = gkdf<kdfkey;0>(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(DERIVED()))
+func EARLY_SECRET_DERIVED_GHOST() = gexpand<nonce;0>(gextract(HASH_LEN_0(), PSK()), KDF_LABEL(DERIVED()))
 
-func CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gkdf<kdfkey;0>(HANDSHAKE_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(C_AP_TRAFFIC()))
-func SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gkdf<kdfkey;0>(HANDSHAKE_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(S_AP_TRAFFIC()))
+func HANDSHAKE_SECRET_GHOST() = gextract(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET())
+func CLIENT_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gexpand<nonce;0>(HANDSHAKE_SECRET_GHOST(), KDF_LABEL(C_HS_TRAFFIC()))
+func SERVER_HANDSHAKE_TRAFFIC_SECRET_GHOST() = gexpand<enckey;0>(HANDSHAKE_SECRET_GHOST(), KDF_LABEL(S_HS_TRAFFIC()))
 
-func CLIENT_WRITE_KEY_0_GHOST() = gkdf<enckey;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(KEY()))
-func CLIENT_WRITE_IV_0_GHOST() = gkdf<nonce |counter|;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(IV()))
+func MASTER_SECRET_GHOST() = gextract(gexpand<extractkey;0>(HANDSHAKE_SECRET_GHOST(), KDF_LABEL(DERIVED())), HASH_LEN_0())
+func CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gexpand<expandkey;0>(MASTER_SECRET_GHOST(), KDF_LABEL(C_AP_TRAFFIC()))
+func SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST() = gexpand<expandkey;0>(MASTER_SECRET_GHOST(), KDF_LABEL(S_AP_TRAFFIC()))
 
-func SERVER_WRITE_KEY_0_GHOST() = gkdf<enckey;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(KEY()))
-func SERVER_WRITE_IV_0_GHOST() = gkdf<nonce |counter|;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), DH_SHARED_SECRET(), KDF_LABEL(IV()))
+func CLIENT_WRITE_KEY_0_GHOST() = gexpand<enckey;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(KEY()))
+func CLIENT_WRITE_IV_0_GHOST() = gexpand<nonce |counter|;0>(CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(IV()))
+
+func SERVER_WRITE_KEY_0_GHOST() = gexpand<enckey;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(KEY()))
+func SERVER_WRITE_IV_0_GHOST() = gexpand<nonce |counter|;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(IV()))
 
 nametype ClientApplicationTrafficKey = st_aead ClientInnerRecord
     aad x. true // TODO: header
@@ -138,7 +141,7 @@ nametype ServerApplicationTrafficKey = st_aead Name(server_data)
     aad x. true // TODO: header
     nonce server_application_traffic_counter // TODO: xor with server_write_iv
 
-odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
+odh key_schedule : client_dh_sk, server_dh_sk -> expandkey {info.
     // client_handshake_traffic_secret
     // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
     // since the latter is derived from the former via another HKDF-Expand call
@@ -148,9 +151,9 @@ odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
     info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficKey,
 
     // Master Secret
-    info == KDF_LABEL(DERIVED()) -> strict kdf {ikm info.
+    info == KDF_LABEL(DERIVED()) -> strict extractkey expandkey {info.
         // client_application_traffic_secret_0
-        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict kdf {ikm info.
+        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict expandkey {info.
             // client_write_key_0
             // TODO: technically this should not be a full kdf call
             // but rather a partial HKDF-Expand call
@@ -158,10 +161,12 @@ odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
 
             // client_write_iv_0
             info == KDF_LABEL(IV()) -> public nonce |counter|
+
+            // TODO: client_application_traffic_secret_N with N > 0
         },
 
         // server_application_traffic_secret_0
-        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict kdf {ikm info.
+        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict expandkey {info.
             // server_write_key_0
             // TODO: technically this should not be a full kdf call
             // but rather a partial HKDF-Expand call
@@ -169,9 +174,46 @@ odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
 
             // server_write_iv_0
             info == KDF_LABEL(IV()) -> public nonce |counter|
+
+            // TODO: server_application_traffic_secret_N with N > 0
         }
     }
 }
+
+// odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
+//     // client_handshake_traffic_secret
+//     // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
+//     // since the latter is derived from the former via another HKDF-Expand call
+//     info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficKey, // TODO: ClientHandshakeFinished
+
+//     // server_handshake_traffic_secret
+//     info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficKey,
+
+//     // Master Secret
+//     info == KDF_LABEL(DERIVED()) -> strict kdf {ikm info.
+//         // client_application_traffic_secret_0
+//         info == KDF_LABEL(C_AP_TRAFFIC()) -> strict kdf {ikm info.
+//             // client_write_key_0
+//             // TODO: technically this should not be a full kdf call
+//             // but rather a partial HKDF-Expand call
+//             info == KDF_LABEL(KEY()) -> strict ClientApplicationTrafficKey,
+
+//             // client_write_iv_0
+//             info == KDF_LABEL(IV()) -> public nonce |counter|
+//         },
+
+//         // server_application_traffic_secret_0
+//         info == KDF_LABEL(S_AP_TRAFFIC()) -> strict kdf {ikm info.
+//             // server_write_key_0
+//             // TODO: technically this should not be a full kdf call
+//             // but rather a partial HKDF-Expand call
+//             info == KDF_LABEL(KEY()) -> strict ServerApplicationTrafficKey,
+
+//             // server_write_iv_0
+//             info == KDF_LABEL(IV()) -> public nonce |counter|
+//         }
+//     }
+// }
 
 // ClientRandom and ServerRandom in the hello messages are public
 corr adv ==> [client_random]

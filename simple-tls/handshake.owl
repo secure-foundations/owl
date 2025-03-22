@@ -6,18 +6,16 @@ include "defs.owl"
 struct HandshakeResult {
     HandshakeResult_client_handshake_key:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<nonce;0;ClientHandshakeTrafficKey>(
-                EARLY_SECRET_DERIVED_GHOST(),
-                DH_SHARED_SECRET(),
+            SecName(Expand<nonce;0;ClientHandshakeTrafficKey>(
+                HANDSHAKE_SECRET_GHOST(),
                 KDF_LABEL(C_HS_TRAFFIC())))
         else
             Data<adv>,
 
     HandshakeResult_server_handshake_key:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<enckey;0;ServerHandshakeTrafficKey>(
-                EARLY_SECRET_DERIVED_GHOST(),
-                DH_SHARED_SECRET(),
+            SecName(Expand<enckey;0;ServerHandshakeTrafficKey>(
+                HANDSHAKE_SECRET_GHOST(),
                 KDF_LABEL(S_HS_TRAFFIC())))
         else
             Data<adv>,
@@ -25,9 +23,8 @@ struct HandshakeResult {
     // Key and IV for AEAD on application data from the client
     HandshakeResult_client_app_key:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<enckey;0;ClientApplicationTrafficKey>(
+            SecName(Expand<enckey;0;ClientApplicationTrafficKey>(
                 CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                DH_SHARED_SECRET(),
                 KDF_LABEL(KEY())))
         else
             Data<adv>,
@@ -35,9 +32,8 @@ struct HandshakeResult {
     // TODO: PubName or SecName?
     HandshakeResult_client_app_iv:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            PubName(KDF<nonce |counter|;0;nonce |counter|>(
+            PubName(Expand<nonce |counter|;0;nonce |counter|>(
                 CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                DH_SHARED_SECRET(),
                 KDF_LABEL(IV())))
         else
             Data<adv>,
@@ -45,18 +41,16 @@ struct HandshakeResult {
     // Key and IV for AEAD on application data from the server
     HandshakeResult_server_app_key:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(KDF<enckey;0;ServerApplicationTrafficKey>(
+            SecName(Expand<enckey;0;ServerApplicationTrafficKey>(
                 SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                DH_SHARED_SECRET(),
                 KDF_LABEL(KEY())))
         else
             Data<adv>,
 
     HandshakeResult_server_app_iv:
         if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            PubName(KDF<nonce |counter|;0;nonce |counter|>(
+            PubName(Expand<nonce |counter|;0;nonce |counter|>(
                 SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                DH_SHARED_SECRET(),
                 KDF_LABEL(IV())))
         else
             Data<adv>
@@ -74,29 +68,23 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
         corr_case server_dh_sk in
 
         // Key schedule in Section 7.1
-        let early_secret_derived = kdf<0;;nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC())) in
-        let client_handshake_traffic_secret = kdf<;odh key_schedule[0];nonce;0>(
-            early_secret_derived, sk, KDF_LABEL(C_HS_TRAFFIC())) in
-        let server_handshake_traffic_secret = kdf<;odh key_schedule[1];enckey;0>(
-            early_secret_derived, sk, KDF_LABEL(S_HS_TRAFFIC())) in
+        let early_secret = extract(HASH_LEN_0(), PSK()) in
+        let early_secret_derived = expand<0;nonce;0>(early_secret, KDF_LABEL(DERIVED())) in
 
-        let handshake_secret_derived = kdf<;odh key_schedule[2];kdfkey;0>(
-            early_secret_derived, sk, KDF_LABEL(DERIVED())) in
+        let handshake_secret = extract<key_schedule>(early_secret_derived, sk) in
+        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, KDF_LABEL(C_HS_TRAFFIC())) in
+        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, KDF_LABEL(S_HS_TRAFFIC())) in
+        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, KDF_LABEL(DERIVED())) in
 
-        let client_application_traffic_secret_0 = kdf<0;;kdfkey;0>(handshake_secret_derived, sk,
-            KDF_LABEL(C_AP_TRAFFIC())) in
-        let server_application_traffic_secret_0 = kdf<1;;kdfkey;0>(handshake_secret_derived, sk,
-            KDF_LABEL(S_AP_TRAFFIC())) in
+        let master_secret = extract(handshake_secret_derived, HASH_LEN_0()) in
+        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, KDF_LABEL(C_AP_TRAFFIC())) in
+        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, KDF_LABEL(S_AP_TRAFFIC())) in
 
-        let client_write_key_0 = kdf<0;;enckey;0>(client_application_traffic_secret_0, sk,
-            KDF_LABEL(KEY())) in
-        let client_write_iv_0 = kdf<1;;nonce |counter|;0>(client_application_traffic_secret_0, sk,
-            KDF_LABEL(IV())) in
+        let client_write_key_0 = expand<0;enckey;0>(client_application_traffic_secret_0, KDF_LABEL(KEY())) in
+        let client_write_iv_0 = expand<1;nonce |counter|;0>(client_application_traffic_secret_0, KDF_LABEL(IV())) in
 
-        let server_write_key_0 = kdf<0;;enckey;0>(server_application_traffic_secret_0, sk,
-            KDF_LABEL(KEY())) in
-        let server_write_iv_0 = kdf<1;;nonce |counter|;0>(server_application_traffic_secret_0, sk,
-            KDF_LABEL(IV())) in
+        let server_write_key_0 = expand<0;enckey;0>(server_application_traffic_secret_0, KDF_LABEL(KEY())) in
+        let server_write_iv_0 = expand<1;nonce |counter|;0>(server_application_traffic_secret_0, KDF_LABEL(IV())) in
 
         // Send certificate and certificate verify
         // TODO: this needs to sign the server_hello message instead of just the DH key
@@ -133,29 +121,23 @@ def client_handshake() @ client : Option(HandshakeResult)
         assume(server_dh_pk == dhpk(get(server_dh_sk)));
 
         // Key schedule in Section 7.1
-        let early_secret_derived = kdf<0;;nonce;0>(0x00, PSK(), KDF_LABEL(C_HS_TRAFFIC())) in
-        let client_handshake_traffic_secret = kdf<;odh key_schedule[0];nonce;0>(
-            early_secret_derived, sk, KDF_LABEL(C_HS_TRAFFIC())) in
-        let server_handshake_traffic_secret = kdf<;odh key_schedule[1];enckey;0>(
-            early_secret_derived, sk, KDF_LABEL(S_HS_TRAFFIC())) in
+        let early_secret = extract(HASH_LEN_0(), PSK()) in
+        let early_secret_derived = expand<0;nonce;0>(early_secret, KDF_LABEL(DERIVED())) in
 
-        let handshake_secret_derived = kdf<;odh key_schedule[2];kdfkey;0>(
-            early_secret_derived, sk, KDF_LABEL(DERIVED())) in
+        let handshake_secret = extract<key_schedule>(early_secret_derived, sk) in
+        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, KDF_LABEL(C_HS_TRAFFIC())) in
+        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, KDF_LABEL(S_HS_TRAFFIC())) in
+        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, KDF_LABEL(DERIVED())) in
 
-        let client_application_traffic_secret_0 = kdf<0;;kdfkey;0>(handshake_secret_derived, sk,
-            KDF_LABEL(C_AP_TRAFFIC())) in
-        let server_application_traffic_secret_0 = kdf<1;;kdfkey;0>(handshake_secret_derived, sk,
-            KDF_LABEL(S_AP_TRAFFIC())) in
+        let master_secret = extract(handshake_secret_derived, HASH_LEN_0()) in
+        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, KDF_LABEL(C_AP_TRAFFIC())) in
+        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, KDF_LABEL(S_AP_TRAFFIC())) in
 
-        let client_write_key_0 = kdf<0;;enckey;0>(client_application_traffic_secret_0, sk,
-            KDF_LABEL(KEY())) in
-        let client_write_iv_0 = kdf<1;;nonce |counter|;0>(client_application_traffic_secret_0, sk,
-            KDF_LABEL(IV())) in
+        let client_write_key_0 = expand<0;enckey;0>(client_application_traffic_secret_0, KDF_LABEL(KEY())) in
+        let client_write_iv_0 = expand<1;nonce |counter|;0>(client_application_traffic_secret_0, KDF_LABEL(IV())) in
 
-        let server_write_key_0 = kdf<0;;enckey;0>(server_application_traffic_secret_0, sk,
-            KDF_LABEL(KEY())) in
-        let server_write_iv_0 = kdf<1;;nonce |counter|;0>(server_application_traffic_secret_0, sk,
-            KDF_LABEL(IV())) in
+        let server_write_key_0 = expand<0;enckey;0>(server_application_traffic_secret_0, KDF_LABEL(KEY())) in
+        let server_write_iv_0 = expand<1;nonce |counter|;0>(server_application_traffic_secret_0, KDF_LABEL(IV())) in
 
         // TODO: send Finished
 

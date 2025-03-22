@@ -1760,7 +1760,7 @@ parseCryptOp =
 parseNameKind =
     (reserved "extractkey" >> return NK_ExtractKey)
     <|>
-    (reserved "expandkey" >> return NK_ExtractKey)
+    (reserved "expandkey" >> return NK_ExpandKey)
     <|>
     (reserved "enckey" >> return NK_Enc)
     <|>
