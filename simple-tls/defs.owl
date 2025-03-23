@@ -3,7 +3,7 @@
  * 1. Names, odh, kdf, procedure, counter declarations use snake_case
  * 2. Structs, enums, and name types use CamelCase
  * 3. Functions use capitalized SNAKE_CASE (except for uninterpreted functions)
- * 4. Fields of a struct are named as <StructName>_<field_name>
+ * 4. Fields of a struct are named as <struct abbreviation>_<field_name>
  * 5. Local variables are snake_case
  */
 
@@ -12,6 +12,7 @@ locality server
 
 // Some constant labels (Section 7.1)
 func DERIVED() = "derived"
+func C_E_TRAFFIC() = "c e traffic"
 func C_HS_TRAFFIC() = "c hs traffic"
 func S_HS_TRAFFIC() = "s hs traffic"
 func C_AP_TRAFFIC() = "c ap traffic"
@@ -67,20 +68,20 @@ name server_cert_key : sigkey dhpk(server_dh_sk) @ server
 // Highly simplified version of TLS ClientHello
 // TODO: cipher suite negotiation, extensions, etc.
 struct ClientHello {
-    ClientHello_random: Name(client_random),
-    ClientHello_pk: dhpk(client_dh_sk)
+    ch_random: Name(client_random),
+    ch_pk: dhpk(client_dh_sk)
 }
 
 // Highly simplified version of TLS ServerHello
 struct ServerHello {
-    ServerHello_random: Name(server_random),
-    ServerHello_pk: dhpk(server_dh_sk)
+    sh_random: Name(server_random),
+    sh_pk: dhpk(server_dh_sk)
 }
 
 // Merged version of Server Certificate and Certificate Verify
 struct ServerCertificate {
-    ServerCertificate_cert: vk(server_cert_key),
-    ServerCertificate_sig: Data<adv> ||signature||
+    sc_cert: vk(server_cert_key),
+    sc_sig: Data<adv> ||signature||
 }
 
 // For sending
@@ -98,10 +99,10 @@ struct ClientInnerRecord {
     // TODO: in the actual definition (TLSInnerPlaintext in RFC 8446)
     // this content type actually comes after content
     // but we assume that this permutation is handled in Vest
-    InnerRecord_type: Data<adv> |1|,
+    ir_type: Data<adv> |1|,
 
-    InnerRecord_content:
-        if InnerRecord_type == CTYPE_APPLICATION_DATA() then
+    ir_content:
+        if ir_type == CTYPE_APPLICATION_DATA() then
             ClientData
         else
             Data<adv>
@@ -109,12 +110,9 @@ struct ClientInnerRecord {
     // TODO: padding handled in Vest
 }
 
-// TODO: change to AEAD
-nametype ClientHandshakeTrafficKey = nonce
-nametype ServerHandshakeTrafficKey = enckey ServerCertificate
-
 // Similar to the exec version of key derivation, but in ghost mode
 // so that they can be used in types
+// TODO can we remove this?
 func EARLY_SECRET_DERIVED_GHOST() = gexpand<nonce;0>(gextract(HASH_LEN_0(), PSK()), KDF_LABEL(DERIVED()))
 
 func HANDSHAKE_SECRET_GHOST() = gextract(EARLY_SECRET_DERIVED_GHOST(), DH_SHARED_SECRET())
@@ -131,88 +129,98 @@ func CLIENT_WRITE_IV_0_GHOST() = gexpand<nonce |counter|;0>(CLIENT_APPLICATION_T
 func SERVER_WRITE_KEY_0_GHOST() = gexpand<enckey;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(KEY()))
 func SERVER_WRITE_IV_0_GHOST() = gexpand<nonce |counter|;0>(SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(), KDF_LABEL(IV()))
 
-nametype ClientApplicationTrafficKey = st_aead ClientInnerRecord
+nametype ClientApplicationWriteKey = st_aead ClientInnerRecord
     aad x. true // TODO: header
     nonce client_application_traffic_counter
     pattern i. xor(i, CLIENT_WRITE_IV_0_GHOST()) // TODO: xor with server_write_iv
 
-nametype ServerApplicationTrafficKey = st_aead Name(server_data)
+nametype ServerApplicationWriteKey = st_aead Name(server_data)
     aad x. true // TODO: header
     nonce server_application_traffic_counter // TODO: xor with server_write_iv
 
-odh key_schedule : client_dh_sk, server_dh_sk -> expandkey {info.
-    // client_handshake_traffic_secret
-    // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
-    // since the latter is derived from the former via another HKDF-Expand call
-    info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficKey, // TODO: ClientHandshakeFinished
+// TODO: not exactly correct (e.g. add expand and change to AEAD)
+nametype ClientHandshakeTrafficSecret = nonce
+nametype ServerHandshakeTrafficSecret = enckey ServerCertificate
 
-    // server_handshake_traffic_secret
-    info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficKey,
+nametype ClientApplicationTrafficSecret = expandkey {info.
+    // client_write_key_0
+    // TODO: technically this should not be a full kdf call
+    // but rather a partial HKDF-Expand call
+    info == KDF_LABEL(KEY()) -> strict ClientApplicationWriteKey,
+
+    // client_write_iv_0
+    info == KDF_LABEL(IV()) -> public nonce |counter|
+
+    // TODO: client_application_traffic_secret_N with N > 0
+}
+
+nametype ServerApplicationTrafficSecret = expandkey {info.
+    // server_write_key_0
+    // TODO: technically this should not be a full kdf call
+    // but rather a partial HKDF-Expand call
+    info == KDF_LABEL(KEY()) -> strict ServerApplicationWriteKey,
+
+    // server_write_iv_0
+    info == KDF_LABEL(IV()) -> public nonce |counter|
+
+    // TODO: server_application_traffic_secret_N with N > 0
+}
+
+// Conflating the names of name/ordinary types here
+struct ClientHandshakeTrafficSecret {
+    chts_master_secret: Ghost,
+    chts_label: Ghost,
+    chts_secret:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(Expand<nonce;0;ClientHandshakeTrafficSecret>(chts_master_secret, chts_label))
+        else
+            Data<adv>
+}
+
+struct ServerHandshakeTrafficSecret {
+    shts_master_secret: Ghost,
+    shts_label: Ghost,
+    shts_secret:
+        if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(Expand<enckey;0;ServerHandshakeTrafficSecret>(shts_master_secret, shts_label))
+        else
+            Data<adv>
+}
+
+struct ClientApplicationTrafficSecret {
+    cats_master_secret: Ghost,
+    cats_label: Ghost,
+    cats_secret:
+        x: if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(Expand<expandkey;0;ClientApplicationTrafficSecret>(cats_master_secret, cats_label))
+        else
+            Data<adv>
+        // To make the AEAD pattern to go through
+        { x == CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST() }
+}
+
+struct ServerApplicationTrafficSecret {
+    sats_master_secret: Ghost,
+    sats_label: Ghost,
+    sats_secret:
+        x: if sec(client_dh_sk) /\ sec(server_dh_sk) then
+            SecName(Expand<expandkey;0;ServerApplicationTrafficSecret>(sats_master_secret, sats_label))
+        else
+            Data<adv>
+        { x == SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST() }
+}
+
+// RFC 8446 Section 7.1
+odh key_schedule : client_dh_sk, server_dh_sk -> expandkey {info.
+    info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficSecret,
+    info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficSecret,
 
     // Master Secret
     info == KDF_LABEL(DERIVED()) -> strict extractkey expandkey {info.
-        // client_application_traffic_secret_0
-        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict expandkey {info.
-            // client_write_key_0
-            // TODO: technically this should not be a full kdf call
-            // but rather a partial HKDF-Expand call
-            info == KDF_LABEL(KEY()) -> strict ClientApplicationTrafficKey,
-
-            // client_write_iv_0
-            info == KDF_LABEL(IV()) -> public nonce |counter|
-
-            // TODO: client_application_traffic_secret_N with N > 0
-        },
-
-        // server_application_traffic_secret_0
-        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict expandkey {info.
-            // server_write_key_0
-            // TODO: technically this should not be a full kdf call
-            // but rather a partial HKDF-Expand call
-            info == KDF_LABEL(KEY()) -> strict ServerApplicationTrafficKey,
-
-            // server_write_iv_0
-            info == KDF_LABEL(IV()) -> public nonce |counter|
-
-            // TODO: server_application_traffic_secret_N with N > 0
-        }
+        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict ClientApplicationTrafficSecret,
+        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict ServerApplicationTrafficSecret
     }
 }
-
-// odh key_schedule : client_dh_sk, server_dh_sk -> {salt info.
-//     // client_handshake_traffic_secret
-//     // TODO: I'm conflating client_handshake_traffic_secret and client_write_key here
-//     // since the latter is derived from the former via another HKDF-Expand call
-//     info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficKey, // TODO: ClientHandshakeFinished
-
-//     // server_handshake_traffic_secret
-//     info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficKey,
-
-//     // Master Secret
-//     info == KDF_LABEL(DERIVED()) -> strict kdf {ikm info.
-//         // client_application_traffic_secret_0
-//         info == KDF_LABEL(C_AP_TRAFFIC()) -> strict kdf {ikm info.
-//             // client_write_key_0
-//             // TODO: technically this should not be a full kdf call
-//             // but rather a partial HKDF-Expand call
-//             info == KDF_LABEL(KEY()) -> strict ClientApplicationTrafficKey,
-
-//             // client_write_iv_0
-//             info == KDF_LABEL(IV()) -> public nonce |counter|
-//         },
-
-//         // server_application_traffic_secret_0
-//         info == KDF_LABEL(S_AP_TRAFFIC()) -> strict kdf {ikm info.
-//             // server_write_key_0
-//             // TODO: technically this should not be a full kdf call
-//             // but rather a partial HKDF-Expand call
-//             info == KDF_LABEL(KEY()) -> strict ServerApplicationTrafficKey,
-
-//             // server_write_iv_0
-//             info == KDF_LABEL(IV()) -> public nonce |counter|
-//         }
-//     }
-// }
 
 // ClientRandom and ServerRandom in the hello messages are public
 corr adv ==> [client_random]

@@ -34,15 +34,19 @@ def server_read(
     record: Record
 ) @ server : ServerReadResult
     =
-    parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
+    parse keys as HandshakeResult(_, _, app_secret, _) in
+    parse app_secret as ClientApplicationTrafficSecret(_, _, app_secret) in
     parse record as Record(ctype, version, len, encrypted) in
         corr_case client_dh_sk in
         corr_case server_dh_sk in
 
+        let write_key = expand<0;enckey;0>(app_secret, KDF_LABEL(KEY())) in
+        let write_iv = expand<1;nonce |counter|;0>(app_secret, KDF_LABEL(IV())) in
+
         let counter = get_counter client_application_traffic_counter_recv in
         let header = ctype ++ version ++ len in
 
-        case st_aead_dec(client_app_key, encrypted, header, xor(counter, client_app_iv)) {
+        case st_aead_dec(write_key, encrypted, header, xor(counter, write_iv)) {
             | None => ServerReadResult_Error()
             | Some decrypted =>
                 parse decrypted as ClientInnerRecord(ctype, decrypted) in
@@ -85,15 +89,19 @@ def client_send(
         { leq(length(d), 16384) }
 ) @ client : ClientSendResult
     =
-    parse keys as HandshakeResult(_, _, client_app_key, client_app_iv, _, _) in
+    parse keys as HandshakeResult(_, _, app_secret, _) in
+    parse app_secret as ClientApplicationTrafficSecret(_, _, app_secret) in
     corr_case client_dh_sk in
     corr_case server_dh_sk in
+
+    let write_key = expand<0;enckey;0>(app_secret, KDF_LABEL(KEY())) in
+    let write_iv = expand<1;nonce |counter|;0>(app_secret, KDF_LABEL(IV())) in
 
     // TODO: replace 0x0000 with the ciphertext length (how to compute it?)
     let enc_data = ClientInnerRecord(CTYPE_APPLICATION_DATA(), data) in
     let enc_len = cipherlen(length(enc_data)) in
-    let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, client_app_iv)>(
-        client_app_key,
+    let encrypted = st_aead_enc<client_application_traffic_counter, pattern i. xor(i, write_iv)>(
+        write_key,
         enc_data,
 
         // TODO: is enc_len correct? how to pad it into two bytes?

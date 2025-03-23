@@ -4,56 +4,10 @@ include "defs.owl"
 
 // Resulting secrets from the handshake
 struct HandshakeResult {
-    HandshakeResult_client_handshake_key:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(Expand<nonce;0;ClientHandshakeTrafficKey>(
-                HANDSHAKE_SECRET_GHOST(),
-                KDF_LABEL(C_HS_TRAFFIC())))
-        else
-            Data<adv>,
-
-    HandshakeResult_server_handshake_key:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(Expand<enckey;0;ServerHandshakeTrafficKey>(
-                HANDSHAKE_SECRET_GHOST(),
-                KDF_LABEL(S_HS_TRAFFIC())))
-        else
-            Data<adv>,
-
-    // Key and IV for AEAD on application data from the client
-    HandshakeResult_client_app_key:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(Expand<enckey;0;ClientApplicationTrafficKey>(
-                CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                KDF_LABEL(KEY())))
-        else
-            Data<adv>,
-
-    // TODO: PubName or SecName?
-    HandshakeResult_client_app_iv:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            PubName(Expand<nonce |counter|;0;nonce |counter|>(
-                CLIENT_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                KDF_LABEL(IV())))
-        else
-            Data<adv>,
-
-    // Key and IV for AEAD on application data from the server
-    HandshakeResult_server_app_key:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            SecName(Expand<enckey;0;ServerApplicationTrafficKey>(
-                SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                KDF_LABEL(KEY())))
-        else
-            Data<adv>,
-
-    HandshakeResult_server_app_iv:
-        if sec(client_dh_sk) /\ sec(server_dh_sk) then
-            PubName(Expand<nonce |counter|;0;nonce |counter|>(
-                SERVER_APPLICATION_TRAFFIC_SECRET_0_GHOST(),
-                KDF_LABEL(IV())))
-        else
-            Data<adv>
+    hr_client_handshake_secret: ClientHandshakeTrafficSecret,
+    hr_server_handshake_secret: ServerHandshakeTrafficSecret,
+    hr_client_app_secret: ClientApplicationTrafficSecret,
+    hr_server_app_secret: ServerApplicationTrafficSecret
 }
 
 // client_hello is given has argument since we don't
@@ -98,10 +52,10 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
         // TODO: send Finished
 
         Some(HandshakeResult(
-            client_handshake_traffic_secret,
-            server_handshake_traffic_secret,
-            client_write_key_0, client_write_iv_0,
-            server_write_key_0, server_write_iv_0
+            ClientHandshakeTrafficSecret(handshake_secret, KDF_LABEL(C_HS_TRAFFIC()), client_handshake_traffic_secret),
+            ServerHandshakeTrafficSecret(handshake_secret, KDF_LABEL(S_HS_TRAFFIC()), server_handshake_traffic_secret),
+            ClientApplicationTrafficSecret(master_secret, KDF_LABEL(C_AP_TRAFFIC()), client_application_traffic_secret_0),
+            ServerApplicationTrafficSecret(master_secret, KDF_LABEL(S_AP_TRAFFIC()), server_application_traffic_secret_0)
         ))
     otherwise
         None()
@@ -150,10 +104,10 @@ def client_handshake() @ client : Option(HandshakeResult)
                     case vrfy(get_vk(server_cert_key), server_dh_pk, sig) {
                         | Some server_dh_pk_verified =>
                             Some(HandshakeResult(
-                                client_handshake_traffic_secret,
-                                server_handshake_traffic_secret,
-                                client_write_key_0, client_write_iv_0,
-                                server_write_key_0, server_write_iv_0
+                                ClientHandshakeTrafficSecret(handshake_secret, KDF_LABEL(C_HS_TRAFFIC()), client_handshake_traffic_secret),
+                                ServerHandshakeTrafficSecret(handshake_secret, KDF_LABEL(S_HS_TRAFFIC()), server_handshake_traffic_secret),
+                                ClientApplicationTrafficSecret(master_secret, KDF_LABEL(C_AP_TRAFFIC()), client_application_traffic_secret_0),
+                                ServerApplicationTrafficSecret(master_secret, KDF_LABEL(S_AP_TRAFFIC()), server_application_traffic_secret_0)
                             ))
                         | None => None()
                     }
