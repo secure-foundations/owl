@@ -18,14 +18,14 @@ locality client
 locality server
 
 // Some constant labels (Section 7.1)
-func DERIVED() = "derived"
-func C_E_TRAFFIC() = "c e traffic"
-func C_HS_TRAFFIC() = "c hs traffic"
-func S_HS_TRAFFIC() = "s hs traffic"
-func C_AP_TRAFFIC() = "c ap traffic"
-func S_AP_TRAFFIC() = "s ap traffic"
-func KEY() = "key"
-func IV() = "iv"
+// func DERIVED() = "derived"
+// func C_E_TRAFFIC() = "c e traffic"
+// func C_HS_TRAFFIC() = "c hs traffic"
+// func S_HS_TRAFFIC() = "s hs traffic"
+// func C_AP_TRAFFIC() = "c ap traffic"
+// func S_AP_TRAFFIC() = "s ap traffic"
+// func KEY() = "key"
+// func IV() = "iv"
 
 // ContentType's
 func CTYPE_ALERT() = 0x15
@@ -42,16 +42,10 @@ func ALERT_DESC_CLOSE_NOTIFY() = 0x00
 //     // HKDFContext_context: Data<adv> ||crh||
 // }
 
-// TODO: make sure |crh| has the correct length (u16)
-// TODO: add context (hash of previous messages)
-// see Section 7.1
-func KDF_LABEL(lbl) = as_u16(|crh|) ++ "tls13 " ++ lbl
-
-// struct KDFLabel {
-//     kl_len: Data<adv> |2|,
-//     kl_label_pref: Const("tls13 "),
-//     kl_label: Data<adv>
-// }
+// HkdfLabel in Section 7.1
+// TODO: should add as_u16(len) at the front, but since it's
+// uninterpreted, we can't prove disjointness yet
+func LABEL(len, lbl, ctx) = "tls13 " ++ lbl ++ ctx
 
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?
@@ -135,29 +129,25 @@ nametype ServerHandshakeTrafficSecret = enckey ServerCertificate
 // TODO: recursively define client_application_traffic_secret_N with N > 0
 nametype ClientApplicationTrafficSecret = expandkey {info self.
     // client_write_key
-    // TODO: technically this should not be a full kdf call
-    // but rather a partial HKDF-Expand call
-    info == KDF_LABEL(KEY()) -> strict st_aead ClientInnerRecord
+    info == LABEL(|enckey|, "key", "") -> strict st_aead ClientInnerRecord
         aad x. true // TODO: header
         nonce client_application_traffic_counter
-        pattern i. xor(i, gexpand<nonce |counter|;0>(self, KDF_LABEL(IV()))),
+        pattern i. xor(i, gexpand<nonce |counter|;0>(self, LABEL(|counter|, "iv", ""))),
 
     // client_write_iv
-    info == KDF_LABEL(IV()) -> public nonce |counter|
+    info == LABEL(|counter|, "iv", "") -> public nonce |counter|
 }
 
 // TODO: recursively define server_application_traffic_secret_N with N > 0
 nametype ServerApplicationTrafficSecret = expandkey {info self.
-    // server_write_key_0
-    // TODO: technically this should not be a full kdf call
-    // but rather a partial HKDF-Expand call
-    info == KDF_LABEL(KEY()) -> strict st_aead ServerInnerRecord
+    // server_write_key
+    info == LABEL(|enckey|, "key", "") -> strict st_aead ServerInnerRecord
         aad x. true // TODO: header
         nonce client_application_traffic_counter
-        pattern i. xor(i, gexpand<nonce |counter|;0>(self, KDF_LABEL(IV()))),
+        pattern i. xor(i, gexpand<nonce |counter|;0>(self, LABEL(|counter|, "iv", ""))),
 
-    // server_write_iv_0
-    info == KDF_LABEL(IV()) -> public nonce |counter|
+    // server_write_iv
+    info == LABEL(|counter|, "iv", "") -> public nonce |counter|
 }
 
 // Conflating the names of name/ordinary types here
@@ -203,13 +193,13 @@ struct ServerApplicationTrafficSecret {
 
 // RFC 8446 Section 7.1
 odh key_schedule : client_dh_sk, server_dh_sk -> expandkey {info.
-    info == KDF_LABEL(C_HS_TRAFFIC()) -> strict ClientHandshakeTrafficSecret,
-    info == KDF_LABEL(S_HS_TRAFFIC()) -> strict ServerHandshakeTrafficSecret,
+    exists ctx: bv. info == LABEL(|enckey|, "c hs traffic", ctx) -> strict ClientHandshakeTrafficSecret,
+    exists ctx: bv. info == LABEL(|enckey|, "s hs traffic", ctx) -> strict ServerHandshakeTrafficSecret,
 
     // Master Secret
-    info == KDF_LABEL(DERIVED()) -> strict extractkey expandkey {info.
-        info == KDF_LABEL(C_AP_TRAFFIC()) -> strict ClientApplicationTrafficSecret,
-        info == KDF_LABEL(S_AP_TRAFFIC()) -> strict ServerApplicationTrafficSecret
+    exists ctx: bv. info == LABEL(|extractkey|, "derived", ctx) -> strict extractkey expandkey {info.
+        exists ctx: bv. info == LABEL(|expandkey|, "c ap traffic", ctx) -> strict ClientApplicationTrafficSecret,
+        exists ctx: bv. info == LABEL(|expandkey|, "s ap traffic", ctx) -> strict ServerApplicationTrafficSecret
     }
 }
 

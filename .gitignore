@@ -9,3 +9,4 @@ main
 .owl-log/
 .z3log/
 *.smtcache
+.DS_Store

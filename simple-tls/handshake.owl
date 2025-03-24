@@ -22,23 +22,19 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
         corr_case server_dh_sk in
 
         // Key schedule in Section 7.1
+        let ctx = crh("") in // TODO: take ctx to be the transcript hash
+
         let early_secret = extract(HASH_LEN_0(), PSK()) in
-        let early_secret_derived = expand<0;nonce;0>(early_secret, KDF_LABEL(DERIVED())) in
+        let early_secret_derived = expand<0;extractkey;0>(early_secret, LABEL(|extractkey|, "derive", ctx)) in
 
         let handshake_secret = extract<key_schedule>(early_secret_derived, sk) in
-        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, KDF_LABEL(C_HS_TRAFFIC())) in
-        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, KDF_LABEL(S_HS_TRAFFIC())) in
-        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, KDF_LABEL(DERIVED())) in
+        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, LABEL(|enckey|, "c hs traffic", ctx)) in
+        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, LABEL(|enckey|, "s hs traffic", ctx)) in
+        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, LABEL(|extractkey|, "derived", ctx)) in
 
         let master_secret = extract(handshake_secret_derived, HASH_LEN_0()) in
-        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, KDF_LABEL(C_AP_TRAFFIC())) in
-        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, KDF_LABEL(S_AP_TRAFFIC())) in
-
-        let client_write_key_0 = expand<0;enckey;0>(client_application_traffic_secret_0, KDF_LABEL(KEY())) in
-        let client_write_iv_0 = expand<1;nonce |counter|;0>(client_application_traffic_secret_0, KDF_LABEL(IV())) in
-
-        let server_write_key_0 = expand<0;enckey;0>(server_application_traffic_secret_0, KDF_LABEL(KEY())) in
-        let server_write_iv_0 = expand<1;nonce |counter|;0>(server_application_traffic_secret_0, KDF_LABEL(IV())) in
+        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, LABEL(|expandkey|, "c ap traffic", ctx)) in
+        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, LABEL(|expandkey|, "s ap traffic", ctx)) in
 
         // Send certificate and certificate verify
         // TODO: this needs to sign the server_hello message instead of just the DH key
@@ -52,10 +48,10 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
         // TODO: send Finished
 
         Some(HandshakeResult(
-            ClientHandshakeTrafficSecret(handshake_secret, KDF_LABEL(C_HS_TRAFFIC()), client_handshake_traffic_secret),
-            ServerHandshakeTrafficSecret(handshake_secret, KDF_LABEL(S_HS_TRAFFIC()), server_handshake_traffic_secret),
-            ClientApplicationTrafficSecret(master_secret, KDF_LABEL(C_AP_TRAFFIC()), client_application_traffic_secret_0),
-            ServerApplicationTrafficSecret(master_secret, KDF_LABEL(S_AP_TRAFFIC()), server_application_traffic_secret_0)
+            ClientHandshakeTrafficSecret(handshake_secret, LABEL(|enckey|, "c hs traffic", ctx), client_handshake_traffic_secret),
+            ServerHandshakeTrafficSecret(handshake_secret, LABEL(|enckey|, "s hs traffic", ctx), server_handshake_traffic_secret),
+            ClientApplicationTrafficSecret(master_secret, LABEL(|expandkey|, "c ap traffic", ctx), client_application_traffic_secret_0),
+            ServerApplicationTrafficSecret(master_secret, LABEL(|expandkey|, "s ap traffic", ctx), server_application_traffic_secret_0)
         ))
     otherwise
         None()
@@ -75,23 +71,18 @@ def client_handshake() @ client : Option(HandshakeResult)
         assume(server_dh_pk == dhpk(get(server_dh_sk)));
 
         // Key schedule in Section 7.1
+        let ctx = "" in // TODO: take ctx to be the transcript hash
         let early_secret = extract(HASH_LEN_0(), PSK()) in
-        let early_secret_derived = expand<0;nonce;0>(early_secret, KDF_LABEL(DERIVED())) in
+        let early_secret_derived = expand<0;extractkey;0>(early_secret, LABEL(|extractkey|, "derive", ctx)) in
 
         let handshake_secret = extract<key_schedule>(early_secret_derived, sk) in
-        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, KDF_LABEL(C_HS_TRAFFIC())) in
-        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, KDF_LABEL(S_HS_TRAFFIC())) in
-        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, KDF_LABEL(DERIVED())) in
+        let client_handshake_traffic_secret = expand<0;nonce;0>(handshake_secret, LABEL(|enckey|, "c hs traffic", ctx)) in
+        let server_handshake_traffic_secret = expand<1;enckey;0>(handshake_secret, LABEL(|enckey|, "s hs traffic", ctx)) in
+        let handshake_secret_derived = expand<2;extractkey;0>(handshake_secret, LABEL(|extractkey|, "derived", ctx)) in
 
         let master_secret = extract(handshake_secret_derived, HASH_LEN_0()) in
-        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, KDF_LABEL(C_AP_TRAFFIC())) in
-        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, KDF_LABEL(S_AP_TRAFFIC())) in
-
-        let client_write_key_0 = expand<0;enckey;0>(client_application_traffic_secret_0, KDF_LABEL(KEY())) in
-        let client_write_iv_0 = expand<1;nonce |counter|;0>(client_application_traffic_secret_0, KDF_LABEL(IV())) in
-
-        let server_write_key_0 = expand<0;enckey;0>(server_application_traffic_secret_0, KDF_LABEL(KEY())) in
-        let server_write_iv_0 = expand<1;nonce |counter|;0>(server_application_traffic_secret_0, KDF_LABEL(IV())) in
+        let client_application_traffic_secret_0 = expand<0;expandkey;0>(master_secret, LABEL(|expandkey|, "c ap traffic", ctx)) in
+        let server_application_traffic_secret_0 = expand<1;expandkey;0>(master_secret, LABEL(|expandkey|, "s ap traffic", ctx)) in
 
         // TODO: send Finished
 
@@ -104,10 +95,10 @@ def client_handshake() @ client : Option(HandshakeResult)
                     case vrfy(get_vk(server_cert_key), server_dh_pk, sig) {
                         | Some server_dh_pk_verified =>
                             Some(HandshakeResult(
-                                ClientHandshakeTrafficSecret(handshake_secret, KDF_LABEL(C_HS_TRAFFIC()), client_handshake_traffic_secret),
-                                ServerHandshakeTrafficSecret(handshake_secret, KDF_LABEL(S_HS_TRAFFIC()), server_handshake_traffic_secret),
-                                ClientApplicationTrafficSecret(master_secret, KDF_LABEL(C_AP_TRAFFIC()), client_application_traffic_secret_0),
-                                ServerApplicationTrafficSecret(master_secret, KDF_LABEL(S_AP_TRAFFIC()), server_application_traffic_secret_0)
+                                ClientHandshakeTrafficSecret(handshake_secret, LABEL(|enckey|, "c hs traffic", ctx), client_handshake_traffic_secret),
+                                ServerHandshakeTrafficSecret(handshake_secret, LABEL(|enckey|, "s hs traffic", ctx), server_handshake_traffic_secret),
+                                ClientApplicationTrafficSecret(master_secret, LABEL(|expandkey|, "c ap traffic", ctx), client_application_traffic_secret_0),
+                                ServerApplicationTrafficSecret(master_secret, LABEL(|expandkey|, "s ap traffic", ctx), server_application_traffic_secret_0)
                             ))
                         | None => None()
                     }

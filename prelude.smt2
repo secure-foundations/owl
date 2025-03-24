@@ -86,6 +86,17 @@
     :qid concat_assoc
 )))
 
+(assert (forall ((x Bits) (y Bits) (xhex String) (yhex String) (z Bits) (w Bits)) (!
+    (=> (and (not (= xhex yhex))
+            (HasHex x xhex)
+            (HasHex y yhex)
+            (not (str.prefixof xhex yhex))
+            (not (str.prefixof yhex xhex)))
+        (not (= (concat x z) (concat y w))))
+    :pattern ((concat x z) (concat y w) (HasHex x xhex) (HasHex y yhex))
+    :qid concat_prefix_disjoint
+)))
+
 
 
 (declare-fun eq (Bits Bits) Bits)
