@@ -822,14 +822,11 @@ resolveProp p =
           pth' <- resolvePath (p^.spanOf) PTDef pth
           as' <- mapM resolveAExpr as
           return $ Spanned (p^.spanOf) $ PHappened pth' is as'
-      PQuantIdx q sx ip -> do
-          (i, p') <- unbind ip
-          p''  <- resolveProp p'
-          return $ Spanned (p^.spanOf) $ PQuantIdx q sx $ bind i p''
-      PQuantBV q sx xp -> do
-          (x, p') <- unbind xp
+      PQuant q sx xp -> do
+          (xs, (trigger, p')) <- unbind xp
           p'' <- resolveProp p'
-          return $ Spanned (p^.spanOf) $ PQuantBV q sx $ bind x p''
+          trigger'' <- traverse resolveAExpr trigger
+          return $ Spanned (p^.spanOf) $ PQuant q sx $ bind xs (trigger'', p'')
       PHonestPKEnc ne a -> do
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a

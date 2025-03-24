@@ -1293,8 +1293,7 @@ coveringLabel' = withMemoize (memoCoveringLabel') $ \t ->
 quantFree :: Prop -> Check' senv Bool
 quantFree p = 
     case p^.val of
-      PQuantIdx _ _ _ -> return False
-      PQuantBV _ _ _ -> return False
+      PQuant _ _ _ -> return False
       PAADOf ne a -> extractAAD ne a >>= quantFree
       -- PInODH a b c -> return True -- Abstracted by a predicate in SMT
       PApp ps is xs -> return True -- Abstracted by a predicate in SMT
@@ -1783,14 +1782,10 @@ stripProp x p =
               return $ pImpl p1 p2'
       PFlow l1 l2 -> do
           if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
-      PQuantIdx q sx ip -> do
-          (i, p') <- unbind ip
+      PQuant q sx ip -> do
+          (i, (trigger, p')) <- unbind ip
           p'' <- stripProp x p'
-          return $ mkSpanned $ PQuantIdx q sx (bind i p'')
-      PQuantBV q sx xp -> do
-          (y, p) <- unbind xp               
-          p' <- stripProp x p
-          return $ mkSpanned $ PQuantBV q sx (bind y p')
+          return $ mkSpanned $ PQuant q sx (bind i (trigger, p''))
       PHappened s _ xs -> do
           if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
       PLetIn a yp -> 

@@ -553,26 +553,17 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PNot p1 -> do
                          p' <- normalizeProp p1
                          return $ Spanned (p^.spanOf) $ PNot p'
-                     PQuantBV q sx xp -> do
-                         (x, p') <- unbind xp
+                     PQuant q sx xp -> do
+                         (xs, (trigger, p')) <- unbind xp
                          case p'^.val of
                            PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
                                             PAnd 
-                                                (mkSpanned $ PQuantBV q sx $ bind x p1') 
-                                                (mkSpanned $ PQuantBV q sx $ bind x p2') 
-                           _ -> do 
-                             p2' <- withVars [(x, (ignore $ show x, Nothing, tGhost))] $ normalizeProp p'
-                             return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantBV q sx (bind x p2')) else p2'
-                     PQuantIdx q sx xp -> do
-                         (x, p') <- unbind xp
-                         case p'^.val of
-                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
-                                            PAnd 
-                                                (mkSpanned $ PQuantIdx q sx $ bind x p1') 
-                                                (mkSpanned $ PQuantIdx q sx $ bind x p2') 
-                           _ -> do 
-                             p2' <- withIndices [(x, (ignore $ show x, IdxGhost))] $ normalizeProp p'
-                             return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantIdx q sx (bind x p2')) else p2'
+                                                (mkSpanned $ PQuant q sx $ bind xs (trigger, p1')) 
+                                                (mkSpanned $ PQuant q sx $ bind xs (trigger, p2')) 
+                           _ -> do
+                             -- TODO: removing unused quantifiers is currently disabled
+                             p2' <- withQuantBinders xs $ normalizeProp p'
+                             return $ Spanned (p^.spanOf) $ PQuant q sx (bind xs (trigger, p2'))
                      PFlow a b -> do
                          a' <- normLabel a
                          b' <- normLabel b
@@ -1486,9 +1477,8 @@ checkNoTopTy allowGhost t =
           
 
 mkManyExists :: [(String, DataVar)] -> Prop -> Prop
-mkManyExists [] p = p
-mkManyExists ((s, x):xs) p = 
-    mkSpanned $ PQuantBV Exists (ignore s) $ bind x $ mkManyExists xs p
+mkManyExists xs p =
+    mkSpanned $ PQuant Exists (ignore $ show xs) $ bind (map (\x -> QBV (snd x)) xs) (Nothing, p)
 
 
 checkNameType :: NameType -> Check ()
@@ -1746,6 +1736,12 @@ checkLabel l =
               (i, l) <- unbind il
               withIndices [(i, (ignore $ show i, IdxGhost))] $ checkLabel l
 
+withQuantBinders :: [QuantBinder] -> Check a -> Check a
+withQuantBinders [] k = k
+withQuantBinders ((QIdx i):xs) k = withIndices [(i, (ignore $ show i, IdxGhost))] $ withQuantBinders xs k
+withQuantBinders ((QBV x):xs) k = withVars [(x, (ignore $ show x, Nothing, tGhost))] $ withQuantBinders xs k
+
+
 checkProp :: Prop -> Check ()
 checkProp p =
     local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ do
@@ -1773,12 +1769,11 @@ checkProp p =
               checkLabel l1
               checkLabel l2
               return ()
-          (PQuantIdx _ _ ip) -> do
-              (i, p) <- unbind ip
-              withIndices [(i, (ignore $ show i, IdxGhost))] $ checkProp p
-          (PQuantBV _ _ xp) -> do
-              (x, p) <- unbind xp
-              withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
+          (PQuant _ _ p) -> do
+              (xs, (trigger, p)) <- unbind p
+              withQuantBinders xs $ checkProp p
+              withQuantBinders xs $ traverse inferAExpr trigger
+              return ()
           PApp s is xs -> do
               ts <- mapM inferAExpr xs
               p <- extractPredicate s is xs
@@ -2034,7 +2029,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           (ix, p) <- unbind ip
           withIndices [(ix, (ignore s, IdxGhost))] $ do
               checkProp p
-          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists (ignore s) ip
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuant Exists (ignore s) (bind [QIdx ix] (Nothing, p))
           (i, k) <- unbind ik
           getOutTy ot =<< case b of
             Just True -> do
@@ -2054,7 +2049,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           (x, p) <- unbind ip
           withVars [(x, (ignore s, Nothing, tGhost))] $ do
               checkProp p
-          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantBV Exists (ignore s) ip
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuant Exists (ignore s) (bind [QBV x] (Nothing, p))
           (y, k) <- unbind ik
           getOutTy ot =<< case b of
             Just True -> do
@@ -2227,7 +2222,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 let p2 = case oreq of
                            Nothing -> p'
                            Just req -> pImpl req p'
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p2
+                getOutTy ot $ tLemma $ mkSpanned $ PQuant Forall (ignore s) $ bind [QBV x] $ subst y (aeApp (topLevelPath "unit") [] []) (Nothing, p2)
             _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       (EForallIdx s ik) -> do
           (i, (oreq, k)) <- unbind ik
@@ -2252,7 +2247,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 let p2 = case oreq of
                            Nothing -> p'
                            Just req -> pImpl req p'
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p2
+                getOutTy ot $ tLemma $ mkSpanned $ PQuant Forall (ignore s) $ bind [QIdx i] $ subst y (aeApp (topLevelPath "unit") [] []) (Nothing, p2)
             _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
       EOpenTyOf a k -> do
           t <- inferAExpr a >>= normalizeTy

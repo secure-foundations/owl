@@ -1,0 +1,8 @@
+locality alice
+
+func f arity 1
+
+axiom forall x: bv, y: bv. {:trigger f(x)} f(x) == f(y)
+
+def g(x: Data<adv>, y: Data<adv>) @ alice : (r: Data<adv> { r == f(x) })
+    = f(y)

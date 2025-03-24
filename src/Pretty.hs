@@ -236,12 +236,9 @@ instance  OwlPretty PropX where
     owlpretty (PNot (Spanned _ (PFlow l1 l2))) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "!<=" <+> owlpretty l2
     owlpretty (PFlow l1 l2) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2
     owlpretty (PIsConstant a) = owlpretty "is_constant(" <> owlpretty a <> owlpretty ")"
-    owlpretty (PQuantIdx q sx b) = 
+    owlpretty (PQuant q sx b) =
         let (x, p) = owlprettyBind b in
-        owlpretty q <+> owlpretty sx <+> owlpretty ": idx" <> owlpretty "." <+> p
-    owlpretty (PQuantBV q sx b) = 
-        let (x, p) = owlprettyBind b in
-        owlpretty q <+> owlpretty sx <+> owlpretty ": bv" <> owlpretty "." <+> p
+        owlpretty q <+> owlpretty sx <> owlpretty "." <+> p
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ intersperse (owlpretty ", ") $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     -- owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
@@ -266,6 +263,10 @@ instance OwlPretty KDFStrictness where
 owlprettyIdxBinds1 :: [IdxVar] -> OwlDoc
 owlprettyIdxBinds1 [] = mempty
 owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map owlpretty xs) <> owlpretty ">"
+
+instance OwlPretty QuantBinder where
+    owlpretty (QIdx i) = owlpretty i <+> owlpretty ": idx"
+    owlpretty (QBV x) = owlpretty x <+> owlpretty ": bv"
 
 
 instance  OwlPretty NameTypeX where

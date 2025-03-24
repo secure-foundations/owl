@@ -623,6 +623,11 @@ withSMTVarsTys xs k = do
     varVals .= vVs
     return res
 
+withQuantBinders :: [QuantBinder] -> Sym a -> Sym a
+withQuantBinders [] m = m
+withQuantBinders ((QIdx i):xs) m = withSMTIndices [(i, IdxGhost)] $ withQuantBinders xs m
+withQuantBinders ((QBV x):xs) m = withSMTVars [x] $ withQuantBinders xs m
+
 ---- Helpers for logging 
 
 logSMT :: String -> T.Text -> IO String
@@ -809,24 +814,22 @@ interpretProp = withPropMemo $ \p -> do
       (PIsConstant a) -> do
           v <- interpretAExp a
           return $ SApp [SAtom "IsConstant", v]
-      (PQuantBV q _ ip) -> do
-          (x, p) <- liftCheck $ unbind ip
-          v <- withSMTVars [x] $ interpretProp p 
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
-          let xname = cleanSMTIdent $ show x
+      (PQuant q _ ip) -> do
+          (xs, (trigger, p)) <- liftCheck $ unbind ip
+          v <- withQuantBinders xs $ interpretProp p
+          trig <- case trigger of
+                    Just trigger -> do
+                        trig <- withQuantBinders xs $ interpretAExp trigger
+                        return [trig]
+                    Nothing -> return []
+          let smtBinders :: [QuantBinder] -> [(SExp, SExp)]
+              smtBinders [] = []
+              smtBinders ((QIdx i):xs) = (SAtom $ cleanSMTIdent $ show i, indexSort) : smtBinders xs
+              smtBinders ((QBV x):xs) = (SAtom $ cleanSMTIdent $ show x, bitstringSort) : smtBinders xs
+
           case q of
-            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v trig $ "forall_" ++ xname
-            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v trig $ "exists_" ++ xname
-      (PQuantIdx q _ ip) -> do
-          (i, p') <- liftCheck $ unbind ip
-          v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
-          let iname = cleanSMTIdent $ show i
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
-          case q of
-            Forall -> return $ sForall [(SAtom iname, indexSort)] v trig $ "forall_" ++ iname 
-            Exists -> return $ sExists [(SAtom iname, indexSort)] v trig $ "exists_" ++ iname
+            Forall -> return $ sForall (smtBinders xs) v trig $ "anon_forall"
+            Exists -> return $ sExists (smtBinders xs) v trig $ "anon_exists"
       (PHonestPKEnc ne a) -> do
           vn <- getSymName ne
           a' <- interpretAExp a

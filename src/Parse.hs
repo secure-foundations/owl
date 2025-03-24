@@ -513,8 +513,14 @@ parsePropTerm =
             q <- parseQuant
             bs <- parseQuantBinders
             symbol "."
+            trigger <- optionMaybe $ do
+                symbol "{"
+                symbol ":trigger"
+                x <- parseAExpr
+                symbol "}"
+                return x
             p <- parseProp
-            return $ (mkQuant q bs p)^.val
+            return $ (mkQuant q bs trigger p)^.val
         )
         <|>
         (parseSpanned $ do
@@ -576,31 +582,23 @@ parseQuant =
         return $ Exists
     )
 
-data BinderType = BTIdx | BTBV
-    deriving Eq
-
 parseQuantBinders = 
     (do
         i <- identifier
         symbol ":"
-        bt <- alt
-            (reserved "idx" >> return BTIdx)
-            (reserved "bv" >> return BTBV)
-        return (i, bt)) `sepBy1` (symbol ",")
+        alt (reserved "idx" >> return (QIdx (s2n i)))
+            (reserved "bv" >> return (QBV (s2n i)))) `sepBy1` (symbol ",")
 
-mkQuant :: Quant -> [(String, BinderType)] -> Prop -> Prop
-mkQuant q [] p = p
-mkQuant q ((i, bt):bs) p = case bt of
-    BTIdx -> mkSpanned $ PQuantIdx q (ignore i) $ bind (s2n i) $ mkQuant q bs p
-    BTBV -> mkSpanned $ PQuantBV q (ignore i) $ bind (s2n i) $ mkQuant q bs p
+mkQuant :: Quant -> [QuantBinder] -> Maybe AExpr -> Prop -> Prop
+mkQuant q bs trigger p = mkSpanned $ PQuant q (ignore $ show bs) $ bind bs (trigger, p)
 
-mkEForall :: [(String, BinderType)] -> Maybe Prop -> Expr -> Expr
-mkEForall [(i, bt)] op k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (op, k)
-    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (op, k)
-mkEForall ((i, bt):bs) op k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
-    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
+mkEForall :: [QuantBinder] -> Maybe Prop -> Expr -> Expr
+mkEForall [b] op k = case b of
+    QIdx i -> mkSpanned $ EForallIdx (show i) $ bind i (op, k)
+    QBV i -> mkSpanned $ EForallBV (show i) $ bind i (op, k)
+mkEForall (bt:bs) op k = case bt of
+    QIdx i -> mkSpanned $ EForallIdx (show i) $ bind i (Nothing, mkEForall bs op k)
+    QBV i -> mkSpanned $ EForallBV (show i) $ bind i (Nothing, mkEForall bs op k)
 
 
 prefixProp op f =

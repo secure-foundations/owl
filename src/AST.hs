@@ -193,8 +193,7 @@ data PropX =
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
-    | PQuantIdx Quant  (Ignore String) (Bind IdxVar Prop)
-    | PQuantBV Quant  (Ignore String) (Bind DataVar Prop)
+    | PQuant Quant (Ignore String) (Bind [QuantBinder] (Maybe AExpr, Prop))
     | PIsConstant AExpr -- Internal use
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
@@ -209,6 +208,9 @@ data NameKind = NK_ExpandKey | NK_ExtractKey |
 type Prop = Spanned PropX
 
 data Quant = Forall | Exists
+    deriving (Show, Generic, Typeable)
+
+data QuantBinder = QIdx IdxVar | QBV DataVar
     deriving (Show, Generic, Typeable)
 
 pAnd :: Prop -> Prop -> Prop
@@ -629,6 +631,10 @@ instance Subst Idx Quant
 instance Subst AExpr Quant
 instance Subst ResolvedPath Quant
 
+instance Alpha QuantBinder
+instance Subst Idx QuantBinder
+instance Subst AExpr QuantBinder
+instance Subst ResolvedPath QuantBinder
 
 instance Alpha DebugCommand
 instance Subst AExpr DebugCommand
@@ -675,10 +681,8 @@ tLemma p = tRefined tUnit "._" p
 
 
 mkForallIdx :: [IdxVar] -> Prop -> Prop
-mkForallIdx [] p = p
-mkForallIdx (x:xs) p = mkSpanned $ PQuantIdx Forall (ignore $ show x) $ bind x $ mkForallIdx xs p
+mkForallIdx xs p = mkSpanned $ PQuant Forall (ignore $ show xs) $ bind (map QIdx xs) (Nothing, mkForallIdx xs p)
 
 mkExistsIdx :: [IdxVar] -> Prop -> Prop
-mkExistsIdx [] p = p
-mkExistsIdx (x:xs) p = mkSpanned $ PQuantIdx Exists (ignore $ show x) $ bind x $ mkExistsIdx xs p
+mkExistsIdx xs p = mkSpanned $ PQuant Exists (ignore $ show xs) $ bind (map QIdx xs) (Nothing, mkExistsIdx xs p)
 
