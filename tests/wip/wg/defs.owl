@@ -17,10 +17,9 @@ mac1---- -> 0x6d6163312d2d2d2d
 
 */
 
-func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c795f424c414b453273
-func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
-func mac1() = 0x6d6163312d2d2d2d
-
+func construction() = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+func identifier() = "WireGuard v1 zx2c4 Jason@zx2c4.com"
+func mac1() = "mac1----"
 func zeros_16() = 0x00000000000000000000000000000000
 func zeros_32() = 0x0000000000000000000000000000000000000000000000000000000000000000
 type ty_zeros_32 = Const(0x0000000000000000000000000000000000000000000000000000000000000000)
@@ -36,6 +35,20 @@ name E_resp<i@m> : DH @ Responder<m>
 name S_init<@n> : DH @ Initiator<n>
 name S_resp<@m> : DH @ Responder<m>
 
+nametype C3 = expandkey {info.
+    True -> nonce
+}
+
+nametype C2 = expandkey {info.
+    True -> strict C3 || strict nonce
+}
+
+odh L1<i@n,m> :
+    E_init<i@n>, S_resp<@m> -> C2
+
+/*
+
+-------------
 
 func h1_pre(s_resp) = crh(crh(construction()) ++ identifier()) ++ s_resp
 func h2_pre(s_resp, e_init) = crh(h1_pre(s_resp)) ++ e_init
@@ -447,3 +460,4 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
                   happened(key_confirm_responder_send<@m>(x)) })
         else Data<adv> 
 }
+*/

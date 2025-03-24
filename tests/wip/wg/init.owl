@@ -1,6 +1,7 @@
 include "defs.owl"
 
     
+    /*
 predicate is_e_resp(eph) = 
     exists m:idx,j:idx.
         eph == dhpk(get(E_resp<j@m>))
@@ -16,7 +17,9 @@ predicate init_safe<i,n,m>() =
 
 def key_confirm_initiator_send<@n>(k : Ghost) @ Initiator<n> : Unit = () 
 def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = () 
+*/
 
+/*
     
 struct init_sent_state<i,n,m> {
     iss_c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
@@ -30,15 +33,24 @@ struct init_sent_state<i,n,m> {
         else
             (x:Data<adv>{x == honest_c3<session i, pid n, pid n, pid m>()})
 }
+*/
 
 def init_stage1<i@n,m>
     (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
     dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>), 
-    psk : PSKMode<idx n,idx m>) @
-    Initiator<n> : init_sent_state<session i, pid n, pid m> = 
+    psk : Unit /* PSKMode<idx n,idx m> */) @
+    Initiator<n> : Unit = // init_sent_state<session i, pid n, pid m> = 
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in 
     let H1 = crh(H0 ++ dhpk_S_resp) in
+    let e_init = dhpk(get(E_init<i@n>)) in 
+    let C1 = kdf<;;extractkey;0>(C0, e_init, 0x) in 
+    let msg_ephemeral = e_init in 
+    let H2 = crh(H1 ++ msg_ephemeral) in 
+    let C2 = kdf<L1<i@n,m>;0;extractkey||enckey;0>(C1, dh_combine(dhpk_S_resp, get(E_init<i@n>)), 0x) in 
+    ()
+
+/*
     let e_init = dhpk(get(E_init<i@n>)) in 
     let C1 = kdf<;;kdfkey;0>(C0, e_init, 0x) in 
     let H2 = crh(H1 ++ e_init) in
@@ -245,3 +257,4 @@ def init_stage2<i@n,m>
 //     call init_stage2<i@n,m>(st)
 
 def init_dummy<@n>() @ Initiator<n> : Unit = ()
+*/
