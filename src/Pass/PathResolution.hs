@@ -258,6 +258,12 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over funcPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
+      DeclAxiom p -> do
+          p' <- resolveProp p
+          pth <- view curPath
+          let d' = Spanned (d^.spanOf) $ DeclAxiom p'
+          ds' <- resolveDecls ds
+          return (d' : ds')
       DeclTable s t l -> do
           t' <- resolveTy t
           l' <- resolveLocality (d^.spanOf) l

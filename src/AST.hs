@@ -350,6 +350,7 @@ data DeclX =
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
+    | DeclAxiom Prop
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))
     | DeclCorrGroup (Bind ([IdxVar], [DataVar]) [Label])  
