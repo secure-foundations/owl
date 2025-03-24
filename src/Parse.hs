@@ -1319,6 +1319,31 @@ parseExprTerm =
         return $ ECrypt cop as
     )
     <|>
+    (parseSpanned $ do
+        reserved "kdf"
+        symbol "<"
+        odhs <- parseODHAnn `sepBy` (symbol ",")
+        symbol ";"
+        ianns <- (do 
+            i <- many1 digit
+            iargs <- parseOptionArgs
+            return (read i, iargs)
+                  ) `sepBy` (symbol ",")
+        symbol ";"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        symbol "("
+        as <- parseArgs
+        symbol ")"
+        case as of
+          [a1, a2, a3] -> 
+            return $ ELet (mkSpanned $ ECrypt (CExtract odhs) [a1, a2]) Nothing Nothing "%res" $ 
+                bind (s2n "%res") $ mkSpanned $ ECrypt (CExpand ianns nks (read j)) [aeVar "%res", a3]
+          _ -> fail "kdf: must have three arguments"
+    )
+    <|>
     (parseSpanned $ do 
         reserved "output" 
         ae <- parseAExpr 
@@ -1659,7 +1684,7 @@ parseCryptOp =
             i <- many1 digit
             iargs <- parseOptionArgs
             return (read i, iargs)
-                  ) `sepBy1` (symbol ",")
+                  ) `sepBy` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
@@ -1667,29 +1692,6 @@ parseCryptOp =
         symbol ">"
         return $ CExpand ianns nks (read j))
     <|>
-    -- (do
-    --     reserved "kdf"
-    --     symbol "<"
-    --     oann1 <- parseKDFSelector `sepBy` (symbol ",")
-    --     symbol ";"
-    --     oann2 <- (alt
-    --                 (do
-    --                     reserved "odh"
-    --                     s <- identifier
-    --                     p <- parseIdxParams
-    --                     symbol "["
-    --                     i <- parseKDFSelector
-    --                     symbol "]"
-    --                     return $ Right (s, p, i))
-    --                 (Left <$> parseKDFSelector)) `sepBy` (symbol ",")
-    --     symbol ";"
-    --     nks <- parseNameKind `sepBy1` (symbol "||")
-    --     symbol ";"
-    --     j <- many1 digit
-    --     symbol ">"
-    --     return $ CKDF oann1 oann2 nks (read j)
-    -- )
-    -- <|>
     (do
         reserved "crh_lemma"
         return $ CLemma $ LemmaCRH 
