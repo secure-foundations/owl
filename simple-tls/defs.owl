@@ -14,18 +14,13 @@ func minus arity 2
 func as_u16 arity 1
 func subrange arity 3
 
+// axiom forall x: bv. length(as_u16(x)) == 2
+axiom length(as_u16(|enckey|)) == 2 /\
+      length(as_u16(|counter|)) == 2 /\
+      length(as_u16(|extractkey|)) == 2
+
 locality client
 locality server
-
-// Some constant labels (Section 7.1)
-// func DERIVED() = "derived"
-// func C_E_TRAFFIC() = "c e traffic"
-// func C_HS_TRAFFIC() = "c hs traffic"
-// func S_HS_TRAFFIC() = "s hs traffic"
-// func C_AP_TRAFFIC() = "c ap traffic"
-// func S_AP_TRAFFIC() = "s ap traffic"
-// func KEY() = "key"
-// func IV() = "iv"
 
 // ContentType's
 func CTYPE_ALERT() = 0x15
@@ -45,7 +40,7 @@ func ALERT_DESC_CLOSE_NOTIFY() = 0x00
 // HkdfLabel in Section 7.1
 // TODO: should add as_u16(len) at the front, but since it's
 // uninterpreted, we can't prove disjointness yet
-func LABEL(len, lbl, ctx) = "tls13 " ++ lbl ++ ctx
+func LABEL(len, lbl, ctx) = as_u16(len) ++ "tls13 " ++ lbl ++ ctx
 
 // We don't support PSK yet
 // TODO: should we pad it to a certain length?

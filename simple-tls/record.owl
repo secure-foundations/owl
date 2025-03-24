@@ -91,8 +91,6 @@ def client_send(
     =
     parse keys as HandshakeResult(_, _, app_secret, _) in
     parse app_secret as ClientApplicationTrafficSecret(_, _, app_secret) in
-    corr_case client_dh_sk in
-    corr_case server_dh_sk in
 
     let write_key = expand<0;enckey;0>(app_secret, LABEL(|enckey|, "key", "")) in
     let write_iv = expand<1;nonce |counter|;0>(app_secret, LABEL(|counter|, "iv", "")) in

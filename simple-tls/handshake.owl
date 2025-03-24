@@ -18,8 +18,8 @@ def server_handshake(msg: ClientHello) @ server : Option(HandshakeResult)
         let _ = output ServerHello(get(server_random), dhpk(get(server_dh_sk))) to endpoint(client) in
         let sk = dh_combine(client_dh_pk, get(server_dh_sk)) in
 
-        corr_case client_dh_sk in
-        corr_case server_dh_sk in
+        // corr_case client_dh_sk in
+        // corr_case server_dh_sk in
 
         // Key schedule in Section 7.1
         let ctx = crh("") in // TODO: take ctx to be the transcript hash
