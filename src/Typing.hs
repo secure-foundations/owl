@@ -51,7 +51,7 @@ import Data.Typeable (Typeable)
 type Check = Check' SMT.SolverEnv
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 doAssertFalse :: Check Bool
 doAssertFalse = do
@@ -1253,6 +1253,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           let is_abs = ignore $ unsafeMapDepBind dspec $ \(_, _, o) -> not $ isJust o
           let df = Def $ bind (is1, is2) $ DefSpec is_abs l dspec
           addDef n df $ cont
+      (DeclAxiom p) -> do
+          checkProp p
+          local (over (curMod . axioms) $ \xs -> p : xs) $ cont
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
           ((is, xs), (l1, l2)) <- unbind ils

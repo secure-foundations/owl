@@ -47,6 +47,7 @@ smtSetup = do
             setupNameEnvRO
             smtLabelSetup 
             setupTyEnv 
+            setupAxioms
             thePrelude <- do
                 log <- use smtLog
                 prelude <- liftIO $ T.readFile "prelude.smt2"
@@ -75,6 +76,12 @@ setupIndexEnv = do
 sZero :: SExp
 sZero = SAtom "zero"
 
+setupAxioms :: Sym ()
+setupAxioms = do
+    axs <- liftCheck $ collectAxioms
+    forM_ axs $ \p -> do
+        v <- interpretProp p
+        emitAssertion v
 
 setupNameEnvRO :: Sym ()
 setupNameEnvRO = do

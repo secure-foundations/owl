@@ -935,6 +935,11 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
+        reserved "axiom"
+        p <- parseProp
+        return $ DeclAxiom p)
+    <|>
+    (parseSpanned $ do
         reserved "corr"
         pb <- parseIdxParamBinds1
         alt
