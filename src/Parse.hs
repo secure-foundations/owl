@@ -590,7 +590,7 @@ parseQuantBinders =
             (reserved "bv" >> return (QBV (s2n i)))) `sepBy1` (symbol ",")
 
 mkQuant :: Quant -> [QuantBinder] -> Maybe AExpr -> Prop -> Prop
-mkQuant q bs trigger p = mkSpanned $ PQuant q (ignore $ show bs) $ bind bs (trigger, p)
+mkQuant q bs trigger p = mkSpanned $ PQuant q (ignore $ show $ mconcat (map owlpretty bs)) $ bind bs (trigger, p)
 
 mkEForall :: [QuantBinder] -> Maybe Prop -> Expr -> Expr
 mkEForall [b] op k = case b of

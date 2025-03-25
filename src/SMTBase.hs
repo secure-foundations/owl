@@ -323,6 +323,14 @@ getSMTQuery senv setup k = do
 trimnl :: String -> String
 trimnl = reverse . dropWhile (=='\n') . reverse
 
+wrapLogIO :: String -> IO a -> IO a
+wrapLogIO s k = do
+    putStrLn $ "begin " ++ s
+    r <- k
+    putStrLn $ "end " ++ s
+    return r
+
+
 queryZ3 :: Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> T.Text -> IO (Either String (Bool, Maybe String))
 queryZ3 logsmt filepath z3results mp q = do
     let hq = hash q 

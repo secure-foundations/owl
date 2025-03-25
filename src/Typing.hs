@@ -553,10 +553,10 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PNot p1 -> do
                          p' <- normalizeProp p1
                          return $ Spanned (p^.spanOf) $ PNot p'
-                     PQuant q sx xp -> do
+                     PQuant q sx xp -> withLog0 ("normalizeProp quant " ++ show (owlpretty p)) $ do
                          (xs, (trigger, p')) <- unbind xp
                          case p'^.val of
-                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
+                           PAnd p1' p2' -> return $ Spanned (p^.spanOf) $ 
                                             PAnd 
                                                 (mkSpanned $ PQuant q sx $ bind xs (trigger, p1')) 
                                                 (mkSpanned $ PQuant q sx $ bind xs (trigger, p2')) 
@@ -1770,8 +1770,8 @@ checkProp p =
               checkLabel l2
               return ()
           (PQuant _ _ p) -> do
-              (xs, (trigger, p)) <- unbind p
-              withQuantBinders xs $ checkProp p
+              (xs, (trigger, p')) <- unbind p
+              withQuantBinders xs $ checkProp p'
               withQuantBinders xs $ traverse inferAExpr trigger
               return ()
           PApp s is xs -> do

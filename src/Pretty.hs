@@ -237,8 +237,8 @@ instance  OwlPretty PropX where
     owlpretty (PFlow l1 l2) = annotate (color flowColor) $ owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2
     owlpretty (PIsConstant a) = owlpretty "is_constant(" <> owlpretty a <> owlpretty ")"
     owlpretty (PQuant q sx b) =
-        let (x, p) = owlprettyBind b in
-        owlpretty q <+> owlpretty sx <> owlpretty "." <+> p
+        let (_, (_, p)) = unsafeUnbind b in 
+        owlpretty q <+> owlpretty sx <> owlpretty "." <+> owlpretty p
     owlpretty (PApp p is xs) = owlpretty p <> angles (mconcat $ intersperse (owlpretty ", ") $ map owlpretty is) <> list (map owlpretty xs)
     owlpretty (PAADOf ne x) = owlpretty "aad" <> tupled [owlpretty ne] <> brackets (owlpretty x)
     -- owlpretty (PInODH s ikm info) = owlpretty "in_odh" <> tupled [owlpretty s, owlpretty ikm, owlpretty info]
