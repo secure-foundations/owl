@@ -553,7 +553,7 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PNot p1 -> do
                          p' <- normalizeProp p1
                          return $ Spanned (p^.spanOf) $ PNot p'
-                     PQuant q sx xp -> withLog0 ("normalizeProp quant " ++ show (owlpretty p)) $ do
+                     PQuant q sx xp -> do
                          (xs, (trigger, p')) <- unbind xp
                          case p'^.val of
                            PAnd p1' p2' -> return $ Spanned (p^.spanOf) $ 

@@ -681,8 +681,8 @@ tLemma p = tRefined tUnit "._" p
 
 
 mkForallIdx :: [IdxVar] -> Prop -> Prop
-mkForallIdx xs p = mkSpanned $ PQuant Forall (ignore $ show xs) $ bind (map QIdx xs) (Nothing, mkForallIdx xs p)
+mkForallIdx xs p = mkSpanned $ PQuant Forall (ignore $ show xs) $ bind (map QIdx xs) (Nothing, p)
 
 mkExistsIdx :: [IdxVar] -> Prop -> Prop
-mkExistsIdx xs p = mkSpanned $ PQuant Exists (ignore $ show xs) $ bind (map QIdx xs) (Nothing, mkExistsIdx xs p)
+mkExistsIdx xs p = mkSpanned $ PQuant Exists (ignore $ show xs) $ bind (map QIdx xs) (Nothing, p)
 
