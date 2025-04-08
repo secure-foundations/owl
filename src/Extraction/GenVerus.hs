@@ -32,7 +32,7 @@ import PrettyVerus
 import ConcreteAST
 import ExtractionBase
 import AST
---import Data.String.Interpolate (i, __i, iii)
+import CmdArgs
 import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad VerusTy
@@ -420,13 +420,15 @@ genVerusCAExpr ae = do
                     PCBytes l -> do
                         l' <- concreteLength $ lowerFLen l
                         return [di|Bytes(#{l'})|]
-                    PCConstBytes l s -> return [di|OwlConstBytes:<#{l}>(#{s})|]
+                    PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
                     PCBuilder -> return [di|BuilderCombinator(#{arg})|]
             let mkCombArg ((arg, comb), fty) = do
                     arg' <- genVerusCAExpr arg
                     let fty' = if comb == PCBuilder then RTUnit else fty
                     arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty'
                     argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
+                    viewArg <- if fty == RTUnit then return [di|()|] else do
+                        return [di|#{arg' ^. code}.view()|]
                     comb' <- printComb arg'' comb
                     len <- case comb of
                         PCBytes l -> do
@@ -434,15 +436,17 @@ genVerusCAExpr ae = do
                         PCConstBytes l _ -> return [di|#{l}|]
                         PCTail -> return [di|#{arg''}.len()|]
                         PCBuilder -> return [di|#{arg''}.length()|]
-                    return (comb', (argForSer, len))
+                    return (comb', ((argForSer, viewArg), len))
             let acfs = zip args ftys
             (combs, arglens) <- unzip <$> mapM mkCombArg acfs
-            let (args, lens) = unzip arglens
+            let (argsViews, lens) = unzip arglens
+            let (args, viewArgs) = unzip argsViews
             let execcomb = mkNestPattern combs
             let execargs = mkNestPattern args
             let specSerInner = [di|serialize_#{specNameOfExecName n}_inner|]
             let specSer = [di|serialize_#{specNameOfExecName n}|]
             let reveals = [di|reveal(#{specSerInner}); reveal(#{specSer});|]
+            let specMkStruct = [di|#{unExecName n}(#{hsep . punctuate comma $ viewArgs})|]
             let ser_body = [__di|    
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
                     let mut ser_buf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
@@ -450,6 +454,7 @@ genVerusCAExpr ae = do
                     #{reveals}
                     let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
                     if let Ok((num_written)) = ser_result {
+                        assert(ser_buf.view() == #{specSer}(#{specMkStruct}));
                         ser_buf
                     } else {
                         // TODO better error name

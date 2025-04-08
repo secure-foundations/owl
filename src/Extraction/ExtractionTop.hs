@@ -40,11 +40,11 @@ import qualified GenVerus
 import qualified SpecExtraction
 
 
-extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann, Doc ann))
+extract :: Flags -> TB.Env SMTBase.SolverEnv -> String -> TB.ModBody -> IO (Either ExtractionError (Doc ann))
 extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path (modbody ^. TB.userFuncs)) $ extract' modbody
 
 
-extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann, Doc ann)
+extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann)
 extract' modbody = do
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
@@ -55,9 +55,7 @@ extract' modbody = do
             lowerBufOptPass concreteExtrData
         else lowerImmutPass concreteExtrData
     extractedOwl <- liftExtractionMonad $ genVerusPass verusTyExtrData
-    (entryPoint, libHarness, callMain) <- mkEntryPoint verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
-    lp <- prettyFile "extraction/lib_preamble.rs"
     return (
         p                       <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
@@ -72,11 +70,7 @@ extract' modbody = do
         pretty "// ------------------------------------" <> line <>
         pretty "// ------------ ENTRY POINT -----------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
-        entryPoint                 <> line <> line <>
-        pretty "} // verus!"    <> line <> line <> 
-        callMain                <> line <> line
-      , lp                      <> line <> line <> line <> line <> 
-        libHarness
+        pretty "} // verus!"    <> line <> line 
       )
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
@@ -270,19 +264,6 @@ specExtractPass cfExtrData = do
     defSpecs <- mapM SpecExtraction.extractLoc <$> M.assocs $ cfExtrData ^. locMap
     userFuncSpecs <- mapM SpecExtraction.extractUserFunc $ cfExtrData ^. userFuncs
     return $ vsep $ tyDefs ++ defSpecs ++ userFuncSpecs
-
-mkEntryPoint :: CRExtractionData -> ExtractionMonad t (Doc ann, Doc ann, Doc ann)
-mkEntryPoint verusExtrData = do
-    debugLog "Generating entry point"
-    fs <- use flags
-    if fs ^. fExtractHarness then do
-        throwError $ ErrSomethingFailed "TODO harness generation in mkEntryPoint"
-    else 
-        return (
-                pretty "/* no entry point */"
-            ,   pretty "/* no library harness routines */"
-            ,   pretty "fn main() { }" <> line
-        )
 
 
 prettyFile :: String -> ExtractionMonad t (Doc ann)

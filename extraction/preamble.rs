@@ -89,8 +89,8 @@ pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16us
 #[verifier(external_body)]
 pub struct TcpListenerWrapper ( std::net::TcpListener );
 
-#[verifier(external_type_specification)]
-pub struct OwlErrorWrapper ( OwlError );
+// #[verifier(external_type_specification)]
+// pub struct OwlErrorWrapper ( OwlError );
 
 
 #[verifier(external_body)]
@@ -161,6 +161,29 @@ pub fn owl_output_serialize_fused<A, I: VestInput, C: View + Combinator<I, Vec<u
 #[verifier(external_body)]
 pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
+}
+
+pub use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct msg {
+    pub ret_addr: String,
+    pub payload: Vec<u8>
+}
+
+#[verifier(external_body)]
+pub fn serialize_msg(l: &msg) -> Vec<u8> {
+    serde_json::to_vec(&l).expect("Can't serialize msg")
+}
+
+#[verifier(external_body)]
+pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
+    serde_json::from_slice(s).expect("Can't deserialize msg")
+}
+
+#[derive(Debug)]
+pub enum OwlError {
+    IntegerOverflow,
 }
 
 } // verus!

@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "extraction_lib"
+name = "extraction"
 path = "src/lib.rs"
 
-[[bin]]
-name = "extraction"
-path = "src/main.rs"
+# [[bin]]
+# name = "extraction"
+# path = "src/main.rs"
 
 [dependencies]
 aead = {version = "0.5.1"} # , optional = true}

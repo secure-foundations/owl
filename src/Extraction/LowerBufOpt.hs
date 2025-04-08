@@ -186,7 +186,6 @@ mkApp f spec_f frty argtys args' = do
             let argsusptys = map getSuspTy args'
             if RTStAeadBuilder `elem` concat argsusptys then do
                 {-
-                TODO: 
                 - Have a way to "suspend" computations which floats up to the enclosing let-binding,
                   so that the code is emitted immediately prior to when it is used. (Can borrow from GenVerus)
                 - In the lowerCtx, store some data structure for the suspended computation, which should contain
@@ -272,10 +271,11 @@ lowerCAExpr info aexpr = do
         CAGetEncPK s -> lowerGet $ CAGetEncPK s
         CAGetVK s -> lowerGet $ CAGetVK s
         CAInt fl -> eagerRt $ CAInt fl
-        CAHexConst s -> do
-            hcvar <- fresh $ s2n "hexconst"
-            let lets = [(hcvar, Nothing, Typed rt $ CRet $ Typed rt $ CAHexConst s)]
-            return $ Eager (Typed rt $ CAVar (ignore "hexconst") hcvar, lets)
+        CAHexConst s -> eagerRt $ CAHexConst s
+        -- CAHexConst s -> do
+        --     hcvar <- fresh $ s2n "hexconst"
+        --     let lets = [(hcvar, Nothing, Typed rt $ CRet $ Typed rt $ CAHexConst s)]
+        --     return $ Eager (Typed rt $ CAVar (ignore "hexconst") hcvar, lets)
         CACounter s -> eagerRt $ CACounter s
         CASerializeWith t args -> do
             throwError $ ErrSomethingFailed "got CASerializeWith as input to lowering, it should not be emitted by Concretify"

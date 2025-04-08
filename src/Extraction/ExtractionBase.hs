@@ -257,6 +257,10 @@ execName owlName = "owl_" ++ replacePrimes owlName
 specName :: String -> VerusName
 specName owlName = "owlSpec_" ++ replacePrimes owlName
 
+unExecName :: VerusName -> String
+unExecName s = 
+    if "owl_" `isPrefixOf` s then drop 4 s else error "unExecName: not an owl name: " ++ s
+
 specNameOfExecName :: VerusName -> String
 specNameOfExecName s = 
     if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s

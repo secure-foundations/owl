@@ -53,18 +53,18 @@ main = do
                               z3Results <- readIORef $ tcEnv^.z3Results
                               reportZ3Results fn z3Results
                           when (args^.fExtract) $ do
-                              let extfn = "extraction/src/main.rs"
-                              let libfn = "extraction/src/lib.rs"
+                              let extfn = "extraction/src/lib.rs"
+                              -- let libfn = "extraction/src/lib.rs"
                               modBody <- doFlattening tcEnv
                               res <- ET.extract args tcEnv (takeDirectory fn) modBody
                               case res of
                                 Left err -> EB.printErr err >> exitFailure
-                                Right (rust_code, lib_code) -> do
+                                Right rust_code -> do
                                   -- putStrLn $ show rust_code
                                   writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
-                                  writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
-                                  appendFile libfn $ show lib_code
+                                  -- writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
+                                  -- appendFile libfn $ show lib_code
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
                           
