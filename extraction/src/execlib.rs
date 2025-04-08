@@ -176,7 +176,7 @@ impl<'x> OwlBuf<'x> {
     }
 }
 
-impl vest::buf_traits::VestSecretInput for OwlBuf<'_> {
+impl vest::buf_traits::VestInput for OwlBuf<'_> {
     fn len(&self) -> usize {
         self.len()
     }
@@ -190,7 +190,7 @@ impl vest::buf_traits::VestSecretInput for OwlBuf<'_> {
     }
 }
 
-impl vest::buf_traits::VestInput for OwlBuf<'_> {
+impl vest::buf_traits::VestPublicInput for OwlBuf<'_> {
     fn as_byte_slice(&self) -> (res: &[u8]) {
         self.as_slice()
     }
@@ -479,7 +479,7 @@ pub mod secret {
         SecretBuf::from_buf(OwlBuf::from_vec(v))
     }
 
-    impl vest::buf_traits::VestSecretInput for SecretBuf<'_> {
+    impl vest::buf_traits::VestInput for SecretBuf<'_> {
         fn len(&self) -> usize {
             self.buf.len()
         }
@@ -543,7 +543,7 @@ pub mod secret {
         }
     }
 
-    impl vest::buf_traits::VestSecretOutput<SecretBuf<'_>> for SecretOutputBuf {
+    impl vest::buf_traits::VestOutput<SecretBuf<'_>> for SecretOutputBuf {
         fn len(&self) -> usize {
             SecretOutputBuf::len(&self)
         }
@@ -554,7 +554,7 @@ pub mod secret {
     }
 
 
-    impl<'a> vest::buf_traits::VestSecretOutput<&'a [u8]> for SecretOutputBuf {
+    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
         fn len(&self) -> usize {
             SecretOutputBuf::len(&self)
         }
@@ -564,7 +564,7 @@ pub mod secret {
         }
     }
 
-    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
+    impl<'a> vest::buf_traits::VestPublicOutput<&'a [u8]> for SecretOutputBuf {
         fn set_byte(&mut self, i: usize, value: u8) {
             assume(self.obuf@.len() < usize::MAX); // TODO: why doesn't Verus figure this out?
             let ghost old_self = self@;

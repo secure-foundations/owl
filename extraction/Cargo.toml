@@ -32,9 +32,11 @@ x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
 builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
-# vest = { git = "https://github.com/secure-foundations/vest", branch = "main" }
-# parsley = { git = "https://github.com/secure-foundations/parsley", branch = "main" }
+vest = { path = "/usr0/home/prataps/src/vest/vest" }
 
 [features]
 default = [] # ["nonverif-crypto"]
 nonverif-crypto = []
+
+[package.metadata.verus]
+verify = true

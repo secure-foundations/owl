@@ -27,8 +27,7 @@ pub const fn tag_size(mode: &Mode) -> usize {
     }
 }
 
-#[inline]
-pub open const spec fn spec_key_size(mode: Mode) -> usize {
+pub open spec fn spec_key_size(mode: Mode) -> usize {
     64
 }
 

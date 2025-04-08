@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
-#![forbid(unsafe_code)]
+//#![forbid(unsafe_code)]
 
 pub use vstd::{modes::*, prelude::*, seq::*, view::*};
 pub mod speclib;
@@ -23,15 +23,14 @@ pub use vest::{
     regular::*,
     regular::builder::*,
     regular::bytes::*,
-    regular::bytes_n::*,
+    regular::repetition::*,
     regular::tag::*,
-    regular::choice::*,
-    regular::tail::*,
+    regular::sequence::*,
+    regular::variant::*,
     regular::uints::*,
     utils::*,
 };
 
-pub use extraction_lib::*;
 pub use std::collections::HashMap;
 pub use std::env;
 pub use std::fs;
@@ -130,14 +129,14 @@ pub fn owl_sample<A,'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: us
 }
 
 #[verifier(external_body)]
-pub fn owl_output_serialize_fused<A, I: VestInput, C: View + Combinator<I, Vec<u8>>>(
+pub fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
     Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
     comb: C,
-    val: C::Result,
+    val: C::Type,
     obuf: &mut Vec<u8>,
     dest_addr: &str,
     ret_addr: &str,
-) where <C as View>::V: SecureSpecCombinator<SpecResult = <C::Result as View>::V>
+) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
     requires
         comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
             b,
@@ -163,9 +162,7 @@ pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
 }
 
-pub use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct msg {
     pub ret_addr: String,
     pub payload: Vec<u8>
@@ -173,12 +170,14 @@ pub struct msg {
 
 #[verifier(external_body)]
 pub fn serialize_msg(l: &msg) -> Vec<u8> {
-    serde_json::to_vec(&l).expect("Can't serialize msg")
+    unimplemented!()
+    // serde_json::to_vec(&l).expect("Can't serialize msg")
 }
 
 #[verifier(external_body)]
 pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
-    serde_json::from_slice(s).expect("Can't deserialize msg")
+    unimplemented!()
+    // serde_json::from_slice(s).expect("Can't deserialize msg")
 }
 
 #[derive(Debug)]

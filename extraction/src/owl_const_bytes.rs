@@ -15,9 +15,9 @@ impl<const N: usize> View for OwlConstBytes<N> {
 }
 
 impl<const N: usize> SpecCombinator for OwlConstBytes<N> {
-    type SpecResult = ();
+    type Type = ();
 
-    open spec fn spec_parse(&self, s: Seq<u8>) -> Result<(usize, Self::SpecResult), ()> {
+    open spec fn spec_parse(&self, s: Seq<u8>) -> Result<(usize, Self::Type), ()> {
         if N <= s.len() && s.subrange(0, N as int) == self.0@ {
             Ok((N, ()))
         } else {
@@ -25,12 +25,12 @@ impl<const N: usize> SpecCombinator for OwlConstBytes<N> {
         }
     }
 
-    open spec fn spec_serialize(&self, _v: Self::SpecResult) -> Result<Seq<u8>, ()> {
+    open spec fn spec_serialize(&self, _v: Self::Type) -> Result<Seq<u8>, ()> {
         Ok(self.0@)
     }
 
-    proof fn spec_parse_wf(&self, s: Seq<u8>) {
-    }
+    // proof fn spec_parse_wf(&self, s: Seq<u8>) {
+    // }
 }
 
 impl<const N: usize> SecureSpecCombinator for OwlConstBytes<N> {
@@ -46,7 +46,7 @@ impl<const N: usize> SecureSpecCombinator for OwlConstBytes<N> {
         }
     }
 
-    proof fn theorem_serialize_parse_roundtrip(&self, v: Self::SpecResult) {
+    proof fn theorem_serialize_parse_roundtrip(&self, v: Self::Type) {
         if let Ok(buf) = self.spec_serialize(v) {
             assert(buf.subrange(0, buf.len() as int) == self.0@);
         }
@@ -54,13 +54,23 @@ impl<const N: usize> SecureSpecCombinator for OwlConstBytes<N> {
 
     proof fn theorem_parse_serialize_roundtrip(&self, s: Seq<u8>) {
     }
+
+    proof fn lemma_parse_length(&self, s: Seq<u8>) {
+    }
+
+    open spec fn is_productive(&self) -> bool {
+        N > 0
+    }
+
+    proof fn lemma_parse_productive(&self, s: Seq<u8>) {
+    }
 }
 
 impl<const N: usize, I, O> Combinator<I, O> for OwlConstBytes<N> where
-    I: VestInput,
-    O: VestOutput<I>,
+    I: VestPublicInput,
+    O: VestPublicOutput<I>,
  {
-    type Result = ();
+    type Type = ();
 
     open spec fn spec_length(&self) -> Option<usize> {
         Some(N)
@@ -70,7 +80,7 @@ impl<const N: usize, I, O> Combinator<I, O> for OwlConstBytes<N> where
         Some(N)
     }
 
-    fn parse(&self, s: I) -> (res: Result<(usize, Self::Result), ParseError>) {
+    fn parse(&self, s: I) -> (res: Result<(usize, Self::Type), ParseError>) {
         if N <= s.len() {
             let s_ = s.subrange(0, N);
             if compare_slice(s_.as_byte_slice(), self.0.as_slice()) {
@@ -83,7 +93,7 @@ impl<const N: usize, I, O> Combinator<I, O> for OwlConstBytes<N> where
         }
     }
 
-    fn serialize(&self, v: Self::Result, data: &mut O, pos: usize) -> (res: Result<
+    fn serialize(&self, v: Self::Type, data: &mut O, pos: usize) -> (res: Result<
         usize,
         SerializeError,
     >) {

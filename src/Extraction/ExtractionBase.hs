@@ -487,10 +487,10 @@ compareByFieldNames (a, _) (b, _) = compare a b
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
 specCombTyOf' (FBuf BufSecret (Just flen)) = do
-    return $ Just [di|Bytes|]
+    return $ Just [di|Variable|]
 specCombTyOf' (FBuf BufSecret Nothing) = do
     return $ Just [di|Tail|]
-specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
 specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 specCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (specCombTyOf' . snd) fs
@@ -505,7 +505,7 @@ specCombTyOf' (FEnum _ csStart) = do
     case sequence cs' of
         Just cs'' -> do
             let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let cs''' = map (fromMaybe [di|Variable|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
@@ -519,9 +519,9 @@ specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 specCombTyOf = liftFromJust specCombTyOf'
 
 execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Variable|]
 execCombTyOf' (FBuf BufSecret Nothing) = return $ Just [di|Tail|]
-execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Bytes|]
+execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
 execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (execCombTyOf' . snd) fs
@@ -536,7 +536,7 @@ execCombTyOf' (FEnum _ csStart) = do
     case sequence cs' of
         Just cs'' -> do
             let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Bytes|]) cs''
+            let cs''' = map (fromMaybe [di|Variable|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoiceTy constCs
             return $ Just [di|#{nest}|]
@@ -553,11 +553,11 @@ execCombTyOf = liftFromJust execCombTyOf'
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 specCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
+    return $ noconst [di|Variable(#{l})|]
 specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 specCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
+    return $ noconst [di|Variable(#{l})|]
 specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 specCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (specCombOf' constSuffix . snd) fs
@@ -580,7 +580,7 @@ specCombOf' constSuffix (FEnum _ csStart) = do
                             Nothing -> Nothing : cs
                     ) [] ccs''
             let consts = [[di|Tag::spec_new(U8, #{i})|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
             let nest = nestOrdChoice constCs
             return $ noconst [di|#{nest}|]
@@ -600,11 +600,11 @@ specCombOf s = liftFromJust (specCombOf' s)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 execCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
+    return $ noconst [di|Variable(#{l})|]
 execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 execCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Bytes(#{l})|]
+    return $ noconst [di|Variable(#{l})|]
 execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 execCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (execCombOf' constSuffix . snd) fs
@@ -627,7 +627,7 @@ execCombOf' constSuffix (FEnum _ csStart) = do
                             Nothing -> Nothing : cs
                     ) [] ccs''
             let consts = [[di|Tag::new(U8, #{i})|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Bytes(0)|]) cs''
+            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
             let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
             let nest = nestOrdChoice constCs
             return $ noconst [di|#{nest}|]

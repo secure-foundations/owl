@@ -419,7 +419,7 @@ genVerusCAExpr ae = do
                     PCTail -> return [di|Tail|]
                     PCBytes l -> do
                         l' <- concreteLength $ lowerFLen l
-                        return [di|Bytes(#{l'})|]
+                        return [di|Variable(#{l'})|]
                     PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
                     PCBuilder -> return [di|BuilderCombinator(#{arg})|]
             let mkCombArg ((arg, comb), fty) = do
@@ -557,7 +557,7 @@ genVerusCExpr info expr = do
                             PCBuilder -> return [di|BuilderCombinator(#{arg})|]
                     let printCombTy comb = case comb of
                             PCTail -> [di|Tail|]
-                            PCBytes l -> [di|Bytes|]
+                            PCBytes l -> [di|Variable|]
                             PCConstBytes l _ -> [di|OwlConstBytes<#{l}>|]
                             PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
                     let mkCombArg ((arg, comb), fty) = do

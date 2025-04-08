@@ -90,7 +90,7 @@ macro_rules! no_usize_overflows {
 pub(crate) use no_usize_overflows;
 
 #[verifier::inline]
-pub open const spec fn usize_max_as_nat() -> nat {
+pub open spec fn usize_max_as_nat() -> nat {
     usize::MAX as nat    
 }
 
