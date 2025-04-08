@@ -46,7 +46,7 @@ fi
 echo ""
 echo "CARGO VERUS BUILD"
 pushd $ext_dir_path
-cargo verus verify -- --no-lifetime
+cargo verus verify -- $verus_args
 popd
 
 # echo ""
