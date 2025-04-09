@@ -15,6 +15,8 @@ import qualified Data.Functor.Identity as I
 import qualified Data.Set as S
 import Unbound.Generics.LocallyNameless
 import AST
+import Numeric
+import Data.Char (ord)
 import Pretty
 
 type Parser = ParsecT String () IO 
@@ -1888,6 +1890,13 @@ parseAExprTerm =
         reserved "false"
         return $ AEApp (topLevelPath $ "false") [] []
     )
+    <|>
+    (parseSpanned $ do
+        char '\"'
+        s <- many $ noneOf "\"\n\r"
+        char '\"'
+        whiteSpace
+        return $ AEHex $ concat (map (\i -> showHex (ord i) "") s))
     <|>
     (parseSpanned $ do
         whiteSpace

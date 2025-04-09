@@ -1,12 +1,16 @@
 include "defs.owl"
 
+// Code for the responder (just the handshake)
+
 def key_confirm_responder_send<@m> (k : Ghost) @ Responder<m> : Unit = () 
 def key_confirm_responder_recv<@m> (k : Ghost) @ Responder<m> : Unit = () 
 
+// Is eph an ephemeral key for the initiator?
 predicate is_e_init(eph) = 
     exists n:idx,i:idx.
         eph == dhpk(get(E_init<i@n>))
 
+// Is eph a static key for the initiator?
 predicate is_s_init(eph) = 
     exists n:idx.
         eph == dhpk(get(S_init<@n>))
@@ -16,6 +20,8 @@ struct init_info<n, m> {
     init_info_psk : PSKMode<idx n,idx m> 
 }
 
+// This models looking up a public key in the responder's database, 
+// both to authenticate it and to lookup the precomputed shared secret
 def get_pk_info<@m>(pk : Data<adv>) @ Responder<m>
     : Option (exists n. 
         (x:init_info<pid n,pid m>{dhpk(get(S_init<@n>)) == pk}))
@@ -74,24 +80,36 @@ input inp in
      let C0 = crh(construction()) in
      let H0 = crh(C0 ++ identifier()) in 
      let H1 = crh(H0 ++ dhpk_S_resp) in
+     
+
+     // Is the received ephemeral key (msg1_ephemeral) actually an ephemeral
+     // key?
      pcase  
          (is_e_init[msg1_ephemeral]) in 
+        // If so, let it be for initator n and session i of that initiator.
          choose_idx n | exists i:idx. msg1_ephemeral == dhpk(get(E_init<i@n>)) in 
          choose_idx i | msg1_ephemeral == dhpk(get(E_init<i@n>)) in
+    // Otherwise, is it a static key of an initiator?
      pcase (is_s_init[msg1_ephemeral]) when (!is_e_init[msg1_ephemeral]) in 
+        // If so, let it be for initiator n2
         choose_idx n2 | msg1_ephemeral == dhpk(get(S_init<@n2>)) in 
      let C1 = kdf<;;kdfkey;0>(C0, msg1_ephemeral, 0x) in 
      let ghost c1_ghost = gkdf<kdfkey;0>(C0, msg1_ephemeral, 0x) in 
      let H2 = crh(H1 ++ msg1_ephemeral) in
      let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(S_resp<@m>)) in
      
+    // cross_dh_lemma states that, given g^x, y, and z, (for random different values x, y,
+    // and z), it is hard for the
+    // adversary to construct an h such that h^x = g^(y * z) (when x is a
+    // secret). If it could do so, we can compute discrete log of x. 
+    // The actual lemma call is for x = S_resp<@m> and h = msg1_ephemeral, where
+    // y and z are the other Diffie-Hellman secrets in the protocol. 
      cross_dh_lemma<S_resp<@m>>(msg1_ephemeral);
      // H(a, b, c) != H(H(a, b, c), d, e)
      {
          forall n:idx,i:idx {
              kdf_inj_lemma(c1_ghost, honest_c2<session i, pid n, pid m>())
          };
-         // TODO: maybe need axiom about this
          is_constant_lemma(crh(construction()));
          assert (forall n:idx. ! exists i:idx. C1 == honest_c2<session i, pid n, pid m>())
      };
@@ -196,13 +214,6 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
  assert (n !=idx n3 ==> 
      c4 != honest_c4<session i, session j, pid n3,
      pid n3, pid m>());
- /*
- assert (n !=idx n3 ==> 
-     forall n_pk:idx.
-     ! exists i:idx.
-         c4 == honest_c4<session i, session j, pid n, pid n_pk, pid m>()
- );
- */
  forall n_eph:idx, i:idx {
      kdf_inj_lemma(c4_ghost, honest_c5<session i, session j, pid n_eph, pid n2, pid
      m>())
@@ -274,9 +285,7 @@ pcase HasPSK?(psk) in
  let msg2_output: msg2 = msg2(
      msg2_tag, msg2_sender, msg2_receiver, e_resp_pk, msg2_empty, msg2_mac1, msg2_mac2
  ) in
- let _ = output msg2_output /* to endpoint(Initiator<n>) */ in // (TODO: endpoint? )
-//  debug checkStructMatches(transp_keys_resp<session j,pid n3,pid n,pid m>(msg2_receiver, msg2_sender,
-//  HasPSK?(psk), msg1_ephemeral, c7, false, tk1, tk2));
+ let _ = output msg2_output in 
  let ret = 
  pack<n>(
      pack<n3>(

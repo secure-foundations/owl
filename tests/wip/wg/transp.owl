@@ -1,11 +1,14 @@
 include "defs.owl"
 
+// Transport layer code for both parties 
+
 
 def init_sent_message<@n>(x : Ghost) @ Initiator<n> : Unit = ()
 def resp_sent_message<@m>(x : Ghost) @ Responder<m> : Unit = ()
 
 def init_recv<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>) @
 Initiator<n>
+    // When intiator decrypts, it gets secret data
     : Option Data<adv /\ [channel_secret_resp_send<@n,m>]> = 
     input i in 
     parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, haspsk, eph, c7, init_send,
@@ -29,6 +32,7 @@ Initiator<n>
     otherwise None<ty: Data<adv /\ [channel_secret_resp_send<@n,m>]>> ()
 
 def init_send<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>,
+    // Initiator's message to send here is secret
     msg : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>
 ) @
 Initiator<n>
@@ -108,9 +112,17 @@ Responder<m>
     guard b in {
     pcase resp_clean<j,npk,n,m>[haspsk, eph] in 
     assert (resp_clean<j,npk,n,m>[haspsk, eph] ==> n =idx npk);
-    // N.B.: Below is required
-    assume (exists i:idx. eph == dhpk(get(E_init<i@npk>)));
-    assume (n =idx npk);
+
+    // For the responder's security for sending a message, we require that,
+    // if channel_secret_resp_send<@n,m> is actually secret 
+    // (and hence one of the responder's DH keys are secret, and the initiator's
+    // static key is secret), 
+    // the ephemeral key it got from the handshake is actually an ephemeral key,
+    // and it corresponds to the initiator it thinks it corresponds to. 
+    // This corresponds to the cleanliness predicate in Lipp's formalization of
+    // WireGuard in CryptoVerif (4.3.4). 
+    assume (sec(channel_secret_resp_send<@n,m>) ==> exists i:idx. eph == dhpk(get(E_init<i@npk>)));
+    assume (sec(channel_secret_resp_send<@n,m>) ==> n =idx npk);
 
     let transp_counter = get_counter N_resp_send<j@m> in
     call resp_sent_message<@m>(msg);

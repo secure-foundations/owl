@@ -10,21 +10,19 @@ timestamp (12 bytes)
 mac1 (16 bytes) 
 mac2 (16 bytes)
 
-CONSTANTS:
-construction -> Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s
-identifier -> WireGuard v1 zx2c4 Jason@zx2c4.com
-mac1---- -> 0x6d6163312d2d2d2d
-
 */
 
-func construction() = 0x4e6f6973655f494b70736b325f32353531395f436861436861506f6c795f424c414b453273
-func identifier() = 0x576972654775617264207631207a78326334204a61736f6e407a783263342e636f6d 
-func mac1() = 0x6d6163312d2d2d2d
+// Constants used in WireGuard. They get interpreted as ASCII hex
+func construction() = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+func identifier() = "WireGuard v1 zx2c4 Jason@zx2c4.com"
+func mac1() = "mac1----"
 
 func zeros_16() = 0x00000000000000000000000000000000
 func zeros_32() = 0x0000000000000000000000000000000000000000000000000000000000000000
 type ty_zeros_32 = Const(0x0000000000000000000000000000000000000000000000000000000000000000)
 
+// We assume we have N Initiators and M responders, where N and M are
+// polynomially large security parameters
 locality Initiator : 1
 locality Responder : 1
 
@@ -37,30 +35,47 @@ name S_init<@n> : DH @ Initiator<n>
 name S_resp<@m> : DH @ Responder<m>
 
 
+// These specify the preimages of the hashes used in the protocol.
+// Used for verification
 func h1_pre(s_resp) = crh(crh(construction()) ++ identifier()) ++ s_resp
 func h2_pre(s_resp, e_init) = crh(h1_pre(s_resp)) ++ e_init
 func h3_pre(s_resp, e_init, c) = crh(h2_pre(s_resp, e_init)) ++ c
 func h4_pre(s_resp, e_init, c, ts) = crh(h3_pre(s_resp, e_init, c)) ++ ts
 func h5_pre(s_resp, e_init, c, ts, e_resp) = crh(h4_pre(s_resp, e_init, c, ts)) ++ e_resp
 func h6_pre(s_resp, e_init, c, ts, e_resp, tau) = crh(h5_pre(s_resp, e_init, c, ts, e_resp)) ++ tau
-
 func honest_H4_pre<i@n,m>(c, ts) = h4_pre(dhpk(get(S_resp<@m>)), dhpk(get(E_init<i@n>)), c, ts)
 
+// These names are used to express the information flow label of secret data
+// flowing through the record layer. Intuitively, the label
+// [channel_secret_init_send<@n,m>] is the label of secret data flowing from the 
+// n'th initiator to the m'th responder. 
 name channel_secret_init_send<@n,m> : nonce 
 name channel_secret_resp_send<@n,m> : nonce 
 
+// These lines further specify the corruption model we consider. 
+
+// If an initiator's secret and ephemeral key (for any session) is corrupt, then
+// that initiator's channel_secret_init_send label is corrupt 
 corr<i,n,m> [S_init<@n>] /\ [E_init<i@n>] ==> [channel_secret_init_send<@n,m>]
+
+// This label is also corrupt if the responder's static key is corrupt 
 corr<n,m> [S_resp<@m>] ==> [channel_secret_init_send<@n,m>]
 
+// The conditions are dual for the label that specifies data going from the
+// responder to the initiator. 
 corr<j,n,m> [S_resp<@m>] /\ [E_resp<j@m>] ==> [channel_secret_resp_send<@n,m>]
 corr<n,m> [S_init<@n>] ==> [channel_secret_resp_send<@n,m>]
 
 
+// These specify local, mutable, monotonic counters used for 
+// stateful AEAD nonces
 counter N_init_send<i@n> @ Initiator<n>
 counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
+// These are forward declared methods used to define Owl's authentication
+// guarantees. 
 def key_confirm_initiator_send<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
 def key_confirm_initiator_recv<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
 def key_confirm_responder_send<@m> @ Responder<m> // (k : Ghost) @ Responder<m> : Unit = () 
@@ -69,16 +84,29 @@ def key_confirm_responder_recv<@m> @ Responder<m> // (k : Ghost) @ Responder<m> 
 def init_sent_message<@n> @ Initiator<n>
 def resp_sent_message<@m> @ Responder<m>
 
+
+// We now get into the invariants of the protocol, which are specfied via name
+// types. 
+
+
+// The type for encryption keys for transport-layer data, from the initiator to
+// the sender. 
 nametype transp_key_init_send<@n,m> = 
+                    // This type says: data with label
+                    // channel_secret_init_send<@n,m>, and we know that 
+                    // the initiator actually send that message (the happened
+                    // predicate is like CryptoVerif's events)
             st_aead (x : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|> { happened(init_sent_message<@n>(x))})
                 aad x self. happened(key_confirm_initiator_send<@n>(self))
                 nonce N_init_send
 
+// Dual for the responder
 nametype transp_key_resp_send<@n,m> = 
             st_aead (x : Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>{ happened(resp_sent_message<@m>(x)) })
                 aad x. true
                 nonce N_resp_send
 
+// Types for the KDF hash chain secrets 
 nametype C7<@n,m> = kdf {ikm info.
     True -> 
         strict transp_key_init_send<@n,m>
@@ -96,7 +124,14 @@ nametype transp_key_resp_send_corr =
                         aad x. true
                         nonce N_resp_send
     
-
+// Due to the unauthenticated nature of WireGuard, we can't guarantee at all
+// points of the protocol that we have the correct value of the KDF chain. 
+// these "_corr" values are the specifications for the "incorrect" values.
+// If you look at the specification for encryption keys (given above), we 
+// see that they are specified to encrypt data refined at False; i.e., 
+// they are never actually used as encryption keys. This is useful for
+// verification of the responder, who may then rule out this case if they
+// decrypt data under this key. 
 nametype C7_corr = kdf {ikm info.
     True ->
         strict transp_key_init_send_corr
@@ -165,6 +200,8 @@ nametype C6_dual<@n, m> = dualkdf {salt info self .
            nonce aead_counter_msg2_C7
 }
 
+// The pre-shared key between initiator and responder. We assume for now we have 
+// one PSK between each pair
 name psk<@n,m> : C6_dual<@n,m> // @ Initiator<n>, Responder<m>
 
 enum PSKMode<n,m> {
@@ -211,6 +248,7 @@ nametype C4<@n,m> = kdf {ikm info.
     (forall i:idx,j:idx. ikm != dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))) -> strict C5_corr
 }
 
+// This is just useful for verification. Incurs no runtime overhead
 locality nobody
 counter useless @ nobody
 nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
@@ -243,6 +281,9 @@ nametype C2<@n,m> = kdf {ikm info.
 
 counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
+// To actually use the Diffie-Hellman secrets, we have these
+// "odh" (oracle Diffie-Hellman) declarations, which specify how 
+// Diffie-Hellman secrets may be combined in the KDF.
 odh L1<i@n,m> :
     E_init<i@n>, S_resp<@m> -> {salt info.
         salt == honest_c1<session i, pid n>() -> 
@@ -310,29 +351,30 @@ nametype C1<@n,m> = kdf {ikm info.
 ////////////////////////////
 // Message formats
 
+// Byte-precise format of the first message 
 struct msg1 {
       _msg1_tag : Const(0x01000000)
     , _msg1_sender : Data<adv> |4| // bytes??
     , _msg1_ephemeral : Data<adv> | |group| |
     , _msg1_static : Data<adv> | cipherlen(|group|) | 
     , _msg1_timestamp: Data<adv> | cipherlen(12) |
-    // TODO cookie mechanism
     , _msg1_mac1: Data<adv> | |maclen| |
     , _msg1_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
 }
 
+// And the second message
 struct msg2 {
       _msg2_tag : Const(0x02000000)
     , _msg2_sender: Data<adv> |4|
     , _msg2_receiver: Data<adv> |4|
     , _msg2_ephemeral: Data<adv> | |group| |
     , _msg2_empty: Data<adv> | cipherlen(0) |
-    // TODO cookie mechanism
     , _msg2_mac1: Data<adv> | |maclen| |
     , _msg2_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
 }
 
 
+// And the transport layer message
 struct transp {
       _transp_tag : Const(0x04000000)
     , _transp_receiver : Data<adv> |4|
@@ -349,10 +391,14 @@ func msg1_tag_value() = 0x01000000
 func msg2_tag_value() = 0x02000000
 func transp_tag_value() = 0x04000000
 
-def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4| // TODO can we model this as a nonce?
+// Identifier for the initiator. We assume adversary-controlled
+def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4|
+
+// Timestamp getter. We assume (as in other work) that timestamps are adversary
+// controlled
 def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
 
-def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4| // TODO can we model this as a nonce?
+def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4| 
 def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 
 
@@ -366,25 +412,39 @@ func dh(x, y) = dh_combine(dhpk(x), y)
 /////////////////////////
 // Transport keys for initiator
 
+// Here are the actual security guarantees. 
+
+// As in other work, we need to define the notion of a clean session.
+// For us, a clean session for the i'th session, between the n'th initiator and
+// m'th responder, is one where:
 predicate init_clean<i,n,m>(haspsk, eph) = 
+    // We have a psk, and that psk is secret (not corrupted); OR
     ((haspsk == true) /\ sec(psk<@n,m>))
     \/
     (
+    // One of the initiator's DH secrets is secret; AND
     (sec(S_init<@n>) \/ sec(E_init<i@n>))
     /\
     (
+    // The responder's static key is secret; OR
     sec(S_resp<@m>)
     \/
+    // The ephermeral key received by the initiator is a correct one, and it is
+    // secret 
     (exists j:idx. eph == dhpk(get(E_resp<j@m>)) /\
      sec(E_resp<j@m>)
     )))
 
+// This is the return type of the initiator from the handshake. The important
+// part is the last two fields. 
 struct transp_keys_init<i,n,m> {
     tki_msg2_receiver : Data<adv> |4|,
     tki_msg2_sender : Data<adv> |4|,
     tki_has_psk : Bool<adv>,
     tki_eph : Ghost,
     tki_c7 : Ghost,
+    // If the session is clean, then we get secret, authentic keys for the
+    // transport layer. Otherwise, we get arbitrary public data 
     tki_k_init_send : if init_clean<i,n,m>[tki_has_psk, tki_eph] then
         (x:SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7,0x, 0x)){
             happened(key_confirm_responder_recv<@m>(x)) /\ 
@@ -403,29 +463,54 @@ struct transp_keys_init<i,n,m> {
 /////////////////////////
 // (Pre-)Transport keys for initiator
 
+// The responder's notion of a clean session is dual. 
+// It is indexed by FOUR indices (not three) because it might not be that 
+// the initiator corresponding to the received ephemeral key is the same one 
+// as the initiator corresponding to the received public static key. 
 predicate resp_clean<j,n_pk,n_eph,m>(haspsk, eph) = 
+    // We have a PSK and it is secret; OR 
     (haspsk == true /\ sec(psk<@n_pk, m>))
     \/
     (
+    // The ephemeral key we receive is actually an ephemeral key; AND 
     (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)))
     /\
+      // Both static keys are secret; OR
     ((sec(S_resp<@m>) /\ sec(S_init<@n_pk>))
      \/
+     // Responder's ephemeral, initiator's static keys are secret; OR
      (sec(E_resp<j@m>) /\ sec(S_init<@n_pk>))
      \/
      (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)) /\
+           // Responder's static key is secret, and initiator's ephemeral is
+           // secret; OR 
          ((sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
           \/
+            //  Both ephemerals are secret. 
           (sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))))))
 
+// Return type of responder from handshake. 
 struct transp_keys_resp<j,n_pk,n_eph,m> {
     tkr_msg2_receiver : Data<adv> |4|,
     tkr_msg2_sender : Data<adv> |4|,
     tkr_has_psk : Bool<adv>,
     tkr_eph : Ghost,
     tkr_c7 : Ghost,
+    // The responder in WireGuard cannot be sure it's talking to the initiator
+    // until after the first transport layer message. We model this with the
+    // tkr_recvd boolean, which (under a clean session) implies that the
+    // party corresponding to the received ephemeral key actually equals the
+    // party corresponding to the received static key.
+
+
+    // This boolean is initially false, but gets set to true after the first
+    // transport message. 
     tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph]) ==> 
         (n_pk =idx n_eph /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)))}),
+    // If we have a clean session, AND n_pk =idx n_eph (the two indices are
+    // equal, which is implied by the boolean) then we get the correct,
+    // authenticated, secret key. Otherwise, we get a secret "junk" key that we can
+    // later rule out, since nobody ever sends a message under that "junk" key
     tkr_k_init_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
         if (n_pk =idx n_eph) /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)) then 
               (x:SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
