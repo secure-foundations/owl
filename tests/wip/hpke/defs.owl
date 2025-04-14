@@ -1,13 +1,24 @@
+// The parties of the protocol
 locality sender
 locality receiver
 
+// Similar to how we encode WireGuard, this channel_secret nonce is used to
+// define the information flow label of secret data flowing from sender to
+// receiver after the handshake.
 name channel_secret : nonce
 
 def sent_message @ sender
 type plaintext_t = (x:Data<[channel_secret] /\ adv, |adv|>{happened(sent_message(x))})
 
+// Diffie-Hellman secrets
+
+// Recever's static key 
 name skR : DH @ receiver
+
+// Ephemeral keys for the sender; one per session
 name skE<i> : DH @ sender
+
+// Sender's static key 
 name skS : DH @ sender
 
 
@@ -38,18 +49,22 @@ base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk),
 )
 */
 
-func hpke_v1() = 0x48504b452d7631
-func hpke_suite_id() = 0x48504b45002000010003 // TODO
+func hpke_v1() = "HPKE-v1" 
+
+/* Precomputed suite_id constants; see 5.1 and 4.1 of the HPKE RFC. Precomuted
+ * since we don't support cryptographic agility yet */
+func hpke_suite_id() = 0x48504b45002000010003 
 func kem_suite_id() = 0x4b454d0020
-func secret_string() = 0x736563726574 // "secret"
-func shared_secret_string() = 0x7368617265645f736563726574 // "shared_secret"
-func key_string() = 0x6b6579 // "key"
-func base_nonce_string() = 0x626173655f6e6f6e6365 // "base_nonce"
-func export_string() = 0x657870 // "exp"
-func info_hash_string() = 0x696e666f5f68617368 // "info_hash"
-func psk_id_hash_string() = 0x70736b5f69645f68617368 // "psk_id_hash"
+
+func secret_string() = "secret" 
+func shared_secret_string() = "shared_secret" 
+func key_string() = "key" 
+func base_nonce_string() = "base_nonce" 
+func export_string() = "exp" 
+func info_hash_string() = "info_hash" 
+func psk_id_hash_string() = "psk_id_hash" 
 func crh_labeled_extract_0salt(lbl, ikm) = 
-    crh(hpke_v1() ++ hpke_suite_id() ++ lbl ++ ikm) // crh here = hmac. TODO support 2-place crh
+    crh(hpke_v1() ++ hpke_suite_id() ++ lbl ++ ikm) 
 
 func psk_id() = (0x)
 
@@ -57,17 +72,20 @@ func info() = (0x)
 
 func mode() = 0x03 // auth_psk
 func key_schedule_context() = 0x03431df6cd95e11ff49d7013563baf7f11588c75a6611ee2a4404a49306ae4cfc555e7b39d7a73553c14eee3b605f8c4438fb8c4a5d32fb2bef735f26128ed5695
+    // Precomputed value to be equal to: 
     // mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
     // crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
 
-func eae_prk() = 0x6561655f70726b
+func eae_prk() = "eae_prk" 
 
+/* These functions model how HPKE use LabeledExtract and LabeledExpand */
 func lbl_ikm(suite_id, lbl, ikm) = 
     hpke_v1() ++ suite_id ++ lbl ++ ikm
 
 func lbl_info(suite_id, len, lbl, info) = 
     len ++ hpke_v1() ++ suite_id ++ lbl ++ info
 
+/* Coming from HPKE RFC */ 
 func kdfkey_len() = 
     0x0020
 
@@ -78,6 +96,7 @@ func nonce_len() =
     0x000c
 
 
+/* Inputs to HKDF from the protocol */
 func base_nonce_kdf_info() = 
     lbl_info(hpke_suite_id(), nonce_len(), base_nonce_string(), key_schedule_context())
 
@@ -90,6 +109,7 @@ func export_kdf_info() =
 func dh_secret_kdf_ikm(psk_) = lbl_ikm(hpke_suite_id(), secret_string(), psk_)
 
 
+/* Diffie-Hellman secrets uesd in AuthEncap */
 func AuthEncap_dh<i>() =   
     dh_combine(dhpk(get(skR)), get(skE<i>))
     ++
@@ -128,21 +148,26 @@ func AuthDecap_shared_secret(eph) =
                        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
+/* Similar to WireGuard, a "junk secret" that later can be ruled out */
 nametype hpke_corr_key_t = 
      st_aead (x:Data<adv>{false})
           aad x. false
           nonce send_counter
 
 
+/* Type for the pre-shared key */
 nametype psk_t = dualkdf {salt info self.
+       /* The base nonce */
     (info == base_nonce_kdf_info()) -> public nonce |counter|,
     (exists i:idx. salt == AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
+                    /* The actual encryption key for data */
      strict st_aead  plaintext_t
                               aad x. true
                               nonce send_counter
                               pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
                                 dh_secret_kdf_ikm(self),
                                 base_nonce_kdf_info())),
+            /* Junk secret, if the salt is incorrect */
     (forall i:idx. salt != AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
          strict hpke_corr_key_t,
     (info == export_kdf_info()) -> strict nonce
@@ -151,9 +176,18 @@ nametype psk_t = dualkdf {salt info self.
 
 name psk : psk_t @ sender, receiver
 
+/* Corruption scenario we model for HPKE. */
+
+/* If the sender is completely corrupt -- its DH secrets and the psk -- then 
+we give up on secrecy for the transport layer */ 
 corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
+
+/* If the receiver is completely corrupt -- its DH key and the psk -- then
+we give up on secrecy for the transport layer */
 corr [skR] /\ [psk] ==> [channel_secret]
 
+
+/* The actual encryption key for data */
 nametype hpke_key_t<i> = 
     st_aead plaintext_t
         aad x. true
@@ -164,6 +198,7 @@ nametype hpke_key_t<i> =
 
 
 
+/* The type for the DH shared_secret  */
 nametype shared_secret_t = 
     kdf {ikm info self. 
         (ikm == dh_secret_kdf_ikm(get(psk)))
@@ -186,6 +221,7 @@ nametype shared_secret_t =
         -> strict nonce
     }
 
+/* Another "junk secret" */ 
 nametype shared_secret_corr_t = 
     kdf {ikm info self. 
         (ikm == dh_secret_kdf_ikm(get(psk)))
@@ -205,6 +241,8 @@ nametype shared_secret_corr_t =
     }
 
 
+/* Oracle Diffie-Hellman declarations. These specify how the DH secrets may be
+ * combined together inside of an HKDF call */
 odh ss : skR, skS -> { salt info. 
     (exists i:idx. info == AuthEncap_honest_info<session i>()) -> strict shared_secret_t,
     (forall i:idx. info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
@@ -215,6 +253,7 @@ odh se<i> : skR, skE<i> -> {salt info.
     (info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
 }
 
+/* Low-level data format for an HPKE ciphertext */
 struct hpke_ciphertext { 
     hc_pk : Data<adv> | |group| |,
     hc_cipher : Data<adv>

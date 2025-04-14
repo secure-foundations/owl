@@ -501,6 +501,9 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
     // tkr_recvd boolean, which (under a clean session) implies that the
     // party corresponding to the received ephemeral key actually equals the
     // party corresponding to the received static key.
+    // Note that Owl lets us reason about this detail modularly, while other
+    // efforts need to glue to first transport message into the handshake for
+    // security.
 
 
     // This boolean is initially false, but gets set to true after the first

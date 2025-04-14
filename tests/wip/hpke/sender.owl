@@ -1,6 +1,9 @@
 include "defs.owl"
 
+
 struct AuthEncapResult<i> {
+    // If one of the two DH shared secrets are actually secret, then we get the
+    // correct, secret output; otherwise public output
     aer_shared_secret : if sec(skR) /\ (sec(skS) \/ sec(skE<i>)) then
         SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
         lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()), 
@@ -11,6 +14,7 @@ struct AuthEncapResult<i> {
     aer_pke : dhpk(skE<i>)
 }
 
+/* Corresponds 1-1 with AuthEncap in RFC */
 def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @ sender : AuthEncapResult<session i> = 
     let dh = dh_combine(pkR, get(skE<i>)) ++ dh_combine(pkR, get(skS))  in 
     let kem_context = dhpk_skE ++ pkR ++ dhpk_skS in
@@ -27,17 +31,23 @@ def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @
     AuthEncapResult<session i>(res, dhpk_skE)
 
 
+/* Corresponds to Context<ROLE> for the Sender from the RFC */
 struct ContextS<i> {
+        // Shared secret value (in ghost)
         ctxtS_ss : (x:Ghost{x == AuthEncap_shared_secret<session i>()}),
+        // Base nonce. Only guaranteed to be correct if psk is secret, 
+        // OR one of the DH shared secrets are fully secret
         ctxtS_base : if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) 
             then PubName(KDF<nonce |counter|;0;nonce |counter|>(ctxtS_ss,
             dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
             else Data<adv>,
+        // Secret key. Same correctness guarantee as the base nonce 
         ctxtS_sk :
         if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) 
             then SecName(KDF<enckey;0;hpke_key_t<i>>(ctxtS_ss,
             dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
             else Data<adv>,
+        // Export key. Same correctness guarantee as the base nonce 
         ctxtS_export : 
         if sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) 
             then SecName(KDF<nonce;0;nonce>(ctxtS_ss,

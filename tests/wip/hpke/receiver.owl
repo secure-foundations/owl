@@ -1,31 +1,44 @@
 include "defs.owl"
 
 struct AuthDecapResult<i> {
+    // Ephemeral key. Is ither the correct ephemeral key for session i, or is it
+    // not an ephemeral key
     adr_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}), 
+    // If the ephemeral key is correct, AND one of the two DH shared secrets are
+    // actually secret, then we get the correct, secret output
     adr_shared_secret : 
         if adr_eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
             SecName(KDF<kdfkey;0;shared_secret_t>(0x, 
             lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)), 
             lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        // Otherwise, if the static DH shared secret is actually secret, we 
+        // get a "junk" secret that we can rule out later
         else if sec(skR) /\ sec(skS) then 
             SecName(KDF<kdfkey;0;shared_secret_corr_t>(0x, 
             lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)), 
             lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        // Otherwise, public
         else
             (x:Data<adv> ||kdfkey|| {
                 x == AuthDecap_shared_secret(adr_eph) 
                 }),
+    // A lemma that says that the shared secret is determined by the identity of
+    // the ephemeral key 
     adr_shared_secret_inj : (x:Ghost{
             (adr_eph == dhpk(get(skE<i>)) <==> adr_shared_secret == AuthEncap_shared_secret<session i>())
-            /\
+          /\
             (adr_eph != dhpk(get(skE<i>)) ==> (forall j:idx. adr_shared_secret != AuthEncap_shared_secret<session j>()))
             })
 }
 
 def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Option (exists i.AuthDecapResult<session i>) = 
+    // Ensure the ephemeral key is a valid group element
     guard is_group_elem(eph) in         
+    // Is the ephemeral key actually an ephemeral key?
     pcase (exists i:idx. eph == dhpk(get(skE<i>))) in 
+    // If it's not, is it a static key of the sender?
     pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in 
+    // Let i be the index of the ephemeral key (if it is one)
     choose_idx i | eph == dhpk(get(skE<i>)) in 
     let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ pkR ++ pkS in
@@ -36,6 +49,7 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
         lbl_ikm(kem_suite_id(), eae_prk(), dh), 
         lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
     forall j:idx {
+        // This calls out to collision-resistance of the KDF
         kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret<session j>())
     };
     let res = AuthDecapResult<session i>(eph, shared_secret, ()) in
@@ -43,24 +57,40 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
     Some(pres)
 
     
+// Context<ROLE> from the RFC, for the receiver
 struct ContextR<i> {
         ctxtR_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}), 
+
+        // This confirmed boolean is similar to the boolean "tkr_recvd" from
+        // WireGuard. The receiver can't know it's actually talking to the
+        // sender until it's "confirmed", which it gets by doing a round-trip
+        // transport message
         ctxtR_confirmed : Bool<adv>,
         ctxtR_ss : (x:Ghost{x == AuthDecap_shared_secret(ctxtR_eph)}),
+        // If the psk is secret, OR we have a truly secret DH shared secret
+        // (including that the ephemeral key is correct), then we get the right
+        // base_nonce. Otherwise public
         ctxtR_base : 
         if (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ (ctxtR_eph == dhpk(get(skE<i>)) /\ sec(skE<i>)))))
             then PubName(KDF<nonce |counter|;0;nonce |counter|>(ctxtR_ss,
             dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info()))
             else Data<adv>,
+        // If the ephemeral key is correct, AND either the psk is secret, or a
+        // DH shared secret is actually secret, we get the correct, secret
+        // encryption key
         ctxtR_sk :
         if ctxtR_eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))
             then SecName(KDF<enckey;0;hpke_key_t<i>>(ctxtR_ss,
             dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
             else 
+                // Otherwise, if we haven't confirmed, but the PSK is still
+                // secret, or the static DH shared secret is secret, then we get
+                // the "junk secret"
                 if (ctxtR_confirmed == false) /\ (sec(psk) \/ (sec(skR) /\ sec(skS)))
                     then SecName(KDF<enckey;0;hpke_corr_key_t>(ctxtR_ss, dh_secret_kdf_ikm(get(psk)), key_kdf_info()))
                 else
                     Data<adv>,
+        // Has a similar correctness guarantee to the base_nonce
         ctxtR_export : 
         if (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ (ctxtR_eph == dhpk(get(skE<i>)) /\ sec(skE<i>)))))
             then SecName(KDF<nonce;0;nonce>(ctxtR_ss,
@@ -81,14 +111,18 @@ def KeyScheduleR(adr : exists i. AuthDecapResult<session i>) @ receiver : exists
     pack<i>(res)
 
 
+// The result of calling Open
 enum OpenMsg { 
     | SomeMsg Data<adv /\ [channel_secret], |adv|>
     | NoMsg
 }
 
+
+// the state we thread through for Open. 
 struct OpenResult<i> {
     or_ctxt : ContextR<session i>,
     or_pt : OpenMsg,
+    // If Open succeeds with a message, then we have confirmed the secret key
     or_wf : (x:Ghost{SomeMsg?(or_pt) ==> ctxtR_confirmed<session i>(or_ctxt) == true})
 }
 
