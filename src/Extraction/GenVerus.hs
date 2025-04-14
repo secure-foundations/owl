@@ -85,7 +85,11 @@ genVerusUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
                     res.view() == #{specname}(#{viewArgs}),
             {
                 reveal(#{specname});
-                #{body''}
+                let res = { 
+                    #{body''} 
+                };
+                assert(res.view() == #{specname}(#{viewArgs}));
+                res
             }
             |]
 

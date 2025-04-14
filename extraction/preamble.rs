@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
-//#![forbid(unsafe_code)]
+#[cfg_attr(verus_keep_ghost, forbid(unsafe_code))]
 
 pub use vstd::{modes::*, prelude::*, seq::*, view::*};
 pub mod speclib;
