@@ -51,8 +51,9 @@ base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk),
 
 func hpke_v1() = "HPKE-v1" 
 
-/* Precomputed suite_id constants; see 5.1 and 4.1 of the HPKE RFC. Precomuted
- * since we don't support cryptographic agility yet */
+/* Precomputed suite_id constants; see 5.1 and 4.1 of the HPKE RFC. Precomputed
+ * (since we don't support cryptographic agility yet) to SHA256 and X25519.
+ */
 func hpke_suite_id() = 0x48504b45002000010003 
 func kem_suite_id() = 0x4b454d0020
 
@@ -253,7 +254,6 @@ odh se<i> : skR, skE<i> -> {salt info.
     (info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
 }
 
-/* Low-level data format for an HPKE ciphertext */
 struct hpke_ciphertext { 
     hc_pk : Data<adv> | |group| |,
     hc_cipher : Data<adv>
