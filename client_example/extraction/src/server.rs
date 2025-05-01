@@ -65,7 +65,6 @@ impl cfg_Server<'_> {
                         proof { itree = itree1; }
                         
                         proof { 
-                            reveal(echo_server_main_spec);
                             let tracked (Tracked(next_itree), Tracked(cont_itree)) = split_bind(itree, echo_server_main_spec(*self, *mut_state, decrement(fuel)));
                             itree = next_itree;
                         }
@@ -73,7 +72,6 @@ impl cfg_Server<'_> {
                     },
                     owl_ServerResult::owl_SRErr() => {
                         proof { 
-                            reveal(echo_server_main_spec);
                             let tracked (Tracked(next_itree), Tracked(cont_itree)) = split_bind(itree, echo_server_main_spec(*self, *mut_state, decrement(fuel)));
                             itree = next_itree;
                         }
