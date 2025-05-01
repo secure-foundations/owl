@@ -1,0 +1,80 @@
+#!/bin/bash
+
+set -euo pipefail
+
+function usage() {
+    echo "Usage: ${0} [-n] <path-to-extraction-dir>"
+    echo "You must have verus and verusfmt in your path,"
+    echo "and the VESTPATH environment variable set to the path"
+    echo "to the crate root of the vest crate in the vest repo."
+    exit 2
+}
+
+format="true"
+ext_dir_path=""
+verus_args=""
+
+# Parse command line options
+while getopts "v:n" opt; do
+    case "${opt}" in
+        n) format="false" ;;
+        v) verus_args="${OPTARG}" ;;
+        \? ) usage ;;
+        : ) usage ;;
+    esac
+done
+shift $((OPTIND -1))
+
+# Check if there's a required argument provided
+if [[ -n $1 ]]; then
+    ext_dir_path=$(realpath "$1")
+else
+    echo "Path to extraction dir is missing." 1>&2
+    exit 1
+fi
+
+src_path=$ext_dir_path/src
+
+main_file=$src_path/lib.rs
+
+if [ $format = "true" ]; then
+    echo ""
+    echo "FORMATTING"
+    verusfmt $main_file
+fi
+
+echo ""
+echo "CARGO VERUS BUILD"
+pushd $ext_dir_path
+cargo verus verify -- --rlimit=100 $verus_args
+popd
+
+# echo ""
+# echo "VERIFYING, COMPILING, AND EXPORTING VEST" 
+# pushd $VESTPATH
+# make
+# popd
+
+# echo ""
+# echo "COMPILING DEPENDENCIES" 
+# pushd $ext_dir_path 
+# cargo clean
+# cargo build-deps
+# popd
+
+# echo ""
+# echo "VERIFYING" 
+# verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --extern vest=$VESTPATH/libvest.rlib --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=1000 --crate-type=lib $main_file $verus_args -V spinoff-all 
+# # verus -L dependency=$(realpath $ext_dir_path/target/debug/deps) $( find $ext_dir_path/target/debug/deps -name \*.rlib -exec realpath '{}' ';' | awk -F/ '{print "--extern " substr ($NF,4,index($NF,"-") - 4) "=" $0}' | grep -v vstd | grep -v builtin ) --import vest=$VESTPATH/vest.verusdata --multiple-errors=100 --rlimit=100 $main_file $verus_args -V spinoff-all 
+
+
+if [ -z $verus_args ]; then
+    echo ""
+    echo "Done!" 
+else
+    echo ""
+    echo ""
+    echo "WARNING: using the following extra verus args: $verus_args"
+    echo ""
+fi
+
