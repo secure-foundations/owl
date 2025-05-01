@@ -1,7 +1,6 @@
 target/
 src/main.rs
 src/lib.rs
-Cargo.lock
 *.owl_config
 parse_serialize.vest
 parse_serialize.rs
