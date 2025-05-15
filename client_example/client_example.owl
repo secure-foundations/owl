@@ -10,11 +10,11 @@ struct EncMsg {
 }
 
 enum ServerResult {
-    | SROk Name(message)
+    | SROk (if sec(kC2S) then Name(message) else Data<adv>)
     | SRErr
 }
 
-def server_recv() @ Server : if sec(kC2S) then ServerResult else Data<adv> =
+def server_recv() @ Server : ServerResult =
     input p in
     parse p as EncMsg(_, ctxt) in {
         let recv_key = get(kC2S) in
@@ -30,3 +30,11 @@ def server_send(m: if sec(kC2S) then Name(message) else Data<adv>) @ Server : Un
     let enc_msg = aenc(send_key, m) in
     let msg = EncMsg(0x01, enc_msg) in
     output msg to endpoint(Client)
+
+def echo_server() @ Server : Unit =
+    let s_result = call server_recv() in
+    corr_case kC2S in
+    case s_result {
+        | SROk m => call server_send(m)
+        | SRErr => ()
+    }
