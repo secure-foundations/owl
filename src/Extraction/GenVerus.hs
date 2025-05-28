@@ -542,9 +542,9 @@ genVerusCExpr info expr = do
             dst' <- case dst of
                 Just (EndpointLocality (Locality lname _)) -> do
                     plname <- flattenPath lname
-                    return [di|&#{plname}_addr()|]
-                Just (Endpoint ev) -> return [di|&#{execName . show $ ev}.as_str()|]
-                Nothing -> throwError OutputWithUnknownDestination
+                    return [di|Some(&#{plname}_addr())|]
+                Just (Endpoint ev) -> return [di|Some(&#{execName . show $ ev}.as_str())|]
+                Nothing -> return [di|None|] -- throwError OutputWithUnknownDestination
             let myAddr = [di|&#{curLocality info}_addr()|]
             let itreeTy = specItreeTy info
             let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]

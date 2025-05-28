@@ -32,6 +32,14 @@ pub open spec fn option_as_seq<T: OwlSpecSerialize>(v: Option<T>) -> Option<Seq<
     }
 }
 
+pub open spec fn option_map<A,B>(o: Option<A>, f: spec_fn(A) -> B) -> Option<B>
+{
+    match o {
+        Option::Some(x) => Option::Some(f(x)),
+        Option::None    => Option::None
+    }
+}
+
 
 pub trait OwlSpecSerialize {
     spec fn as_seq(self) -> Seq<u8> where Self: Sized;
@@ -292,7 +300,7 @@ pub mod itree {
     #[verifier::reject_recursive_types(Endpoint)]
     pub enum ITree<A, Endpoint> {
         Input       (spec_fn(Seq<u8>, Endpoint) -> ITree<A, Endpoint>),
-        Output      (Seq<u8>, Endpoint, Box<ITree<A, Endpoint>>),
+        Output      (Seq<u8>, Option<Endpoint>, Box<ITree<A, Endpoint>>),
         Sample      (usize, spec_fn(Seq<u8>) -> ITree<A, Endpoint>),
         Declassify  (DeclassifyingOp, Box<ITree<A, Endpoint>>),
         Ret         (A),
@@ -308,7 +316,7 @@ pub mod itree {
             (self->Input_0)(i, ev)
 
         }
-        pub open spec fn is_output(&self, o: Seq<u8>, ev: Endpoint) -> bool {
+        pub open spec fn is_output(&self, o: Seq<u8>, ev: Option<Endpoint>) -> bool {
             self matches ITree::Output(o_spec, ev_spec, _) && o == o_spec && ev == ev_spec
         }
         pub open spec(checked) fn give_output(&self) -> ITree<A,Endpoint>
@@ -373,7 +381,7 @@ pub mod itree {
     { }
 
     #[verifier(external_body)]
-    pub broadcast proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Endpoint, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
+    pub broadcast proof fn axiom_bind_output<A, B, Endpoint>(x : Seq<u8>, e: Option<Endpoint>, f : Box<ITree<A, Endpoint>>, k : spec_fn(A) -> ITree<B, Endpoint>)
         ensures
             (#[trigger] ITree::Output(x, e, f).bind(k)) == ITree::Output(x, e, Box::new((*f).bind(k)))
     { }

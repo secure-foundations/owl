@@ -620,8 +620,8 @@ extractExpr expr = do
             dst' <- case dst of
                 Just endp -> do
                     endp' <- extractEndpoint endp
-                    return [di|(#{endp'})|]
-                Nothing -> throwError OutputWithUnknownDestination
+                    return [di|(Some(#{endp'}))|]
+                Nothing -> return [di|(None)|] -- throwError OutputWithUnknownDestination
             ae' <- extractCAExpr ae
             ae'' <- specCast (ae', ae ^. tty) seqU8
             return [__di|

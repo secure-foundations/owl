@@ -93,13 +93,13 @@ pub struct TcpListenerWrapper ( std::net::TcpListener );
 
 
 #[verifier(external_body)]
-pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &str, ret_addr: &str)
-    requires old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view()))
+pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: Option<&str>, ret_addr: &str)
+    requires old(t).view().is_output(x.view(), option_map(view_option(dest_addr), |a| endpoint_of_addr(a)))
     ensures  t.view() == old(t).view().give_output()
 {
     let msg = msg { ret_addr: ret_addr.to_string(), payload: std::vec::Vec::from(x) };
     let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr).unwrap();
+    let mut stream = TcpStream::connect(dest_addr.unwrap()).unwrap();
     stream.write_all(&serialized).unwrap();
     stream.flush().unwrap();
 }
@@ -134,13 +134,13 @@ pub fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I,
     comb: C,
     val: C::Type,
     obuf: &mut Vec<u8>,
-    dest_addr: &str,
+    dest_addr: Option<&str>,
     ret_addr: &str,
 ) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
     requires
         comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
             b,
-            endpoint_of_addr(dest_addr.view()),
+            option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
         ),
     ensures
         t.view() == old(t).view().give_output(),
