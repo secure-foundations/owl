@@ -299,7 +299,6 @@ lowerExprNoSusp expr = do
 
 lowerExpr :: CExpr FormatTy -> LM (Suspendable CEWithLets)
 lowerExpr expr = do
-    liftEM $ debugPrint $ "Lowering expression: " ++ show (owlpretty expr)
     rt <- lowerTy' $ expr ^. tty
     let lowerCAExpr' = lowerCAExpr (LowerCAExprInfo { inArg = False })
     let eager x = return $ Eager x
@@ -328,7 +327,6 @@ lowerExpr expr = do
             case ae' of
                 Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
                 Susp sc -> do
-                    liftEM $ debugPrint $ "Lowering COutput with suspended computation "
                     -- Force the computation at type Buffer
                     outputTy <- getSerializedTy
                     ((ae'', aeLets), resTy) <- scComputation sc $ outputTy
