@@ -299,6 +299,7 @@ lowerExprNoSusp expr = do
 
 lowerExpr :: CExpr FormatTy -> LM (Suspendable CEWithLets)
 lowerExpr expr = do
+    liftEM $ debugPrint $ "Lowering expression: " ++ show (owlpretty expr)
     rt <- lowerTy' $ expr ^. tty
     let lowerCAExpr' = lowerCAExpr (LowerCAExprInfo { inArg = False })
     let eager x = return $ Eager x
@@ -327,11 +328,12 @@ lowerExpr expr = do
             case ae' of
                 Eager (ae', aeLets) -> eagerRt (COutput ae' dst) aeLets
                 Susp sc -> do
+                    liftEM $ debugPrint $ "Lowering COutput with suspended computation "
                     -- Force the computation at type Buffer
                     outputTy <- getSerializedTy
                     ((ae'', aeLets), resTy) <- scComputation sc $ outputTy
-                    case (resTy, ae ^. tval) of
-                        (RTStruct _ fs, CAVar _ x) | RTStAeadBuilder `elem` map snd fs -> do
+                    case (resTy, canFusedSerializeOpt ae) of
+                        (RTStruct _ fs, Just x) | RTStAeadBuilder `elem` map snd fs -> do
                             -- Special case for fused serialize-output
                             let x' = castName x
                             aeForX <- case find (\(xlet, _, _) -> xlet == x') aeLets of
@@ -437,7 +439,16 @@ lowerExpr expr = do
             eagerRtNoLets $ CGetCtr s
         CIncCtr s -> do
             eagerRtNoLets $ CIncCtr s
-        
+    where                
+        -- Recognize the pattern of a suspended serializer computation, which can show up as a 
+        -- variable of buffer type, or as a cast of a variable of ADT type to buffer type
+        canFusedSerializeOpt :: CAExpr FormatTy -> Maybe (CDataVar FormatTy)
+        canFusedSerializeOpt ae = do
+            case ae ^. tval of
+                CAVar _ n -> Just n
+                CACast ae'@(Typed _ (CAVar _ n)) t | t == serializedFormatTy -> Just n
+                _ -> Nothing
+
 
 lowerArg :: (CDataVar FormatTy, String, FormatTy) -> LM (CDataVar VerusTy, String, VerusTy)
 lowerArg (n, s, t) = do
@@ -530,4 +541,7 @@ u8slice :: VerusTy
 u8slice = RTRef RShared (RTSlice RTU8)
 
 getSerializedTy :: LM VerusTy
-getSerializedTy = lowerTy' $ FBuf BufPublic Nothing
+getSerializedTy = lowerTy' $ serializedFormatTy
+
+serializedFormatTy :: FormatTy
+serializedFormatTy = FBuf BufPublic Nothing
