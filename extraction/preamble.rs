@@ -149,24 +149,6 @@ pub fn debug_print_bytes(x: &[u8]) {
 }
 
 #[derive(Debug)]
-pub struct msg {
-    pub ret_addr: String,
-    pub payload: Vec<u8>
-}
-
-#[verifier(external_body)]
-pub fn serialize_msg(l: &msg) -> Vec<u8> {
-    unimplemented!()
-    // serde_json::to_vec(&l).expect("Can't serialize msg")
-}
-
-#[verifier(external_body)]
-pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
-    unimplemented!()
-    // serde_json::from_slice(s).expect("Can't deserialize msg")
-}
-
-#[derive(Debug)]
 pub enum OwlError {
     IntegerOverflow,
 }
