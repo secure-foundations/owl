@@ -148,7 +148,6 @@ genVerusLocality pubkeys (lname, ldata) = do
         }
     }
     pub struct #{cfgName}#{lifetimeAnnot} {
-        pub listener: TcpListener,
         pub salt: Vec<u8>,
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
@@ -157,11 +156,9 @@ genVerusLocality pubkeys (lname, ldata) = do
         /*
         \#[verifier::external_body]
         pub fn init_#{cfgName}(config_path: &StrSlice) -> Self {
-            let listener = TcpListener::bind(#{lname}_addr().into_rust_str()).unwrap();
             let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
             let config = deserialize_cfg_alice_config(&config_str);
             #{cfgName} { 
-                listener,
                 salt: (config.salt),
                 #{vsep . punctuate comma $ localNameInits ++ sharedNameInits ++ pkInits}
             }
@@ -534,7 +531,7 @@ genVerusCExpr info expr = do
             k' <- genVerusCExpr info k
             castTmp <- ([di|tmp_#{rustX}|], vecU8) `cast` t
             return $ GenRustExpr (k' ^. eTy) [__di|
-            let (tmp_#{rustX}, #{rustEv}) = { owl_input::<#{itreeTy}>(Tracked(&mut itree), &self.listener) };
+            let (tmp_#{rustX}, #{rustEv}) = { effects.owl_input::<#{itreeTy}>(Tracked(&mut itree)) };
             let #{rustX} = #{castTmp};
             #{k' ^. code}
             |]
@@ -544,7 +541,7 @@ genVerusCExpr info expr = do
                     plname <- flattenPath lname
                     return [di|Some(&#{plname}_addr())|]
                 Just (Endpoint ev) -> return [di|Some(&#{execName . show $ ev}.as_str())|]
-                Nothing -> return [di|None|] -- throwError OutputWithUnknownDestination
+                Nothing -> return [di|None|]
             let myAddr = [di|&#{curLocality info}_addr()|]
             let itreeTy = specItreeTy info
             let retItree = if inK info then [di|((), Tracked(itree))|] else [di||]
@@ -589,11 +586,10 @@ genVerusCExpr info expr = do
                     let serout_body = [__di|    
                         let exec_comb = #{execcomb};
                         #{reveals}
-                        owl_output_serialize_fused::<#{itreeTy}, OwlBuf<'_>, #{combTy}>(
+                        effects.owl_output_serialize_fused::<#{itreeTy}, OwlBuf<'_>, #{combTy}>(
                             Tracked(&mut itree),
                             exec_comb,
                             #{execargs}, 
-                            obuf,
                             #{dst'}, 
                             #{myAddr}
                         );
@@ -604,7 +600,7 @@ genVerusCExpr info expr = do
                     ae' <- genVerusCAExpr ae
                     aeCast <- ae' `castGRE` u8slice
                     return $ GenRustExpr RTUnit [__di|
-                    owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
+                    effects.owl_output::<#{itreeTy}>(Tracked(&mut itree), #{aeCast}, #{dst'}, #{myAddr}); 
                     #{retItree}
                     |]
         CSample fl t xk -> do
@@ -615,7 +611,7 @@ genVerusCExpr info expr = do
             let itreeTy = specItreeTy info
             castTmp <- ([di|tmp_#{rustX}|], RTSecBuf AnyLifetime) `cast` t
             return $ GenRustExpr (k' ^. eTy) [__di|
-            let tmp_#{rustX} = owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
+            let tmp_#{rustX} = effects.owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
             let #{rustX} = #{castTmp};
             #{k' ^. code}
             |]
@@ -833,7 +829,7 @@ genVerusCExpr info expr = do
             let execCall = [di|self.#{execf}(#{hsep . punctuate comma $ execArgs})|]
             return $ GenRustExpr frty [__di|
             #{vsep genArgVars}
-            #{callMacro}(itree, *mut_state, #{specCall}, #{execCall})
+            #{callMacro}(effects, itree, *mut_state, #{specCall}, #{execCall})
             |]
         _ -> throwError $ ErrSomethingFailed $ "TODO: genVerusCExpr: " ++ show (owlpretty expr)
 
@@ -864,9 +860,10 @@ genVerusDef lname cdef = do
     verusArgs <- mapM compileArg defArgsLt
     let specRt = specTyOfExecTySerialized rty'
     let itreeTy = [di|Tracked<ITreeToken<(#{pretty specRt}, state_#{lname}),Endpoint>>|]
+    let effectsArg = [di|effects: &mut E|]
     let itreeArg = [di|Tracked(itree): |] <> itreeTy
     let mutStateArg = [di|mut_state: &mut state_#{lname}|]
-    let argdefs = hsep . punctuate comma $ [di|&#{if needsLt then pretty lt else pretty ""} self|] : itreeArg : mutStateArg : verusArgs
+    let argdefs = hsep . punctuate comma $ [di|&#{if needsLt then pretty lt else pretty ""} self|] : effectsArg : itreeArg : mutStateArg : verusArgs
     let retval = [di|(res: Result<(#{pretty rtyLt}, #{itreeTy}), OwlError>)|]
     specargs <- mapM viewArg defArgs'
     let genInfo = GenCExprInfo { inK = True, specItreeTy = [di|(#{pretty specRt}, state_#{lname})|], curLocality = lname }
@@ -880,7 +877,7 @@ genVerusDef lname cdef = do
     return [__di|
     #{attr}
     \#[verifier::spinoff_prover]
-    pub fn #{execname}#{if needsLt then angles (pretty lt) else pretty ""}(#{argdefs}) -> #{retval}
+    pub fn #{execname}<#{if needsLt then (pretty lt <> comma) else pretty ""}E: OwlEffects>(#{argdefs}) -> #{retval}
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
         ensures

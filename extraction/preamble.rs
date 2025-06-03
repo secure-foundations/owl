@@ -84,75 +84,61 @@ pub exec const SIGNATURE_SIZE: usize ensures SIGNATURE_SIZE == SPEC_SIGNATURE_SI
 #[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
 pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16usize }
 
-#[verifier(external_type_specification)]
-#[verifier(external_body)]
-pub struct TcpListenerWrapper ( std::net::TcpListener );
+pub trait OwlEffects {
+    fn owl_output<A>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        x: &[u8],
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    )
+        requires
+            old(t).view().is_output(
+                x.view(),
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
 
-// #[verifier(external_type_specification)]
-// pub struct OwlErrorWrapper ( OwlError );
+    fn owl_input<A>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    ) -> (ie: (Vec<u8>, String))
+        requires
+            old(t).view().is_input(),
+        ensures
+            t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
+    ;
 
+    fn owl_sample<A, 'a>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        n: usize,
+    ) -> (res: SecretBuf<'a>)
+        requires
+            old(t).view().is_sample(n),
+        ensures
+            t.view() == old(t).view().get_sample(res.view()),
+            res.len_valid(),
+    ;
 
-#[verifier(external_body)]
-pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: Option<&str>, ret_addr: &str)
-    requires old(t).view().is_output(x.view(), option_map(view_option(dest_addr), |a| endpoint_of_addr(a)))
-    ensures  t.view() == old(t).view().give_output()
-{
-    let msg = msg { ret_addr: ret_addr.to_string(), payload: std::vec::Vec::from(x) };
-    let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr.unwrap()).unwrap();
-    stream.write_all(&serialized).unwrap();
-    stream.flush().unwrap();
-}
-
-#[verifier(external_body)]
-pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
-    requires old(t).view().is_input()
-    ensures  t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view()))
-{
-    let (mut stream, _addr) = listener.accept().unwrap();
-    let mut reader = io::BufReader::new(&mut stream);
-    let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
-    reader.consume(received.len());
-    let msg : msg = deserialize_msg(&received);
-    (msg.payload, msg.ret_addr)
-}
-
-#[verifier(external_body)]
-pub fn owl_sample<A,'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize) -> (res: SecretBuf<'a>)
-    requires
-        old(t).view().is_sample(n),
-    ensures
-        t.view() == old(t).view().get_sample(res.view()),
-        res.len_valid(),
-{
-    OwlBuf::from_vec(owl_util::gen_rand_bytes(n)).into_secret()
-}
-
-#[verifier(external_body)]
-pub fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
-    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    comb: C,
-    val: C::Type,
-    obuf: &mut Vec<u8>,
-    dest_addr: Option<&str>,
-    ret_addr: &str,
-) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
-    requires
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
-            b,
-            option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
-        ),
-    ensures
-        t.view() == old(t).view().give_output(),
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
-{
-    let ser_result = comb.serialize(val, obuf, 0);
-    assume(ser_result.is_ok());
-    if let Ok((num_written)) = ser_result {
-        // assert(obuf.view() == comb.spec_serialize((arg.view()))->Ok_0);
-    } else {
-        assert(false);
-    }
+    fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        comb: C,
+        val: C::Type,
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    ) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
+        requires
+            comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
+                b,
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
 }
 
 
