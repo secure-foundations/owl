@@ -345,7 +345,8 @@ hexStringToByteList :: String -> ExtractionMonad t (Doc ann)
 hexStringToByteList [] = return $ pretty ""
 hexStringToByteList (h1 : h2 : t) = do
     t' <- hexStringToByteList t
-    return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8," <+> t'
+    commaIfNeeded <- if null t then return "" else return ","
+    return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8" <> pretty commaIfNeeded <+> t'
 hexStringToByteList _ = throwError OddLengthHexConst
 
 lookupNameKindAExprMap :: [(([NameKind], [AExpr]), a)] -> [NameKind] -> [AExpr] -> Maybe a
