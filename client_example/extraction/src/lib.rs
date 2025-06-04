@@ -138,112 +138,67 @@ pub exec const MACLEN_SIZE: usize
     16usize
 }
 
-#[verifier(external_type_specification)]
-#[verifier(external_body)]
-pub struct TcpListenerWrapper(std::net::TcpListener);
+pub trait OwlEffects {
+    fn owl_output<A>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        x: &[u8],
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    )
+        requires
+            old(t).view().is_output(
+                x.view(),
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
 
-// #[verifier(external_type_specification)]
-// pub struct OwlErrorWrapper ( OwlError );
-#[verifier(external_body)]
-pub fn owl_output<A>(
-    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    x: &[u8],
-    dest_addr: &str,
-    ret_addr: &str,
-)
-    requires
-        old(t).view().is_output(x.view(), endpoint_of_addr(dest_addr.view())),
-    ensures
-        t.view() == old(t).view().give_output(),
-{
-    let msg = msg { ret_addr: ret_addr.to_string(), payload: std::vec::Vec::from(x) };
-    let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr).unwrap();
-    stream.write_all(&serialized).unwrap();
-    stream.flush().unwrap();
-}
+    fn owl_input<A>(&mut self, Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>) -> (ie: (
+        Vec<u8>,
+        String,
+    ))
+        requires
+            old(t).view().is_input(),
+        ensures
+            t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
+    ;
 
-#[verifier(external_body)]
-pub fn owl_input<A>(
-    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    listener: &TcpListener,
-) -> (ie: (Vec<u8>, String))
-    requires
-        old(t).view().is_input(),
-    ensures
-        t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
-{
-    let (mut stream, _addr) = listener.accept().unwrap();
-    let mut reader = io::BufReader::new(&mut stream);
-    let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
-    reader.consume(received.len());
-    let msg: msg = deserialize_msg(&received);
-    (msg.payload, msg.ret_addr)
-}
+    fn owl_sample<A, 'a>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        n: usize,
+    ) -> (res: SecretBuf<'a>)
+        requires
+            old(t).view().is_sample(n),
+        ensures
+            t.view() == old(t).view().get_sample(res.view()),
+            res.len_valid(),
+    ;
 
-#[verifier(external_body)]
-pub fn owl_sample<A, 'a>(Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>, n: usize) -> (res:
-    SecretBuf<'a>)
-    requires
-        old(t).view().is_sample(n),
-    ensures
-        t.view() == old(t).view().get_sample(res.view()),
-        res.len_valid(),
-{
-    OwlBuf::from_vec(owl_util::gen_rand_bytes(n)).into_secret()
-}
-
-#[verifier(external_body)]
-pub fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
-    Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
-    comb: C,
-    val: C::Type,
-    obuf: &mut Vec<u8>,
-    dest_addr: &str,
-    ret_addr: &str,
-) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
-    requires
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
-            b,
-            endpoint_of_addr(dest_addr.view()),
-        ),
-    ensures
-        t.view() == old(t).view().give_output(),
-        comb@.spec_serialize(val.view()) matches Ok(b) ==> obuf.view() == b,
-{
-    let ser_result = comb.serialize(val, obuf, 0);
-    assume(ser_result.is_ok());
-    if let Ok((num_written)) = ser_result {
-        // assert(obuf.view() == comb.spec_serialize((arg.view()))->Ok_0);
-    } else {
-        assert(false);
-    }
+    fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        comb: C,
+        val: C::Type,
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    ) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
+        requires
+            comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
+                b,
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
 }
 
 // for debugging purposes, not used by the compiler
 #[verifier(external_body)]
 pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
-}
-
-#[derive(Debug)]
-pub struct msg {
-    pub ret_addr: String,
-    pub payload: Vec<u8>,
-}
-
-#[verifier(external_body)]
-pub fn serialize_msg(l: &msg) -> Vec<u8> {
-    unimplemented!()
-    // serde_json::to_vec(&l).expect("Can't serialize msg")
-
-}
-
-#[verifier(external_body)]
-pub fn deserialize_msg<'a>(s: &'a [u8]) -> msg {
-    unimplemented!()
-    // serde_json::from_slice(s).expect("Can't deserialize msg")
-
 }
 
 #[derive(Debug)]
@@ -442,7 +397,7 @@ pub open spec fn server_send_spec(cfg: cfg_Server, mut_state: state_Server, m: S
         let send_key = ((ret(cfg.owl_kS2C.view()))) in
         let enc_msg = ((sample(NONCE_SIZE, enc(send_key, m)))) in
         let msg = ((ret(EncMsg((), enc_msg)))) in
-        (output (serialize_owlSpec_EncMsg(msg)) to (Endpoint::Loc_Client))
+        (output (serialize_owlSpec_EncMsg(msg)) to (Some(Endpoint::Loc_Client)))
     )
 }
 
@@ -452,11 +407,11 @@ pub open spec fn server_recv_spec(cfg: cfg_Server, mut_state: state_Server) -> (
     Endpoint,
 >) {
     owl_spec!(mut_state, state_Server,
-        (input(p,_7)) in
-        (parse (parse_owlSpec_EncMsg(p)) as (owlSpec_EncMsg{owlSpec_version_num : _unused20, owlSpec_cipher : ctxt}) in {
+        (input(p,_10)) in
+        (parse (parse_owlSpec_EncMsg(p)) as (owlSpec_EncMsg{owlSpec_version_num : _unused23, owlSpec_cipher : ctxt}) in {
             let recv_key = ((ret(cfg.owl_kC2S.view()))) in
             let caseval = ((declassify(DeclassifyingOp::ADec(recv_key, ctxt))) in
-            (ret(dec(recv_key, ctxt)))) in
+                           (ret(dec(recv_key, ctxt)))) in
             (case (caseval) {
                 | Some(ptxt) => {
                     (ret(SROk(ptxt)))
@@ -465,8 +420,8 @@ pub open spec fn server_recv_spec(cfg: cfg_Server, mut_state: state_Server) -> (
                     (ret(SRErr()))
                 },
             })
-            } otherwise ((ret(SRErr())))
-        ))
+        } otherwise ((ret(SRErr())))
+    ))
 }
 
 // ------------------------------------
@@ -563,7 +518,6 @@ pub exec fn parse_owl_EncMsg<'a>(arg: OwlBuf<'a>) -> (res: Option<owl_EncMsg<'a>
 pub exec fn serialize_owl_EncMsg_inner<'a>(arg: &owl_EncMsg<'a>) -> (res: Option<OwlBuf<'a>>)
     ensures
         res is Some ==> serialize_owlSpec_EncMsg_inner(arg.view()) is Some,
-        // res is None ==> serialize_owlSpec_EncMsg_inner(arg.view()) is None,
         res matches Some(x) ==> x.view() == serialize_owlSpec_EncMsg_inner(arg.view())->Some_0,
 {
     reveal(serialize_owlSpec_EncMsg_inner);
@@ -683,19 +637,7 @@ pub exec fn secret_parse_owl_ServerResult<'a>(
         res matches Some(x) ==> x.view() == parse_owlSpec_ServerResult(arg.view())->Some_0,
 {
     reveal(parse_owlSpec_ServerResult);
-    todo!()/*
-    let exec_comb = ord_choice!((Tag::new(U8, 1), Variable(0)), (Tag::new(U8, 2), Variable(12)));
-    if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
-        let v = match parsed {
-            inj_ord_choice_pat!(_, *) => owl_ServerResult::owl_SRErr(),
-inj_ord_choice_pat!(*, (_,x)) => owl_ServerResult::owl_SROk(x),
-        };
-        Some(v)
-    } else {
-        None
-    }
-    */
-
+    unimplemented!()
 }
 
 #[verifier(external_body)]
@@ -707,40 +649,7 @@ pub exec fn serialize_owl_ServerResult_inner(arg: &owl_ServerResult) -> (res: Op
             arg.view(),
         )->Some_0,
 {
-    todo!()/* reveal(serialize_owlSpec_ServerResult_inner);
-    let empty_vec: Vec<u8> = mk_vec_u8![];
-    let exec_comb = ord_choice!((Tag::new(U8, 1), Variable(0)), (Tag::new(U8, 2), Variable(12)));
-    match arg {
-        owl_ServerResult::owl_SRErr() => {
-    if no_usize_overflows![ 1, 0 ] {
-        let mut obuf = vec_u8_of_len(1 + 0);
-        let ser_result = exec_comb.serialize(inj_ord_choice_result!(((), &empty_vec.as_slice()), *), &mut obuf, 0);
-        if let Ok((num_written)) = ser_result {
-            assert(obuf.view() == serialize_owlSpec_ServerResult_inner(arg.view())->Some_0);
-            Some(obuf)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-},
-owl_ServerResult::owl_SROk(x) => {
-    if no_usize_overflows![ 1, x.len() ] {
-        let mut obuf = vec_u8_of_len(1 + x.len());
-        let ser_result = exec_comb.serialize(inj_ord_choice_result!(*, ((), x.as_slice())), &mut obuf, 0);
-        if let Ok((num_written)) = ser_result {
-            assert(obuf.view() == serialize_owlSpec_ServerResult_inner(arg.view())->Some_0);
-            Some(obuf)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-},
-    } */
-
+    unimplemented!()
 }
 
 #[inline]
@@ -764,7 +673,6 @@ impl state_Client {
 }
 
 pub struct cfg_Client<'Client> {
-    pub listener: TcpListener,
     pub salt: Vec<u8>,
     pub owl_message: SecretBuf<'Client>,
     pub owl_kS2C: SecretBuf<'Client>,
@@ -772,22 +680,6 @@ pub struct cfg_Client<'Client> {
 }
 
 impl cfg_Client<'_> {
-    // TODO: library routines for reading configs
-    /*
-    #[verifier::external_body]
-    pub fn init_cfg_Client(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(Client_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
-        let config = deserialize_cfg_alice_config(&config_str);
-        cfg_Client {
-            listener,
-            salt: (config.salt),
-            owl_message : (owl_util::gen_rand_bytes(NONCE_SIZE)),
-owl_kS2C : (config.owl_kS2C),
-owl_kC2S : (config.owl_kC2S)
-        }
-    }
-    */
 
 }
 
@@ -801,37 +693,22 @@ impl state_Server {
 }
 
 pub struct cfg_Server<'Server> {
-    pub listener: TcpListener,
     pub salt: Vec<u8>,
     pub owl_kS2C: SecretBuf<'Server>,
     pub owl_kC2S: SecretBuf<'Server>,
 }
 
 impl cfg_Server<'_> {
-    // TODO: library routines for reading configs
-    /*
-    #[verifier::external_body]
-    pub fn init_cfg_Server(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(Server_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
-        let config = deserialize_cfg_alice_config(&config_str);
-        cfg_Server {
-            listener,
-            salt: (config.salt),
-            owl_kS2C : (config.owl_kS2C),
-owl_kC2S : (config.owl_kC2S)
-        }
-    }
-    */
     #[verifier::spinoff_prover]
-    pub fn owl_server_send(
+    pub fn owl_server_send<E: OwlEffects>(
         &self,
+        effects: &mut E,
         Tracked(itree): Tracked<ITreeToken<((), state_Server), Endpoint>>,
         mut_state: &mut state_Server,
-        owl_m34: SecretBuf<'_>,
+        owl_m40: SecretBuf<'_>,
     ) -> (res: Result<((), Tracked<ITreeToken<((), state_Server), Endpoint>>), OwlError>)
         requires
-            itree.view() == server_send_spec(*self, *old(mut_state), owl_m34.view()),
+            itree.view() == server_send_spec(*self, *old(mut_state), owl_m40.view()),
         ensures
             res matches Ok(r) ==> (r.1).view().view().results_in(((), *mut_state)),
     {
@@ -840,27 +717,27 @@ owl_kC2S : (config.owl_kC2S)
             broadcast use itree_axioms;
 
             reveal(server_send_spec);
-            let tmp_owl_send_key22 = { SecretBuf::another_ref(&self.owl_kS2C) };
-            let owl_send_key22 = SecretBuf::another_ref(&tmp_owl_send_key22);
-            let tmp_owl_enc_msg23 = {
-                let tmp_owl_coins24 = owl_sample::<((), state_Server)>(
+            let tmp_owl_send_key27 = { SecretBuf::another_ref(&self.owl_kS2C) };
+            let owl_send_key27 = SecretBuf::another_ref(&tmp_owl_send_key27);
+            let tmp_owl_enc_msg28 = {
+                let tmp_owl_coins29 = effects.owl_sample::<((), state_Server)>(
                     Tracked(&mut itree),
                     NONCE_SIZE,
                 );
-                let owl_coins24 = SecretBuf::another_ref(&tmp_owl_coins24);
+                let owl_coins29 = SecretBuf::another_ref(&tmp_owl_coins29);
                 owl_enc(
-                    SecretBuf::another_ref(&owl_send_key22),
-                    SecretBuf::another_ref(&owl_m34),
-                    SecretBuf::another_ref(&owl_coins24),
+                    SecretBuf::another_ref(&owl_send_key27),
+                    SecretBuf::another_ref(&owl_m40),
+                    SecretBuf::another_ref(&owl_coins29),
                 )
             };
-            let owl_enc_msg23 = OwlBuf::from_vec(tmp_owl_enc_msg23);
-            let tmp_owl_msg25 = { owl_EncMsg((), OwlBuf::another_ref(&owl_enc_msg23)) };
-            let owl_msg25 = owl_EncMsg::another_ref(&tmp_owl_msg25);
-            owl_output::<((), state_Server)>(
+            let owl_enc_msg28 = OwlBuf::from_vec(tmp_owl_enc_msg28);
+            let tmp_owl_msg30 = { owl_EncMsg((), OwlBuf::another_ref(&owl_enc_msg28)) };
+            let owl_msg30 = owl_EncMsg::another_ref(&tmp_owl_msg30);
+            effects.owl_output::<((), state_Server)>(
                 Tracked(&mut itree),
-                serialize_owl_EncMsg(&owl_msg25).as_slice(),
-                &Client_addr(),
+                serialize_owl_EncMsg(&owl_msg30).as_slice(),
+                Some(&Client_addr()),
                 &Server_addr(),
             );
             ((), Tracked(itree))
@@ -869,8 +746,9 @@ owl_kC2S : (config.owl_kC2S)
     }
 
     #[verifier::spinoff_prover]
-    pub fn owl_server_recv<'a>(
+    pub fn owl_server_recv<'a, E: OwlEffects>(
         &'a self,
+        effects: &mut E,
         Tracked(itree): Tracked<ITreeToken<(owlSpec_ServerResult, state_Server), Endpoint>>,
         mut_state: &mut state_Server,
     ) -> (res: Result<
@@ -890,38 +768,35 @@ owl_kC2S : (config.owl_kC2S)
             broadcast use itree_axioms;
 
             reveal(server_recv_spec);
-            let (tmp_owl_p27, owl__26) = {
-                owl_input::<(owlSpec_ServerResult, state_Server)>(
-                    Tracked(&mut itree),
-                    &self.listener,
-                )
+            let (tmp_owl_p32, owl__31) = {
+                effects.owl_input::<(owlSpec_ServerResult, state_Server)>(Tracked(&mut itree))
             };
-            let owl_p27 = OwlBuf::from_vec(tmp_owl_p27);
-            let parseval_tmp = OwlBuf::another_ref(&owl_p27);
+            let owl_p32 = OwlBuf::from_vec(tmp_owl_p32);
+            let parseval_tmp = OwlBuf::another_ref(&owl_p32);
             if let Some(parseval) = parse_owl_EncMsg(OwlBuf::another_ref(&parseval_tmp)) {
-                let owl__29 = parseval.owl_version_num;
-                let owl_ctxt28 = OwlBuf::another_ref(&parseval.owl_cipher);
+                let owl__34 = parseval.owl_version_num;
+                let owl_ctxt33 = OwlBuf::another_ref(&parseval.owl_cipher);
                 {
-                    let tmp_owl_recv_key30 = { SecretBuf::another_ref(&self.owl_kC2S) };
-                    let owl_recv_key30 = SecretBuf::another_ref(&tmp_owl_recv_key30);
-                    let tmp_owl_caseval31 = {
-                        let tracked owl_declassify_tok32 = consume_itree_declassify::<
+                    let tmp_owl_recv_key35 = { SecretBuf::another_ref(&self.owl_kC2S) };
+                    let owl_recv_key35 = SecretBuf::another_ref(&tmp_owl_recv_key35);
+                    let tmp_owl_caseval36 = {
+                        let tracked owl_declassify_tok37 = consume_itree_declassify::<
                             (owlSpec_ServerResult, state_Server),
                             Endpoint,
                         >(&mut itree);
                         owl_dec(
-                            SecretBuf::another_ref(&owl_recv_key30),
-                            OwlBuf::another_ref(&owl_ctxt28),
-                            Tracked(owl_declassify_tok32),
+                            SecretBuf::another_ref(&owl_recv_key35),
+                            OwlBuf::another_ref(&owl_ctxt33),
+                            Tracked(owl_declassify_tok37),
                         )
                     };
-                    let owl_caseval31 = SecretBuf::another_ref_option(&tmp_owl_caseval31);
-                    match SecretBuf::another_ref_option(&owl_caseval31) {
-                        Option::Some(tmp_owl_ptxt33) => {
-                            let owl_ptxt33 = SecretBuf::another_ref(&tmp_owl_ptxt33);
+                    let owl_caseval36 = SecretBuf::another_ref_option(&tmp_owl_caseval36);
+                    match SecretBuf::another_ref_option(&owl_caseval36) {
+                        Option::Some(tmp_owl_ptxt38) => {
+                            let owl_ptxt38 = SecretBuf::another_ref(&tmp_owl_ptxt38);
                             (
                                 owl_ServerResult::another_ref(
-                                    &owl_SROk(SecretBuf::another_ref(&owl_ptxt33)),
+                                    &owl_SROk(SecretBuf::another_ref(&owl_ptxt38)),
                                 ),
                                 Tracked(itree),
                             )

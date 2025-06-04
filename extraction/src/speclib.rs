@@ -240,7 +240,7 @@ pub open spec fn length(x: Seq<u8>) -> usize
     x.len() as usize
 }
 
-// The ITree macro below parses () as a paren-delimited itree expression, so we use this hack to generate unit values
+// The ITree macro below parses () as a paren-delimited itree expression, so we use this to generate unit values
 pub open spec fn spec_unit() -> () 
 {
     ()
@@ -266,12 +266,6 @@ pub open spec fn is_none<T>(x: Option<T>) -> bool
 {
     vstd::std_specs::option::is_none(&x)
 }
-
-
-// pub open spec fn owl_ghost_unit() -> Ghost<()>
-// {
-//     Ghost(())
-// }
 
 }
 
@@ -405,100 +399,7 @@ pub mod itree {
         axiom_bind_declassify,
     }
 
-    //////////////////////////////////////////////////////
-    ///// Proof for axiom_bind_assoc (TODO update) ///////
-    //////////////////////////////////////////////////////
-
-    // // triggering hack
-    // pub open spec fn trig<A>(x: A) -> bool { true }
-
-    // pub open spec fn is_equal<A>(x : ITree<A, Endpoint>, y : ITree<A, Endpoint>) -> bool
-    //     decreases x, y
-    // {
-    //     match (x, y) {
-    //         (ITree::Ret(a), ITree::Ret(b)) => x == y,
-    //         (ITree::Input(kx), ITree::Input(ky)) => forall|v| #[trigger] trig(v) ==> is_equal(kx(v), ky(v)),
-    //         (ITree::Output(ox, ex, tx), ITree::Output(oy, ey, ty)) => ox == oy && ex == ey && is_equal(*tx, *ty),
-    //         (_, _) => false,
-    //     }
-    // }
-
-    // pub proof fn is_equal_eq<A>(x: ITree<A, Endpoint>, y: ITree<A, Endpoint>)
-    //     requires is_equal(x, y)
-    //     ensures  x =~~= y
-    //     decreases x, y
-    // {
-    //     match (x, y) {
-    //         (ITree::Input(ff), ITree::Input(gg)) => {
-    //             assert forall|v| #[trigger] ff(v) =~= gg(v) by {
-    //                 assert(trig(v));
-    //                 is_equal_eq(ff(v), gg(v))
-    //             }
-    //             assert (ff =~~= gg);
-    //         },
-    //         (ITree::Output(ox, tx), ITree::Output(oy, ty)) => {
-    //             is_equal_eq(*tx, *ty)
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // #[verifier(external_body)]
-    // #[verifier(broadcast_forall)]
-    // pub proof fn axiom_is_equal_eq<A>(x: ITree<A, Endpoint>, y: ITree<A, Endpoint>)
-    //     requires is_equal(x, y)
-    //     ensures  x =~~= y
-    // {}
-
-    // pub proof fn eq_is_equal<A>(x: ITree<A, Endpoint>, y: ITree<A, Endpoint>)
-    //     requires x =~~= y
-    //     ensures  is_equal(x, y)
-    //     decreases x, y
-    // {
-    //     match (x, y) {
-    //         (ITree::Input(ff), ITree::Input(gg)) => {
-    //             assert forall|v| #[trigger] trig(v) implies is_equal(ff(v), gg(v)) by {
-    //                 eq_is_equal(ff(v), gg(v))
-    //             }
-    //         },
-    //         (ITree::Output(ox, tx), ITree::Output(oy, ty)) => {
-    //             eq_is_equal(*tx, *ty)
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // #[verifier(external_body)]
-    // #[verifier(broadcast_forall)]
-    // pub proof fn axiom_eq_is_equal<A>(x: ITree<A, Endpoint>, y: ITree<A, Endpoint>)
-    //     requires x =~~= y
-    //     ensures  is_equal(x, y)
-    // {}
-
-    // pub proof fn bind_assoc<A,B,C>(f: ITree<A, Endpoint>, g: spec_fn(A) -> ITree<B, Endpoint>, h: spec_fn(B) -> ITree<C, Endpoint>)
-    //     ensures f.bind(g).bind(h) =~~= f.bind(|x| g(x).bind(h))
-    //     decreases f
-    // {
-    //     match f {
-    //         ITree::Ret(b) => {},
-    //         ITree::Input(ff) => {
-    //             assert(f.bind(g).get_Input_0() =~~= (|x| ff(x).bind(g)));
-    //             assert(ITree::Input(|x| ff(x).bind(g)).bind(h).get_Input_0() =~~= |y| ff(y).bind(g).bind(h));
-    //             assert(f.bind(|x| g(x).bind(h)).get_Input_0() =~~= |y| ff(y).bind(|x| g(x).bind(h)));
-    //             assert forall |y| #[trigger] trig(y) implies is_equal(ff(y).bind(g).bind(h), ff(y).bind(|x| g(x).bind(h))) by {
-    //                 bind_assoc(ff(y), g, h)
-    //             }
-    //             assert(is_equal(ITree::Input(|y| ff(y).bind(g).bind(h)), ITree::Input(|y| ff(y).bind(|x| g(x).bind(h)))));
-    //         },
-    //         ITree::Output(o, t) => {
-    //             bind_assoc(*t, g, h)
-    //         }
-    //     }
-    // }
-
-
     #[verifier(external_body)]
-    // #[verifier(broadcast_forall)]
     pub proof fn axiom_bind_assoc<A,B,C, Endpoint>(f: ITree<A, Endpoint>, g: spec_fn(A) -> ITree<B, Endpoint>, h: spec_fn(B) -> ITree<C, Endpoint>)
         ensures (#[trigger] f.bind(g).bind(h)) =~~= f.bind(|x| g(x).bind(h))
     {}
@@ -518,7 +419,7 @@ pub mod itree {
     }
 
     impl<T,Endpoint> ITreeToken<T,Endpoint> {
-        pub closed spec fn view(self) -> ITree<T,Endpoint>;
+        pub uninterp spec fn view(self) -> ITree<T,Endpoint>;
 
         // Token constructor---this is only used to make the executable code typecheck.
         // Verified code can never call this function (since it requires false), so it
@@ -542,16 +443,7 @@ pub mod itree {
     }
 
     impl DeclassifyingOpToken {
-        pub closed spec fn view(self) -> DeclassifyingOp;
-
-        // TODO is this needed? Shouldn't be?
-        // // Token constructor---this is only used to make the executable code typecheck.
-        // // Verified code can never call this function (since it requires false), so it
-        // // cannot forge tokens.
-        // #[verifier(external_body)]
-        // pub fn dummy_declassify_token() -> DeclassifyingOpToken
-        //     requires false
-        // { unimplemented!() }
+        pub uninterp spec fn view(self) -> DeclassifyingOp;
     }
 
     #[verifier::external_body]
@@ -621,14 +513,6 @@ pub mod itree {
     #[allow(unused_macros)]
     #[macro_export]
     macro_rules! owl_call_internal {
-        // ($itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $exec:ident ( $($execarg:expr),* ) ) => {
-        //     ::builtin_macros::verus_exec_expr! {{
-        //         let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
-        //         let (res, Tracked(call_token)) = $exec(Tracked(call_token), $($execarg),*);
-        //         let tracked Tracked($itree) = join_bind($spec($($specarg),*), call_token, cont_token, (res.view(), $mut_state));
-        //         (res, Tracked($itree))
-        //     }}
-        // };
         ($res: ident, $view_res:expr, $effects:ident, $itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
             ::builtin_macros::verus_exec_expr! {{
                 reveal($spec);
@@ -655,7 +539,7 @@ pub mod itree {
     #[macro_export]
     macro_rules! owl_spec {
         ($mut_state:ident, $mut_type:ident, ($($tt:tt)*)) => { verus_proof_expr!{ owl_spec!($mut_state, $mut_type, $($tt)*) } };
-        ($mut_state:ident, $mut_type:ident, {$($tt:tt)*}) => { verus_proof_expr!{ owl_spec!($mut_state, $mut_type, $($tt)*) } }; // NB: this one has curly braces {}, above has parens (), don't delete!
+        ($mut_state:ident, $mut_type:ident, {$($tt:tt)*}) => { verus_proof_expr!{ owl_spec!($mut_state, $mut_type, $($tt)*) } }; 
         ($mut_state:ident, $mut_type:ident, (input ($var:ident, $evar:ident)) in $($next:tt)*) => { verus_proof_expr!{
             (ITree::Input(|$var, $evar| {owl_spec!($mut_state, $mut_type, $($next)*)}))
         }};
@@ -668,7 +552,6 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, (output ($($e:tt)*) to ($($endpoint:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             (ITree::Output(($($e)*), $($endpoint)*, Box::new(owl_spec!($mut_state, $mut_type, $($next)*))))
         }};
-        // vvv check this
         ($mut_state:ident, $mut_type:ident, output ($($e:tt)*) to ($($endpoint:tt)*)) => { verus_proof_expr!{
             (ITree::Output(($($e)*), $($endpoint)*, Box::new(ITree::Ret(((), $mut_state)))))
         }};
@@ -680,18 +563,6 @@ pub mod itree {
                 owl_spec!($mut_state, $mut_type, $($next)*)
             })))
         }};
-        // ($mut_state:ident, $mut_type:ident, (declassify ($($e:tt)*) as ($var:ident)) in $($next:tt)*) => { verus_proof_expr!{
-        //     (ITree::Declassify(DeclassifyingOp::ControlFlow($($e)*), Box::new({
-        //         let $var = $($e)*;
-        //         owl_spec!($mut_state, $mut_type, $($next)*)
-        //     })))
-        // }};
-        // ($mut_state:ident, $mut_type:ident, (declassify_first_byte ($($e:tt)*) as ($var:ident)) in $($next:tt)*) => { verus_proof_expr!{
-        //     (ITree::Declassify(DeclassifyingOp::EnumParse($($e)*), Box::new({
-        //         let $var = $($e)*;
-        //         owl_spec!($mut_state, $mut_type, $($next)*)
-        //     })))
-        // }};
         ($mut_state:ident, $mut_type:ident, inc_counter($ctr:ident)) => { verus_exec_expr!{ // need `exec` so that + uses usize not nat
             ITree::Ret(((), $mut_type {$ctr: $mut_state.$ctr + 1usize, .. $mut_state}))
         }};
@@ -701,13 +572,6 @@ pub mod itree {
             ($($e)*)
                 .bind( |tmp : (_, $mut_type)| ITree::Ret(tmp) )
         }};
-        // // special case handling of `enc_st_aead`, which needs to increment the nonce counter, and so is stateful
-        // ($mut_state:ident, $mut_type:ident, ret (enc_st_aead($k:expr, $x:expr, $nonce:ident, $aad:expr))) => { verus_proof_expr!{
-        //     {
-        //         let (c, new_nonce) = enc_st_aead($k, $x, $mut_state.$nonce, $aad);
-        //         ITree::Ret((c, $mut_type {$nonce: new_nonce, .. $mut_state}))
-        //     }
-        // }};
         ($mut_state:ident, $mut_type:ident, ret ($($e:tt)*)) => { verus_proof_expr!{
             ITree::Ret(($($e)*, $mut_state))
         }};
@@ -733,14 +597,6 @@ pub mod itree {
             $(let $varName = $fieldName;)*
             owl_spec!($mut_state, $mut_type, $($next)*)
         }}};
-        // ($mut_state:ident, $mut_type:ident, 
-        //     parse ($a:ident) as 
-        //         ($enumName:ident : $enumTy:ident) 
-        //     in { $($next:tt)* }) => 
-        // {verus_proof_expr! {
-        //     let $enumName = $a;
-        //     owl_spec!($mut_state, $mut_type, $($next)*)
-        // }};
         ($mut_state:ident, $mut_type:ident, 
             parse ($parser:ident($a:ident)) as 
                 ($enumName:ident : $enumTy:ident) 
@@ -756,7 +612,7 @@ pub mod itree {
         ($mut_state:ident, $mut_type:ident, 
             case ($parser:ident($a:ident)) { $(| $pattern:pat => { $($branch:tt)* },)* otherwise ($($otw:tt)*)}) => 
         { verus_proof_expr!{
-            if let Some(parseval) = $parser($a) { // TODO check whether we need .as_seq() here? Causes typechecking issues?
+            if let Some(parseval) = $parser($a) { 
                 match parseval {
                     $($pattern => { owl_spec!($mut_state, $mut_type, $($branch)*) })*
                 }

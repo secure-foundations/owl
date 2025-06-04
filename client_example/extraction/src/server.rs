@@ -5,7 +5,7 @@ pub use crate::*;
 
 verus! {
 
-// hack since we can't use `x - 1` inside itree syntax
+// hack since we can't use `x - 1` inside itree syntax macro
 pub open spec fn decrement(x: usize) -> usize {
     (x - 1) as usize
 }
@@ -33,8 +33,9 @@ pub open spec fn echo_server_main_spec(cfg: cfg_Server, mut_state: state_Server,
 
 impl cfg_Server<'_> {
 
-    pub fn echo_server_main_loop(
+    pub fn echo_server_main_loop<E: OwlEffects>(
         &self,
+        effects: &mut E,
         Tracked(itree): Tracked<ITreeToken<((), state_Server), Endpoint>>,
         mut_state: &mut state_Server,
         fuel: usize,
@@ -57,11 +58,11 @@ impl cfg_Server<'_> {
                     itree.view() == echo_server_main_spec(*self, *mut_state, fuel),
                 decreases fuel
             {
-                let (recv_result, Tracked(itree1)) = owl_call!(itree, *mut_state, server_recv_spec(*self, *mut_state), self.owl_server_recv(mut_state));
+                let (recv_result, Tracked(itree1)) = owl_call!(effects, itree, *mut_state, server_recv_spec(*self, *mut_state), self.owl_server_recv(mut_state));
                 proof { itree = itree1; }
                 let Tracked(itree1) = match recv_result {
                     owl_ServerResult::owl_SROk(ptxt) => {
-                        let (_, Tracked(itree1)) = owl_call!(itree, *mut_state, server_send_spec(*self, *mut_state, ptxt@), self.owl_server_send(mut_state, ptxt));
+                        let (_, Tracked(itree1)) = owl_call!(effects, itree, *mut_state, server_send_spec(*self, *mut_state, ptxt@), self.owl_server_send(mut_state, ptxt));
                         proof { itree = itree1; }
                         
                         proof { 
