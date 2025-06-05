@@ -44,18 +44,25 @@ instance Semigroup ModBody where
                 (md1^.predicates <> md2^.predicates)
                 (md1^.advCorrConstraints <> md2^.advCorrConstraints)
                 (md1^.tyDefs <> md2^.tyDefs)
+                (md1^.odh <> md2^.odh)
+                (md1^.nameTypeDefs <> md2^.nameTypeDefs)
                 (md1^.userFuncs <> md2^.userFuncs)
                 (md1^.nameDefs <> md2^.nameDefs)
                 (md1^.ctrEnv <> md2^.ctrEnv)
                 (md1^.modules <> md2^.modules)
 
 globalName :: ResolvedPath -> String
-globalName PTop = "Top"
+globalName PTop = ""
+globalName (PDot PTop s) = s
 globalName (PDot p s) = globalName p ++ "_" ++ s
 globalName _ = error "globalName : Got path var"
 
+globalNameWith :: ResolvedPath -> String -> String
+globalNameWith PTop s = s
+globalNameWith p s = globalName p ++ "_" ++ s
+
 globalizeMap :: ResolvedPath -> Map String a -> Map String a
-globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalName p0 ++ "_" ++ x, y)) mp
+globalizeMap p0 mp = Prelude.map (\(x, y) -> (globalNameWith p0 x, y)) mp
 
 flattenModules :: ResolvedPath -> ModBody -> FreshMT IO ([(Name ResolvedPath, ResolvedPath)], ModBody)
 flattenModules p0 md = do
@@ -83,6 +90,8 @@ flattenModules p0 md = do
                 (md^.predicates)
                 (md^.advCorrConstraints)
                 (globalizeMap p0 $ md^.tyDefs)
+                (globalizeMap p0 $ md^.odh)
+                (globalizeMap p0 $ md^.nameTypeDefs)
                 (globalizeMap p0 $ md^.userFuncs)
                 (globalizeMap p0 $ md^.nameDefs)
                 (globalizeMap p0 $ md^.ctrEnv)
@@ -90,7 +99,7 @@ flattenModules p0 md = do
     let res = sconcat $ md' :| mbs
     return (sbts, res)
 
-doFlattening :: Env -> IO ModBody
+doFlattening :: Env senv -> IO ModBody
 doFlattening e = do 
     (x, y) <- runFreshMT $ flattenModules PTop (e^.curMod) 
     return $ substs x y

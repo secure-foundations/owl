@@ -12,7 +12,8 @@ struct s {
 
 def alice_main() @ alice : Unit =
     input i in
-    let x, y : Data<adv>, z = _x(i), _y(i), _z(i) in
+    parse i as t(x, y, z) in 
     let s' = s(x) in
     output s'
+    otherwise ()
     

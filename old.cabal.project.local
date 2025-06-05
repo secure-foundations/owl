@@ -1,0 +1,2 @@
+profiling: True
+profiling-detail: all-functions

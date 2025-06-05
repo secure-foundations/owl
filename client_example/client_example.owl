@@ -1,0 +1,40 @@
+locality Client
+locality Server
+name message : nonce @ Client
+name kC2S : enckey Name(message) @ Client, Server
+name kS2C : enckey (if sec(kC2S) then Name(message) else Data<adv>) @ Client, Server
+
+struct EncMsg {
+    version_num: Const(0x01),
+    cipher: Data<adv>
+}
+
+enum ServerResult {
+    | SROk (if sec(kC2S) then Name(message) else Data<adv>)
+    | SRErr
+}
+
+def server_recv() @ Server : ServerResult =
+    input p in
+    parse p as EncMsg(_, ctxt) in {
+        let recv_key = get(kC2S) in
+        corr_case kC2S in
+        case adec(recv_key, ctxt) {
+            | Some ptxt => SROk(ptxt)
+            | None => SRErr()
+        }
+    } otherwise SRErr() 
+
+def server_send(m: if sec(kC2S) then Name(message) else Data<adv>) @ Server : Unit =
+    let send_key = get(kS2C) in
+    let enc_msg = aenc(send_key, m) in
+    let msg = EncMsg(0x01, enc_msg) in
+    output msg to endpoint(Client)
+
+def echo_server() @ Server : Unit =
+    let s_result = call server_recv() in
+    corr_case kC2S in
+    case s_result {
+        | SROk m => call server_send(m)
+        | SRErr => ()
+    }

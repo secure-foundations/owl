@@ -1,0 +1,26 @@
+locality alice
+
+name A : nonce @ alice
+corr adv ==> [A]
+name B : nonce @ alice
+corr adv ==> [B]
+
+enum s {
+    | a Name(A)
+    | b Name(B)
+}
+
+name k : enckey s @ alice
+
+def alice_main() @ alice : Unit = 
+    input i in
+    corr_case k in
+    case adec(get(k), i) {
+    | Some p => 
+        case p as s {
+        | a aa => output aa to endpoint(alice)
+        | b bb => output bb to endpoint(alice)
+        otherwise => ()
+        }
+    | None => ()
+    }

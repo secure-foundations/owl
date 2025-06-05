@@ -95,12 +95,12 @@ instance Show ResolvedPath where
     show (PDot x y) = show x ++ "." ++ y
 
 
-data Idx = IVar (Ignore Position) IdxVar
+data Idx = IVar (Ignore Position) (Ignore String) IdxVar
     deriving (Show, Generic, Typeable)
 
 
 mkIVar :: IdxVar -> Idx
-mkIVar i = IVar (ignore def) i
+mkIVar i = IVar (ignore def) (ignore $ show i) i
 
 data Endpoint = 
     Endpoint  EndpointVar
@@ -113,22 +113,27 @@ data AExprX =
     AEVar (Ignore String) DataVar -- First argument is the user-facing name for the var
     | AEApp (Path) [FuncParam] [AExpr]
     | AEHex String
-    | AEPreimage Path ([Idx], [Idx]) [AExpr]
+    -- | AEPreimage Path ([Idx], [Idx]) [AExpr]
     | AEGet NameExp
     | AEGetEncPK NameExp
     | AEGetVK NameExp
-    | AEPackIdx Idx AExpr
     | AELenConst String
     | AEInt Int
+    | AEKDF AExpr AExpr AExpr [NameKind] Int -- Ghost
     deriving (Show, Generic, Typeable)
 
 type AExpr = Spanned AExprX
 
+data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
+    deriving (Show, Generic, Typeable, Eq)
+
 
 data NameExpX = 
-    NameConst ([Idx], [Idx]) Path (Maybe ([AExpr], Int))
-    | PRFName NameExp String
+    NameConst ([Idx], [Idx]) Path [AExpr]
+    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+           -- Ignore Bool is whether we trust that the name is well-formed
     deriving (Show, Generic, Typeable)
+
 
 type NameExp = Spanned NameExpX
 
@@ -136,18 +141,16 @@ data Locality = Locality Path [Idx]
     deriving (Show, Generic, Typeable)
 
 
-
-prfName :: NameExp -> String -> NameExp
-prfName n ae = mkSpanned (PRFName n ae)
-
 data LabelX =
     LName NameExp 
     | LZero
     | LAdv 
     | LTop
+    | LGhost
     | LJoin Label Label 
     | LConst LblConst -- Used Internally?
     | LRangeIdx (Bind IdxVar Label)
+    | LRangeVar (Bind DataVar Label)
     deriving (Show, Generic, Typeable)
 
 data LblConst = 
@@ -166,6 +169,9 @@ advLbl = mkSpanned LAdv
 topLbl :: Label
 topLbl = mkSpanned LTop
 
+ghostLbl :: Label
+ghostLbl = mkSpanned LGhost
+
 nameLbl :: NameExp -> Label
 nameLbl n = mkSpanned (LName n)
 
@@ -182,14 +188,17 @@ data PropX =
     | PImpl Prop Prop
     | PFlow Label Label 
     | PHappened Path ([Idx], [Idx]) [AExpr]
-    | PQuantIdx Quant  (Bind IdxVar Prop)
-    | PQuantBV Quant  (Bind DataVar Prop)
+    | PQuantIdx Quant  (Ignore String) (Bind IdxVar Prop)
+    | PQuantBV Quant  (Ignore String) (Bind DataVar Prop)
     | PIsConstant AExpr -- Internal use
-    | PRO AExpr AExpr Int
     | PApp Path [Idx] [AExpr]
-    | PAADOf NameExp AExpr
-    deriving (Show, Generic, Typeable)
+    | PAADOf NameExp AExpr         
+    | PInODH AExpr AExpr AExpr
+    | PHonestPKEnc NameExp AExpr
+    deriving (Show, Generic, Typeable)    
 
+data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_Nonce String
+    deriving (Show, Generic, Typeable, Eq)
 
 type Prop = Spanned PropX
 
@@ -217,6 +226,9 @@ pEq x y = mkSpanned $ PEq x y
 pNot :: Prop -> Prop
 pNot p = mkSpanned $ PNot p
 
+pKDF a b c nks j res = 
+    pEq res (mkSpanned $ AEKDF a b c nks j)
+
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2
 
@@ -224,34 +236,35 @@ pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
 
+data KDFPos = KDF_SaltPos | KDF_IKMPos
+    deriving (Show, Generic, Typeable, Eq)
 
 data NameTypeX =
     NT_DH
     | NT_Sig Ty
-    | NT_Nonce
+    | NT_Nonce String 
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind DataVar Prop) Path NoncePattern
+    | NT_StAEAD Ty (Bind (DataVar, DataVar) Prop) Path (Bind DataVar AExpr) 
     | NT_PKE Ty
     | NT_MAC Ty
-    | NT_PRF [(String, (AExpr, NameType))]
+    | NT_App Path ([Idx], [Idx]) [AExpr]
+    | NT_KDF KDFPos 
+        -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
+        KDFBody
     deriving (Show, Generic, Typeable)
 
 
 type NameType = Spanned NameTypeX
 
--- Nonce patterns are injective contexts
-data NoncePattern = NPHere
-    deriving (Show, Generic, Typeable)
-
 data TyX = 
     TData Label Label (Ignore (Maybe String))
     | TDataWithLength Label AExpr
+    | TGhost
     | TRefined Ty String (Bind DataVar Prop)
     | TOption Ty
     | TCase Prop Ty Ty
-    | TConst (Path) [FuncParam]
+    | TConst (Path) [FuncParam] -- Application of type definition (eg, struct or enum)
     | TBool Label
-    | TUnion Ty Ty
     | TUnit
     | TName NameExp -- Singleton type
     | TVK NameExp -- Singleton type
@@ -259,7 +272,8 @@ data TyX =
     | TEnc_PK NameExp -- Singleton type
     | TSS NameExp NameExp -- Singleton type
     | TAdmit -- return type of admit 
-    | TExistsIdx (Bind IdxVar Ty) -- Label of which idx I am is adversary
+    | TExistsIdx String (Bind IdxVar Ty) -- Label of which idx I am is adversary
+    | THexConst String -- Singleton type; hex constant
     deriving (Show, Generic, Typeable)
 
 
@@ -267,6 +281,9 @@ type Ty = Spanned TyX
 
 tData :: Label -> Label -> Ty
 tData l1 l2 = mkSpanned $ TData l1 l2 (ignore Nothing)
+
+tGhost :: Ty
+tGhost = mkSpanned TGhost
 
 tDataAnn :: Label -> Label -> String -> Ty
 tDataAnn l1 l2 s = mkSpanned $ TData l1 l2 (ignore $ Just s)
@@ -287,8 +304,8 @@ tName t = mkSpanned (TName t)
 tAdmit :: Ty
 tAdmit = mkSpanned TAdmit
 
-tExistsIdx :: (Bind IdxVar Ty) -> Ty
-tExistsIdx t = mkSpanned (TExistsIdx t)
+tExistsIdx :: String -> (Bind IdxVar Ty) -> Ty
+tExistsIdx s t = mkSpanned (TExistsIdx s t)
 
 data ModuleExpX = 
     ModuleBody IsModuleType (Bind (Name ResolvedPath) [Decl]) -- (Maybe ModuleExp)
@@ -299,6 +316,13 @@ data ModuleExpX =
 
 type ModuleExp = Spanned ModuleExpX
 
+data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
+    deriving (Show, Generic, Typeable)
+
+type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
+        [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
+
+
 -- Decls are surface syntax
 data DeclX = 
     DeclName String (Bind ([IdxVar], [IdxVar]) NameDecl) 
@@ -308,34 +332,31 @@ data DeclX =
     | DeclFun       String (Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr)
     | DeclDef String (Bind ([IdxVar], [IdxVar]) (
                          Locality,
-                         Bind [(DataVar, Embed Ty)]
-                          (
-                            Maybe Prop,
-                            Ty,
-                            Maybe Expr
-                          )
+                         DepBind (Maybe Prop, Ty, Maybe Expr)
                         ))
     | DeclEnum String (Bind [IdxVar] [(String, Maybe Ty)]) -- Int is arity of indices
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
-    | DeclStruct String (Bind [IdxVar] [(String, Ty)]) -- Int is arity of indices
+    | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
+    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
     | DeclTy String (Maybe Ty)
+    | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
     | DeclTable String Ty Locality -- Only valid for localities without indices, for now
     | DeclCorr (Bind ([IdxVar], [DataVar]) (Label, Label))
+    | DeclCorrGroup (Bind ([IdxVar], [DataVar]) [Label])  
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp) 
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
 
-data ROStrictness = ROStrict (Maybe [Int]) | ROUnstrict
-    deriving (Show, Generic, Typeable, Eq)
+
 
 data NameDecl = 
     DeclBaseName NameType [Locality]
-      | DeclRO ROStrictness (Bind [DataVar] (AExpr, Prop, [NameType], Expr)) 
       | DeclAbstractName
+      | DeclAbbrev (Bind [DataVar] NameExp)
       deriving (Show, Generic, Typeable)
 
 data IsModuleType = ModType | ModConcrete
@@ -360,6 +381,8 @@ aeVar' v = mkSpanned $ AEVar (ignore $ show v) v
 aeApp :: Path -> [FuncParam] -> [AExpr] -> AExpr
 aeApp x y z = mkSpanned $ AEApp x y z
 
+aeGet n = mkSpanned $ AEGet n
+
 builtinFunc :: String -> [AExpr] -> AExpr
 builtinFunc s xs = aeApp (PRes $ PDot PTop s) [] xs
 
@@ -379,13 +402,15 @@ data ExprX =
     -- The string is the name for the var
     -- If this binding is generated by ANF, the (Maybe AExpr) contains the AExpr from which it was generated
     | ELet Expr (Maybe Ty) (Maybe AExpr) String (Bind DataVar Expr) 
-    | EBlock Expr -- Boundary for scoping; introduced by { }
-    | EUnionCase AExpr String (Bind DataVar Expr)
-    | EUnpack AExpr (Bind (IdxVar, DataVar) Expr)
-    | EChooseIdx (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
+    | ELetGhost AExpr String (Bind DataVar Expr)
+    | EBlock Expr Bool -- Boundary for scoping; introduced by { }. The bool is if it is a proof block, or regular
+    | EUnpack AExpr (String, String) (Bind (IdxVar, DataVar) Expr)
+    | EChooseBV String (Bind DataVar Prop) (Bind DataVar Expr)
+    | EChooseIdx String (Bind IdxVar Prop) (Bind IdxVar Expr)                                         
     | EIf AExpr Expr Expr
-    | EForallBV (Bind DataVar Expr)
-    | EForallIdx (Bind IdxVar Expr)
+    | EForallBV String (Bind DataVar (Maybe Prop, Expr))
+    | EForallIdx String (Bind IdxVar (Maybe Prop, Expr))
+    | EPackIdx Idx Expr
     | EGuard AExpr Expr
     | ERet AExpr
     | EGetCtr Path ([Idx], [Idx])
@@ -397,8 +422,12 @@ data ExprX =
     | EAdmit
     | ECrypt CryptOp [AExpr]
     | ECall Path ([Idx], [Idx]) [AExpr]
-    | ECase Expr [(String, Either Expr (Ignore String, Bind DataVar Expr))] -- The (Ignore String) part is the name for the var
-    | EPCase Prop (Maybe Prop) Expr
+    | EParse AExpr Ty (Maybe Expr) (Bind [(DataVar, Ignore String)] Expr)
+    | ECase Expr (Maybe (Ty, Expr)) [(String, Either Expr (Ignore String, Bind DataVar Expr))] 
+        -- The (Ignore String) part is the name for the var
+    | EPCase Prop (Maybe Prop) (Maybe Bool) Expr
+    | ECorrCaseNameOf AExpr (Maybe Prop) Expr
+    | EOpenTyOf AExpr Expr
     | EFalseElim Expr (Maybe Prop)
     | ETLookup Path AExpr
     | ETWrite Path AExpr AExpr
@@ -406,16 +435,17 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
-type ROHint = (Path, ([Idx], [Idx]), [AExpr])
+type KDFSelector = (Int, [Idx])
 
 data CryptOp = 
-    CHash [ROHint] Int
-      | CPRF String
+      CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
+           [NameKind]
+           Int 
       | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
-      | CEncStAEAD Path ([Idx], [Idx])
-      | CDecStAEAD
+      | CEncStAEAD Path ([Idx], [Idx]) (Bind DataVar AExpr)
+      | CDecStAEAD 
       | CPKEnc
       | CPKDec
       | CMac
@@ -426,23 +456,27 @@ data CryptOp =
 
 data BuiltinLemma = 
       LemmaCRH 
+      | LemmaKDFInj 
       | LemmaConstant 
       | LemmaDisjNotEq 
-      | LemmaCrossDH NameExp NameExp NameExp
+      | LemmaCrossDH NameExp 
     deriving (Show, Generic, Typeable)
 
 
 
 data DebugCommand = 
-    DebugPrintTyOf AExpr
+    DebugPrintTyOf (Ignore AExpr) AExpr
+      | DebugHasType (Ignore AExpr) AExpr Ty
       | DebugResolveANF AExpr
       | DebugPrint String
       | DebugPrintTy Ty
-      | DebugPrintProp Prop
+      | DebugPrintPathCondition
+      | DebugDecideProp Prop
       | DebugPrintTyContext Bool
       | DebugPrintExpr Expr
       | DebugPrintLabel Label
       | DebugPrintModules
+      | DebugCheckMatchesStruct [AExpr] Path [FuncParam]
     deriving (Show, Generic, Typeable)
 
 data IdxType = IdxSession | IdxPId | IdxGhost
@@ -471,7 +505,7 @@ instance Subst b a => Subst b (Spanned a)
 instance Alpha Idx
 instance Alpha Endpoint
 instance Subst Idx Idx where
-    isvar (IVar _ v) = Just (SubstName v)
+    isvar (IVar _ _ v) = Just (SubstName v)
 instance Subst AExpr Idx
 instance Subst ResolvedPath Idx
 
@@ -482,9 +516,21 @@ instance Alpha NameDecl
 instance Subst AExpr NameDecl
 instance Subst ResolvedPath NameDecl
 
-instance Alpha ROStrictness
-instance Subst AExpr ROStrictness
-instance Subst ResolvedPath ROStrictness
+instance Alpha KDFStrictness
+instance Subst AExpr KDFStrictness
+instance Subst Idx KDFStrictness
+instance Subst ResolvedPath KDFStrictness
+
+instance Alpha a => Alpha (DepBind a)
+instance (Alpha a, Subst ResolvedPath a) => Subst ResolvedPath (DepBind a)
+instance (Alpha a, Subst Idx a) => Subst Idx (DepBind a)
+instance (Alpha a, Subst AExpr a) => Subst AExpr (DepBind a)
+
+depBindNames :: Alpha a => DepBind a -> [String]
+depBindNames (DPDone _) = []
+depBindNames (DPVar _ s k) =
+    let (_, k2) = unsafeUnbind k in 
+    s : depBindNames k2
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX
@@ -504,15 +550,15 @@ instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
 
+instance Alpha KDFPos
+instance Subst Idx KDFPos
+instance Subst AExpr KDFPos
+instance Subst ResolvedPath KDFPos
+
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX
 instance Subst AExpr NameTypeX
 instance Subst ResolvedPath NameTypeX
-
-instance Alpha NoncePattern
-instance Subst Idx NoncePattern
-instance Subst AExpr NoncePattern
-instance Subst ResolvedPath NoncePattern
 
 instance Alpha IdxType
 instance Subst Idx IdxType
@@ -554,6 +600,11 @@ instance Alpha TyX
 instance Subst Idx TyX
 instance Subst AExpr TyX
 instance Subst ResolvedPath TyX
+
+instance Alpha NameKind
+instance Subst Idx NameKind
+instance Subst AExpr NameKind
+instance Subst ResolvedPath NameKind
 
 instance Alpha PropX
 instance Subst Idx PropX
@@ -611,4 +662,13 @@ instance Alpha a => Ord (AlphaOrd a) where
 
 tLemma :: Prop -> Ty
 tLemma p = tRefined tUnit "._" p 
+
+
+mkForallIdx :: [IdxVar] -> Prop -> Prop
+mkForallIdx [] p = p
+mkForallIdx (x:xs) p = mkSpanned $ PQuantIdx Forall (ignore $ show x) $ bind x $ mkForallIdx xs p
+
+mkExistsIdx :: [IdxVar] -> Prop -> Prop
+mkExistsIdx [] p = p
+mkExistsIdx (x:xs) p = mkSpanned $ PQuantIdx Exists (ignore $ show x) $ bind x $ mkExistsIdx xs p
 

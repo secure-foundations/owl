@@ -1,9 +1,0 @@
-locality alice
-name d : nonce @ alice
-name d1 : nonce @ alice
-
-name k : prf { 
-    l1 : get(d1) -> enckey Name(d),
-    l2 : get(d1) -> enckey Name(d)
-} @ alice
-

@@ -1,4 +1,7 @@
 target/
 src/main.rs
-Cargo.lock
+src/lib.rs
 *.owl_config
+parse_serialize.vest
+parse_serialize.rs
+rust-toolchain.toml

@@ -6,6 +6,7 @@ name m<l> : nonce @ alice
 def alice<i, j>() @ alice : Unit = 
     let ni = get(n<i>) in 
     let nj = get(n<j>) in 
+    pcase (i =idx j) in 
     let b = checknonce(ni, nj) in 
     if b then
         assert (i =idx j);

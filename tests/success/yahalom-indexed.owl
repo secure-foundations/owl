@@ -104,29 +104,31 @@ def Alice_main<i> () @ Alice
     let _ = output (msg1_AtoB(A, nA)) to endpoint(Bob) in
 
     input inp1 in
-    let tkt1, tkt2 = msg3_tkt1(inp1), msg3_tkt2(inp1) in   
-
-    case adec(kA, tkt1)  {
-        | None => 
-            unpack j, _ = () in
-            pack<j>(alice_None<idx i, idx j>())
-        | Some res =>
-            unpack j, res' = res in
-            let B'   = _B_kA<idx j>(res') in
-            let kAB' = _kAB_kA<idx j>(res') in 
-            let nA'  = _nA_kA<idx j>(res') in
-            // let nB_packed'  = _nB_kA<idx j>(res') in
-            let nB'  = _nB_kA<idx j>(res') in
-            // let _ = check_nonce(nA, nA') in
-
-            // let encm =  aenc(kAB', nB_packed') in
-            let encm = aenc(kAB', nB') in
-            // case tkt2' 
-            // | e1 _ => pack<j>(alice_None<idx i, idx j>())
-            // | e2 tkt2 =>
-            let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
-            pack<j>(alice_Some<idx i, idx j>(kAB'))
+    parse inp1 as msg3_StoA(tkt1, tkt2) in {
+        case adec(kA, tkt1)  {
+            | None => 
+                unpack j, _ = () in
+                pack<j>(alice_None<idx i, idx j>())
+            | Some res =>
+                unpack j, res' = res in
+                parse res' as kA_message<idx j>(B', kAB', nA', nB') in {
+                    // let encm =  aenc(kAB', nB_packed') in
+                    let encm = aenc(kAB', nB') in
+                    // case tkt2' 
+                    // | e1 _ => pack<j>(alice_None<idx i, idx j>())
+                    // | e2 tkt2 =>
+                    let _ = output msg4_AtoB(encm, tkt2) to endpoint(Bob) in
+                    pack<j>(alice_Some<idx i, idx j>(kAB'))
+                }
+                otherwise pack<j>(alice_None<idx i, idx j>()) 
+        }
     }
+    otherwise {
+        unpack j, _ = () in
+        pack<j>(alice_None<idx i, idx j>())
+    }
+
+                
 
 
 
@@ -140,57 +142,54 @@ def Bob_main<i> () @ Bob
 
     input inp in
 
-    let A'  = msg1_A(inp) in
-    let nA' = msg1_nA(inp) in
-
     unpack j_, _ = () in
+    parse inp as msg1_AtoB(A', nA') in {
+    let temp_packed = pack<i>(pack<j_>(mB1<idx i, idx j_>(kB_message_1<idx i>(A', nA', nB)))) in
 
-
-    if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) then
-        let temp_packed = pack<i>(pack<j_>(mB1<idx i, idx j_>(kB_message_1<idx i>(A', nA', nB)))) in
-
-        let encm = aenc(kB, temp_packed) in
-        let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
-        
-        input inp2 in
-        let tkt', x = msg4_tkt(inp2), msg4_x(inp2) in
-
-        case tkt'  {
+    let encm = aenc(kB, temp_packed) in
+    let _ = output msg2_BtoS(B, e1(encm)) to endpoint(AS) in
+    
+    input inp2 in
+    parse inp2 as msg4_AtoB(x, tkt') in {
+        case tkt' as encd_by_kB  {
         | e1 _ => pack<j_>(bob_None<idx i, idx j_>())
         | e2 tkt =>
-             case adec(kB, tkt) {
+                case adec(kB, tkt) {
                 | None => pack<j_>(bob_None<idx i, idx j_>())
                 | Some res =>
                     unpack i', res' = res in
                     unpack j', res'' = res' in
-                    case res'' {
+                    case res'' as kB_messages<idx i', idx j'> {
                         | mB1 _ => pack<j'>(bob_None<idx i, idx j'>())
                         | mB2 msg2 =>
-                            let A''  = _A_kB2<idx i', idx j'>(msg2) in
-                            // let _ = check_username(A'', A') in
-                            let kAB':if sec(KB) then Name(KAB<j'>) else Data<adv> = _kAB_kB2<idx i', idx j'>(msg2) in
-                            let nB' :if sec(KB) then Name(NB<i'>) else Data<adv> = _nB_kB2<idx i', idx j'>(msg2) in
-
-                            if checknonce(nB', nB) then 
-                                assert(sec(KB) ==> (i =idx i'));
-                                corr_case KAB<j'> in
-                                case adec(kAB', x) {
-                                    | None => pack<j'>(bob_None<idx i, idx j'>())
-                                    | Some res2 =>
-                                        // unpack j'', nB' = res2 in
-                                        let nB' = res2 in
-                                        if checknonce(nB', nB) then 
-                                            pack<j'>(bob_Some<idx i, idx j'>(kAB'))
-                                        else
-                                            pack<j'>(bob_None<idx i, idx j'>())
-                                  }
-                            else
-                                pack<j'>(bob_None<idx i, idx j'>())
+                            parse msg2 as kB_message_2<idx i', idx j'>(A'', kAB', nB') in {
+                                if checknonce(nB', nB) then 
+                                    assert(sec(KB) ==> (i =idx i'));
+                                    corr_case KAB<j'> in
+                                    case adec(kAB', x) {
+                                        | None => pack<j'>(bob_None<idx i, idx j'>())
+                                        | Some res2 =>
+                                            // unpack j'', nB' = res2 in
+                                            let nB' = res2 in
+                                            if checknonce(nB', nB) then 
+                                                pack<j'>(bob_Some<idx i, idx j'>(kAB'))
+                                            else
+                                                pack<j'>(bob_None<idx i, idx j'>())
+                                        }
+                                else
+                                    pack<j'>(bob_None<idx i, idx j'>())
+                            }
+                            otherwise pack<j'>(bob_None<idx i, idx j'>())
+                        otherwise => pack<j_>(bob_None<idx i, idx j_>())
                     }
                 }
+            otherwise => pack<j_>(bob_None<idx i, idx j_>())
         }
-    else
-        pack<j_>(bob_None<idx i, idx j_>())
+    }
+    otherwise pack<j_>(bob_None<idx i, idx j_>())
+
+    }
+    otherwise pack<j_>(bob_None<idx i, idx j_>())
 
 def AS_main<i> () @ AS
 : Unit =
@@ -201,10 +200,8 @@ def AS_main<i> () @ AS
 
     input inp in
 
-    let B' = msg2_B(inp) in
-    if eq(length(B'), |nonce|)  then
-        let x' = msg2_x(inp) in
-        case x' {
+    parse inp as msg2_BtoS(B', x') in {
+        case x' as encd_by_kB {
             | e2 _ => ()
             | e1 x'' => 
                 case adec(kB, x'') {
@@ -213,25 +210,26 @@ def AS_main<i> () @ AS
                         unpack i1, res' = res in
                         unpack j1, res'' = res' in
 
-                        case res'' {
+                        case res'' as kB_messages<idx i1, idx j1> {
                             | mB1 msg1 =>
-                                let A'  = _A_kB1<idx i1>(msg1) in
-                                let nA' = _nA_kB1<idx i1>(msg1) in
-                                // let nB':if sec(KB) then Name(NB<i1>) else Data<adv> = _nB_kB1<idx i1>(msg1) in
-                                let nB' = _nB_kB1<idx i1>(msg1) in
-
-                                if eq(length(nA'), |nonce|) && eq(length(nB'), |nonce|) && eq(length(A'), |nonce|)  then
+                                parse msg1 as kB_message_1<idx i1>(A', nA', nB') in {
                                         // let temp: if sec(KB) then kA_message<idx i> else Data<adv> = kA_message<idx i>(B', kAB, nA', pack<i1>(nB')) in
-                                        let encmA = aenc(kA, pack<i>(kA_message<idx i>(B', kAB, nA', nB'))) in
-                                        let encmB = aenc(kB, pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB'))))) in
+                                        let m = pack<i>(kA_message<idx i>(B', kAB, nA', nB')) in
+                                        let encmA = aenc(kA, m) in
+                                        let m = pack<i1>(pack<i>(mB2<idx i1, idx i>(kB_message_2<idx i1, idx i>(A', kAB, nB')))) in 
+                                        let encmB = aenc(kB, m) in 
                                         let _ = output msg3_StoA(encmA, e2(encmB)) to endpoint(Alice) in
                                         ()
-                                else ()
+                                }
+                                otherwise ()
                             | mB2 _ => ()
+                            otherwise => ()
                         }
                 }
+            otherwise => ()
         }
-    else ()
+    }
+    otherwise ()
 
 // TODO: Strengthen spec for all servers also? if sec(KA, KB) then valid key output    
 // Cannot really prove something meaningful if kab encs Data<adv>

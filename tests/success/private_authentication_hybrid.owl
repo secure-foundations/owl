@@ -39,7 +39,8 @@ def A_main<i> () @ A
     let hybridKA          = get(hybrid_skA) in
     let enc_hybridKA      =  pkenc(get_encpk(pkB), hybridKA) in
     let _ = output enc_hybridKA to endpoint(B) in
-    let encm              =  aenc(hybridKA, pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA))))) in
+    let m = pack<i>(m1<idx i>(get(n0<i>), get(r0<i>), m1_pkA_tag(get_encpk(pkA)))) in 
+    let encm              =  aenc(hybridKA, m) in 
     let _ = output encm to endpoint(B) in
 
     input enc_hybridKB in
@@ -47,12 +48,12 @@ def A_main<i> () @ A
     corr_case pkA in
     case pkdec(get(pkA), enc_hybridKB) {
         | None => ()
-        | Some hybridKB' =>
-            union_case hybridKB = hybridKB' in
+        | Some hybridKB =>
             corr_case hybrid_skB in 
-            case adec(hybridKB, inp) {
+            case adec(hybridKB, inp) as Option (exists j. m2<idx j>) {
                 | None => ()   
                 | Some _ => ()
+                otherwise => ()
             }
     }
 
@@ -64,29 +65,36 @@ def B_main<j> () @ B
 
     input enc_hybridKA in
     input inp in
-    case pkdec(privKey, enc_hybridKA) {
+    case pkdec(privKey, enc_hybridKA) as Option Name(hybrid_skA) {
         | None => ()
-        | Some hybridKA' => 
-            union_case hybridKA = hybridKA' in
+        | Some hybridKA => 
             corr_case hybrid_skA in 
-            case adec(hybridKA, inp) {
+            case adec(hybridKA, inp) as Option (exists i. m1<idx i>) {
             | None => ()
-            | Some m => 
+            | Some m => {
                 unpack i, m' = m in
-                let n0' = m1_n0<idx i>(m') in
-                let m1_pkA_e = m1_pkA<idx i>(m') in
-                case m1_pkA_e {
+                parse m' as m1<idx i>(n0', _, m1_pkA_e) in 
+                case m1_pkA_e as m1_pkA_enum {
                 | m1_pkA_tag m1_pkA =>
+                    pcase (i =idx j) in 
                     if eq(m1_pkA, get_encpk(pkA)) && checknonce(n0', get(n0<j>)) then
+                        false_elim in 
                         let hybridKB          = get(hybrid_skB) in
                         let enc_hybridKB      =  pkenc(get_encpk(pkA), hybridKB) in
                         let _ = output enc_hybridKB to endpoint(A) in
                         let pubKeyA = get_encpk(pkA) in
-                        let encm =  aenc(hybridKB, pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)))) in
+                        let m = pack<j>(m2<idx j>(get(n0<j>), get(n<j>), get(r<j>))) in
+                        let encm =  aenc(hybridKB, m) in 
                         let _ = output encm to endpoint(A) in
                         ()
                     else ()
+                 otherwise => ()
                 }
+                otherwise ()
             }
+            otherwise => ()
+        }
+                
+        otherwise => ()
     }
 

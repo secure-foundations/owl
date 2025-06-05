@@ -6,10 +6,11 @@ module DH_KE (P : Params) : KE(P) = {
             name C : DH @ P.Client
             name skS : sigkey (dhpk(S)) @ P.Server
             name skC : sigkey (dhpk(C)) @ P.Client
-            name l : RO dh_combine(dhpk(get(C)), get(S)) -> enckey Name(k) 
-            name l_corr : RO[x] x -> enckey Unit
-                requires x != dh_combine(dhpk(get(C)), get(S))
-            corr[x] adv ==> [l_corr[x;0]]
+            
+            odh L : C, S -> 
+                {salt info.
+                    True -> strict enckey Name(k)
+                }
 
             struct server_msg {
                 _s1: dhpk(S),
@@ -39,13 +40,14 @@ module DH_KE (P : Params) : KE(P) = {
                 let _ = output a to endpoint(P.Client) in
                 input i, _ in 
                 corr_case skC in
-                case vrfy(vkC, _c1(i), _c2(i)) {
+                parse i as client_msg(c1, c2) in 
+                case vrfy(vkC, c1, c2) {
                  | Some client_pk => 
                    corr_case S in 
                    corr_case C in 
                    let ss = dh_combine(client_pk, get(S)) in
                    pcase (ss == dh_combine(dhpk(get(C)), get(S))) in  
-                   let dhk  = hash<l, l_corr[ss]>(ss) in
+                   let dhk  = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
                    let c =  aenc(dhk, get(k)) in
                    corr_case k in
                    false_elim in
@@ -54,6 +56,7 @@ module DH_KE (P : Params) : KE(P) = {
                    ()
                  | None => ()
                 }
+                otherwise ()
 
 
             def ke_Client () @ P.Client
@@ -64,13 +67,13 @@ module DH_KE (P : Params) : KE(P) = {
                 let _ = output b to endpoint(P.Server) in
                 input i, _ in 
                 corr_case skS in
-                case vrfy(vkS, _s1(i), _s2(i)) {
+                parse i as server_msg(s1, s2) in 
+                case vrfy(vkS, s1, s2) {
                  | Some server_pk => 
                    let ss  = dh_combine(server_pk, get(C)) in
                    pcase (ss == dh_combine(dhpk(get(C)), get(S))) in  
-                   let dhk  = hash<l, l_corr[ss]> (ss) in
+                   let dhk  = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
                    input ii, _ in 
-                   corr_case l in
                    corr_case k in 
                    false_elim in
                    case adec(dhk, ii) {
@@ -82,6 +85,7 @@ module DH_KE (P : Params) : KE(P) = {
                    }
                  | None => None<ty: if sec(k) then Name(k) else Data<adv> >()
                 }
+                otherwise None<ty: if sec(k) then Name(k) else Data<adv> >()
 }
                  
 

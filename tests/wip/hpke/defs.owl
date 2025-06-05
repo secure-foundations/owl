@@ -1,0 +1,260 @@
+// The parties of the protocol
+locality sender
+locality receiver
+
+// Similar to how we encode WireGuard, this channel_secret nonce is used to
+// define the information flow label of secret data flowing from sender to
+// receiver after the handshake.
+name channel_secret : nonce
+
+def sent_message @ sender
+type plaintext_t = (x:Data<[channel_secret] /\ adv, |adv|>{happened(sent_message(x))})
+
+// Diffie-Hellman secrets
+
+// Recever's static key 
+name skR : DH @ receiver
+
+// Ephemeral keys for the sender; one per session
+name skE<i> : DH @ sender
+
+// Sender's static key 
+name skS : DH @ sender
+
+
+counter send_counter<i> @ sender
+counter recv_counter<j> @ receiver
+
+/*
+secret = Extract(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk))
+key = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "key", key_sched_context), Nk)
+base_nonce = Expand(secret, concat(i2osp(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_sched_context), Nk)
+exporter = same but "exp"
+
+kdf(x, y, z) = Expand(Extract(x, y), z; length)
+
+key_schedule_context is a pure function of "info"; so we will leave this as a
+constant as well
+
+we will need extra machinery for psk to be valid in concat position;
+let's leave it off for now as well
+
+key = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "key", key_schedule_context);
+    Nk
+
+base_nonce = hkdf(dh_shared_secret, concat("HPKE-v1", suite_id, "secret", psk), 
+    concat(I2OSP(Nk, 2), "HPKE-v1", suite_id, "base_nonce", key_schedule_context);
+    Nk
+)
+*/
+
+func hpke_v1() = "HPKE-v1" 
+
+/* Precomputed suite_id constants; see 5.1 and 4.1 of the HPKE RFC. Precomputed
+ * (since we don't support cryptographic agility yet) to SHA256 and X25519.
+ */
+func hpke_suite_id() = 0x48504b45002000010003 
+func kem_suite_id() = 0x4b454d0020
+
+func secret_string() = "secret" 
+func shared_secret_string() = "shared_secret" 
+func key_string() = "key" 
+func base_nonce_string() = "base_nonce" 
+func export_string() = "exp" 
+func info_hash_string() = "info_hash" 
+func psk_id_hash_string() = "psk_id_hash" 
+func crh_labeled_extract_0salt(lbl, ikm) = 
+    crh(hpke_v1() ++ hpke_suite_id() ++ lbl ++ ikm) 
+
+func psk_id() = (0x)
+
+func info() = (0x)
+
+func mode() = 0x03 // auth_psk
+func key_schedule_context() = 0x03431df6cd95e11ff49d7013563baf7f11588c75a6611ee2a4404a49306ae4cfc555e7b39d7a73553c14eee3b605f8c4438fb8c4a5d32fb2bef735f26128ed5695
+    // Precomputed value to be equal to: 
+    // mode() ++ crh_labeled_extract_0salt(info_hash_string(), info()) ++
+    // crh_labeled_extract_0salt(psk_id_hash_string(), psk_id())
+
+func eae_prk() = "eae_prk" 
+
+/* These functions model how HPKE use LabeledExtract and LabeledExpand */
+func lbl_ikm(suite_id, lbl, ikm) = 
+    hpke_v1() ++ suite_id ++ lbl ++ ikm
+
+func lbl_info(suite_id, len, lbl, info) = 
+    len ++ hpke_v1() ++ suite_id ++ lbl ++ info
+
+/* Coming from HPKE RFC */ 
+func kdfkey_len() = 
+    0x0020
+
+func enckey_len() = 
+    0x0020
+
+func nonce_len() = 
+    0x000c
+
+
+/* Inputs to HKDF from the protocol */
+func base_nonce_kdf_info() = 
+    lbl_info(hpke_suite_id(), nonce_len(), base_nonce_string(), key_schedule_context())
+
+func key_kdf_info() =                         
+    lbl_info(hpke_suite_id(), enckey_len(), key_string(), key_schedule_context())
+
+func export_kdf_info() = 
+    lbl_info(hpke_suite_id(), enckey_len(), export_string(), key_schedule_context())
+
+func dh_secret_kdf_ikm(psk_) = lbl_ikm(hpke_suite_id(), secret_string(), psk_)
+
+
+/* Diffie-Hellman secrets uesd in AuthEncap */
+func AuthEncap_dh<i>() =   
+    dh_combine(dhpk(get(skR)), get(skE<i>))
+    ++
+    dh_combine(dhpk(get(skR)), get(skS))
+
+func AuthEncap_kem_context<i>() =   
+    dhpk(get(skE<i>)) 
+    ++
+    dhpk(get(skR)) 
+    ++
+    dhpk(get(skS)) 
+
+func AuthEncap_honest_info<i>() = 
+    lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
+
+func AuthEncap_shared_secret<i>() = 
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
+                       AuthEncap_kem_context<session i>()))
+
+
+func AuthDecap_dh(eph) = 
+    dh_combine(eph, get(skR))
+    ++
+    dh_combine(dhpk(get(skR)), get(skS))
+
+func AuthDecap_kem_context(eph) =   
+    eph
+    ++
+    dhpk(get(skR)) 
+    ++
+    dhpk(get(skS)) 
+
+func AuthDecap_shared_secret(eph) = 
+    gkdf<kdfkey;0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
+                       AuthDecap_kem_context(eph)))
+
+/* Similar to WireGuard, a "junk secret" that later can be ruled out */
+nametype hpke_corr_key_t = 
+     st_aead (x:Data<adv>{false})
+          aad x. false
+          nonce send_counter
+
+
+/* Type for the pre-shared key */
+nametype psk_t = dualkdf {salt info self.
+       /* The base nonce */
+    (info == base_nonce_kdf_info()) -> public nonce |counter|,
+    (exists i:idx. salt == AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
+                    /* The actual encryption key for data */
+     strict st_aead  plaintext_t
+                              aad x. true
+                              nonce send_counter
+                              pattern i. xor(i, gkdf<nonce |counter|;0>(salt,
+                                dh_secret_kdf_ikm(self),
+                                base_nonce_kdf_info())),
+            /* Junk secret, if the salt is incorrect */
+    (forall i:idx. salt != AuthEncap_shared_secret<session i>()) /\ info == key_kdf_info() -> 
+         strict hpke_corr_key_t,
+    (info == export_kdf_info()) -> strict nonce
+
+}
+
+name psk : psk_t @ sender, receiver
+
+/* Corruption scenario we model for HPKE. */
+
+/* If the sender is completely corrupt -- its DH secrets and the psk -- then 
+we give up on secrecy for the transport layer */ 
+corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
+
+/* If the receiver is completely corrupt -- its DH key and the psk -- then
+we give up on secrecy for the transport layer */
+corr [skR] /\ [psk] ==> [channel_secret]
+
+
+/* The actual encryption key for data */
+nametype hpke_key_t<i> = 
+    st_aead plaintext_t
+        aad x. true
+        nonce send_counter
+        pattern i. xor(i, gkdf<nonce |counter|;0>(AuthEncap_shared_secret<session i>(), 
+                                                dh_secret_kdf_ikm(get(psk)),
+                                                base_nonce_kdf_info()))
+
+
+
+/* The type for the DH shared_secret  */
+nametype shared_secret_t = 
+    kdf {ikm info self. 
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == base_nonce_kdf_info()
+        -> public nonce |counter|,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == key_kdf_info()
+        -> strict st_aead plaintext_t
+                          aad x. true
+                          nonce send_counter
+                          pattern i. xor(i, gkdf<nonce |counter|;0>(self,
+                          dh_secret_kdf_ikm(get(psk)), base_nonce_kdf_info())),
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == export_kdf_info()
+        -> strict nonce
+    }
+
+/* Another "junk secret" */ 
+nametype shared_secret_corr_t = 
+    kdf {ikm info self. 
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == base_nonce_kdf_info()
+        -> public nonce |counter|,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == key_kdf_info()
+        -> strict hpke_corr_key_t,
+
+        (ikm == dh_secret_kdf_ikm(get(psk)))
+        /\
+        info == export_kdf_info()
+        -> strict nonce
+    }
+
+
+/* Oracle Diffie-Hellman declarations. These specify how the DH secrets may be
+ * combined together inside of an HKDF call */
+odh ss : skR, skS -> { salt info. 
+    (exists i:idx. info == AuthEncap_honest_info<session i>()) -> strict shared_secret_t,
+    (forall i:idx. info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
+} 
+
+odh se<i> : skR, skE<i> -> {salt info.
+    (info == AuthEncap_honest_info<session i>()) -> strict shared_secret_t,
+    (info != AuthEncap_honest_info<session i>()) -> strict shared_secret_corr_t
+}
+
+struct hpke_ciphertext { 
+    hc_pk : Data<adv> | |group| |,
+    hc_cipher : Data<adv>
+}

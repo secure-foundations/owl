@@ -5,6 +5,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Typing where
 import AST
 import Data.Time.Clock
@@ -43,20 +45,30 @@ import qualified Text.Parsec as P
 import qualified System.IO as S
 import qualified System.FilePath as S
 import Parse
+import GHC.Generics (Generic)
+import Data.Typeable (Typeable)
+
+type Check = Check' SMT.SolverEnv
 
 emptyModBody :: IsModuleType -> ModBody
-emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+emptyModBody t = ModBody t mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty 
+
+doAssertFalse :: Check Bool
+doAssertFalse = do
+       (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
+       return b
 
 -- extend with new parts of Env -- ok
-emptyEnv :: Flags -> IO Env
+emptyEnv :: Flags -> IO (Env SMT.SolverEnv)
 emptyEnv f = do
     r <- newIORef 0
     r' <- newIORef 0
     r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
-    return $ Env f initDetFuncs mempty TcGhost mempty mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m mempty rs r' r'' (typeError') Nothing False def
+    memo <- mkMemoEntry 
+    return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -78,6 +90,34 @@ trivialTypeOf :: [Ty] -> Check TyX
 trivialTypeOf ts = do
     l <- coveringLabelOf ts
     return $ TData l l (ignore Nothing)
+
+trivialTypeOfAnn :: String -> [Ty] -> Check TyX
+trivialTypeOfAnn s ts = do
+    l <- coveringLabelOf ts
+    return $ TData l l (ignore $ Just s)
+
+trivialTypeOfWithLength :: [Ty] -> AExpr -> Check TyX
+trivialTypeOfWithLength ts ae = do
+    t <- trivialTypeOf ts
+    return $ TRefined (mkSpanned t) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) ae
+
+checkPublicArguments :: String -> [Ty] -> Check ()
+checkPublicArguments errmsg ts = do
+    forM_ ts $ \t -> do
+        b <- tyFlowsTo t advLbl
+        assert errmsg b
+
+enforcePublicArguments :: String -> [Ty] -> Check TyX
+enforcePublicArguments errmsg ts = do
+    checkPublicArguments errmsg ts
+    return $ TData advLbl advLbl (ignore $ Nothing)
+
+enforcePublicArgumentsOption :: String -> [Ty] -> Check TyX
+enforcePublicArgumentsOption errmsg ts = do
+    checkPublicArguments errmsg ts
+    return $ TOption $ tData advLbl advLbl
+
+
 
 extractNameFromType :: Ty -> Maybe NameExp
 extractNameFromType t =
@@ -120,6 +160,9 @@ withNormalizedTys mp =
 mkRefined :: Ty -> (AExpr -> Prop) -> TyX              
 mkRefined t p = TRefined t ".res" $ bind (s2n ".res") $ p $ aeVar ".res"
 
+tPubGroupElem :: Ty
+tPubGroupElem = tRefined (tData advLbl advLbl) ".res" $ pEq (builtinFunc "is_group_elem" [aeVar ".res"]) (builtinFunc "true" [])
+
 initDetFuncs :: Map String (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "unit" 0 $ \args -> do
@@ -153,7 +196,33 @@ initDetFuncs = withNormalizedTys $ [
           ([ParamTy t], []) -> do
               checkTy t
               return (TOption t)
+          ([], []) -> do
+              ot <- view expectedTy
+              case ot of
+                Nothing -> typeError $ "No option type inferrable from context"
+                Just t -> do
+                    case t^.val of
+                      TOption _ -> return $ t^.val
+                      _ -> typeError $ show $ owlpretty "Expected type is not option type: " <> owlpretty t
           _ -> typeError $ show $ ErrBadArgs "None" (map snd args))),
+    mkSimpleFunc "Some?" 1 $ \args -> 
+            case args of
+            [t] -> 
+                case (stripRefinements t)^.val of
+                    TOption t' -> return $ TBool advLbl
+                    _ -> do
+                        l <- coveringLabel t
+                        return $ TBool l
+            _ -> typeError $ show $ ErrBadArgs "Some?" args,
+    mkSimpleFunc "None?" 1 $ \args -> 
+            case args of
+            [t] -> 
+                case (stripRefinements t)^.val of
+                    TOption t' -> return $ TBool advLbl
+                    _ -> do
+                        l <- coveringLabel t
+                        return $ TBool l
+            _ -> typeError $ show $ ErrBadArgs "None?" args,
     ("andb", (2, \ps args -> do
         assert ("Bad params") $ length ps == 0
         case args of
@@ -166,6 +235,24 @@ initDetFuncs = withNormalizedTys $ [
             assertSubtype t2 (mkSpanned $ TBool l)
             return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") $ pImpl (pEq (aeVar ".res") tr) (pAnd (pEq x tr) (pEq y tr)))
           _ -> typeError "Bad args for andb")),
+    ("andp", (2, \ps args -> do
+        assert ("Bad params") $ length ps == 0
+        case args of
+          [(_, Spanned _ (TRefined (Spanned _ TUnit) _ xp)), (_, Spanned _ (TRefined (Spanned _ TUnit) _ yp))] -> do 
+              (x, p1) <- unbind xp
+              (y, p2) <- unbind yp
+              return $ TRefined (mkSpanned TUnit) "._" $ bind x $ pAnd p1 (subst y (aeVar' x) p2)
+          _ -> typeError "Bad args for andp"
+    )),
+    ("notb", (1, \ps args -> do
+        assert ("Bad params") $ length ps == 0
+        case args of
+          [(x, t)] -> do
+              l <- coveringLabel t
+              assertSubtype t (mkSpanned $ TBool l)
+              let tr = aeApp (topLevelPath $ "true") [] []
+              return $ TRefined (mkSpanned $ TBool l) ".res" $
+                    bind (s2n ".res") $ mkSpanned $ pIff (pEq (aeVar ".res") tr) (pNot $ pEq x tr))),                      
     mkSimpleFunc "length" 1 $ \args -> do
         case args of
           [t] -> do
@@ -176,14 +263,17 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "crh" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "mult" 2 $ \args -> trivialTypeOf args,
     mkSimpleFunc "zero" 0 $ \args -> trivialTypeOf args,
-    mkSimpleFunc "is_group_elem" 1 $ \args -> trivialTypeOf args,
-    mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, -- Used for RO
+    mkSimpleFunc "is_group_elem" 1 $ \args -> do
+        l <- coveringLabel $ head args
+        return $ TBool l,
+    mkSimpleFunc "concat" 2 $ \args -> trivialTypeOf args, 
+    mkSimpleFunc "xor" 2 $ \args -> trivialTypeOf args, 
     mkSimpleFunc "cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "pk_cipherlen" 1 $ \args -> trivialTypeOf args,
     mkSimpleFunc "vk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <- local (set tcScope TcGhost) $ getNameType n
+              nt <- local (set tcScope (TcGhost False)) $ getNameType n
               case nt^.val of
                 NT_Sig _ ->
                     return $ TRefined (mkSpanned $ TVK n) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "vk")
@@ -192,7 +282,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "dhpk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <- local (set tcScope TcGhost) $ getNameType n
+              nt <- local (set tcScope (TcGhost False)) $ getNameType n
               case nt^.val of
                 NT_DH -> return $ TDH_PK n
                 _ -> trivialTypeOf args
@@ -200,7 +290,7 @@ initDetFuncs = withNormalizedTys $ [
     mkSimpleFunc "enc_pk" 1 $ \args ->
         case args of
           [t] | Just n <- extractNameFromType t -> do
-              nt <-  local (set tcScope TcGhost) $ getNameType n
+              nt <-  local (set tcScope (TcGhost False)) $ getNameType n
               case nt^.val of
                 NT_PKE _ -> return $ TEnc_PK n
                 _ -> trivialTypeOf args
@@ -208,15 +298,18 @@ initDetFuncs = withNormalizedTys $ [
     ("dh_combine", (2, \ps args ->
         case (ps, args) of
           ([], [(_, t1), (_, t2)]) | Just n <- extractDHPKFromType t1, Just m <- extractNameFromType t2 -> do
-              nt_n <-  local (set tcScope TcGhost) $ getNameType n
-              nt_m <-  local (set tcScope TcGhost) $ getNameType m
+              nt_n <-  local (set tcScope $ TcGhost False) $ getNameType n
+              nt_m <-  local (set tcScope $ TcGhost False) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
-                (NT_DH, NT_DH) -> return $ TSS n m
+                (NT_DH, NT_DH) -> 
+                        return $ TCase (pFlow (nameLbl n) advLbl) tPubGroupElem 
+                                                                  (mkSpanned $ TCase (pFlow (nameLbl m) advLbl) tPubGroupElem
+                                                                                                                (mkSpanned $ TSS n m))
                 _ -> trivialTypeOf $ map snd args
           ([], _) -> trivialTypeOf $ map snd args
           ([ParamName n, ParamName m], [(x, t1), (_, t2)]) -> do 
-              nt_n <-  local (set tcScope TcGhost) $ getNameType n
-              nt_m <-  local (set tcScope TcGhost) $ getNameType m
+              nt_n <-  local (set tcScope $ TcGhost False) $ getNameType n
+              nt_m <-  local (set tcScope $ TcGhost False) $ getNameType m
               case (nt_n^.val, nt_m^.val) of
                 (NT_DH, NT_DH) -> do
                   b1 <- isSubtype t1 (mkSpanned $ TDH_PK n)
@@ -230,25 +323,21 @@ initDetFuncs = withNormalizedTys $ [
           ([], [(x, t1), (y, t2)]) ->
               case ((stripRefinements t1)^.val, (stripRefinements t2)^.val) of
                 (TName n, TName m) -> do
-                  if n `aeq` m then return $ TRefined (mkSpanned $ TBool zeroLbl) ".res" (bind (s2n ".res") (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])))
-                  else case (n^.val, m^.val) of
-                       (NameConst (is1, is1') a oi1, NameConst (is2, is2') b oi2) | (a, oi1) `aeq` (b, oi2) -> do
-                           let p =  foldr pAnd pTrue $ map (\(i, j) -> mkSpanned $ PEqIdx i j) $ zip (is1 ++ is1') (is2  ++ is2')
-                           return $ TRefined (mkSpanned $ TBool advLbl) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) p))
-                       _ -> do
-                           l <- coveringLabelOf $ map snd args
-                           return $ TBool l
+                        return $ TRefined (mkSpanned $ TBool zeroLbl) ".res" $ bind (s2n ".res") $
+                            pImpl (pEq (aeVar ".res") (aeApp (topLevelPath "true") [] []))
+                                  (pEq (aeGet n) (aeGet m))
                 (TName n, m) -> do
-                  nt <-  local (set tcScope TcGhost) $ getNameType n
+                  nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
-                    NT_Nonce -> do
+                    NT_Nonce _ -> do
+                        -- TODO: enforce that m's length label is public 
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
                 (m, TName n) -> do
-                  nt <-  local (set tcScope TcGhost) $ getNameType n
+                  nt <-  local (set tcScope $ TcGhost False) $ getNameType n
                   case nt^.val of
-                    NT_Nonce -> do
+                    NT_Nonce _ -> do
                         l <- coveringLabel (mkSpanned m)
                         return $ TRefined (mkSpanned $ TBool l) ".res" (bind (s2n ".res") (pImpl (pEq (aeVar ".res") (aeApp (topLevelPath $ "true") [] [])) (pAnd (pFlow (nameLbl n) l) (pEq x y))))
                     _ -> trivialTypeOf $ map snd args
@@ -259,43 +348,88 @@ initDetFuncs = withNormalizedTys $ [
     ))
     ]
 
-mkStructType :: ResolvedPath -> TyVar -> [FuncParam] -> [AExpr] -> [(String, Ty)] -> Check TyX
-mkStructType pth tv ps xs fields = do
-    etaRules <- forM [0 .. (length fields - 1)] $ \i -> 
-        return $ pEq (xs !! i) $ mkSpanned $ AEApp (PRes $ PDot pth (fst $ fields !! i)) ps [aeVar ".res"]
-    let etaRule = foldr pAnd pTrue etaRules
+
+
+mkStructType :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [Ty] -> [FuncParam] ->  Bind [IdxVar] (DepBind ()) -> Check TyX
+mkStructType pth tv args outTs ps b = do
+    (is, dp) <- unbind b
+    idxs <- getStructParams ps
+    assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty (PRes $ PDot pth tv)) $ length idxs == length is
+    let p = map (\(a, s) -> pEq a $ mkSpanned $ AEApp (PRes $ PDot pth s) ps [aeVar ".res"])
+                (zip (map fst args) (depBindNames $ substs (zip is idxs) dp))
+    slengths <- sumOfLengths (zip (map fst args) outTs)
     return $ TRefined (mkSpanned $ TConst (PRes $ PDot pth tv) ps) ".res" $
-            bind (s2n ".res") $ 
-                pAnd (pEq (aeLength (aeVar ".res")) (sumOfLengths xs))
-                     etaRule
+        bind (s2n ".res") $ 
+            pAnd (pEq (aeLength (aeVar ".res")) slengths)
+                 (foldr pAnd pTrue p)
+
+-- Only for debugging
+ensureTysMatchDepBind :: [(AExpr, Ty)] -> DepBind () -> Check ()
+ensureTysMatchDepBind [] (DPDone ()) = return ()
+ensureTysMatchDepBind ((a, t) : args) (DPVar t1 sx xk) = do
+    b <- isSubtype (tRefined t ".res" $ pEq (aeVar ".res") a) t1
+    if b then do
+         (x, k) <- unbind xk
+         ensureTysMatchDepBind args $ subst x a k
+    else do
+        t' <- normalizeTy t
+        t1' <- normalizeTy t1
+        typeError ("Argument " ++ show (owlpretty a) ++ " does not match type " ++ sx ++ ": " ++ show (owlpretty t1') ++ "\nGot type " ++ show (owlpretty t'))
+
+-- returns Nothing if input tys don't match; returns the output tys if they all
+-- do match
+tysMatchStructDef :: ResolvedPath -> TyVar -> [(AExpr, Ty)] -> [FuncParam] -> Bind [IdxVar] (DepBind ()) -> Check (Maybe [Ty])
+tysMatchStructDef pth sname args ps b = do
+    (is, dp) <- unbind b
+    idxs <- getStructParams ps
+    assert (show $ owlpretty "Wrong index arity for struct" <+> owlpretty pth <> owlpretty "." <> owlpretty sname ) $ length idxs == length is
+    go args $ substs (zip is idxs) dp
+        where
+            go [] (DPDone ()) = return $ Just []
+            go ((a, t):args) (DPVar t1 sx xk) = do
+                b1 <- isSubtype t t1 
+                checkTyPubLenOrGhost t
+                case b1 of
+                  False -> return Nothing
+                  True -> do
+                      (x, k) <- unbind xk
+                      res <- go args $ subst x a k
+                      case res of
+                        Nothing -> return Nothing
+                        Just ts -> return $ Just (t1 : ts)
+            go _ _ = typeError "Bad number of arguments to tyMatchStructDef"
 
 
+isGhost :: TcScope -> Bool
+isGhost (TcGhost _) = True
+isGhost (TcDef _) = False
         
 
 interpUserFunc :: ResolvedPath -> ModBody -> UserFunc -> Check (Int, [FuncParam] -> [(AExpr, Ty)] -> Check TyX)
 interpUserFunc pth md (StructConstructor tv) = do
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
-          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length $ depBindNames ys)
           return (ar, \ps xs -> do
               forM_ ps checkParam
-              nts <- extractStruct ps (show tv) idf 
               assert (show $ owlpretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
               if length xs == ar then do
-                b <- foldM (\acc i -> do
-                    b1 <- isSubtype (snd $ xs !! i) (snd $ nts !! i) 
-                    return $ acc && b1) True [0..(length xs - 1)]
-                if b then mkStructType pth tv ps (map fst xs) nts else trivialTypeOf (map snd xs)
+                res <- tysMatchStructDef pth tv xs ps idf 
+                case res of
+                  Nothing -> trivialTypeOf (map snd xs)
+                  Just outTs -> mkStructType pth tv xs outTs ps idf
               else trivialTypeOf (map snd xs))
       _ -> typeError $ "Unknown struct: " ++ show tv
 interpUserFunc pth md (StructProjector tv field) = do
+    tc <- view tcScope  
+    assert ("Struct accessors can only be called in ghost. Use a parse expression") $ isGhost tc
     case lookup tv (md^.tyDefs) of
       Just (StructDef idf) -> do
-          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length ys)
+          let (is_ar, ar) = let (xs, ys) = unsafeUnbind idf in (length xs, length $ depBindNames ys)
           return (1, \ps args -> do
               forM_ ps checkParam
-              nts <- extractStruct ps (show tv) idf 
               assert (show $ owlpretty "Index arity mismatch on struct constructor") $ length ps == is_ar 
+              nts <- extractStructTopDown ps (PRes $ PDot pth tv) (fst $ args !! 0) idf 
               case lookup field nts of
                 Just t -> do
                   b <- isSubtype (snd $ args !! 0) (mkSpanned $ TConst (PRes $ PDot pth tv) ps)
@@ -344,84 +478,218 @@ interpUserFunc pth md (UninterpUserFunc f ar) = do
         l <- coveringLabelOf $ map snd args
         return $ TRefined (tData l l) ".res" $ bind (s2n ".res") (pEq (aeVar ".res") (aeApp (PRes $ PDot pth f) [] (map fst args))))
 
+aelem :: Alpha a => a -> [a] -> Bool
+aelem x ys = any (aeq x) ys
+
+tryResolvePropFromPathCondition :: Prop -> Check (Maybe Bool)
+tryResolvePropFromPathCondition p = do
+    pc <- view pathCondition
+    if p `aelem` pc then return (Just True) else
+        if (pNot p) `aelem` pc then return (Just False) else
+        case p^.val of
+          PEq a1 a2 -> do
+              if (mkSpanned $ PEq a2 a1) `aelem` pc then return (Just True) else 
+                  if (pNot $ mkSpanned $ PEq a2 a1) `aelem` pc then return (Just False) else 
+                      return Nothing
+          PEqIdx i1 i2 -> do 
+              if (mkSpanned $ PEqIdx i2 i1) `aelem` pc then return (Just True) else 
+                  if (pNot $ mkSpanned $ PEqIdx i2 i1) `aelem` pc then return (Just False) else 
+                      return Nothing
+          _ -> return Nothing
+
+
+normalizeProp :: Prop -> Check Prop
+normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
+    ob <- tryResolvePropFromPathCondition p
+    case ob of
+      Just True -> return $ mkSpanned PTrue
+      Just False -> return $ mkSpanned PFalse
+      Nothing -> do
+          p' <- go p
+          if p' `aeq` p then return p' else normalizeProp p'
+    where 
+            go p = case p^.val of
+                     PTrue -> return p
+                     PFalse -> return p
+                     PAnd (Spanned _ PTrue) p -> normalizeProp p
+                     PAnd p (Spanned _ PTrue) -> normalizeProp p
+                     PAnd (Spanned _ PFalse) p -> return pFalse
+                     PAnd p (Spanned _ PFalse) -> return pFalse
+                     PAnd p1 p2 -> do
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         if p1' `aeq` p2' then return p1' else
+                             return $ Spanned (p^.spanOf) $ PAnd p1' p2'
+                     POr (Spanned _ PTrue) p -> return pTrue
+                     POr p (Spanned _ PTrue) -> return pTrue
+                     POr (Spanned _ PFalse) p -> normalizeProp p
+                     POr p (Spanned _ PFalse) -> normalizeProp p
+                     POr p1 p2 -> do
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         if p1' `aeq` p2' then return p1' else
+                             return $ Spanned (p^.spanOf) $ POr p1' p2'
+                     PImpl (Spanned _ PTrue) p -> normalizeProp p
+                     PImpl _ (Spanned _ PTrue) -> return pTrue  
+                     PImpl (Spanned _ PFalse) p -> return pTrue
+                     PImpl p (Spanned _ PFalse) -> pNot <$> normalizeProp p
+                     PImpl p1 p2 -> do 
+                         p1' <- normalizeProp p1
+                         p2' <- normalizeProp p2
+                         return $ Spanned (p^.spanOf) $ PImpl p1' p2'
+                     PEq a1 a2 -> do
+                         a1' <- resolveANF a1 >>= normalizeAExpr 
+                         a2' <- resolveANF a2 >>= normalizeAExpr 
+                         return $ Spanned (p^.spanOf) $ PEq a1' a2'
+                     PLetIn a xp -> do
+                         (x, p) <- unbind xp
+                         normalizeProp $ subst x a p
+                     PNot (Spanned _ PTrue) -> return pFalse
+                     PNot (Spanned _ PFalse) -> return pTrue
+                     PNot (Spanned _ (PAnd p1 p2)) -> do
+                         np1' <- normalizeProp $ pNot p1
+                         np2' <- normalizeProp $ pNot p2
+                         return $ pOr np1' np2'
+                     PNot p1 -> do
+                         p' <- normalizeProp p1
+                         return $ Spanned (p^.spanOf) $ PNot p'
+                     PQuantBV q sx xp -> do
+                         (x, p') <- unbind xp
+                         case p'^.val of
+                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
+                                            PAnd 
+                                                (mkSpanned $ PQuantBV q sx $ bind x p1') 
+                                                (mkSpanned $ PQuantBV q sx $ bind x p2') 
+                           _ -> do 
+                             p2' <- withVars [(x, (ignore $ show x, Nothing, tGhost))] $ normalizeProp p'
+                             return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantBV q sx (bind x p2')) else p2'
+                     PQuantIdx q sx xp -> do
+                         (x, p') <- unbind xp
+                         case p'^.val of
+                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
+                                            PAnd 
+                                                (mkSpanned $ PQuantIdx q sx $ bind x p1') 
+                                                (mkSpanned $ PQuantIdx q sx $ bind x p2') 
+                           _ -> do 
+                             p2' <- withIndices [(x, (ignore $ show x, IdxGhost))] $ normalizeProp p'
+                             return $ if x `elem` toListOf fv p2' then (Spanned (p^.spanOf) $ PQuantIdx q sx (bind x p2')) else p2'
+                     PFlow a b -> do
+                         a' <- normLabel a
+                         b' <- normLabel b
+                         case (a'^.val, b'^.val) of
+                           (LZero, _) -> return pTrue
+                           _ | a' `aeq` b' -> return pTrue 
+                           _ -> return (Spanned (p^.spanOf) $ PFlow a' b')
+                     PHappened s ps as -> do
+                         as' <- mapM (\a -> resolveANF a >>= normalizeAExpr) as
+                         return $ Spanned (p^.spanOf) $ PHappened s ps as'
+                     PApp s ps as -> do 
+                         as' <- mapM (\a -> resolveANF a >>= normalizeAExpr) as
+                         return $ Spanned (p^.spanOf) $ PApp s ps as'
+                     PAADOf ne a -> do
+                         ne' <- normalizeNameExp ne
+                         a' <- resolveANF a >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PAADOf ne' a'               
+                     PInODH a1 a2 a3 -> do 
+                         a1' <- resolveANF a1 >>= normalizeAExpr
+                         a2' <- resolveANF a2 >>= normalizeAExpr
+                         a3' <- resolveANF a3 >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PInODH a1' a2' a3'
+                     PHonestPKEnc ne a -> do
+                         ne' <- normalizeNameExp ne
+                         a' <- resolveANF a >>= normalizeAExpr
+                         return $ Spanned (p^.spanOf) $ PHonestPKEnc ne' a'
+                     _ -> return p
 
 
 -- Normalize a type expression. Only nontrivial computations are to normalize a
 -- nested refinement, and to normalize a case whether a name n is honest.
+
+
 normalizeTy :: Ty -> Check Ty
-normalizeTy t0 = local (set tcScope TcGhost) $ do
-    case t0^.val of
-        TUnit -> return tUnit
-        (TCase p t1 t2) -> 
-            if t1 `aeq` t2 then normalizeTy t1 else do
-                ob <- decideProp p
-                t1' <- normalizeTy t1
-                t2' <- normalizeTy t2
-                case ob of
-                  Nothing -> do
-                      b1 <- isSubtype t1 t2
-                      b2 <- isSubtype t2 t1
-                      if (b1 && b2) then return t1' else return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
-                  Just b -> return $ if b then t1' else t2'
-        (TOption t) -> do
-            t' <- normalizeTy t
-            return $ Spanned (t0^.spanOf) $ TOption t'
-        (TRefined (Spanned _ (TRefined t s1 xp1)) s2 yp2) -> do  -- x:(y:t{p1}){p2} --> x:t{p1 /\ p2}
-            (x, p1) <- unbind xp1
-            (y, p2) <- unbind yp2
-            normalizeTy $ Spanned (t0^.spanOf) $ TRefined t s2 $ bind y $ pAnd (subst x (mkSpanned $ AEVar (ignore s2) y) p1) p2 
-        (TRefined t s xp) -> do
-            t' <- normalizeTy t
-            (x, p) <- unbind xp
-            p' <- withVars [(x, (ignore $ show x, Nothing, t'))] $ simplifyProp p
-            return $ Spanned (t0^.spanOf) $ TRefined t' s $ bind x p'
-        (TUnion t1 t2) -> do
-            t1' <- normalizeTy t1
-            t2' <- normalizeTy t2
-            return $ Spanned (t0^.spanOf) $ TUnion t1' t2'
-        (TData l1 l2 s) -> do
-            l1' <- normalizeLabel l1
-            l2' <- normalizeLabel l2
-            return $ Spanned (t0^.spanOf) $ TData l1' l2' s
-        (TDataWithLength l a) -> do
-            l' <- normalizeLabel l
-            return $ Spanned (t0^.spanOf) $ TDataWithLength l' a
-        (TBool l) -> do
-            l' <- normalizeLabel l
-            return $ Spanned (t0^.spanOf) $ TBool l'
-        (TName n) -> do
-            n' <- normalizeNameExp n
-            return $ Spanned (t0^.spanOf) $ TName n'
-        (TVK n) -> do
-            n' <- normalizeNameExp n
-            return $ Spanned (t0^.spanOf) $ TVK n'
-        (TDH_PK n) -> do
-            n' <- normalizeNameExp n
-            return $ Spanned (t0^.spanOf) $ TDH_PK n'
-        (TEnc_PK n) -> do
-            n' <- normalizeNameExp n
-            return $ Spanned (t0^.spanOf) $ TEnc_PK n'
-        (TSS n m) -> do
-            n' <- normalizeNameExp n
-            m' <- normalizeNameExp m
-            return $ Spanned (t0^.spanOf) $ TSS n' m'
-        TConst s ps -> do
-            td <- getTyDef s
-            case td of
-              TyAbstract -> return t0
-              TyAbbrev t -> normalizeTy t
-              StructDef _ -> return t0
-              EnumDef _ ->
-                  case ps of
-                    ps' -> do
-                        return $ Spanned (t0^.spanOf) $ TConst s (ps')
-        (TExistsIdx xt) -> do
-            (x, t) <- unbind xt
-            if x `elem` getTyIdxVars t then do
-                t' <- local (over (inScopeIndices) $ insert x IdxGhost) $ normalizeTy t
-                return $ Spanned (t0^.spanOf) $ TExistsIdx $ bind x t'
-            else normalizeTy t
-        TAdmit -> return t0
+normalizeTy = withMemoize (memoNormalizeTy) $ \t0 -> 
+     withSpan (t0^.spanOf) $ local (set tcScope $ TcGhost False) $ do
+         case t0^.val of
+             TUnit -> return tUnit
+             (TCase p' t1 t2) -> do
+                 if t1 `aeq` t2 then normalizeTy t1 else do
+                     p <- normalizeProp p'
+                     case p^.val of
+                       PTrue -> normalizeTy t1
+                       PFalse -> normalizeTy t2
+                       _ -> do
+                           t1' <- pushPathCondition p $ do
+                               normalizeTy t1
+                           t2' <- pushPathCondition (pNot p) $ do
+                               normalizeTy t2
+                           return $ Spanned (t0^.spanOf) $ TCase p t1' t2'
+             (TOption t) -> do
+                 t' <- normalizeTy t
+                 return $ Spanned (t0^.spanOf) $ TOption t'
+             (TRefined (Spanned _ (TRefined t s1 xp1)) s2 yp2) -> do  -- x:(y:t{p1}){p2} --> x:t{p1 /\ p2}
+                 (x, p1) <- unbind xp1
+                 (y, p2) <- unbind yp2
+                 normalizeTy $ Spanned (t0^.spanOf) $ TRefined t s2 $ bind y $ pAnd (subst x (mkSpanned $ AEVar (ignore s2) y) p1) p2 
+             (TRefined t s xp) -> do
+                 t' <- normalizeTy t
+                 (x, p) <- unbind xp
+                 p' <- withVars [(x, (ignore $ show x, Nothing, t'))] $ normalizeProp p
+                 return $ Spanned (t0^.spanOf) $ TRefined t' s $ bind x p'
+             (TData l1 l2 s) -> do
+                 l1' <- normalizeLabel l1
+                 l2' <- normalizeLabel l2
+                 return $ Spanned (t0^.spanOf) $ TData l1' l2' s
+             (TDataWithLength l a) -> do
+                 l' <- normalizeLabel l
+                 return $ Spanned (t0^.spanOf) $ TDataWithLength l' a
+             (TBool l) -> do
+                 l' <- normalizeLabel l
+                 return $ Spanned (t0^.spanOf) $ TBool l'
+             TGhost -> return t0
+             (TName n) -> do
+                 n' <- normalizeNameExp n
+                 return $ Spanned (t0^.spanOf) $ TName n'
+             (TVK n) -> do
+                 n' <- normalizeNameExp n
+                 return $ Spanned (t0^.spanOf) $ TVK n'
+             (TDH_PK n) -> do
+                 n' <- normalizeNameExp n
+                 return $ Spanned (t0^.spanOf) $ TDH_PK n'
+             (TEnc_PK n) -> do
+                 n' <- normalizeNameExp n
+                 return $ Spanned (t0^.spanOf) $ TEnc_PK n'
+             (TSS n m) -> do
+                 n' <- normalizeNameExp n
+                 m' <- normalizeNameExp m
+                 b1 <- decideProp $ pFlow (nameLbl n') advLbl
+                 let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+                 let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+                 let corr_t = Spanned (t0^.spanOf) $ TRefined (tData advLbl advLbl) ".res" $
+                         bind (s2n ".res") $
+                             pEq (aeVar ".res") (dhCombine (dhpk (aeGet n')) (aeGet m'))
+                 case b1 of
+                   Just True -> return corr_t
+                   _ -> do
+                       b2 <- decideProp $ pFlow (nameLbl m') advLbl
+                       case b2 of
+                         Just True -> return corr_t
+                         _ -> return $ Spanned (t0^.spanOf) $ TSS n' m'
+             TConst s ps -> do
+                 td <- getTyDef s
+                 case td of
+                   TyAbstract -> return t0
+                   TyAbbrev t -> normalizeTy t
+                   StructDef _ -> return t0
+                   EnumDef _ ->
+                       case ps of
+                         ps' -> do
+                             return $ Spanned (t0^.spanOf) $ TConst s (ps')
+             (TExistsIdx s xt) -> do
+                 (x, t) <- unbind xt
+                 t' <- withIndices [(x, (ignore s, IdxGhost))] $ normalizeTy t
+                 return $ Spanned (t0^.spanOf) $ TExistsIdx s $ bind x t'
+             TAdmit -> return t0
+             THexConst a -> return t0
 
 normalizeLabel :: Label -> Check Label
 normalizeLabel l = do                
@@ -431,96 +699,211 @@ normalizeLabel l = do
 
 -- Subtype checking, assuming the types are normalized
 
-isSubtype' t1 t2 = do
-    case (t1^.val, t2^.val) of
-      _ | isSingleton t2 -> do 
-          (_, b) <- SMT.smtTypingQuery "singleton check" $ SMT.subTypeCheck t1 t2
-          return b 
-      (TCase p t1' t2', _) -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' (if b then t1' else t2') t2
-            Nothing -> do
-              b1 <- isSubtype' t1' t2
-              b2 <- isSubtype' t2' t2
-              return $ b1 && b2
-      (_, TCase p t1' t2') -> do
-          r <- decideProp p
-          case r of
-            Just b -> isSubtype' t1 (if b then t1' else t2')
-            Nothing -> do
-              b1 <- isSubtype' t1 t1'
-              b2 <- isSubtype' t1 t2'
-              return $ b1 && b2
-      (TAdmit, _) -> return True
-      (t1', t2') | t1' `aeq` t2' -> return True
-      (TOption t1, TOption t2) -> isSubtype' t1 t2
-      (_, TRefined t _ p) -> do
-          b1 <- isSubtype' t1 t
-          (_, b2) <- SMT.smtTypingQuery "refinement check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b2
-      (TRefined t _ _, t') | (t^.val) `aeq` t' -> return True
-      (_, TUnit) -> snd <$> (SMT.smtTypingQuery "unit check" $ SMT.subTypeCheck t1 t2)
-      (TUnit,  _) -> do
-        isSubtype' (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] []))) t2
-      (TBool l1, TBool l2) -> do
-          ob <- tryFlowsTo l1 l2
-          case ob of
-            Nothing -> return False
-            Just b -> return b
-      (TConst x ps1, TConst y ps2) -> do
-          x' <- normalizePath x
-          y' <- normalizePath y
-          td <- getTyDef x
-          case (aeq x' y', td) of
-            (True, EnumDef _) -> return $ aeq ps1 ps2 
-            (True, StructDef _) -> do
-                assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
-                qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
-                    case (p1, p2) of
-                      (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
-                      _ -> typeError $ "Bad param to struct: didn't get index"
-                let p = foldr pAnd pTrue qs
-                (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
-                return b
-            _ -> return False
-      (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True -- TODO maybe all we want? not sure
-      (TExistsIdx xt1, TExistsIdx xt2) -> do
-          (xi, t1) <- unbind xt1
-          (xi', t2) <- unbind xt2
-          local (over (inScopeIndices) $ insert xi IdxGhost) $
-              isSubtype' t1 (subst xi' (mkIVar xi) t2)
-      (_, TUnion t1' t2') -> do
-          b1 <- isSubtype' t1 t1'
-          b2 <- isSubtype' t1 t2'
-          return $ b1 || b2
-      (t, TDataWithLength l a) -> do
-          b1 <- isSubtype' t1 (tData l l)
-          (_, b) <- SMT.smtTypingQuery "TDataWithLength check" $ SMT.subTypeCheck t1 t2
-          return $ b1 && b
-      (t, TData l1 l2 _) -> do
-        l2' <- tyLenLbl t1
-        b1 <- tyFlowsTo t1 l1 
-        ob2 <- tryFlowsTo l2' l2
-        case ob2 of
-          Nothing -> return False
-          Just b2 -> return $ b1 && b2
-      (TRefined t _ _, _) -> isSubtype' t t2
-      _ -> return False
 
-isSingleton :: Ty -> Bool
-isSingleton t = 
+tUnitSimpl = 
+    (tRefined (tData zeroLbl zeroLbl) "_x" $ (pEq (aeVar "_x") (aeApp (topLevelPath $ "unit") [] [])))
+
+tDataWithLengthSimpl :: Label -> AExpr -> Check (Maybe Ty)
+tDataWithLengthSimpl l a = do
+    t <- inferAExpr a
+    llen <- coveringLabel t
+    llenPub <- tryFlowsTo llen advLbl
+    case llenPub of
+      Just True -> return $ Just $ tRefined (tData l advLbl) "_x" $ pEq (aeLength (aeVar "_x")) a
+      _ -> return Nothing
+
+mkRefineds :: Ty -> [(String, Bind DataVar Prop)] -> Ty
+mkRefineds t [] = t
+mkRefineds t ((s,p):ps) = mkSpanned $ TRefined (mkRefineds t ps) s p
+
+checkSubRefinement t1 r1 t2 r2 = snd <$> (SMT.smtTypingQuery "" $ SMT.subTypeCheck (mkRefineds t1 r1) (mkRefineds t2 r2))
+
+isSubtype' :: Ty -> [(String, Bind DataVar Prop)] -> Ty -> [(String, Bind DataVar Prop)] -> Check Bool
+isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
+    res <- withPushLog $ do
+      x <- freshVar
+      falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
+         (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
+         return b
+      if falseTy then return True else 
+          case (t1^.val, t2^.val) of
+            (t1', t2') | t1' `aeq` t2' -> return True
+            (_, TGhost) -> return True
+            (TAdmit, _) -> return True
+            (TCase p t1' t2', _) -> do
+                p' <- normalizeProp p
+                (fn, r) <- SMT.symDecideProp p'
+                case r of
+                  Just b -> do
+                      isSubtype' (if b then t1' else t2') r1 t2 r2
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' (if b then t1' else t2') r1 t2 r2
+            (_, TCase p t1' t2') -> do
+                p' <- normalizeProp p
+                (fn, r) <- SMT.symDecideProp p'
+                case r of
+                  Just b -> do
+                      isSubtype' t1 r1 (if b then t1' else t2') r2
+                  Nothing -> byCasesProp p' $ \b -> isSubtype' t1 r1 (if b then t1' else t2') r2
+            (TOption t1, TOption t2) -> isSubtype' t1 r1 t2 r2
+            (_, TRefined t s p) -> isSubtype' t1 r1 t ((s,p):r2)
+            (TRefined t s p, _) -> isSubtype' t ((s,p):r1) t2 r2
+            (TExistsIdx s1 xt1, TExistsIdx s2 xt2) -> do
+                (xi, t1) <- unbind xt1
+                (xi', t2) <- unbind xt2
+                withIndices [(xi, (ignore s1, IdxGhost))] $ 
+                    isSubtype' t1 r1 (subst xi' (mkIVar xi) t2) r2
+            (_, TUnit) -> isSubtype' t1 r1 tUnitSimpl r2
+            (TUnit,  _) -> isSubtype' tUnitSimpl r1 t2 r2
+            (TBool l1, TBool l2) -> do
+                ob <- tryFlowsTo l1 l2
+                case ob of
+                  Nothing -> return False
+                  Just b -> return b
+            (_, TName (Spanned _ (KDFName a2 b2 c2 nks2 j2 nt2 _))) ->
+                case (stripRefinements t1)^.val of
+                  TName (Spanned _ (KDFName a1 b1 c1 nks1 j1 nt1 _)) | (nks1 == nks2 && j1 == j2) 
+                      -> subKDFName a1 b1 c1 nt1 a2 b2 c2 nt2
+                  _ -> return False
+            _ | isSingleton t2 -> return True
+            (TConst x ps1, TConst y ps2) -> do
+                x' <- normalizePath x
+                y' <- normalizePath y
+                td <- getTyDef x
+                case (aeq x' y', td) of
+                  (True, EnumDef _) -> return $ aeq ps1 ps2 
+                  (True, StructDef _) -> do
+                      assert (show $ owlpretty "Func param arity mismatch on struct") $ length ps1 == length ps2
+                      qs <- forM (zip ps1 ps2) $ \(p1, p2) ->
+                          case (p1, p2) of
+                            (ParamIdx i1 _, ParamIdx i2 _) -> return $ mkSpanned $ PEqIdx i1 i2
+                            _ -> typeError $ "Bad param to struct: didn't get index"
+                      let p = foldr pAnd pTrue qs
+                      (_, b) <- SMT.smtTypingQuery "index equality check" $ SMT.symAssert p
+                      return b
+                  _ -> return False
+            (TSS n m, TSS m' n') | (n `aeq` n') && (m `aeq` m') -> return True
+            (TDataWithLength l a, _) -> do
+                ot1' <- tDataWithLengthSimpl l a
+                case ot1' of
+                  Nothing -> return False
+                  Just t1' -> isSubtype' t1' r1 t2 r2
+            (_, TDataWithLength l a) -> do
+                ot2' <- tDataWithLengthSimpl l a
+                case ot2' of
+                  Nothing -> return False
+                  Just t2' -> isSubtype' t1 r1 t2' r2
+            (t, TData l1 l2 _) -> do
+              l2' <- tyLenLbl t1
+              b1 <- tyFlowsTo t1 l1 
+              ob2 <- tryFlowsTo l2' l2
+              case ob2 of
+                Nothing -> return False
+                Just b2 -> return $ b1 && b2
+            _ -> do
+                return False
+    let t2Leaf = isSubtypeLeaf t2 
+    if res then if t2Leaf then checkSubRefinement t1 r1 t2 r2 else return True else return False
+
+isSubtypeLeaf t = 
     case t^.val of
+      TData _ _ _ -> True
+      TGhost -> True
+      TConst _ _ -> True
+      TBool _ -> True
+      TUnit -> True
       TName _ -> True
       TVK _ -> True
       TDH_PK _ -> True
       TEnc_PK _ -> True
       TSS _ _ -> True
+      TAdmit -> True
+      THexConst _ -> True
+      _ -> False 
+
+subKDFName a1 b1 c1 nt1 a2 b2 c2 nt2 = do
+    argsEq <- decideProp $ (pEq a1 a2) `pAnd` (pEq b1 b2) `pAnd` (pEq c1 c2)
+    ntSub <- subNameType nt1 nt2
+    return $ (argsEq == Just True) && ntSub
+
+allM :: Monad m => [a] -> (a -> m Bool) -> m Bool
+allM [] f = return True
+allM (x:xs) f = do
+    b <- f x
+    if b then allM xs f else return False
+
+subNameType :: NameType -> NameType -> Check Bool
+subNameType nt1 nt2 = do
+    res <- withPushLog $ case (nt1^.val, nt2^.val) of
+             _ | nt1 `aeq` nt2 -> return True
+             (NT_DH, NT_DH) -> return True
+             (NT_Sig t1, NT_Sig t2) -> isSubtype t1 t2
+             (NT_Nonce s1, NT_Nonce s2) -> return $ s1 == s2
+             (NT_Enc t1, NT_Enc t2) -> isSubtype t1 t2
+             (NT_StAEAD t1 xp1 pth1 xpat1, NT_StAEAD t2 xp2 pth2 xpat2) -> do
+                 b1 <- isSubtype t1 t2
+                 ((x, slf), p1) <- unbind xp1
+                 ((x', slf'), p2_) <- unbind xp2
+                 let p2 = subst x' (aeVar' x) $ subst slf' (aeVar' slf) $ p2_
+                 b2 <- withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ decideProp $ p1 `pImpl` p2
+                 b3 <- return $ pth1 `aeq` pth2
+                 (z, pat1) <- unbind xpat1
+                 (w, pat2) <- unbind xpat2
+                 b4 <- withVars [(z, (ignore $ show z, Nothing, tGhost))] $ decideProp $ pat1 `pEq` (subst w (aeVar' z) pat2)
+                 return $ b1 && (b2 == Just True) && b3 && (b4 == Just True)
+             (NT_KDF pos1 body1, NT_KDF pos2 body2) -> do
+                 (((sx, x), (sy, y), (sz, z)), bnds) <- unbind body1
+                 (((sx', x'), (sy', y'), (sz', z')), bnds') <- unbind body2
+                 withVars [(x, (ignore sx, Nothing, tGhost)), (y, (ignore sy, Nothing, tGhost)), (z, (ignore sz, Nothing, tGhost))] $ 
+                     if pos1 == pos2 && length bnds == length bnds' then go bnds (substs [(x', aeVar' x), (y', aeVar' y), (z', aeVar' z)] bnds') else return False
+                     where
+                         go :: [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                               [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])] -> 
+                               Check Bool
+                         go [] [] = return True
+                         go (b1:xs) (b2:ys) = do
+                             (is1, rest1) <- unbind b1
+                             (is2, rest2_) <- unbind b2
+                             bhere <- if length is1 == length is2 then do
+                                 let rest2 = substs (map (\(i1, i2) -> (i2, mkIVar i1)) (zip is1 is2)) rest2_
+                                 withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is1) $ do
+                                     b1 <- decideProp $ pImpl (fst rest1) (fst rest2)
+                                     if (b1 == Just True) then do 
+                                         allM (zip (snd rest1) (snd rest2)) $ \(nt1, nt2) -> 
+                                             if (fst nt1 == fst nt2) then subNameType (snd nt1) (snd nt2) else return False
+                                     else return False
+                                 else return False
+                             if bhere then go xs ys else return False
+             _ -> return False                                
+    return res
+
+                                                         
+
+
+isSingleton :: Ty -> Bool
+isSingleton t = 
+    case t^.val of
+      TName ne -> 
+          case ne^.val of
+            KDFName _ _ _ _ _ _ _ -> False
+            NameConst _ _ _ -> True
+      TVK _ -> True
+      TDH_PK _ -> True
+      TEnc_PK _ -> True
+      TSS _ _ -> True
+      THexConst _ -> True
       _ -> False
 
 tyFlowsTo :: Ty -> Label -> Check Bool
-tyFlowsTo t l = 
+tyFlowsTo t0 l = do
+    t <- normalizeTy t0
+    tyFlowsTo' (t, l)
+
+tyFlowsTo' = withMemoize (memoTyFlowsTo') $ \(t, l) -> 
     case t^.val of
+      TRefined t0 s xp -> do
+          x <- freshVar
+          withVars [(s2n x, (ignore $ show x, Nothing, t))] $
+              tyFlowsTo t0 l
       TSS n m -> do
           ob1 <- tryFlowsTo (joinLbl (nameLbl n) advLbl) l
           ob2 <- tryFlowsTo (joinLbl (nameLbl m) advLbl) l
@@ -528,15 +911,28 @@ tyFlowsTo t l =
       _ -> do
           l1 <- coveringLabel t
           ob <- tryFlowsTo l1 l
-          return $ ob == Just True
+          case ob of
+            Nothing -> return False
+            Just b -> return b
+
+-- A more precise version of tyFlowsTo, taking into account concats
+isIKMDerivable :: AExpr -> Check Bool
+isIKMDerivable a = do
+    xs <- unconcatIKM a
+    ts <- mapM inferAExpr xs
+    bs <- mapM (\t -> tyFlowsTo t advLbl) ts
+    return $ foldr (&&) True bs
+
+
 
 -- We check t1 <: t2  by first normalizing both
 isSubtype :: Ty -> Ty -> Check Bool
-isSubtype t1 t2 = do
-    t1' <- normalizeTy t1
-    t2' <- normalizeTy t2
-    b <- isSubtype' t1' t2'
-    return b
+isSubtype t1 t2 = go (t1, t2)
+    where
+        go = withMemoize (memoisSubtype') $ \(t1, t2) -> do 
+            t1' <- normalizeTy t1
+            t2' <- normalizeTy t2
+            isSubtype' t1' [] t2' []
 
 
 
@@ -548,49 +944,10 @@ assertSubtype t1 t2 = laxAssertion $ do
     t2' <- normalizeTy t2
     assert (show $ ErrCannotProveSubtype t1' t2') b
 
-typeProtectsLabel' :: Label -> Ty -> Check ()
-typeProtectsLabel' l t0 =
-    laxAssertion $ case t0^.val of
-      (TData l' _ _) -> flowCheck l l'
-      (TDataWithLength l' _) -> flowCheck l l'
-      (TOption t) -> flowCheck l advLbl
-      (TRefined t _ _) -> typeProtectsLabel l t
-      TBool l' -> flowCheck l l'
-      (TUnion t1 t2) -> do
-        typeProtectsLabel' l t1
-        typeProtectsLabel' l t2
-      (TUnit) -> return () -- Only sound since TUnit is unit 
-      TConst s ps -> do
-          td <- getTyDef s
-          case td of
-            TyAbstract -> flowCheck l (mkSpanned $ LConst $ TyLabelVar s)
-            TyAbbrev t -> typeProtectsLabel' l t
-            StructDef xs -> typeError $ "TODO: typeProtectsLabel for struct"
-            EnumDef b -> do
-                bdy <- extractEnum ps (show s) b
-                flowCheck l advLbl
-      (TName n) ->
-          flowCheck l (nameLbl n)
-      TAdmit -> return ()
-      TCase p t1 t2 -> do
-       typeProtectsLabel' l t1
-       typeProtectsLabel' l t2
-      TExistsIdx _ -> do
-          b <- flowsTo l advLbl
-          if b then return () else typeError $ show $ owlpretty "typeProtectsLabel on exists: label " <> owlpretty l <> owlpretty " does not flow to adv"
-      t ->
-          error ("Unimp: typeProtectsLabel'" ++ show (owlpretty l <> owlpretty ", " <> owlpretty t))
-
-typeProtectsLabel :: Label -> Ty -> Check ()
-typeProtectsLabel l t = laxAssertion $ do
-    t' <- normalizeTy t
-    typeProtectsLabel' l t'
-
 
 coveringLabel :: Ty -> Check Label
-coveringLabel t = local (set tcScope TcGhost) $ do
-    t' <- normalizeTy t
-    coveringLabel' t'
+coveringLabel t = local (set tcScope $ TcGhost False) $ do
+    coveringLabel' t
 
 
 addDef :: String -> Def -> Check a -> Check a
@@ -624,8 +981,7 @@ addTyDef s td k = do
             StructDef sd -> do
                 (is, xs') <- unbind sd
                 assert (show $ owlpretty "Cannot assign abstract type " <> owlpretty s <> owlpretty " to indexed struct") $ length is == 0
-                ls <- forM xs' $ \(_, t) -> tyLenLbl t
-                return $ foldr joinLbl zeroLbl ls
+                error "TODO: abstract ty for structs"
             TyAbbrev t -> tyLenLbl t
             TyAbstract -> typeError $ show $ owlpretty "Overlapping abstract types: " <> owlpretty s
           len_lbl' <- tyLenLbl $ mkSpanned $ TConst (topLevelPath s) []
@@ -646,15 +1002,39 @@ addNameDef n (is1, is2) (nt, nls) k = do
               withSpan (nt^.spanOf) $ assert (show $ owlpretty "Indices on abstract and concrete def of name" <+> owlpretty n <+> owlpretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
           _ -> typeError $ "Duplicate name: " ++ n
     withSpan (nt^.spanOf) $ assert (show $ owlpretty "Duplicate indices in definition: " <> owlpretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
-    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
             forM_ nls normLocality
             checkNameType nt
     local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (BaseDef (nt, nls)))) $ k
 
-sumOfLengths :: [AExpr] -> AExpr
-sumOfLengths [] = aeApp (topLevelPath $ "zero") [] []
-sumOfLengths (x:xs) = aeApp (topLevelPath $ "plus") [] [aeLength x, sumOfLengths xs]
+addNameAbbrev :: String ->  ([IdxVar], [IdxVar]) -> (Bind [DataVar] NameExp) -> Check a -> Check a
+addNameAbbrev n (is1, is2) bne k = do
+    md <- view curMod
+    case lookup n (md^.nameDefs) of
+      Nothing -> return ()
+      Just o -> do
+        ((is1', is2'), nd) <- unbind o
+        case nd of
+          AbstractName -> do
+              assert (show $ owlpretty "Indices on abstract and concrete def of name" <+> owlpretty n <+> owlpretty "do not match") $ (length is1 == length is1' && length is2 == length is2')
+          _ -> typeError $ "Duplicate name: " ++ n
+    assert (show $ owlpretty "Duplicate indices in definition: " <> owlpretty (is1 ++ is2)) $ UL.allUnique (is1 ++ is2)
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
+        (xs, ne) <- unbind bne
+        withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+            _ <- getNameInfo ne
+            return ()
+    local (over (curMod . nameDefs) $ insert n (bind (is1, is2) (AbbrevNameDef bne))) $ k
+
+
+sumOfLengths :: [(AExpr, Ty)] -> Check AExpr
+sumOfLengths [] = return $ aeApp (topLevelPath $ "zero") [] []
+sumOfLengths ((x, t):xs) = do
+    ng <- tyNonGhost t
+    xslen <- sumOfLengths xs
+    case ng of
+      True -> return $ aeApp (topLevelPath $ "plus") [] [aeLength x, xslen]
+      False -> return $ xslen
 
 inferModuleExp :: ModuleExp -> Check ModDef
 inferModuleExp me = 
@@ -719,6 +1099,49 @@ ensureNoConcreteDefs = do
               let (_, d) = unsafeUnbind ds 
               assert ("Decl cannot appear after concrete def") $ unignore $ _isAbstract d
 
+
+withDepBind :: (Alpha a, Alpha b) => DepBind a -> ([(DataVar, String, Ty)] -> a -> Check b) -> Check (DepBind b)
+withDepBind (DPDone x) k = DPDone <$> k [] x
+withDepBind (DPVar t s xd) k = do
+    (x, d) <- unbind xd
+    res <- withVars [(x, (ignore s, Nothing, t))] $ withDepBind d $ \args v -> k ((x, s, t):args) v
+    return $ DPVar t s (bind x res)
+                                          
+unsafeMapDepBind :: Alpha a => DepBind a -> (a -> b) -> b
+unsafeMapDepBind (DPDone x) k = k x
+unsafeMapDepBind (DPVar _ _ xd) k = 
+    let (x, d) = unsafeUnbind xd in
+    unsafeMapDepBind d k
+
+checkTyPubLenOrGhost :: Ty -> Check ()
+checkTyPubLenOrGhost t = do
+    case (stripRefinements t)^.val of
+      TGhost -> return ()
+      TConst s@(PRes (PDot pth tv)) ps -> do
+          td <- getTyDef s
+          case td of
+            StructDef ib -> do
+                (is, xs) <- unbind ib
+                _ <- withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    withDepBind xs $ \args _ -> do 
+                        forM_ args $ \(_, _, t) -> checkTyPubLenOrGhost t
+                return ()
+            EnumDef bs -> do
+                bdy <- extractEnum ps (show s) bs
+                forM_ bdy $ \(s, ot) -> 
+                    case ot of
+                      Nothing -> return ()
+                      Just t0 -> 
+                          checkTyPubLenOrGhost t0
+            _ -> do
+                  llbl <- tyLenLbl t
+                  flowCheck llbl advLbl
+      _ -> do
+          llbl <- tyLenLbl t
+          flowCheck llbl advLbl
+
+                
+
                   
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
@@ -736,9 +1159,8 @@ checkDecl d cont = withSpan (d^.spanOf) $
       DeclCounter n isloc -> do
           ensureNoConcreteDefs
           ((is1, is2), loc) <- unbind isloc
-          local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
-                  normLocality loc
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
+              normLocality loc
           local (over (curMod . ctrEnv) $ insert n (bind (is1, is2) loc)) $ cont
       DeclSMTOption s1 s2 -> do
         local (over z3Options $ M.insert s1 s2) $ cont
@@ -746,18 +1168,18 @@ checkDecl d cont = withSpan (d^.spanOf) $
           ufs <- view $ curMod . userFuncs
           assert ("Duplicate function: " ++ show s) $ not $ member s ufs
           (((is, ps), xs), a) <- unbind bnd
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is) $ do 
-              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) ps) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-                    _ <- inferAExpr a
-                    return ()
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
+              withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                  _ <- inferAExpr a
+                  return ()
           local (over (curMod . userFuncs) $ insert s (FunDef bnd)) $ cont
       DeclPredicate s bnd -> do 
         preds <- view $ curMod . predicates
         assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
         ((is, xs), p) <- unbind bnd
-        local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do 
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $
+        local (set tcScope $ TcGhost False) $ do
+            withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
@@ -766,28 +1188,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
         case ndecl of 
           DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
           DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
-          DeclRO strictness b -> do
-              (xs, (a, p, nts, lem)) <- unbind b
-              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do 
-                local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do 
-                    withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-                        logTypecheck $ "Checking RO decl: " ++ n
-                        _ <- inferAExpr a
-                        checkProp p
-                        forM_ nts $ \nt -> do
-                            checkNameType nt
-                            checkROName nt
-                        case strictness of
-                          ROStrict (Just is) -> do
-                              forM_ is $ \i -> do
-                                  assert ("Hash index " ++ show i ++ " not in scope") $ i < length nts
-                          _ -> return ()
-              skipROUnique <- view $ envFlags . fSkipRODisj
-              when (not skipROUnique) $ do
-                  logTypecheck $ "Checking RO uniqueness of " ++ n
-                  checkROUnique n (bind ((is1, is2), xs) (a, p, lem))
-                  checkROSelfDisjoint n (bind ((is1, is2), xs) (a, p))
-              local (over (curMod . nameDefs) $ insert n $ bind (is1, is2) $ RODef strictness $ bind xs (a, p, nts)) cont
+          DeclAbbrev bne -> addNameAbbrev n (is1, is2) bne $ cont
       DeclModule n imt me omt -> do
           ensureNoConcreteDefs
           md <- case me^.val of
@@ -807,34 +1208,31 @@ checkDecl d cont = withSpan (d^.spanOf) $
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
           ((is1, is2), l) <- unbind isl
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
-              local (over inScopeIndices $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
-                  normLocality l
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
+              normLocality l
           let df = DefHeader isl 
           addDef n df $ cont
       DeclDef n o1 -> do
-          ((is1, is2), (l, o2)) <- unbind o1
-          (xs, (opreReq, tyAnn, bdy)) <- unbind o2
-          let preReq = case opreReq of
-                         Nothing -> pTrue
-                         Just p -> p
-          abs_or_body <- local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $ do
-              local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do
+          ((is1, is2), (l, db)) <- unbind o1
+          dspec <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
                   normLocality l
-                  forM_ xs $ \(x, t) -> checkTy $ unembed t
-                  withVars (map (\(x, t) -> (x, (ignore $ show x, Nothing, unembed t))) xs) $ do
+                  withDepBind db $ \args (opreReq, tyAnn, bdy) -> do   
+                      forM_ args $ \(_, _, t) -> checkTy t
+                      let preReq = case opreReq of
+                             Nothing -> pTrue
+                             Just p -> p
                       checkProp preReq
                       checkTy tyAnn
-                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map fst xs)
+                      let happenedProp = pHappened (topLevelPath n) (map mkIVar is1, map mkIVar is2) (map aeVar' $ map (\(x, _, _) -> x) args)
                       x <- freshVar
                       case bdy of
-                        Nothing -> return $ Nothing
+                        Nothing -> return $ (preReq, tyAnn, Nothing)
                         Just bdy' -> do
                           onlyCheck <- view $ envFlags . fOnlyCheck
                           let doCheck = (onlyCheck == Nothing) || (onlyCheck == Just n)
                           when doCheck $ do 
                               bdy'' <- ANF.anf bdy'
-                              logTypecheck $ "Type checking " ++ n
+                              logTypecheck $ owlpretty $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
                               pushLogTypecheckScope
                               local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $ 
@@ -842,50 +1240,90 @@ checkDecl d cont = withSpan (d^.spanOf) $
                                   _ <- checkExpr (Just tyAnn) bdy''
                                   popLogTypecheckScope
                                   t1 <- liftIO $ getCurrentTime
-                                  logTypecheck $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
-                          return $ Just bdy'
-          let is_abs = ignore $ case abs_or_body of
-                         Nothing -> True
-                         Just _ -> False
-          let df = Def $ bind (is1, is2) $ DefSpec is_abs l (bind xs (preReq, tyAnn, abs_or_body))
+                                  logTypecheck $ owlpretty $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
+                          return $ (preReq, tyAnn, Just bdy')
+          let is_abs = ignore $ unsafeMapDepBind dspec $ \(_, _, o) -> not $ isJust o
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l dspec
           addDef n df $ cont
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
           ((is, xs), (l1, l2)) <- unbind ils
-          local (over inScopeIndices $ mappend $ map (\i -> (i, IdxGhost)) is) $ do
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
+          withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
               checkLabel l1
               checkLabel l2
-          local (over (curMod . advCorrConstraints) $ \xs -> ils : xs ) $ cont
+          let cc = bind (is, xs) $ CorrImpl l1 l2
+          local (over (curMod . advCorrConstraints) $ \xs -> cc : xs ) $ cont
+      (DeclCorrGroup ils) -> do
+          ensureNoConcreteDefs
+          ((is, xs), ls) <- unbind ils
+          withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+            withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+              mapM_ checkLabel ls
+          let cc = bind (is, xs) $ CorrGroup ls
+          local (over (curMod . advCorrConstraints) $ \xs -> cc : xs ) $ cont
       (DeclStruct n ixs) -> do
-          logTypecheck $ "Checking struct: " ++ n
+          logTypecheck $ owlpretty $ "Checking struct: " ++ n
           (is, xs) <- unbind ixs
           dfs <- view detFuncs
           tvars <- view $ curMod . tyDefs
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n tvars
           assert (show $ owlpretty n <+> owlpretty "already defined") $ not $ member n dfs
-          assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : map fst xs
-          local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
-              forM_ xs $ \(x, t) -> do
-                  checkTy t
-                  assert (show $ owlpretty x <+> owlpretty "already defined") $ not $ member x dfs
-                  llbl <- tyLenLbl t
-                  flowCheck llbl advLbl
-          let projs = map (\(x, t) ->  (x, StructProjector n x)) xs 
+          assert (show $ owlpretty "Duplicate constructor / destructor") $ uniq $ n : depBindNames xs
+          snames_ <- withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+              withDepBind xs $ \args _ -> do 
+                  snames <- forM args $ \(x, s, t) -> do 
+                      checkTy t
+                      assert (show $ owlpretty s <+> owlpretty "already defined") $ not $ member s dfs
+                      checkTyPubLenOrGhost t
+                      return s
+                  return snames
+          let snames = unsafeMapDepBind snames_ id 
+          ufuncs <- view $ curMod . userFuncs
+          let projs = map (\s -> (s, StructProjector n s)) snames 
+          forM_ snames $ \sname -> 
+              assert (show $ owlpretty sname <+> owlpretty "already defined") $ not $ member sname ufuncs
           local (over (curMod . userFuncs) $ insert n (StructConstructor n)) $ 
               local (over (curMod . userFuncs) $ mappend projs) $ 
                   addTyDef n (StructDef ixs) $ 
                       cont
       (DeclEnum n b) -> do
         (is, bdy) <- unbind b
-        local (set (inScopeIndices) $ map (\i -> (i, IdxGhost)) is) $
+        withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
             mapM_ checkTy $ catMaybes $ map snd bdy
+        assert ("Enum cases must be unique") $ uniq $ map fst bdy
         assert (show $ "Enum " ++ n ++ " must be nonempty") $ length bdy > 0
         let constrs = map (\(x, ot) -> (x, EnumConstructor n x)) bdy 
         let tests = map (\(x, ot) -> (x ++ "?", EnumTest n x)) bdy
         local (over (curMod . userFuncs) $ mappend (constrs ++ tests)) $ 
             addTyDef n (EnumDef b) $
                 cont
+      DeclNameType s bnt -> do
+          tds <- view $ curMod . nameTypeDefs
+          assert ("Duplicate name type name: " ++ s) $ not $ member s tds
+          (((is, ps), xs), nt) <- unbind bnt
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                    checkNameType nt
+          local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
+      DeclODH s b -> do
+          ensureNoConcreteDefs
+          ((is, ps), (ne1, ne2, kdf)) <- unbind b
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
+                nt <- getNameType ne1
+                nt2 <- getNameType ne2
+                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
+                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
+                b1 <- nameExpIsLocal ne1
+                b2 <- nameExpIsLocal ne2
+
+                assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
+                assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
+                let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
+                assert ("All indices in odh must appear in name expressions") indsLocal
+                checkNameType $ Spanned (d^.spanOf) $ NT_KDF KDF_IKMPos kdf
+          ensureODHDisjoint (bind (is, ps) (ne1, ne2))
+          local (over (curMod . odh) $ insert s b) $ cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -909,13 +1347,29 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
+ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
+ensureODHDisjoint b = do
+    cur_odh <- view $ curMod . odh
+    ((is, ps), (ne1, ne2)) <- unbind b
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
+            forM_ cur_odh $ \(_, bnd2) -> do
+                    ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
+                    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps2) $ do
+                            let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+                            let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
+                                            (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
+                            let pdisj = pNot $ pOr peq1 peq2
+                            (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+                            assert ("ODH Disjointness") b
+
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
     case ne^.val of
-      NameConst _ (PRes (PDot p s)) _ -> do
+      NameConst _ (PRes (PDot p s)) [] -> do
           p' <- curModName
           return $ p `aeq` p'
-      PRFName ne _ -> nameExpIsLocal ne
+      -- PRFName ne _ -> nameExpIsLocal ne
 
 ensureOnlyLocalNames :: AExpr -> Check ()
 ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do 
@@ -932,18 +1386,19 @@ ensureOnlyLocalNames ae = withSpan (ae^.spanOf) $ do
       AEGetVK n -> do
           b <- nameExpIsLocal n
           assert "Random oracle decl must only involve local names" b
-      AEPackIdx _ a -> ensureOnlyLocalNames a
       AELenConst _ -> return ()
       AEInt _ -> return ()
 
-checkROName :: NameType -> Check ()
-checkROName nt =  
+nameTypeUniform :: NameType -> Check ()
+nameTypeUniform nt =  
     case nt^.val of
-      NT_Nonce -> return ()
+      NT_Nonce _ -> return ()
       NT_StAEAD _ _ _ _ -> return ()
       NT_Enc _ -> return ()
+      NT_App p ps as -> resolveNameTypeApp p ps as >>= nameTypeUniform
       NT_MAC _ -> return ()
-      _ -> typeError $ "Bad RO Name: " ++ show (owlpretty nt)
+      NT_KDF _ _ -> return ()
+      _ -> typeError $ "Name type must be uniform: " ++ show (owlpretty nt)
 
 -- We then fold the list of decls, checking later ones after processing the
 -- earlier ones.
@@ -955,54 +1410,68 @@ checkDeclsWithCont :: [Decl] -> Check a -> Check a
 checkDeclsWithCont [] k = k
 checkDeclsWithCont (d:ds) k = checkDecl d $ checkDeclsWithCont ds k
 
-mkForallIdx :: [IdxVar] -> Prop -> Prop
-mkForallIdx [] p = p
-mkForallIdx (i:is) p = mkSpanned $ PQuantIdx Forall (bind i (mkForallIdx is p))
-
-openROData :: Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> (AExpr -> Prop -> Check a) -> Check a
-openROData b k = do 
-    (((is1, is2), xs), (a, preq)) <- unbind b
-    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-                k a preq 
-
 withTypeErrorHook :: (forall a. String -> Check a) -> Check b -> Check b
 withTypeErrorHook f k = do
     local (\e -> e { _typeErrorHook = f }) k 
-
-checkROUnique :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop, Expr) -> Check ()
-checkROUnique roname b = do
-    pres <- collectROPreimages
-    (((is1, is2), xs), (a, preq, elem)) <- unbind b
-    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) is2) $ do                
-            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs) $ do
-                forM_ pres $ \(pth, p) -> 
-                    openROData p $ \a' preq' -> do 
-                        elem' <- ANF.anf elem
-                        withTypeErrorHook (\x -> typeError' $ "Cannot prove RO disjointness between " ++ roname ++ " and " ++ show (owlpretty pth) ++ ": \n             " ++ x) $ do
-                                let pdisj = pImpl (pAnd preq preq') (pNot $ pEq a a')
-                                _ <- checkExpr (Just $ tLemma pdisj) elem'
-                                return ()
-
-checkROSelfDisjoint :: String -> Bind (([IdxVar], [IdxVar]), [DataVar]) (AExpr, Prop) -> Check ()
-checkROSelfDisjoint roname b = do
-    (((is1, ps1), xs1), (a1, preq1)) <- unbind b
-    (((is2, ps2), xs2), (a2, preq2)) <- unbind b
-    when ((length is1 + length ps1 + length xs1) > 0) $ do
-        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is1) $
-            local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps1) $ do                
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs1) $ do
-                    local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxSession)) is2) $
-                        local (over (inScopeIndices) $ mappend $ map (\i -> (i, IdxPId)) ps2) $ do                
-                            withVars (map (\x -> (x, (ignore $ show x, Nothing, tData advLbl advLbl))) xs2) $ do
-                                let idxs_eq = foldr pAnd pTrue $ zipWith (\i1 i2 -> mkSpanned $ PEqIdx (IVar (ignore def) i1) (IVar (ignore def) i2)) (is1 ++ ps1) (is2 ++ ps2)
-                                let xs_eq = foldr pAnd pTrue $ zipWith (\x y -> pEq (aeVar' x) (aeVar' y)) xs1 xs2
-                                let pdisj = pImpl (pAnd preq1 preq2) $ pImpl (pEq a1 a2) $ (pAnd idxs_eq xs_eq)
-                                (_, b) <- SMT.smtTypingQuery "disj" $ SMT.symAssert pdisj
-                                assert ("RO self disjointness check failed: " ++ roname) b
                                         
+
+checkNoTopLbl :: Bool -> Label -> Check ()
+checkNoTopLbl allowGhost l = 
+    case l^.val of
+      LTop -> typeError $ "Top label not allowed here"
+      LJoin l1 l2 -> do
+          checkNoTopLbl allowGhost l1
+          checkNoTopLbl allowGhost l2
+      LRangeIdx il -> do
+          (i, l) <- unbind il
+          withIndices [(i, (ignore $ show i, IdxGhost))] $ checkNoTopLbl allowGhost l
+      LRangeVar il -> do
+          (x, l) <- unbind il
+          checkNoTopLbl allowGhost l
+      LGhost -> if allowGhost then return () else typeError $ "Ghost label not allowed here"
+      _ -> return ()
+
+
+checkNoTopTy :: Bool -> Ty -> Check ()
+checkNoTopTy allowGhost t = 
+    case t^.val of
+      TData l1 l2 _ -> do
+          checkNoTopLbl allowGhost l1
+          checkNoTopLbl allowGhost l2
+      TDataWithLength l _ -> checkNoTopLbl allowGhost l
+      TRefined t _ _ -> checkNoTopTy allowGhost t
+      TOption t -> checkNoTopTy allowGhost t
+      TCase _ t1 t2 -> do
+          checkNoTopTy allowGhost t1
+          checkNoTopTy allowGhost t2
+      TBool l -> checkNoTopLbl allowGhost l
+      TGhost -> if allowGhost then return () else typeError $ "Ghost type not allowed here"
+      TAdmit -> typeError $ "Admit type not allowed here"
+      TExistsIdx s it -> do
+          (i, t) <- unbind it
+          withIndices [(i, (ignore s, IdxGhost))] $ checkNoTopTy allowGhost t
+      TConst s ps -> do
+          td <- getTyDef s
+          forM_ ps checkParam
+          forM_ ps $ \p -> 
+              case p of
+                ParamLbl l -> checkNoTopLbl allowGhost l
+                ParamTy t -> checkNoTopTy allowGhost t
+                _ -> return ()
+          case td of
+            TyAbstract -> return ()
+            TyAbbrev t1 -> checkNoTopTy allowGhost t1
+            StructDef ib -> do
+                (is, xs) <- unbind ib
+                _ <- withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    withDepBind xs $ \args _ -> do 
+                        forM_ args $ \(_, _, t) -> checkNoTopTy True t
+                return ()
+            EnumDef b -> do
+                ed <- extractEnum ps (show s) b
+                forM_ ed $ \(_, ot) -> traverse (checkNoTopTy allowGhost) ot
+      _ -> return ()      
+          
 
 
 
@@ -1010,32 +1479,63 @@ checkNameType :: NameType -> Check ()
 checkNameType nt = withSpan (nt^.spanOf) $ 
     case nt^.val of
       NT_DH -> return ()
-      NT_Sig t -> checkTy t
-      NT_Nonce -> return ()
-      NT_PRF xs -> do
-          assert ("PRF value labels not unique") $ uniq $ map fst xs
-          forM_ xs (\(_, (a, t)) -> do
-              _ <- inferAExpr a
-              checkNameType t)
-          (_, b) <- SMT.smtTypingQuery "prf" $ SMT.symListUniq (map (fst . snd) xs)
-          assert "PRF uniqueness check failed" b
+      NT_Sig t -> do
+          checkTy t
+          checkNoTopTy False t
+      NT_Nonce l -> do
+          assert ("Unknown length constant: " ++ l) $ l `elem` lengthConstants 
+          return ()
+      NT_KDF kdfPos b -> do 
+          (((sx, x), (sy, y), (sself, xself)), cases) <- unbind b 
+          withVars [(x, (ignore sx, Nothing, tGhost)), 
+                    (y, (ignore sy, Nothing, tGhost)),
+                    (xself, (ignore sself, Nothing, tGhost))] $ do
+              assert ("KDF cases must be non-empty") $ not $ null cases
+              ps <- forM cases $ \bcase -> do
+                  (ixs, (p, nts)) <- unbind bcase 
+                  withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) ixs) $ do 
+                      withSpan (p^.spanOf) $ 
+                          assert ("Self variable must not appear in precondition") $ 
+                              not $ xself `elem` (toListOf fv p)
+                      checkProp p
+                      forM_ nts $ \(str, nt) -> do
+                          checkNameType nt
+                          nameTypeUniform nt
+                      return $ mkExistsIdx ixs p 
+              (_, b) <- SMT.smtTypingQuery "disjoint" $ SMT.disjointProps ps
+              assert ("KDF disjointness check failed") b
+          return ()
       NT_Enc t -> do
         checkTy t
+        checkNoTopTy False t
         checkTyPubLen t
-      NT_StAEAD t xaad p np -> do
+      NT_App p ps as -> do
+          resolveNameTypeApp p ps as >>= checkNameType
+      NT_StAEAD t xsaad p ypat -> do
           checkTy t
+          checkNoTopTy False t
           checkTyPubLen t
-          (x, aad) <- unbind xaad
-          withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp aad
-          checkNoncePattern np
+          ((x, slf), aad) <- unbind xsaad
+          withVars [(x, (ignore $ show x, Nothing, tGhost)), (slf, (ignore $ show slf, Nothing, tGhost))] $ checkProp aad
+          (y, pat) <- unbind ypat
+          (y', _) <- freshen y
+          let pat' = subst y (aeVar' y') pat
+          let ghostNonceTy = tRefined tGhost ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "counter")
+          (_, pat_inj) <- withVars [(y, (ignore $ show y, Nothing, ghostNonceTy)), (y', (ignore $ show y', Nothing, ghostNonceTy))] $  local (set tcScope $ TcGhost False) $ do
+              _ <- inferAExpr pat
+              SMT.smtTypingQuery "pat_injectivity" $ SMT.symAssert $
+                  pImpl (pEq pat pat') (pEq (aeVar' y) (aeVar' y'))
+          assert ("Pattern injectivity failed") $ pat_inj
           checkCounter p
       NT_PKE t -> do
           checkTy t
+          checkNoTopTy False t
           checkTyPubLen t
-      NT_MAC t -> checkTy t
+      NT_MAC t -> do
+          checkTy t
+          checkNoTopTy False t
 
-checkNoncePattern :: NoncePattern -> Check ()
-checkNoncePattern NPHere = return ()
+
 
 checkCounter :: Path -> Check ()
 checkCounter p@(PRes (PDot p0 s)) = do
@@ -1056,18 +1556,19 @@ checkParam (ParamLbl l) =  checkLabel l
 checkParam (ParamTy t) =  checkTy t
 checkParam (ParamIdx i oann) = 
     case oann of
-      Nothing -> local (set tcScope TcGhost) $ checkIdx i
-      Just IdxSession -> local (set tcScope TcGhost) $ checkIdxSession i
-      Just IdxPId -> local (set tcScope TcGhost) $ checkIdxPId i
+      Nothing -> local (set tcScope $ TcGhost False) $ checkIdx i
+      Just IdxSession -> local (set tcScope $ TcGhost False) $ checkIdxSession i
+      Just IdxPId -> local (set tcScope $ TcGhost False) $ checkIdxPId i
       Just IdxGhost -> typeError $ "Ghost annotation not supported yet"
 checkParam (ParamName ne) = getNameTypeOpt ne >> return ()
 
 checkTy :: Ty -> Check ()
 checkTy t = withSpan (t^.spanOf) $ 
-    local (set tcScope $ TcGhost) $
+    local (set tcScope $ TcGhost False) $ do
         case t^.val of
           TUnit -> return ()
           TBool l -> checkLabel l
+          TGhost -> return ()
           (TData l1 l2 _) -> do
               checkLabel l1
               checkLabel l2
@@ -1092,17 +1593,18 @@ checkTy t = withSpan (t^.spanOf) $
                 TyAbbrev t ->
                     assert (show $ owlpretty "Params should be empty for abbrev " <> owlpretty s) $ length ps == 0
                 StructDef ib -> do
-                    _ <- extractStruct ps (show s) ib
-                    return ()
+                    (is, dp) <- unbind ib
+                    idxs <- getStructParams ps
+                    assert (show $ owlpretty "Wrong index arity for struct " <> owlpretty s) $ length is == length idxs
                 EnumDef b -> do
                     _ <- extractEnum ps (show s) b
                     return ()
           (TName n) -> do
               _ <- getNameTypeOpt n
               return ()
-          (TExistsIdx it) -> do
+          (TExistsIdx s it) -> do
               (i, t) <- unbind it
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkTy t
+              withIndices [(i, (ignore s, IdxGhost))] $ checkTy t
           (TVK n) -> do
               nt <- getNameType n
               case nt^.val of
@@ -1125,72 +1627,75 @@ checkTy t = withSpan (t^.spanOf) $
                 (NT_DH, NT_DH) -> return ()
                 (NT_DH, _) -> typeError $ show $ ErrWrongNameType n "DH" nt
                 (_, NT_DH) -> typeError $ show $ ErrWrongNameType m "DH" nt
-          (TUnion t1 t2) -> do
-              checkTy t1
-              checkTy t2
           (TCase p t1 t2) -> do
-              local (set tcScope $ TcGhost) $ checkProp p
+              local (set tcScope $ TcGhost False) $ checkProp p
               checkTy t1
               checkTy t2
           TAdmit -> return ()
-
-
-
+          THexConst a -> 
+              assert ("HexConst must have even length") $ length a `mod` 2 == 0
 
 
 tyLenLbl :: Ty -> Check Label
 tyLenLbl t =
-    case t^.val of
-      TName _ -> return zeroLbl
-      TVK _ -> return zeroLbl
-      TDH_PK _ -> return zeroLbl
-      TEnc_PK _ -> return zeroLbl
-      TSS _ _ -> return zeroLbl
-      TUnit -> return zeroLbl
-      TBool _ -> return zeroLbl
-      TData _ l _ -> return l
-      TDataWithLength _ a -> do
-          t <- inferAExpr a
-          coveringLabel t
-      TRefined t' _ _ -> tyLenLbl t'
-      TOption t' -> do
-          l' <- tyLenLbl t'
-          return $ joinLbl advLbl l'
-      TConst s ps -> do
-          td <- getTyDef s
-          case td of
-            TyAbstract -> return advLbl
-            TyAbbrev t -> tyLenLbl t
-            StructDef b -> do
-                bdy <- extractStruct ps (show s) b
-                local (set tcScope $ TcGhost) $ do
-                    ls <- forM bdy $ \(_, t) -> tyLenLbl t
-                    return $ foldr joinLbl zeroLbl ls
-            EnumDef b -> do
-                bdy <- extractEnum ps (show s) b
-                ls <- forM bdy $ \(_, ot) ->
-                    case ot of
-                      Just t' -> tyLenLbl t'
-                      Nothing -> return zeroLbl
-                return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
-      (TCase _ t1 t2) -> do
-          t' <- normalizeTy t
-          case t'^.val of
-            TCase p _ _ -> do
-                l1 <- tyLenLbl t1
-                l2 <- tyLenLbl t2
-                return $ joinLbl l1 l2    
-            _ -> tyLenLbl t'
-      (TUnion t1 t2) -> do
-          l1 <- tyLenLbl t1
-          l2 <- tyLenLbl t2
-          return $ joinLbl l1 l2
-      (TExistsIdx it) -> do
-          (i, t) <- unbind it
-          l <- local (over (inScopeIndices) $ insert i IdxGhost) $ tyLenLbl t
-          return $ mkSpanned $ LRangeIdx $ bind i l
-      TAdmit -> return zeroLbl
-
+    go False t
+        where
+            go inStruct t = 
+                case t^.val of
+                  TName _ -> return zeroLbl
+                  TVK _ -> return zeroLbl
+                  TDH_PK _ -> return zeroLbl
+                  TEnc_PK _ -> return zeroLbl
+                  TSS _ _ -> return zeroLbl
+                  TUnit -> return zeroLbl
+                  TBool _ -> return zeroLbl
+                  TGhost -> return $ if inStruct then zeroLbl else ghostLbl
+                  TData _ l _ -> return l
+                  TDataWithLength _ a -> do
+                      t <- inferAExpr a
+                      coveringLabel t
+                  TRefined t' _ _ -> go inStruct t'
+                  TOption t' -> do
+                      l' <- go inStruct t'
+                      return $ joinLbl advLbl l'
+                  TConst s ps -> do
+                      td <- getTyDef s
+                      case td of
+                        TyAbstract -> return advLbl
+                        TyAbbrev t -> go inStruct t
+                        StructDef b -> do
+                            (is, xs) <- unbind b
+                            idxs <- getStructParams ps
+                            assert ("Wrong index arity for struct " ++ show (owlpretty s)) $ length is == length idxs
+                            local (set tcScope $ TcGhost False) $ go2 $ substs (zip is idxs) xs
+                                where
+                                    go2 (DPDone _) = return zeroLbl
+                                    go2 (DPVar t sx xk) = do
+                                        l1 <- go True t
+                                        (x, k) <- unbind xk
+                                        l2_ <- withVars [(x, (ignore sx, Nothing, t))] $ go2 k
+                                        let l2 = if x `elem` toListOf fv l2_ then (mkSpanned $ LRangeVar $ bind x l2_) else l2_
+                                        return $ joinLbl l1 l2
+                        EnumDef b -> do
+                            bdy <- extractEnum ps (show s) b
+                            ls <- forM bdy $ \(_, ot) ->
+                                case ot of
+                                  Just t' -> go inStruct t'
+                                  Nothing -> return zeroLbl
+                            return $ joinLbl advLbl (foldr joinLbl zeroLbl ls)
+                  (TCase _ t1 t2) -> do
+                      case t^.val of
+                        TCase p _ _ -> do
+                            l1 <- go inStruct t1
+                            l2 <- go inStruct t2
+                            return $ joinLbl l1 l2    
+                        _ -> go inStruct t
+                  (TExistsIdx s it) -> do
+                      (i, t) <- unbind it
+                      l <- withIndices [(i, (ignore s, IdxGhost))] $ go inStruct t
+                      return $ mkSpanned $ LRangeIdx $ bind i l
+                  TAdmit -> return zeroLbl
+                  THexConst a -> return zeroLbl
 
 
 
@@ -1201,13 +1706,14 @@ checkTyPubLen t0 = laxAssertion $ do
 
 checkLabel :: Label -> Check ()
 checkLabel l =
-    local (set tcScope TcGhost) $
+    local (set tcScope $ TcGhost False) $
         case l^.val of
           (LName n) -> do
               _ <- getNameTypeOpt n
               return ()
           LZero -> return ()
           LAdv -> return ()
+          LGhost -> return ()
           LTop -> return ()
           (LJoin l1 l2) -> do
               checkLabel l1
@@ -1217,12 +1723,19 @@ checkLabel l =
               return ()
           (LRangeIdx il) -> do
               (i, l) <- unbind il
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkLabel l
+              withIndices [(i, (ignore $ show i, IdxGhost))] $ checkLabel l
 
 checkProp :: Prop -> Check ()
 checkProp p =
-    local (set tcScope $ TcGhost) $ withSpan  (p^.spanOf) $ 
+    local (set tcScope $ TcGhost False) $ withSpan  (p^.spanOf) $ do
         case p^.val of
+          PHonestPKEnc ne a -> do
+              nt <- local (set tcScope $ TcGhost False) $  getNameType ne
+              case nt^.val of
+                NT_PKE _ -> do
+                    _ <- inferAExpr a
+                    return ()
+                _ -> typeError $ "Not a PKE key: " ++ show (owlpretty ne)
           PTrue -> return ()
           PFalse -> return ()
           (PAnd p1 p2) -> do
@@ -1239,13 +1752,14 @@ checkProp p =
               checkLabel l1
               checkLabel l2
               return ()
-          (PQuantIdx _ ip) -> do
+          (PQuantIdx _ _ ip) -> do
               (i, p) <- unbind ip
-              local (over (inScopeIndices) $ insert i IdxGhost) $ checkProp p
-          (PQuantBV _ xp) -> do
+              withIndices [(i, (ignore $ show i, IdxGhost))] $ checkProp p
+          (PQuantBV _ _ xp) -> do
               (x, p) <- unbind xp
-              withVars [(x, (ignore $ show x, Nothing, tData advLbl advLbl))] $ checkProp p 
+              withVars [(x, (ignore $ show x, Nothing, tGhost))] $ checkProp p 
           PApp s is xs -> do
+              ts <- mapM inferAExpr xs
               p <- extractPredicate s is xs
               checkProp p
           PAADOf ne x -> do
@@ -1257,6 +1771,11 @@ checkProp p =
                       NT_StAEAD _ _ _ _ -> return ()
                       _ -> typeError $ "Wrong name type for " ++ show (owlpretty ne) ++ ": expected StAEAD" 
                 Nothing -> typeError $ "Name cannot be abstract here: " ++ show (owlpretty ne)
+          PInODH salt ikm info -> do
+             _ <- inferAExpr salt
+             _ <- inferAExpr ikm
+             _ <- inferAExpr info
+             return ()
           (PHappened s (idxs1, idxs2) xs) -> do
               -- TODO: check that method s is in scope?
               _ <- mapM inferAExpr xs
@@ -1270,11 +1789,6 @@ checkProp p =
           (PEq x y) -> do
               _ <- inferAExpr x
               _ <- inferAExpr y
-              return ()
-          (PRO x y i) -> do
-              _ <- inferAExpr x
-              _ <- inferAExpr y
-              assert ("weird case for PRO i") $ i >= 0
               return ()
           (PEqIdx i1 i2) -> do
               checkIdx i1
@@ -1298,15 +1812,21 @@ tryFlowsTo :: Label -> Label -> Check (Maybe Bool)
 tryFlowsTo l1' l2' = do
     l1 <- normalizeLabel l1'
     l2 <- normalizeLabel l2'
-    tyc <- view tyContext
+    tryFlowsTo' (l1, l2)
+
+tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2
     return b
 
 decideProp :: Prop -> Check (Maybe Bool)
 decideProp p = do
-    tyc <- view tyContext
-    (fn, r) <- SMT.symDecideProp p
-    return r
+    p' <- normalizeProp p
+    case p'^.val of
+      PTrue -> return $ Just True
+      PFalse -> return $ Just False
+      _ -> do 
+        (fn, r) <- SMT.symDecideProp p'
+        return r
 
 flowCheck :: Label -> Label -> Check ()
 flowCheck l1 l2 = laxAssertion $ do
@@ -1316,153 +1836,14 @@ flowCheck l1 l2 = laxAssertion $ do
 -- Ensure l flows to LAdv
 
 
-stripNameExp :: DataVar -> NameExp -> Check NameExp
-stripNameExp x e = 
-    case e^.val of
-      NameConst _ _ (Just (as, _)) ->
-          if x `elem` (concat $ map getAExprDataVars as) then typeError ("stripNameExp: " ++ show (owlpretty x) ++ " is in " ++ show (owlpretty as)) else return e
-      _ -> return e
-
-stripLabel :: DataVar -> Label -> Check Label
-stripLabel x l = return l
-
-getAExprDataVars :: AExpr -> [DataVar]
-getAExprDataVars a = toListOf fv a
-
-getPropDataVars :: Prop -> [DataVar]
-getPropDataVars p = toListOf fv p
-
-getLabelDataVars :: Label -> [DataVar]
-getLabelDataVars p = toListOf fv p
-
-getTyDataVars :: Ty -> [DataVar]
-getTyDataVars p = toListOf fv p
-
-getTyIdxVars :: Ty -> [IdxVar]
-getTyIdxVars p = toListOf fv p
 
 
--- get strongest type that doesn't mention x
--- t <= stripTy x t
--- p ==> stripProp x p 
--- l <= stripLabel x l
 
--- Find strongest p' such that p ==> p', and x \notin p'.
--- Always succeeds.
-stripProp :: DataVar -> Prop -> Check Prop
-stripProp x p =
-    case p^.val of
-      PTrue -> return p
-      PFalse -> return p
-      PAnd p1 p2 -> do
-          p1' <- stripProp x p1
-          p2' <- stripProp x p2
-          return $ mkSpanned $ PAnd p1' p2'
-      POr p1 p2 -> do
-          p1' <- stripProp x p1
-          p2' <- stripProp x p2
-          return $ mkSpanned $ POr p1' p2'
-      PNot p' -> do
-          -- If x in p, replace the clause with true
-          if x `elem` getPropDataVars p' then return pTrue else return p'
-      PEq a1 a2 ->
-          -- if x in either side, replace clause with true
-          if (x `elem` getAExprDataVars a1) || (x `elem` getAExprDataVars a2) then return pTrue else return p
-      PEqIdx _ _ -> return p
-      PImpl p1 p2 -> do
-          if x `elem` getPropDataVars p1 then return pTrue else do
-              p2' <- stripProp x p2
-              return $ pImpl p1 p2'
-      PFlow l1 l2 -> do
-          if (x `elem` getLabelDataVars l1) || (x `elem` getLabelDataVars l2) then return pTrue else return p
-      PQuantIdx q ip -> do
-          (i, p') <- unbind ip
-          p'' <- stripProp x p'
-          return $ mkSpanned $ PQuantIdx q (bind i p'')
-      PQuantBV q xp -> do
-          (y, p) <- unbind xp               
-          p' <- stripProp x p
-          return $ mkSpanned $ PQuantBV q (bind y p')
-      PHappened s _ xs -> do
-          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
-      PLetIn a yp -> 
-          if x `elem` (getAExprDataVars a) then return pTrue else do
-            (y, p') <- unbind yp
-            p'' <- stripProp x p'
-            return $ mkSpanned $ PLetIn a (bind y p'')
-      PApp a is xs -> do
-          if x `elem` concat (map getAExprDataVars xs) then return pTrue else return p
-      PAADOf ne y -> do
-          ne' <- stripNameExp x ne
-          if x `elem` getAExprDataVars y then return pTrue else return p
-      PRO a1 a2 i -> do
-          if x `elem` (getAExprDataVars a1 ++ getAExprDataVars a2) then return pTrue else return p 
-
-stripTy :: DataVar -> Ty -> Check Ty
-stripTy x t =
-    case t^.val of
-      TData l1 l2 s -> do
-          l1' <- stripLabel x l1
-          l2' <- stripLabel x l2
-          return $ Spanned (t^.spanOf) $ TData l1' l2' s
-      TDataWithLength l1 ae -> do
-          l' <- stripLabel x l1
-          if x `elem` getAExprDataVars ae then return $ tData l' l' else return $ tDataWithLength l' ae
-      TRefined t1 s yp -> do
-          (y, p) <- unbind yp
-          t' <- stripTy x t1
-          p' <- stripProp x p
-          return $ mkSpanned $ TRefined t' s (bind y p')
-      TOption t -> do
-          t' <- stripTy x t
-          return $ mkSpanned $ TOption t'
-      TCase p t1 t2 -> do
-          withSpan (t^.spanOf) $ 
-              assert ("stripTy failed on TCase: free variable " ++ show x ++ " should not appear in proposition of " ++ show (owlpretty t)) $ 
-                (not $ x `elem` getPropDataVars p)
-          t1' <- stripTy x t1
-          t2' <- stripTy x t2
-          return $ mkSpanned $ TCase p t1' t2'
-      TConst s ps -> do
-          forM_ ps $ \p ->
-              case p of
-                ParamAExpr a ->
-                    if x `elem` getAExprDataVars a then typeError "Hard case for TConst" else return ()
-                ParamLbl l ->
-                    if x `elem` getLabelDataVars l then typeError "Hard case for TConst" else return ()
-                ParamTy t ->
-                    if x `elem` getTyDataVars t then typeError "Hard case for TConst" else return ()
-                _ -> return ()
-          return t
-      TBool l -> do
-          l' <- stripLabel x l
-          return $ mkSpanned $ TBool l'
-      TUnion t1 t2 -> do
-          t1' <- stripTy x t1
-          t2' <- stripTy x t2
-          return $ mkSpanned $ TUnion t1' t2'
-      TUnit -> return t
-      TName n -> do
-          n' <- stripNameExp x n
-          return $ mkSpanned $ TName n'
-      TVK n -> do
-          n' <- stripNameExp x n
-          return $ mkSpanned $ TVK n'
-      TDH_PK n -> do
-          n' <- stripNameExp x n
-          return $ mkSpanned $ TDH_PK n'
-      TEnc_PK n -> do
-          n' <- stripNameExp x n
-          return $ mkSpanned $ TEnc_PK n'
-      TSS n m -> do
-          n' <- stripNameExp x n
-          m' <- stripNameExp x m
-          return $ mkSpanned $ TSS n' m'
-      TAdmit -> return t
-      TExistsIdx it -> do
-          (i, t) <- unbind it
-          t' <- stripTy x t
-          return $ mkSpanned $ TExistsIdx $ bind i t
+stripTys :: [DataVar] -> Ty -> Check Ty
+stripTys [] t = return t
+stripTys (x:xs) t = do
+    t' <- stripTy x t
+    stripTys xs t'
 
 checkEndpoint :: Endpoint -> Check ()
 checkEndpoint (Endpoint x) = do
@@ -1474,7 +1855,7 @@ checkEndpoint (EndpointLocality l) = do
 
 getOutTy :: Maybe Ty -> Ty -> Check Ty
 getOutTy ot t1 = 
-    normalizeTy =<< case ot of 
+    case ot of 
       Nothing -> return t1
       Just t2 -> do
           assertSubtype t1 t2
@@ -1483,24 +1864,26 @@ getOutTy ot t1 =
 ensureNonGhost :: Check ()
 ensureNonGhost = do
     s <- view tcScope
-    assert "Cannot be in ghost here" $ not $ s `aeq` TcGhost        
+    assert "Cannot be in ghost here" $ not $ isGhost s 
+
 
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
-checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do 
+checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set expectedTy ot) $ do 
     case e^.val of
       ECrypt (CLemma lem) aes -> do -- Type check lemma arguments in ghost
-          args <- local (set tcScope TcGhost) $ forM aes $ \a -> do
+          args <- local (set tcScope $ TcGhost False) $ forM aes $ \a -> do
               t <- inferAExpr a
-              t' <- normalizeTy t
-              return (a, t')
-          getOutTy ot =<< checkCryptoOp (CLemma lem) args
+              return (a, t)
+          openArgs args $ \args' -> 
+              getOutTy ot =<< checkCryptoOp (CLemma lem) args'
       ECrypt cop aes -> do
           args <- forM aes $ \a -> do
               t <- inferAExpr a
-              t' <- normalizeTy t
-              return (a, t')
-          getOutTy ot =<< checkCryptoOp cop args
+              withSpan (a^.spanOf) $ checkNoTopTy False t
+              return (a, t)
+          openArgs args $ \args' -> 
+            getOutTy ot =<< checkCryptoOp cop args'
       (EInput sx xsk) -> do
           ensureNonGhost
           ((x, s), k) <- unbind xsk
@@ -1517,45 +1900,75 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           case ep of
             Nothing -> return ()
             Just ep -> checkEndpoint ep
-          t' <- inferAExpr a
-          l_t <- coveringLabel t'
-          flowCheck l_t advLbl
-          getOutTy ot tUnit
+          t0' <- inferAExpr a
+          openTy t0' $ \t' -> do 
+              l_t <- coveringLabel t'
+              flowCheck l_t advLbl
+              getOutTy ot tUnit
       (EAssert p) -> do
-          local (set tcScope $ TcGhost) $ checkProp p
-          (fn, b) <- local (set tcScope $ TcGhost) $ SMT.smtTypingQuery "assert" $ SMT.symAssert p
+          local (set tcScope $ TcGhost False) $ checkProp p
+          (fn, b) <- local (set tcScope $ TcGhost False) $ SMT.smtTypingQuery "assert" $ SMT.symAssert p
           g <- view tyContext
           assert (show $ ErrAssertionFailed fn p) b
           let lineno =  fst $ begin $ unignore $ e^.spanOf
           getOutTy ot $ tRefined tUnit ("assertion_line_" ++ show lineno) p 
       (EAssume p) -> do
-          local (set tcScope $ TcGhost) $ checkProp p
+          local (set tcScope $ TcGhost False) $ checkProp p
           let lineno =  fst $ begin $ unignore $ e^.spanOf
           getOutTy ot $ tRefined tUnit ("assumption_line_" ++ show lineno) p
       (EAdmit) -> getOutTy ot $ tAdmit
+      (EDebug (DebugCheckMatchesStruct args pth@(PRes (PDot p v)) ps)) -> do 
+          argTys <- mapM inferAExpr args
+          _ <- openArgs (zip args argTys) $ \args' -> do 
+              md <- openModule p
+              case lookup v (md^.tyDefs) of 
+                Just (StructDef idf) -> do
+                    sps <- getStructParams ps
+                    (ixs, dp') <- unbind idf
+                    assert ("Bad number of params for struct") $ length sps == length ixs
+                    let dp = substs (zip ixs sps) dp'
+                    ensureTysMatchDepBind args' dp
+                    getOutTy ot $ tUnit
+                _ -> typeError "Not a struct" 
+          getOutTy ot $ tUnit
+      (EDebug (DebugPrintPathCondition)) -> do
+          pc <- view pathCondition
+          logTypecheck $ owlpretty "Path condition: " <> list (map owlpretty pc)
+          getOutTy ot $ tUnit
       (EDebug (DebugPrintModules)) -> do
           ms <- view openModules
           getOutTy ot $ tUnit
       (EDebug (DebugResolveANF a)) -> do
-          liftIO $ putStrLn $ "Resolving ANF on " ++ show (owlpretty a) ++ ":"
+          logTypecheck $ owlpretty $ "resolving ANF on " ++ show (owlpretty a) ++ ":"
           b <- resolveANF a
-          liftIO $ putStrLn $ "Got " ++ show (owlpretty b)
+          logTypecheck . owlpretty $ "Got " ++ show (owlpretty b)
           getOutTy ot $ tUnit
       (EDebug (DebugPrint s)) -> do
-          liftIO $ putStrLn s
+          logTypecheck $ owlpretty s
           getOutTy ot $ tUnit
-      (EDebug (DebugPrintTyOf a)) -> do
-          t <- local (set tcScope $ TcGhost) $ inferAExpr a
+      (EDebug (DebugPrintTyOf s a)) -> do
+          t <- local (set tcScope $ TcGhost False) $ inferAExpr a
           a' <- resolveANF a
           t' <- normalizeTy t
-          liftIO $ putStrLn $ show $ owlpretty "Type for " <> owlpretty a <> owlpretty ": " <> owlpretty t' 
+          logTypecheck $ owlpretty "Type for " <> owlpretty s <> owlpretty ": " <> owlpretty t' 
+          getOutTy ot $ tUnit
+      (EDebug (DebugHasType s a t)) -> do
+          checkTy t
+          ta' <- local (set tcScope $ TcGhost False) $ inferAExpr a
+          let ta = tRefined ta' ".res" $ pEq (aeVar ".res") a
+          b <- isSubtype ta t
+          logTypecheck $ owlpretty s <+> owlpretty "has type" <+> owlpretty t <> owlpretty ":" <+> owlpretty b 
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTy t)) -> do
           t' <- normalizeTy t
-          liftIO $ putStrLn $ show $ owlpretty t <+> owlpretty "normalizes to: " <> owlpretty t'
+          logTypecheck $ owlpretty t <+> owlpretty "normalizes to: " <> owlpretty t'
           getOutTy ot $ tUnit
-      (EDebug (DebugPrintProp p)) -> do
-          liftIO $ putDoc $ owlpretty p
+      (EDebug (DebugDecideProp p)) -> do
+          b <- decideProp p
+          let pb = case b of
+                     Just v -> owlpretty v
+                     Nothing -> owlpretty "Inconclusive"
+          logTypecheck $ owlpretty "Deciding " <> owlpretty p <> owlpretty ": " <> pb
           getOutTy ot $ tUnit
       (EDebug (DebugPrintTyContext anf)) -> do
           tC <- view tyContext
@@ -1568,72 +1981,84 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
       (EDebug (DebugPrintLabel l)) -> do
           liftIO $ putStrLn $ show $ owlpretty l
           getOutTy ot $ tUnit
-      (EUnionCase a s xe) -> do
-          t <- inferAExpr a
-          (x, e) <- unbind xe
-          case (stripRefinements t)^.val of
-            TUnion t1 t2 -> do
-                logTypecheck $ "First case for EUnionCase: " ++ s
-                pushLogTypecheckScope
-                t1' <- withVars [(x, (ignore s, Nothing, tRefined t1 ".res" (pEq (aeVar ".res") a)))] $ checkExpr ot e
-                popLogTypecheckScope
-                logTypecheck $ "Second case for EUnionCase: " ++ s
-                pushLogTypecheckScope
-                t2' <- withVars [(x, (ignore s, Nothing, tRefined t2 ".res" (pEq (aeVar ".res") a)))] $ checkExpr ot e
-                popLogTypecheckScope
-                assertSubtype t1' t2'
-                getOutTy ot =<< stripTy x t2'
-            _ -> do  -- Just continue
-                t <- withVars [(x, (ignore s, Nothing, t))] $ checkExpr ot e
-                getOutTy ot =<< stripTy x t
-      (EBlock k) -> checkExpr ot k
+      (EBlock k p) -> do
+          tc <- view tcScope
+          let tc' = case (tc, p) of
+                      (TcDef _, True) -> TcGhost True
+                      (TcGhost True, True) -> TcGhost True
+                      _ -> tc
+          local (set tcScope tc') $ checkExpr ot k
       (ELet e tyAnn anf sx xe') -> do
-          case tyAnn of
-            Just t -> checkTy t
-            Nothing -> return ()
-          t1 <- checkExpr tyAnn e
+          let letTriv = xe' `aeq` (bind (s2n ".res") $ mkSpanned $ ERet (aeVar ".res"))
+          tyAnn' <- case tyAnn of
+            Just t -> do
+                checkTy t
+                return $ Just t
+            Nothing -> do
+                return $ if letTriv then ot else Nothing
+          t1 <- (checkExpr tyAnn' e >>= normalizeTy)
+          tc <- view tcScope
           (x, e') <- unbind xe'
           t2 <- withVars [(x, (ignore sx, anf, t1))] (checkExpr ot e')
+          stripTy x t2 >>= normalizeTy
+      ELetGhost a sx xk -> do
+          t <- local (set tcScope $ TcGhost False) $ inferAExpr a
+          t'' <- ghostifyTy a t
+          (x, k) <- unbind xk
+          t2 <- withVars [(x, (ignore sx, Just a, t''))] (checkExpr ot k)
           stripTy x t2
-      (EChooseIdx ip ik) -> do
+      (EChooseIdx s ip ik) -> do
           (ix, p) <- unbind ip
-          local (over inScopeIndices $ insert ix IdxGhost) $ do
+          withIndices [(ix, (ignore s, IdxGhost))] $ do
               checkProp p
-          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists ip
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantIdx Exists (ignore s) ip
           (i, k) <- unbind ik
           getOutTy ot =<< case b of
             Just True -> do
                 x <- freshVar
                 let tx = tLemma (subst ix (mkIVar i) p) 
-                to <- local (over inScopeIndices $ insert i IdxGhost) $ do
+                to <- withIndices [(i, (ignore s, IdxGhost))] $ do
                     withVars [(s2n x, (ignore x, Nothing, tx))] $ checkExpr ot k
                 if i `elem` getTyIdxVars to then
-                    return (tExistsIdx (bind i to))
+                    return (tExistsIdx s (bind i to))
                 else return to
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ checkExpr ot k
+                t' <- withIndices [(i, (ignore s, IdxGhost))] $ checkExpr ot k
                 if i `elem` getTyIdxVars t' then
-                    return (tExistsIdx (bind i t'))
+                    return (tExistsIdx s (bind i t'))
                 else return t'
-      (EUnpack a ixk) -> do
-          t <- inferAExpr a
-          ((i, x), e) <- unbind ixk
-          getOutTy ot =<< case (stripRefinements t)^.val of
-            TExistsIdx jt' -> do
-                (j, t') <- unbind jt'
-                let tx = tRefined (subst j (mkIVar i) t') ".res" (pEq (aeVar ".res") a) 
-                to <- local (over (inScopeIndices) $ insert i IdxGhost) $ do
-                    withVars [(x, (ignore $ show x, Nothing, tx))] $ checkExpr ot e
-                to' <- stripTy x to
-                if i `elem` getTyIdxVars to' then
-                    return (tExistsIdx (bind i to'))
-                else return to'
+      (EChooseBV s ip ik) -> do
+          (x, p) <- unbind ip
+          withVars [(x, (ignore s, Nothing, tGhost))] $ do
+              checkProp p
+          (_, b) <- SMT.symDecideProp $ mkSpanned $ PQuantBV Exists (ignore s) ip
+          (y, k) <- unbind ik
+          getOutTy ot =<< case b of
+            Just True -> do
+                let tx = tRefined tGhost ".x" $ subst x (aeVar ".x") p
+                to <- withVars [(x, (ignore s, Nothing, tx))] $
+                    checkExpr ot $ subst y (aeVar' x) k
+                if x `elem` toListOf fv to then 
+                    stripTy x to
+                else return to
             _ -> do
-                t' <- local (over (inScopeIndices) $ insert i IdxGhost) $ withVars [(x, (ignore $ show x, Nothing, t))] $ checkExpr ot e
-                to' <- stripTy x t'
-                if i `elem` getTyIdxVars to' then
-                    return (tExistsIdx (bind i to'))
-                else return to'
+                to <- withVars [(y, (ignore s, Nothing, tGhost))] $ checkExpr ot k
+                if y `elem` toListOf fv to then stripTy y to else return to
+      (EUnpack a (si, sx) ixk) -> do
+          t0 <- inferAExpr a
+          ((i, x), e_) <- unbind ixk
+          let e = subst i (mkIVar (s2n si)) e_
+          tyOfX <- openTy t0 $ \t -> do
+              case (stripRefinements t)^.val of
+                TExistsIdx _ jt' -> do
+                    (j, t') <- unbind jt'
+                    return $ tRefined (subst j (mkIVar $ s2n si) t') ".res" (pEq (aeVar ".res") a)
+                _ -> return t
+          to <- withIndices [(s2n si, (ignore si, IdxGhost))] $ do
+              withVars [(x, (ignore $ sx, Nothing, tyOfX))] $ do
+                  checkExpr ot e
+          to' <- stripTy x to
+          return $ if (s2n si) `elem` getTyIdxVars to' then (tExistsIdx si (bind i to')) else to'
       (ETLookup pth@(PRes (PDot p n)) a) -> do
           md <- openModule p
           case lookup n (md^.tableEnv) of 
@@ -1682,23 +2107,37 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
                 fl' <- normLocality fl
                 curr_locality' <- normLocality curr_locality
                 assert (show $ owlpretty "Wrong locality for function call") $ fl' `aeq` curr_locality'
-                (xts, (pr, rt, _)) <- unbind o
-                assert (show $ owlpretty "Wrong variable arity for " <> owlpretty f) $ length args == length xts
-                argTys <- mapM inferAExpr args
-                forM (zip xts argTys) $ \((_, t), t') -> assertSubtype t' (unembed t)
-                let (prereq, retTy) = substs (zip (map fst xts) args) (pr, rt)
+                let go (db :: DepBind (Prop, Ty, Maybe Expr)) args = 
+                        case (db, args) of 
+                          (DPDone v, []) -> return v
+                          (DPDone _, _) -> typeError $ "Too many arguments for " ++ show (owlpretty f)
+                          (DPVar _ _ _, []) -> typeError $ "Too few arguments for " ++ show (owlpretty f)
+                          (DPVar t _ xd, a:as) -> do 
+                             t' <- inferAExpr a
+                             assertSubtype t' t
+                             (x, d) <- unbind xd
+                             go (subst x a d) as
+                (prereq, retTy, _) <- go o args
                 (fn, b) <- SMT.smtTypingQuery "precond" $ SMT.symAssert prereq
                 assert ("Precondition failed: " ++ show (owlpretty prereq) ++ show (owlpretty fn)) b
                 let happenedProp = pHappened f (is1, is2) args
                 getOutTy ot $ (tRefined retTy ".res" happenedProp)
             _ -> typeError $ "Unreachable"
+      EPackIdx j@(IVar _ _ xj) e1 -> do
+          _ <- local (set tcScope $ TcGhost False) $ inferIdx j
+          t1 <- checkExpr Nothing e1
+          case ot of
+            Just retT@(Spanned _ (TExistsIdx si it)) -> do
+                (i, t) <- unbind it
+                b <- isSubtype t1 (subst i j t)
+                if b then return retT else (getOutTy ot $ mkSpanned $ TExistsIdx si $ bind xj t1)
+            _ -> getOutTy ot $ mkSpanned $ TExistsIdx (show j) $ bind xj t1
       (EIf a e1 e2) -> do
           t <- inferAExpr a
           lt <- coveringLabel t
           flowCheck lt advLbl
           -- Carry forward refinements from t into the path condition
-          t' <- normalizeTy t
-          pathRefinement <- case t' ^. val of
+          pathRefinement <- case t ^. val of
             TRefined _ _ xp -> do
                 (x, p) <- unbind xp
                 return $ subst x a p 
@@ -1717,8 +2156,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
           t <- inferAExpr a
           b <- tyFlowsTo t advLbl
           withSpan (a^.spanOf) $ assert ("Guard must be public") b   
-          t' <- normalizeTy t
-          pathRefinement <- case t'^.val of
+          pathRefinement <- case t^.val of
                               TRefined _ _ xp -> do
                                   (x, p) <- unbind xp
                                   return $ subst x a p
@@ -1730,155 +2168,372 @@ checkExpr ot e = withSpan (e^.spanOf) $ traceFn ("checkExpr") $ do
             _ -> typeError $ "Guard body must return an option: " ++ show (owlpretty t1)
       (ERet a) -> do
           t <- inferAExpr a
-          getOutTy ot $ tRefined t ".res" (pEq (aeVar ".res") a)
+          tres <- normalizeTy $ tRefined t ".res" (pEq (aeVar ".res") a)
+          getOutTy ot tres 
       EFalseElim e op -> do
           doFalseElim <- case op of
                            Nothing -> return True
                            Just pcond -> do
-                             _ <- local (set tcScope TcGhost) $ checkProp pcond
+                             _ <- local (set tcScope $ TcGhost False) $ checkProp pcond
                              (_, b) <- SMT.smtTypingQuery "false_elim condition" $ SMT.symAssert pcond
                              return b 
           case doFalseElim of
             True -> do
                (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
-               if b then getOutTy ot tAdmit else checkExpr ot e
+               if b then do
+                        pc <- view pathCondition
+                        logTypecheck $ owlpretty "Reached contradiction! Path condition: " <> list (map owlpretty pc)
+                        getOutTy ot tAdmit 
+                    else checkExpr ot e
             False -> checkExpr ot e
       (ESetOption s1 s2 k) -> do
         local (over z3Options $ M.insert s1 s2) $ checkExpr ot k
-      (EForallBV xk) -> do
-          (x, k) <- unbind xk
-          t <- local (set tcScope TcGhost) $ withVars [(x, (ignore $ show x, Nothing, tData topLbl topLbl))] $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+      (EForallBV s xk) -> do
+          (x, (oreq, k)) <- unbind xk
+          t <- local (set tcScope $ TcGhost False) $ withVars [(x, (ignore s, Nothing, tGhost))] $ do
+              case oreq of
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ 
+                        checkExpr Nothing k
+                Nothing -> checkExpr Nothing k
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
-      (EForallIdx ik) -> do
-          (i, k) <- unbind ik
-          t <- local (set tcScope TcGhost) $ local (over inScopeIndices $ mappend [(i, IdxGhost)]) $ do
-              checkExpr Nothing k
-          t' <- normalizeTy t
-          case t'^.val of
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantBV Forall (ignore s) $ bind x $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
+      (EForallIdx s ik) -> do
+          (i, (oreq, k)) <- unbind ik
+          tc <- view tcScope
+          -- We allow crypto lemmas underneath forall_idx, because there are
+          -- only polynomially many indices.
+          -- If we already disallow crypto lemmas, though, continue to forbid
+          -- them
+          let tc' = case tc of
+                      TcGhost False -> TcGhost False
+                      _ -> TcGhost True
+          t <- local (set tcScope $ tc') $ withIndices [(i, (ignore $ show i, IdxGhost))] $ do
+              case oreq of
+                Nothing -> checkExpr Nothing k
+                Just req -> do
+                    checkProp req
+                    xlem <- (\x -> "%" ++ x) <$> freshVar
+                    withVars [(s2n xlem, (ignore xlem, Nothing, tLemma req))] $ checkExpr Nothing k
+          case t^.val of
             TRefined (Spanned _ TUnit) _ yp -> do
                 (y, p') <- unbind yp
-                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p'
-            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t')
-      (EPCase p op k) -> do
-          _ <- local (set tcScope TcGhost) $ checkProp p
+                let p2 = case oreq of
+                           Nothing -> p'
+                           Just req -> pImpl req p'
+                getOutTy ot $ tLemma $ mkSpanned $ PQuantIdx Forall (ignore s) $ bind i $ subst y (aeApp (topLevelPath "unit") [] []) p2
+            _ -> typeError $ "Unexpected return type of forall body: " ++ show (owlpretty t)
+      EOpenTyOf a k -> do
+          t <- inferAExpr a >>= normalizeTy
+          openTy t $ \_ -> checkExpr ot k
+      (ECorrCaseNameOf a op k) -> do
+          t <- inferAExpr a
+          case extractNameFromType t of
+            Just n ->  checkExpr ot $ Spanned (e^.spanOf) $ EPCase (pFlow (nameLbl n) advLbl) op Nothing k
+            Nothing -> checkExpr ot k
+      (EPCase p op attr k) -> do
+          _ <- local (set tcScope $ TcGhost False) $ checkProp p
           doCaseSplit <- case op of
                            Nothing -> return True
                            Just pcond -> do 
-                               _ <- local (set tcScope TcGhost) $ checkProp pcond
+                               _ <- local (set tcScope $ TcGhost False) $ checkProp pcond
                                (_, b) <- SMT.smtTypingQuery "case split condition" $ SMT.symAssert pcond
                                return b 
-          retT <- case ot of
-                    Just t -> return t
-                    Nothing -> typeError $ "pcase must have expected return type"
+          let (doFalse, doTrue) = case attr of
+                                    Nothing -> (True, True)
+                                    Just False -> (True, False)
+                                    Just True -> (False, True)
           case doCaseSplit of 
             False -> checkExpr ot k
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
-              x <- freshVar
-              _ <- withVars [(s2n x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ do
-                  logTypecheck $ "Case split: " ++ show (owlpretty p)
-                  pushLogTypecheckScope
-                  (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                  popLogTypecheckScope
-              _ <- withVars [(s2n x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ do
-                  logTypecheck $ "Case split: " ++ show (owlpretty $ pNot p)
-                  pushLogTypecheckScope
-                  (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                  r <- if b then getOutTy ot tAdmit else checkExpr (Just retT) k
-                  popLogTypecheckScope
-              normalizeTy retT
-      (ECase e1 cases) -> do
+              x <- fresh $ s2n "%caseProp"
+              tTrue <- case doTrue of
+                         True -> 
+                             withVars [(x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
+                                  logTypecheck $ owlpretty "Case split: " <> owlpretty p
+                                  withPushLog $ do 
+                                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                                      if b then return tAdmit else checkExpr ot k
+                         False -> return tAdmit
+              tFalse <- case doFalse of
+                         True -> 
+                             withVars [(x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
+                                  logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
+                                  withPushLog $ do 
+                                      (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
+                                      if b then return tAdmit else checkExpr ot k
+                         False -> return tAdmit
+              tMerge <- normalizeTy $ mkSpanned $ TCase p tTrue tFalse
+              getOutTy ot tMerge
+      EParse a t ok bk -> do
+          retT <- case ot of
+                    Just t -> return t
+                    Nothing -> typeError $ "parse must have expected return type"
+          t1 <- inferAExpr a
+          checkTy t
+          sinfo <- obtainStructInfoTopDown a t
+          otherwiseCase <- case ok of
+                             Nothing -> return False
+                             Just k' -> do
+                                 _ <- checkExpr (Just retT) k'
+                                 return True
+          bindingTys <- computeStructBindings t1 t sinfo otherwiseCase
+          (b, k) <- unbind bk
+          assert ("Wrong number of variables on parse statement") $ length b == length sinfo
+          bindings <- forM (zip b bindingTys) $ \((x, s), t) -> return (x, (s, Nothing, t))
+          withVars bindings $ checkExpr (Just retT) k
+          normalizeTy retT
+      (ECase e1 otk cases) -> do
           t <- checkExpr Nothing e1
-          t <- normalizeTy t
-          let t' = stripRefinements t
-          (l, otcases) <- case t'^.val of
-                            TData l1 l2 _ -> return (l1, Left (tData l1 l2))
-                            TOption to -> return (advLbl, Right $ [("Some", Just to), ("None", Nothing)])
-                            TConst s ps -> do
-                                td <- getTyDef s
-                                case td of
-                                  EnumDef b -> do
-                                      bdy <- extractEnum ps (show s) b
-                                      return (advLbl, Right bdy)
-                            _ -> typeError $ "Unknown type for case expression: " ++ show (owlpretty t')
-          assert (show $ owlpretty "Empty cases on case expression") $ length cases > 0
-          flowCheck l advLbl
-          branch_tys <- 
-              case otcases of
-                Left td -> do
-                    forM cases $ \(c, ocase) -> 
-                        case ocase of
-                          Left e -> checkExpr ot e
-                          Right (sb, xe) -> do
-                              (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, Nothing, td))] $ checkExpr ot e
-                              case ot of
-                                 Just _ -> return t
-                                 Nothing -> stripTy x t
-                Right tcases -> do
-                    forM tcases $ \(c, ot') ->
-                        case (ot', lookup c cases) of
-                          (_, Nothing) -> typeError $ show $ owlpretty "Case not found: " <> owlpretty c
-                          (Nothing, Just (Left e)) -> checkExpr ot e
-                          (Just tc, Just (Right (sb, xe))) -> do
-                              (x, e) <- unbind xe
-                              t <- withVars [(x, (sb, Nothing, tc))] $ checkExpr ot e
-                              case ot of
-                                Just _ -> return t
-                                Nothing -> stripTy x t
-                          (_, _) -> typeError $ show $ owlpretty "Mismatch on case: " <> owlpretty c
-          case ot of
-            Just t -> return t
-            Nothing -> do -- Need to synthesize type here. Take the first one
-                let t = head branch_tys
-                forM_ (tail branch_tys) $ \t' -> assertSubtype t' t
-                return t
+          e1_a <- case e1^.val of
+                    ERet a -> return a
+                    _ -> typeError "Expected AExpr for case after ANF"
+          t <- stripRefinements <$> normalizeTy t
+          retT <- case ot of
+                    Just t -> return t
+                    Nothing -> typeError $ "case must have expected return type"
+          ((enumPath, tcases), tEnum, hasOtherwise) <- case otk of
+                      Just (tAnn, k) -> do
+                          checkTy tAnn
+                          _ <- checkExpr (Just retT) k
+                          tc <- obtainTyCases tAnn ""
+                          return (tc, tAnn, True)
+                      Nothing -> do
+                          tc <- obtainTyCases t ". Try adding an annotation to the case statement." 
+                          return (tc, t, False)
+          assert ("Duplicate case found in case statement") $ uniq $ map fst cases
+          assert ("Case split inexhaustive") $ (S.fromList (map fst cases)) == (S.fromList (map fst tcases)) 
+          let caseNameArities = S.fromList $ map (\(s, ot) -> (s, isJust ot)) tcases
+          ensureTyCanBeCased t hasOtherwise
+          forM_ cases $ \(c, cse) -> do 
+              let (Just otcase) = lookup c tcases
+              case (otcase, cse) of
+                (Nothing, Left ek) -> do
+                    x <- freshVar
+                    _ <- withVars [(s2n x, (ignore $ show x, Nothing, tLemma $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]))] $
+                        checkExpr (Just retT) ek
+                    return ()
+                (Just t1, Right (xs, bnd)) -> do
+                    (x, k) <- unbind bnd
+                    xt <- normalizeTy =<< computeEnumDataType tEnum t t1 caseNameArities c
+                    let xt_refined = tRefined xt "._" $ pEq aeTrue $ aeApp (PRes $ PDot enumPath $ c ++ "?") [] [e1_a]
+                    _ <- withVars [(x, (xs, Nothing, xt_refined))] $ checkExpr (Just retT) k
+                    return ()
+                _ -> do
+                    let ar1 = case otcase of
+                                  Nothing -> 0
+                                  Just _ -> 1
+                    let ar2 = case cse of
+                                  Left _ -> 0
+                                  Right _ -> 1
+                    typeError $ "Mismatch on branch case" ++ c ++ ": expected arity " ++ show ar1 ++ ", got " ++ show ar2
+          normalizeTy retT
+      _ -> error $ "Unhandled expr: " ++ show e
 
+ensureTyCanBeCased :: Ty -> Bool -> Check ()
+ensureTyCanBeCased t hasOtherwise = 
+    when hasOtherwise $ do 
+        analyzeTyByCases t $ \t0 -> do 
+            otcs <- tryObtainTyCases t0 
+            case otcs of
+              Just _ -> return () -- t0 is a case-able enum or option
+              Nothing -> do -- overapproximate
+                l <- coveringLabel t0
+                flowCheck l advLbl
+
+computeStructBindings :: Ty -> Ty -> [(String, Ty)] -> Bool -> Check [Ty]
+computeStructBindings targ tann sinfo hasOtherwise = 
+    case (stripRefinements targ)^.val of
+      TCase p t1 t2 -> casePropTyList p $ \b -> computeStructBindings (if b then t1 else t2) tann sinfo hasOtherwise
+      _ -> do
+          b <- isSubtype targ tann
+          case b of
+            True ->  return $ map snd sinfo
+            False -> do
+                assert ("Parse statement needs an otherwise case here") $ hasOtherwise
+                l <- coveringLabel targ
+                validatedTys <- getValidatedStructTys (show $ owlpretty tann) l sinfo
+                return $ map snd validatedTys
+
+
+
+
+computeEnumDataType :: Ty -> Ty -> Ty -> S.Set (String, Bool) -> String -> Check Ty
+computeEnumDataType tEnum -- Type of overall enum
+                    t -- Type of argument
+                    t1 -- Type of parsed argument (worst case)
+                    caseNameArities 
+                    c = do -- Enum case name
+    case (stripRefinements t)^.val of
+      TCase p ta tb -> casePropTy p $ \b -> computeEnumDataType tEnum (if b then ta else tb) t1 caseNameArities c
+      _ -> do
+          otcs <- tryObtainTyCases t 
+          case otcs of
+            Just (_, tcs) -> do
+                assert ("Casing on wrong enum") $ caseNameArities == S.fromList (map (\(x, ot) -> (x, isJust ot)) tcs) 
+                case lookup c tcs of
+                  Just (Just to) -> return to
+                  _ -> typeError "unreachable"
+            Nothing -> do
+                ot <- getValidatedTy advLbl t1
+                case ot of
+                  Just to -> return to
+                  Nothing -> return $ tData advLbl advLbl
+
+
+ghostifyTy :: AExpr -> Ty -> Check Ty
+ghostifyTy a t = do
+    let tghost = case t^.val of 
+                  TRefined _ s xk -> Spanned (t^.spanOf) $ TRefined tGhost s xk
+                  _ -> tGhost
+    return $ tRefined tghost ".res" (pEq a (aeVar ".res"))
+
+-- Generate types for the parsed struct fields that incorporate the length information generated from parsing.
+-- Note: we allow the last field in the struct to have a statically unknowable length, since it can be parsed with 
+-- a `tail` combinator.
+getValidatedStructTys :: String -> Label -> [(String, Ty)] -> Check [(String, Ty)]
+getValidatedStructTys structTy albl sinfo = do
+    maybeTys <- mapM (\(n,t) -> getValidatedTy albl t) sinfo
+    case allowLastUnknownLen (tData albl albl) maybeTys of
+        Nothing -> do
+            warn $ "Unparsable struct type: " ++ structTy ++ ", no length info generated from parsing"
+            return $ zip (map fst sinfo) (repeat $ tData albl albl)
+        Just tys -> return $ zip (map fst sinfo) tys
+    where
+    -- Like `Data.Traversable.sequence`, but uses the default value for the last element if it is `Nothing`.
+    allowLastUnknownLen :: a -> [Maybe a] -> Maybe [a]
+    allowLastUnknownLen _ [] = Just []
+    allowLastUnknownLen def [Nothing] = Just [def]
+    allowLastUnknownLen def (h:t) = (:) <$> h <*> allowLastUnknownLen def t
+
+getValidatedTy :: Label -> Ty -> Check (Maybe Ty)
+getValidatedTy albl t = local (set tcScope $ TcGhost False) $ do
+    case t ^. val of
+        TData _ _ _ -> do
+            return Nothing
+        TDataWithLength _ ae -> do
+            t <- inferAExpr ae
+            l <- tyLenLbl t
+            b <- flowsTo l zeroLbl
+            return $ if b then Just $ tDataWithLength albl ae else Nothing
+        TRefined t' _ _ -> getValidatedTy albl t' -- Refinement not guaranteed to hold by parsing
+        TOption t' -> do 
+            t'' <- getValidatedTy albl t'
+            case t'' of
+              Nothing -> return Nothing
+              Just t'' -> return $ Just $ mkSpanned $ TOption t''
+        TCase _ _ _ -> return Nothing
+        TConst s ps -> do
+            td <- getTyDef s
+            case td of
+              EnumDef b -> do
+                -- Check that all cases are validatable:
+                caseTys <- mapMaybe snd <$> extractEnum ps (show s) b
+                validatedTys <- mapM (getValidatedTy albl) caseTys
+                case sequence validatedTys of
+                    Nothing -> do
+                        warn $ "Unparsable enum type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
+                        return Nothing -- Unparsable nested enum type
+                    Just _ -> 
+                        -- All cases are parsable, but since we don't have a structural representation of the validated
+                        -- enum, we just return Data<albl> and require a second `case` statement to parse it.
+                        return $ Just $ tData albl albl 
+              StructDef b -> do
+                (is, dp) <- unbind b
+                idxs <- getStructParams ps
+                assert ("Wrong index arity for struct") $ length idxs == length is
+                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
+                    res <- withDepBind dp $ \args _ -> do
+                        validatedTys <- mapM (getValidatedTy albl) (map (\(_, _, t) -> t) args)
+                        case sequence validatedTys of
+                            Nothing -> do
+                                warn $ "Unparsable struct type: " ++ show (owlpretty s) ++ ", no length info generated from parsing"
+                                return Nothing -- Unparsable nested struct type
+                            Just _ -> do
+                                -- All cases are parsable, but since we don't have a structural representation of the validated
+                                -- struct, we just return Data<albl> and require a second `parse` statement to parse it.
+                                return $ Just $ tData albl albl
+                    return $ unsafeMapDepBind res id
+              TyAbbrev t' -> getValidatedTy albl t'
+              TyAbstract -> typeError $ "Abstract type " ++ show (owlpretty t) ++ " is unparsable"
+        TBool _ -> return $ Just $ mkSpanned $ TBool albl
+        TGhost -> return $ Just t
+        TUnit -> return $ Just tUnit
+        TName ne -> do
+            nameLen <- getLenConst ne
+            return $ Just $ tDataWithLength albl nameLen
+        TVK _ -> return $ Just $ tDataWithLength albl (aeLenConst "vk")
+        TDH_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
+        TEnc_PK _ -> return $ Just $ tDataWithLength albl (aeLenConst "pke_pk")
+        TSS _ _ -> return $ Just $ tDataWithLength albl (aeLenConst "group")
+        TAdmit -> typeError $ "Unparsable type: " ++ show (owlpretty t)
+        TExistsIdx s ity -> do
+            (i, ty) <- unbind ity
+            withIndices [(i, (ignore s, IdxGhost))] $ getValidatedTy albl ty
+        THexConst a -> return $ Just t 
+    where     
+    getLenConst :: NameExp -> Check AExpr
+    getLenConst ne = do
+        ntLclsOpt <- getNameInfo ne
+        case ntLclsOpt of
+            Nothing -> typeError $ "Name shouldn't be abstract: " ++ show (owlpretty ne)
+            Just (nt, _) ->  go nt
+                where
+                    go nt = 
+                        case nt^.val of
+                            NT_Nonce l -> return $ mkSpanned $ AELenConst l
+                            NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
+                            NT_App p ps as -> resolveNameTypeApp p ps as >>= go
+                            NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
+                            NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
+                            NT_DH -> return $ mkSpanned $ AELenConst "group"
+                            NT_Sig _ -> return $ mkSpanned $ AELenConst "signature"
+                            NT_PKE _ -> return $ mkSpanned $ AELenConst "pke_sk"
+                            NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    -- NT_PRF _ -> typeError $ "Unparsable name type: " ++ show (owlpretty nt)
 
 doAEnc t1 x t args =
   case extractNameFromType t1 of
     Just k -> do
-        nt <- local (set tcScope TcGhost) $  getNameType k
+        nt <- local (set tcScope $ TcGhost False) $  getNameType k
         case nt^.val of
           NT_Enc t' -> do
               b1 <- isSubtype t t'
               if b1 then
                   return $ mkSpanned $ TRefined (tData advLbl advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
               else
-                  mkSpanned <$> trivialTypeOf [t1, t]
+                  mkSpanned <$> enforcePublicArguments "Encryption ill typed, so all arguments must be public" [t1, t]
           _ -> typeError $ show $ ErrWrongNameType k "encryption key" nt
     _ -> do
-        mkSpanned <$> trivialTypeOf [t1, t]
+        mkSpanned <$> enforcePublicArguments "Encryption ill typed, so all arguments must be public" [t1, t]
 
-doADec t1 t args = 
+doADec t1 t args = do
     case extractNameFromType t1 of
       Just k -> do
-          nt <-  local (set tcScope TcGhost) $ getNameType k
+          nt <-  local (set tcScope $ TcGhost False) $ getNameType k
           case nt^.val of
             NT_Enc t' -> do
-                b2 <- flowsTo (nameLbl k) advLbl
                 b <- tyFlowsTo t advLbl -- Public ciphertext
-                if ((not b2) && b) then do
-                    -- Honest
-                    return $ mkSpanned $ TOption t'
-                else if b then do
-                    l_corr <- coveringLabelOf [t1, t]
-                    return $ mkSpanned $ TOption $ tDataAnn l_corr l_corr "Corrupt adec" -- Change here
-                else do
-                    l_corr <- coveringLabelOf [t1, t]
-                    -- Corrupt
-                    return $ tDataAnn l_corr l_corr "Corrupt adec"-- Change here
+                casePropTy (pFlow (nameLbl k) advLbl) $ \b2 ->  -- b2 = k is corrupt
+                    if ((not b2) && b) then do -- k secret and cipher public
+                        -- Honest
+                        return $ mkSpanned $ TOption t'
+                    else if (b && b2) then do -- everything public
+                        return $ mkSpanned $ TOption $ tDataAnn advLbl advLbl "Public adec"
+                    else do
+                        mkSpanned <$> enforcePublicArgumentsOption "Decryption ill typed, so all arguments must be public" [t1, t]
             _ -> typeError $ show $  ErrWrongNameType k "encryption key" nt
       _ -> do
-          l <- coveringLabelOf [t1, t]
-          return $ tData l l -- Change here
+          mkSpanned <$> enforcePublicArgumentsOption "Decryption ill typed, so all arguments must be public" [t1, t]
 
 owlprettyMaybe :: OwlPretty a => Maybe a -> OwlDoc
 owlprettyMaybe x = 
@@ -1886,17 +2541,18 @@ owlprettyMaybe x =
       Nothing -> owlpretty "Nothing"
       Just x -> owlpretty "Just" <+> owlpretty x
 
-pNameExpEq :: NameExp -> NameExp -> Prop
-pNameExpEq ne1 ne2 = 
-    case (ne1^.val, ne2^.val) of
-      _ | ne1 `aeq` ne2 -> pTrue
-      (NameConst _ p1 _, NameConst _ p2 _) | (not $ p1 `aeq` p2) -> pFalse 
-      (NameConst _ _ _, NameConst _ _ _) -> pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2)
-      (PRFName x s, PRFName x' s') -> pAnd (pNameExpEq x x') (if s == s' then pTrue else pFalse)
-      _ -> pFalse
+pNameExpEq :: NameExp -> NameExp -> Check Prop
+pNameExpEq ne1 ne2 = do
+    ni1 <- getNameInfo ne1
+    ni2 <- getNameInfo ne2
+    case (ni1, ni2) of
+      (Just (_, Just (pth1, _)), Just (_, Just (pth2, _))) | (not $ aeq pth1 pth2) -> return pFalse
+      _ -> return $ pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2)
 
-nameExpNotIn :: NameExp -> [NameExp] -> Prop
-nameExpNotIn ne nes = foldr pAnd pTrue $ map (\ne' -> pNot $ pNameExpEq ne ne') nes 
+nameExpNotIn :: NameExp -> [NameExp] -> Check Prop
+nameExpNotIn ne nes = do
+    ps <- mapM (\ne' -> pNot <$> pNameExpEq ne ne') nes
+    return $ foldr pAnd pTrue ps
 
 proveDisjointContents :: AExpr -> AExpr -> Check ()
 proveDisjointContents x y = do
@@ -1904,9 +2560,9 @@ proveDisjointContents x y = do
     ns2 <- getNameContents y
     ns1' <- mapM normalizeNameExp ns1
     ns2' <- mapM normalizeNameExp ns2
-    let p1 = foldr pAnd pTrue $ map (\ne -> nameExpNotIn ne ns2') ns1' 
-    let p2 = foldr pAnd pTrue $ map (\ne -> nameExpNotIn ne ns1') ns2' 
-    local (set tcScope TcGhost) $ do
+    p1 <- foldr pAnd pTrue <$> mapM (\ne -> nameExpNotIn ne ns2') ns1' 
+    p2 <- foldr pAnd pTrue <$> mapM (\ne -> nameExpNotIn ne ns1') ns2' 
+    local (set tcScope $ TcGhost False) $ do
         (_, b) <- SMT.smtTypingQuery "proveDisjoint" $ SMT.symAssert $ pOr p1 p2
         assert ("Cannot prove disjointness of " ++ show (owlpretty x) ++ " and " ++ show (owlpretty y) ++ ": got " ++ show (owlpretty ns1') ++ " and " ++ show (owlpretty ns2')) $ b
         where
@@ -1926,40 +2582,374 @@ proveDisjointContents x y = do
                         _ -> typeError $ "Unsupported function in disjoint_not_eq_lemma: " ++ show (owlpretty f)
                   _ -> typeError $ "Unsupported expression in disjoint_not_eq_lemma: " ++ show (owlpretty a)
 
-checkROHint :: ROHint -> Check (AExpr, Prop, [NameType])
-checkROHint (p, (is, ps), args) = local (set tcScope TcGhost) $ do
-    b <- getRO p
-    ((ixs, pxs), b') <- unbind b
-    (xs, (pre_, req_, nts_)) <- unbind b'
-    assert ("Wrong index arity to RO " ++ show (owlpretty p)) $ (length is, length ps) == (length ixs, length pxs)
-    assert ("Wrong var arity to RO " ++ show (owlpretty p)) $ length args == length xs
-    forM_ is checkIdx
-    forM_ ps checkIdx
-    _ <- forM args inferAExpr
-    return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs args) $ (pre_, req_, nts_) 
+-- Check that multiple computed KDF case results are consistent (i.e., they compute the same value).
+-- Need to use SMT for this since they may not be syntactically equal
+unifyValidKDFResults :: [(KDFStrictness, NameExp)] -> Check (Maybe (KDFStrictness, NameExp))
+unifyValidKDFResults valids = do
+    if length valids == 0 then return Nothing else Just <$> go valids
+        where
+            go (v : []) = return v
+            go ((str, ne_) : (str', ne_') : vs) = do
+               _ <- go ((str', ne_') : vs)
+               ne <- normalizeNameExp ne_
+               ne' <- normalizeNameExp ne_'
+               b <- SMT.symEqNameExp ne ne'
+               ni1 <- getNameInfo ne
+               ni2 <- getNameInfo ne'
+               let b2 = (str == str')
+               b3 <- case (ni1, ni2) of
+                       (Nothing, Nothing) -> return True
+                       (Just (nt1, _), Just (nt2, _)) -> liftM2 (&&) (subNameType nt1 nt2) (subNameType nt2 nt1)
+                       (_, _) -> return False
+               case (b && b2 && b3) of
+                 True -> return (str, ne_)
+                 _ | not b3 -> do
+                     typeError $ "KDF results inconsistent: mismatch on name types" 
+                 _ | not b2 -> typeError $ "KDF results inconsistent: mismatch on strictness" 
+                 _ | not b -> typeError $ "KDF results inconsistent: result name types not equal" 
 
-findGoodROHint :: AExpr -> Int -> [((AExpr, Prop, [NameType]), ROHint)] -> Check NameExp
-findGoodROHint a _ [] = do
+-- `Either Bool (KDFStrictness, NameExp)` is used to represent the result of a KDF call.
+-- If the result is `Right _`, we matched a case in the KDF/ODH declaration.
+-- If the result is `Left True`, the KDF key is public (either flows to adv or is an out-of-bounds DH shared secret).
+-- If the result is `Left False`, the KDF call is ill-typed in some way.
+
+
+-- Unify the results of multiple KDF calls (sort of inverse to `findBestKDFCallResult`).
+-- Used to join the results of checking multiple candidate concats in IKM position (so all must either be public or match a KDF case).
+-- If we got any bad KDF calls from the concats, then we have an ill-typed KDF call overall.
+-- Otherwise, try to find a matching case from the KDF declaration; if unsuccessful, we have a public KDF key.
+unifyKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
+unifyKDFCallResult xs = do
+    -- If any are (Left False), return Nothing
+    let bad = or $ map (\e -> e `aeq` Left False) xs 
+    if bad then return (Left False) else do
+        let valids = catMaybes $ map (\e -> case e of                           
+                                              Left _ -> Nothing
+                                              Right v -> Just v) xs
+        res <- unifyValidKDFResults valids
+        case res of
+          Nothing -> return $ Left True
+          Just v -> return $ Right v
+
+-- Used to find the best result from trying several annotations (so any of the annotations working is fine).
+-- The "best" KDF call result (from `findValidSaltCalls` or `findValidIKMCalls`) is defined as follows.
+-- Exact names are best (corresponding to cases that appear in the KDF declaration).
+-- If no exact names are found, check if all results correspond to public data (in which case the KDF call is public).
+findBestKDFCallResult :: [Either Bool (KDFStrictness, NameExp)] -> Check (Either Bool (KDFStrictness, NameExp))
+findBestKDFCallResult xs = do
+    let valids = catMaybes $ map (\e -> case e of                           
+                                          Left _ -> Nothing
+                                          Right v -> Just v) xs
+    res <- unifyValidKDFResults valids
+    case res of
+      Just v -> return $ Right v
+      Nothing -> return $ Left $ and $ map (\e -> case e of 
+                                                    Left b -> b
+                                                    Right _ -> True) xs
+               
+-- Find all possible KDF salt position calls that match the given annotations `anns` and choose the best one.
+-- Attempt to extract a KDF key from the salt position argument `a`. If successful, use `matchKDF`
+-- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the salt argument is public.
+findValidSaltCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [KDFSelector] -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
+findValidSaltCalls a b c anns j nks = do
+    results <- forM anns $ \(i, is_case) -> do
+        mapM_ inferIdx is_case
+        case (extractNameFromType (snd a)) of
+          Nothing -> Left <$> tyFlowsTo (snd a) advLbl
+          Just ne -> do
+              nt <- getNameType ne
+              case nt^.val of
+                NT_KDF KDF_SaltPos kdfbody -> matchKDF [] KDF_SaltPos ne kdfbody a ((fst b, fst b), snd b) c (i, is_case) j nks
+                _ -> Left <$> kdfArgPublic [] KDF_SaltPos a b c
+    findBestKDFCallResult results
+
+-- Find all possible KDF IKM position calls that match the given annotations `anns` and choose the best one.
+-- Use `unconcatIKM` to split out all concats from the IKM position arg `b`. For each subrange `b'` of `b`, try to find
+-- a name in `b'`; if successful, use either `matchKDF` or `matchODH` (depending on the selectors in the annotation)
+-- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the IKM argument is public.
+findValidIKMCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)] 
+                  -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
+findValidIKMCalls a b c anns j nks = do
+    bs <- unconcatIKM (fst b)
+    dhs_ <- forM anns $ \e ->
+        case e of
+          Left _ -> return []
+          Right (s, ips, i) -> do
+              pth <- curModName
+              (ne1, ne2, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+              return [(ne1, ne2)]
+    let dhs = concat dhs_
+    b_results <- forM bs $ \b' -> do
+        bt' <- inferAExpr b' >>= normalizeTy
+        b'_res <- forM anns $ \e -> do
+            case e of
+              Left (i, is_case) -> do
+                  mapM_ inferIdx is_case
+                  case (extractNameFromType bt') of
+                    Nothing -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
+                    Just ne -> do
+                        nt <- getNameType ne
+                        case nt^.val of
+                          NT_KDF KDF_IKMPos kdfbody -> do
+                              matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
+                          _ -> do
+                              Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
+              Right (s, ips, i) -> matchODH dhs a ((fst b, b'), bt') c (s, ips, i) j nks
+        findBestKDFCallResult b'_res
+    unifyKDFCallResult $ b_results
+
+
+-- Compute the result name exp for an ODH call using a particular ODH selector. Arguments:
+--  dhs: DH key pairs from the odh declaration
+--  a: salt argument
+--  ((bFull, b), bt): ikm argument (`bFull` is the original argument, `b` is the concat component to analyze, `bt` is the type of `b`)
+--  c: info argument
+--  (s, ips, i): ODH selector (ODH name, sid/pid arguments, selector)
+--  j: index into the name kind row `nks`
+--  nks: output name kind row
+-- Returns either a boolean indicating whether the ODH call is public (if it doesn't match the case), or the strictness and the name exp of the result
+matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> (String, ([Idx], [Idx]), KDFSelector) -> Int -> [NameKind] -> 
+    Check (Either Bool (KDFStrictness, NameExp))
+matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
+    pth <- curModName
+    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+    nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
+    assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+    let (str, nt) = str_nts !! j
+    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
+    -- We ask if one of the unconcatted elements is equal to the specified
+    -- DH name
+    beq <- decideProp $ pEq real_ss b 
+    case beq of 
+      Just True -> do
+          b2 <- decideProp p
+          b3 <- flowsTo (nameLbl ne1) advLbl
+          b4 <- flowsTo (nameLbl ne2) advLbl
+          -- If it is, and if the DH name is a secret, then we are good
+          if (b2 == Just True) then 
+                if (not b3) && (not b4) then do
+                      return $ Right (str, mkSpanned $ KDFName (fst a) bFull (fst c) nks2 j nt (ignore $ True))
+                else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+          else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+      _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+
+
+-- Compute the result name exp for a KDF call using a particular selector. Arguments:
+--  dhs: DH key pairs from the annotation (used to check public args)
+--  pos: KDF position (salt or IKM)
+--  ne: name exp extracted from the KDF key (either salt or IKM position)
+--  bcases: KDF body corresponding to `ne` in the environment
+--  a: salt argument
+--  ((bFull, b), bt): ikm argument (`bFull` is the original argument, `b` is the concat component to analyze, `bt` is the type of `b`)
+--  c: info argument
+--  (i, is_case): KDF selector (selector into `bcases` and index arguments)
+--  j: index into the name kind row `nks`
+--  nks: output name kind row
+-- Returns either a boolean indicating whether the KDF call is public (if it doesn't match the case), or the strictness and the name exp of the result
+matchKDF :: [(NameExp, NameExp)] -> KDFPos -> NameExp -> KDFBody -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> KDFSelector -> Int -> [NameKind] ->
+    Check (Either Bool (KDFStrictness, NameExp))
+matchKDF dhs pos ne bcases a ((bFull, b), bt) c (i, is_case) j nks = do 
+    (((sx, x), (sy, y), (sself, xself)), cases_) <- unbind bcases
+    let cases = case pos of
+                  KDF_SaltPos -> subst x bFull $ subst y (fst c) $ subst xself (fst a) $ cases_
+                  KDF_IKMPos -> subst x (fst a) $ subst y (fst c) $ subst xself b $ cases_
+    if i < length cases then do
+      (ixs, pnts) <- unbind $ cases !! i
+      assert ("KDF case index arity mismatch") $ length ixs == length is_case
+      let (p, nts) = substs (zip ixs is_case) $ pnts
+      nks2 <- forM nts $ \(_, nt) -> getNameKind nt
+      assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
+      assert "KDF row index out of bounds" $ j < length nks                    
+      let (str, nt) = nts !! j
+      bp <- decideProp p
+      b2 <- not <$> flowsTo (nameLbl ne) advLbl
+      if (bp == Just True) then
+            if b2 then do
+                  return $ Right (str, mkSpanned $ KDFName (fst a) bFull (fst c) nks2 j nt (ignore $ True))   
+            else Left <$> kdfArgPublic dhs pos a (b, bt) c 
+      else Left <$> kdfArgPublic dhs pos a (b, bt) c
+    else Left <$> kdfArgPublic dhs pos a (b, bt) c
+
+-- check if the key position argument to a KDF call is public
+-- salt must flow to adv
+-- ikm must either flow to adv or be an out-of-bounds DH shared secret
+kdfArgPublic dhs pos a b c = do
+    case pos of
+      KDF_SaltPos -> tyFlowsTo (snd a) advLbl
+      KDF_IKMPos -> pubIKM dhs a b c
+
+pubIKM :: [(NameExp, NameExp)] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check Bool
+pubIKM dhs a b c = do
+    p <- tyFlowsTo (snd b) advLbl
+    if p then return True else kdfOOB dhs (fst a) (fst b) (fst c)
+
+-- Check if an ODH call to kdf is out of bounds (i.e., the DH shared secret is not
+-- defined in the relevant `odh` name definition), or if it is, 
+-- matchedSecrets: list of DH pairs to try based on the `odh` annotation from the user
+-- returns true if the call is out of bounds, so result should be `Data<adv>` by PRF-ODH
+kdfOOB :: [(NameExp, NameExp)] -> AExpr -> AExpr -> AExpr -> Check Bool
+kdfOOB matchedSecrets a b c = do
+    dhComp <- getLocalDHComputation b
+    case dhComp of
+      Nothing -> return False
+      Just _ -> do 
+        let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
+        let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+        (_, notODH) <- SMT.smtTypingQuery "" $ SMT.symAssert $ pNot $ mkSpanned $ PInODH a b c
+        if notODH then return True else do
+            bs <- forM matchedSecrets $ \(ne1, ne2) -> do
+                p <- decideProp $ pEq b (dhCombine (dhpk $ mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2))
+                if p == Just True then do
+                     pub1 <- flowsTo (nameLbl ne1) advLbl
+                     pub2 <- flowsTo (nameLbl ne2) advLbl
+                     return $ pub1 || pub2
+                else return False
+            return $ or bs
+
+-- Try to infer a valid local DH computation (pk, sk) from input
+-- (local = sk name is local to the module)
+getLocalDHComputation :: AExpr -> Check (Maybe (AExpr, NameExp))
+getLocalDHComputation a = pushRoutine ("getLocalDHComp") $ do
+    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+    let go_from_ty = do
+            t <- inferAExpr a >>= normalizeTy
+            case (stripRefinements t)^.val of
+              TSS n m -> do
+                  m_local <- nameExpIsLocal m
+                  n_local <- nameExpIsLocal n
+                  if m_local then return (Just (dhpk (aeGet n), m)) else 
+                     if n_local then return (Just (dhpk (aeGet m), n)) else return Nothing
+              _ -> return Nothing
     a' <- resolveANF a
-    typeError $ "Cannot prove " ++ show (owlpretty a') ++ " matches given hints"
-findGoodROHint a i (((a', p', _), (pth, inds, args)) : xs) = do
-    (_, b) <- SMT.smtTypingQuery "findGoodROHint" $ SMT.symAssert $ pAnd p' (pEq a a')
-    if b then return (mkSpanned $ NameConst inds pth (Just (args, i))) else findGoodROHint a i xs
+    case a'^.val of
+      AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> do
+          tx <- inferAExpr x >>= normalizeTy
+          xwf <- decideProp $ pEq (builtinFunc "is_group_elem" [x]) (builtinFunc "true" [])
+          ty <- inferAExpr y >>= normalizeTy
+          case extractNameFromType ty of
+            Just ny -> do
+                ny_local <- nameExpIsLocal ny
+                nty <- getNameType ny
+                case nty^.val of
+                  NT_DH -> 
+                      if (xwf == Just True) && ny_local then return (Just (x, ny)) else go_from_ty
+                  _ -> return Nothing
+            _ -> go_from_ty
+      _ -> go_from_ty
+
+-- Resolve the AExpr and split it up into its concat components. For soundness,
+-- we restrict the computations that can show up in IKMs, so we cannot smuggle
+-- in a concat that is not caught
+-- Values that can appear in an IKM expression:
+-- - A name (`TName`/`get(_)`)
+-- - A DH public key (`TDH_PK`/`dhpk(_)`)
+-- - A DH shared secret (`TSS`/`dh_combine(_,_)`)
+-- - A hex const (`THexConst`)
+-- - A DH group element (`is_group_elem(_)` checked by SMT)
+-- - Concats of the above
+unconcatIKM :: AExpr -> Check [AExpr]
+unconcatIKM a = do
+    a' <- resolveANF a >>= normalizeAExpr
+    case a'^.val of
+     AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
+         liftM2 (++) (unconcatIKM x) (unconcatIKM y)
+     AEGet _ -> return [a']
+     AEApp (PRes (PDot PTop "dh_combine")) _ _ -> return [a']
+     AEApp (PRes (PDot PTop "dhpk")) _ _ -> return [a']
+     AEHex _ -> return [a']
+     _ -> do
+         t <- inferAExpr a >>= normalizeTy
+         case (stripRefinements t)^.val of
+           TSS _ _ -> return [a']
+           TDH_PK _ -> return [a']
+           THexConst _ -> return [a']
+           TName _ -> return [a']
+           _ -> do
+               wf <- decideProp $ pEq (builtinFunc "is_group_elem" [a']) (builtinFunc "true" [])
+               case wf of
+                 Just True -> return [a']
+                 _ -> typeError $ "Unsupported computation for IKM: " ++ show (owlpretty a') ++ " with type " ++ show (owlpretty t)
+
+
+
+
+nameKindLength :: NameKind -> AExpr
+nameKindLength nk =
+    aeLenConst $ case nk of
+                               NK_KDF -> "kdfkey"
+                               NK_DH -> "dhkey"
+                               NK_Enc -> "enckey"
+                               NK_PKE -> "pkekey"
+                               NK_Sig -> "sigkey"
+                               NK_MAC -> "mackey"
+                               NK_Nonce l -> l
+
+crhInjLemma :: AExpr -> AExpr -> Check Prop
+crhInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEApp (PRes (PDot PTop "crh")) [] [a], AEApp (PRes (PDot PTop "crh")) [] [b]) -> do
+          let p1 = pImpl (pEq x y) (pEq a b)
+          p2 <- crhInjLemma a b
+          return $ pAnd p1 p2
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- crhInjLemma a c
+          p2 <- crhInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
+
+kdfInjLemma :: AExpr -> AExpr -> Check Prop
+kdfInjLemma x y = 
+    case (x^.val, y^.val) of
+      (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | j < length nks && j' < length nks' && (nks !! j == nks' !! j') -> do
+          let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
+          p2 <- kdfInjLemma a a'
+          p3 <- kdfInjLemma b b'
+          return $ pAnd p1 $ pAnd p2 p3
+      (AEApp (PRes (PDot PTop "concat")) [] [a, b], AEApp (PRes (PDot PTop "concat")) [] [c, d]) -> do
+          p1 <- kdfInjLemma a c
+          p2 <- kdfInjLemma b d
+          return $ pAnd p1 p2
+      _ -> return pTrue
+
+patternPublicAndEquivalent :: Bind DataVar AExpr -> Bind DataVar AExpr -> Check (Bool, Bool)
+patternPublicAndEquivalent pat1 pat2 = do
+    (x, pat) <- unbind pat1
+    (y, pat') <- unbind pat2
+    let ctrTy = tRefined (tData advLbl advLbl) ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "counter")
+    withVars [(x, (ignore $ show x, Nothing, ctrTy))] $ do
+        t <- inferAExpr pat
+        b1 <- tyFlowsTo t advLbl
+        if b1 then do
+              (_, b2) <- SMT.smtTypingQuery "pattern equivalence check" $ SMT.symAssert $ pEq pat (subst y (aeVar' x) pat')
+              return (True, b2)
+        else return (False, False)
+
 
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
-checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
+checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
+    tcs <- view tcScope
+    case (tcs, cop) of
+      (TcGhost b, CLemma _) -> assert ("Lemma " ++ show (owlpretty cop) ++ " cannot be called here") b
+      (TcGhost _, _) -> typeError $ "Crypto op " ++ show (owlpretty cop) ++ " cannot be executed in ghost"
+      _ -> return ()
     case cop of
-      CLemma (LemmaCRH) -> local (set tcScope TcGhost) $ do 
+      CLemma (LemmaKDFInj) -> local (set tcScope $ TcGhost False) $ do 
+          assert ("kdf_inj_lemma takes two arguments") $ length args == 2
+          let [(x, _), (y, _)] = args
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- kdfInjLemma x' y'
+          return $ tLemma p 
+      CLemma (LemmaCRH) -> local (set tcScope $ TcGhost False) $ do 
           assert ("crh_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
-          x' <- resolveANF x
-          y' <- resolveANF y
-          return $ tRefined tUnit "._" $
-              pImpl
-                (pEq (aeApp (topLevelPath "crh") [] [x])
-                     (aeApp (topLevelPath "crh") [] [y]))
-                (pEq x y)
+          x' <- resolveANF x >>= normalizeAExpr
+          y' <- resolveANF y >>= normalizeAExpr
+          p <- crhInjLemma x' y'
+          return $ tLemma p 
       CLemma (LemmaDisjNotEq) -> do
           assert ("disjoint_not_eq_lemma takes two arguments") $ length args == 2
           let [(x, _), (y, _)] = args
@@ -1967,24 +2957,27 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           y' <- normalizeAExpr =<< resolveANF y
           proveDisjointContents x' y'
           return $ tRefined tUnit "._" $ pNot $ pEq x' y'
-      CLemma (LemmaCrossDH n1 n2 n3) -> do
+      CLemma (LemmaCrossDH n) -> do
+          -- Below states that, given g^x, y, and z, it is hard to construct h such that h^x = g^(y * z)
           assert ("Wrong number of arguments to cross_dh_lemma") $ length args == 1
           let [(x, t)] = args
           b <- tyFlowsTo t advLbl
           assert ("Argument to cross_dh_lemma must flow to adv") b
-          nt1 <- getNameType n1
-          assert ("First argument to cross_dh_lemma must be a DH name") $ (nt1^.val) `aeq` NT_DH
-          nt2 <- getNameType n2
-          assert ("Second argument to cross_dh_lemma must be a DH name") $ (nt2^.val) `aeq` NT_DH
-          nt3 <- getNameType n3
-          assert ("Third argument to cross_dh_lemma must be a DH name") $ (nt3^.val) `aeq` NT_DH
-          let ns_disj = pAnd (pNot $ pNameExpEq n1 n2) $ pAnd (pNot $ pNameExpEq n1 n3) $ pNot $ pNameExpEq n2 n3
+          nt <- getNameType n
+          assert ("Name parameter to cross_dh_lemma must be a DH name") $ (nt^.val) `aeq` NT_DH
+          odhs <- view $ curMod . odh
           let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
           let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-          p <- simplifyProp $  pImpl (foldr pAnd pTrue [ns_disj, pNot (pFlow (nameLbl n2) advLbl), pNot (pFlow (nameLbl n3) advLbl)])
-                        (pNot $ pEq (dhCombine x (mkSpanned $ AEGet n1))
-                                    (dhCombine (dhpk (mkSpanned $ AEGet n2)) (mkSpanned $ AEGet n3)))
-   
+          let pSec m = pNot $ pFlow (nameLbl m) advLbl
+          ps <- forM odhs $ \(_, b) -> do
+              ((is, ps), (n2, n3, _)) <- unbind b
+              p <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
+                  n_disj <- liftM2 pAnd (pNot <$> pNameExpEq n n2) (pNot <$> pNameExpEq n n3)
+                  return $ pImpl (n_disj `pAnd` (pSec n))
+                                        (pNot $ pEq (dhCombine x $ aeGet n)
+                                                    (dhCombine (dhpk $ aeGet n2) (aeGet n3)))
+              return $ mkForallIdx (is ++ ps) p
+          p <- normalizeProp $ (foldr pAnd pTrue ps) 
           return $ tLemma p
       CLemma (LemmaConstant)  -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
@@ -1994,43 +2987,52 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
-      CHash hints i -> do
-          assert ("RO hints must be nonempty") $ length hints > 0
-          hints_data <- forM hints checkROHint
-          let nks = map (map getNameKind) $ map (\(_, _, x)  -> x) hints_data
-          let hints_consistent = all (\x -> x == head nks) nks
-          assert ("RO hints must have consistent name kinds") $ hints_consistent
-          assert ("RO name index out of bounds") $ i < length (head nks)
-          ne <- findGoodROHint (mkConcats $ map fst args) i (zip hints_data hints)
-          lenConst <- local (set tcScope TcGhost) $ lenConstOfROName $ ne
-          solvability <- solvabilityAxioms (mkConcats $ map fst args) ne 
-          return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-              pAnd (mkSpanned $ PRO (mkConcats $ map fst args) (aeVar ".res") i)
-                (pAnd solvability $ pEq (aeLength (aeVar ".res")) lenConst)
-
-      -- 1. Ensure that the hints are nonempty and consistent (name kinds are the same)
-      -- 1.5. Check that i is in bounds
-      -- 2. One by one, try to find a hint that matches the concats of the args 
-      -- 3. If no hint matches, throw an error
-      -- 4. If a hint matches, return the corresponding name type, refined with:
-      --    - RO solvability axioms
-      --    - RO predicate
-      CPRF s -> do
-          assert ("Wrong number of arguments to prf") $ length args == 2
-          let [(_, t1), (a, t)] = args
-          case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
-            Just k -> do
-                nt <-  local (set tcScope TcGhost) $ getNameType k
-                case nt^.val of
-                  NT_PRF aes -> do
-                      case L.find (\p -> fst p == s) aes of
-                        Nothing -> typeError $ "Unknown PRF label: " ++ s
-                        Just (_, (ae, nt')) -> do
-                            (_, b) <- SMT.smtTypingQuery "prf" $ SMT.symCheckEqTopLevel [ae] [a]
-                            corr <- flowsTo (nameLbl k) advLbl
-                            if (not corr) && b then return (mkSpanned $ TName $ prfName k s) else mkSpanned <$> trivialTypeOf [t1, t]
-                  _ -> typeError $ "Wrong name type for PRF"
+-- For CKDF:
+--  0. Ensure that info is public
+--  1. For the salt:
+--      - Ensure it matches a secret, or is public
+--  2. For the IKM:
+--      - Split it into components
+--      - For each component, ensure it matches a secret, or is public
+--  3. Collect the secret ann's, make sure they are consistent
+      -- oann1: which case of the kdf to use for kdfkey in salt position
+      -- oann2: which case of the kdf to use for kdfkey in ikm position (also for odh name in ikm position)
+      CKDF oann1 oann2 nks j -> do
+          assert ("KDF must take three arguments") $ length args == 3
+          let [a, b, c] = args -- a == salt, b == ikm, c == info
+          cpub <- tyFlowsTo (snd c) advLbl -- check that info is public
+          assert ("Third argument to KDF must flow to adv") cpub
+          kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j 
+          resT <- manyCasePropTy kdfCaseSplits $ local (set tcScope $ TcGhost False) $ do 
+              falseCase <- doAssertFalse
+              case falseCase of
+                True -> return tAdmit
+                False -> do 
+                    saltResult <- findValidSaltCalls a b c oann1 j nks
+                    ikmResult <- findValidIKMCalls a b c oann2 j nks
+                    unif <- unifyKDFCallResult [saltResult, ikmResult] 
+                    resT <- case unif of 
+                      Left False -> mkSpanned <$> enforcePublicArguments "KDF ill typed, so arguments must be public" [snd a, snd b, snd c]
+                      Left True -> return $ tData advLbl advLbl
+                      Right (strictness, ne) -> do 
+                        let flowAx = case strictness of
+                                       KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                       KDFPub -> pFlow (nameLbl ne) advLbl 
+                                       KDFUnstrict -> pTrue
+                        return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                            flowAx 
+                    kdfProp <- do
+                        a' <- resolveANF (fst a)
+                        b' <- resolveANF (fst b)
+                        c' <- resolveANF (fst c)
+                        return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
+                    let outLen = nameKindLength $ nks !! j
+                    let kdfRefinement t = tRefined t ".res" $ 
+                          pAnd
+                              (pEq (aeLength (aeVar ".res")) outLen)
+                              kdfProp
+                    return $ kdfRefinement resT
+          normalizeTy resT
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
@@ -2039,107 +3041,110 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
           assert ("Wrong number of arguments to decryption") $ length args == 2
           let [(_, t1), (_, t)] = args
           doADec t1 t args
-      CEncStAEAD p iargs -> do
+      CEncStAEAD p iargs xpat -> do
           checkCounterIsLocal p iargs
           assert ("Wrong number of arguments to stateful AEAD encryption") $ length args == 3
           let [(_, t1), (x, t), (y, t2)] = args
-          case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+          let withCorrectLength k = do
+                      t <- k
+                      return $ tRefined t ".res" $ pEq (aeLength (aeVar ".res")) 
+                        (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
+          withCorrectLength $ case extractNameFromType t1 of
+            Nothing -> mkSpanned <$> enforcePublicArguments "Invalid key, so arguments must be public" (map snd args)
             Just k -> do
-                nt <- local (set tcScope TcGhost) $ getNameType k
+                nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad p' _ -> do
+                  NT_StAEAD tm xaad p' ypat' -> do
                       pnorm <- normalizePath p
                       pnorm' <- normalizePath p'
                       assert ("Wrong counter for AEAD: expected " ++ show (owlpretty p') ++ " but got " ++ show (owlpretty p)) $ pnorm `aeq` pnorm'
                       b1 <- isSubtype t tm
-                      (xa, aadp) <- unbind xaad
+                      ((xa, xslf), aadp) <- unbind xaad
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
                           pImpl (pNot $ pFlow (nameLbl k) advLbl)
-                                (subst xa (aeVar ".res") aadp)
-                      if b1 && b2 then return $ tRefined (tData advLbl advLbl) ".res" $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "cipherlen") [] [aeLength x])
-                                  else mkSpanned <$> trivialTypeOf (map snd args)
-                  _ -> mkSpanned <$> trivialTypeOf (map snd args)
+                                (subst xa (aeVar ".res") $ subst xslf (aeGet k) $  aadp)
+                      (b3, b4) <- patternPublicAndEquivalent xpat ypat'
+                      if b1 && b2 && b3 && b4 then return $ tData advLbl advLbl 
+                                  else do
+                                      let err_msg = case (b1, b2, b3, b4) of
+                                                      (False, _, _, _) -> "Invalid message type"
+                                                      (_, False, _, _) -> "Invalid AAD"
+                                                      (_, _, False, _) -> "Nonce pattern not public"
+                                                      (_, _, _, False) -> "Invalid nonce pattern"
+                                      mkSpanned <$> enforcePublicArguments (err_msg ++ ", so arguments must be public") (map snd args)
+                  _ -> mkSpanned <$> enforcePublicArguments "Name type invalid for key, so arguments must be public" (map snd args)
       CDecStAEAD -> do
           assert ("Wrong number of arguments to stateful AEAD decryption") $ length args == 4
-          let [(_, t1), (x, t), (y, t2), (_, tnonce)] = args
+          let [(_, t1), (x, t), (y, t2), (xnonce, tnonce)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf (map snd args)
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
             Just k -> do
-                nt <- local (set tcScope TcGhost) $ getNameType k
+                nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad _ _ -> do
+                  NT_StAEAD tm xaad _ ypat -> do
                       b1 <- flowsTo (nameLbl k) advLbl
                       b2 <- tyFlowsTo tnonce advLbl
                       b3 <- tyFlowsTo t advLbl
                       b4 <- tyFlowsTo t2 advLbl
                       if (not b1) && b2 && b3 && b4 then do
-                            (x, aad) <- unbind xaad
-                            return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y aad
-                      else if (b2 && b3 && b4) then do 
-                          l <- coveringLabelOf [t1, t, t2, tnonce]
-                          return $ mkSpanned $ TOption $ tData l l
-                      else do
-                            -- Corrupt
-                            l <- coveringLabel t
-                            let l_corr = joinLbl (nameLbl k) l
-                            return $ tData l_corr l_corr
-                  _ -> mkSpanned <$> trivialTypeOf (map snd args)         
+                            ((x, xslf), aad) <- unbind xaad
+                            return $ mkSpanned $ TOption $ tRefined tm ".res" $ subst x y $ subst xslf (aeGet k) $ aad
+                      else  mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
+                  _ ->  mkSpanned <$> enforcePublicArgumentsOption "Decryption ill-typed, so arguments must be public" [t1, t, t2, tnonce]
       CPKDec -> do 
           assert ("Wrong number of arguments to pk decryption") $ length args == 2
-          let [(_, t1), (_, t)] = args
+          let [(_, t1), (xm, t)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "pk dec ill-typed, so arguments must be public" [t1, t]
             Just k -> do
-              nt <- local (set tcScope TcGhost) $  getNameType k
+              nt <- local (set tcScope $ TcGhost False) $  getNameType k
               case nt^.val of
                 NT_PKE t' -> do
                     l <- coveringLabel t
                     b1 <- flowsTo l advLbl
-                    b2 <- flowsTo (nameLbl k) advLbl
-                    if b1 && (not b2) then do
-                        -- TODO: is this complete?
-                        return $ mkSpanned $ TOption $ mkSpanned $ TUnion t' $ tDataAnn advLbl advLbl "adversarial message"
-                    else do
-                        let l_corr = joinLbl (nameLbl k) l
-                        return $ mkSpanned $ TOption $ tDataAnn l_corr l_corr "corrupt pkdec"
+                    casePropTy (pFlow (nameLbl k) advLbl) $ \b2 -> 
+                        if b1 && (not b2) then do
+                            return $ mkSpanned $ TOption $ mkSpanned $ 
+                                TCase (mkSpanned $ PHonestPKEnc k xm)
+                                      t'
+                                      (tDataAnn advLbl advLbl "adversarial message")
+                        else mkSpanned <$> enforcePublicArgumentsOption "pk dec ill-typed, so arguments must be public" [t1, t]
       CPKEnc -> do 
           assert ("Wrong number of arguments to pk encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
           case extractEncPKFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArguments "pk enc ill-typed, so arguments must be public" [t1, t]
             Just k -> do
-                nt <- local (set tcScope TcGhost) $  getNameType k
+                nt <- local (set tcScope $ TcGhost False) $  getNameType k
                 case nt^.val of
                   NT_PKE t' -> do
                       b <- isSubtype t t'
                       if (b) then
                           return $ mkSpanned $ TRefined (tData advLbl advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (aeApp (topLevelPath $ "pk_cipherlen") [] [aeLength x])
-                      else
-                          mkSpanned <$> trivialTypeOf [t1, t] 
+                      else mkSpanned <$> enforcePublicArguments "pk enc ill-typed, so arguments must be public" [t1, t]
                   _ -> typeError $ show $ ErrWrongNameType k "encryption key" nt
       CMac -> do
           assert ("Wrong number of arguments to mac") $ length args == 2
           let [(_, t1), (_, t)] = args
-          case extractNameFromType t1 of
+          let withMacLength t = 
+                  tRefined t ".res" $ pEq (aeLength (aeVar ".res")) (aeLenConst "maclen")
+          withMacLength <$> case extractNameFromType t1 of
             Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
             Just k -> do 
-                nt <-  local (set tcScope TcGhost) $ getNameType k
+                nt <-  local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
                   NT_MAC t' -> do
                       assertSubtype t t'
                       l <- coveringLabel t'
-                      return $ mkSpanned $ TRefined (tData l advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "maclen")
-                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+                      return $ tData l advLbl 
+                  _ -> mkSpanned <$> enforcePublicArguments "mac ill-typed, so arguments must be public" [t1, t]
       CMacVrfy -> do
           assert ("Wrong number of arguments to mac_vrfy") $ length args == 3
           let [(xt1, t1), (m, mt), (xt, t)] = args
           case extractNameFromType t1 of
-            Nothing -> do
-                l <- coveringLabelOf [t1, mt, t] 
-                return $ tData l l -- Change here
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "mac vrfy ill-typed, so arguments must be public" [t1, mt, t]
             Just k -> do
-                nt <- local (set tcScope TcGhost) $ getNameType k
+                nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
                   NT_MAC t' -> do
                       l1 <- coveringLabel mt
@@ -2149,47 +3154,82 @@ checkCryptoOp cop args = traceFn ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")
                       b3 <- flowsTo  (nameLbl k) advLbl
                       if (b1 && b2 && (not b3)) then
                         return $ mkSpanned $ TOption (tRefined t' ".res" $ (pEq (aeVar ".res") m))
-                      else
-                        let l_corr = joinLbl (nameLbl k) (joinLbl l1 l2) in
-                        return $ mkSpanned $ (TData l_corr l_corr (ignore $ Just "corrupt mac")) -- Change here
+                      else mkSpanned <$> enforcePublicArgumentsOption "mac vrfy ill-typed, so arguments must be public" [t1, mt, t]
       CSign -> do
           assert ("Wrong number of arguments to sign") $ length args == 2
           let [(_, t1), (_, t)] = args
           case extractNameFromType t1 of
-            Nothing -> mkSpanned <$> trivialTypeOf [t1, t]
+            Nothing -> mkSpanned <$> enforcePublicArguments "sign ill-typed, so arguments must be public" [t1, t]
             Just sk -> do
-                nt <- local (set tcScope TcGhost) $  getNameType sk
+                nt <- local (set tcScope $ TcGhost False) $  getNameType sk
                 case nt^.val of
                   NT_Sig t' -> do
                       assertSubtype t t'
                       l <- coveringLabel t'
                       return $ mkSpanned $ TRefined (tData l advLbl) ".res" $ bind (s2n ".res") $ pEq (aeLength (aeVar ".res")) (mkSpanned $ AELenConst "signature")
-                  _ -> mkSpanned <$> trivialTypeOf [t1, t]
+                  _ -> mkSpanned <$> enforcePublicArguments "sign ill-typed, so arguments must be public" [t1, t]
       CSigVrfy -> do
           assert ("Wrong number of arguments to vrfy") $ length args == 3
           let [(_, t1), (_, t2), (_, t3)] = args
           case extractVKFromType t1 of
-            Nothing -> do
-                l <- coveringLabelOf [t1, t2, t3]
-                return $ mkSpanned $ TData l l (ignore $ Just $ "corrupt vrfy") 
+            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
             Just k -> do 
-                nt <-  local (set tcScope TcGhost) $ getNameType k
+                nt <-  local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
                   NT_Sig t' -> do
                       l <- coveringLabel t'
                       let l' = joinLbl l advLbl
                       b1 <- tyFlowsTo t2 l'
                       b2 <- tyFlowsTo t3 l'
-                      b3 <- flowsTo (nameLbl k) advLbl
-                      if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
-                                                else do
-                                                 l_corr <- coveringLabelOf [t1, t2, t3]
-                                                 return $ mkSpanned $ (TData l_corr l_corr $ ignore $ Just "corrupt vrfy") -- Change here
+                      casePropTy (pFlow (nameLbl k) advLbl) $ \b3 -> 
+                          if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
+                          else mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
+
+-- Find all names that appear in any of the arguments to the KDF, as well as any
+-- DH pairs that appear in the ODH annotation.
+-- Return a list of props for whether each of the above names flows to the adv.
+findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [Either a (String, ([Idx], [Idx]), KDFSelector)] -> Int -> Check [Prop]
+findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
+    names1 <- do
+        t <- inferAExpr a
+        case (stripRefinements t)^.val of
+          TName n -> return [n]
+          TSS n m -> return [n, m]
+          _ -> return []
+    names2 <- do
+        bs <- unconcatIKM b
+        ts <- mapM (inferAExpr >=> normalizeTy) bs
+        ps <- forM (zip bs ts) $ \(x, t) ->
+            case (stripRefinements t)^.val of
+              TName n -> return [n]
+              TSS n m -> return [n, m]
+              _ -> do
+                  o <- getLocalDHComputation x
+                  case o of
+                    Nothing -> return []
+                    Just (_, n) -> return [n]
+        return $ concat ps
+    names3 <- forM oann2 $ \o -> do
+        case o of
+          Left _ -> return []
+          Right (s, ips, i) -> do
+            pth <- curModName
+            (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips a c i j
+            return [ne1, ne2] 
+    return $ map (\n -> pFlow (nameLbl n) advLbl) $ aundup $ names1 ++ names2 ++ (concat names3)
+
+aundup :: Alpha a => [a] -> [a]
+aundup [] = []
+aundup (x:xs) = if x `aelem` xs then aundup xs else x : aundup xs
+
+manyCasePropTy :: [Prop] -> Check Ty -> Check Ty
+manyCasePropTy [] k = k
+manyCasePropTy (p:ps) k = casePropTy p $ \_ -> manyCasePropTy ps k
 
 ---- Entry point ----
 
-typeCheckDecls :: Flags -> [Decl] -> IO (Either Env Env)
+typeCheckDecls :: Flags -> [Decl] -> IO (Either (Env SMT.SolverEnv) (Env SMT.SolverEnv))
 typeCheckDecls f ds = do
     e <- emptyEnv f
     r <- PR.runResolve f $ PR.resolveDecls ds
@@ -2217,11 +3257,10 @@ defMatches s d1 d2 =
           (is1, DefSpec ab l1 pty) <- unbind blspec
           (is', DefSpec ab' l1' pty') <- unbind blspec'
           assert ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
-          (args, (pr1, t1, _)) <- unbind pty
-          (args', (pr2, t2, _)) <- unbind pty'
           assert ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
-          assert ("Def prereq mismatch") $ (bind is1 $ bind args pr1) `aeq` (bind is' $ bind args' pr2)
-          assert ("Def return ty mismatch") $ (bind is1 $ bind args t1) `aeq` (bind is' $ bind args' t2)
+          prereq_retty1 <- withDepBind pty $ \_ (x, y, _) -> return (x, y)
+          prereq_retty2 <- withDepBind pty' $ \_ (x, y, _) -> return (x, y)
+          assert ("Def mismatch on prereq or return ty") $ (bind is1 prereq_retty1) `aeq` (bind is' prereq_retty2)
       (Nothing, _) -> typeError $ "Missing def: " ++ s
 
 tyDefMatches :: String -> TyDef -> TyDef -> Check ()
@@ -2248,8 +3287,7 @@ nameDefMatches s xn1 xn2 = do
       (BaseDef (nt1, ls1), BaseDef (nt2, ls2)) -> do
           assert ("Name type mismatch on name " ++ s) $ nt1 `aeq` nt2
           assert ("Locality mismatch on name " ++ s) $ ls1 `aeq` ls2
-      _ -> typeError $ "Unhandled name def matches case"
-
+      _ -> error "unimp: nameDefMatches"
 
 moduleMatches :: ModDef -> ModDef -> Check ()
 moduleMatches md1 md2 = 
@@ -2327,6 +3365,12 @@ moduleMatches md1 md2 =
 --moduleMatches :: Bind (Name ResolvedPath) ModDef -> Bind (Name ResolvedPath) ModDef -> Check ()
 --moduleMatches xmd1 ymd2 = do
 
+normalizeTyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty) -> Check (Map DataVar (Ignore String, (Maybe AExpr), Ty))
+normalizeTyContext ctxt =
+    forM ctxt $ \(x, (s, a, t)) -> do
+        t' <- normalizeTy t
+        return (x, (s, a, t'))
+
 typeError' :: String -> Check a
 typeError' msg = do
     pos <- view curSpan
@@ -2339,11 +3383,25 @@ typeError' msg = do
               False -> do
                 (_, b) <- local (set inTypeError True) $ SMT.smtTypingQuery "typeError false check" $ SMT.symAssert $ mkSpanned PFalse
                 return $ if b then [E.Note "Inconsistent type context detected. Try using false_elim?"] else []
-    tyc <- removeAnfVars <$> view tyContext 
+    tyc <- case ite of
+             True -> removeAnfVars <$> view tyContext
+             False -> do
+                f <- view $ envFlags . fLocalTypeError
+                (if (not f) then local (set pathCondition []) else id) $ 
+                    local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
+    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
     e <- ask
     E.printDiagnostic S.stdout True True 4 E.defaultStyle diag 
-    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line
+    pc <- view pathCondition
+    case pc of
+      [] -> return ()
+      _ -> liftIO $ putDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
     writeSMTCache
+    -- Uncomment for debugging
+    -- rs <- view tcRoutineStack
+    -- logTypecheck $ owlpretty "Routines: " <> (mconcat $ L.intersperse (owlpretty ", ") $ map owlpretty rs)
+    -- inds <- view inScopeIndices
+    -- logTypecheck $ "Indices: " ++ show (owlprettyIndices inds)
     Check $ lift $ throwError e

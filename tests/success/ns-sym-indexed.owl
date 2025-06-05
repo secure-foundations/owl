@@ -101,12 +101,10 @@ def Alice_main<i> (
             unpack j, _ = () in // arbitrary j
             pack<j>(alice_None<idx i, idx j>())
         | Some res =>
-            let kAB : if sec(KA) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB2(res) in
-            let B' = _B(res) in
+            parse res as kA_message(nA', kAB, B', m1) in 
             unpack j, kAB' = kAB in
             corr_case KAB<j> in
 
-            let m1 = _x(res) in
             let _ = output m1 to endpoint(Bob) in
 
             input inp2 in
@@ -119,6 +117,10 @@ def Alice_main<i> (
                     let _ = output encm to endpoint(Bob) in
                     pack<j>(alice_Some<idx i, idx j>(kAB'))
             }
+            otherwise {
+                unpack j, _ = () in // arbitrary j
+                pack<j>(alice_None<idx i, idx j>())
+            }
         }
 // ************************************************************************
 
@@ -128,17 +130,15 @@ def Alice_main<i> (
 def AS_main<i> () @ AS
 : Unit =
     input inp in
-    let A', B', nA' = msg1_A(inp), msg1_B(inp), msg1_nA(inp) in
-    let kAB = get(KAB<i>) in
-    let kAB' = pack<i>(kAB) in
-    let kA  = get(KA) in
-    let kB  = get(KB) in
-
-    if eq(length(nA'), |nonce|) && eq(length(A'), |nonce|) && eq(length(B'), |nonce|) then
+    parse inp as msg1_AtoS(A', B', nA') in 
+        let kAB = get(KAB<i>) in
+        let kAB' = pack<i>(kAB) in
+        let kA  = get(KA) in
+        let kB  = get(KB) in
         let encm1 = aenc(kB, kB_message(kAB', A')) in
         let encm2 = aenc(kA, kA_message(nA', kAB', B', encm1)) in
         let _ = output encm2 to endpoint(Alice) in ()
-    else let _ = output 0 to endpoint(Alice) in ()    
+    otherwise let _ = output 0 to endpoint(Alice) in ()
 // ************************************************************************
 
 
@@ -159,12 +159,12 @@ def Bob_main<i> () @ Bob
           unpack j, _ = () in // arbitrary j
           pack<j>(bob_None<idx i, idx j>())
         | Some res =>
-            let kAB : if sec(KB) then (exists j. Name(KAB<j>)) else Data<adv> = _kAB1(res) in
-            let A' = _A(res) in
+            parse res as kB_message(kAB, A') in
             unpack j, kAB' = kAB in
             corr_case KAB<j> in 
 
-            let encm = aenc(kAB', pack<i>(nonceB<idx i>(get(NB<i>)))) in
+            let m = pack<i>(nonceB<idx i>(get(NB<i>))) in 
+            let encm = aenc(kAB', m) in 
             let _ = output encm to endpoint(Alice) in
 
             input inp2 in
@@ -176,5 +176,9 @@ def Bob_main<i> () @ Bob
                     let m : if sec(KB) then Name(KAB<j>) else Data<adv> = kAB' in 
                     pack<j>(bob_Some<idx i, idx j>(m))
             }
+        otherwise {
+          unpack j, _ = () in // arbitrary j
+          pack<j>(bob_None<idx i, idx j>())
+        }
     }
 // ************************************************************************

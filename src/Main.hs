@@ -14,11 +14,14 @@ import CmdArgs
 import System.Directory
 import System.Process
 import System.CPUTime
+import System.Exit
 import Text.Printf
 import ModuleFlattening
 import Test
-import qualified Extraction as E
+import qualified ExtractionTop as ET
+import qualified ExtractionBase as EB
 import Control.Lens
+import Control.Monad ( when ) 
 
 
 main :: IO ()
@@ -34,12 +37,14 @@ main = do
           s <- readFile fn
           pres <- P.runParserT parseFile () (takeFileName fn) s
           case pres of
-            Left err -> putStrLn $ "parse error: " ++ show err
+            Left err -> do
+              putStrLn $ "parse error: " ++ show err 
+              exitFailure
             Right ast -> do
                 do
                     res <- typeCheckDecls (set fFileContents s args) ast
                     case res of
-                      Left _ -> return ()
+                      Left _ -> exitFailure
                       Right tcEnv -> do
                           -- end <- getCPUTime
                           -- let diff = fromIntegral (end - start) / (10^12)
@@ -47,20 +52,22 @@ main = do
                           when (args^.fLogSMT) $ do
                               z3Results <- readIORef $ tcEnv^.z3Results
                               reportZ3Results fn z3Results
-                          if args^.fExtract then do
-                              let extfn = "extraction/src/main.rs"
+                          when (args^.fExtract) $ do
+                              let extfn = "extraction/src/lib.rs"
+                              -- let libfn = "extraction/src/lib.rs"
                               modBody <- doFlattening tcEnv
-                              res <- E.extract tcEnv (takeDirectory fn) modBody
+                              res <- ET.extract args tcEnv (takeDirectory fn) modBody
                               case res of
-                                Left err -> E.printErr err
+                                Left err -> EB.printErr err >> exitFailure
                                 Right rust_code -> do
                                   -- putStrLn $ show rust_code
-                                  writeFile extfn $ "// Extracted rust code from file " ++ fn ++ ":\n"
+                                  writeFile extfn $ "// Extracted verus code from file " ++ fn ++ ":\n"
                                   appendFile extfn $ show rust_code
-                                  callProcess "rustfmt" [extfn]
+                                  -- writeFile libfn $ "// Extracted rust library code from file " ++ fn ++ ":\n"
+                                  -- appendFile libfn $ show lib_code
                                   putStrLn $ "Successfully extracted to file " ++ extfn
                                   return ()
-                          else return ()
+                          
 
 
 lookupDefault :: String -> M.Map String a -> a -> a

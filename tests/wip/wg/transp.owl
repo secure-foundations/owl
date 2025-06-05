@@ -1,0 +1,134 @@
+include "defs.owl"
+
+// Transport layer code for both parties 
+
+
+def init_sent_message<@n>(x : Ghost) @ Initiator<n> : Unit = ()
+def resp_sent_message<@m>(x : Ghost) @ Responder<m> : Unit = ()
+
+def init_recv<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>) @
+Initiator<n>
+    // When intiator decrypts, it gets secret data
+    : Option Data<adv /\ [channel_secret_resp_send<@n,m>]> = 
+    input i in 
+    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, haspsk, eph, c7, init_send,
+    resp_send) in 
+    parse i as transp(tag, from, ctr, pkt) in {
+        guard eq(from, resp) in 
+        pcase init_clean<i,n,m>[haspsk, eph] in 
+        let p = st_aead_dec(resp_send, pkt, 0x, ctr) in
+        {
+            let _ : Unit = case p as Option Data<adv> {
+                | None => ()
+                | Some m =>
+                    assert init_clean<i,n,m>[haspsk, eph] ==> happened(resp_sent_message<@m>(m));
+                    ()
+                otherwise => ()
+            } in
+            ()
+        };
+        p
+    }
+    otherwise None<ty: Data<adv /\ [channel_secret_resp_send<@n,m>]>> ()
+
+def init_send<i@n,m>(tki : transp_keys_init<session i, pid n, pid m>,
+    // Initiator's message to send here is secret
+    msg : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>
+) @
+Initiator<n>
+    : Unit
+    =
+    parse tki as transp_keys_init<session i, pid n, pid m>(init, resp, haspsk, eph, c7, init_send,
+    resp_send) in 
+    pcase init_clean<i,n,m>[haspsk, eph] in 
+    let transp_counter = get_counter N_init_send<i@n> in
+    call init_sent_message<@n>(msg);
+    let c = st_aead_enc<N_init_send<i@n>>(init_send, msg, 0x) in 
+    let transp_tag = transp_tag_value() in 
+    let o = transp(transp_tag, init, transp_counter, c) in 
+    output o to endpoint(Responder<m>)
+
+struct resp_transp_recv_result<j,n_pk,n,m> {
+    rr_st : transp_keys_resp<session j, pid n_pk, pid n, pid m>,
+    rr_msg : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|>
+}
+
+def resp_recv<j@n,m>(
+    tki : exists n_pk. transp_keys_resp<session j, pid n_pk, pid n, pid m>) 
+    @ Responder<m>
+    : Option (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>) = 
+    input i in 
+    unpack n_pk, tki' = tki in
+    parse tki' as transp_keys_resp<session j, pid n_pk, pid n, pid m>(init,
+    resp, haspsk, eph, c7, _, init_send,
+    resp_send) in 
+    parse i as transp(tag, from, ctr, pkt) in {
+        guard eq(from, init) in 
+        pcase resp_clean<j,n_pk,n,m>[haspsk, eph] in
+        pcase exists i:idx. eph == dhpk(get(E_init<i@n>)) when resp_clean<j,n_pk,n,m>[haspsk, eph] in 
+        pcase n =idx n_pk in 
+        case st_aead_dec(init_send, pkt, 0x, ctr) // as Option 
+        // (Data<adv /\
+        // [channel_secret_init_send<@n,m>], |adv|>)
+        {
+            | Some x =>
+                false_elim in 
+                let st' : transp_keys_resp<session j, pid n_pk, pid
+                n,
+                pid m> =
+                    transp_keys_resp<session j, pid n_pk, pid n, pid
+                    m>(init, resp, haspsk, eph, c7, true, init_send, resp_send)
+                 in
+                let ret = 
+                pack<n_pk>(resp_transp_recv_result<session j, pid n_pk, pid n, pid
+                m>(st', x)) in 
+                assert (resp_clean<j,n_pk,n,m>[haspsk,eph] /\ n =idx n_pk /\ exists i:idx. eph == dhpk(get(E_init<i@n>)))
+                       ==>
+                       happened(init_sent_message<@n>(x));
+                Some(ret)
+            | None => None<ty: (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>)>()
+            // otherwise => None()
+        }
+    }
+    otherwise None<ty: (exists n_pk. resp_transp_recv_result<session j, pid n_pk, pid n,
+    pid m>)>()
+                
+
+
+def resp_send<j@n,m>(tki : 
+  exists n_pk. transp_keys_resp<session j, pid n_pk, pid n, pid m>,
+    msg : Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>
+    ) @
+Responder<m>
+    : Option Unit // State stays the same after this
+ = 
+  unpack npk, tki_ = tki in 
+
+    parse tki_ as transp_keys_resp<session j, pid npk, pid n, pid m>(init, resp,
+    haspsk, eph, c7, b, init_send,
+    resp_send) in 
+    guard b in {
+    pcase resp_clean<j,npk,n,m>[haspsk, eph] in 
+    assert (resp_clean<j,npk,n,m>[haspsk, eph] ==> n =idx npk);
+
+    // For the responder's security for sending a message, we require that,
+    // if channel_secret_resp_send<@n,m> is actually secret 
+    // (and hence one of the responder's DH keys are secret, and the initiator's
+    // static key is secret), 
+    // the ephemeral key it got from the handshake is actually an ephemeral key,
+    // and it corresponds to the initiator it thinks it corresponds to. 
+    // This corresponds to the cleanliness predicate in Lipp's formalization of
+    // WireGuard in CryptoVerif (4.3.4). 
+    assume (sec(channel_secret_resp_send<@n,m>) ==> exists i:idx. eph == dhpk(get(E_init<i@npk>)));
+    assume (sec(channel_secret_resp_send<@n,m>) ==> n =idx npk);
+
+    let transp_counter = get_counter N_resp_send<j@m> in
+    call resp_sent_message<@m>(msg);
+    let c = st_aead_enc<N_resp_send<j@m>>(resp_send, msg, 0x) in 
+    let transp_tag = transp_tag_value() in 
+    let o = transp(transp_tag, resp, transp_counter, c) in 
+    output o to endpoint(Initiator<n>);
+    Some(())
+    }

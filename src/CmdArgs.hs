@@ -12,10 +12,13 @@ data Flags = Flags {
     _fLogSMT :: Bool,
     _fCleanCache :: Bool,
     _fExtract :: Bool,
+    _fDebugExtraction :: Bool,
+    _fExtractBufOpt :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
     _fFilePath :: String, 
+    _fLocalTypeError :: Bool,
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
     _fFileContents :: String
@@ -37,7 +40,11 @@ parseArgs =
       <*>
           switch 
           ( long "extract" <> short 'e' <> 
-            help "Extract rust code (requires rustfmt to be installed)" )
+            help "Extract Verus code" )
+      <*> switch
+          ( long "debug-extraction" <> long "dbgext" <> help "Debug extraction" )
+      <*> switch
+          ( long "optimize-buffers" <> long "bufopt" <> help "Optimize buffer usage for extraction where possible" )
       <*>
           switch
           ( long "test" <> help "Do tests")
@@ -48,6 +55,9 @@ parseArgs =
           switch
           ( long "skip-ro-disj" <> help "Skip RO disjointness queries" )
       <*> Options.Applicative.argument (str) (value "" <> metavar "FILE")
+      <*>
+          switch
+          ( long "local-errors" <> help "Localize type errors to path condition" )
       <*>
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )

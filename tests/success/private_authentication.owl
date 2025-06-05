@@ -44,7 +44,6 @@ def A_main<i> () @ A
     input inp in
     corr_case pkA in
     let m' = pkdec(get(pkA), inp) in
-    union_case m = m' in 
     ()
 
 
@@ -56,17 +55,18 @@ def B_main<j> () @ B
     input inp in
     case pkdec(privKey, inp) {
         | None => ()
-        | Some mm => 
-            union_case m = mm in
+        | Some m => 
             unpack i, m' = m in
-            let n0' = m1_n0<idx i>(m') in
-            let m1_pkA_e = m1_pkA<idx i>(m') in
-            case m1_pkA_e {
+            
+            parse m' as m1<idx i>(n0', _, m1_pkA_e) in 
+            case m1_pkA_e as m1_pkA_enum {
             | m1_pkA_tag m1_pkA =>
                 let b1 = eq(m1_pkA, get_encpk(pkA)) in    // let b2 = eq(n0', |nonce|) in
-                let b2 = checknonce(n0', get(n0<j>)) in // TODO: Check
+                pcase (i =idx j) in 
+                let b2 = checknonce(n0', get(n0<j>)) in 
                 if b1 then
                     if b2 then
+                        false_elim in 
                         let msg_to_enc        = m2<idx j>(get(n0<j>), get(n<j>), get(r<j>)) in
                         let msg_to_enc_packed = (pack<j>(msg_to_enc)) in
                         let pubKeyA = get_encpk(pkA) in
@@ -77,6 +77,8 @@ def B_main<j> () @ B
                         ()
                 else
                     ()
+            otherwise => ()
             }
+            otherwise ()
     }
 

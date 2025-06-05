@@ -27,7 +27,7 @@ def alice1 () @ alice : Data<adv> =
 def tst_constants() @ alice : Unit = 
     let x = 0 in
     let y = 012 in 
-    let z = 0xabc in 
+    let z = 0xabcd in 
     let w = 0xdeadbeef in 
     let a = 0x in 
     ()

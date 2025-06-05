@@ -15,6 +15,9 @@ import qualified Data.Functor.Identity as I
 import qualified Data.Set as S
 import Unbound.Generics.LocallyNameless
 import AST
+import Numeric
+import Data.Char (ord)
+import Pretty
 
 type Parser = ParsecT String () IO 
 
@@ -28,7 +31,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "bool", "Option", "name", "Name", "enckey",  "st_aead", "nonce_pattern", "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -76,32 +79,45 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
+parseKDFSelector :: Parser KDFSelector
+parseKDFSelector = do
+    i <- many1 digit
+    ps <- parseIdxParams1
+    return (read i, ps)
+
+parseNameExp :: Parser NameExp
 parseNameExp = 
     (parseSpanned $ do
-        reserved "PRF"
+        reserved "KDF"
         symbol "<"
-        n <- parseNameExp
-        symbol ","
-        p <- identifier
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ";"
+        nt <- parseNameType
         symbol ">"
-        return $ PRFName n p)
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ","
+        c <- parseAExpr
+        symbol ")"
+        return $ KDFName a b c nks (read j) nt (ignore False)
+    )
     <|>
     (parseSpanned $ do
         i <- parsePath
         ps <- parseIdxParams 
-        oi <- optionMaybe $ do
-            symbol "["
-            oas_ <- optionMaybe $ do 
-                as <- parseAExpr `sepBy` (symbol ",")
-                symbol ";"
-                return as
-            let as = case oas_ of
-                        Nothing -> []
-                        Just v -> v
-            i <- many1 digit
-            symbol "]"
-            return $ (as, read i)
-        return $ NameConst ps i oi)
+        oxs <- optionMaybe $ do
+                symbol "["
+                xs <- parseAExpr `sepBy1` (symbol ",")
+                symbol "]"
+                return xs
+        let xs = case oxs of
+                   Just v -> v
+                   Nothing -> []
+        return $ NameConst ps i xs) 
 
 parsePath :: Parser Path
 parsePath = 
@@ -132,6 +148,10 @@ parseLabelTerm =
       <|>
       (parseSpanned $ do
           reserved "adv";
+          return LAdv)
+      <|>
+      (parseSpanned $ do
+          reserved "ghost";
           return LAdv)
       <|>
       (parseSpanned $ do
@@ -174,18 +194,18 @@ parseTyTerm =
         t <- parseTy
         return $ TOption t)
     <|>
-    (parseSpanned $ do 
-        reserved "Union"
-        symbol "<"
-        t1 <- parseTy
-        symbol ","
-        t2 <- parseTy
-        symbol ">"
-        return $ TUnion t1 t2)
-    <|>
     (parseSpanned $ do
         reserved "Unit"
         return $ TUnit)
+    <|>
+    (parseSpanned $ do
+        reserved "Const"
+        symbol "("
+        symbol "0"
+        symbol "x"
+        z <- many hexDigit
+        symbol ")"
+        return $ THexConst z)
     <|>
     (parseSpanned $ do
         reserved "Lemma"
@@ -193,6 +213,10 @@ parseTyTerm =
         p <- parseProp
         symbol "}"
         return $ TRefined tUnit "._" $ bind (s2n "._") p)
+    <|>
+    (parseSpanned $ do
+        reserved "Ghost"
+        return $ TGhost)
     <|>
     (parseSpanned $ do
         reserved "Data"
@@ -251,12 +275,34 @@ parseTyTerm =
         symbol ")"
         return $ TName n)
     <|>
+    (do
+        p <- getPosition
+        reserved "SecName"
+        symbol "("
+        n <- parseNameExp
+        symbol ")"
+        p' <- getPosition
+        let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
+        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
+    )
+    <|>
+    (do
+        p <- getPosition
+        reserved "PubName"
+        symbol "("
+        n <- parseNameExp
+        symbol ")"
+        p' <- getPosition
+        let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
+        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pFlow (nameLbl n) advLbl
+    )
+    <|>
     (parseSpanned $ do
         reserved "exists"
         i <- identifier
         symbol "."
         t <- parseTy
-        return $ TExistsIdx $ bind (s2n i) t 
+        return $ TExistsIdx i $ bind (s2n i) t 
     )
     <|>
     (try $ parseSpanned $ do
@@ -328,20 +374,16 @@ parseEnum = parseSpanned $ do
             return $ DeclEnum n $ bind is xs
         else fail $ "Duplicate cases in enum " ++ n
 
+
 parseStruct = parseSpanned $ do
     reserved "struct"
     n <- identifier                                                                  
     is <- parseIdxParamBinds1 
     symbol "{"
-    xs <- (do
-        s <- identifier
-        symbol ":"
-        t <- parseTy
-        return (s, t)) `sepBy` (symbol ",")
+    xs_ <- parseDepBind
+    let xs = xs_ () 
     symbol "}"
-    if uniq (map fst xs) then 
-        return $ DeclStruct n $ bind is xs
-    else fail $ "Duplicate cases in struct " ++ n
+    return $ DeclStruct n $ bind is xs
         
 parseProp :: Parser Prop
 parseProp = buildExpressionParser parsePropTable parsePropTerm
@@ -374,21 +416,21 @@ parsePropTerm =
             p' <- getPosition
             return $ PNot $ Spanned (ignore $ mkPos p p') $ PFlow (Spanned (_spanOf ne) $ LName ne) advLbl
         )
-        <|>
-        (parseSpanned $ do
-            reserved "ro"
-            symbol "("
-            a <- parseAExpr
-            symbol ","
-            b <- parseAExpr
-            symbol ";"
-            oi <- optionMaybe $ many1 digit
-            symbol ")"
-            let i = case oi of
-                      Nothing -> 0
-                      Just i -> read i
-            return $ PRO a b i
-        )
+        -- <|>
+        -- (parseSpanned $ do
+        --     reserved "ro"
+        --     symbol "("
+        --     a <- parseAExpr
+        --     symbol ","
+        --     b <- parseAExpr
+        --     symbol ";"
+        --     oi <- optionMaybe $ many1 digit
+        --     symbol ")"
+        --     let i = case oi of
+        --               Nothing -> 0
+        --               Just i -> read i
+        --     return $ PRO a b i
+        -- )
         <|>         
         (parseSpanned $ do
             reserved "let"
@@ -419,6 +461,14 @@ parsePropTerm =
             symbol "=idx"
             t2 <- parseIdx
             return $ PEqIdx t t2)
+        <|>
+        (try $ parseSpanned $ do
+            pbegin <- getPosition
+            t <- parseIdx
+            symbol "!=idx"
+            t2 <- parseIdx
+            pend <- getPosition
+            return $ PNot $ Spanned (ignore $ mkPos pbegin pend) $ PEqIdx t t2)
         <|>
         (try $ parseSpanned $ do
             l1 <- parseLabel
@@ -467,6 +517,29 @@ parsePropTerm =
             return $ PAADOf ne x
             )
         <|>
+        (parseSpanned $ do
+            reserved "in_odh"
+            symbol "("
+            s <- parseAExpr
+            symbol ","
+            ikm <- parseAExpr
+            symbol ","
+            info <- parseAExpr
+            symbol ")"
+            return $ PInODH s ikm info
+            )
+        <|>
+        (parseSpanned $ do
+            reserved "honest_pk_enc"
+            symbol "<"
+            ne <- parseNameExp
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ")"
+            return $ PHonestPKEnc ne a
+        )
+        <|>
         (parseSpanned $ try $ do
             p <- parsePath
             is <- parseIdxParams1
@@ -507,14 +580,16 @@ parseQuantBinders =
 mkQuant :: Quant -> [(String, BinderType)] -> Prop -> Prop
 mkQuant q [] p = p
 mkQuant q ((i, bt):bs) p = case bt of
-    BTIdx -> mkSpanned $ PQuantIdx q $ bind (s2n i) $ mkQuant q bs p
-    BTBV -> mkSpanned $ PQuantBV q $ bind (s2n i) $ mkQuant q bs p
+    BTIdx -> mkSpanned $ PQuantIdx q (ignore i) $ bind (s2n i) $ mkQuant q bs p
+    BTBV -> mkSpanned $ PQuantBV q (ignore i) $ bind (s2n i) $ mkQuant q bs p
 
-mkEForall :: [(String, BinderType)] -> Expr -> Expr
-mkEForall [] e = e
-mkEForall ((i, bt):bs) k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx $ bind (s2n i) $ mkEForall bs k
-    BTBV -> mkSpanned $ EForallBV $ bind (s2n i) $ mkEForall bs k
+mkEForall :: [(String, BinderType)] -> Maybe Prop -> Expr -> Expr
+mkEForall [(i, bt)] op k = case bt of
+    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (op, k)
+    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (op, k)
+mkEForall ((i, bt):bs) op k = case bt of
+    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
+    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
 
 
 prefixProp op f =
@@ -540,8 +615,6 @@ parsePropTable = [
     [ infixProp "<==>" pIff AssocNone ]
                  ]
 
-parseNoncePattern = 
-    (symbol "*" >> return NPHere)
 
 parseNameType = 
     parensPos parseNameType <|>
@@ -551,7 +624,15 @@ parseNameType =
     <|>
     (parseSpanned $ do
         reserved "nonce"
-        return NT_Nonce)
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NT_Nonce len)
     <|>
     (parseSpanned $ do
         reserved "sigkey"
@@ -568,13 +649,24 @@ parseNameType =
         t <- parseTy
         symbol "aad"
         x <- identifier
+        oself <- optionMaybe identifier
+        let self = case oself of
+                     Nothing -> "%self"
+                     Just v -> v
         symbol "."
         pr <- parseProp
         reserved "nonce"
         p <- parsePath
-        reserved "nonce_pattern"
-        np <- parseNoncePattern
-        return $ NT_StAEAD t (bind (s2n x) pr) p np
+        opat <- optionMaybe $ do
+            reserved "pattern"
+            y <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n y) a
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ NT_StAEAD t (bind (s2n x, s2n self) pr) p pat 
     )
     <|>
     (parseSpanned $ do
@@ -588,19 +680,63 @@ parseNameType =
         return $ NT_MAC t)
     <|>
     (parseSpanned $ do
-        reserved "prf"
+        kpos <- alt (reserved "kdf" >> return KDF_SaltPos) (reserved "dualkdf" >> return KDF_IKMPos)
         symbol "{"
-        vals <- (do
-            l <- identifier
-            symbol ":"
-            ae <- parseAExpr
-            symbol "->"
-            nt <- parseNameType
-            return (l, (ae, nt))) `sepBy` (symbol ",")
+        x <- identifier
+        y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
+        symbol "."
+        kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ NT_PRF vals)
+        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
+    )
+    <|>
+    (parseSpanned $ do
+        p <- parsePath
+        ps <- parseIdxParams
+        oargs <- optionMaybe $ do
+            symbol "("
+            xs <- parseAExpr `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let as = case oargs of
+                   Nothing -> []
+                   Just v -> v
+        return $ NT_App p ps as
+    )
+
+parseKDFStrictness = 
+    (reserved "strict" >> return KDFStrict)
+    <|>
+    (reserved "public" >> return KDFPub)
 
 
+kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
+kdfCase = do 
+    ois <- parseIdxParamBinds1
+    p <- parseProp
+    symbol "->"
+    nts <- (do
+        ostrict <- optionMaybe $ parseKDFStrictness
+        nt <- parseNameType
+        let strictness = case ostrict of 
+                            Nothing -> KDFUnstrict
+                            Just v -> v
+        return (strictness, nt)) `sepBy` (symbol "||")
+    return $ bind ois (p, nts)
+
+parseKDFHint :: Parser (NameExp, Int, Int)
+parseKDFHint = do 
+    n <- parseNameExp
+    symbol "["
+    i <- many1 digit
+    symbol ","
+    j <- many1 digit
+    symbol "]"
+    return (n, read i, read j)
 
 parseLocality :: Parser Locality
 parseLocality = do
@@ -631,48 +767,29 @@ parseRequires = do
 
 parseNameDeclBody =
     (do
-        symbol ":"
-        ((do
-            reserved "RO"
-            xs_ <- optionMaybe $ do
-                symbol "["
-                xs <- (identifier `sepBy1` (symbol ","))
-                symbol "]"
-                return $ map s2n xs
-            let xs = case xs_ of
-                       Nothing -> []
-                       Just v -> v
-            ostrict <- optionMaybe $ do
-                reserved "strict"
-                optionMaybe $ do
-                    symbol "{"
-                    i <- (many1 digit) `sepBy1` (symbol ",")
-                    symbol "}"
-                    return $ map read i
-            let strictness = case ostrict of
-                               Just oi -> ROStrict oi
-                               Nothing -> ROUnstrict
-            e <- parseAExpr
-            symbol "->"
-            nts <- parseNameType `sepBy1` (symbol "||")
-            oreq <- parseRequires
-            let req = case oreq of
-                        Nothing -> pTrue
-                        Just v -> v
-            olem <- optionMaybe $ do
-                reserved "uniqueness_by"
-                parseExpr
-            let lem = case olem of
-                        Nothing -> mkSpanned $ ERet $ mkSpanned $ AEApp (topLevelPath "unit") [] []
-                        Just l -> l
-            return $ DeclRO strictness (bind xs (e, req, nts, lem))
-         )
-         <|>
-         (do
-             nt <- parseNameType
+         symbol ":"
+         nt <- parseNameType
+         onl <- optionMaybe $ do
              symbol "@"
-             nl <- parseLocality `sepBy1` (symbol ",")
-             return $ DeclBaseName nt nl)))
+             parseLocality `sepBy1` (symbol ",")
+         let nl = case onl of
+                    Nothing -> []
+                    Just v -> v
+         return $ DeclBaseName nt nl)
+    <|>
+    (do
+        oxs <- optionMaybe $ do
+                symbol "["
+                xs <- identifier `sepBy1` (symbol ",")
+                symbol "]"
+                return xs
+        let xs = case oxs of
+                   Just v -> v
+                   Nothing -> []
+        symbol "="
+        ne2 <- parseNameExp
+        return $ DeclAbbrev $ bind (map s2n xs) ne2
+    )
     <|>
     (return $ DeclAbstractName)
     
@@ -734,6 +851,45 @@ parseDecls =
     )
     <|>
     (parseSpanned $ do
+        reserved "odh"
+        n <- identifier
+        ps <- parseIdxParamBinds
+        symbol ":"
+        ne1 <- parseNameExp
+        symbol ","
+        ne2 <- parseNameExp
+        symbol "->"
+        symbol "{"
+        x <- identifier
+        y <- identifier
+        oz <- optionMaybe identifier
+        let z = case oz of
+                  Just v -> v
+                  Nothing -> "%self"
+        symbol "."
+        kdfCases <- kdfCase `sepBy1` (symbol ",")
+        symbol "}"
+        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "nametype"
+        n <- identifier
+        ps <- parseIdxParamBinds
+        oxs <- optionMaybe $ do
+            symbol "("
+            xs <- identifier `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let xs = case oxs of
+                   Nothing -> []
+                   Just v -> map s2n v
+        symbol "="
+        nt <- parseNameType
+        return $ DeclNameType n (bind (ps, xs) nt)
+    )
+    <|>
+    (parseSpanned $ do
         reserved "predicate"
         n <- identifier
         ps <- parseIdxParamBinds1
@@ -782,6 +938,21 @@ parseDecls =
                 symbol "==>"
                 l2 <- parseLabel
                 return $ DeclCorr $ bind (pb, []) (l1, l2))
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "corr_group"
+        pb <- parseIdxParamBinds1
+        alt
+            (try $ do
+                symbol "["
+                xs <- identifier `sepBy1` (symbol ",")
+                symbol "]"
+                ls <- parseLabel `sepBy1` (symbol ",")
+                return $ DeclCorrGroup $ bind (pb, map s2n xs) ls)
+            (do
+                ls <- parseLabel `sepBy1` (symbol ",")
+                return $ DeclCorrGroup $ bind (pb, []) ls)
     )
     <|>
     (try $ parseSpanned $ do
@@ -838,14 +1009,24 @@ parseDecls =
         return $ DeclModule n imt bdy otype 
     )
 
-parseRegularDef n inds = do
-    symbol "("
+parseDepBind :: Alpha a => Parser (a -> DepBind a)
+parseDepBind = do
     args <- (do
         x <- identifier
         symbol ":"
         t <- parseTy
-        return $ (s2n x, embed t)
+        return (s2n x, x, t)
         ) `sepBy` (symbol ",")
+    return $ \x -> go args x
+        where
+            go [] x = DPDone x
+            go ((n, s, t):args) x = DPVar t s (bind n $ go args x) 
+
+
+
+parseRegularDef n inds = do
+    symbol "("
+    bndk <- parseDepBind
     symbol ")"
     symbol "@"
     nl <- parseLocality
@@ -855,7 +1036,7 @@ parseRegularDef n inds = do
     oe <- optionMaybe $ do
         symbol "="
         parseExpr
-    return $ DeclDef n (bind inds $ (nl, bind args (preReq, tyAnn, oe)))
+    return $ DeclDef n (bind inds $ (nl, bndk (preReq, tyAnn, oe)))
 
 parseHeader n inds = do 
     symbol "@"
@@ -925,6 +1106,22 @@ parseAppChain imt n = parseSpanned $ do
       mkModuleApp m (x : xs) = mkModuleApp (mkSpanned $ ModuleApp m x) xs
 
 
+parseAttribute = do
+    symbol "#"
+    symbol "["
+    s <- many $ alphaNum <|> char '_' <|> space
+    symbol "]"
+    return s
+
+parsePCaseAttribute = do
+    o <- optionMaybe parseAttribute
+    case o of
+      Nothing -> return Nothing
+      Just s ->
+          case s of
+            "assume false" -> return $ Just False
+            "assume true" -> return $ Just True
+            _ -> fail $ "Unknown attribute for PCase: " ++ s
 
 
 parseDebugCommand = 
@@ -942,7 +1139,32 @@ parseDebugCommand =
         symbol "("
         a <- parseAExpr
         symbol ")"
-        return $ DebugPrintTyOf a
+        return $ DebugPrintTyOf (ignore a) a
+    )
+    <|>
+    (try $ do
+        reserved "checkStructMatches"
+        symbol "(" 
+        x <- parsePath
+        op <- optionMaybe parseParams
+        symbol "(" 
+        args <- parseArgs
+        symbol ")"
+        symbol ")"
+        let ps = case op of
+                   Just ps -> ps
+                   Nothing -> []
+        return $ DebugCheckMatchesStruct args x ps
+    )
+    <|>
+    (try $ do
+        reserved "hasType"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        t <- parseTy
+        symbol ")"
+        return $ DebugHasType (ignore a) a t
     )
     <|>
     (try $ do
@@ -962,11 +1184,11 @@ parseDebugCommand =
     )
     <|>
     (try $ do
-        reserved "printProp"
+        reserved "decideProp"
         symbol "("
         p <- parseProp
         symbol ")"
-        return $ DebugPrintProp p
+        return $ DebugDecideProp p
         )
     <|>
     (try $ do
@@ -981,6 +1203,11 @@ parseDebugCommand =
     (try $ do
         reserved "printModules"
         return $ DebugPrintModules
+    )
+    <|>
+    (try $ do
+        reserved "printPathCondition"
+        return $ DebugPrintPathCondition
     )
     <|>
     (try $ do
@@ -1018,11 +1245,15 @@ parseExprTable =
 parseExprBlock :: Parser Expr
 parseExprBlock = do
     p <- getPosition
+    oproof <- optionMaybe $ reserved "proof"
+    let proof = case oproof of
+                  Just _ -> True
+                  Nothing -> False
     symbol "{"
     v <- parseExpr
     symbol "}"
     p' <- getPosition
-    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) $ EBlock v
+    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) $ EBlock v proof
 
 parseExprTerm = 
     (try $ do -- Short circuit for ()
@@ -1111,35 +1342,35 @@ parseExprTerm =
         return $ ESetOption s1 s2 e
     )
     <|>
-    (parseSpanned $ do
-        reserved "union_case"
-        x <- identifier
-        reservedOp "="
-        a <- parseAExpr
-        reserved "in"
-        e <- parseExpr
-        return $ EUnionCase a x $ bind (s2n x) e
-    )
-    <|>
     (do
         p <- getPosition
         reserved "let"
-        xts <- ((do
-                x <- identifier
-                tyAnn <- optionMaybe $ do
-                    symbol ":"
-                    parseTy
-                return (x, tyAnn))
-            `sepBy` (reservedOp ","))
-        reservedOp "="
-        es <- parseExpr `sepBy` (reservedOp ",")
-        reserved "in"
-        p' <- getPosition
-        e' <- parseExpr
-        if length xts /= length es then fail "must have same number of binders and expressions" else
-            let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
-            return $ foldl f e' $ zip xts es
-    )
+        alt
+            (do
+                reserved "ghost"
+                x <- identifier 
+                reservedOp "="
+                a <- parseAExpr 
+                reserved "in"
+                p' <- getPosition
+                e' <- parseExpr
+                return $ Spanned (ignore $ mkPos p p') $ ELetGhost a x $ bind (s2n x) e')
+            (do
+                xts <- ((do
+                        x <- identifier
+                        tyAnn <- optionMaybe $ do
+                            symbol ":"
+                            parseTy
+                        return (x, tyAnn))
+                    `sepBy` (reservedOp ","))
+                reservedOp "="
+                es <- parseExpr `sepBy` (reservedOp ",")
+                reserved "in"
+                p' <- getPosition
+                e' <- parseExpr
+                if length xts /= length es then fail "must have same number of binders and expressions" else
+                    let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
+                    return $ foldl f e' $ zip xts es))
     <|>
     (parseSpanned $ do
         reserved "unpack"
@@ -1150,7 +1381,7 @@ parseExprTerm =
         a <- parseAExpr
         reserved "in"
         e <- parseExpr
-        return $ EUnpack a $ bind (s2n i, s2n x) e)
+        return $ EUnpack a (i, x) $ bind (s2n i, s2n x) e)
     <|>
     (parseSpanned $ do
         reserved "choose_idx"
@@ -1159,7 +1390,16 @@ parseExprTerm =
         p <- parseProp
         reserved "in"
         k <- parseExpr
-        return $ EChooseIdx (bind (s2n i) p) $ bind (s2n i) k)
+        return $ EChooseIdx i (bind (s2n i) p) $ bind (s2n i) k)
+    <|>
+    (parseSpanned $ do
+        reserved "choose_bv"
+        i <- identifier
+        symbol "|"
+        p <- parseProp
+        reserved "in"
+        k <- parseExpr
+        return $ EChooseBV i (bind (s2n i) p) $ bind (s2n i) k)
     <|>
     (parseSpanned $ do
         reserved "call"
@@ -1179,13 +1419,27 @@ parseExprTerm =
         e2 <- parseExpr
         return $ EIf t e1 e2)
     <|>
+    (parseSpanned $ do 
+        reserved "pack"
+        symbol "<"
+        i <- parseIdx
+        symbol ">"
+        symbol "("
+        a <- parseExpr
+        symbol ")"
+        return $ EPackIdx i a
+        )
+    <|>
     (parseSpanned $ do
         reserved "forall"
         bs <- parseQuantBinders
+        oAssume <- optionMaybe $ do
+            reserved "assuming"
+            parseProp
         symbol "{"
         k <- parseExpr
         symbol "}"
-        return $ (mkEForall bs k)^.val
+        return $ (mkEForall bs oAssume k)^.val
     )
     <|>
     (parseSpanned $ do
@@ -1199,6 +1453,9 @@ parseExprTerm =
     (parseSpanned $ do
         reserved "case"
         x <- parseExpr
+        ot <- optionMaybe $ do
+            symbol "as"
+            parseTy
         symbol "{"
         xs <- many1 $ do
           symbol "|"
@@ -1209,9 +1466,33 @@ parseExprTerm =
           return (c, case ov of
                        Nothing -> Left e
                        Just x -> Right (ignore x, bind (s2n x) e))
+        otk <- case ot of
+                 Nothing -> return Nothing
+                 Just t -> do 
+                     symbol "otherwise"
+                     symbol "=>"
+                     k <- parseExpr
+                     return $ Just (t, k)
         symbol "}"
-        return $ ECase x xs 
+        return $ ECase x otk xs 
     )
+    <|>
+    (parseSpanned $ do
+        reserved "parse"
+        a <- parseAExpr
+        reserved "as"
+        t <- parseTy
+        symbol "("
+        xs <- identifier `sepBy1` (symbol ",")
+        symbol ")"
+        reserved "in"
+        k <- parseExpr
+        ok <- optionMaybe $ do
+            reserved "otherwise"
+            parseExpr
+        return $ EParse a t ok (bind (map (\x -> (s2n x, ignore x)) xs) k)
+
+        )
     <|>
     (parseSpanned $ do
         reserved "assert"
@@ -1227,24 +1508,46 @@ parseExprTerm =
     <|>
     (parseSpanned $ do
         reserved "corr_case"
-        n <- parseNameExp
+        attr <- parsePCaseAttribute
+        ccase <- alt
+                    (do
+                        reserved "nameOf"
+                        symbol "("
+                        a <- parseAExpr
+                        symbol ")"
+                        return $ Left a
+                    )
+                    (do
+                        n <- parseNameExp
+                        return $ Right n
+                    )
         op <- optionMaybe $ do
             reserved "when"
             parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase (pFlow (nameLbl n) advLbl) op e
-        )
+        return $ case ccase of
+                   Left a -> ECorrCaseNameOf a op e
+                   Right n  -> EPCase (pFlow (nameLbl n) advLbl) op attr e
+    )
+    <|>
+    (parseSpanned $ do
+        reserved "openTyOf"
+        a <- parseAExpr
+        reserved "in"
+        e <- parseExpr
+        return $ EOpenTyOf a e)
     <|>
     (parseSpanned $ do
         reserved "pcase"
+        attr <- parsePCaseAttribute
         p <- parseProp
         op <- optionMaybe $ do
             reserved "when"
             parseProp
         reserved "in"
         e <- parseExpr
-        return $ EPCase p op e
+        return $ EPCase p op attr e
         )
     <|>
     (parseSpanned $ do
@@ -1305,35 +1608,36 @@ parseROHint = do
 parseCryptOp :: Parser CryptOp
 parseCryptOp = 
     (do
-        reserved "hash"
-        ohints_idx <- optionMaybe $ do
-            symbol "<"
-            hs <- parseROHint `sepBy1` (symbol ",")
-            idx_ <- optionMaybe $ do
-                symbol ";"
-                many1 digit
-            let idx = case idx_ of
-                        Nothing -> 0
-                        Just v -> read v
-            symbol ">"
-            return (hs, idx)
-        let (hints, idx) = case ohints_idx of
-                             Nothing -> ([], 0)
-                             Just v -> v
-        return $ CHash hints idx
-    )
-    <|>
-    (do
-        reserved "prf"
+        reserved "kdf"
         symbol "<"
-        x <- identifier
+        oann1 <- parseKDFSelector `sepBy` (symbol ",")
+        symbol ";"
+        oann2 <- (alt
+                    (do
+                        reserved "odh"
+                        s <- identifier
+                        p <- parseIdxParams
+                        symbol "["
+                        i <- parseKDFSelector
+                        symbol "]"
+                        return $ Right (s, p, i))
+                    (Left <$> parseKDFSelector)) `sepBy` (symbol ",")
+        symbol ";"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
         symbol ">"
-        return $ CPRF x
+        return $ CKDF oann1 oann2 nks (read j)
     )
     <|>
     (do
         reserved "crh_lemma"
         return $ CLemma $ LemmaCRH 
+    )
+    <|>
+    (do
+        reserved "kdf_inj_lemma"
+        return $ CLemma $ LemmaKDFInj 
     )
     <|>
     (do
@@ -1350,12 +1654,8 @@ parseCryptOp =
         reserved "cross_dh_lemma"
         symbol "<"
         x <- parseNameExp
-        symbol ","
-        y <- parseNameExp
-        symbol ","
-        z <- parseNameExp
         symbol ">"
-        return $ CLemma $ LemmaCrossDH x y z
+        return $ CLemma $ LemmaCrossDH x 
     )
     <|>
     (reserved "aenc" >> return CAEnc)
@@ -1367,11 +1667,23 @@ parseCryptOp =
         symbol "<"
         p <- parsePath
         inds <- parseIdxParams
+        opat <- optionMaybe $ do
+            symbol ","
+            reserved "pattern"
+            x <- identifier
+            symbol "."
+            a <- parseAExpr
+            return $ bind (s2n x) a
         symbol ">"
-        return $ CEncStAEAD p inds
+        let pat = case opat of
+                    Just v -> v
+                    Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
+        return $ CEncStAEAD p inds pat
     )
     <|>
-    (reserved "st_aead_dec" >> return CDecStAEAD)
+    (do
+        reserved "st_aead_dec" 
+        return $ CDecStAEAD)
     <|>
     (reserved "pkenc" >> return CPKEnc)
     <|>
@@ -1384,6 +1696,25 @@ parseCryptOp =
     (reserved "sign" >> return CSign)
     <|>
     (reserved "vrfy" >> return CSigVrfy)
+
+parseNameKind =
+    (reserved "kdfkey" >> return NK_KDF)
+    <|>
+    (reserved "enckey" >> return NK_Enc)
+    <|>
+    (reserved "mackey" >> return NK_MAC)
+    <|>
+    (do
+        reserved "nonce" 
+        olen <- optionMaybe $ try $ do
+            symbol "|"
+            x <- identifier
+            symbol "|"
+            return x
+        let len = case olen of
+                    Just v -> v
+                    Nothing -> "nonce"
+        return $ NK_Nonce len)
 
 parseParam :: Parser FuncParam
 parseParam = 
@@ -1426,7 +1757,7 @@ parseIdx = do
     p <- getPosition
     i <- identifier
     p' <- getPosition
-    return $ IVar (ignore $ mkPos p p') (s2n i)
+    return $ IVar (ignore $ mkPos p p') (ignore i) (s2n i)
 
 parseIdxParams :: Parser ([Idx], [Idx])
 parseIdxParams = do
@@ -1519,6 +1850,12 @@ infixAExpr name fname assoc =
         return $ \e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ AEApp (topLevelPath fname) [] [e1, e2]
           ) assoc
 
+prefixAExpr name fname = 
+    Prefix (do
+        try $ symbol name
+        return $ \e -> mkSpannedWith (unignore $ e^.spanOf) $ AEApp (topLevelPath fname) [] [e]
+          )
+
 
 parseAExpr :: Parser AExpr
 parseAExpr = buildExpressionParser parseAExprTable parseAExprTerm
@@ -1526,8 +1863,10 @@ parseAExprTable =
     [ 
         [ infixAExpr "*" "mult" AssocLeft ],
         [ infixAExpr "++" "concat" AssocLeft ],
+        [ infixAExpr "&&&" "andp" AssocLeft ],
         [ infixAExpr "&&" "andb" AssocLeft ],
-        [ infixAExpr "+" "plus" AssocLeft ]
+        [ infixAExpr "+" "plus" AssocLeft ],
+        [ prefixAExpr "!" "notb" ]
     ]
 
 parseAExprTerm =           
@@ -1551,6 +1890,13 @@ parseAExprTerm =
         reserved "false"
         return $ AEApp (topLevelPath $ "false") [] []
     )
+    <|>
+    (parseSpanned $ do
+        char '\"'
+        s <- many $ noneOf "\"\n\r"
+        char '\"'
+        whiteSpace
+        return $ AEHex $ concat (map (\i -> showHex (ord i) "") s))
     <|>
     (parseSpanned $ do
         whiteSpace
@@ -1582,23 +1928,40 @@ parseAExprTerm =
         return $ AELenConst x
     )
     <|>
-    (parseSpanned $ do 
-        reserved "preimage"
-        symbol "("
-        p <- parsePath
-        ps <- parseIdxParams
-        oargs <- optionMaybe $ do
-            symbol "["
-            as <- parseAExpr `sepBy1` (symbol ",")
-            symbol "]"
-            return as
-        symbol ")"
-        let args = case oargs of
-                     Nothing -> []
-                     Just as -> as
-        return $ AEPreimage p ps args
-        )
+        (parseSpanned $ do
+            reserved "gkdf"
+            symbol "<"
+            nks <- parseNameKind `sepBy1` (symbol "||")
+            symbol ";"
+            j <- many1 digit
+            symbol ">"
+            symbol "("
+            a <- parseAExpr
+            symbol ","
+            b <- parseAExpr
+            symbol ","
+            c <- parseAExpr
+            symbol ")"
+            return $ AEKDF a b c nks (read j) 
+            )
     <|>
+    --(parseSpanned $ do 
+    --    reserved "preimage"
+    --    symbol "("
+    --    p <- parsePath
+    --    ps <- parseIdxParams
+    --    oargs <- optionMaybe $ do
+    --        symbol "["
+    --        as <- parseAExpr `sepBy1` (symbol ",")
+    --        symbol "]"
+    --        return as
+    --    symbol ")"
+    --    let args = case oargs of
+    --                 Nothing -> []
+    --                 Just as -> as
+    --    return $ AEPreimage p ps args
+    --    )
+    -- <|>
     (parseSpanned $ do 
         reserved "get"
         symbol "("
@@ -1621,17 +1984,6 @@ parseAExprTerm =
         ne <- parseNameExp
         symbol ")"
         return $ AEGetVK ne
-        )
-    <|>
-    (parseSpanned $ do 
-        reserved "pack"
-        symbol "<"
-        i <- parseIdx
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ")"
-        return $ AEPackIdx i a
         )
     <|>
     (try $ parseSpanned $ do

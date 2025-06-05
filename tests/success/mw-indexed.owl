@@ -18,9 +18,6 @@ corr adv ==> /\_i [NT<i>] // can remove this with xor property
 name id<i> : nonce @ T
 corr adv ==> /\_i [id<i>] // can remove this with xor property
 
-func xor
-    arity 2
-
 enum zero_or_one {
 | zz
 | oo
@@ -61,7 +58,7 @@ def R_main<i>() @ R
     let _ = output(nR) to endpoint(T) in
 
     input inp in
-    let nT, mc = m1_nt(inp), m1_xormac(inp) in
+    parse inp as m1_t(nT, mc) in 
 
     // let x: Option<adv>(exists j. Name(K<j>)) = lookup(keys, nT) in
     let x: Option (exists j. pair<idx j>) = lookup(keys, nT) in
@@ -70,8 +67,7 @@ def R_main<i>() @ R
         | None => No()
         | Some p_packed =>
             unpack j, p = p_packed in
-            let id = _id<idx j>(p) in
-            let k = _k<idx j>(p) in
+            parse p as pair<idx j>(id, k) in
             corr_case K<j> in
 
             let mac_to_verify = h1_t<idx j>(zz(), nR, nT) in
@@ -82,7 +78,7 @@ def R_main<i>() @ R
                 | Some m =>
                     // let _ = check_equal(mc, xor(id, m)) in
                     assert(sec(K<j>) ==> happened(T_main<j>()));
-                    let nT' = h1_nt<idx j>(m) in
+                    parse m as h1_t<idx j>(c, nr, nT')  in     
                     let nT':if sec(K<j>) then (x:Name(NT<j>){happened(T_main<j>())}) else Data<adv> = nT' in
                     let nT'':if sec(K<j>) then
                     (x:Name(NT<j>){happened(T_main<j>())}) else
@@ -97,9 +93,12 @@ def R_main<i>() @ R
 
                     let res: (exists i. (p:Data<adv>{sec(K<i>) ==> ((p == get(NT<i>)) /\ happened(T_main<i>()))})) = pack<j>(nT'') in
                     Ok(res)
+                    otherwise No()
                     // Ok(pack<j>(nT'))
             }
+            otherwise No()
     }
+    otherwise No()
 
 def T_main<i> () @ T
 : Unit =
