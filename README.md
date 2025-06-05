@@ -4,7 +4,7 @@ This repository contains the artifact for OwlC, an automatic compiler for securi
 
 ## Code structure
 
-The source files are in `src/`. OwlC consists of the code in `src/Extraction` and `src/Pass`, while the remaining code is our fork of the original Owl repository.
+The source files are in `src/`. OwlC consists of the code in `src/Extraction` and `src/Pass`, while the remaining code is our updated version of the Owl typechecker.
 
 OwlC outputs a library crate in `extraction/`. The generated code goes in `extraction/src/lib.rs`, while the other files are ancillary handwritten Verus code for the compiled library.
 
