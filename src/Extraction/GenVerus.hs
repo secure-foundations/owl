@@ -148,7 +148,6 @@ genVerusLocality pubkeys (lname, ldata) = do
         }
     }
     pub struct #{cfgName}#{lifetimeAnnot} {
-        // pub salt: Vec<u8>,
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
     impl #{cfgName}#{emptyLifetimeAnnot} {
