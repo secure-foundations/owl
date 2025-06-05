@@ -148,29 +148,16 @@ genVerusLocality pubkeys (lname, ldata) = do
         }
     }
     pub struct #{cfgName}#{lifetimeAnnot} {
-        pub salt: Vec<u8>,
+        // pub salt: Vec<u8>,
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
     impl #{cfgName}#{emptyLifetimeAnnot} {
-        // TODO: library routines for reading configs
-        /*
-        \#[verifier::external_body]
-        pub fn init_#{cfgName}(config_path: &StrSlice) -> Self {
-            let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
-            let config = deserialize_cfg_alice_config(&config_str);
-            #{cfgName} { 
-                salt: (config.salt),
-                #{vsep . punctuate comma $ localNameInits ++ sharedNameInits ++ pkInits}
-            }
-        }
-        */
-
         #{vsep . punctuate (line <> line) $ execFns}
     }
     |]
     where
         secrecyNeedsLifetime (_,_,_,BufSecret) = True
-        secrecyNeedsLifetime (_,_,_,BufPublic) = True -- this can change in future
+        secrecyNeedsLifetime (_,_,_,BufPublic) = True 
 
 
 -- ctr decl, ctr init
@@ -180,9 +167,6 @@ genVerusCtr counterName =
     let ctrDecl = [di|pub #{counterName'} : usize|] in
     let ctrInit = [di|#{counterName'} : 0|] in
     (ctrDecl, ctrInit)
-
--- nameTy :: VerusTy
--- nameTy = vecU8
 
 withCurNameEnv :: [VNameData] -> [VNameData] -> EM a -> EM a
 withCurNameEnv vnames pubkeys m = do
@@ -216,7 +200,6 @@ lookupPkBufTy n = do
 -- name decl, name initializer
 genVerusName :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
 genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
-    -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = execName vname in
     let bufty = buftyOfSecrecy secrecy in
@@ -233,7 +216,6 @@ genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
 -- name decl, name initializer
 genVerusPk :: Maybe Lifetime -> Bool -> VNameData -> (Doc ann, Doc ann)
 genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) =
-    -- We ignore PID indices for now
     -- debugLog $ "genVerusName: " ++ vname
     let execname = "pk_" ++ execName vname in
     let bufty = buftyOfSecrecy secrecy in
@@ -248,7 +230,6 @@ genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) =
     (nameDecl, nameInit)
 
 -- These should be kept in one-to-one correspondence with execlib.rs
--- TODO in the far future, somehow have these generated from the Rust code?
 builtins :: M.Map String (String, [VerusTy], VerusTy)
 builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
     addExecName n (args, rty) = (execName n, args, rty)
@@ -273,8 +254,7 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("secret_concat", ([secBuf, secBuf], secBuf))
         , ("xor", ([u8slice, u8slice], vecU8))
         , ("secret_xor", ([secBuf, secBuf], secBuf))
-        -- , ("bytes_as_counter", ([u8slice], RTUsize))
-        -- , ("counter_as_bytes", ([RTRef RShared RTUsize], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")))
+        -- bytes_as_counter and counter_as_bytes are handled specially 
         ]
     diffNameBuiltins = M.fromList [
           ("kdf", ("owl_extract_expand_to_len", [RTUsize, secBuf, secBuf, owlBuf], secBuf))
@@ -293,14 +273,10 @@ genVerusCAExpr ae = do
                 Just (fExecName, argDstTys, rSrcTy) -> do
                     args' <- mapM genVerusCAExpr args
                     args'' <- zipWithM castGRE args' argDstTys
-                    -- castRes <- cast ([di|val|], rSrcTy) (ae ^. tty)
-
-                    -- Delay the cast to the "top level". We could do some analysis to figure out
-                    -- if we can actually do it now
                     let code = [di|#{fExecName}(#{hsep . punctuate comma $ args''})|]
                     return $ GenRustExpr { _code = code, _eTy = rSrcTy }
                 Nothing -> do
-                    -- Special cases for things which aren't regular function calls in Rust
+                    -- Special cases for Owl function calls which aren't regular function calls in Rust
                     case (f, args) of
                         ("true", []) -> return $ GenRustExpr RTBool [di|true|]
                         ("false", []) -> return $ GenRustExpr RTBool [di|false|]
@@ -311,7 +287,6 @@ genVerusCAExpr ae = do
                         ("None", []) -> return $ GenRustExpr (ae ^. tty) [di|None|]
                         ("length", [x]) -> do
                             x' <- genVerusCAExpr x
-                            -- x'' <- castGRE x' (x ^. tty)
                             case x' ^. eTy of
                                 RTVec RTU8 -> return $ GenRustExpr RTUsize [di|#{x' ^. code}.len()|]
                                 RTRef _ (RTSlice RTU8) -> return $ GenRustExpr RTUsize [di|{ slice_len(#{x' ^. code}) }|]
@@ -391,19 +366,16 @@ genVerusCAExpr ae = do
             let rustN = execName n
             nameTy <- lookupNameBufTy n
             castN <- cast ([di|self.#{rustN}|], nameTy) (ae ^. tty)
-            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetEncPK n -> do
             let rustN = execName n
-            nameTy <- lookupPkBufTy $ n
+            nameTy <- lookupPkBufTy n
             castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
-            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAGetVK n -> do
             let rustN = execName n
             nameTy <- lookupPkBufTy n
             castN <- cast ([di|self.pk_#{rustN}|], nameTy) (ae ^. tty)
-            -- castN' <- cast ([di|#{castN}|], u8slice) (ae ^. tty)
             return $ GenRustExpr (ae ^. tty) [di|#{castN}|]
         CAInt fl -> return  $ GenRustExpr (ae ^. tty) $ pretty $ lowerFLen fl
         CACounter ctrname -> do
@@ -493,7 +465,8 @@ data GenCExprInfo ann = GenCExprInfo {
     -- True if we are extracting the expression `k` in `let x = e in k`, false if we are extracting `e`
     -- We need to track this since at the end of `k`, Rust requires us to return the itree token as well (see CRet case)
     inK :: Bool,
-    -- The spec itree type of the current function, which is needed because Rust type inference cannot infer it
+    -- The spec itree type of the current function, which is needed because Rust type inference cannot infer it,
+    -- so we need to add `::<specItreeTy>` to the effect calls
     specItreeTy :: Doc ann,
     curLocality :: LocalityName
 } deriving (Show)
@@ -519,7 +492,6 @@ genVerusCExpr info expr = do
         CRet ae -> do
             ae' <- genVerusCAExpr ae
             if inK info then do
-                -- On this side we cast as necessary
                 castRes <- castGRE ae' (expr ^. tty)
                 return $ GenRustExpr (expr ^. tty) [di|(#{castRes}, Tracked(itree))|]
             else return ae'
@@ -645,13 +617,6 @@ genVerusCExpr info expr = do
                 let #{rustX} = #{castE'};
                 #{k' ^. code}
                 |]
-            -- else if needsToplevelCast $ e' ^. eTy then do
-            --     castE' <- castGRE e' (e ^. tty)
-            --     let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
-            --     return $ GenRustExpr (k' ^. eTy) [__di|
-            --     let #{lhs} = { #{castE'} };
-            --     #{k' ^. code}
-            --     |]
             else do
                 let lhs = if needsItreeLhs then [di|(#{rustX}, Tracked(itree))|] else [di|#{rustX}|]
                 return $ GenRustExpr (k' ^. eTy) [__di|
@@ -673,7 +638,6 @@ genVerusCExpr info expr = do
             e2' <- genVerusCExpr info e2
             when (e1' ^. eTy /= e1 ^. tty) $ throwError $ TypeError $ "if true branch has different type than expected: " ++ show (e1' ^. eTy) ++ " vs " ++ show (e1 ^. tty)
             when (e2' ^. eTy /= e2 ^. tty) $ throwError $ TypeError $ "if false branch has different type than expected: " ++ show (e2' ^. eTy) ++ " vs " ++ show (e2 ^. tty)
-            -- when (e1' ^. eTy /= e2' ^. eTy) $ throwError $ TypeError "if branches have different types"
             ety <- unifyVerusTysUpToSecrecy (e1' ^. eTy) (e2' ^. eTy)
             e1'' <- if e1' ^. eTy /= ety then castGRE e1' ety else return $ e1' ^. code
             e2'' <- if e2' ^. eTy /= ety then castGRE e2' ety else return $ e2' ^. code
@@ -707,10 +671,10 @@ genVerusCExpr info expr = do
                         Right xtk -> do
                             let (x, (t, k)) = unsafeUnbind xtk
                             let rustX = execName . show $ x
-                            -- We include this in case we decide during type-lowering to 
-                            -- represent the contained type differently in the enum and
-                            -- in the case body (e.g., if the enum contains an owned Vec
-                            -- but the case body should have an OwlBuf or something)
+                            -- We include the cast operation below in case we decide during 
+                            -- type-lowering to  represent the contained type differently 
+                            -- in the enum and in the case body (e.g., if the enum contains 
+                            -- an owned Vec but the case body should have an OwlBuf)
                             castTmp <- ([di|tmp_#{rustX}|], t) `cast` t
                             k' <- genVerusCExpr info k
                             return ([di|#{aeTyPrefix}#{translateCaseName c}(tmp_#{rustX}) =>|],
@@ -721,7 +685,6 @@ genVerusCExpr info expr = do
                                 }
                                 |])
             cases' <- mapM genCase cases
-            -- let casesCode = map (^. code) cases'
             let casesEtys = map ((^. eTy) . snd) cases'
             stmtEty <- foldM unifyVerusTysUpToSecrecy (head casesEtys) (tail casesEtys)
             let castCases (matchArm, c) = do
@@ -735,7 +698,7 @@ genVerusCExpr info expr = do
                 #{vsep . punctuate comma $ casesCode'}
             }
             |]
-        -- special case: comes from type annotation when matching on an option type
+        -- special case: comes from type annotation when matching on an authentic option type
         CParse PFromDatatype ae _ (RTOption t') _ xtsk -> do
             let ([(x,s,t)], k) = unsafeUnbind xtsk
             let xsk' = bind (castName x) k
@@ -797,7 +760,6 @@ genVerusCExpr info expr = do
                 _ -> throwError $ TypeError "Tried to parse from buf without an otherwise case!"
         CGetCtr ctrname -> do
             let rustCtr = execName ctrname
-            -- castCtr <- ([di|#{tmpCtrName}|], RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) `cast` (expr ^. tty)
             return $ GenRustExpr (RTArray RTU8 (CUsizeConst "COUNTER_SIZE")) [di|owl_counter_as_bytes(&mut_state.#{rustCtr})|]
         CIncCtr ctrname -> do
             let rustCtr = [di|mut_state.#{execName ctrname}|]
@@ -872,7 +834,7 @@ genVerusDef lname cdef = do
             body' <- genVerusCExpr genInfo body
             castResInner <- cast ([di|res_inner|], body' ^. eTy) rty'
             return ([di||], body' ^. code, castResInner)
-        Nothing -> return ([di|\#[verifier::external_body]|], [di|todo!(/* implement #{execname} by hand */)|], [di|res_inner|])
+        Nothing -> return ([di|\#[verifier::external_body]|], [di|unimplemented!(/* implement #{execname} by hand */)|], [di|res_inner|])
     viewRes <- viewVar "(r.0)" rty'
     return [__di|
     #{attr}
@@ -950,24 +912,12 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
     } 
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    -- vestFormat <- if isVest then genVestFormat verusName verusFieldsFV else return [di||]
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecretParse isSecretSer
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where
-
-        -- genVestFormat name layoutFields = do
-        --     let genField (_, f, format, l) = do 
-        --             layout <- vestLayoutOf' f format l
-        --             return [di|    #{layout},|]
-        --     fields <- mapM genField layoutFields
-        --     return [__di|
-        --     #{name} = {
-        --     #{vsep fields}
-        --     }
-        --     |]
 
         genConstructorShortcut :: VerusName -> [(String, VerusName, VerusTy)] -> Doc ann -> EM (Doc ann)
         genConstructorShortcut verusName fields lAnnot = do
@@ -1037,13 +987,6 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                             _ -> return $ pretty fname
                     return [di|#{fname}: #{mkf}|]
             mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField (RTOwlBuf (Lifetime lifetimeConst)) fname fty) fields
-            -- let mkFieldVec fname fty = do
-            --         mkf <- case fty of
-            --                 RTOwlBuf _ -> ([di|slice_to_vec(#{fname})|], vecU8) `cast` fty
-            --                 _ -> return $ pretty fname
-            --         return [di|#{fname}: #{mkf}|]
-            -- mkStructFields <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkField fname fty) fields
-            -- mkStructFieldsVecs <- hsep . punctuate comma <$> mapM (\(_, fname, _, fty) -> mkFieldVec fname fty) fields
             let parse = [__di|
             pub exec fn #{execParse}<'#{lifetimeConst}>(arg: OwlBuf<'#{lifetimeConst}>) -> (res: Option<#{pretty structTy}>) 
                 ensures
@@ -1115,7 +1058,6 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             pub exec fn #{execSerInner}<'#{lifetimeConst}>(arg: &#{verusName}<'#{lifetimeConst}>) -> (res: Option<#{outTy}>)
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
-                    // res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
                 reveal(#{specSerInner});
@@ -1155,7 +1097,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
             {
-                todo!()
+                unimplemented!()
             }
             |]
             let secretParse = if isSecretParse then
@@ -1167,7 +1109,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                             res is None ==> #{specParse}(arg.view()) is None,
                             res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     {
-                        todo!()
+                        unimplemented!()
                     }
                     |]
                 else [di||]
@@ -1181,16 +1123,15 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             pub exec fn #{execSerInner}<'#{lifetimeConst}>(arg: &#{verusName}) -> (res: Option<#{outTy}>)
                 ensures
                     res is Some ==> #{specSerInner}(arg.view()) is Some,
-                    // res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
-                todo!()
+                unimplemented!()
             }
             \#[verifier::external_body]
             pub exec fn #{execSer}<'#{lifetimeConst}>(arg: &#{verusName}) -> (res: #{outTy})
                 ensures  res.view() == #{specSer}(arg.view())
             {
-                todo!()
+                unimplemented!()
             }
             |]
             return $ vsep [parse, secretParse, ser]
@@ -1217,7 +1158,6 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
     use #{verusName}::*;
     |]
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
-    -- vestFormat <- genVestFormat verusName casesFV
     implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
     parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest isSecret
@@ -1227,20 +1167,6 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
         liftLifetime a (Just (RTOwlBuf _)) = Just $ RTOwlBuf (Lifetime a)
         liftLifetime a (Just (RTSecBuf _)) = Just $ RTSecBuf (Lifetime a)
         liftLifetime _ ty = ty
-
-        -- genVestFormat name layoutCases = do
-        --     debugLog $ "No vest format for enum: " ++ name
-        --     return [__di||]
-            -- let genField (_, (f, l)) = do 
-            --         layout <- vestLayoutOf f l
-            --         return [di|    #{layout},|]
-            -- fields <- mapM genField layoutCases
-            -- return [__di|
-            -- #{name} = {
-            -- #{vsep fields}
-            -- }
-            -- |]
-
 
         genImplEnum :: VerusName -> M.Map String (VerusName, Maybe VerusTy) -> Doc ann -> EM (Doc ann)
         genImplEnum verusName cases lAnnot = do
@@ -1364,18 +1290,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                             res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     {
                         reveal(#{specParse});
-                        todo!()
-                        /* 
-                        let exec_comb = #{execComb};
-                        if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
-                            let v = match parsed {
-                                #{vsep parseBranchesVecs}
-                            };
-                            Some(v)
-                        } else {
-                            None
-                        }
-                        */
+                        unimplemented!()
                     }
                     |]
                     return parse
@@ -1414,13 +1329,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                     res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
-                todo!()
-                /* reveal(#{specSerInner});
-                let empty_vec: Vec<u8> = mk_vec_u8![];
-                let exec_comb = #{execComb};
-                match arg {
-                    #{vsep serBranches}
-                } */
+                unimplemented!()
             }
             \#[inline]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
@@ -1444,7 +1353,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                     res is None ==> #{specParse}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
             {
-                todo!()
+                unimplemented!()
             }
             |]
             secretParse <- if isSecret then do
@@ -1458,7 +1367,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                             res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
                     {
                         reveal(#{specParse});
-                        todo!()
+                        unimplemented!()
                     }
                     |]
                     return parse
@@ -1475,13 +1384,13 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
                     res is None ==> #{specSerInner}(arg.view()) is None,
                     res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
             {
-                todo!()
+                unimplemented!()
             }
             \#[verifier(external_body)]
             pub exec fn #{execSer}(arg: &#{verusName}) -> (res: Vec<u8>)
                 ensures  res.view() == #{specSer}(arg.view())
             {
-                todo!()
+                unimplemented!()
             }
             |]
             return $ vsep [parse, secretParse, ser]
@@ -1504,11 +1413,6 @@ genVerusTyDefs tydefs = do
 
 castGRE :: GenRustExpr ann -> VerusTy -> EM (Doc ann)
 castGRE gre t2 = cast (gre ^. code, gre ^. eTy) t2
-
--- castField :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
--- castField (v, RTRef RShared (RTSlice RTU8)) RTUnit =
---     return [di|()|]
--- castField (v, t1) t2 = cast (v, t1) t2
 
 -- cast v t1 t2 v returns an expression of type t2 whose contents are v, which is of type t1
 cast :: (Doc ann, VerusTy) -> VerusTy -> EM (Doc ann)
@@ -1540,18 +1444,16 @@ cast (v, RTOwlBuf _) (RTRef _ (RTSlice RTU8)) =
     return [di|#{v}.as_slice()|]
 cast (v, RTOption (RTVec RTU8)) (RTOption (RTOwlBuf _)) =
     return [di|OwlBuf::from_vec_option(#{v})|]
--- cast (v, RTStruct t fs) (RTVec RTU8) = 
---     return [di|serialize_#{t}(&#{v})|]
 cast (v, RTStruct t fs) (RTRef RShared (RTSlice RTU8)) = do
     c1 <- cast (v, RTStruct t fs) (RTOwlBuf AnyLifetime)
     cast (c1, vecU8) u8slice
 cast (v, RTStruct t fs) (RTOwlBuf l) = do
     return [di|serialize_#{t}(&#{v})|]
-cast (v, RTStruct t fs) (RTSecBuf l) = do -- TODO: Concretify should catch cases where this won't work
+cast (v, RTStruct t fs) (RTSecBuf l) = do 
     return [di|serialize_#{t}(&#{v})|]
 cast (v, RTEnum t cs) (RTOwlBuf l) = do
     return [di|OwlBuf::from_vec(serialize_#{t}(&#{v}))|]
-cast (v, RTEnum t cs) (RTSecBuf l) = do -- TODO: Concretify should catch cases where this won't work
+cast (v, RTEnum t cs) (RTSecBuf l) = do 
     return [di|OwlBuf::from_vec(serialize_#{t}(&#{v})).into_secret()|]
 cast (v, RTEnum t cs) (RTVec RTU8) =
     return [di|serialize_#{t}(&#{v})|]
@@ -1627,7 +1529,7 @@ specTyOfExecTySerialized (RTTuple ts) = RTTuple (fmap specTyOfExecTySerialized t
 specTyOfExecTySerialized (RTStruct n fs) = RTStruct (snOfEn n) (fmap (\(f, t) -> (f, specTyOfExecTySerialized t)) fs)
 specTyOfExecTySerialized (RTEnum n cs) = RTEnum (snOfEn n) (fmap (\(c, mt) -> (c, fmap specTyOfExecTySerialized mt)) cs)
 specTyOfExecTySerialized (RTWithLifetime t l) = specTyOfExecTySerialized t
-specTyOfExecTySerialized t = t -- TODO: not true in general
+specTyOfExecTySerialized t = t 
 
 
 viewVar :: VerusName -> VerusTy -> EM (Doc ann)

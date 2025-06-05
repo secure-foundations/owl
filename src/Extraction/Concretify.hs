@@ -150,14 +150,6 @@ unifyFormatTy t1 t2 =
                 (Nothing, Just l2') -> return $ Just l2'
                 (Nothing, Nothing) -> return Nothing
             return $ FBuf s l
-        -- (FBuf BufSecret Nothing, FBuf BufSecret _) -> return $ FBuf BufSecret Nothing
-        -- (FBuf BufSecret _, FBuf BufSecret Nothing) -> return $ FBuf BufSecret Nothing
-        -- (FBuf BufSecret l1, FBuf BufPublic l2) -> do
-        --     unifyFormatTy (FBuf BufSecret l1) (FBuf BufSecret l2)
-        -- (FBuf BufPublic l1, FBuf BufSecret l2) -> do
-        --     unifyFormatTy (FBuf BufSecret l1) (FBuf BufSecret l2)
-        -- (FBuf BufPublic Nothing, _) -> return $ FBuf BufPublic Nothing
-        -- (_, FBuf BufPublic Nothing) -> return $ FBuf BufPublic Nothing
         _ -> throwError $ ErrSomethingFailed $ "Could not unify format types " ++ show (owlpretty t1) ++ " and " ++ show (owlpretty t2)
 
 unifyFLen :: FLen -> FLen -> EM FLen
@@ -219,7 +211,7 @@ flenOfFormatTy :: FormatTy -> Maybe FLen
 flenOfFormatTy (FBuf _ o) = o
 flenOfFormatTy FUnit = Just $ FLConst 0
 flenOfFormatTy FGhost = Just $ FLConst 0
-flenOfFormatTy FInt = Just $ FLConst 32 -- todo?
+flenOfFormatTy FInt = Just $ FLConst 8 -- 64-bit system
 flenOfFormatTy _ = Nothing
 
 doubleFresh :: String -> EM (Name a)
@@ -229,7 +221,7 @@ doubleFresh s = do
 
 bufcastVar :: (CDataVar FormatTy, Ignore String, FormatTy) -> FormatTy -> EM ((CDataVar FormatTy, Ignore String), [CLetBinding])
 bufcastVar (v, s, startT) t | secrecyOfFTy startT == BufSecret && secrecyOfFTy t == BufPublic = do
-    -- Need an explicit declassification here
+    -- Insert an explicit declassification here
     declassifiedVarName <- doubleFresh "declassified_buf"
     tokName <- fresh $ s2n "declassify_tok"
     let ae = Typed startT $ CAVar s v
@@ -249,7 +241,7 @@ bufcastVar (v, s, startT) t = do
 
 bufcast :: CAExpr FormatTy -> FormatTy -> EM (CAExpr FormatTy, [CLetBinding])
 bufcast ae t | secrecyOfFTy (ae ^. tty) == BufSecret && secrecyOfFTy t == BufPublic = do
-    -- Need an explicit declassification here
+    -- Insert an explicit declassification here
     declassifiedBufName <- doubleFresh "declassified_buf"
     let decBufVar = Typed t $ CAVar (ignore $ show declassifiedBufName) declassifiedBufName
     tokName <- fresh $ s2n "declassify_tok"
@@ -286,7 +278,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
     case (f, argtys) of
         ("unit", _) -> return $ mkAppNoLets f FUnit
         ("true", _) -> return $ mkAppNoLets f FBool
-        ("false", _) -> return$ mkAppNoLets f FBool
+        ("false", _) -> return $ mkAppNoLets f FBool
         ("eq", [x, y]) -> do
                 unifyFormatTy x y
                 let eqSecrecy = joinSecrecy (secrecyOfFTy x) (secrecyOfFTy y)
@@ -302,8 +294,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                         t <- concretifyTy owlT
                         return $ mkAppNoLets f $ FOption t
                     _ -> do
-                        -- This is probably fine, since some other branch should constrain the type
-                        -- debugPrint "WARNING: Can't infer type of None, using dummy type"
+                        -- The Some branch will constrain the inner type of the Option
                         return $ mkAppNoLets f $  FOption FDummy
         ("Some?", [x]) -> return $ mkAppNoLets "is_some" $ FBool
         ("None?", [x]) -> return $ mkAppNoLets "is_none" $ FBool
@@ -334,21 +325,12 @@ concretifyApp (PRes (PDot PTop f)) params args = do
             case xorSecrecy of
                     BufSecret -> return $ mkSecretAppNoLets "xor" $ FBuf xorSecrecy Nothing
                     BufPublic -> return $ mkAppNoLets "xor" $ FBuf xorSecrecy Nothing
-            --   t <- unifyFormatTy x y
-            --   case t of
-            --     FBuf _ -> return t
-            --     _ -> throwError $ ErrSomethingFailed $ "cannot extract xor " ++ show (owlpretty t)
         ("cipherlen", [x]) -> return $ mkAppNoLets f FInt
         ("pk_cipherlen", [x]) -> return $ mkAppNoLets f FInt
         ("vk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "vk"
         ("dhpk", [x]) -> return $ mkAppNoLets f $ groupFormatTy BufPublic
         ("enc_pk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "enc_pk"
         ("dh_combine", [x, y]) -> do
-            -- We may not have this information at concretization time, but the typechecker tells us it is sound
-            -- to extract dh_combine, so we don't check it here
-            --   when (not $ (aeq x groupFormatTy) && (aeq y groupFormatTy)) $
-            --       throwError $ ErrSomethingFailed $ "Cannot extract dh_combine"
-            -- DH shared secrets should be secret buffers
             return $ mkAppNoLets f $ groupFormatTy BufSecret
         ("checknonce", [x, y]) -> do
                 unifyFormatTy x y
@@ -364,7 +346,6 @@ concretifyApp (PRes (PDot PTop f)) params args = do
                 Just (fargTys, retTy) -> do
                     when (length fargTys /= length args) $ throwError $ TypeError $ "Wrong number of arguments to function " ++ p
                     argsWithLets <- forM (zip fargTys args) $ \(t, a) -> do
-                        -- unifyFormatTy t (a ^. tty) -- check types are compatible
                         bufcast a t
                     let (args', argsCastLets) = unzip argsWithLets
                     return $ withLets (concat argsCastLets) $ Typed retTy $ cAApp f args'
@@ -411,7 +392,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
 concretifyApp _ _ _ = do
     throwError $ ErrSomethingFailed "Got bad path in concreteTyOfApp"
 
--- Special case: Owl lets us implicitly cast exec values into ghost, but we must make this
+-- Owl lets us implicitly cast exec values into ghost, but we must make this
 -- explicit in the concrete AST
 ghostifyAppArgs :: Path -> [CAExpr FormatTy] -> EM [CAExpr FormatTy]
 ghostifyAppArgs (PRes (PDot PTop p)) args = do
@@ -525,12 +506,9 @@ concretifyExpr e = do
                 let k'' = exprFromLets' k'
                 return $ noLets $ exprFromLets c1Lets $ Typed (_tty k'') $ CLet c1 oanf $ bind (castName x) k''
       ELetGhost _ s xk -> do
+        -- erase explicit ghost lets
         (_,k) <- unbind xk
         concretifyExpr k
-        --   (x, k) <- unbind xk
-        --   k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
-        --   let k'' = exprFromLets' k'
-        --   return $ noLets $ Typed (_tty k'') $ CLet (Typed FGhost (CRet ghostUnit)) Nothing $ bind (castName x) k''
       EBlock e b -> do
           (c, clets) <- concretifyExpr e
           return $ noLets $ exprFromLets clets $ Typed (_tty c) $ CBlock c
@@ -575,7 +553,6 @@ concretifyExpr e = do
       EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       ECrypt cop aes -> do
           (cs, argLets) <- concretifyAExprs aes
-          -- resolvedArgs <- mapM resolveANF aes
           addLets argLets <$> concretifyCryptOp aes cop cs
       ECall p _ aes -> do
             s <- concretifyPath p
@@ -600,7 +577,6 @@ concretifyExpr e = do
                             when (length xs' /= 1) $ throwError $ TypeError "Expected exactly one argument to EParse for enum"
                             return [(head xs' ^. _1, head xs' ^. _2, t_target')]
                         _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
-            -- (pkind, bufcastLets, xtysForK, xtysForParse, t_target'') <- 
             case a' ^. tty of
                     FBuf BufPublic _ -> do
                         (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
@@ -653,7 +629,6 @@ concretifyExpr e = do
                     return $ withLets (e'Lets ++ [(avar, Nothing, e')]) $ Typed (e' ^. tty) $ CAVar (ignore "caseval") avar
             let startT = ae' ^. tty
             casevalT <- case otherwiseCase of
-                -- TODO: need to insert explicit declassification here
                 Just (t, _) -> do
                     t' <- concretifyTy t
                     if t' `eqUpToSecrecy` startT then return startT else return t'
@@ -682,8 +657,7 @@ concretifyExpr e = do
                         k' <- withVars [(x', caseTy)] $ concretifyExpr k
                         let k'' = exprFromLets' k'
                         return (c, Right $ bind x' (caseTy, k''))
-            -- avar <- fresh $ s2n "caseval"
-            -- Assume the typechecker already checked that all branches return compatible types,
+            -- The typechecker already checked that all branches return compatible types,
             -- so we just look at the first one to determine the return type
             let getCaseRt c = case c of
                             (_, Left k) -> k ^. tty
@@ -694,7 +668,7 @@ concretifyExpr e = do
                     let ct = getCaseRt c
                     unifyFormatTy acc ct
             retTy <- foldM unifyCaseRt (getCaseRt . head $ cases') (tail cases')
-            let mkCaseStmt a = Typed retTy $ CCase a cases' -- (Typed casevalT $ CAVar (ignore "caseval") avar) cases'
+            let mkCaseStmt a = Typed retTy $ CCase a cases' 
             (parseAndCase, parseAndCaseLets) <- case otherwiseCase of
                 Nothing -> return (mkCaseStmt ae', [])
                 Just (t, otw) -> do
@@ -716,8 +690,7 @@ concretifyExpr e = do
                                     return (p, [])
                                 BufSecret -> do
                                     if secrecyOfFTy casevalT == BufPublic then do
-                                        -- can just declassify the whole buf
-                                        -- let startAE = ae' --Typed startT $ CAVar (ignore "parseval") avar'
+                                        -- just declassify the whole buf
                                         (bufcastAE', bufcastAELets) <- bufcastSecrecy ae' BufPublic
                                         let p = Typed retTy $ 
                                                 CParse PFromBuf bufcastAE' [] casevalT (Just otw') $
@@ -727,14 +700,13 @@ concretifyExpr e = do
                                         -- need to create a declassify token to parse the enum
                                         tokName <- fresh $ s2n "declassify_tok"
                                         let tokVar = Typed FDeclassifyTok $ CAVar (ignore "declassify_tok") tokName
-                                        --let startAE = Typed startT $ CAVar (ignore "parseval") avar'
                                         let dop = DOEnumParse ae'
                                         let p = Typed retTy $ 
                                                 CParse PFromSecBuf ae' [tokVar] casevalT (Just otw') $
                                                     bind [(avar', ignore "parsed_caseval", casevalT)] $ mkCaseStmt avar'Var 
                                         let declassifyExpr = Typed retTy $ CItreeDeclassify dop $ bind tokName p
                                         return (declassifyExpr, [])
-            return $ withLets (ae'Lets ++ parseAndCaseLets) parseAndCase--Typed retTy $ CLet (Typed startT $ CRet ae') Nothing $ bind avar' parseAndCase
+            return $ withLets (ae'Lets ++ parseAndCaseLets) parseAndCase
       EPCase _ _ _ e -> concretifyExpr e
       ECorrCaseNameOf _ _ e -> concretifyExpr e
       EFalseElim e _ -> concretifyExpr e
@@ -787,7 +759,6 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
     vtopt <- lookupKdfCall nks resolvedArgs
     (kdfVar, lets) <- case vtopt of
         Just (var, varty) -> do
-            -- debugPrint $ "Found memoized KDF call: " ++ show (owlpretty nks) ++ " " ++ show (owlpretty resolvedArgs)
             unifyFormatTy varty kdfTy
             return (var, [])
         Nothing -> do
@@ -811,7 +782,6 @@ concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
             let actualOutTy = fPBuf $ Just outLen
             let dop = DOControlFlow $ Typed kdfOutTy $ CAVar (ignore "kdf_slice") sliceVar
             return $ withLets lets $ Typed actualOutTy $ CItreeDeclassify dop $ bind sliceVar doSlice
-    -- return $ noLets $ Typed outTy $ CLet doKdf Nothing $ bind kdfVar doSlice
     where
         kdfLenOf nks = foldl' FLPlus (FLConst 0) <$> mapM fLenOfNameKind nks
         offsetOf nks idx = kdfLenOf $ take idx nks
@@ -842,7 +812,6 @@ concretifyCryptOp _ (CEncStAEAD np _ xpat) [k, x, aad] = do
     let t = case x ^. tty of
             FBuf BufSecret (Just fl) -> FBuf BufPublic $ Just $ FLCipherlen fl
             _ -> FBuf BufPublic Nothing
-    -- return $ noLets $ Typed t $ CRet $ Typed t $ CAApp "enc_st_aead" [k, x, Typed FInt $ CACounter nonce, aad]
     ctrVar <- fresh $ s2n nonce
     let ctrTy = fSBuf $ Just $ FLNamed "counter"
     let getCtr = (ctrVar, Nothing, Typed ctrTy $ CGetCtr nonce)
@@ -954,7 +923,6 @@ concretifyDef defName (TB.Def bd) = do
         TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) sids ++ map (\i -> (i, (ignore $ show i, IdxPId))) pids) $ do
         withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
             when (not $ p `aeq` pTrue) $ throwError $ ErrSomethingFailed "Attempting to extract def with nontrivial prerequisite"
-            -- cretT <- concretifyTy retT
             case oexpr of
                 Nothing -> do
                     cretT <- concretifyTy retT
@@ -962,16 +930,11 @@ concretifyDef defName (TB.Def bd) = do
                 Just e -> do
                     ce <- exprFromLets' <$> concretifyExpr e
                     let cretT = ce ^. tty
-                    --   debugPrint . show . owlpretty $ defName
-                    --   debugPrint . show . owlpretty $ ce
                     return $ Just (cretT, Just ce)
     case ores of
         Nothing -> return Nothing
         Just res -> return $ Just $ CDef defName res
 
-
--- userFuncArgTy :: FormatTy
--- userFuncArgTy = fPBuf Nothing
 
 concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy, FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do
@@ -1014,8 +977,8 @@ rtyOfUserFunc ufName uf args = do
 
 
 typeIsVest :: FormatTy -> Bool
-typeIsVest (FStruct _ fs) = False -- all (typeIsVest . snd) fs
-typeIsVest (FEnum _ cs) = False -- all (maybe True typeIsVest . snd) cs 
+typeIsVest (FStruct _ fs) = False
+typeIsVest (FEnum _ cs) = False
 typeIsVest FGhost = False
 typeIsVest FBool = False
 typeIsVest (FOption t) = False
@@ -1023,7 +986,7 @@ typeIsVest _ = True
 
 concretifyTyDef :: String -> TB.TyDef -> EM [(String, CTyDef FormatTy)]
 concretifyTyDef tname (TB.TyAbstract) = return []
-concretifyTyDef tname (TB.TyAbbrev t) = return [] -- TODO: need to keep track of aliases
+concretifyTyDef tname (TB.TyAbbrev t) = return []
 concretifyTyDef tname (TB.EnumDef bnd) = do
     debugLog $ "Concretifying enum: " ++ tname
     (idxs, ts) <- unbind bnd

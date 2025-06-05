@@ -67,9 +67,6 @@ extract' modbody = do
         pretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         extractedOwl            <> line <> line <> line <> line <>
-        pretty "// ------------------------------------" <> line <>
-        pretty "// ------------ ENTRY POINT -----------" <> line <>
-        pretty "// ------------------------------------" <> line <> line <>
         pretty "} // verus!"    <> line <> line 
       )
 
@@ -118,11 +115,6 @@ preprocessModBody mb = do
             let f = counters %~ flip (++) [name]
             return $ M.adjust f locName locMap
 
-            -- case (sids, pids) of
-            --     ([], _) -> do
-                    -- ...
-                -- _ -> throwError $ ErrSomethingFailed "TODO indexed counters"
-
         resolveNameApp :: Path -> ExtractionMonad t (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
         resolveNameApp p = do
             s <- tailPath p
@@ -150,7 +142,7 @@ preprocessModBody mb = do
                 let nsids = length sids
                 let npids = length pids
                 when (nsids > 1) $ throwError $ DefWithTooManySids name
-                -- For now, we assume that all names are secret bufs
+                -- All names are secret bufs
                 let gShared m lo = M.adjust (sharedNames %~ flip (++) [(name, flen, npids, BufSecret)]) lo m
                 let gLocal m lo = M.adjust (localNames %~ flip (++) [(name, flen, npids, BufSecret)]) lo m
                 locNames <- mapM (\(Locality lname _) -> flattenPath lname) loc
@@ -212,12 +204,14 @@ concretifyPass owlExtrData = do
         (uncurry Concretify.concretifyDef)
         return
         Concretify.concretifyTyDef
-        (uncurry Concretify.concretifyUserFunc) -- Dummy, doesn't actually get used here
+        (uncurry Concretify.concretifyUserFunc) -- Result is thrown away, since we concretify only the user funcs that are used in concrete code
         owlExtrData
     concreteUserFuncs <- catMaybes <$> concretifyUserFuncs
     return $ cfExtrData & userFuncs .~ concreteUserFuncs
     where
         -- Extract only the user funcs that need to be extracted
+        -- Owl users can use user funcs for ghost operations that we can't compile,
+        -- so we ignore those here
         concretifyUserFuncs = do
             oufs <- M.assocs <$> use owlUserFuncs 
             let oufs' = mapMaybe (\(name, (uf, rtopt)) -> case rtopt of Just _ -> Just (name, uf) ; Nothing -> Nothing) oufs

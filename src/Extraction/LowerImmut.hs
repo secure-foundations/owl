@@ -53,24 +53,6 @@ lowerTy FDummy = return $ RTDummy
 lowerTy (FHexConst s) = return $ RTUnit
 lowerTy FDeclassifyTok = return RTDeclassifyTok
 
--- lowerTyNoOwlBuf :: FormatTy -> EM VerusTy
--- lowerTyNoOwlBuf FUnit = return RTUnit
--- lowerTyNoOwlBuf FBool = return RTBool
--- lowerTyNoOwlBuf FInt = return RTUsize
--- lowerTyNoOwlBuf (FBuf Nothing) = return $ RTVec RTU8
--- lowerTyNoOwlBuf (FBuf (Just flen)) = return $ RTVec RTU8
--- lowerTyNoOwlBuf (FOption ft) = RTOption <$> lowerTyNoOwlBuf ft
--- lowerTyNoOwlBuf (FStruct fn ffs) = do
---     let rn = execName fn
---     rfs <- mapM (\(n, t) -> (,) (execName n) <$> lowerTyNoOwlBuf t) ffs
---     return $ RTStruct rn rfs
--- lowerTyNoOwlBuf (FEnum n fcs) = do
---     let rn = execName n
---     rcs <- mapM (\(n, t) -> (,) (execName n) <$> mapM lowerTyNoOwlBuf t) fcs
---     return $ RTEnum rn rcs
--- lowerTyNoOwlBuf FGhost = return $ RTVerusGhost
-
-
 
 
 lowerExpr :: CExpr FormatTy -> EM (CExpr VerusTy)
@@ -105,9 +87,7 @@ lowerUserFunc (CUserFunc specName pubName secName pubBody secBody) = do
 
 
 lowerFieldTy :: FormatTy -> EM VerusTy
--- lowerFieldTy (FHexConst s) = return RTUnit
-lowerFieldTy = lowerTy -- for now, probably need to change it later
-
+lowerFieldTy = lowerTy 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)
 maybeLenOf (FBuf _ (Just flen)) = return $ Just $ lowerFLen flen

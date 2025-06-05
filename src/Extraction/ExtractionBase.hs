@@ -301,6 +301,7 @@ secrecyOfNameTy nt = do
 concreteLength :: ConstUsize -> ExtractionMonad t Int
 concreteLength (CUsizeLit i) = return i
 concreteLength (CUsizeConst s) = do
+    -- NOTE: these lengths are dependent on the particular crypto primitives being used
     l <- case s of
         "KDFKEY_SIZE"    -> return 32
         "GROUP_SIZE"     -> return 32
@@ -311,7 +312,7 @@ concreteLength (CUsizeConst s) = do
         "MACLEN_SIZE"    -> return 16
         "COUNTER_SIZE"   -> return 8
         "SIGNATURE_SIZE" -> return 64
-        -- The below are for compatibility with old Owl and probably should be updated
+        -- The below are for compatibility with old Owl
         "VK_SIZE"        -> return 1219
         "SIGKEY_SIZE"    -> return 1219
         "PKEKEY_SIZE"    -> return 1219
@@ -403,8 +404,6 @@ secretizeFTy f = f
 -- Any format that uses Vest's `uint` or `Tag` combinators cannot have a secret parser
 -- Enums use `Tag` for the enum tag
 -- Structs must have all secret-parsable fields to be secret-parsable 
--- TODO: if we want to support secret-parsable structs with non-secret-parsable fields, we need
--- some new declassification machinery
 hasSecParser :: FormatTy -> Bool
 hasSecParser (FBuf BufSecret _) = True
 hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
@@ -437,18 +436,10 @@ mkNestPattern l =
 nestOrdChoiceTy :: [Doc ann] -> Doc ann
 nestOrdChoiceTy l = 
     [di|ord_choice_type!(#{hsep . punctuate comma $ l})|]
-        -- case l of
-        --     [] -> pretty ""
-        --     [x] -> x
-        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice<#{acc}, #{v}>|]) [di|OrdChoice<#{x}, #{y}>|] tl 
 
 nestOrdChoice :: [Doc ann] -> Doc ann
 nestOrdChoice l = 
         [di|ord_choice!(#{hsep . punctuate comma $ l})|]
-        -- case l of
-        --     [] -> pretty ""
-        --     [x] -> x
-        --     x:y:tl -> foldl (\acc v -> [di|OrdChoice(#{acc}, #{v})|]) [di|OrdChoice(#{x}, #{y})|] tl 
 
 -- injOrdChoice i l x macro prints the macro call for x in a list of length l at index i
 injOrdChoice :: Int -> Int -> Doc ann -> Doc ann -> Doc ann
@@ -462,22 +453,6 @@ listIdxToInjPat i l x = return $ injOrdChoice i l x [di|inj_ord_choice_pat!|]
 listIdxToInjResult :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
 listIdxToInjResult i l x = return $ injOrdChoice i l x [di|inj_ord_choice_result!|]   
 
-
--- -- listIdxToEitherPat i l x prints the right Either pattern for x in a list of length l at index i
--- listIdxToEitherPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
--- listIdxToEitherPat i l x = do
---     let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]]
---     return [di|inj_ord_choice_pat!(#{starstr})|]   
---     -- if i >= l then 
---     --     throwError $ ErrSomethingFailed $ "listIdxToEitherPat index error: " ++ show i ++ ", " ++ show l
---     -- else do
---     --     if l == 2 then
---     --         return $ if i == 0 then [di|Either::Left(#{x})|] else [di|Either::Right(#{x})|]
---     --     else if i == l - 1 then
---     --         return [di|Either::Right(#{x})|]
---     --     else do
---     --         x' <- listIdxToEitherPat i (l-1) x
---     --         return [di|Either::Left(#{x'})|]
 
 withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
 withJustNothing f (Just x) = Just <$> f x

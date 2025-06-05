@@ -185,26 +185,12 @@ mkApp f spec_f frty argtys args' = do
         (f, FStruct f' fields) | f == f' -> do
             let argsusptys = map getSuspTy args'
             if RTStAeadBuilder `elem` concat argsusptys then do
-                {-
-                - Have a way to "suspend" computations which floats up to the enclosing let-binding,
-                  so that the code is emitted immediately prior to when it is used. (Can borrow from GenVerus)
-                - In the lowerCtx, store some data structure for the suspended computation, which should contain
-                  the way to construct the combinator, the way to construct the input to the combinator, and the
-                  call to just construct the struct as normal. This will need to float up to the enclosing let-binding.
-                - When we encounter a use of whatever variable was bound to this call, we examine its type to determine
-                  whether it is being used as a struct or as a serialized buffer. If buffer, we emit the right serializing
-                  call; if constructor, we just emit the constructor.
-                - It is then easy to emit the optimization for `Output` as well.
-                -}
-
-
                 let mkBuilderStructField (fieldName, fieldFormatTy) argVerusTyChoices = do
                         if RTStAeadBuilder `elem` argVerusTyChoices 
                         then return (execName fieldName, RTStAeadBuilder) 
                         else (,) (execName fieldName) <$> lowerTy' fieldFormatTy
                 builderStructFields <- zipWithM mkBuilderStructField fields argsusptys
                 let rStructTy' = RTStruct (execName f') builderStructFields
-                -- serStructTy <- lowerTy' frty
                 serializedTy <- getSerializedTy
                 let suspcomp rt = do
                         case rt of
@@ -223,7 +209,6 @@ mkApp f spec_f frty argtys args' = do
                                 combs <- mapM parsleycombof $ zip (map snd fields) argsusptys
                                 let forcetys = zipWith forceTyOf argtys argsusptys
                                 (argrtys, arglets) <- forceAEs forcetys args' 
-                                -- CASerializeWith needs serStructTy since that is the type that will determine
                                 return ((Typed serializedTy $ CASerializeWith rStructTy' (zip argrtys combs), arglets), rStructTy')
                             _ -> throwError $ ErrSomethingFailed "mkApp struct constructor: got bad type"
                 return $ Susp $ Suspended [rStructTy', serializedTy] suspcomp
@@ -252,7 +237,7 @@ lowerCAExpr info aexpr = do
     rt <- lowerTy' $ aexpr ^. tty
     let eager x = return $ Eager (x, [])
     let eagerRt x = eager $ Typed rt x :: LM (Suspendable CAWithLets)
-    let lowerGet ae = eagerRt ae -- if inArg info then eager $ Typed u8slice ae else eagerRt ae
+    let lowerGet ae = eagerRt ae 
     case aexpr ^. tval of
         CAVar s n -> do
             ltcv <- lookupLTC n 
@@ -272,10 +257,6 @@ lowerCAExpr info aexpr = do
         CAGetVK s -> lowerGet $ CAGetVK s
         CAInt fl -> eagerRt $ CAInt fl
         CAHexConst s -> eagerRt $ CAHexConst s
-        -- CAHexConst s -> do
-        --     hcvar <- fresh $ s2n "hexconst"
-        --     let lets = [(hcvar, Nothing, Typed rt $ CRet $ Typed rt $ CAHexConst s)]
-        --     return $ Eager (Typed rt $ CAVar (ignore "hexconst") hcvar, lets)
         CACounter s -> eagerRt $ CACounter s
         CASerializeWith t args -> do
             throwError $ ErrSomethingFailed "got CASerializeWith as input to lowering, it should not be emitted by Concretify"
@@ -368,7 +349,6 @@ lowerExpr expr = do
                             ((e'', elets), t') <- sccomp t
                             let lets = elets ++ [(castName x, oanf, e'')]
                             -- When this computation is later forced, we update the context to reflect this
-                            -- liftEM $ debugPrint $ "Adding let bindings for: " ++ show x ++ " at type: " ++ show t'
                             lowerCtx %= M.insert x (LTCTy t')
                             return (lets, t')
                     k' <- withSusp [ (castName x, Suspended scTy sccompLet) ] $ lowerExprNoSusp k
@@ -490,8 +470,7 @@ lowerUserFunc = runLowerMonad . lowerUserFunc'
 --- Structs and enums
 
 lowerFieldTy :: FormatTy -> EM VerusTy
--- lowerFieldTy (FHexConst s) = return RTUnit
-lowerFieldTy = lowerTy -- for now, probably need to change it later
+lowerFieldTy = lowerTy 
 
 
 maybeLenOf :: FormatTy -> EM (Maybe ConstUsize)

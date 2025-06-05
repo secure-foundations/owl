@@ -33,12 +33,11 @@ import PrettyVerus
 import ConcreteAST
 import ExtractionBase
 import AST
---import Data.String.Interpolate (i, __i, iii)
 import Prettyprinter.Interpolate
 
 type EM = ExtractionMonad FormatTy
 
--- We construct both the spec and exec Parsley combinators in spec extraction, since here, we have access to the 
+-- We construct both the spec and exec Vest combinators in spec extraction, since here, we have access to the 
 -- format types which include hex consts
 
 seqU8 :: VerusTy
@@ -179,19 +178,19 @@ extractCStruct (CStruct n fs isVest _ _) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                todo!()
+                unimplemented!()
             }
             |]
             let serInner = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
-                todo!()
+                unimplemented!()
             }
             |]
             let ser = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                todo!()
+                unimplemented!()
             }
             |]
             let implOwlSpecSer = [__di|
@@ -255,22 +254,8 @@ extractCEnum (CEnum n cs isVest _ _) = do
             (execComb, _) <- execCombOf owlN (FEnum owlN cs)
             (_, execConsts) <- unzip <$> mapM (execCombOf owlN) (catMaybes ctys)
             let fieldVars = map ((++) "field_" . show) [1..length ctys]
-            -- let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
-            -- let mkSpecCombs = zipWith mkComb fieldVars specCombs
-            -- let mkExecCombs = zipWith mkComb fieldVars execCombs
-            -- let nest = mkNestPattern $ map pretty fieldVars
             let specCombFnName = [di|spec_combinator_#{specname}|]
             let execCombFnName = [di|exec_combinator_#{execname}|]
-            -- let combDefs = [__di|
-            -- spec fn #{specCombFnName}() -> #{specCombTy} {
-            --     #{specComb}
-            -- }
-            -- exec fn #{execCombFnName}() -> (res: #{execCombTy})
-            --     ensures res.view() == #{specCombFnName}()
-            -- {
-            --     #{execComb}
-            -- }
-            -- |]
             return $ (vsep $ specConsts ++ execConsts, specComb, execComb)
 
         genParserSerializer execname specname speccases specComb execComb = do
@@ -283,7 +268,6 @@ extractCEnum (CEnum n cs isVest _ _) = do
                     return [__di|
                     #{lhs} => #{specname}::#{caseName}(#{rhsX}),
                     |]
-            -- debugPrint $ show $ owlpretty $ map fst speccases
             parseBranches <- mapM mkParseBranch (zip speccases [0..])
             let parse = [__di|
             \#[verifier::opaque]
@@ -350,19 +334,19 @@ extractCEnum (CEnum n cs isVest _ _) = do
             let parse = [__di|
             \#[verifier::external_body]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
-                todo!()
+                unimplemented!()
             }
             |]
             let serInner = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
-                todo!()
+                unimplemented!()
             }
             |]
             let ser = [__di|
             \#[verifier::external_body]
             pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
-                todo!()   
+                unimplemented!()   
             }
             |]
             let implOwlSpecSer = [__di|
@@ -423,6 +407,7 @@ extractVar n = do
 -- Note: we do not include the declassification tokens for `dec`, etc, in this list.
 -- Since we `zip` the arg types with the provided args, this means that in spec, the 
 -- declassification tokens are not printed in the function call, as required.
+-- These should be kept in one-to-one correspondence with speclib.rs
 specBuiltins :: M.Map String (String, [VerusTy], VerusTy)
 specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins where
     addSpecName n (args, rty) = (n, args, rty)
@@ -538,17 +523,6 @@ extractCAExpr aexpr = do
                             start' <- extractCAExpr start
                             end' <- extractCAExpr end
                             return [di|Seq::subrange(#{buf'}, #{start'}, #{end'})|]
-                        -- "enc_st_aead" -> do
-                        --     let [key, msg, nonce, aad] = args
-                        --     let extAndCast x dstty = do
-                        --             x' <- extractCAExpr x
-                        --             x'' <- specCast (x', x ^. tty) dstty
-                        --             return x''
-                        --     key' <- extAndCast key seqU8
-                        --     msg' <- extAndCast msg seqU8
-                        --     nonce' <- extractCAExpr nonce
-                        --     aad' <- extAndCast aad seqU8
-                        --     return [di|enc_st_aead(#{key'}, #{msg'}, #{nonce'}, #{aad'})|]
                         _ | "?" `isSuffixOf` f -> do
                             -- Special case for enum test functions
                             let f' = init f ++ "_enumtest"
@@ -621,7 +595,7 @@ extractExpr expr = do
                 Just endp -> do
                     endp' <- extractEndpoint endp
                     return [di|(Some(#{endp'}))|]
-                Nothing -> return [di|(None)|] -- throwError OutputWithUnknownDestination
+                Nothing -> return [di|(None)|]
             ae' <- extractCAExpr ae
             ae'' <- specCast (ae', ae ^. tty) seqU8
             return [__di|
@@ -633,7 +607,7 @@ extractExpr expr = do
             coins' <- extractVar coins
             case k ^. tval of
                 -- need special-case handling of CSample to insert the right itree syntax
-                -- TODO: we could change the itree macro to handle sample more similarly to 
+                -- alternatively, we could change the itree macro to handle sample more similarly to 
                 -- input and output, but that would break backwards compatibility
                 CRet (Typed t (CAApp _ "enc" [key, msg, coins])) -> do
                     key' <- extractCAExpr key
@@ -647,7 +621,6 @@ extractExpr expr = do
         CItreeDeclassify dop xk -> do
             let (x, k) = unsafeUnbind xk
             dop' <- extractDeclassifyingOp dop
-            -- x' <- extractVar x
             k' <- extractExpr k
             return [__di|
             (declassify(#{dop'})) in
@@ -747,7 +720,6 @@ extractExpr expr = do
                         (Just otw, pkind) | pkind /= PFromDatatype -> do
                             let parseCall = [di|parse_#{dstTyName}(#{ae'})|]
                             otw' <- extractExpr otw
-                            -- return (parseCall, [di|otherwise (#{otw'})|])
                             return $ parens [__di|
                             parse (#{parseCall}) as (#{x} : #{dstTyName}) in {
                             #{k'}
@@ -781,7 +753,6 @@ extractDef locName (CDef defname b) = do
     (owlArgs, (retTy, body)) <- unbindCDepBind b
     owlArgs' <- mapM extractArg owlArgs
     let specArgs = [di|cfg: cfg_#{locName}|] : [di|mut_state: state_#{locName}|] : owlArgs'
-    -- NB: forces all data structures to be represented as Seq<u8> in spec
     let specRetTy = specTyOf retTy
     let itreeTy = [di|ITree<(#{pretty specRetTy}, state_#{locName}), Endpoint>|]
     (body, pureDef) <- case body of
