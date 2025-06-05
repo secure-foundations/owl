@@ -1,5 +1,0 @@
-module type Params = {
-    locality Client
-    locality Server
-    name data : nonce @ Client
-}

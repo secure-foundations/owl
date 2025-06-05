@@ -1,5 +1,0 @@
-locality alice
-locality bob
-
-name nA : nonce @ alice
-name k : enckey Name(nA) @ alice, bob

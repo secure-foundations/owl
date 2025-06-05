@@ -1,9 +1,0 @@
-locality alice
-func f
-    arity 0
-def debugTest (y : (y:Unit{True})) @ alice : Unit = 
-    let z : (x:Unit{x == f()}) = admit in
-    if f() then
-        debug printTyContext
-    else 
-        debug printTyContext

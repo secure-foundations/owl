@@ -1,7 +1,0 @@
-locality Server
-locality Client
-
-name data : nonce @ Client
-
-def server() @ Server : Option (if sec(data) then Name(data) else Data<adv>) 
-def client(x : Name(data)) @ Client : Unit

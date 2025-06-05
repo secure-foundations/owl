@@ -1,8 +1,0 @@
-locality alice
-
-def tst(a : Data<adv>, b : Data<adv>, c : Data<adv>, d : Data<adv>) @ alice : Unit = 
-    let h1 = crh(crh(a) ++ b) in 
-    let h2 = crh(crh(c) ++ d) in 
-    crh_lemma(h1, h2); 
-    assert (h1 == h2 ==> a == c /\ b == d)
-

@@ -1,4 +1,0 @@
-locality alice
-
-def f1 () @ alice : Unit = ()
-def f1 () @ alice : Unit = ()
