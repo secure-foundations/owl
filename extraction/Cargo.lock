@@ -1247,7 +1247,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vest"
 version = "0.1.0"
-source = "git+https://github.com/secure-foundations/vest?branch=main#39876557b9776b17dabcbbf0385742c94d038597"
+source = "git+https://github.com/secure-foundations/vest?rev=39876557b9776b17dabcbbf0385742c94d038597#39876557b9776b17dabcbbf0385742c94d038597"
 dependencies = [
  "builtin",
  "builtin_macros",

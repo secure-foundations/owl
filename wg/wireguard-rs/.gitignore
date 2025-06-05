@@ -1,7 +1,6 @@
 /target
 **/*.rs.bk
 proptest-regressions/
-Cargo.lock
 .idea/
 iperf-tests/
 iperf-linedelay-tests/

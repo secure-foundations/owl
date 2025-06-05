@@ -32,7 +32,7 @@ x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
 builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
-vest = { git = "https://github.com/secure-foundations/vest", branch = "main" }
+vest = { git = "https://github.com/secure-foundations/vest", rev = "39876557b9776b17dabcbbf0385742c94d038597" }
 
 [features]
 default = [] # ["nonverif-crypto"]

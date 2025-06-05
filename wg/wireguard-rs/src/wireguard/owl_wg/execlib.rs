@@ -2,7 +2,6 @@ use std::rc::Rc;
 use crate::wireguard::owl_wg::{owl_aead, speclib, *};
 pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
 use vest::regular::builder::*;
-// use vest::secret::*;
 
 
 verus! {
@@ -12,7 +11,6 @@ enum OwlBufInner<'a> {
     Owned(Rc<Vec<u8>>, usize, usize), // buffer, start, len
 }
 
-// #[repr(transparent)]
 pub struct OwlBuf<'a> {
     inner: OwlBufInner<'a>
 }
@@ -176,7 +174,7 @@ impl<'x> OwlBuf<'x> {
     }
 }
 
-impl vest::buf_traits::VestSecretInput for OwlBuf<'_> {
+impl vest::buf_traits::VestInput for OwlBuf<'_> {
     fn len(&self) -> usize {
         self.len()
     }
@@ -190,7 +188,7 @@ impl vest::buf_traits::VestSecretInput for OwlBuf<'_> {
     }
 }
 
-impl vest::buf_traits::VestInput for OwlBuf<'_> {
+impl vest::buf_traits::VestPublicInput for OwlBuf<'_> {
     fn as_byte_slice(&self) -> (res: &[u8]) {
         self.as_slice()
     }
@@ -329,6 +327,19 @@ pub open spec fn view_first_byte_pair_opt(x: Option<(u8, SecretBuf<'_>)>) -> Seq
     }
 }
 
+
+pub fn owl_is_some<T>(x: Option<T>) -> (res: bool)
+    ensures res <==> x.is_some()
+{
+    x.is_some()   
+}
+
+pub fn owl_is_none<T>(x: Option<T>) -> (res: bool)
+    ensures res <==> x.is_none()
+{
+    x.is_none()   
+}
+
 }
 
 
@@ -338,12 +349,11 @@ pub open spec fn view_first_byte_pair_opt(x: Option<(u8, SecretBuf<'_>)>) -> Seq
 
 pub mod secret {
     use crate::wireguard::owl_wg::execlib::*;
-    use crate::wireguard::owl_wg::speclib::itree::*;
+    use crate::wireguard::owl_wg::speclib::*;
     use vstd::*;
     
     verus! {
     
-    // #[repr(transparent)]
     pub struct SecretBuf<'a> {
         buf: OwlBuf<'a>
     }
@@ -402,6 +412,11 @@ pub mod secret {
             SecretBuf { buf }
         }
 
+        pub fn len(&self) -> (result: usize)
+            ensures result == self.view().len()
+        {
+            self.buf.len()
+        }
 
         ///////// Declassifying operations on SecretBufs
 
@@ -423,7 +438,6 @@ pub mod secret {
             requires t.view() matches DeclassifyingOp::EnumParse(b) && b == self.view()
             ensures result matches Some(p) ==> self.view() == view_first_byte_pair(p),
                     result is None ==> self.view().len() == 0,
-                    // t.view() == old(t).view().do_declassify()
         {
             proof { use_type_invariant(&self) }
             if self.buf.len() == 0 {
@@ -464,10 +478,7 @@ pub mod secret {
         SecretBuf::from_buf(OwlBuf::from_vec(v))
     }
 
-    // TODO: is this fine? We don't expose `len` or `subrange` directly in the secret buf interface, 
-    // but we do via the `VestSecretInput` trait
-    // If not, Owl will need a `LessSecretBuf` type and some conversion functions
-    impl vest::buf_traits::VestSecretInput for SecretBuf<'_> {
+    impl vest::buf_traits::VestInput for SecretBuf<'_> {
         fn len(&self) -> usize {
             self.buf.len()
         }
@@ -486,7 +497,6 @@ pub mod secret {
         }
     }
 
-    // #[repr(transparent)]
     pub struct SecretOutputBuf {
         obuf: Vec<u8>
     }
@@ -531,7 +541,7 @@ pub mod secret {
         }
     }
 
-    impl vest::buf_traits::VestSecretOutput<SecretBuf<'_>> for SecretOutputBuf {
+    impl vest::buf_traits::VestOutput<SecretBuf<'_>> for SecretOutputBuf {
         fn len(&self) -> usize {
             SecretOutputBuf::len(&self)
         }
@@ -542,7 +552,7 @@ pub mod secret {
     }
 
 
-    impl<'a> vest::buf_traits::VestSecretOutput<&'a [u8]> for SecretOutputBuf {
+    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
         fn len(&self) -> usize {
             SecretOutputBuf::len(&self)
         }
@@ -552,9 +562,9 @@ pub mod secret {
         }
     }
 
-    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
+    impl<'a> vest::buf_traits::VestPublicOutput<&'a [u8]> for SecretOutputBuf {
         fn set_byte(&mut self, i: usize, value: u8) {
-            assume(self.obuf@.len() < usize::MAX); // TODO: why doesn't Verus figure this out?
+            assume(self.obuf@.len() < usize::MAX);
             let ghost old_self = self@;
             let value_arr = [value];
             self.set_range_from_secret_buf(i, &OwlBuf::from_slice(value_arr.as_slice()).into_secret());
@@ -581,8 +591,6 @@ pub mod secret {
     pub exec fn owl_enc(k: SecretBuf<'_>, msg: SecretBuf<'_>, iv: SecretBuf<'_>) -> (ctxt: Vec<u8>)
         ensures
             ctxt.view() == enc(k.view(), msg.view(), iv.view())
-        //     ((k.view().len() == crate::KEY_SIZE && msg.view().len() == crate::TAG_SIZE) ==> ctxt.view() == enc(k.view(), msg.view(), iv.view())),
-        //    !((k.view().len() == crate::KEY_SIZE && msg.view().len() == crate::TAG_SIZE) ==> ctxt.view() == seq![]),
     {
         let k = k.private_as_slice();
         let msg = msg.private_as_slice();
@@ -607,10 +615,6 @@ pub mod secret {
         ensures
             view_option(x) == dec(k.view(), c.view()),
             x matches Some(b) ==> b.len_valid()
-            // (k.view().len() == crate::KEY_SIZE && dec(k.view(), c.view()).is_Some()) ==>
-            //     x.is_Some() && x.get_Some_0().view() == dec(k.view(), c.view()).get_Some_0(),
-            // dec(k.view(), c.view()).is_None() ==> x.is_None(),
-            // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
     {
         let k = k.private_as_slice();
         let c = c.as_slice();
@@ -625,7 +629,6 @@ pub mod secret {
 
     #[verifier(external_body)]
     pub exec fn owl_sign(privkey: SecretBuf, msg: OwlBuf) -> (signature: Vec<u8>)
-        // requires msg == 
         ensures signature.view() == sign(privkey.view(), msg.view())
     {
         let privkey = privkey.private_as_slice();
@@ -651,7 +654,6 @@ pub mod secret {
         }
     }
 
-    // secret -> public
     #[verifier(external_body)]
     pub exec fn owl_dhpk(privkey: SecretBuf) -> (pubkey: Vec<u8>)
         ensures pubkey.view() == dhpk(privkey.view())
@@ -660,7 +662,6 @@ pub mod secret {
     }
 
 
-    // public -> secret -> secret
     #[verifier(external_body)]
     pub exec fn owl_dh_combine<'a>(pubkey: SecretBuf, privkey: SecretBuf) -> (ss: SecretBuf<'a>)
         ensures
@@ -701,24 +702,6 @@ pub mod secret {
         }
     }
 
-    // #[verifier(external_body)]
-    // pub exec fn owl_pkenc(pubkey: &[u8], msg: &[u8]) -> (ctxt: Vec<u8>)
-    //     ensures ctxt.view() == pkenc(pubkey.view(), msg.view())
-    // {
-    //     owl_pke::encrypt(pubkey, msg)
-    // }
-
-    // #[verifier(external_body)]
-    // pub exec fn owl_pkdec(privkey: &[u8], ctxt: &[u8], Tracked(t): Tracked<DeclassifyingOpToken>) -> (msg: Option<Vec<u8>>)
-    //     requires
-    //         t.view() matches DeclassifyingOp::PkDec(privkey_spec, ctxt_spec) 
-    //         && privkey@ == privkey_spec && ctxt@ == ctxt_spec
-    //     ensures 
-    //         view_option(msg) == pkdec(privkey.view(), ctxt.view())
-    // {
-    //     owl_pke::decrypt(privkey, ctxt)
-    // }
-
 
     // Builder for stateful AEAD encryption
     pub struct OwlStAEADBuilder<'a> {
@@ -728,8 +711,6 @@ pub mod secret {
         pub aad: SecretBuf<'a>,
     }
 
-    // Hack: due to https://github.com/verus-lang/verus/issues/1147, we cannot use `Builder::into_vec` directly,
-    // so we have to define our own version with a different name.
     impl<'a> OwlStAEADBuilder<'a> {
         pub fn into_fresh_vec(&self) -> (res: Vec<u8>)
             ensures
@@ -758,7 +739,7 @@ pub mod secret {
         
         #[verifier::external_body]
         fn length(&self) -> usize {
-            self.msg.private_as_slice().len() + TAG_SIZE
+            self.msg.len() + TAG_SIZE
         }
 
         #[verifier::external_body]
@@ -823,34 +804,6 @@ pub mod secret {
         res
     }
 
-    // // #[verifier(external_body)]
-    // // pub exec fn owl_enc_st_aead_into(dst: &mut [u8], start: usize, end: usize, k: &[u8], msg: &[u8], nonce: &mut usize, aad: &[u8]) -> (res: Result<Ghost<Seq<u8>>, OwlError>)
-    // //     ensures
-    // //         res.is_Ok() ==> (dst.view().subrange(start as int, end as int), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
-    // //         res.is_Ok() ==> (res.get_Ok_0().view(), *nonce) == enc_st_aead(k.view(), msg.view(), *old(nonce), aad.view()),
-    // //         res.is_Ok() ==> res.get_Ok_0().view() == dst.view().subrange(start as int, end as int)
-    // //         // *nonce == *old(nonce) + 1,
-    // // {
-    // //     todo!()
-    // //     // if *nonce > usize::MAX - 1 { return Err (OwlError::IntegerOverflow) }
-    // //     // let mut iv = nonce.to_le_bytes().to_vec();
-    // //     // iv.resize(NONCE_SIZE, 0u8);
-    // //     // let res = match owl_aead::encrypt_combined(CIPHER, k, msg, &iv[..], aad) {
-    // //     //     Ok(mut c) => {
-    // //     //         let mut v = iv.to_owned();
-    // //     //         v.append(&mut c);
-    // //     //         v
-    // //     //     },
-    // //     //     Err(_e) => {
-    // //     //         // dbg!(e);
-    // //     //         vec![]
-    // //     //     }
-    // //     // };
-    // //     // *nonce += 1;
-    // //     // Ok(res)
-    // // }
-
-
     #[verifier(external_body)]
     pub exec fn owl_dec_st_aead<'a>(k: SecretBuf<'_>, c: OwlBuf<'_>, nonce: SecretBuf<'_>, aad: SecretBuf<'_>, Tracked(t): Tracked<DeclassifyingOpToken>) -> (x: Option<SecretBuf<'a>>)
         requires
@@ -858,10 +811,6 @@ pub mod secret {
             && k@ == k_spec && c@ == c_spec && nonce@ == nonce_spec && aad@ == aad_spec
         ensures
             view_option(x) == dec_st_aead(k.view(), c.view(), nonce.view(), aad.view())
-            // (k.view().len() == crate::KEY_SIZE && dec(k.view(), c.view()).is_Some()) ==>
-            //     x.is_Some() && x.get_Some_0().view() == dec(k.view(), c.view()).get_Some_0(),
-            // dec(k.view(), c.view()).is_None() ==> x.is_None(),
-            // k.view().len() != crate::KEY_SIZE ==> x.is_None(),
     {
         assert_eq!(owl_aead::nonce_size(CIPHER), 12);
         let mut iv_sized = [0u8; 12];
@@ -881,8 +830,7 @@ pub mod secret {
     pub exec fn owl_is_group_elem(x: SecretBuf) -> (b: bool)
         ensures b == is_group_elem(x.view())
     {
-        // todo!("implement is_group_elem")
-        x.private_as_slice().len() == 32 // TODO what should go here?
+        x.len() == 32
     }
 
     #[verifier(external_body)]

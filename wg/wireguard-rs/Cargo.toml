@@ -37,10 +37,10 @@ p256 = { version = "0.11.1", features = ["ecdh", "bits", "serde"] }
 rsa = "0.7.2"
 sha1 = "0.10.5"
 sha2 = "0.10.6"
-vest = { git = "https://github.com/secure-foundations/vest", rev = "74bf5a7" }
-builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
-builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
-vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
+vest = { git = "https://github.com/secure-foundations/vest", rev = "39876557b9776b17dabcbbf0385742c94d038597" }
+builtin = { git = "https://github.com/verus-lang/verus", rev = "1c9ff071a7bf18f35e34cd1b99df856ab994f0a9" }
+builtin_macros = { git = "https://github.com/verus-lang/verus", rev = "1c9ff071a7bf18f35e34cd1b99df856ab994f0a9" }
+vstd = { git = "https://github.com/verus-lang/verus", rev = "1c9ff071a7bf18f35e34cd1b99df856ab994f0a9" }
 
 [dependencies.treebitmap]
 package = "ip_network_table-deps-treebitmap"
