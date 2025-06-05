@@ -1697,24 +1697,6 @@ impl cfg_receiver<'_> {
     }
 
 
-    // TODO: library routines for reading configs
-    /*
-    #[verifier::external_body]
-    pub fn init_cfg_receiver(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(receiver_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
-        let config = deserialize_cfg_alice_config(&config_str);
-        cfg_receiver {
-            listener,
-            salt: (config.salt),
-            owl_psk : (config.owl_psk),
-owl_skR : (config.owl_skR),
-pk_owl_skS : (config.pk_owl_skS),
-pk_owl_skE : (config.pk_owl_skE),
-pk_owl_skR : (config.pk_owl_skR)
-        }
-    }
-    */
     #[verifier::external_body]
     pub fn owl_SingleShotOpen_wrapper<'a>(
         &'a self,
@@ -2197,25 +2179,7 @@ impl cfg_sender<'_> {
             pk_owl_skR: OwlBuf::from_slice(pk_owl_skR),
         }
     }
-    // TODO: library routines for reading configs
-    /*
-    #[verifier::external_body]
-    pub fn init_cfg_sender(config_path: &StrSlice) -> Self {
-        let listener = TcpListener::bind(sender_addr().into_rust_str()).unwrap();
-        let config_str = fs::read_to_string(config_path.into_rust_str()).expect("Config file not found");
-        let config = deserialize_cfg_alice_config(&config_str);
-        cfg_sender {
-            listener,
-            salt: (config.salt),
-            owl_psk : (config.owl_psk),
-owl_skS : (config.owl_skS),
-owl_skE : (config.owl_skE),
-pk_owl_skS : (config.pk_owl_skS),
-pk_owl_skE : (config.pk_owl_skE),
-pk_owl_skR : (config.pk_owl_skR)
-        }
-    }
-    */
+
     #[verifier::external_body]
     pub fn owl_SingleShotSeal_wrapper<'a>(
         &'a self,
@@ -3181,9 +3145,5 @@ pub fn owl_public_shared_secret_string<'a>() -> (res: OwlBuf<'a>)
     )
 }
 
-// ------------------------------------
-// ------------ ENTRY POINT -----------
-// ------------------------------------
-/* no entry point */
 } // verus!
 
