@@ -148,10 +148,10 @@ impl<E: Endpoint, C: Callbacks, T: tun::Writer, B: udp::Writer<E>> ParallelJob
                         let msg2_sender = msg.1[4..8].to_vec();
         
                         // TODO: the solver optimization stuff should allow us to do this in-place and avoid this copy
-                        let ctxt = msg.1.to_vec();
+                        // let ctxt = msg.1.to_vec();
                         let res = cfg.owl_transp_recv_init_wrapper(
                             &mut state, 
-                            &ctxt,
+                            &msg.1[..],
                             &[].as_slice(),
                             msg2_sender.as_slice(),
                             &job.state.keypair.send.key[..],
