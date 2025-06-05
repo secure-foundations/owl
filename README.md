@@ -20,7 +20,7 @@ Owl currently supports the following cryptographic primitives:
 * Authenticated Symmetric Encryption (e.g., ChaCha20-Poly1305, or AES-GCM)
 * CCA-secure PKE (e.g., RSA with OAEP)
 * Message Authentication Codes (e.g., HMAC)
-* Digital Signatures (e.g., RSA siagnatures)
+* Digital Signatures (e.g., RSA signatures)
 * Diffie-Hellman Key Exchange
 * HKDF for key derivations
 * Unique Nonces for checking equality
@@ -32,7 +32,6 @@ Work-in-progress documentation is in the [docs](/docs/) directory. A number of e
 ## Relevant branches
 
 The `main` branch tracks recent developments, so the Owl syntax and language features are subject to change. 
-The secure compiler for Owl currently lives on the `dev` branch, but will be merged into `main` soon.
 Our release [here](https://github.com/secure-foundations/owl/releases/tag/ieee-sp-2023) corresponds to our [S&P 2023 publication](https://www.computer.org/csdl/proceedings-article/sp/2023/933600b130/1NrbYvgcB4Q).
 
 ## Setup
@@ -43,6 +42,10 @@ and in your `PATH`; binary releases are [here](https://github.com/Z3Prover/z3/re
 
 To build and run, type `cabal run owl -- path/to/protocol.owl`. For more options, type `cabal run owl -- --help`.
 
+To compile a protocol to Verus using Owl's secure compiler, use the `--extract` argument: `cabal run owl -- --extract path/to/protocol.owl`.
+Then, in the `extraction/` directory, run `./run_verus.sh $PWD` to verify the generated code with Verus. 
+The `run_verus` script assumes you have [`verus`](https://github.com/verus-lang/verus/) and [`verusfmt`](https://github.com/verus-lang/verusfmt/)
+in your `PATH`.
 
 ## Syntax highlighting
 
