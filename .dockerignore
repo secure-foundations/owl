@@ -1,0 +1,11 @@
+.stack-work/
+dist-newstyle/
+temp.rs
+hie.yaml
+stack.yaml.lock
+.vscode/
+main
+*.owl_config
+.owl-log/
+.z3log/
+*.smtcache
