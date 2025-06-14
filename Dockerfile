@@ -28,6 +28,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python packages
+RUN pip3 install prettytable
+
 # Set environment variables for root user
 ENV PATH="/root/.ghcup/bin:/root/.cargo/bin:${PATH}"
 ENV GHCUP_INSTALL_BASE_PREFIX="/root"
@@ -58,6 +61,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 # Install verusfmt via cargo
 RUN . /root/.cargo/env && \
     cargo install verusfmt --version 0.4.3
+
+# Install Tokei for line counting
+RUN . /root/.cargo/env && \
+    cargo install tokei
 
 # Download and install Verus release 0.2025.04.12.04a69f9 (also installs z3)
 RUN wget https://github.com/verus-lang/verus/releases/download/release%2F0.2025.04.12.04a69f9/verus-0.2025.04.12.04a69f9-x86-linux.zip && \

@@ -11,7 +11,7 @@ function usage() {
 }
 
 format="true"
-ext_dir_path=""
+ext_dir_path="$(realpath "$(dirname "$0")")"
 verus_args=""
 
 # Parse command line options
@@ -25,13 +25,13 @@ while getopts "v:n" opt; do
 done
 shift $((OPTIND -1))
 
-# Check if there's a required argument provided
-if [[ -n $1 ]]; then
-    ext_dir_path=$(realpath "$1")
-else
-    echo "Path to extraction dir is missing." 1>&2
-    exit 1
-fi
+# # Check if there's a required argument provided
+# if [[ -n $1 ]]; then
+#     ext_dir_path=$(realpath "$1")
+# else
+#     echo "Path to extraction dir is missing." 1>&2
+#     exit 1
+# fi
 
 src_path=$ext_dir_path/src
 

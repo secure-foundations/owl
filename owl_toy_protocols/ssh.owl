@@ -1,24 +1,24 @@
 // set_option ":rlimit" "65000"
 /*
  * Excerpt from Squirrel SSH:
-
-        We refer to P and S as the two processes of ssh-forward-part1-comp.sp
-        In this protocol,
-            - PFA is a process which first runs P, and then starts a forwarded agent
-            process, which accepts to sign queries received on the secure channel
-            established through P
-            - PDIS is a protocol which first runs S, and then can run P on the distant
-            server. When P while require a signature, it will request it on the channel
-            established by S, to contact some forwarded agent.
-            - SDIS is the server that will communicated with P run by PDIS.
-
-        PFA <-> PDIS : SSH key exchange, deriving an ideal key k11.
-
-        PDIS -> SDIS : g^a
-        SDIS-> PDIS : g^b, pkS, sign(h(g^a,g^b, g^ab),skS) )
-        PDIS -> PFA : aenc(<"sign request",h(g^a,g^b, g^ab)>,k11 )
-        PFA -> PDIS : aenc(<"sign answer",sign(h(g^a,g^b, g^ab),skP)>,k11 )
-        PDIS -> SDIS : aenc( sign(g(g^a,g^b,g^ab),skP) , g^ab)
+ *
+ *      We refer to P and S as the two processes of ssh-forward-part1-comp.sp
+ *      In this protocol,
+ *          - PFA is a process which first runs P, and then starts a forwarded agent
+ *          process, which accepts to sign queries received on the secure channel
+ *          established through P
+ *          - PDIS is a protocol which first runs S, and then can run P on the distant
+ *          server. When P while require a signature, it will request it on the channel
+ *          established by S, to contact some forwarded agent.
+ *          - SDIS is the server that will communicated with P run by PDIS.
+ *
+ *      PFA <-> PDIS : SSH key exchange, deriving an ideal key k11.
+ *
+ *      PDIS -> SDIS : g^a
+ *      SDIS-> PDIS : g^b, pkS, sign(h(g^a,g^b, g^ab),skS) )
+ *      PDIS -> PFA : aenc(<"sign request",h(g^a,g^b, g^ab)>,k11 )
+ *      PFA -> PDIS : aenc(<"sign answer",sign(h(g^a,g^b, g^ab),skP)>,k11 )
+ *      PDIS -> SDIS : aenc( sign(g(g^a,g^b,g^ab),skP) , g^ab)
  */
 
 locality PFA  // forwarding agent
