@@ -81,8 +81,22 @@ def get_owl_loc(file_path: str) -> int:
         print(f"Warning: owl line count failed for {file_path}.")
         return 0
 
+def get_case_study_loc(file_path: str) -> int:
+    directory = os.path.dirname(file_path)
+    count = 0
+    try:
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                if file.endswith('.owl'):
+                    file_path = os.path.join(root, file)
+                    count += get_owl_loc(file_path)
+        return count
+    except Exception as e:
+        print(f"Warning: Error counting Owl case study LoC in {directory}: {e}")
+        return 0
 
-def collect_file_statistics(file_path: str) -> Dict[str, any]:
+
+def collect_file_statistics(file_path: str, is_full_case_study: bool) -> Dict[str, any]:
     """
     Collect statistics for a single file.
     """
@@ -103,7 +117,10 @@ def collect_file_statistics(file_path: str) -> Dict[str, any]:
         ["cabal", "run", "owl", "--", "-e", file_path]
     )
     stats['owl_time'] = owl_time
-    stats['owl_loc'] = get_owl_loc(file_path)
+    if is_full_case_study:
+        stats['owl_loc'] = get_case_study_loc(file_path)
+    else: 
+        stats['owl_loc'] = get_owl_loc(file_path)
     
     if owl_time == -1:
         print(f"  Warning: OWL command failed for {file_name}: {owl_stderr}")
@@ -275,14 +292,13 @@ def main():
 
     full_case_studies_files = [os.path.join(full_case_studies_dir, wireguard_owl_filepath), os.path.join(full_case_studies_dir, hpke_owl_filepath)]
 
-    all_files_to_process = sorted(example_files) + full_case_studies_files
-
+    all_files_to_process = [(f, False) for f in sorted(example_files)] + [(f, True) for f in full_case_studies_files]
 
     # Collect statistics for each file
     all_stats = []
-    for file_path in all_files_to_process:
+    for file_path, is_full_case_study in all_files_to_process:
         try:
-            stats = collect_file_statistics(file_path)
+            stats = collect_file_statistics(file_path, is_full_case_study)
             all_stats.append(stats)
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
@@ -303,7 +319,7 @@ def main():
     
     # Save formatted table to file
     with open("owlc_statistics.txt", "w", encoding="utf-8") as f:
-        f.write("Command Statistics Results\n")
+        f.write("OwlC Statistics Results\n")
         f.write("=" * 50 + "\n\n")
         f.write(table)
     
