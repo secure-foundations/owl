@@ -15,7 +15,7 @@ import re
 from prettytable import PrettyTable
 
 
-def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout: int = 300) -> tuple[float, str, str]:
+def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout: int = 1200) -> tuple[float, str, str]:
     """
     Run a command and measure its execution time.
     Returns (execution_time, stdout, stderr)
@@ -27,7 +27,7 @@ def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout
             capture_output=True,
             text=True,
             cwd=cwd,
-            timeout=timeout,  # 5 minute timeout
+            timeout=timeout,
         )
         end_time = time.time()
         execution_time = end_time - start_time
@@ -82,25 +82,25 @@ def get_owl_loc(file_path: str) -> int:
         return 0
 
 
-def get_verus_time_from_json(json_output: str) -> float:
-    """
-    Extract timing information from Verus JSON output.
-    """
-    try:
-        data = json.loads(json_output)
+# def get_verus_time_from_json(json_output: str) -> float:
+#     """
+#     Extract timing information from Verus JSON output.
+#     """
+#     try:
+#         data = json.loads(json_output)
 
-        # Look up timing information in the JSON structure
-        if isinstance(data, dict) and 'times-ms' in data:
-            times_ms = data['times-ms']
-            if isinstance(times_ms, dict) and 'total-verify' in times_ms:
-                # Convert from milliseconds to seconds
-                total_verify_ms = float(times_ms['total-verify'])
-                return total_verify_ms / 1000.0
+#         # Look up timing information in the JSON structure
+#         if isinstance(data, dict) and 'times-ms' in data:
+#             times_ms = data['times-ms']
+#             if isinstance(times_ms, dict) and 'total-verify' in times_ms:
+#                 # Convert from milliseconds to seconds
+#                 total_verify_ms = float(times_ms['total-verify'])
+#                 return total_verify_ms / 1000.0
                     
-        # If no timing found in JSON, return -1 to indicate unavailable
-        return -1
-    except (json.JSONDecodeError, ValueError, KeyError):
-        return -1
+#         # If no timing found in JSON, return -1 to indicate unavailable
+#         return -1
+#     except (json.JSONDecodeError, ValueError, KeyError):
+#         return -1
 
 
 def collect_file_statistics(file_path: str) -> Dict[str, any]:
@@ -128,6 +128,8 @@ def collect_file_statistics(file_path: str) -> Dict[str, any]:
     
     if owl_time == -1:
         print(f"  Warning: OWL command failed for {file_name}: {owl_stderr}")
+        # Don't run Verus if Owl fails
+        return stats
     else:
         print(f"  OWL completed in {owl_time:.2f}s, {stats['owl_loc']} LoC")
     
@@ -156,7 +158,7 @@ def collect_file_statistics(file_path: str) -> Dict[str, any]:
         # Run cargo verus verify
         print(f"    Running cargo verus verify...")
         verus_time, verus_stdout, verus_stderr = run_command_with_time(
-            ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
+            ["cargo", "verus", "verify", "--", "--no-lifetime"],
             cwd=extraction_dir
         )
         
@@ -164,13 +166,15 @@ def collect_file_statistics(file_path: str) -> Dict[str, any]:
             print(f"    Warning: cargo verus verify failed: {verus_stderr}")
             stats['verus_time'] = -1
         else:
-            # Extract time from JSON file
-            json_time = get_verus_time_from_json(verus_stdout)
-            if json_time != -1:
-                stats['verus_time'] = json_time
-                print(f"    Extracted verus time from JSON output: {json_time:.2f}s")
-            else:
-                print(f"    Warning: could not extract verus time from JSON")
+            stats['verus_time'] = verus_time
+            print(f"    Verus time: {verus_time:.2f}s")
+            # # Extract time from JSON file
+            # json_time = get_verus_time_from_json(verus_stdout)
+            # if json_time != -1:
+            #     stats['verus_time'] = json_time
+            #     print(f"    Extracted verus time from JSON output: {json_time:.2f}s")
+            # else:
+            #     print(f"    Warning: could not extract verus time from JSON")
                 
         
         # Get Verus LoC
@@ -261,7 +265,7 @@ def main():
 
     # Build OWL first to ensure we don't measure compilation time (might take longer)
     print("(Re)building OWL...")
-    build_time, build_stdout, build_stderr = run_command_with_time(["cabal", "build", "owl"], timeout=1200)
+    build_time, build_stdout, build_stderr = run_command_with_time(["cabal", "build", "owl"])
     if build_time == -1:
         print(f"Error: Failed to build OWL: {build_stderr}")
         return 1
