@@ -82,27 +82,6 @@ def get_owl_loc(file_path: str) -> int:
         return 0
 
 
-# def get_verus_time_from_json(json_output: str) -> float:
-#     """
-#     Extract timing information from Verus JSON output.
-#     """
-#     try:
-#         data = json.loads(json_output)
-
-#         # Look up timing information in the JSON structure
-#         if isinstance(data, dict) and 'times-ms' in data:
-#             times_ms = data['times-ms']
-#             if isinstance(times_ms, dict) and 'total-verify' in times_ms:
-#                 # Convert from milliseconds to seconds
-#                 total_verify_ms = float(times_ms['total-verify'])
-#                 return total_verify_ms / 1000.0
-                    
-#         # If no timing found in JSON, return -1 to indicate unavailable
-#         return -1
-#     except (json.JSONDecodeError, ValueError, KeyError):
-#         return -1
-
-
 def collect_file_statistics(file_path: str) -> Dict[str, any]:
     """
     Collect statistics for a single file.
@@ -167,15 +146,7 @@ def collect_file_statistics(file_path: str) -> Dict[str, any]:
             stats['verus_time'] = -1
         else:
             stats['verus_time'] = verus_time
-            print(f"    Verus time: {verus_time:.2f}s")
-            # # Extract time from JSON file
-            # json_time = get_verus_time_from_json(verus_stdout)
-            # if json_time != -1:
-            #     stats['verus_time'] = json_time
-            #     print(f"    Extracted verus time from JSON output: {json_time:.2f}s")
-            # else:
-            #     print(f"    Warning: could not extract verus time from JSON")
-                
+            print(f"    Verus time: {verus_time:.2f}s")                
         
         # Get Verus LoC
         verus_lib_path = os.path.join(extraction_dir, "src/lib.rs")
