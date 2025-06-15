@@ -889,5 +889,5 @@ fn bench_send_recv_baseline(b: &mut Bencher) {
 
 const NUM_PACKETS: usize = 1000;
 
-const BYTES_PER_PACKET: usize = 50;
+const BYTES_PER_PACKET: usize = 200;
 

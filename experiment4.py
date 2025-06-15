@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 WireGuard Transport Layer Benchmark Runner
 
@@ -214,9 +215,12 @@ def calculate_throughput_gbps(packet_size_bytes: int, processing_time_ns: float)
     """
     Calculate effective throughput in Gbps from packet size and processing time.
     
+    Note: Each benchmark iteration processes 1000 packets, so we multiply by 1000
+    to get the correct throughput calculation.
+    
     Args:
-        packet_size_bytes: Size of the packet in bytes
-        processing_time_ns: Processing time per packet in nanoseconds
+        packet_size_bytes: Size of each packet in bytes
+        processing_time_ns: Processing time per iteration (1000 packets) in nanoseconds
         
     Returns:
         Throughput in Gbps (Gigabits per second)
@@ -224,14 +228,17 @@ def calculate_throughput_gbps(packet_size_bytes: int, processing_time_ns: float)
     if processing_time_ns <= 0 or packet_size_bytes <= 0:
         return 0.0
     
-    # Convert packet size to bits
-    packet_size_bits = packet_size_bytes * 8
+    # Each iteration processes 1000 packets
+    packets_per_iteration = 1000
+    
+    # Calculate total bits processed per iteration
+    total_bits_per_iteration = packet_size_bytes * 8 * packets_per_iteration
     
     # Convert processing time from ns to seconds
     processing_time_s = processing_time_ns / 1e9
     
     # Calculate throughput: bits per second, then convert to Gbps
-    throughput_bps = packet_size_bits / processing_time_s
+    throughput_bps = total_bits_per_iteration / processing_time_s
     throughput_gbps = throughput_bps / 1e9
     
     return throughput_gbps
@@ -243,7 +250,7 @@ def calculate_net_performance(data: Dict[str, Dict]) -> Tuple[Optional[float], O
         data: Raw benchmark data
         
     Returns:
-        Tuple of (no_owl_net, owl_net) performance in ns/iter, or (None, None) if data missing
+        Tuple of (no_owl_net, owl_net) performance in ns per iteration (1000 packets), or (None, None) if data missing
     """
     if BASELINE not in data or NO_OWL not in data or OWL not in data:
         return (None, None)
@@ -263,7 +270,7 @@ def run_single_benchmark(base_args: str) -> Tuple[Optional[float], Optional[floa
         base_args: Additional arguments for cargo bench command
         
     Returns:
-        Tuple of (no_owl_net, owl_net) performance in ns/packet
+        Tuple of (no_owl_net, owl_net) performance in ns per iteration (1000 packets)
     """
     command = build_cargo_command(base_args)
     parsed_output = run_cargo_bench(command)
@@ -439,7 +446,7 @@ def create_performance_graph(results: Dict[int, Dict[str, Optional[float]]]):
     Create and save a line graph of throughput performance results.
     
     Args:
-        results: Dictionary mapping packet sizes to benchmark results (ns/packet)
+        results: Dictionary mapping packet sizes to benchmark results (ns/1000 packets)
     """
     # Prepare data for plotting
     packet_sizes = []
@@ -510,7 +517,7 @@ def create_performance_graph(results: Dict[int, Dict[str, Optional[float]]]):
 
 def save_results_to_csv(results: Dict[int, Dict[str, Optional[float]]]):
     """
-    Save benchmark results to CSV file with both ns/packet and Gbps metrics.
+    Save benchmark results to CSV file with both ns/iteration and Gbps metrics.
     
     Args:
         results: Dictionary mapping packet sizes to benchmark results
@@ -524,7 +531,7 @@ def save_results_to_csv(results: Dict[int, Dict[str, Optional[float]]]):
             # Write header with both timing and throughput metrics
             writer.writerow([
                 'packet_size_bytes', 
-                'wg_rs_B_ns_per_packet', 'OwlC_B_ns_per_packet', 'wg_rs_V_ns_per_packet', 'OwlC_V_ns_per_packet',
+                'wg_rs_B_ns_per_1000_packets', 'OwlC_B_ns_per_1000_packets', 'wg_rs_V_ns_per_1000_packets', 'OwlC_V_ns_per_1000_packets',
                 'wg_rs_B_gbps', 'OwlC_B_gbps', 'wg_rs_V_gbps', 'OwlC_V_gbps'
             ])
             
