@@ -9,6 +9,8 @@ import subprocess
 import time
 import json
 import csv
+import threading
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 import re
@@ -17,9 +19,28 @@ from prettytable import PrettyTable
 
 def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout: int = 1200) -> tuple[float, str, str]:
     """
-    Run a command and measure its execution time.
+    Run a command and measure its execution time with visual progress indicator.
     Returns (execution_time, stdout, stderr)
     """
+    # Animation state
+    animation_active = True
+    
+    def animate():
+        bar_length = 20
+        i = 0
+        while animation_active:
+            filled = i % (bar_length + 1)
+            bar = '█' * filled + '░' * (bar_length - filled)
+            sys.stdout.write(f'\r[{bar}] Running...')
+            sys.stdout.flush()
+            time.sleep(0.1)
+            i += 1
+    
+    # Start animation in separate thread
+    animation_thread = threading.Thread(target=animate)
+    animation_thread.daemon = True
+    animation_thread.start()
+    
     start_time = time.time()
     try:
         result = subprocess.run(
@@ -31,10 +52,23 @@ def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout
         )
         end_time = time.time()
         execution_time = end_time - start_time
+        
+        # Stop animation and clear line
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the animation line
+        sys.stdout.flush()
+        
         return execution_time, result.stdout, result.stderr
+        
     except subprocess.TimeoutExpired:
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.flush()
         return -1, "", "Command timed out"
     except Exception as e:
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.flush()
         return -1, "", str(e)
 
 

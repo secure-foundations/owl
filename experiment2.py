@@ -16,6 +16,8 @@ Results are displayed in a matrix format showing runs/sec and relative slowdown 
 
 import json
 import subprocess
+import threading
+import time
 import sys
 import os
 import csv
@@ -96,7 +98,7 @@ def build_cargo_command(base_args: str) -> str:
 
 def run_cargo_bench(command: str) -> Optional[List[Dict]]:
     """
-    Execute cargo bench command and parse JSON output.
+    Execute cargo bench command and parse JSON output with progress indicator.
     
     Args:
         command: The complete shell command to execute
@@ -104,14 +106,39 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
     Returns:
         List of parsed JSON objects, or None if execution failed
     """
+    # Animation state
+    animation_active = True
+    
+    def animate():
+        bar_length = 20
+        i = 0
+        while animation_active:
+            filled = i % (bar_length + 1)
+            bar = '█' * filled + '░' * (bar_length - filled)
+            sys.stdout.write(f'\r[{bar}] Running...')
+            sys.stdout.flush()
+            time.sleep(0.1)
+            i += 1
+    
     try:
         print(f"Running: {command}")
+        
+        # Start animation in separate thread
+        animation_thread = threading.Thread(target=animate)
+        animation_thread.daemon = True
+        animation_thread.start()
+        
         output = subprocess.check_output(
             command, 
             shell=True, 
             text=True,
             cwd=BENCHMARK_DIR
         )
+        
+        # Stop animation and clear line
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the animation line
+        sys.stdout.flush()
         
         # Parse each line as JSON (cargo bench outputs one JSON object per line)
         parsed_output = []
@@ -126,10 +153,16 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
         return parsed_output
         
     except subprocess.CalledProcessError as e:
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.flush()
         print(f"Error executing cargo bench: {e}")
         print(f"Return code: {e.returncode}")
         return None
     except Exception as e:
+        animation_active = False
+        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.flush()
         print(f"Unexpected error: {e}")
         return None
 
