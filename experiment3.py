@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-HPKE Benchmark Runner
+WireGuard Handshake Benchmark Runner
 
-This script runs cargo benchmarks for HPKE (Hybrid Public Key Encryption) implementations
+This script runs cargo benchmarks for WireGuard handshake implementations
 comparing performance between Rust and Owl implementations in different configurations.
 
-The benchmarks test four different sender/receiver combinations:
-- rs -> rs: Rust sender to Rust receiver (baseline)
-- owl -> rs: Owl sender to Rust receiver  
-- rs -> owl: Rust sender to Owl receiver
-- owl -> owl: Owl sender to Owl receiver
+The benchmarks test four different initiator/responder combinations:
+- rs -> rs: Rust initiator to Rust responder (baseline)
+- owl -> rs: Owl initiator to Rust responder  
+- rs -> owl: Rust initiator to Owl responder
+- owl -> owl: Owl initiator to Owl responder
 
-Results are displayed in a matrix format showing runs/sec and relative slowdown percentages.
+Results are displayed in a matrix format showing handshakes/sec and relative performance percentages.
 """
 
 import json
 import subprocess
-import threading
-import time
 import sys
 import os
 import csv
+import time
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from prettytable import PrettyTable
@@ -28,30 +28,34 @@ from prettytable import PrettyTable
 
 # Configuration constants
 BASELINE = "rs -> rs"
-BASELINE_PAT = "bench_rust_rust"
+BASELINE_PAT = "bench_h_1_rs_handshake"
+BASELINE_INIT_PAT = "bench_h_1_rs_handshake_init"
 OWL_TO_RUST = "owl -> rs"
-OWL_TO_RUST_PAT = "bench_owl_rust"
+OWL_TO_RUST_PAT = "bench_h_2_owl_init_rs_resp_handshake"
+OWL_TO_RUST_INIT_PAT = "bench_h_2_owl_init_rs_resp_handshake_init"
 RUST_TO_OWL = "rs -> owl"
-RUST_TO_OWL_PAT = "bench_rust_owl"
+RUST_TO_OWL_PAT = "bench_h_3_rs_init_owl_resp_handshake"
+RUST_TO_OWL_INIT_PAT = "bench_h_3_rs_init_owl_resp_handshake_init"
 OWL_TO_OWL = "owl -> owl"
-OWL_TO_OWL_PAT = "bench_owl_owl"
+OWL_TO_OWL_PAT = "bench_h_4_owl_handshake"
+OWL_TO_OWL_INIT_PAT = "bench_h_4_owl_handshake_init"
 
 # Cargo bench command configuration
 BASE_COMMAND = "cargo bench"
-BENCH_PATTERN = ""
+BENCH_PATTERN = "bench_h"
 BENCH_ARGS = "--format=json -Z unstable-options"
 HIDE_STDERR = "2> /dev/null"
 UNVERIF_CRYPTO_ARGS = "--features=nonverif-crypto"
 
 # Benchmark directory
-BENCHMARK_DIR = "full_protocol_case_studies/implementations/hpke/test_bench_hpke"
+BENCHMARK_DIR = "full_protocol_case_studies/implementations/wireguard/wireguard-rs"
 
 # Benchmark patterns for processing
 BENCHMARK_PATTERNS = [
-    (BASELINE, BASELINE_PAT),
-    (OWL_TO_RUST, OWL_TO_RUST_PAT),
-    (RUST_TO_OWL, RUST_TO_OWL_PAT),
-    (OWL_TO_OWL, OWL_TO_OWL_PAT),
+    (BASELINE, BASELINE_PAT, BASELINE_INIT_PAT),
+    (OWL_TO_RUST, OWL_TO_RUST_PAT, OWL_TO_RUST_INIT_PAT),
+    (RUST_TO_OWL, RUST_TO_OWL_PAT, RUST_TO_OWL_INIT_PAT),
+    (OWL_TO_OWL, OWL_TO_OWL_PAT, OWL_TO_OWL_INIT_PAT),
 ]
 
 
@@ -98,7 +102,7 @@ def build_cargo_command(base_args: str) -> str:
 
 def run_cargo_bench(command: str) -> Optional[List[Dict]]:
     """
-    Execute cargo bench command and parse JSON output with progress indicator.
+    Execute cargo bench command and parse JSON output.
     
     Args:
         command: The complete shell command to execute
@@ -106,28 +110,29 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
     Returns:
         List of parsed JSON objects, or None if execution failed
     """
-    # Animation state
-    animation_active = True
-    
-    def animate():
-        bar_length = 20
-        i = 0
-        while animation_active:
-            filled = i % (bar_length + 1)
-            bar = '█' * filled + '░' * (bar_length - filled)
-            sys.stdout.write(f'\r[{bar}] Running...')
-            sys.stdout.flush()
-            time.sleep(0.1)
-            i += 1
-    
     try:
-        # print(f"Running: {command}")
+        print(f"Running: {command}")
         
-        # Start animation in separate thread
+        # Set up animation
+        animation_active = True
+        
+        def animate():
+            bar_length = 20
+            i = 0
+            while animation_active:
+                filled = i % (bar_length + 1)
+                bar = '█' * filled + '░' * (bar_length - filled)
+                sys.stdout.write(f'\r[{bar}] Running...')
+                sys.stdout.flush()
+                time.sleep(0.1)
+                i += 1
+        
+        # Start animation in a separate thread
         animation_thread = threading.Thread(target=animate)
         animation_thread.daemon = True
         animation_thread.start()
         
+        # Run the cargo bench command
         output = subprocess.check_output(
             command, 
             shell=True, 
@@ -135,9 +140,10 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
             cwd=BENCHMARK_DIR
         )
         
-        # Stop animation and clear line
+        # Stop animation and clear the line
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the animation line
+        time.sleep(0.2)  # Give animation thread time to stop
+        sys.stdout.write('\r' + ' ' * 50 + '\r')  # Clear the animation line
         sys.stdout.flush()
         
         # Parse each line as JSON (cargo bench outputs one JSON object per line)
@@ -153,16 +159,22 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
         return parsed_output
         
     except subprocess.CalledProcessError as e:
+        # Stop animation on error
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        time.sleep(0.2)
+        sys.stdout.write('\r' + ' ' * 50 + '\r')
         sys.stdout.flush()
+        
         print(f"Error executing cargo bench: {e}")
         print(f"Return code: {e.returncode}")
         return None
     except Exception as e:
+        # Stop animation on error
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        time.sleep(0.2)
+        sys.stdout.write('\r' + ' ' * 50 + '\r')
         sys.stdout.flush()
+        
         print(f"Unexpected error: {e}")
         return None
 
@@ -170,6 +182,9 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
 def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
     """
     Process raw cargo bench output into structured benchmark results.
+    
+    WireGuard benchmarks include both handshake and init measurements.
+    We calculate the actual handshake time by subtracting init time.
     
     Args:
         obj_list: List of JSON objects from cargo bench
@@ -186,23 +201,36 @@ def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
     
     structured_results = {}
     
-    for display_name, pattern in BENCHMARK_PATTERNS:
-        # Find matching benchmark result
+    for display_name, handshake_pattern, init_pattern in BENCHMARK_PATTERNS:
+        # Find matching benchmark results for both handshake and init
         matching_results = [
             result for result in bench_results 
-            if pattern in result.get('name', '')
+            if handshake_pattern in result.get('name', '')
         ]
         
-        if len(matching_results) == 0:
-            print(f"Warning: No results found for pattern '{pattern}'")
+        if len(matching_results) != 2:
+            print(f"Warning: Expected 2 results for pattern '{handshake_pattern}', found {len(matching_results)}")
             continue
-        elif len(matching_results) > 1:
-            print(f"Warning: Multiple results found for pattern '{pattern}', using first")
         
-        result = matching_results[0]
+        # Identify which is init and which is handshake
+        init_result = None
+        handshake_result = None
+        
+        for result in matching_results:
+            if init_pattern in result.get('name', ''):
+                init_result = result
+            else:
+                handshake_result = result
+        
+        if not init_result or not handshake_result:
+            print(f"Warning: Could not find both init and handshake results for '{display_name}'")
+            continue
+        
         structured_results[display_name] = {
-            'median': result.get('median', 0),
-            'deviation': result.get('deviation', 0),
+            'handshake_median': handshake_result.get('median', 0),
+            'handshake_deviation': handshake_result.get('deviation', 0),
+            'init_median': init_result.get('median', 0),
+            'init_deviation': init_result.get('deviation', 0),
         }
     
     return structured_results
@@ -210,10 +238,10 @@ def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
 
 def calculate_metrics(data: Dict[str, Dict]) -> Dict[str, Dict]:
     """
-    Calculate additional metrics like runs/sec and relative slowdowns.
+    Calculate additional metrics like handshakes/sec and relative performance.
     
     Args:
-        data: Raw benchmark data with median and deviation
+        data: Raw benchmark data with handshake and init measurements
         
     Returns:
         Enhanced data with calculated metrics
@@ -221,43 +249,72 @@ def calculate_metrics(data: Dict[str, Dict]) -> Dict[str, Dict]:
     enhanced_data = {}
     
     for name, values in data.items():
-        median_ns = values['median']
-        deviation_ns = values['deviation']
+        handshake_median = values['handshake_median']
+        handshake_deviation = values['handshake_deviation']
+        init_median = values['init_median']
+        init_deviation = values['init_deviation']
         
-        # Calculate runs per second (convert from ns/iter to runs/sec)
-        runs_per_sec = 1e9 / median_ns if median_ns > 0 else 0
+        # Calculate net handshake time (handshake - init setup)
+        net_handshake_ns = handshake_median - init_median
+        net_handshake_deviation = handshake_deviation + init_deviation
         
-        # Calculate deviation for runs/sec using error propagation
-        if median_ns > 0 and deviation_ns > 0:
+        # Calculate handshakes per second (convert from ns to handshakes/sec)
+        handshakes_per_sec = 1e9 / net_handshake_ns if net_handshake_ns > 0 else 0
+        
+        # Calculate deviation for handshakes/sec using error propagation
+        if net_handshake_ns > 0 and net_handshake_deviation > 0:
             # Using approximation: if f(x) = 1/x, then σ_f ≈ σ_x / x²
-            runs_per_sec_dev = (deviation_ns * 1e9) / (median_ns ** 2)
+            handshakes_per_sec_dev = (net_handshake_deviation * 1e9) / (net_handshake_ns ** 2)
         else:
-            runs_per_sec_dev = 0
+            handshakes_per_sec_dev = 0
         
         enhanced_data[name] = {
-            'median_ns': median_ns,
-            'deviation_ns': deviation_ns,
-            'runs_per_sec': runs_per_sec,
-            'runs_per_sec_dev': runs_per_sec_dev,
+            'handshake_median': handshake_median,
+            'handshake_deviation': handshake_deviation,
+            'init_median': init_median,
+            'init_deviation': init_deviation,
+            'net_handshake_ns': net_handshake_ns,
+            'net_handshake_deviation': net_handshake_deviation,
+            'handshakes_per_sec': handshakes_per_sec,
+            'handshakes_per_sec_dev': handshakes_per_sec_dev,
         }
     
-    # Calculate relative slowdowns compared to baseline
+    # Calculate relative performance compared to baseline
     baseline_data = enhanced_data.get(BASELINE)
-    if baseline_data and baseline_data['runs_per_sec'] > 0:
-        baseline_rps = baseline_data['runs_per_sec']
+    if baseline_data and baseline_data['handshakes_per_sec'] > 0:
+        baseline_hps = baseline_data['handshakes_per_sec']
         
         for name, values in enhanced_data.items():
             if name == BASELINE:
-                values['slowdown_pct'] = 0.0  # Baseline has no slowdown
+                values['performance_pct'] = 0.0  # Baseline has no change
             else:
                 # Calculate percentage change: (current - baseline) / baseline * 100
-                current_rps = values['runs_per_sec']
-                if current_rps > 0:
-                    values['slowdown_pct'] = ((current_rps - baseline_rps) / baseline_rps) * 100
+                current_hps = values['handshakes_per_sec']
+                if current_hps > 0:
+                    values['performance_pct'] = ((current_hps - baseline_hps) / baseline_hps) * 100
                 else:
-                    values['slowdown_pct'] = -100.0  # Complete slowdown
+                    values['performance_pct'] = -100.0  # Complete performance loss
     
     return enhanced_data
+
+
+def get_implementation_name(impl_type: str, is_verified: bool) -> str:
+    """
+    Get the display name for an implementation based on type and crypto verification.
+    
+    Args:
+        impl_type: Either "rust" or "owl"
+        is_verified: True for verified crypto, False for unverified crypto
+        
+    Returns:
+        Formatted implementation name
+    """
+    if impl_type == "rust":
+        return "wireguard-rs"
+    elif impl_type == "owl":
+        return "OwlC_V" if is_verified else "OwlC_B"
+    else:
+        return impl_type  # fallback
 
 
 def format_matrix_cell(name: str, enhanced_data: Dict[str, Dict]) -> str:
@@ -275,38 +332,19 @@ def format_matrix_cell(name: str, enhanced_data: Dict[str, Dict]) -> str:
         return "N/A"
     
     values = enhanced_data[name]
-    runs_per_sec = values['runs_per_sec']
-    slowdown_pct = values['slowdown_pct']
+    handshakes_per_sec = values['handshakes_per_sec']
+    performance_pct = values['performance_pct']
     
     if name == BASELINE:
-        return f"{runs_per_sec:,.0f} (---)"
+        return f"{handshakes_per_sec:,.0f} (---)"
     else:
-        return f"{runs_per_sec:,.0f} ({slowdown_pct:+.1f}%)"
-
-
-def get_implementation_name(impl_type: str, is_verified: bool) -> str:
-    """
-    Get the display name for an implementation based on type and crypto verification.
-    
-    Args:
-        impl_type: Either "rust" or "owl"
-        is_verified: True for verified crypto, False for unverified crypto
-        
-    Returns:
-        Formatted implementation name
-    """
-    if impl_type == "rust":
-        return "rust-hpke"
-    elif impl_type == "owl":
-        return "OwlC_V" if is_verified else "OwlC_B"
-    else:
-        return impl_type  # fallback
+        return f"{handshakes_per_sec:,.0f} ({performance_pct:+.1f}%)"
 
 
 def display_matrix_results(data: Dict[str, Dict], is_verified: bool = True):
     """
     Display benchmark results in a 2x2 matrix format.
-    Each column represents the same sender, each row represents the same receiver.
+    Each column represents the same initiator, each row represents the same responder.
     
     Args:
         data: Raw benchmark data
@@ -324,26 +362,26 @@ def display_matrix_results(data: Dict[str, Dict], is_verified: bool = True):
     
     # Create the matrix table with clearer headers
     table = PrettyTable()
-    table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
+    table.field_names = ["", f"Initiator: {rust_name}", f"Initiator: {owl_name}"]
     
-    # Add data rows with receiver labels
+    # Add data rows with responder labels
     table.add_row([
-        f"Receiver: {rust_name}",
+        f"Responder: {rust_name}",
         format_matrix_cell(BASELINE, enhanced_data),      # rs -> rs
         format_matrix_cell(OWL_TO_RUST, enhanced_data)    # owl -> rs
     ])
     
     table.add_row([
-        f"Receiver: {owl_name}",
+        f"Responder: {owl_name}",
         format_matrix_cell(RUST_TO_OWL, enhanced_data),   # rs -> owl
         format_matrix_cell(OWL_TO_OWL, enhanced_data)     # owl -> owl
     ])
     
     # Customize alignment
     table.align = "c"
-    table.align[""] = "l"  # Left align the receiver labels
+    table.align[""] = "l"  # Left align the responder labels
     
-    print("Performance Matrix (runs/sec with relative performance %)")
+    print("Performance Matrix (handshakes/sec with relative performance %)")
     print(table)
 
 
@@ -362,8 +400,9 @@ def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: s
             
             # Write header
             writer.writerow([
-                'crypto_type', 'configuration', 'sender', 'receiver', 
-                'median_ns', 'deviation_ns', 'runs_per_sec', 'performance_change_pct'
+                'crypto_type', 'configuration', 'initiator', 'responder', 
+                'handshake_median_ns', 'handshake_deviation_ns', 'init_median_ns', 'init_deviation_ns',
+                'net_handshake_ns', 'net_handshake_deviation_ns', 'handshakes_per_sec', 'performance_change_pct'
             ])
             
             # Helper function to write data for one benchmark suite
@@ -374,28 +413,32 @@ def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: s
                 enhanced_data = calculate_metrics(results)
                 
                 for config_name, values in enhanced_data.items():
-                    # Parse sender and receiver from config name
+                    # Parse initiator and responder from config name
                     if config_name == BASELINE:
-                        sender, receiver = "rust", "rust"
+                        initiator, responder = "rust", "rust"
                     elif config_name == OWL_TO_RUST:
-                        sender, receiver = "owl", "rust"
+                        initiator, responder = "owl", "rust"
                     elif config_name == RUST_TO_OWL:
-                        sender, receiver = "rust", "owl"
+                        initiator, responder = "rust", "owl"
                     elif config_name == OWL_TO_OWL:
-                        sender, receiver = "owl", "owl"
+                        initiator, responder = "owl", "owl"
                     else:
-                        sender, receiver = "unknown", "unknown"
+                        initiator, responder = "unknown", "unknown"
                     
-                    performance_pct = values['slowdown_pct'] if values['slowdown_pct'] != 0.0 else 0.0
+                    performance_pct = values['performance_pct'] if values['performance_pct'] != 0.0 else 0.0
                     
                     writer.writerow([
                         crypto_type,
                         config_name,
-                        sender,
-                        receiver,
-                        values['median_ns'],
-                        values['deviation_ns'],
-                        values['runs_per_sec'],
+                        initiator,
+                        responder,
+                        values['handshake_median'],
+                        values['handshake_deviation'],
+                        values['init_median'],
+                        values['init_deviation'],
+                        values['net_handshake_ns'],
+                        values['net_handshake_deviation'],
+                        values['handshakes_per_sec'],
                         performance_pct
                     ])
             
@@ -423,7 +466,7 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
     try:
         with open(filename, 'w') as txtfile:
             # Capture the matrix output for verified crypto
-            txtfile.write("HPKE Benchmark Results\n")
+            txtfile.write("WireGuard Handshake Benchmark Results\n")
             txtfile.write("=" * 60 + "\n\n")
             
             txtfile.write("Benchmarks with verified crypto:\n")
@@ -436,15 +479,15 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 owl_name = get_implementation_name("owl", True)
                 
                 table = PrettyTable()
-                table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
+                table.field_names = ["", f"Initiator: {rust_name}", f"Initiator: {owl_name}"]
                 
                 table.add_row([
-                    f"Receiver: {rust_name}",
+                    f"Responder: {rust_name}",
                     format_matrix_cell(BASELINE, enhanced_data),
                     format_matrix_cell(OWL_TO_RUST, enhanced_data)
                 ])
                 table.add_row([
-                    f"Receiver: {owl_name}",
+                    f"Responder: {owl_name}",
                     format_matrix_cell(RUST_TO_OWL, enhanced_data),
                     format_matrix_cell(OWL_TO_OWL, enhanced_data)
                 ])
@@ -452,7 +495,7 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 table.align = "c"
                 table.align[""] = "l"
                 
-                txtfile.write("Performance Matrix (runs/sec with relative performance %)\n")
+                txtfile.write("Performance Matrix (handshakes/sec with relative performance %)\n")
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run verified crypto benchmarks\n")
@@ -469,15 +512,15 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 owl_name = get_implementation_name("owl", False)
                 
                 table = PrettyTable()
-                table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
+                table.field_names = ["", f"Initiator: {rust_name}", f"Initiator: {owl_name}"]
                 
                 table.add_row([
-                    f"Receiver: {rust_name}",
+                    f"Responder: {rust_name}",
                     format_matrix_cell(BASELINE, enhanced_data),
                     format_matrix_cell(OWL_TO_RUST, enhanced_data)
                 ])
                 table.add_row([
-                    f"Receiver: {owl_name}",
+                    f"Responder: {owl_name}",
                     format_matrix_cell(RUST_TO_OWL, enhanced_data),
                     format_matrix_cell(OWL_TO_OWL, enhanced_data)
                 ])
@@ -485,7 +528,7 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 table.align = "c"
                 table.align[""] = "l"
                 
-                txtfile.write("Performance Matrix (runs/sec with relative performance %)\n")
+                txtfile.write("Performance Matrix (handshakes/sec with relative performance %)\n")
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run unverified crypto benchmarks\n")
@@ -523,7 +566,7 @@ def main():
     validate_benchmark_directory()
     
     print("=" * 60)
-    print("HPKE Benchmark Suite")
+    print("WireGuard Handshake Benchmark Suite")
     print("=" * 60)
     
     # Run benchmarks with verified crypto first
