@@ -17,7 +17,7 @@ import re
 from prettytable import PrettyTable
 
 
-def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout: int = 1200) -> tuple[float, str, str]:
+def run_command_with_time(command: List[str], cwd: Optional[str] = None) -> tuple[float, str, str]:
     """
     Run a command and measure its execution time with visual progress indicator.
     Returns (execution_time, stdout, stderr)
@@ -47,8 +47,7 @@ def run_command_with_time(command: List[str], cwd: Optional[str] = None, timeout
             command,
             capture_output=True,
             text=True,
-            cwd=cwd,
-            timeout=timeout,
+            cwd=cwd
         )
         end_time = time.time()
         execution_time = end_time - start_time
