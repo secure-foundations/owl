@@ -889,7 +889,5 @@ fn bench_send_recv_baseline(b: &mut Bencher) {
 
 const NUM_PACKETS: usize = 1000;
 
-const BYTES_PER_PACKET: usize = 200;
-// Note: bench_send_recv.py will append the appropriate constant to this file, so the line above must be commented out
-// when using that script
+const BYTES_PER_PACKET: usize = 50;
 

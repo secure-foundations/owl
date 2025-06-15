@@ -11,3 +11,5 @@ main
 *.smtcache
 experiment*.txt
 experiment*.csv
+experiment*.png
+experiment*.pdf

@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages
-RUN pip3 install prettytable
+RUN pip3 install prettytable matplotlib numpy
 
 # Set environment variables for root user
 ENV PATH="/root/.ghcup/bin:/root/.cargo/bin:${PATH}"
