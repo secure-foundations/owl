@@ -309,7 +309,7 @@ def main():
         return 1
     
     # Save CSV
-    save_csv(all_stats, "owlc_statistics.csv")
+    save_csv(all_stats, "experiment1.csv")
     
     # Generate and display formatted table
     table = format_table(all_stats)
@@ -318,12 +318,12 @@ def main():
     print(table)
     
     # Save formatted table to file
-    with open("owlc_statistics.txt", "w", encoding="utf-8") as f:
-        f.write("OwlC Statistics Results\n")
+    with open("experiment1.txt", "w", encoding="utf-8") as f:
+        f.write("Experiment 1 Results\n")
         f.write("=" * 50 + "\n\n")
         f.write(table)
     
-    print(f"\nFormatted table saved to owlc_statistics.txt")
+    print(f"\nFormatted table saved to experiment1.txt")
     
     return 0
 

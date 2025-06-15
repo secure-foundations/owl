@@ -9,5 +9,5 @@ main
 .owl-log/
 .z3log/
 *.smtcache
-owlc_statistics.csv
-owlc_statistics.txt
+experiment*.txt
+experiment*.csv
