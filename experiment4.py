@@ -489,7 +489,7 @@ def create_performance_graph(results: Dict[int, Dict[str, Optional[float]]]):
              label='OwlC_V', markerfacecolor='red', markeredgecolor='red')
     
     # Customize the plot
-    plt.xlabel('Packet Size (bytes)', fontsize=12)
+    plt.xlabel('Packet payload (bytes)', fontsize=12)
     plt.ylabel('Throughput (Gbps)', fontsize=12)
     plt.title('WireGuard Transport Layer Throughput vs Packet Size', fontsize=14, fontweight='bold')
     plt.grid(True, alpha=0.3)
