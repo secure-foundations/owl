@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     unzip \
     ca-certificates \
+    wireguard \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,9 +33,14 @@ RUN apt-get update && apt-get install -y \
 RUN pip3 install prettytable matplotlib numpy
 
 # Set environment variables for root user
-ENV PATH="/root/.ghcup/bin:/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.ghcup/bin:/root/.cargo/bin:/usr/local/go/bin:${PATH}"
 ENV GHCUP_INSTALL_BASE_PREFIX="/root"
 WORKDIR /root
+
+# Install Go 1.20
+RUN wget https://go.dev/dl/go1.20.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.20.linux-amd64.tar.gz && \
+    rm go1.20.linux-amd64.tar.gz
 
 # Install GHCup and GHC 9.0.2 with non-interactive mode
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
@@ -82,7 +88,8 @@ RUN . /root/.ghcup/env && \
     z3 --version && \
     cargo --version && \
     verusfmt --version && \
-    verus --version 
+    verus --version && \
+    go version
 
 # Set up environment for interactive use
 RUN echo 'source /root/.ghcup/env' >> /root/.bashrc && \
