@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     ca-certificates \
     wireguard \
+    iproute2 \
+    iperf3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
