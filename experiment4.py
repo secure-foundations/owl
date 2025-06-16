@@ -408,15 +408,7 @@ def run_packet_size_benchmarks() -> Dict[int, Dict[str, Optional[float]]]:
                     'verif_no_owl': verif_no_owl,
                     'verif_owl': verif_owl
                 }
-                
-                # Show quick summary for this packet size
-                if unverif_no_owl and unverif_owl and verif_owl:
-                    # Calculate throughput for display
-                    wg_rs_b_gbps = calculate_throughput_gbps(packet_size, unverif_no_owl)
-                    owlc_b_gbps = calculate_throughput_gbps(packet_size, unverif_owl)
-                    owlc_v_gbps = calculate_throughput_gbps(packet_size, verif_owl)
-                    print(f"Results: wg-rs_B={wg_rs_b_gbps:.2f}Gbps, OwlC_B={owlc_b_gbps:.2f}Gbps, OwlC_V={owlc_v_gbps:.2f}Gbps")
-                
+                                
             except Exception as e:
                 print(f"Error running benchmarks for packet size {packet_size}: {e}")
                 results[packet_size] = {

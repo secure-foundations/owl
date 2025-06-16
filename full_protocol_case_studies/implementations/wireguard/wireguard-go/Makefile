@@ -8,7 +8,7 @@ all: generate-version-and-build
 
 MAKEFLAGS += --no-print-directory
 
-rustlib:
+rustlib: $(wildcard *.rs) $(wildcard */*.rs)
 	@cd lib/owl_wireguard && cargo +nightly build $(RUSTLIB_ARGS) --release
 	@cp lib/owl_wireguard/target/release/libowl_wireguard.a lib/
 
