@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y \
     wireguard \
     iproute2 \
     iperf3 \
+    iputils-ping \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
