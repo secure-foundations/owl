@@ -13,3 +13,7 @@ experiment*.txt
 experiment*.csv
 experiment*.png
 experiment*.pdf
+linedelay-go.*
+linedelay-rs.*
+mss-go.*
+mss-rs.*

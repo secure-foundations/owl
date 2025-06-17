@@ -81,7 +81,7 @@ class WireguardBenchmark:
         self.iperf_duration = iperf_duration
         self.ping_test = ping_test
         self.config_dir = 'full_protocol_case_studies/implementations/wireguard'
-        self.mss_vals = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1440]
+        self.mss_vals = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400]
         self.all_results = {}
         self.network_name = "wg-benchmark-net"
         self.container1_name = "wg-benchmark-server"
