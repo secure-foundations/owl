@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import subprocess
 import json
 import time
@@ -10,8 +8,10 @@ import tempfile
 from prettytable import PrettyTable
 
 class WireguardBenchmark:
-    def __init__(self, docker_image="owlc-aeval"):
+    def __init__(self, docker_image="owlc-aeval", iperf_duration=60, ping_test=False):
         self.docker_image = docker_image
+        self.iperf_duration = iperf_duration
+        self.ping_test = ping_test
         self.config_dir = 'full_protocol_case_studies/implementations/wireguard'
         self.delays = ['0ms', '0.5ms', '1ms', '1.5ms', '2ms', '3ms', '4ms', '5ms', '6ms', '7ms', '8ms', '9ms', '10ms']
         self.all_results = {}
@@ -21,12 +21,6 @@ class WireguardBenchmark:
         
         # Define the three implementations to test
         self.implementations = {
-            'kernel': {
-                'name': 'Kernel Wireguard',
-                'use_kernel': True,
-                'binary_path': None,
-                'build_commands': []
-            },
             'vanilla-go': {
                 'name': 'Vanilla wireguard-go',
                 'use_kernel': False,
@@ -38,6 +32,12 @@ class WireguardBenchmark:
                 'use_kernel': False,
                 'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
                 'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make']
+            },
+            'kernel': {
+                'name': 'Kernel Wireguard',
+                'use_kernel': True,
+                'binary_path': None,
+                'build_commands': []
             }
         }
 
@@ -66,14 +66,10 @@ class WireguardBenchmark:
     def build_implementation(self, impl_config):
         """Build a specific wireguard implementation"""
         if not impl_config['build_commands']:
-            print(f"No build required for {impl_config['name']}")
             return True
             
-        print(f"Building {impl_config['name']}...")
-        
         for build_cmd in impl_config['build_commands']:
             try:
-                print(f"Running build command: {build_cmd}")
                 # Run build command in both containers
                 self.docker_exec(self.container1_name, build_cmd)
                 self.docker_exec(self.container2_name, build_cmd)
@@ -82,7 +78,6 @@ class WireguardBenchmark:
                 if impl_config['binary_path']:
                     self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
                     self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
-                    print(f"Successfully built {impl_config['binary_path']}")
                 
             except subprocess.CalledProcessError as e:
                 print(f"Failed to build {impl_config['name']}: {e}")
@@ -92,28 +87,30 @@ class WireguardBenchmark:
 
     def setup_docker_network(self):
         """Set up Docker network and containers"""
-        print("Setting up Docker network and containers...")
-        
         # Create Docker network
         self.run_command(f"docker network create {self.network_name} --driver bridge", check=False)
         
-        # Start server container
+        # Start server container with TUN device access
         server_cmd = (
             f"docker run -d --name {self.container1_name} "
             f"--network {self.network_name} "
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
+            f"--device /dev/net/tun:/dev/net/tun "  # Add TUN device access
+            #f"--privileged "  # Add privileged mode for full access
             f"{self.docker_image} "
             f"sleep infinity"
         )
         self.run_command(server_cmd)
         
-        # Start client container
+        # Start client container with TUN device access
         client_cmd = (
             f"docker run -d --name {self.container2_name} "
             f"--network {self.network_name} "
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
+            f"--device /dev/net/tun:/dev/net/tun "  # Add TUN device access
+            #f"--privileged "  # Add privileged mode for full access
             f"{self.docker_image} "
             f"sleep infinity"
         )
@@ -121,6 +118,10 @@ class WireguardBenchmark:
         
         # Wait for containers to be ready
         time.sleep(3)
+        
+        # Ensure TUN module is loaded
+        self.docker_exec(self.container1_name, "modprobe tun", check=False)
+        self.docker_exec(self.container2_name, "modprobe tun", check=False)
         
         # Get container IP addresses
         server_ip_result = self.run_command(
@@ -135,24 +136,19 @@ class WireguardBenchmark:
         self.server_ip = server_ip_result.stdout.strip()
         self.client_ip = client_ip_result.stdout.strip()
         
-        print(f"Server IP: {self.server_ip}")
-        print(f"Client IP: {self.client_ip}")
-
     def setup_wireguard(self, impl_config):
         """Set up Wireguard interfaces in both containers"""
-        print(f"Setting up Wireguard interfaces for {impl_config['name']}...")
+        print(f"Setting up {impl_config['name']}...")
         
         if impl_config['use_kernel']:
-            print("Using kernel wireguard")
             # Set up kernel wireguard interfaces
             self.docker_exec(self.container1_name, "ip link add wg1 type wireguard")
             self.docker_exec(self.container2_name, "ip link add wg1n type wireguard")
         else:
-            print(f"Using userspace wireguard: {impl_config['binary_path']}")
-            # Kill any existing wireguard processes
-            self.docker_exec(self.container1_name, "pkill -f wireguard", check=False)
-            self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
-            time.sleep(1)
+            # # Kill any existing wireguard processes
+            # self.docker_exec(self.container1_name, "pkill -f wireguard", check=False)
+            # self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
+            # time.sleep(1)
             
             # Set up userspace wireguard interfaces
             env_vars = "export WG_THREADS=1 && export GOMAXPROCS=1 &&"
@@ -160,68 +156,49 @@ class WireguardBenchmark:
             wg_cmd_server = f"{env_vars} {impl_config['binary_path']} wg1"
             wg_cmd_client = f"{env_vars} {impl_config['binary_path']} wg1n"
             
-            # Start wireguard processes in background and capture any errors
-            print("Starting wireguard on server container...")
-            result1 = self.docker_exec(self.container1_name, f"bash -c 'nohup {wg_cmd_server} > /tmp/wg1.log 2>&1 & echo $!'", capture_output=True)
-            print(f"Server wireguard PID: {result1.stdout.strip()}")
-            
-            print("Starting wireguard on client container...")
-            result2 = self.docker_exec(self.container2_name, f"bash -c 'nohup {wg_cmd_client} > /tmp/wg1n.log 2>&1 & echo $!'", capture_output=True)
-            print(f"Client wireguard PID: {result2.stdout.strip()}")
-            
-            # Wait for interfaces to be created and check logs
+            # # Start wireguard processes in background
+            # self.docker_exec(self.container1_name, f"bash -c 'nohup {wg_cmd_server} > /tmp/wg1.log 2>&1 & echo $!' > /dev/null", capture_output=True)
+            # self.docker_exec(self.container2_name, f"bash -c 'nohup {wg_cmd_client} > /tmp/wg1n.log 2>&1 & echo $!' > /dev/null", capture_output=True)
+
+            self.docker_exec(self.container1_name, f"{wg_cmd_server}", capture_output=True)
+            self.docker_exec(self.container2_name, f"{wg_cmd_client}", capture_output=True)
+
+            # Wait for interfaces to be created
             time.sleep(5)
             
-            # Check if interfaces were created
+            # Check if interfaces were created (silent check)
             try:
-                self.docker_exec(self.container1_name, "ip link show wg1")
-                print("Server wg1 interface created successfully")
+                self.docker_exec(self.container1_name, "ip link show wg1 > /dev/null 2>&1")
             except:
-                print("Server wg1 interface creation failed, checking logs:")
                 logs = self.docker_exec(self.container1_name, "cat /tmp/wg1.log", capture_output=True, check=False)
-                print(f"Server logs: {logs.stdout}")
-                raise
+                raise Exception(f"Server wg1 interface creation failed. Log: {logs.stdout.strip()}")
             
             try:
-                self.docker_exec(self.container2_name, "ip link show wg1n")
-                print("Client wg1n interface created successfully")
+                self.docker_exec(self.container2_name, "ip link show wg1n > /dev/null 2>&1")
             except:
-                print("Client wg1n interface creation failed, checking logs:")
                 logs = self.docker_exec(self.container2_name, "cat /tmp/wg1n.log", capture_output=True, check=False)
-                print(f"Client logs: {logs.stdout}")
-                raise
+                raise Exception(f"Client wg1n interface creation failed. Log: {logs.stdout.strip()}")
         
         # Add IP addresses to Wireguard interfaces
-        print("Adding IP addresses to Wireguard interfaces...")
         self.docker_exec(self.container1_name, "ip addr add 10.100.2.1/24 dev wg1")
         self.docker_exec(self.container2_name, "ip addr add 10.100.2.2/24 dev wg1n")
         
         # Create updated configuration files with correct Docker IPs
-        print("Creating updated Wireguard configurations...")
         self.create_docker_configs()
         
         # Configure the Wireguard interfaces
-        print("Configuring Wireguard interfaces...")
         self.docker_exec(self.container1_name, "wg setconf wg1 /tmp/wg1_docker.conf")
         self.docker_exec(self.container2_name, "wg setconf wg1n /tmp/wg1n_docker.conf")
         
         # Bring up the Wireguard interfaces
-        print("Bringing up Wireguard interfaces...")
         self.docker_exec(self.container1_name, "ip link set wg1 up")
         self.docker_exec(self.container2_name, "ip link set wg1n up")
         
-        # Wait for interfaces to be fully up and verify
+        # Wait for interfaces to be fully up
         time.sleep(2)
-        
-        # Verify interfaces are up
-        print("Verifying Wireguard setup...")
-        self.docker_exec(self.container1_name, "wg show wg1")
-        self.docker_exec(self.container2_name, "wg show wg1n")
 
     def create_docker_configs(self):
         """Create Wireguard config files with dynamically generated keys"""
-        print("Generating fresh Wireguard keys...")
-        
         # Generate private keys
         wg1_private_result = self.docker_exec(self.container1_name, "wg genkey", capture_output=True)
         wg1n_private_result = self.docker_exec(self.container2_name, "wg genkey", capture_output=True)
@@ -238,8 +215,6 @@ class WireguardBenchmark:
         
         wg1_public_key = wg1_public_result.stdout.strip()
         wg1n_public_key = wg1n_public_result.stdout.strip()
-        
-        print(f"Generated keys - Server public: {wg1_public_key}, Client public: {wg1n_public_key}")
         
         # Use default ports
         wg1_port = "9101"
@@ -280,12 +255,10 @@ AllowedIPs = 10.100.2.1/32
         # Clean up temporary private key files
         self.docker_exec(self.container1_name, "rm -f /tmp/wg1_private.key", check=False)
         self.docker_exec(self.container2_name, "rm -f /tmp/wg1n_private.key", check=False)
-        
-        print(f"Created configs with endpoints {self.server_ip}:{wg1_port} and {self.client_ip}:{wg1n_port}")
 
     def cleanup_docker(self):
         """Clean up Docker containers and network"""
-        print("Cleaning up Docker containers and network...")
+        print("Cleaning up...")
         
         try:
             # Stop and remove containers
@@ -299,8 +272,6 @@ AllowedIPs = 10.100.2.1/32
 
     def configure_delay(self, delay):
         """Configure network delay between containers"""
-        print(f"Configuring delay: {delay}")
-        
         # Clear any existing qdisc on both containers (suppress error output)
         self.docker_exec(self.container1_name, "tc qdisc del dev eth0 root 2>/dev/null || true", check=False)
         self.docker_exec(self.container2_name, "tc qdisc del dev eth0 root 2>/dev/null || true", check=False)
@@ -320,24 +291,25 @@ AllowedIPs = 10.100.2.1/32
         
         time.sleep(1)
         
-        # Test connectivity first
-        print("Testing Wireguard connectivity...")
-        try:
-            self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
-            print("Wireguard connectivity confirmed")
-        except subprocess.CalledProcessError as e:
-            print("Wireguard connectivity test failed!")
-            # Debug information
-            print("Server wg status:")
-            self.docker_exec(self.container1_name, "wg show", check=False)
-            print("Client wg status:")
-            self.docker_exec(self.container2_name, "wg show", check=False)
-            print("Server routes:")
-            self.docker_exec(self.container1_name, "ip route", check=False)
-            print("Client routes:")
-            self.docker_exec(self.container2_name, "ip route", check=False)
-            raise Exception("Wireguard tunnel not working")
-        
+        if self.ping_test:
+            # Test connectivity first
+            print("Testing Wireguard connectivity...")
+            try:
+                self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
+                print("Wireguard connectivity confirmed")
+            except subprocess.CalledProcessError as e:
+                print("Wireguard connectivity test failed!")
+                # Debug information
+                print("Server wg status:")
+                self.docker_exec(self.container1_name, "wg show", check=False)
+                print("Client wg status:")
+                self.docker_exec(self.container2_name, "wg show", check=False)
+                print("Server routes:")
+                self.docker_exec(self.container1_name, "ip route", check=False)
+                print("Client routes:")
+                self.docker_exec(self.container2_name, "ip route", check=False)
+                raise Exception("Wireguard tunnel not working")
+            
         # Start iperf server in server container (daemon mode, one connection)
         self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
         
@@ -355,19 +327,20 @@ AllowedIPs = 10.100.2.1/32
         temp_filename = "/tmp/iperf_result.json"
         
         try:
-            # Run iperf client in client container with more verbose output
-            iperf_cmd = f"timeout 20 iperf3 -c 10.100.2.1 --zerocopy --time 10 --logfile {temp_filename} --json -V"
+            # Run iperf client in client container
+            timeout_duration = self.iperf_duration + 10
+            iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --time {self.iperf_duration} --logfile {temp_filename} --json"
             print(f"Running: {iperf_cmd}")
             
             # Run with error capture to get better debugging info
             result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
             
             if result.returncode == 124:  # timeout
-                print("iperf3 test timed out")
+                print(f"iperf3 test timed out after {timeout_duration} seconds")
                 # Try to get partial results or error info
                 error_output = self.docker_exec(self.container2_name, f"cat {temp_filename} 2>/dev/null || echo 'No output file'", capture_output=True, check=False)
                 print(f"Partial output: {error_output.stdout}")
-                raise Exception("iperf3 test timed out")
+                raise Exception(f"iperf3 test timed out after {timeout_duration} seconds")
             elif result.returncode != 0:
                 print(f"iperf3 failed with return code {result.returncode}")
                 print(f"stderr: {result.stderr}")
@@ -555,11 +528,13 @@ AllowedIPs = 10.100.2.1/32
 
 def main():
     parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various network delays using Docker')
+    parser.add_argument('--iperf-duration', type=int, default=60, help='Duration of iperf test in seconds (default: 60)')
+    parser.add_argument('--ping-test', action='store_true', help='Perform ping connectivity test before iperf')
     
     args = parser.parse_args()
     
     # Run benchmark
-    benchmark = WireguardBenchmark()
+    benchmark = WireguardBenchmark(iperf_duration=args.iperf_duration, ping_test=args.ping_test)
     
     try:
         benchmark.run_benchmark()
