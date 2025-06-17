@@ -39,16 +39,28 @@ class WireguardBenchmark:
         """Set up the network configuration"""
         print("Setting up network configuration...")
         
-        # Set up virtual ethernet interface pair (both in same namespace)
+        # Set up network namespace
+        self.run_command("ip netns add net1")
+        
+        # Set up virtual ethernet interface pair
         self.run_command("ip link add veth1 type veth peer veth1n")
+        
+        # Move veth1n into the net1 namespace
+        self.run_command("ip link set veth1n netns net1")
+        
+        # Bring up loopback in the net1 namespace
+        self.run_command("ip netns exec net1 ip link set dev lo up")
         
         # Bring up the network interfaces
         self.run_command("ip link set dev veth1 up")
-        self.run_command("ip link set dev veth1n up")
+        self.run_command("ip netns exec net1 ip link set dev veth1n up")
         
-        # Add IP addresses to veth interfaces
+        # Add IP addresses to veth1 and veth1n
         self.run_command("ip addr add 10.100.1.1/24 dev veth1")
-        self.run_command("ip addr add 10.100.1.2/24 dev veth1n")
+        self.run_command("ip netns exec net1 ip addr add 10.100.1.2/24 dev veth1n")
+        
+        # Add default route to the net1 namespace
+        self.run_command("ip netns exec net1 route add default gw 10.100.1.1")
         
         # Set up wireguard interfaces
         env = os.environ.copy()
@@ -58,41 +70,43 @@ class WireguardBenchmark:
         if self.use_owl:
             print("Using owl routines")
             subprocess.run(f"WG_THREADS=1 {self.wireguard_bin} --owl wg1", shell=True, env=env)
-            subprocess.run(f"WG_THREADS=1 {self.wireguard_bin} --owl wg1n", shell=True, env=env)
+            subprocess.run(f"WG_THREADS=1 ip netns exec net1 {self.wireguard_bin} --owl wg1n", shell=True, env=env)
         elif self.use_kernel:
             print("Using kernel wireguard")
             self.run_command("ip link add wg1 type wireguard")
-            self.run_command("ip link add wg1n type wireguard")
+            self.run_command("ip netns exec net1 ip link add wg1n type wireguard")
         else:
             subprocess.run(f"WG_THREADS=1 {self.wireguard_bin} wg1", shell=True, env=env)
-            subprocess.run(f"WG_THREADS=1 {self.wireguard_bin} wg1n", shell=True, env=env)
+            subprocess.run(f"WG_THREADS=1 ip netns exec net1 {self.wireguard_bin} wg1n", shell=True, env=env)
         
         # Add IP addresses to Wireguard interfaces
         self.run_command("ip addr add 10.100.2.1/24 dev wg1")
-        self.run_command("ip addr add 10.100.2.2/24 dev wg1n")
+        self.run_command("ip netns exec net1 ip addr add 10.100.2.2/24 dev wg1n")
         
         # Configure the Wireguard interfaces (run in background)
         wg1_conf = os.path.join(self.config_dir, 'wg1.conf')
         wg1n_conf = os.path.join(self.config_dir, 'wg1n.conf')
         subprocess.Popen(f"wg setconf wg1 {wg1_conf}", shell=True)
-        subprocess.Popen(f"wg setconf wg1n {wg1n_conf}", shell=True)
+        subprocess.Popen(f"ip netns exec net1 wg setconf wg1n {wg1n_conf}", shell=True)
         
         # Bring up the Wireguard interfaces
         self.run_command("ip link set wg1 up")
-        self.run_command("ip link set wg1n up")
+        self.run_command("ip netns exec net1 ip link set wg1n up")
 
     def cleanup_network(self):
         """Clean up the network configuration"""
         print("Cleaning up network configuration...")
         
         try:
-            # Delete wg1 interfaces
+            # Delete wg1 interface
             self.run_command("ip link del wg1", check=False)
-            self.run_command("ip link del wg1n", check=False)
+            self.run_command("ip netns exec net1 ip link del wg1n", check=False)
             
-            # Delete veth1 interface (this deletes both ends of the pair)
+            # Delete veth1 interface
             self.run_command("ip link del veth1", check=False)
             
+            # Delete net1 namespace
+            self.run_command("ip netns del net1", check=False)
         except Exception as e:
             print(f"Warning: Cleanup may have been incomplete: {e}")
 
@@ -102,18 +116,20 @@ class WireguardBenchmark:
         
         # Clear any existing qdisc
         self.run_command("tc qdisc del dev veth1 root", check=False)
-        self.run_command("tc qdisc del dev veth1n root", check=False)
+        self.run_command("ip netns exec net1 tc qdisc del dev veth1n root", check=False)
         
-        # Set up link delay on both ends of the veth pair
+        # Set up link delay on outbound interface
         self.run_command(f"tc qdisc add dev veth1 root netem delay {delay}")
-        self.run_command(f"tc qdisc add dev veth1n root netem delay {delay}")
+        
+        # Set up link delay on inbound interface
+        self.run_command(f"ip netns exec net1 tc qdisc add dev veth1n root netem delay {delay}")
 
     def run_iperf_test(self, delay):
         """Run iperf3 test and return the result"""
         print(f"Running iperf test with delay {delay}...")
         
-        # Start iperf server (daemon mode, one connection)
-        self.run_command("iperf3 -sD -1")
+        # Start iperf server in net1 namespace (daemon mode, one connection)
+        self.run_command("ip netns exec net1 iperf3 -sD -1")
         
         # Wait a moment for server to start
         time.sleep(2)
@@ -123,8 +139,8 @@ class WireguardBenchmark:
             temp_filename = temp_file.name
         
         try:
-            # Run iperf client
-            self.run_command(f"iperf3 -c 10.100.2.2 --zerocopy --time 60 --logfile {temp_filename} --json")
+            # Run iperf client in default namespace
+            self.run_command(f"timeout 15 iperf3 -c 10.100.2.2 --zerocopy --time 10 --logfile {temp_filename} --json")
             
             # Read and parse the JSON output
             with open(temp_filename, 'r') as f:
@@ -234,9 +250,9 @@ def main():
         print(f"Error: wg1n.conf not found at {wg1n_conf}")
         sys.exit(1)
     
-    # Check if we're running as root (required for network operations)
+    # Check if we're running as root (required for network namespaces)
     if os.geteuid() != 0:
-        print("Error: This script must be run as root (for network interface operations)")
+        print("Error: This script must be run as root (for network namespace operations)")
         sys.exit(1)
     
     # Run benchmark
