@@ -5,7 +5,10 @@ import argparse
 import os
 import sys
 import tempfile
+import threading
 from prettytable import PrettyTable
+import matplotlib.pyplot as plt
+import numpy as np
 
 class WireguardBenchmark:
     def __init__(self, docker_image="owlc-aeval", iperf_duration=60, ping_test=False):
@@ -18,28 +21,56 @@ class WireguardBenchmark:
         self.network_name = "wg-benchmark-net"
         self.container1_name = "wg-benchmark-server"
         self.container2_name = "wg-benchmark-client"
+        self.animation_active = False
         
         # Define the three implementations to test
         self.implementations = {
-            'vanilla-go': {
-                'name': 'Vanilla wireguard-go',
-                'use_kernel': False,
-                'binary_path': '/root/wireguard-go/wireguard-go',
-                'build_commands': ['cd /root/wireguard-go && make']
-            },
             'modified-go': {
                 'name': 'Modified wireguard-go',
                 'use_kernel': False,
                 'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
                 'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make']
             },
+            'vanilla-go': {
+                'name': 'Baseline wireguard-go',
+                'use_kernel': False,
+                'binary_path': '/root/wireguard-go/wireguard-go',
+                'build_commands': ['cd /root/wireguard-go && make']
+            },
             'kernel': {
-                'name': 'Kernel Wireguard',
+                'name': 'Kernel WireGuard',
                 'use_kernel': True,
                 'binary_path': None,
                 'build_commands': []
             }
         }
+
+    def animate(self):
+        """Simple animation to indicate progress"""
+        bar_length = 20
+        i = 0
+        while self.animation_active:
+            filled = i % (bar_length + 1)
+            bar = '█' * filled + '░' * (bar_length - filled)
+            sys.stdout.write(f'\r[{bar}] Running...')
+            sys.stdout.flush()
+            time.sleep(0.1)
+            i += 1
+
+    def start_animating(self):
+        """Start a simple animation to indicate progress"""
+        if not self.animation_active:
+            self.animation_active = True
+            self.animation_thread = threading.Thread(target=self.animate)
+            self.animation_thread.start()
+
+    def stop_animating(self):
+        if self.animation_active:
+            # Stop animation and clear the line
+            self.animation_active = False
+            time.sleep(0.2)  # Give animation thread time to stop
+            sys.stdout.write('\r' + ' ' * 50 + '\r')  # Clear the animation line
+            sys.stdout.flush()
 
     def run_command(self, cmd, check=True, capture_output=False):
         """Run a shell command"""
@@ -67,28 +98,35 @@ class WireguardBenchmark:
         """Build a specific wireguard implementation"""
         if not impl_config['build_commands']:
             return True
-            
+        
+        print(f"Building {impl_config['name']}...")
+        self.start_animating()
+
         for build_cmd in impl_config['build_commands']:
             try:
                 # Run build command in both containers
-                self.docker_exec(self.container1_name, build_cmd)
-                self.docker_exec(self.container2_name, build_cmd)
+                self.docker_exec(self.container1_name, build_cmd, capture_output=True)
+                self.docker_exec(self.container2_name, build_cmd, capture_output=True)
                 
-                # Verify the binary was created
-                if impl_config['binary_path']:
-                    self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
-                    self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
+                # # Verify the binary was created
+                # if impl_config['binary_path']:
+                #     self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
+                #     self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
                 
             except subprocess.CalledProcessError as e:
+                self.stop_animating()
                 print(f"Failed to build {impl_config['name']}: {e}")
                 return False
         
+        self.stop_animating()
         return True
 
     def setup_docker_network(self):
         """Set up Docker network and containers"""
+        self.start_animating()
+        
         # Create Docker network
-        self.run_command(f"docker network create {self.network_name} --driver bridge", check=False)
+        self.run_command(f"docker network create {self.network_name} --driver bridge", check=False, capture_output=True)
         
         # Start server container with TUN device access
         server_cmd = (
@@ -97,11 +135,10 @@ class WireguardBenchmark:
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
             f"--device /dev/net/tun:/dev/net/tun "  # Add TUN device access
-            #f"--privileged "  # Add privileged mode for full access
             f"{self.docker_image} "
             f"sleep infinity"
         )
-        self.run_command(server_cmd)
+        self.run_command(server_cmd, capture_output=True)
         
         # Start client container with TUN device access
         client_cmd = (
@@ -110,18 +147,14 @@ class WireguardBenchmark:
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
             f"--device /dev/net/tun:/dev/net/tun "  # Add TUN device access
-            #f"--privileged "  # Add privileged mode for full access
             f"{self.docker_image} "
             f"sleep infinity"
         )
-        self.run_command(client_cmd)
+        self.run_command(client_cmd, capture_output=True)
         
         # Wait for containers to be ready
         time.sleep(3)
         
-        # Ensure TUN module is loaded
-        self.docker_exec(self.container1_name, "modprobe tun", check=False)
-        self.docker_exec(self.container2_name, "modprobe tun", check=False)
         
         # Get container IP addresses
         server_ip_result = self.run_command(
@@ -135,10 +168,11 @@ class WireguardBenchmark:
         
         self.server_ip = server_ip_result.stdout.strip()
         self.client_ip = client_ip_result.stdout.strip()
+
+        self.stop_animating()
         
     def setup_wireguard(self, impl_config):
         """Set up Wireguard interfaces in both containers"""
-        print(f"Setting up {impl_config['name']}...")
         
         if impl_config['use_kernel']:
             # Set up kernel wireguard interfaces
@@ -153,18 +187,14 @@ class WireguardBenchmark:
             # Set up userspace wireguard interfaces
             env_vars = "export WG_THREADS=1 && export GOMAXPROCS=1 &&"
             
+            # Start wireguard in both containers
             wg_cmd_server = f"{env_vars} {impl_config['binary_path']} wg1"
             wg_cmd_client = f"{env_vars} {impl_config['binary_path']} wg1n"
-            
-            # # Start wireguard processes in background
-            # self.docker_exec(self.container1_name, f"bash -c 'nohup {wg_cmd_server} > /tmp/wg1.log 2>&1 & echo $!' > /dev/null", capture_output=True)
-            # self.docker_exec(self.container2_name, f"bash -c 'nohup {wg_cmd_client} > /tmp/wg1n.log 2>&1 & echo $!' > /dev/null", capture_output=True)
-
             self.docker_exec(self.container1_name, f"{wg_cmd_server}", capture_output=True)
             self.docker_exec(self.container2_name, f"{wg_cmd_client}", capture_output=True)
 
             # Wait for interfaces to be created
-            time.sleep(5)
+            time.sleep(1)
             
             # Check if interfaces were created (silent check)
             try:
@@ -195,7 +225,7 @@ class WireguardBenchmark:
         self.docker_exec(self.container2_name, "ip link set wg1n up")
         
         # Wait for interfaces to be fully up
-        time.sleep(2)
+        time.sleep(1)
 
     def create_docker_configs(self):
         """Create Wireguard config files with dynamically generated keys"""
@@ -258,6 +288,7 @@ AllowedIPs = 10.100.2.1/32
 
     def cleanup_docker(self):
         """Clean up Docker containers and network"""
+        self.stop_animating()
         print("Cleaning up...")
         
         try:
@@ -294,10 +325,13 @@ AllowedIPs = 10.100.2.1/32
         if self.ping_test:
             # Test connectivity first
             print("Testing Wireguard connectivity...")
+            self.start_animating()
             try:
                 self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
+                self.stop_animating()
                 print("Wireguard connectivity confirmed")
             except subprocess.CalledProcessError as e:
+                self.stop_animating()
                 print("Wireguard connectivity test failed!")
                 # Debug information
                 print("Server wg status:")
@@ -314,12 +348,12 @@ AllowedIPs = 10.100.2.1/32
         self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
         
         # Wait a moment for server to start
-        time.sleep(3)
+        time.sleep(1)
         
         # Verify iperf server is running
         try:
             result = self.docker_exec(self.container1_name, "pgrep -f 'iperf3.*-s'", capture_output=True)
-            print(f"iperf3 server running with PID: {result.stdout.strip()}")
+            # print(f"iperf3 server running with PID: {result.stdout.strip()}")
         except:
             print("Warning: iperf3 server may not be running properly")
         
@@ -331,10 +365,11 @@ AllowedIPs = 10.100.2.1/32
             timeout_duration = self.iperf_duration + 10
             iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --time {self.iperf_duration} --logfile {temp_filename} --json"
             print(f"Running: {iperf_cmd}")
-            
-            # Run with error capture to get better debugging info
+        
+            self.start_animating()
             result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
-            
+            self.stop_animating()
+
             if result.returncode == 124:  # timeout
                 print(f"iperf3 test timed out after {timeout_duration} seconds")
                 # Try to get partial results or error info
@@ -372,13 +407,25 @@ AllowedIPs = 10.100.2.1/32
         
         for delay in self.delays:
             try:
+                print(f"\nRunning benchmark for implementation: {impl_config['name']}, delay: {delay}")
+                
+                print("Setting up Docker network...")
+
+                self.start_animating()
+
                 # Set up Docker environment
                 self.setup_docker_network()
-                
+
+                self.stop_animating()
+
                 # Build the implementation if needed
                 if not self.build_implementation(impl_config):
                     raise Exception(f"Failed to build {impl_config['name']}")
                 
+                print("Setting up Wireguard interfaces...")
+
+                self.start_animating()
+
                 # Set up Wireguard
                 self.setup_wireguard(impl_config)
                 
@@ -388,6 +435,8 @@ AllowedIPs = 10.100.2.1/32
                 # Wait for network to stabilize
                 time.sleep(5)
                 
+                self.stop_animating()
+
                 # Run test
                 bits_per_second = self.run_iperf_test(delay)
                 
