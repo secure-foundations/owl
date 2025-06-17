@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import threading
+import csv
 from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,47 +17,60 @@ ALL_IMPLEMENTATIONS = {
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make'],
-        'run_args': ''
+        'run_args': '',
+        'color': 'r-',
+        'marker': 's'
     },
     'baseline-go': {
         'name': 'Baseline wireguard-go',
         'use_kernel': False,
         'binary_path': '/root/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/wireguard-go && make'],
-        'run_args': ''
+        'run_args': '',
+        'color': 'y-',
+        'marker': 'x'
     },
     'kernel': {
         'name': 'Kernel WireGuard',
         'use_kernel': True,
         'binary_path': None,
         'build_commands': [],
-        'run_args': ''
+        'run_args': '',
+        'color': 'm-',
+        'marker': 'D'
     },
     'baseline-rs': {
         'name': 'Baseline wireguard-rs',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
-        'run_args': ''
+        'run_args': '',
+        'color': 'y-',
+        'marker': 'x'
     },
     'owlc-rs-baseline-crypto': {
         'name': 'OwlC wireguard-rs with baseline crypto',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
-        'run_args': '--owl'
+        'run_args': '--owl',
+        'color': 'b-',
+        'marker': '^'
     },
     'owlc-rs-verif-crypto': {
         'name': 'OwlC wireguard-rs with verified crypto',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --release'],
-        'run_args': '--owl'
+        'run_args': '--owl',
+        'color': 'r-',
+        'marker': 's'
     },
 }
 
 class WireguardBenchmark:
     def __init__(self, bench_choice, docker_image="owlc-aeval", iperf_duration=60, ping_test=False):
+        self.bench_choice = bench_choice
         self.docker_image = docker_image
         self.iperf_duration = iperf_duration
         self.ping_test = ping_test
@@ -515,7 +529,9 @@ AllowedIPs = 10.100.2.1/32
                 results = self.run_implementation_benchmark(impl_key, impl_config)
                 self.all_results[impl_key] = {
                     'name': impl_config['name'],
-                    'results': results
+                    'results': results,
+                    'color': impl_config['color'],
+                    'marker': impl_config['marker']
                 }
             except Exception as e:
                 print(f"Failed to test {impl_config['name']}: {e}")
@@ -524,6 +540,226 @@ AllowedIPs = 10.100.2.1/32
                     'results': [],
                     'error': str(e)
                 }
+
+    def save_csv(self):
+        """Save results to CSV file"""
+        filename = f"linedelay-{self.bench_choice}.csv"
+        
+        # Prepare data for CSV
+        all_delays = set()
+        for impl_data in self.all_results.values():
+            if 'results' in impl_data:
+                for result in impl_data['results']:
+                    all_delays.add(result['delay'])
+        
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
+        
+        with open(filename, 'w', newline='') as csvfile:
+            # Create header
+            fieldnames = ['Delay_ms']
+            for impl_data in self.all_results.values():
+                if 'error' not in impl_data:
+                    fieldnames.append(f"{impl_data['name']}_Gbps")
+            
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            # Write data rows
+            for delay in all_delays:
+                row = {'Delay_ms': float(delay.replace('ms', ''))}
+                
+                for impl_data in self.all_results.values():
+                    if 'error' in impl_data or not impl_data['results']:
+                        continue
+                    
+                    # Find result for this delay
+                    result_for_delay = None
+                    for result in impl_data['results']:
+                        if result['delay'] == delay:
+                            result_for_delay = result
+                            break
+                    
+                    col_name = f"{impl_data['name']}_Gbps"
+                    if result_for_delay is None or 'error' in result_for_delay:
+                        row[col_name] = None
+                    else:
+                        # Convert Mbps to Gbps
+                        row[col_name] = result_for_delay['mbps'] / 1000.0
+                
+                writer.writerow(row)
+        
+        print(f"Results saved to {filename}")
+
+    def save_txt(self):
+        """Save formatted tables to TXT file"""
+        filename = f"linedelay-{self.bench_choice}.txt"
+        
+        with open(filename, 'w') as f:
+            f.write("WIREGUARD BENCHMARK RESULTS\n")
+            f.write("=" * 80 + "\n\n")
+            
+            # Write individual tables for each implementation
+            for impl_key, impl_data in self.all_results.items():
+                f.write(f"{impl_data['name']} Results:\n")
+                f.write("-" * 50 + "\n")
+                
+                if 'error' in impl_data:
+                    f.write(f"ERROR: {impl_data['error']}\n\n")
+                    continue
+                    
+                if not impl_data['results']:
+                    f.write("No results available\n\n")
+                    continue
+                
+                table = PrettyTable()
+                table.field_names = ["Delay", "Throughput (Mbps)", "Throughput (bps)", "Status"]
+                
+                for result in impl_data['results']:
+                    if 'error' in result:
+                        table.add_row([result['delay'], "ERROR", "ERROR", result['error']])
+                    else:
+                        table.add_row([
+                            result['delay'],
+                            f"{result['mbps']:.2f}",
+                            f"{result['bits_per_second']:,}",
+                            "OK"
+                        ])
+                
+                f.write(str(table) + "\n\n")
+            
+            # Write comparison table
+            f.write("=" * 80 + "\n")
+            f.write("COMPARISON TABLE\n")
+            f.write("=" * 80 + "\n")
+            
+            # Get all delays that were tested
+            all_delays = set()
+            for impl_data in self.all_results.values():
+                if 'results' in impl_data:
+                    for result in impl_data['results']:
+                        all_delays.add(result['delay'])
+            
+            all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
+            
+            # Create comparison table
+            table = PrettyTable()
+            field_names = ["Delay"]
+            
+            # Add column for each implementation
+            for impl_data in self.all_results.values():
+                field_names.append(f"{impl_data['name']} (Mbps)")
+            
+            table.field_names = field_names
+            
+            # Add rows for each delay
+            for delay in all_delays:
+                row = [delay]
+                
+                for impl_data in self.all_results.values():
+                    if 'error' in impl_data or not impl_data['results']:
+                        row.append("ERROR")
+                    else:
+                        # Find result for this delay
+                        result_for_delay = None
+                        for result in impl_data['results']:
+                            if result['delay'] == delay:
+                                result_for_delay = result
+                                break
+                        
+                        if result_for_delay is None:
+                            row.append("N/A")
+                        elif 'error' in result_for_delay:
+                            row.append("ERROR")
+                        else:
+                            row.append(f"{result_for_delay['mbps']:.2f}")
+                
+                table.add_row(row)
+            
+            f.write(str(table) + "\n")
+        
+        print(f"Formatted tables saved to {filename}")
+
+    def generate_graph(self):
+        """Generate line graph and save as PDF and PNG"""
+        if not self.all_results:
+            print("No results to plot")
+            return
+        
+        # Set up the plot
+        plt.figure(figsize=(12, 8))
+        plt.style.use('default')  # Use a clean style
+        
+        # Get all delays and convert to numeric values
+        all_delays = set()
+        for impl_data in self.all_results.values():
+            if 'results' in impl_data and 'error' not in impl_data:
+                for result in impl_data['results']:
+                    all_delays.add(result['delay'])
+        
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
+        delay_values = [float(d.replace('ms', '')) for d in all_delays]
+        
+        # # Plot each implementation
+        # colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+        # markers = ['o', 's', '^', 'D', 'v', '<']
+        
+        for i, (impl_key, impl_data, color, marker) in enumerate(self.all_results.items()):
+            if 'error' in impl_data or not impl_data['results']:
+                continue
+            
+            # Extract throughput values for this implementation
+            throughput_gbps = []
+            plot_delays = []
+            
+            for delay in all_delays:
+                # Find result for this delay
+                result_for_delay = None
+                for result in impl_data['results']:
+                    if result['delay'] == delay:
+                        result_for_delay = result
+                        break
+                
+                if result_for_delay is not None and 'error' not in result_for_delay:
+                    # Convert Mbps to Gbps
+                    throughput_gbps.append(result_for_delay['mbps'] / 1000.0)
+                    plot_delays.append(float(delay.replace('ms', '')))
+            
+            # Plot the line
+            if throughput_gbps:  # Only plot if we have data
+                plt.plot(plot_delays, throughput_gbps, 
+                        marker=marker, linewidth=2, markersize=8,
+                        label=impl_data['name'], color=color)
+        
+        # Customize the plot
+        plt.xlabel('Network Delay (ms)', fontsize=12)
+        plt.ylabel('Throughput (Gbps)', fontsize=12)
+        plt.title(f'WireGuard Performance vs Network Delay ({self.bench_choice.upper()})', fontsize=14, fontweight='bold')
+        plt.grid(True, alpha=0.3)
+        plt.legend(fontsize=10, loc='best')
+        
+        # Set axis limits
+        if delay_values:
+            plt.xlim(min(delay_values) - 0.2, max(delay_values) + 0.2)
+        
+        # Make sure y-axis starts at 0
+        y_min, y_max = plt.ylim()
+        plt.ylim(0, y_max * 1.05)
+        
+        # Tight layout to prevent label cutoff
+        plt.tight_layout()
+        
+        # Save as PDF
+        pdf_filename = f"linedelay-{self.bench_choice}.pdf"
+        plt.savefig(pdf_filename, format='pdf', dpi=300, bbox_inches='tight')
+        print(f"Graph saved as {pdf_filename}")
+        
+        # Save as PNG
+        png_filename = f"linedelay-{self.bench_choice}.png"
+        plt.savefig(png_filename, format='png', dpi=300, bbox_inches='tight')
+        print(f"Graph saved as {png_filename}")
+        
+        # Close the plot to free memory
+        plt.close()
 
     def print_results(self):
         """Print results in formatted tables"""
@@ -614,6 +850,27 @@ AllowedIPs = 10.100.2.1/32
         
         print(table)
 
+    def save_all_outputs(self):
+        """Save all output formats (CSV, TXT, graphs)"""
+        print(f"\n{'='*60}")
+        print("SAVING OUTPUT FILES")
+        print(f"{'='*60}")
+        
+        try:
+            self.save_csv()
+        except Exception as e:
+            print(f"Error saving CSV: {e}")
+        
+        try:
+            self.save_txt()
+        except Exception as e:
+            print(f"Error saving TXT: {e}")
+        
+        try:
+            self.generate_graph()
+        except Exception as e:
+            print(f"Error generating graph: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various network delays using Docker')
     parser.add_argument('--iperf-duration', type=int, default=60, help='Duration of iperf test in seconds (default: 60)')
@@ -627,6 +884,7 @@ def main():
     try:
         benchmark.run_benchmark()
         benchmark.print_results()
+        benchmark.save_all_outputs()
     except KeyboardInterrupt:
         print("\nBenchmark interrupted by user")
         benchmark.cleanup_docker()
