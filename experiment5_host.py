@@ -701,12 +701,8 @@ AllowedIPs = 10.100.2.1/32
         
         all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
         delay_values = [float(d.replace('ms', '')) for d in all_delays]
-        
-        # # Plot each implementation
-        # colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-        # markers = ['o', 's', '^', 'D', 'v', '<']
-        
-        for i, (impl_key, impl_data, color, marker) in enumerate(self.all_results.items()):
+                
+        for i, (impl_key, impl_data) in enumerate(self.all_results.items()):
             if 'error' in impl_data or not impl_data['results']:
                 continue
             
@@ -730,8 +726,8 @@ AllowedIPs = 10.100.2.1/32
             # Plot the line
             if throughput_gbps:  # Only plot if we have data
                 plt.plot(plot_delays, throughput_gbps, 
-                        marker=marker, linewidth=2, markersize=8,
-                        label=impl_data['name'], color=color)
+                        marker=impl_data['marker'], linewidth=2, markersize=8,
+                        label=impl_data['name'], color=impl_data['color'])
         
         # Customize the plot
         plt.xlabel('Network Delay (ms)', fontsize=12)
