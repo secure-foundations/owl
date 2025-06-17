@@ -451,6 +451,7 @@ AllowedIPs = 10.100.2.1/32
                 })
                 
                 print(f"MSS {mss}: {mbps:.2f} Mbps")
+                return results
             
             except Exception as e:
                 print(f"Error testing MSS {mss}: {e}")
@@ -710,13 +711,13 @@ AllowedIPs = 10.100.2.1/32
                 if result_for_mss is not None and 'error' not in result_for_mss:
                     # Convert Mbps to Gbps
                     throughput_gbps.append(result_for_mss['mbps'] / 1000.0)
-                    plot_mss.append(float(mss.replace('ms', '')))
+                    plot_mss.append(mss)
 
             # Plot the line
             if throughput_gbps:  # Only plot if we have data
-                plt.plot(plot_mss, throughput_gbps,
+                plt.plot(plot_mss, throughput_gbps, impl_data['color'],
                         marker=impl_data['marker'], linewidth=2, markersize=8,
-                        label=impl_data['name'], color=impl_data['color'])
+                        label=impl_data['name'])
         
         # Customize the plot
         plt.xlabel('TCP MSS (bytes)', fontsize=12)
@@ -800,7 +801,7 @@ AllowedIPs = 10.100.2.1/32
                 for result in impl_data['results']:
                     all_mss_values.add(result['mss'])
         
-        all_mss_values = sorted(list(all_mss_values), key=lambda x: float(x.replace('ms', '')))
+        all_mss_values = sorted(list(all_mss_values), key=lambda x: x)
         
         # Create comparison table
         table = PrettyTable()

@@ -371,47 +371,18 @@ AllowedIPs = 10.100.2.1/32
     def run_iperf_test(self, delay):
         """Run iperf3 test and return the result"""
         print(f"Running iperf test with delay {delay}...")
-        
-        # Kill any existing iperf processes
+
+        # Kill any existing iperf processes (but don't recreate containers)
         self.docker_exec(self.container1_name, "pkill -f iperf3", check=False)
         self.docker_exec(self.container2_name, "pkill -f iperf3", check=False)
         
         time.sleep(1)
         
-        if self.ping_test:
-            # Test connectivity first
-            print("Testing Wireguard connectivity...")
-            self.start_animating()
-            try:
-                self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
-                self.stop_animating()
-                print("Wireguard connectivity confirmed")
-            except subprocess.CalledProcessError as e:
-                self.stop_animating()
-                print("Wireguard connectivity test failed!")
-                # Debug information
-                print("Server wg status:")
-                self.docker_exec(self.container1_name, "wg show", check=False)
-                print("Client wg status:")
-                self.docker_exec(self.container2_name, "wg show", check=False)
-                print("Server routes:")
-                self.docker_exec(self.container1_name, "ip route", check=False)
-                print("Client routes:")
-                self.docker_exec(self.container2_name, "ip route", check=False)
-                raise Exception("Wireguard tunnel not working")
-            
         # Start iperf server in server container (daemon mode, one connection)
         self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
         
         # Wait a moment for server to start
         time.sleep(1)
-        
-        # Verify iperf server is running
-        try:
-            result = self.docker_exec(self.container1_name, "pgrep -f 'iperf3.*-s'", capture_output=True)
-            # print(f"iperf3 server running with PID: {result.stdout.strip()}")
-        except:
-            print("Warning: iperf3 server may not be running properly")
         
         # Create temporary file for iperf output in client container
         temp_filename = "/tmp/iperf_result.json"
@@ -420,17 +391,13 @@ AllowedIPs = 10.100.2.1/32
             # Run iperf client in client container
             timeout_duration = self.iperf_duration + 10
             iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --time {self.iperf_duration} --logfile {temp_filename} --json"
-            print(f"Running: {iperf_cmd}")
-        
+            
             self.start_animating()
             result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
             self.stop_animating()
 
             if result.returncode == 124:  # timeout
                 print(f"iperf3 test timed out after {timeout_duration} seconds")
-                # Try to get partial results or error info
-                error_output = self.docker_exec(self.container2_name, f"cat {temp_filename} 2>/dev/null || echo 'No output file'", capture_output=True, check=False)
-                print(f"Partial output: {error_output.stdout}")
                 raise Exception(f"iperf3 test timed out after {timeout_duration} seconds")
             elif result.returncode != 0:
                 print(f"iperf3 failed with return code {result.returncode}")
@@ -461,64 +428,85 @@ AllowedIPs = 10.100.2.1/32
         
         results = []
         
-        for delay in self.delays:
-            try:
-                print(f"\nRunning benchmark for implementation: {impl_config['name']}, delay: {delay}")
-                
-                print("Setting up Docker network...")
+        try:
+            # One-time setup for this implementation
+            print("Setting up Docker network...")
+            self.start_animating()
+            self.setup_docker_network()
+            self.stop_animating()
 
+            # Build the implementation once
+            if not self.build_implementation(impl_config):
+                raise Exception(f"Failed to build {impl_config['name']}")
+            
+            print("Setting up Wireguard interfaces...")
+            self.start_animating()
+            self.setup_wireguard(impl_config)
+            self.stop_animating()
+            
+            # Test connectivity once
+            if self.ping_test:
+                print("Testing Wireguard connectivity...")
                 self.start_animating()
+                try:
+                    self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
+                    self.stop_animating()
+                    print("Wireguard connectivity confirmed")
+                except subprocess.CalledProcessError as e:
+                    self.stop_animating()
+                    print("Wireguard connectivity test failed!")
+                    raise Exception("Wireguard tunnel not working")
+            
+            # Now run tests for each delay
+            for delay in self.delays:
+                try:
+                    print(f"\nTesting delay: {delay}")
+                    self.start_animating()
 
-                # Set up Docker environment
-                self.setup_docker_network()
+                    # Configure delay for this test
+                    self.configure_delay(delay)
+                    
+                    # Brief wait for network to stabilize
+                    time.sleep(5)
+                    self.stop_animating()
+                    
+                    # Run the iperf test
+                    bits_per_second = self.run_iperf_test(delay)
+                    
+                    # Convert to Mbps for easier reading
+                    mbps = bits_per_second / 1_000_000
+                    
+                    results.append({
+                        'delay': delay,
+                        'bits_per_second': bits_per_second,
+                        'mbps': mbps
+                    })
 
-                self.stop_animating()
-
-                # Build the implementation if needed
-                if not self.build_implementation(impl_config):
-                    raise Exception(f"Failed to build {impl_config['name']}")
-                
-                print("Setting up Wireguard interfaces...")
-
-                self.start_animating()
-
-                # Set up Wireguard
-                self.setup_wireguard(impl_config)
-                
-                # Configure delay
-                self.configure_delay(delay)
-                
-                # Wait for network to stabilize
-                time.sleep(5)
-                
-                self.stop_animating()
-
-                # Run test
-                bits_per_second = self.run_iperf_test(delay)
-                
-                # Convert to Mbps for easier reading
-                mbps = bits_per_second / 1_000_000
-                
-                results.append({
-                    'delay': delay,
-                    'bits_per_second': bits_per_second,
-                    'mbps': mbps
-                })
-                
-                print(f"Delay {delay}: {mbps:.2f} Mbps")
-                
-            except Exception as e:
-                print(f"Error testing delay {delay}: {e}")
-                results.append({
-                    'delay': delay,
-                    'bits_per_second': 0,
-                    'mbps': 0,
-                    'error': str(e)
-                })
-            finally:
-                # Always clean up
-                self.cleanup_docker()
-                time.sleep(2)
+                    print(f"Delay {delay}: {mbps:.2f} Mbps")
+                    
+                except Exception as e:
+                    self.stop_animating()
+                    print(f"Error testing delay {delay}: {e}")
+                    results.append({
+                        'delay': delay,
+                        'bits_per_second': 0,
+                        'mbps': 0,
+                        'error': str(e)
+                    })
+        
+        except Exception as e:
+            print(f"Failed to set up {impl_config['name']}: {e}")
+            return [{
+                'delay': delay,
+                'bits_per_second': 0,
+                'mbps': 0,
+                'error': str(e)
+            } for delay in self.delays]
+        
+        finally:
+            # Clean up once at the end
+            self.cleanup_docker()
+            time.sleep(2)
         
         return results
 
@@ -725,9 +713,9 @@ AllowedIPs = 10.100.2.1/32
             
             # Plot the line
             if throughput_gbps:  # Only plot if we have data
-                plt.plot(plot_delays, throughput_gbps, 
+                plt.plot(plot_delays, throughput_gbps, impl_data['color'],
                         marker=impl_data['marker'], linewidth=2, markersize=8,
-                        label=impl_data['name'], color=impl_data['color'])
+                        label=impl_data['name'])
         
         # Customize the plot
         plt.xlabel('Network Delay (ms)', fontsize=12)
