@@ -726,7 +726,7 @@ AllowedIPs = 10.100.2.1/32
         
         # Set axis limits
         if delay_values:
-            plt.xlim(min(delay_values) - 0.2, max(delay_values) + 0.2)
+            plt.xlim(0, 10)
         
         # Make sure y-axis starts at 0
         y_min, y_max = plt.ylim()

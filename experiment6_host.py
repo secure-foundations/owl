@@ -81,7 +81,7 @@ class WireguardBenchmark:
         self.iperf_duration = iperf_duration
         self.ping_test = ping_test
         self.config_dir = 'full_protocol_case_studies/implementations/wireguard'
-        self.mss_vals = ['100', '200', '300', '400', '500', '600', '700', '800', '900', '1000', '1100', '1200', '1300', '1400', '1440']
+        self.mss_vals = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1440]
         self.all_results = {}
         self.network_name = "wg-benchmark-net"
         self.container1_name = "wg-benchmark-server"
@@ -451,7 +451,6 @@ AllowedIPs = 10.100.2.1/32
                 })
                 
                 print(f"MSS {mss}: {mbps:.2f} Mbps")
-                return results
             
             except Exception as e:
                 print(f"Error testing MSS {mss}: {e}")
@@ -464,6 +463,8 @@ AllowedIPs = 10.100.2.1/32
             finally:
                 # Clean up temp file
                 self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
+    
+        return results
 
     def run_implementation_benchmark(self, impl_key, impl_config):
         """Run benchmark for a specific implementation"""
@@ -728,7 +729,7 @@ AllowedIPs = 10.100.2.1/32
         
         # Set axis limits
         if mss_values:
-            plt.xlim(min(mss_values) - 0.2, max(mss_values) + 0.2)
+            plt.xlim(0, 1500)
 
         # Make sure y-axis starts at 0
         y_min, y_max = plt.ylim()
