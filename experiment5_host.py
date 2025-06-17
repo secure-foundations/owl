@@ -18,6 +18,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make'],
         'run_args': '',
+        'env_vars': '',
         'color': 'r-',
         'marker': 's'
     },
@@ -27,6 +28,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': '/root/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/wireguard-go && make'],
         'run_args': '',
+        'env_vars': '',
         'color': 'y-',
         'marker': 'x'
     },
@@ -36,6 +38,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': None,
         'build_commands': [],
         'run_args': '',
+        'env_vars': '',
         'color': 'm-',
         'marker': 'D'
     },
@@ -45,6 +48,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
         'run_args': '',
+        'env_vars': 'export WG_THREADS=1 &&',
         'color': 'y-',
         'marker': 'x'
     },
@@ -54,6 +58,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
         'run_args': '--owl',
+        'env_vars': 'export WG_THREADS=1 &&',
         'color': 'b-',
         'marker': '^'
     },
@@ -63,6 +68,7 @@ ALL_IMPLEMENTATIONS = {
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --release'],
         'run_args': '--owl',
+        'env_vars': 'export WG_THREADS=1 &&',
         'color': 'r-',
         'marker': 's'
     },
@@ -237,12 +243,9 @@ class WireguardBenchmark:
             # self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
             # time.sleep(1)
             
-            # Set up userspace wireguard interfaces
-            env_vars = "export WG_THREADS=1 && export GOMAXPROCS=1 &&"
-            
             # Start wireguard in both containers
-            wg_cmd_server = f"{env_vars} {impl_config['binary_path']} {impl_config['run_args']} wg1"
-            wg_cmd_client = f"{env_vars} {impl_config['binary_path']} {impl_config['run_args']} wg1n"
+            wg_cmd_server = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1"
+            wg_cmd_client = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1n"
             self.docker_exec(self.container1_name, f"{wg_cmd_server}", capture_output=True)
             self.docker_exec(self.container2_name, f"{wg_cmd_client}", capture_output=True)
 
