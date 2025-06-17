@@ -10,8 +10,53 @@ from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 import numpy as np
 
+ALL_IMPLEMENTATIONS = {
+    'owlc-go': {
+        'name': 'OwlC wireguard-go',
+        'use_kernel': False,
+        'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
+        'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make'],
+        'run_args': ''
+    },
+    'baseline-go': {
+        'name': 'Baseline wireguard-go',
+        'use_kernel': False,
+        'binary_path': '/root/wireguard-go/wireguard-go',
+        'build_commands': ['cd /root/wireguard-go && make'],
+        'run_args': ''
+    },
+    'kernel': {
+        'name': 'Kernel WireGuard',
+        'use_kernel': True,
+        'binary_path': None,
+        'build_commands': [],
+        'run_args': ''
+    },
+    'baseline-rs': {
+        'name': 'Baseline wireguard-rs',
+        'use_kernel': False,
+        'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
+        'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
+        'run_args': ''
+    },
+    'owlc-rs-baseline-crypto': {
+        'name': 'OwlC wireguard-rs with baseline crypto',
+        'use_kernel': False,
+        'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
+        'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
+        'run_args': '--owl'
+    },
+    'owlc-rs-verif-crypto': {
+        'name': 'OwlC wireguard-rs with verified crypto',
+        'use_kernel': False,
+        'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
+        'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --release'],
+        'run_args': '--owl'
+    },
+}
+
 class WireguardBenchmark:
-    def __init__(self, docker_image="owlc-aeval", iperf_duration=60, ping_test=False):
+    def __init__(self, bench_choice, docker_image="owlc-aeval", iperf_duration=60, ping_test=False):
         self.docker_image = docker_image
         self.iperf_duration = iperf_duration
         self.ping_test = ping_test
@@ -22,28 +67,22 @@ class WireguardBenchmark:
         self.container1_name = "wg-benchmark-server"
         self.container2_name = "wg-benchmark-client"
         self.animation_active = False
-        
-        # Define the three implementations to test
-        self.implementations = {
-            'modified-go': {
-                'name': 'Modified wireguard-go',
-                'use_kernel': False,
-                'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
-                'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make']
-            },
-            'vanilla-go': {
-                'name': 'Baseline wireguard-go',
-                'use_kernel': False,
-                'binary_path': '/root/wireguard-go/wireguard-go',
-                'build_commands': ['cd /root/wireguard-go && make']
-            },
-            'kernel': {
-                'name': 'Kernel WireGuard',
-                'use_kernel': True,
-                'binary_path': None,
-                'build_commands': []
+
+        # Define the implementations to test
+        if bench_choice == 'go':
+            self.implementations = {
+                'owlc-go': ALL_IMPLEMENTATIONS['owlc-go'],
+                'baseline-go': ALL_IMPLEMENTATIONS['baseline-go'],
+                'kernel': ALL_IMPLEMENTATIONS['kernel']
             }
-        }
+        elif bench_choice == 'rs':
+            self.implementations = {
+                'baseline-rs': ALL_IMPLEMENTATIONS['baseline-rs'],
+                'owlc-rs-baseline-crypto': ALL_IMPLEMENTATIONS['owlc-rs-baseline-crypto'],
+                'owlc-rs-verif-crypto': ALL_IMPLEMENTATIONS['owlc-rs-verif-crypto'],
+            }
+        else: 
+            raise ValueError(f"Unknown benchmark choice: {bench_choice}. Must be one of: go, rs")
 
     def animate(self):
         """Simple animation to indicate progress"""
@@ -188,8 +227,8 @@ class WireguardBenchmark:
             env_vars = "export WG_THREADS=1 && export GOMAXPROCS=1 &&"
             
             # Start wireguard in both containers
-            wg_cmd_server = f"{env_vars} {impl_config['binary_path']} wg1"
-            wg_cmd_client = f"{env_vars} {impl_config['binary_path']} wg1n"
+            wg_cmd_server = f"{env_vars} {impl_config['binary_path']} {impl_config['run_args']} wg1"
+            wg_cmd_client = f"{env_vars} {impl_config['binary_path']} {impl_config['run_args']} wg1n"
             self.docker_exec(self.container1_name, f"{wg_cmd_server}", capture_output=True)
             self.docker_exec(self.container2_name, f"{wg_cmd_client}", capture_output=True)
 
@@ -579,11 +618,11 @@ def main():
     parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various network delays using Docker')
     parser.add_argument('--iperf-duration', type=int, default=60, help='Duration of iperf test in seconds (default: 60)')
     parser.add_argument('--ping-test', action='store_true', help='Perform ping connectivity test before iperf')
-    
+    parser.add_argument('--bench-choice', choices=['go', 'rs'], required=True, help='Which benchmark to run')
     args = parser.parse_args()
     
     # Run benchmark
-    benchmark = WireguardBenchmark(iperf_duration=args.iperf_duration, ping_test=args.ping_test)
+    benchmark = WireguardBenchmark(args.bench_choice, iperf_duration=args.iperf_duration, ping_test=args.ping_test)
     
     try:
         benchmark.run_benchmark()
