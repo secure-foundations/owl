@@ -81,6 +81,12 @@ RUN wget https://github.com/verus-lang/verus/releases/download/release%2F0.2025.
 # Add Verus to PATH (also adds z3 to PATH)
 ENV PATH="/root/verus/verus-x86-linux:${PATH}"
 
+# Fetch wireguard-go
+RUN git clone --depth 1 --no-tags https://github.com/WireGuard/wireguard-go.git /root/wireguard-go && \
+    cd /root/wireguard-go && \
+    git fetch --depth 1 origin 12269c2761734b15625017d8565745096325392f && \
+    git checkout 12269c2761734b15625017d8565745096325392f
+
 # Verify installations
 RUN . /root/.ghcup/env && \
     . /root/.cargo/env && \

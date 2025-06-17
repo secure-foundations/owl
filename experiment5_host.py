@@ -10,17 +10,36 @@ import tempfile
 from prettytable import PrettyTable
 
 class WireguardBenchmark:
-    def __init__(self, wireguard_bin, use_owl=False, use_kernel=False, docker_image="owlc-aeval"):
-        self.wireguard_bin = wireguard_bin if wireguard_bin else "/usr/bin/wireguard-go"
-        self.use_owl = use_owl
-        self.use_kernel = use_kernel
+    def __init__(self, docker_image="owlc-aeval"):
         self.docker_image = docker_image
         self.config_dir = 'full_protocol_case_studies/implementations/wireguard'
         self.delays = ['0ms', '0.5ms', '1ms', '1.5ms', '2ms', '3ms', '4ms', '5ms', '6ms', '7ms', '8ms', '9ms', '10ms']
-        self.results = []
+        self.all_results = {}
         self.network_name = "wg-benchmark-net"
         self.container1_name = "wg-benchmark-server"
         self.container2_name = "wg-benchmark-client"
+        
+        # Define the three implementations to test
+        self.implementations = {
+            'kernel': {
+                'name': 'Kernel Wireguard',
+                'use_kernel': True,
+                'binary_path': None,
+                'build_commands': []
+            },
+            'vanilla-go': {
+                'name': 'Vanilla wireguard-go',
+                'use_kernel': False,
+                'binary_path': '/root/wireguard-go/wireguard-go',
+                'build_commands': ['cd /root/wireguard-go && make']
+            },
+            'modified-go': {
+                'name': 'Modified wireguard-go',
+                'use_kernel': False,
+                'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
+                'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make']
+            }
+        }
 
     def run_command(self, cmd, check=True, capture_output=False):
         """Run a shell command"""
@@ -44,6 +63,33 @@ class WireguardBenchmark:
         docker_cmd = f"docker exec {container_name} bash -c '{cmd}'"
         return self.run_command(docker_cmd, check=check, capture_output=capture_output)
 
+    def build_implementation(self, impl_config):
+        """Build a specific wireguard implementation"""
+        if not impl_config['build_commands']:
+            print(f"No build required for {impl_config['name']}")
+            return True
+            
+        print(f"Building {impl_config['name']}...")
+        
+        for build_cmd in impl_config['build_commands']:
+            try:
+                print(f"Running build command: {build_cmd}")
+                # Run build command in both containers
+                self.docker_exec(self.container1_name, build_cmd)
+                self.docker_exec(self.container2_name, build_cmd)
+                
+                # Verify the binary was created
+                if impl_config['binary_path']:
+                    self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
+                    self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
+                    print(f"Successfully built {impl_config['binary_path']}")
+                
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to build {impl_config['name']}: {e}")
+                return False
+        
+        return True
+
     def setup_docker_network(self):
         """Set up Docker network and containers"""
         print("Setting up Docker network and containers...")
@@ -57,7 +103,6 @@ class WireguardBenchmark:
             f"--network {self.network_name} "
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
-            #f"--privileged "
             f"{self.docker_image} "
             f"sleep infinity"
         )
@@ -69,7 +114,6 @@ class WireguardBenchmark:
             f"--network {self.network_name} "
             f"--cap-add NET_ADMIN "
             f"--cap-add SYS_MODULE "
-            #f"--privileged "
             f"{self.docker_image} "
             f"sleep infinity"
         )
@@ -94,20 +138,17 @@ class WireguardBenchmark:
         print(f"Server IP: {self.server_ip}")
         print(f"Client IP: {self.client_ip}")
 
-    def setup_wireguard(self):
+    def setup_wireguard(self, impl_config):
         """Set up Wireguard interfaces in both containers"""
-        print("Setting up Wireguard interfaces...")
+        print(f"Setting up Wireguard interfaces for {impl_config['name']}...")
         
-        if self.use_kernel:
+        if impl_config['use_kernel']:
             print("Using kernel wireguard")
             # Set up kernel wireguard interfaces
             self.docker_exec(self.container1_name, "ip link add wg1 type wireguard")
             self.docker_exec(self.container2_name, "ip link add wg1n type wireguard")
         else:
-            print("Using userspace wireguard")
-            # First, check if wireguard binary exists and is executable
-            self.docker_exec(self.container1_name, f"ls -la {self.wireguard_bin}")
-            
+            print(f"Using userspace wireguard: {impl_config['binary_path']}")
             # Kill any existing wireguard processes
             self.docker_exec(self.container1_name, "pkill -f wireguard", check=False)
             self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
@@ -116,13 +157,8 @@ class WireguardBenchmark:
             # Set up userspace wireguard interfaces
             env_vars = "export WG_THREADS=1 && export GOMAXPROCS=1 &&"
             
-            if self.use_owl:
-                print("Using owl routines")
-                wg_cmd_server = f"{env_vars} {self.wireguard_bin} --owl wg1"
-                wg_cmd_client = f"{env_vars} {self.wireguard_bin} --owl wg1n"
-            else:
-                wg_cmd_server = f"{env_vars} {self.wireguard_bin} wg1"
-                wg_cmd_client = f"{env_vars} {self.wireguard_bin} wg1n"
+            wg_cmd_server = f"{env_vars} {impl_config['binary_path']} wg1"
+            wg_cmd_client = f"{env_vars} {impl_config['binary_path']} wg1n"
             
             # Start wireguard processes in background and capture any errors
             print("Starting wireguard on server container...")
@@ -353,15 +389,25 @@ AllowedIPs = 10.100.2.1/32
             # Clean up temp file
             self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
 
-    def run_benchmark(self):
-        """Run the complete benchmark suite"""
-        print("Starting Wireguard benchmark with Docker...")
+    def run_implementation_benchmark(self, impl_key, impl_config):
+        """Run benchmark for a specific implementation"""
+        print(f"\n{'='*60}")
+        print(f"Testing {impl_config['name']}")
+        print(f"{'='*60}")
+        
+        results = []
         
         for delay in self.delays:
             try:
                 # Set up Docker environment
                 self.setup_docker_network()
-                self.setup_wireguard()
+                
+                # Build the implementation if needed
+                if not self.build_implementation(impl_config):
+                    raise Exception(f"Failed to build {impl_config['name']}")
+                
+                # Set up Wireguard
+                self.setup_wireguard(impl_config)
                 
                 # Configure delay
                 self.configure_delay(delay)
@@ -375,7 +421,7 @@ AllowedIPs = 10.100.2.1/32
                 # Convert to Mbps for easier reading
                 mbps = bits_per_second / 1_000_000
                 
-                self.results.append({
+                results.append({
                     'delay': delay,
                     'bits_per_second': bits_per_second,
                     'mbps': mbps
@@ -385,7 +431,7 @@ AllowedIPs = 10.100.2.1/32
                 
             except Exception as e:
                 print(f"Error testing delay {delay}: {e}")
-                self.results.append({
+                results.append({
                     'delay': delay,
                     'bits_per_second': 0,
                     'mbps': 0,
@@ -395,66 +441,125 @@ AllowedIPs = 10.100.2.1/32
                 # Always clean up
                 self.cleanup_docker()
                 time.sleep(2)
+        
+        return results
+
+    def run_benchmark(self):
+        """Run the complete benchmark suite for all implementations"""
+        print("Starting Wireguard benchmark with Docker...")
+        print(f"Testing {len(self.implementations)} implementations: {', '.join([impl['name'] for impl in self.implementations.values()])}")
+        
+        for impl_key, impl_config in self.implementations.items():
+            try:
+                results = self.run_implementation_benchmark(impl_key, impl_config)
+                self.all_results[impl_key] = {
+                    'name': impl_config['name'],
+                    'results': results
+                }
+            except Exception as e:
+                print(f"Failed to test {impl_config['name']}: {e}")
+                self.all_results[impl_key] = {
+                    'name': impl_config['name'],
+                    'results': [],
+                    'error': str(e)
+                }
 
     def print_results(self):
-        """Print results in a formatted table"""
-        if not self.results:
+        """Print results in formatted tables"""
+        if not self.all_results:
             print("No results to display")
             return
+        
+        # Print individual tables for each implementation
+        for impl_key, impl_data in self.all_results.items():
+            print(f"\n{impl_data['name']} Results:")
+            print("-" * 50)
             
+            if 'error' in impl_data:
+                print(f"ERROR: {impl_data['error']}")
+                continue
+                
+            if not impl_data['results']:
+                print("No results available")
+                continue
+            
+            table = PrettyTable()
+            table.field_names = ["Delay", "Throughput (Mbps)", "Throughput (bps)", "Status"]
+            
+            for result in impl_data['results']:
+                if 'error' in result:
+                    table.add_row([result['delay'], "ERROR", "ERROR", result['error']])
+                else:
+                    table.add_row([
+                        result['delay'],
+                        f"{result['mbps']:.2f}",
+                        f"{result['bits_per_second']:,}",
+                        "OK"
+                    ])
+            
+            print(table)
+        
+        # Print comparison table
+        self.print_comparison_table()
+
+    def print_comparison_table(self):
+        """Print a comparison table across all implementations"""
+        print(f"\n{'='*80}")
+        print("COMPARISON TABLE")
+        print(f"{'='*80}")
+        
+        # Get all delays that were tested
+        all_delays = set()
+        for impl_data in self.all_results.values():
+            if 'results' in impl_data:
+                for result in impl_data['results']:
+                    all_delays.add(result['delay'])
+        
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
+        
+        # Create comparison table
         table = PrettyTable()
-        table.field_names = ["Delay", "Throughput (Mbps)", "Throughput (bps)", "Status"]
+        field_names = ["Delay"]
         
-        for result in self.results:
-            if 'error' in result:
-                table.add_row([result['delay'], "ERROR", "ERROR", result['error']])
-            else:
-                table.add_row([
-                    result['delay'],
-                    f"{result['mbps']:.2f}",
-                    f"{result['bits_per_second']:,}",
-                    "OK"
-                ])
+        # Add column for each implementation
+        for impl_data in self.all_results.values():
+            field_names.append(f"{impl_data['name']} (Mbps)")
         
-        print("\nBenchmark Results:")
+        table.field_names = field_names
+        
+        # Add rows for each delay
+        for delay in all_delays:
+            row = [delay]
+            
+            for impl_data in self.all_results.values():
+                if 'error' in impl_data or not impl_data['results']:
+                    row.append("ERROR")
+                else:
+                    # Find result for this delay
+                    result_for_delay = None
+                    for result in impl_data['results']:
+                        if result['delay'] == delay:
+                            result_for_delay = result
+                            break
+                    
+                    if result_for_delay is None:
+                        row.append("N/A")
+                    elif 'error' in result_for_delay:
+                        row.append("ERROR")
+                    else:
+                        row.append(f"{result_for_delay['mbps']:.2f}")
+            
+            table.add_row(row)
+        
         print(table)
 
 def main():
-    parser = argparse.ArgumentParser(description='Benchmark Wireguard performance with various network delays using Docker')
-    parser.add_argument('wireguard_bin', nargs='?', help='Path to wireguard binary in container (default: /usr/bin/wireguard-go)')
-    parser.add_argument('-o', '--owl', action='store_true', help='Use owl routines (for wireguard-rs)')
-    parser.add_argument('-k', '--kernel', action='store_true', help='Use kernel wireguard')
-    parser.add_argument('-i', '--image', default='owlc-aeval', help='Docker image to use (default: owlc-aeval)')
+    parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various network delays using Docker')
     
     args = parser.parse_args()
     
-    # Check for required config files
-    config_dir = 'full_protocol_case_studies/implementations/wireguard'
-    wg1_conf = os.path.join(config_dir, 'wg1.conf')
-    wg1n_conf = os.path.join(config_dir, 'wg1n.conf')
-    
-    if not os.path.exists(wg1_conf):
-        print(f"Error: wg1.conf not found at {wg1_conf}")
-        sys.exit(1)
-    
-    if not os.path.exists(wg1n_conf):
-        print(f"Error: wg1n.conf not found at {wg1n_conf}")
-        sys.exit(1)
-    
-    # Check if Docker is available
-    try:
-        subprocess.run(["docker", "--version"], check=True, capture_output=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Error: Docker is not available or not installed")
-        sys.exit(1)
-    
     # Run benchmark
-    benchmark = WireguardBenchmark(
-        args.wireguard_bin,
-        use_owl=args.owl,
-        use_kernel=args.kernel,
-        docker_image=args.image
-    )
+    benchmark = WireguardBenchmark()
     
     try:
         benchmark.run_benchmark()
