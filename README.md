@@ -17,3 +17,7 @@ Our full WireGuard and HPKE case studies are in `full_protocol_case_studies/`. W
 - `full_protocol_case_studies/implementations` contains our interoperable WireGuard and HPKE executables, consisting of OwlC's generated library, along with reused components from off-the-shelf implementations and handwritten glue code for WireGuard.
 
 Our example verified echo server is in `echo_server_example`.
+
+### Evaluation scripts
+
+The `Dockerfile` and the various `.py` scripts at the top level of this directory are to automate the evaluation workflows from our paper on OwlC. Please see the provided artifact evaluation appendix for details of how to use them.
