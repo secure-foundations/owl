@@ -17,6 +17,27 @@ import re
 from prettytable import PrettyTable
 
 
+# Ordered list of (display_name, file_path, is_full_case_study)
+ORDERED_FILES = [
+    ("Basic-Hash", "owl_toy_protocols/basic_hash-indexed.owl", False),
+    ("Hash-Lock", "owl_toy_protocols/hash-lock.owl", False),
+    ("LAK", "owl_toy_protocols/lak-indexed.owl", False),
+    ("MW", "owl_toy_protocols/mw-indexed.owl", False),
+    ("Feldhofer", "owl_toy_protocols/feldhofer-indexed.owl", False),
+    ("Private Auth", "owl_toy_protocols/private_authentication_hybrid.owl", False),
+    ("Needham-Schroeder (sym)", "owl_toy_protocols/ns-sym-indexed.owl", False),
+    ("Needham-Schroeder (pub)", "owl_toy_protocols/nsl.owl", False),
+    ("Otway-Rees", "owl_toy_protocols/otwayrees-indexed.owl", False),
+    ("Yahalom (sym)", "owl_toy_protocols/yahalom-indexed.owl", False),
+    ("Denning-Sacco (pub)", "owl_toy_protocols/denning-sacco.owl", False),
+    ("Core Kerberos", "owl_toy_protocols/kerberos.owl", False),
+    ("Diffie-Hellman Key Exchange", "owl_toy_protocols/dhke.owl", False),
+    ("SSH Forwarding Agent", "owl_toy_protocols/ssh.owl", False),
+    ("WireGuard", "full_protocol_case_studies/owl_models/wg/wg_full.owl", True),
+    ("HPKE", "full_protocol_case_studies/owl_models/hpke/hpke_full.owl", True),
+]
+
+
 def run_command_with_time(command: List[str], cwd: Optional[str] = None) -> tuple[float, str, str]:
     """
     Run a command and measure its execution time with visual progress indicator.
@@ -149,15 +170,14 @@ def get_verus_time_from_json(json_output: str) -> float:
         return -1
 
 
-def collect_file_statistics(file_path: str, is_full_case_study: bool) -> Dict[str, any]:
+def collect_file_statistics(display_name: str, file_path: str, is_full_case_study: bool) -> Dict[str, any]:
     """
     Collect statistics for a single file.
     """
-    file_name = os.path.basename(file_path)
-    print(f"Processing {file_path}...")
+    print(f"Processing {display_name} ({file_path})...")
     
     stats = {
-        'file': file_name,
+        'file': display_name,  # Use display name instead of file name
         'owl_loc': 0,
         'owl_time': -1,
         'verus_loc': 0,
@@ -165,7 +185,7 @@ def collect_file_statistics(file_path: str, is_full_case_study: bool) -> Dict[st
     }
     
     # Get OWL statistics
-    print(f"  Running OWL command for {file_name}")
+    print(f"  Running OWL command for {display_name}")
     owl_time, owl_stdout, owl_stderr = run_command_with_time(
         ["cabal", "run", "owl", "--", "-e", file_path]
     )
@@ -176,7 +196,7 @@ def collect_file_statistics(file_path: str, is_full_case_study: bool) -> Dict[st
         stats['owl_loc'] = get_owl_loc(file_path)
     
     if owl_time == -1:
-        print(f"  Warning: OWL command failed for {file_name}: {owl_stderr}")
+        print(f"  Warning: OWL command failed for {display_name}: {owl_stderr}")
         # Don't run Verus if Owl fails
         return stats
     else:
@@ -240,7 +260,7 @@ def save_csv(data: List[Dict], filename: str):
     if not data:
         return
     
-    fieldnames = ['file', 'owl_loc', 'owl_time', 'verus_loc', 'verus_time']
+    fieldnames = ['file', 'owl_loc', 'verus_loc', 'owl_time', 'verus_time']
     
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -255,9 +275,9 @@ def format_table(data: List[Dict]) -> str:
     if not data:
         return "No data to display"
     
-    # Create PrettyTable
+    # Create PrettyTable with reordered columns
     table = PrettyTable()
-    table.field_names = ["File", "OWL_LOC", "OWL_TIME", "VERUS_LOC", "VERUS_TIME"]
+    table.field_names = ["Case Study", "OWL_LOC", "VERUS_LOC", "OWL_TIME", "VERUS_TIME"]
     
     # Add rows
     for row in data:
@@ -267,8 +287,8 @@ def format_table(data: List[Dict]) -> str:
         table.add_row([
             row['file'],
             row['owl_loc'],
-            owl_time_str,
             row['verus_loc'],
+            owl_time_str,
             verus_time_str
         ])
     
@@ -304,11 +324,7 @@ def clean_smtcache_files(directory: str):
 
 def main():
     """Main function to orchestrate the statistics collection."""
-    toy_protocols_dir = "owl_toy_protocols"
-    full_case_studies_dir = "full_protocol_case_studies/owl_models/"
-    wireguard_owl_filepath = "wg/wg_full.owl"
-    hpke_owl_filepath = "hpke/hpke_full.owl"
-
+    
     # Build OWL first to ensure we don't measure compilation time (might take longer)
     print("(Re)building OWL...")
     build_time, build_stdout, build_stderr = run_command_with_time(["cabal", "build", "owl"])
@@ -318,48 +334,27 @@ def main():
     else:
         print(f"OWL build completed in {build_time:.2f}s")
 
-    # Collect toy protocols files
-    if not os.path.exists(toy_protocols_dir):
-        print(f"Error: Directory '{toy_protocols_dir}' not found")
-        return 1
-    
-    # Clean .smtcache files from examples directory
-    print("Cleaning .smtcache files from examples directory...")
-    clean_smtcache_files(toy_protocols_dir)
+    # Clean .smtcache files from relevant directories
+    directories_to_clean = ["owl_toy_protocols", "full_protocol_case_studies"]
+    for directory in directories_to_clean:
+        if os.path.exists(directory):
+            print(f"Cleaning .smtcache files from {directory}...")
+            clean_smtcache_files(directory)
     print("=" * 50)   
 
-    # Find all .owl files in examples directory
-    example_files = []
-    for root, dirs, files in os.walk(toy_protocols_dir):
-        for file in files:
-            if file.endswith('.owl'):
-                file_path = os.path.join(root, file)
-                example_files.append(file_path)
-    
-    if not example_files:
-        print(f"No files found in {toy_protocols_dir}")
-        return 1
-    
-    print(f"Found {len(example_files)} files in {toy_protocols_dir}")
-    print("=" * 50)
-
-    # Collect full case study files
-    print("Cleaning smtcache files from full case studies directory...")
-    clean_smtcache_files(full_case_studies_dir)
-    print("=" * 50)
-
-    full_case_studies_files = [os.path.join(full_case_studies_dir, wireguard_owl_filepath), os.path.join(full_case_studies_dir, hpke_owl_filepath)]
-
-    all_files_to_process = [(f, False) for f in sorted(example_files)] + [(f, True) for f in full_case_studies_files]
-
-    # Collect statistics for each file
+    # Process files in the specified order
     all_stats = []
-    for file_path, is_full_case_study in all_files_to_process:
+    for display_name, file_path, is_full_case_study in ORDERED_FILES:
+        if not os.path.exists(file_path):
+            print(f"Warning: File not found: {file_path} (for {display_name})")
+            print("-" * 30)
+            continue
+            
         try:
-            stats = collect_file_statistics(file_path, is_full_case_study)
+            stats = collect_file_statistics(display_name, file_path, is_full_case_study)
             all_stats.append(stats)
         except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+            print(f"Error processing {display_name} ({file_path}): {e}")
         print("-" * 30)
     
     if not all_stats:

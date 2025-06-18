@@ -237,12 +237,7 @@ class WireguardBenchmark:
             # Set up kernel wireguard interfaces
             self.docker_exec(self.container1_name, "ip link add wg1 type wireguard")
             self.docker_exec(self.container2_name, "ip link add wg1n type wireguard")
-        else:
-            # # Kill any existing wireguard processes
-            # self.docker_exec(self.container1_name, "pkill -f wireguard", check=False)
-            # self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
-            # time.sleep(1)
-            
+        else:           
             # Start wireguard in both containers
             wg_cmd_server = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1"
             wg_cmd_client = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1n"
@@ -368,6 +363,36 @@ AllowedIPs = 10.100.2.1/32
             self.docker_exec(self.container1_name, f"tc qdisc add dev eth0 root netem delay {delay}")
             self.docker_exec(self.container2_name, f"tc qdisc add dev eth0 root netem delay {delay}")
 
+    def setup_for_implementation(self, impl_config):
+        """Set up Docker network and Wireguard for an implementation"""
+        # One-time setup for this implementation
+        print("Setting up Docker network...")
+        self.start_animating()
+        self.setup_docker_network()
+        self.stop_animating()
+
+        # Build the implementation once
+        if not self.build_implementation(impl_config):
+            raise Exception(f"Failed to build {impl_config['name']}")
+        
+        print("Setting up Wireguard interfaces...")
+        self.start_animating()
+        self.setup_wireguard(impl_config)
+        self.stop_animating()
+        
+        # Test connectivity once
+        if self.ping_test:
+            print("Testing Wireguard connectivity...")
+            self.start_animating()
+            try:
+                self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
+                self.stop_animating()
+                print("Wireguard connectivity confirmed")
+            except subprocess.CalledProcessError as e:
+                self.stop_animating()
+                print("Wireguard connectivity test failed!")
+                raise Exception("Wireguard tunnel not working")
+
     def run_iperf_test(self, delay):
         """Run iperf3 test and return the result"""
         print(f"Running iperf test with delay {delay}...")
@@ -398,7 +423,7 @@ AllowedIPs = 10.100.2.1/32
 
             if result.returncode == 124:  # timeout
                 print(f"iperf3 test timed out after {timeout_duration} seconds")
-                raise Exception(f"iperf3 test timed out after {timeout_duration} seconds")
+                raise TimeoutError(f"iperf3 test timed out after {timeout_duration} seconds")
             elif result.returncode != 0:
                 print(f"iperf3 failed with return code {result.returncode}")
                 print(f"stderr: {result.stderr}")
@@ -428,71 +453,78 @@ AllowedIPs = 10.100.2.1/32
         
         results = []
         
-        try:
-            # One-time setup for this implementation
-            print("Setting up Docker network...")
-            self.start_animating()
-            self.setup_docker_network()
-            self.stop_animating()
-
-            # Build the implementation once
-            if not self.build_implementation(impl_config):
-                raise Exception(f"Failed to build {impl_config['name']}")
+        try:            
+            print(f"\nRunning benchmark for implementation: {impl_config['name']}")
             
-            print("Setting up Wireguard interfaces...")
-            self.start_animating()
-            self.setup_wireguard(impl_config)
-            self.stop_animating()
-            
-            # Test connectivity once
-            if self.ping_test:
-                print("Testing Wireguard connectivity...")
-                self.start_animating()
-                try:
-                    self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
-                    self.stop_animating()
-                    print("Wireguard connectivity confirmed")
-                except subprocess.CalledProcessError as e:
-                    self.stop_animating()
-                    print("Wireguard connectivity test failed!")
-                    raise Exception("Wireguard tunnel not working")
-            
+            # Set up Docker environment and Wireguard
+            self.setup_for_implementation(impl_config)
+           
             # Now run tests for each delay
             for delay in self.delays:
-                try:
-                    print(f"\nTesting delay: {delay}")
-                    self.start_animating()
+                max_attempts = 2
+                attempt = 1
 
-                    # Configure delay for this test
-                    self.configure_delay(delay)
-                    
-                    # Brief wait for network to stabilize
-                    time.sleep(5)
-                    self.stop_animating()
-                    
-                    # Run the iperf test
-                    bits_per_second = self.run_iperf_test(delay)
-                    
-                    # Convert to Mbps for easier reading
-                    mbps = bits_per_second / 1_000_000
-                    
-                    results.append({
-                        'delay': delay,
-                        'bits_per_second': bits_per_second,
-                        'mbps': mbps
-                    })
+                while attempt <= max_attempts:
+                    try:
+                        print(f"\nTesting delay: {delay}")
+                        self.start_animating()
 
-                    print(f"Delay {delay}: {mbps:.2f} Mbps")
-                    
-                except Exception as e:
-                    self.stop_animating()
-                    print(f"Error testing delay {delay}: {e}")
-                    results.append({
-                        'delay': delay,
-                        'bits_per_second': 0,
-                        'mbps': 0,
-                        'error': str(e)
-                    })
+                        # Configure delay for this test
+                        self.configure_delay(delay)
+                        
+                        # Brief wait for network to stabilize
+                        time.sleep(5)
+                        self.stop_animating()
+                        
+                        # Run the iperf test
+                        bits_per_second = self.run_iperf_test(delay)
+                        
+                        # Convert to Mbps for easier reading
+                        mbps = bits_per_second / 1_000_000
+                        
+                        results.append({
+                            'delay': delay,
+                            'bits_per_second': bits_per_second,
+                            'mbps': mbps
+                        })
+
+                        print(f"Delay {delay}: {mbps:.2f} Mbps")
+                        
+                        break  # Success, exit retry loop
+
+                    except TimeoutError as e:
+                        print(f"Attempt {attempt} failed with timeout for delay {delay}: {e}")
+
+                        if attempt < max_attempts:
+                            print("Cleaning up and retrying...")
+                            # Clean up current setup
+                            self.cleanup_docker()
+                            time.sleep(2)
+                            
+                            # Set up everything again
+                            try:
+                                self.setup_for_implementation(impl_config)
+                                attempt += 1
+                                print(f"Retrying delay {delay} test (attempt {attempt})...")
+                            except Exception as setup_error:
+                                print(f"Failed to set up for retry: {setup_error}")
+                                results.append({
+                                    'delay': delay,
+                                    'bits_per_second': 0,
+                                    'mbps': 0,
+                                    'error': f"Setup failed on retry: {str(setup_error)}"
+                                })
+                                break
+
+                    except Exception as e:
+                        self.stop_animating()
+                        print(f"Error testing delay {delay}: {e}")
+                        results.append({
+                            'delay': delay,
+                            'bits_per_second': 0,
+                            'mbps': 0,
+                            'error': str(e)
+                        })
         
         except Exception as e:
             print(f"Failed to set up {impl_config['name']}: {e}")

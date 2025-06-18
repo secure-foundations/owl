@@ -166,12 +166,7 @@ class WireguardBenchmark:
                 # Run build command in both containers
                 self.docker_exec(self.container1_name, build_cmd, capture_output=True)
                 self.docker_exec(self.container2_name, build_cmd, capture_output=True)
-                
-                # # Verify the binary was created
-                # if impl_config['binary_path']:
-                #     self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
-                #     self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
-                
+
             except subprocess.CalledProcessError as e:
                 self.stop_animating()
                 print(f"Failed to build {impl_config['name']}: {e}")
@@ -237,12 +232,7 @@ class WireguardBenchmark:
             # Set up kernel wireguard interfaces
             self.docker_exec(self.container1_name, "ip link add wg1 type wireguard")
             self.docker_exec(self.container2_name, "ip link add wg1n type wireguard")
-        else:
-            # # Kill any existing wireguard processes
-            # self.docker_exec(self.container1_name, "pkill -f wireguard", check=False)
-            # self.docker_exec(self.container2_name, "pkill -f wireguard", check=False)
-            # time.sleep(1)
-            
+        else:           
             # Start wireguard in both containers
             wg_cmd_server = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1"
             wg_cmd_client = f"{impl_config['env_vars']} {impl_config['binary_path']} {impl_config['run_args']} wg1n"
@@ -357,112 +347,190 @@ AllowedIPs = 10.100.2.1/32
         except Exception as e:
             print(f"Warning: Cleanup may have been incomplete: {e}")
 
-    def run_iperf_test(self):
-        """Run iperf3 test and return the result"""
+    def run_single_iperf_test(self, mss):
+        """Run a single iperf test for a given MSS value"""
+        print(f"Running iperf test with mss {mss}...")
         
+        # Kill any existing iperf processes
+        self.docker_exec(self.container1_name, "pkill -f iperf3", check=False)
+        self.docker_exec(self.container2_name, "pkill -f iperf3", check=False)
+        
+        time.sleep(1)
+                  
+        # Start iperf server in server container (daemon mode, one connection)
+        self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
+        
+        # Wait a moment for server to start
+        time.sleep(1)
+        
+        # Verify iperf server is running
+        try:
+            result = self.docker_exec(self.container1_name, "pgrep -f 'iperf3.*-s'", capture_output=True)
+            # print(f"iperf3 server running with PID: {result.stdout.strip()}")
+        except:
+            print("Warning: iperf3 server may not be running properly")
+        
+        # Create temporary file for iperf output in client container
+        temp_filename = "/tmp/iperf_result.json"
+        
+        # Run iperf client in client container
+        timeout_duration = self.iperf_duration + 10
+        iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --set-mss {mss} --time {self.iperf_duration} --logfile {temp_filename} --json"
+        print(f"Running: {iperf_cmd}")
+    
+        self.start_animating()
+        result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
+        self.stop_animating()
+
+        if result.returncode == 124:  # timeout
+            print(f"iperf3 test timed out after {timeout_duration} seconds")
+            raise TimeoutError(f"iperf3 test timed out after {timeout_duration} seconds")
+        elif result.returncode != 0:
+            print(f"iperf3 failed with return code {result.returncode}")
+            print(f"stderr: {result.stderr}")
+            print(f"stdout: {result.stdout}")
+            raise Exception(f"iperf3 failed with return code {result.returncode}")
+        
+        # Read the JSON output from client container
+        result_cmd = f"cat {temp_filename}"
+        result_output = self.docker_exec(self.container2_name, result_cmd, capture_output=True)
+        
+        # Parse the JSON output
+        result = json.loads(result_output.stdout)
+            
+        # Extract bits per second from end summary
+        bits_per_second = result['end']['sum_received']['bits_per_second']
+        
+        # Convert to Mbps for easier reading
+        mbps = bits_per_second / 1_000_000
+        
+        # Clean up temp file
+        self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
+        
+        return {
+            'mss': mss,
+            'bits_per_second': bits_per_second,
+            'mbps': mbps
+        }
+
+    def setup_for_implementation(self, impl_config):
+        """Set up Docker network and Wireguard for an implementation"""
+        print("Setting up Docker network...")
+        self.start_animating()
+        self.setup_docker_network()
+        self.stop_animating()
+
+        # Build the implementation if needed
+        if not self.build_implementation(impl_config):
+            raise Exception(f"Failed to build {impl_config['name']}")
+        
+        print("Setting up Wireguard interfaces...")
+        self.start_animating()
+        self.setup_wireguard(impl_config)
+        # Wait for network to stabilize
+        time.sleep(5)
+        self.stop_animating()
+
+        if self.ping_test:
+            # Test connectivity first
+            print("Testing Wireguard connectivity...")
+            self.start_animating()
+            try:
+                self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
+                self.stop_animating()
+                print("Wireguard connectivity confirmed")
+            except subprocess.CalledProcessError as e:
+                self.stop_animating()
+                print("Wireguard connectivity test failed!")
+                # Debug information
+                print("Server wg status:")
+                self.docker_exec(self.container1_name, "wg show", check=False)
+                print("Client wg status:")
+                self.docker_exec(self.container2_name, "wg show", check=False)
+                print("Server routes:")
+                self.docker_exec(self.container1_name, "ip route", check=False)
+                print("Client routes:")
+                self.docker_exec(self.container2_name, "ip route", check=False)
+                raise Exception("Wireguard tunnel not working")
+
+    def run_iperf_test(self, impl_config):
+        """Run iperf3 test and return the result"""
         results = []
 
         for mss in self.mss_vals:
-            print(f"Running iperf test with mss {mss}...")
+            max_attempts = 2
+            attempt = 1
             
-            # Kill any existing iperf processes
-            self.docker_exec(self.container1_name, "pkill -f iperf3", check=False)
-            self.docker_exec(self.container2_name, "pkill -f iperf3", check=False)
-            
-            time.sleep(1)
-            
-            if self.ping_test:
-                # Test connectivity first
-                print("Testing Wireguard connectivity...")
-                self.start_animating()
+            while attempt <= max_attempts:
                 try:
-                    self.docker_exec(self.container2_name, "ping -c 3 10.100.2.1", capture_output=True)
-                    self.stop_animating()
-                    print("Wireguard connectivity confirmed")
-                except subprocess.CalledProcessError as e:
-                    self.stop_animating()
-                    print("Wireguard connectivity test failed!")
-                    # Debug information
-                    print("Server wg status:")
-                    self.docker_exec(self.container1_name, "wg show", check=False)
-                    print("Client wg status:")
-                    self.docker_exec(self.container2_name, "wg show", check=False)
-                    print("Server routes:")
-                    self.docker_exec(self.container1_name, "ip route", check=False)
-                    print("Client routes:")
-                    self.docker_exec(self.container2_name, "ip route", check=False)
-                    raise Exception("Wireguard tunnel not working")
-                
-            # Start iperf server in server container (daemon mode, one connection)
-            self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
-            
-            # Wait a moment for server to start
-            time.sleep(1)
-            
-            # Verify iperf server is running
-            try:
-                result = self.docker_exec(self.container1_name, "pgrep -f 'iperf3.*-s'", capture_output=True)
-                # print(f"iperf3 server running with PID: {result.stdout.strip()}")
-            except:
-                print("Warning: iperf3 server may not be running properly")
-            
-            # Create temporary file for iperf output in client container
-            temp_filename = "/tmp/iperf_result.json"
-            
-            try:
-                # Run iperf client in client container
-                timeout_duration = self.iperf_duration + 10
-                iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --set-mss {mss} --time {self.iperf_duration} --logfile {temp_filename} --json"
-                print(f"Running: {iperf_cmd}")
-            
-                self.start_animating()
-                result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
-                self.stop_animating()
-
-                if result.returncode == 124:  # timeout
-                    print(f"iperf3 test timed out after {timeout_duration} seconds")
-                    # Try to get partial results or error info
-                    error_output = self.docker_exec(self.container2_name, f"cat {temp_filename} 2>/dev/null || echo 'No output file'", capture_output=True, check=False)
-                    print(f"Partial output: {error_output.stdout}")
-                    raise Exception(f"iperf3 test timed out after {timeout_duration} seconds")
-                elif result.returncode != 0:
-                    print(f"iperf3 failed with return code {result.returncode}")
-                    print(f"stderr: {result.stderr}")
-                    print(f"stdout: {result.stdout}")
-                    raise Exception(f"iperf3 failed with return code {result.returncode}")
-                
-                # Read the JSON output from client container
-                result_cmd = f"cat {temp_filename}"
-                result_output = self.docker_exec(self.container2_name, result_cmd, capture_output=True)
-                
-                # Parse the JSON output
-                result = json.loads(result_output.stdout)
+                    result = self.run_single_iperf_test(mss)
+                    results.append(result)
+                    print(f"MSS {mss}: {result['mbps']:.2f} Mbps")
+                    break  # Success, exit retry loop
                     
-                # Extract bits per second from end summary
-                bits_per_second = result['end']['sum_received']['bits_per_second']
-                
-                # Convert to Mbps for easier reading
-                mbps = bits_per_second / 1_000_000
-                
-                results.append({
-                    'mss': mss,
-                    'bits_per_second': bits_per_second,
-                    'mbps': mbps
-                })
-                
-                print(f"MSS {mss}: {mbps:.2f} Mbps")
-            
-            except Exception as e:
-                print(f"Error testing MSS {mss}: {e}")
-                results.append({
-                    'mss': mss,
-                    'bits_per_second': 0,
-                    'mbps': 0,
-                    'error': str(e)
-                })
-            finally:
-                # Clean up temp file
-                self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
+                except TimeoutError as e:
+                    print(f"Attempt {attempt} failed with timeout for MSS {mss}: {e}")
+                    
+                    if attempt < max_attempts:
+                        print("Cleaning up and retrying...")
+                        # Clean up current setup
+                        self.cleanup_docker()
+                        time.sleep(2)
+                        
+                        # Set up everything again
+                        try:
+                            self.setup_for_implementation(impl_config)
+                            attempt += 1
+                            print(f"Retrying MSS {mss} test (attempt {attempt})...")
+                        except Exception as setup_error:
+                            print(f"Failed to set up for retry: {setup_error}")
+                            results.append({
+                                'mss': mss,
+                                'bits_per_second': 0,
+                                'mbps': 0,
+                                'error': f"Setup failed on retry: {str(setup_error)}"
+                            })
+                            break
+                    else:
+                        print(f"Max attempts reached for MSS {mss}, recording error")
+                        results.append({
+                            'mss': mss,
+                            'bits_per_second': 0,
+                            'mbps': 0,
+                            'error': f"Timeout after {max_attempts} attempts: {str(e)}"
+                        })
+                        break
+                        
+                except Exception as e:
+                    print(f"Error testing MSS {mss} (attempt {attempt}): {e}")
+                    if attempt < max_attempts:
+                        print("Cleaning up and retrying...")
+                        # Clean up current setup
+                        self.cleanup_docker()
+                        time.sleep(2)
+                        
+                        # Set up everything again
+                        try:
+                            self.setup_for_implementation(impl_config)
+                            attempt += 1
+                            print(f"Retrying MSS {mss} test (attempt {attempt})...")
+                        except Exception as setup_error:
+                            print(f"Failed to set up for retry: {setup_error}")
+                            results.append({
+                                'mss': mss,
+                                'bits_per_second': 0,
+                                'mbps': 0,
+                                'error': f"Setup failed on retry: {str(setup_error)}"
+                            })
+                            break
+                    else:
+                        results.append({
+                            'mss': mss,
+                            'bits_per_second': 0,
+                            'mbps': 0,
+                            'error': f"Failed after {max_attempts} attempts: {str(e)}"
+                        })
+                        break
     
         return results
 
@@ -475,33 +543,11 @@ AllowedIPs = 10.100.2.1/32
         try:
             print(f"\nRunning benchmark for implementation: {impl_config['name']}")
             
-            print("Setting up Docker network...")
-
-            self.start_animating()
-
-            # Set up Docker environment
-            self.setup_docker_network()
-
-            self.stop_animating()
-
-            # Build the implementation if needed
-            if not self.build_implementation(impl_config):
-                raise Exception(f"Failed to build {impl_config['name']}")
-            
-            print("Setting up Wireguard interfaces...")
-
-            self.start_animating()
-
-            # Set up Wireguard
-            self.setup_wireguard(impl_config)
-            
-            # Wait for network to stabilize
-            time.sleep(5)
-            
-            self.stop_animating()
+            # Set up Docker environment and Wireguard
+            self.setup_for_implementation(impl_config)
 
             # Run test
-            results = self.run_iperf_test()
+            results = self.run_iperf_test(impl_config)
             
         except Exception as e:
             results = []
@@ -534,7 +580,6 @@ AllowedIPs = 10.100.2.1/32
                     'results': [],
                     'error': str(e)
                 }
-
     def save_csv(self):
         """Save results to CSV file"""
         filename = f"mss-{self.bench_choice}.csv"
