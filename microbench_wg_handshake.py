@@ -110,8 +110,6 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
         List of parsed JSON objects, or None if execution failed
     """
     try:
-        print(f"Running: {command}")
-        
         # Set up animation
         animation_active = True
         

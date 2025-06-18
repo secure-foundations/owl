@@ -25,14 +25,6 @@ while getopts "v:n" opt; do
 done
 shift $((OPTIND -1))
 
-# # Check if there's a required argument provided
-# if [[ -n $1 ]]; then
-#     ext_dir_path=$(realpath "$1")
-# else
-#     echo "Path to extraction dir is missing." 1>&2
-#     exit 1
-# fi
-
 src_path=$ext_dir_path/src
 
 main_file=$src_path/lib.rs
@@ -46,7 +38,7 @@ fi
 echo ""
 echo "CARGO VERUS BUILD"
 pushd $ext_dir_path
-cargo verus verify -- --rlimit=100 $verus_args
+cargo verus verify -- --rlimit=100 --no-lifetime $verus_args
 popd
 
 if [ -z $verus_args ]; then

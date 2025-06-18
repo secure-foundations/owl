@@ -342,7 +342,6 @@ def display_matrix_results(data: Dict[str, Dict], is_verified: bool = True):
     table.align = "c"
     table.align[""] = "l"  # Left align the receiver labels
     
-    print("Performance Matrix (runs/sec with relative performance %)")
     print(table)
 
 
@@ -451,7 +450,6 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 table.align = "c"
                 table.align[""] = "l"
                 
-                txtfile.write("Performance Matrix (runs/sec with relative performance %)\n")
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run verified crypto benchmarks\n")
@@ -484,7 +482,6 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
                 table.align = "c"
                 table.align[""] = "l"
                 
-                txtfile.write("Performance Matrix (runs/sec with relative performance %)\n")
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run unverified crypto benchmarks\n")
