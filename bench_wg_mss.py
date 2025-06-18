@@ -13,7 +13,7 @@ import numpy as np
 
 ALL_IMPLEMENTATIONS = {
     'owlc-go': {
-        'name': 'OwlC wireguard-go',
+        'name': 'OwlC_V',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-go && make'],
@@ -23,7 +23,7 @@ ALL_IMPLEMENTATIONS = {
         'marker': 's'
     },
     'baseline-go': {
-        'name': 'Baseline wireguard-go',
+        'name': 'wireguard-go',
         'use_kernel': False,
         'binary_path': '/root/wireguard-go/wireguard-go',
         'build_commands': ['cd /root/wireguard-go && make'],
@@ -33,7 +33,7 @@ ALL_IMPLEMENTATIONS = {
         'marker': 'x'
     },
     'kernel': {
-        'name': 'Kernel WireGuard',
+        'name': 'wireguard-linux',
         'use_kernel': True,
         'binary_path': None,
         'build_commands': [],
@@ -43,7 +43,7 @@ ALL_IMPLEMENTATIONS = {
         'marker': 'D'
     },
     'baseline-rs': {
-        'name': 'Baseline wireguard-rs',
+        'name': 'wireguard-rs',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
@@ -53,7 +53,7 @@ ALL_IMPLEMENTATIONS = {
         'marker': 'x'
     },
     'owlc-rs-baseline-crypto': {
-        'name': 'OwlC wireguard-rs with baseline crypto',
+        'name': 'OwlC_B',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --features=nonverif-crypto --release'],
@@ -63,7 +63,7 @@ ALL_IMPLEMENTATIONS = {
         'marker': '^'
     },
     'owlc-rs-verif-crypto': {
-        'name': 'OwlC wireguard-rs with verified crypto',
+        'name': 'OwlC_V',
         'use_kernel': False,
         'binary_path': '/root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs/target/release/wireguard-rs',
         'build_commands': ['cd /root/owlc/full_protocol_case_studies/implementations/wireguard/wireguard-rs && cargo build --release'],
@@ -637,35 +637,6 @@ AllowedIPs = 10.100.2.1/32
             f.write("WIREGUARD BENCHMARK RESULTS\n")
             f.write("=" * 80 + "\n\n")
             
-            # Write individual tables for each implementation
-            for impl_key, impl_data in self.all_results.items():
-                f.write(f"{impl_data['name']} Results:\n")
-                f.write("-" * 50 + "\n")
-                
-                if 'error' in impl_data:
-                    f.write(f"ERROR: {impl_data['error']}\n\n")
-                    continue
-                    
-                if not impl_data['results']:
-                    f.write("No results available\n\n")
-                    continue
-                
-                table = PrettyTable()
-                table.field_names = ["MSS (bytes)", "Throughput (Mbps)", "Throughput (bps)", "Status"]
-                
-                for result in impl_data['results']:
-                    if 'error' in result:
-                        table.add_row([result['mss'], "ERROR", "ERROR", result['error']])
-                    else:
-                        table.add_row([
-                            result['mss'],
-                            f"{result['mbps']:.2f}",
-                            f"{result['bits_per_second']:,}",
-                            "OK"
-                        ])
-                
-                f.write(str(table) + "\n\n")
-            
             # Write comparison table
             f.write("=" * 80 + "\n")
             f.write("COMPARISON TABLE\n")
@@ -801,35 +772,6 @@ AllowedIPs = 10.100.2.1/32
         if not self.all_results:
             print("No results to display")
             return
-        
-        # Print individual tables for each implementation
-        for impl_key, impl_data in self.all_results.items():
-            print(f"\n{impl_data['name']} Results:")
-            print("-" * 50)
-            
-            if 'error' in impl_data:
-                print(f"ERROR: {impl_data['error']}")
-                continue
-                
-            if not impl_data['results']:
-                print("No results available")
-                continue
-            
-            table = PrettyTable()
-            table.field_names = ["TCP MSS (bytes)", "Throughput (Mbps)", "Throughput (bps)", "Status"]
-            
-            for result in impl_data['results']:
-                if 'error' in result:
-                    table.add_row([result['mss'], "ERROR", "ERROR", result['error']])
-                else:
-                    table.add_row([
-                        result['mss'],
-                        f"{result['mbps']:.2f}",
-                        f"{result['bits_per_second']:,}",
-                        "OK"
-                    ])
-            
-            print(table)
         
         # Print comparison table
         self.print_comparison_table()
