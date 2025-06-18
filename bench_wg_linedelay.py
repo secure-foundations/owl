@@ -81,7 +81,7 @@ class WireguardBenchmark:
         self.iperf_duration = iperf_duration
         self.ping_test = ping_test
         self.config_dir = 'full_protocol_case_studies/implementations/wireguard'
-        self.mss_vals = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400]
+        self.delays = ['0ms', '0.5ms', '1ms', '1.5ms', '2ms', '3ms', '4ms', '5ms', '6ms', '7ms', '8ms', '9ms', '10ms']
         self.all_results = {}
         self.network_name = "wg-benchmark-net"
         self.container1_name = "wg-benchmark-server"
@@ -166,7 +166,12 @@ class WireguardBenchmark:
                 # Run build command in both containers
                 self.docker_exec(self.container1_name, build_cmd, capture_output=True)
                 self.docker_exec(self.container2_name, build_cmd, capture_output=True)
-
+                
+                # # Verify the binary was created
+                # if impl_config['binary_path']:
+                #     self.docker_exec(self.container1_name, f"ls -la {impl_config['binary_path']}")
+                #     self.docker_exec(self.container2_name, f"ls -la {impl_config['binary_path']}")
+                
             except subprocess.CalledProcessError as e:
                 self.stop_animating()
                 print(f"Failed to build {impl_config['name']}: {e}")
@@ -347,92 +352,36 @@ AllowedIPs = 10.100.2.1/32
         except Exception as e:
             print(f"Warning: Cleanup may have been incomplete: {e}")
 
-    def run_single_iperf_test(self, mss):
-        """Run a single iperf test for a given MSS value"""
-        print(f"Running iperf test with mss {mss}...")
+    def configure_delay(self, delay):
+        """Configure network delay between containers"""
+        # Clear any existing qdisc on both containers (suppress error output)
+        self.docker_exec(self.container1_name, "tc qdisc del dev eth0 root 2>/dev/null || true", check=False)
+        self.docker_exec(self.container2_name, "tc qdisc del dev eth0 root 2>/dev/null || true", check=False)
         
-        # Kill any existing iperf processes
-        self.docker_exec(self.container1_name, "pkill -f iperf3", check=False)
-        self.docker_exec(self.container2_name, "pkill -f iperf3", check=False)
-        
-        time.sleep(1)
-                  
-        # Start iperf server in server container (daemon mode, one connection)
-        self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
-        
-        # Wait a moment for server to start
-        time.sleep(1)
-        
-        # Verify iperf server is running
-        try:
-            result = self.docker_exec(self.container1_name, "pgrep -f 'iperf3.*-s'", capture_output=True)
-            # print(f"iperf3 server running with PID: {result.stdout.strip()}")
-        except:
-            print("Warning: iperf3 server may not be running properly")
-        
-        # Create temporary file for iperf output in client container
-        temp_filename = "/tmp/iperf_result.json"
-        
-        # Run iperf client in client container
-        timeout_duration = self.iperf_duration + 10
-        iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --set-mss {mss} --time {self.iperf_duration} --logfile {temp_filename} --json"
-        print(f"Running: {iperf_cmd}")
-    
-        self.start_animating()
-        result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
-        self.stop_animating()
-
-        if result.returncode == 124:  # timeout
-            print(f"iperf3 test timed out after {timeout_duration} seconds")
-            raise TimeoutError(f"iperf3 test timed out after {timeout_duration} seconds")
-        elif result.returncode != 0:
-            print(f"iperf3 failed with return code {result.returncode}")
-            print(f"stderr: {result.stderr}")
-            print(f"stdout: {result.stdout}")
-            raise Exception(f"iperf3 failed with return code {result.returncode}")
-        
-        # Read the JSON output from client container
-        result_cmd = f"cat {temp_filename}"
-        result_output = self.docker_exec(self.container2_name, result_cmd, capture_output=True)
-        
-        # Parse the JSON output
-        result = json.loads(result_output.stdout)
-            
-        # Extract bits per second from end summary
-        bits_per_second = result['end']['sum_received']['bits_per_second']
-        
-        # Convert to Mbps for easier reading
-        mbps = bits_per_second / 1_000_000
-        
-        # Clean up temp file
-        self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
-        
-        return {
-            'mss': mss,
-            'bits_per_second': bits_per_second,
-            'mbps': mbps
-        }
+        if delay != "0ms":
+            # Set up link delay on both containers' eth0 interfaces
+            self.docker_exec(self.container1_name, f"tc qdisc add dev eth0 root netem delay {delay}")
+            self.docker_exec(self.container2_name, f"tc qdisc add dev eth0 root netem delay {delay}")
 
     def setup_for_implementation(self, impl_config):
         """Set up Docker network and Wireguard for an implementation"""
+        # One-time setup for this implementation
         print("Setting up Docker network...")
         self.start_animating()
         self.setup_docker_network()
         self.stop_animating()
 
-        # Build the implementation if needed
+        # Build the implementation once
         if not self.build_implementation(impl_config):
             raise Exception(f"Failed to build {impl_config['name']}")
         
         print("Setting up Wireguard interfaces...")
         self.start_animating()
         self.setup_wireguard(impl_config)
-        # Wait for network to stabilize
-        time.sleep(5)
         self.stop_animating()
-
+        
+        # Test connectivity once
         if self.ping_test:
-            # Test connectivity first
             print("Testing Wireguard connectivity...")
             self.start_animating()
             try:
@@ -442,118 +391,152 @@ AllowedIPs = 10.100.2.1/32
             except subprocess.CalledProcessError as e:
                 self.stop_animating()
                 print("Wireguard connectivity test failed!")
-                # Debug information
-                print("Server wg status:")
-                self.docker_exec(self.container1_name, "wg show", check=False)
-                print("Client wg status:")
-                self.docker_exec(self.container2_name, "wg show", check=False)
-                print("Server routes:")
-                self.docker_exec(self.container1_name, "ip route", check=False)
-                print("Client routes:")
-                self.docker_exec(self.container2_name, "ip route", check=False)
                 raise Exception("Wireguard tunnel not working")
 
-    def run_iperf_test(self, impl_config):
+    def run_iperf_test(self, delay):
         """Run iperf3 test and return the result"""
-        results = []
+        print(f"Running iperf test with delay {delay}...")
 
-        for mss in self.mss_vals:
-            max_attempts = 2
-            attempt = 1
+        # Kill any existing iperf processes (but don't recreate containers)
+        self.docker_exec(self.container1_name, "pkill -f iperf3", check=False)
+        self.docker_exec(self.container2_name, "pkill -f iperf3", check=False)
+        
+        time.sleep(1)
+        
+        # Start iperf server in server container (daemon mode, one connection)
+        self.docker_exec(self.container1_name, "iperf3 -sD -1 -B 10.100.2.1")
+        
+        # Wait a moment for server to start
+        time.sleep(1)
+        
+        # Create temporary file for iperf output in client container
+        temp_filename = "/tmp/iperf_result.json"
+        
+        try:
+            # Run iperf client in client container
+            timeout_duration = self.iperf_duration + 10
+            iperf_cmd = f"timeout {timeout_duration} iperf3 -c 10.100.2.1 --zerocopy --time {self.iperf_duration} --logfile {temp_filename} --json"
             
-            while attempt <= max_attempts:
-                try:
-                    result = self.run_single_iperf_test(mss)
-                    results.append(result)
-                    print(f"MSS {mss}: {result['mbps']:.2f} Mbps")
-                    break  # Success, exit retry loop
-                    
-                except TimeoutError as e:
-                    print(f"Attempt {attempt} failed with timeout for MSS {mss}: {e}")
-                    
-                    if attempt < max_attempts:
-                        print("Cleaning up and retrying...")
-                        # Clean up current setup
-                        self.cleanup_docker()
-                        time.sleep(2)
-                        
-                        # Set up everything again
-                        try:
-                            self.setup_for_implementation(impl_config)
-                            attempt += 1
-                            print(f"Retrying MSS {mss} test (attempt {attempt})...")
-                        except Exception as setup_error:
-                            print(f"Failed to set up for retry: {setup_error}")
-                            results.append({
-                                'mss': mss,
-                                'bits_per_second': 0,
-                                'mbps': 0,
-                                'error': f"Setup failed on retry: {str(setup_error)}"
-                            })
-                            break
-                    else:
-                        print(f"Max attempts reached for MSS {mss}, recording error")
-                        results.append({
-                            'mss': mss,
-                            'bits_per_second': 0,
-                            'mbps': 0,
-                            'error': f"Timeout after {max_attempts} attempts: {str(e)}"
-                        })
-                        break
-                        
-                except Exception as e:
-                    print(f"Error testing MSS {mss} (attempt {attempt}): {e}")
-                    if attempt < max_attempts:
-                        print("Cleaning up and retrying...")
-                        # Clean up current setup
-                        self.cleanup_docker()
-                        time.sleep(2)
-                        
-                        # Set up everything again
-                        try:
-                            self.setup_for_implementation(impl_config)
-                            attempt += 1
-                            print(f"Retrying MSS {mss} test (attempt {attempt})...")
-                        except Exception as setup_error:
-                            print(f"Failed to set up for retry: {setup_error}")
-                            results.append({
-                                'mss': mss,
-                                'bits_per_second': 0,
-                                'mbps': 0,
-                                'error': f"Setup failed on retry: {str(setup_error)}"
-                            })
-                            break
-                    else:
-                        results.append({
-                            'mss': mss,
-                            'bits_per_second': 0,
-                            'mbps': 0,
-                            'error': f"Failed after {max_attempts} attempts: {str(e)}"
-                        })
-                        break
-    
-        return results
+            self.start_animating()
+            result = self.docker_exec(self.container2_name, iperf_cmd, capture_output=True, check=False)
+            self.stop_animating()
+
+            if result.returncode == 124:  # timeout
+                print(f"iperf3 test timed out after {timeout_duration} seconds")
+                raise TimeoutError(f"iperf3 test timed out after {timeout_duration} seconds")
+            elif result.returncode != 0:
+                print(f"iperf3 failed with return code {result.returncode}")
+                print(f"stderr: {result.stderr}")
+                print(f"stdout: {result.stdout}")
+                raise Exception(f"iperf3 failed with return code {result.returncode}")
+            
+            # Read the JSON output from client container
+            result_cmd = f"cat {temp_filename}"
+            result_output = self.docker_exec(self.container2_name, result_cmd, capture_output=True)
+            
+            # Parse the JSON output
+            result = json.loads(result_output.stdout)
+                
+            # Extract bits per second from end summary
+            bits_per_second = result['end']['sum_received']['bits_per_second']
+            return bits_per_second
+            
+        finally:
+            # Clean up temp file
+            self.docker_exec(self.container2_name, f"rm -f {temp_filename}", check=False)
 
     def run_implementation_benchmark(self, impl_key, impl_config):
         """Run benchmark for a specific implementation"""
         print(f"\n{'='*60}")
         print(f"Testing {impl_config['name']}")
         print(f"{'='*60}")
-                
-        try:
+        
+        results = []
+        
+        try:            
             print(f"\nRunning benchmark for implementation: {impl_config['name']}")
             
             # Set up Docker environment and Wireguard
             self.setup_for_implementation(impl_config)
+           
+            # Now run tests for each delay
+            for delay in self.delays:
+                max_attempts = 2
+                attempt = 1
 
-            # Run test
-            results = self.run_iperf_test(impl_config)
-            
+                while attempt <= max_attempts:
+                    try:
+                        print(f"\nTesting delay: {delay}")
+                        self.start_animating()
+
+                        # Configure delay for this test
+                        self.configure_delay(delay)
+                        
+                        # Brief wait for network to stabilize
+                        time.sleep(5)
+                        self.stop_animating()
+                        
+                        # Run the iperf test
+                        bits_per_second = self.run_iperf_test(delay)
+                        
+                        # Convert to Mbps for easier reading
+                        mbps = bits_per_second / 1_000_000
+                        
+                        results.append({
+                            'delay': delay,
+                            'bits_per_second': bits_per_second,
+                            'mbps': mbps
+                        })
+
+                        print(f"Delay {delay}: {mbps:.2f} Mbps")
+                        
+                        break  # Success, exit retry loop
+
+                    except TimeoutError as e:
+                        print(f"Attempt {attempt} failed with timeout for delay {delay}: {e}")
+
+                        if attempt < max_attempts:
+                            print("Cleaning up and retrying...")
+                            # Clean up current setup
+                            self.cleanup_docker()
+                            time.sleep(2)
+                            
+                            # Set up everything again
+                            try:
+                                self.setup_for_implementation(impl_config)
+                                attempt += 1
+                                print(f"Retrying delay {delay} test (attempt {attempt})...")
+                            except Exception as setup_error:
+                                print(f"Failed to set up for retry: {setup_error}")
+                                results.append({
+                                    'delay': delay,
+                                    'bits_per_second': 0,
+                                    'mbps': 0,
+                                    'error': f"Setup failed on retry: {str(setup_error)}"
+                                })
+                                break
+
+                    except Exception as e:
+                        self.stop_animating()
+                        print(f"Error testing delay {delay}: {e}")
+                        results.append({
+                            'delay': delay,
+                            'bits_per_second': 0,
+                            'mbps': 0,
+                            'error': str(e)
+                        })
+        
         except Exception as e:
-            results = []
-            print(f"Error during benchmark for {impl_config['name']}: {e}")
+            print(f"Failed to set up {impl_config['name']}: {e}")
+            return [{
+                'delay': delay,
+                'bits_per_second': 0,
+                'mbps': 0,
+                'error': str(e)
+            } for delay in self.delays]
+        
         finally:
-            # Always clean up
+            # Clean up once at the end
             self.cleanup_docker()
             time.sleep(2)
         
@@ -580,22 +563,23 @@ AllowedIPs = 10.100.2.1/32
                     'results': [],
                     'error': str(e)
                 }
+
     def save_csv(self):
         """Save results to CSV file"""
-        filename = f"mss-{self.bench_choice}.csv"
+        filename = f"bench_wg_linedelay-{self.bench_choice}.csv"
         
         # Prepare data for CSV
-        all_mss_values = set()
+        all_delays = set()
         for impl_data in self.all_results.values():
             if 'results' in impl_data:
                 for result in impl_data['results']:
-                    all_mss_values.add(result['mss'])
-
-        all_mss_values = sorted(list(all_mss_values), key=lambda x: x)
+                    all_delays.add(result['delay'])
+        
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
         
         with open(filename, 'w', newline='') as csvfile:
             # Create header
-            fieldnames = ['MSS']
+            fieldnames = ['Delay_ms']
             for impl_data in self.all_results.values():
                 if 'error' not in impl_data:
                     fieldnames.append(f"{impl_data['name']}_Gbps")
@@ -604,34 +588,34 @@ AllowedIPs = 10.100.2.1/32
             writer.writeheader()
             
             # Write data rows
-            for mss in all_mss_values:
-                row = {'MSS': float(mss)}
+            for delay in all_delays:
+                row = {'Delay_ms': float(delay.replace('ms', ''))}
                 
                 for impl_data in self.all_results.values():
                     if 'error' in impl_data or not impl_data['results']:
                         continue
-
-                    # Find result for this mss
-                    result_for_mss = None
+                    
+                    # Find result for this delay
+                    result_for_delay = None
                     for result in impl_data['results']:
-                        if result['mss'] == mss:
-                            result_for_mss = result
+                        if result['delay'] == delay:
+                            result_for_delay = result
                             break
                     
                     col_name = f"{impl_data['name']}_Gbps"
-                    if result_for_mss is None or 'error' in result_for_mss:
+                    if result_for_delay is None or 'error' in result_for_delay:
                         row[col_name] = None
                     else:
                         # Convert Mbps to Gbps
-                        row[col_name] = result_for_mss['mbps'] / 1000.0
-
+                        row[col_name] = result_for_delay['mbps'] / 1000.0
+                
                 writer.writerow(row)
         
         print(f"Results saved to {filename}")
 
     def save_txt(self):
         """Save formatted tables to TXT file"""
-        filename = f"mss-{self.bench_choice}.txt"
+        filename = f"bench_wg_linedelay-{self.bench_choice}.txt"
         
         with open(filename, 'w') as f:
             f.write("WIREGUARD BENCHMARK RESULTS\n")
@@ -651,14 +635,14 @@ AllowedIPs = 10.100.2.1/32
                     continue
                 
                 table = PrettyTable()
-                table.field_names = ["MSS (bytes)", "Throughput (Mbps)", "Throughput (bps)", "Status"]
+                table.field_names = ["Delay", "Throughput (Mbps)", "Throughput (bps)", "Status"]
                 
                 for result in impl_data['results']:
                     if 'error' in result:
-                        table.add_row([result['mss'], "ERROR", "ERROR", result['error']])
+                        table.add_row([result['delay'], "ERROR", "ERROR", result['error']])
                     else:
                         table.add_row([
-                            result['mss'],
+                            result['delay'],
                             f"{result['mbps']:.2f}",
                             f"{result['bits_per_second']:,}",
                             "OK"
@@ -671,47 +655,47 @@ AllowedIPs = 10.100.2.1/32
             f.write("COMPARISON TABLE\n")
             f.write("=" * 80 + "\n")
             
-            # Get all mss values that were tested
-            all_mss_values = set()
+            # Get all delays that were tested
+            all_delays = set()
             for impl_data in self.all_results.values():
                 if 'results' in impl_data:
                     for result in impl_data['results']:
-                        all_mss_values.add(result['mss'])
+                        all_delays.add(result['delay'])
             
-            all_mss_values = sorted(list(all_mss_values), key=lambda x: x)
+            all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
             
             # Create comparison table
             table = PrettyTable()
-            field_names = ["MSS (bytes)"]
-
+            field_names = ["Delay"]
+            
             # Add column for each implementation
             for impl_data in self.all_results.values():
                 field_names.append(f"{impl_data['name']} (Mbps)")
             
             table.field_names = field_names
-
-            # Add rows for each mss
-            for mss in all_mss_values:
-                row = [mss]
-
+            
+            # Add rows for each delay
+            for delay in all_delays:
+                row = [delay]
+                
                 for impl_data in self.all_results.values():
                     if 'error' in impl_data or not impl_data['results']:
                         row.append("ERROR")
                     else:
-                        # Find result for this mss
-                        result_for_mss = None
+                        # Find result for this delay
+                        result_for_delay = None
                         for result in impl_data['results']:
-                            if result['mss'] == mss:
-                                result_for_mss = result
+                            if result['delay'] == delay:
+                                result_for_delay = result
                                 break
-
-                        if result_for_mss is None:
+                        
+                        if result_for_delay is None:
                             row.append("N/A")
-                        elif 'error' in result_for_mss:
+                        elif 'error' in result_for_delay:
                             row.append("ERROR")
                         else:
-                            row.append(f"{result_for_mss['mbps']:.2f}")
-
+                            row.append(f"{result_for_delay['mbps']:.2f}")
+                
                 table.add_row(row)
             
             f.write(str(table) + "\n")
@@ -728,54 +712,54 @@ AllowedIPs = 10.100.2.1/32
         plt.figure(figsize=(12, 8))
         plt.style.use('default')  # Use a clean style
         
-        # Get all mss values and convert to numeric values
-        all_mss_values = set()
+        # Get all delays and convert to numeric values
+        all_delays = set()
         for impl_data in self.all_results.values():
             if 'results' in impl_data and 'error' not in impl_data:
                 for result in impl_data['results']:
-                    all_mss_values.add(result['mss'])
-
-        all_mss_values = sorted(list(all_mss_values), key=lambda x: x)
-        mss_values = [d for d in all_mss_values]
-
+                    all_delays.add(result['delay'])
+        
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
+        delay_values = [float(d.replace('ms', '')) for d in all_delays]
+                
         for i, (impl_key, impl_data) in enumerate(self.all_results.items()):
             if 'error' in impl_data or not impl_data['results']:
                 continue
             
             # Extract throughput values for this implementation
             throughput_gbps = []
-            plot_mss = []
-
-            for mss in all_mss_values:
-                # Find result for this mss
-                result_for_mss = None
+            plot_delays = []
+            
+            for delay in all_delays:
+                # Find result for this delay
+                result_for_delay = None
                 for result in impl_data['results']:
-                    if result['mss'] == mss:
-                        result_for_mss = result
+                    if result['delay'] == delay:
+                        result_for_delay = result
                         break
-
-                if result_for_mss is not None and 'error' not in result_for_mss:
+                
+                if result_for_delay is not None and 'error' not in result_for_delay:
                     # Convert Mbps to Gbps
-                    throughput_gbps.append(result_for_mss['mbps'] / 1000.0)
-                    plot_mss.append(mss)
-
+                    throughput_gbps.append(result_for_delay['mbps'] / 1000.0)
+                    plot_delays.append(float(delay.replace('ms', '')))
+            
             # Plot the line
             if throughput_gbps:  # Only plot if we have data
-                plt.plot(plot_mss, throughput_gbps, impl_data['color'],
+                plt.plot(plot_delays, throughput_gbps, impl_data['color'],
                         marker=impl_data['marker'], linewidth=2, markersize=8,
                         label=impl_data['name'])
         
         # Customize the plot
-        plt.xlabel('TCP MSS (bytes)', fontsize=12)
+        plt.xlabel('Network Delay (ms)', fontsize=12)
         plt.ylabel('Throughput (Gbps)', fontsize=12)
-        plt.title(f'WireGuard Performance vs TCP MSS ({self.bench_choice.upper()})', fontsize=14, fontweight='bold')
+        plt.title(f'WireGuard Performance vs Network Delay ({self.bench_choice.upper()})', fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3)
         plt.legend(fontsize=10, loc='best')
         
         # Set axis limits
-        if mss_values:
-            plt.xlim(0, 1500)
-
+        if delay_values:
+            plt.xlim(0, 10)
+        
         # Make sure y-axis starts at 0
         y_min, y_max = plt.ylim()
         plt.ylim(0, y_max * 1.05)
@@ -784,12 +768,12 @@ AllowedIPs = 10.100.2.1/32
         plt.tight_layout()
         
         # Save as PDF
-        pdf_filename = f"mss-{self.bench_choice}.pdf"
+        pdf_filename = f"bench_wg_linedelay-{self.bench_choice}.pdf"
         plt.savefig(pdf_filename, format='pdf', dpi=300, bbox_inches='tight')
         print(f"Graph saved as {pdf_filename}")
         
         # Save as PNG
-        png_filename = f"mss-{self.bench_choice}.png"
+        png_filename = f"bench_wg_linedelay-{self.bench_choice}.png"
         plt.savefig(png_filename, format='png', dpi=300, bbox_inches='tight')
         print(f"Graph saved as {png_filename}")
         
@@ -816,14 +800,14 @@ AllowedIPs = 10.100.2.1/32
                 continue
             
             table = PrettyTable()
-            table.field_names = ["TCP MSS (bytes)", "Throughput (Mbps)", "Throughput (bps)", "Status"]
+            table.field_names = ["Delay", "Throughput (Mbps)", "Throughput (bps)", "Status"]
             
             for result in impl_data['results']:
                 if 'error' in result:
-                    table.add_row([result['mss'], "ERROR", "ERROR", result['error']])
+                    table.add_row([result['delay'], "ERROR", "ERROR", result['error']])
                 else:
                     table.add_row([
-                        result['mss'],
+                        result['delay'],
                         f"{result['mbps']:.2f}",
                         f"{result['bits_per_second']:,}",
                         "OK"
@@ -840,18 +824,18 @@ AllowedIPs = 10.100.2.1/32
         print("COMPARISON TABLE")
         print(f"{'='*80}")
         
-        # Get all MSS that were tested
-        all_mss_values = set()
+        # Get all delays that were tested
+        all_delays = set()
         for impl_data in self.all_results.values():
             if 'results' in impl_data:
                 for result in impl_data['results']:
-                    all_mss_values.add(result['mss'])
+                    all_delays.add(result['delay'])
         
-        all_mss_values = sorted(list(all_mss_values), key=lambda x: x)
+        all_delays = sorted(list(all_delays), key=lambda x: float(x.replace('ms', '')))
         
         # Create comparison table
         table = PrettyTable()
-        field_names = ["TCP MSS"]
+        field_names = ["Delay"]
         
         # Add column for each implementation
         for impl_data in self.all_results.values():
@@ -859,27 +843,27 @@ AllowedIPs = 10.100.2.1/32
         
         table.field_names = field_names
         
-        # Add rows for each MSS
-        for mss in all_mss_values:
-            row = [mss]
+        # Add rows for each delay
+        for delay in all_delays:
+            row = [delay]
             
             for impl_data in self.all_results.values():
                 if 'error' in impl_data or not impl_data['results']:
                     row.append("ERROR")
                 else:
-                    # Find result for this MSS
-                    result_for_mss = None
+                    # Find result for this delay
+                    result_for_delay = None
                     for result in impl_data['results']:
-                        if result['mss'] == mss:
-                            result_for_mss = result
+                        if result['delay'] == delay:
+                            result_for_delay = result
                             break
                     
-                    if result_for_mss is None:
+                    if result_for_delay is None:
                         row.append("N/A")
-                    elif 'error' in result_for_mss:
+                    elif 'error' in result_for_delay:
                         row.append("ERROR")
                     else:
-                        row.append(f"{result_for_mss['mbps']:.2f}")
+                        row.append(f"{result_for_delay['mbps']:.2f}")
             
             table.add_row(row)
         
@@ -907,7 +891,7 @@ AllowedIPs = 10.100.2.1/32
             print(f"Error generating graph: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various TCP MSS values using Docker')
+    parser = argparse.ArgumentParser(description='Benchmark all Wireguard implementations with various network delays using Docker')
     parser.add_argument('--iperf-duration', type=int, default=60, help='Duration of iperf test in seconds (default: 60)')
     parser.add_argument('--ping-test', action='store_true', help='Perform ping connectivity test before iperf')
     parser.add_argument('--bench-choice', choices=['go', 'rs'], required=True, help='Which benchmark to run')

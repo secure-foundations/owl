@@ -9,11 +9,7 @@ main
 .owl-log/
 .z3log/
 *.smtcache
-experiment*.txt
-experiment*.csv
-experiment*.png
-experiment*.pdf
-linedelay-go.*
-linedelay-rs.*
-mss-go.*
-mss-rs.*
+*.txt
+*.csv
+*.png
+*.pdf

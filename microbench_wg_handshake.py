@@ -597,8 +597,8 @@ def main():
     
     # Save results to files
     print("\nSaving results...")
-    save_raw_data_to_csv(verif_results, unverif_results, "experiment3.csv")
-    save_formatted_tables_to_txt(verif_results, unverif_results, "experiment3.txt")
+    save_raw_data_to_csv(verif_results, unverif_results, "microbench_wg_handshake.csv")
+    save_formatted_tables_to_txt(verif_results, unverif_results, "microbench_wg_handshake.txt")
 
 
 if __name__ == "__main__":

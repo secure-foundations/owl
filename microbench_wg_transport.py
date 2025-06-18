@@ -496,12 +496,12 @@ def create_performance_graph(results: Dict[int, Dict[str, Optional[float]]]):
     
     # Save the plot
     plt.tight_layout()
-    plt.savefig('experiment4.png', dpi=300, bbox_inches='tight')
-    plt.savefig('experiment4.pdf', bbox_inches='tight')
+    plt.savefig('microbench_wg_transport.png', dpi=300, bbox_inches='tight')
+    plt.savefig('microbench_wg_transport.pdf', bbox_inches='tight')
     
     print(f"\nThroughput graphs saved as:")
-    print(f"  - experiment4.png")
-    print(f"  - experiment4.pdf")
+    print(f"  - microbench_wg_transport.png")
+    print(f"  - microbench_wg_transport.pdf")
     
     # Show the plot
     plt.show()
@@ -514,7 +514,7 @@ def save_results_to_csv(results: Dict[int, Dict[str, Optional[float]]]):
     Args:
         results: Dictionary mapping packet sizes to benchmark results
     """
-    filename = "experiment4.csv"
+    filename = "microbench_wg_transport.csv"
     
     try:
         with open(filename, 'w', newline='') as csvfile:

@@ -554,8 +554,8 @@ def main():
     
     # Save results to files
     print("\nSaving results...")
-    save_raw_data_to_csv(verif_results, unverif_results, "experiment2.csv")
-    save_formatted_tables_to_txt(verif_results, unverif_results, "experiment2.txt")
+    save_raw_data_to_csv(verif_results, unverif_results, "bench_hpke.csv")
+    save_formatted_tables_to_txt(verif_results, unverif_results, "bench_hpke.txt")
 
 
 if __name__ == "__main__":
