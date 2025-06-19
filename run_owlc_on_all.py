@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 """
 Script to run commands and collect statistics for files in the examples directory.
-Measures execution times and lines of code for OWL and Verus commands.
+Measures execution times and lines of code for Owl and Verus commands.
 """
 
 import os
@@ -17,7 +16,7 @@ import re
 from prettytable import PrettyTable
 
 
-# Ordered list of (display_name, file_path, is_full_case_study)
+# Owl protocols to test
 ORDERED_FILES = [
     ("Basic-Hash", "owl_toy_protocols/basic_hash-indexed.owl", False),
     ("Hash-Lock", "owl_toy_protocols/hash-lock.owl", False),
@@ -39,11 +38,6 @@ ORDERED_FILES = [
 
 
 def run_command_with_time(command: List[str], cwd: Optional[str] = None) -> tuple[float, str, str]:
-    """
-    Run a command and measure its execution time with visual progress indicator.
-    Returns (execution_time, stdout, stderr)
-    """
-    # Animation state
     animation_active = True
     
     def animate():
@@ -56,8 +50,7 @@ def run_command_with_time(command: List[str], cwd: Optional[str] = None) -> tupl
             sys.stdout.flush()
             time.sleep(0.1)
             i += 1
-    
-    # Start animation in separate thread
+
     animation_thread = threading.Thread(target=animate)
     animation_thread.daemon = True
     animation_thread.start()
@@ -73,30 +66,25 @@ def run_command_with_time(command: List[str], cwd: Optional[str] = None) -> tupl
         end_time = time.time()
         execution_time = end_time - start_time
         
-        # Stop animation and clear line
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the animation line
+        sys.stdout.write('\r' + ' ' * 50 + '\r') 
         sys.stdout.flush()
         
         return execution_time, result.stdout, result.stderr
         
     except subprocess.TimeoutExpired:
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.write('\r' + ' ' * 50 + '\r')
         sys.stdout.flush()
         return -1, "", "Command timed out"
     except Exception as e:
         animation_active = False
-        sys.stdout.write('\r' + ' ' * 30 + '\r')
+        sys.stdout.write('\r' + ' ' * 50 + '\r')
         sys.stdout.flush()
         return -1, "", str(e)
 
 
 def get_verus_loc(file_path: str) -> int:
-    """
-    Get lines of code using tokei.
-    Falls back to simple line counting if tokei is not available.
-    """
     try:
         result = subprocess.run(
             ["tokei", "--output", "json", file_path],
@@ -106,7 +94,6 @@ def get_verus_loc(file_path: str) -> int:
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
-            # Navigate the tokei JSON structure to get total lines of code
             for lang_data in data.values():
                 if isinstance(lang_data, dict) and 'code' in lang_data:
                     return lang_data['code']
@@ -117,10 +104,6 @@ def get_verus_loc(file_path: str) -> int:
     
 
 def get_owl_loc(file_path: str) -> int:
-    """
-    Get lines of code for OWL files by counting non-empty non-comment lines.
-    """
-    # Fallback: count non-empty lines
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             count = 0
@@ -150,22 +133,16 @@ def get_case_study_loc(file_path: str) -> int:
         return 0
 
 def get_verus_time_from_json(json_output: str) -> float:
-    """
-    Extract timing information from Verus JSON output.
-    """
     try:
         data = json.loads(json_output)
 
-        # Look up timing information in the JSON structure
         if isinstance(data, dict) and 'times-ms' in data:
             times_ms = data['times-ms']
             if isinstance(times_ms, dict) and 'total' in times_ms:
-                # Convert from milliseconds to seconds
                 total_verify_ms = float(times_ms['total'])
                 return total_verify_ms / 1000.0
-                    
-        # If no timing found in JSON, return -1 to indicate unavailable
-        return -1
+        else:                    
+            return -1
     except (json.JSONDecodeError, ValueError, KeyError):
         return -1
 
@@ -177,15 +154,14 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
     print(f"Processing {display_name} ({file_path})...")
     
     stats = {
-        'file': display_name,  # Use display name instead of file name
+        'file': display_name,
         'owl_loc': 0,
         'owl_time': -1,
         'verus_loc': 0,
         'verus_time': -1
     }
     
-    # Get OWL statistics
-    print(f"  Running OWL command for {display_name}")
+    print(f"  Running Owl command for {display_name}")
     owl_time, owl_stdout, owl_stderr = run_command_with_time(
         ["cabal", "run", "owl", "--", "-e", file_path]
     )
@@ -196,23 +172,20 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
         stats['owl_loc'] = get_owl_loc(file_path)
     
     if owl_time == -1:
-        print(f"  Warning: OWL command failed for {display_name}: {owl_stderr}")
+        print(f"  Warning: Owl command failed for {display_name}: {owl_stderr}")
         # Don't run Verus if Owl fails
         return stats
     else:
-        print(f"  OWL completed in {owl_time:.2f}s, {stats['owl_loc']} LoC")
+        print(f"  Owl completed in {owl_time:.2f}s, {stats['owl_loc']} LoC")
     
-    # Get Verus statistics
     print(f"  Running Verus commands")
 
-    # Change to extraction directory
     extraction_dir = "./extraction"
     if not os.path.exists(extraction_dir):
         print(f"  Warning: Extraction directory not found at {extraction_dir}")
         stats['verus_time'] = -1
         stats['verus_loc'] = 0
     else:
-        # Run verusfmt first
         print(f"    Running verusfmt...")
         fmt_time, fmt_stdout, fmt_stderr = run_command_with_time(
             ["verusfmt", "src/lib.rs"],
@@ -224,7 +197,6 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
         else:
             print(f"    verusfmt completed in {fmt_time:.2f}s")
         
-        # Run cargo verus verify
         print(f"    Running cargo verus verify...")
         verus_time, verus_stdout, verus_stderr = run_command_with_time(
             ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
@@ -235,7 +207,6 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
             print(f"    Warning: cargo verus verify failed: {verus_stderr}")
             stats['verus_time'] = -1
         else:
-            # Extract time from JSON output
             json_time = get_verus_time_from_json(verus_stdout)
             if json_time != -1:
                 stats['verus_time'] = json_time
@@ -243,7 +214,6 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
             else:
                 print(f"    Warning: could not extract verus time from JSON")            
         
-        # Get Verus LoC
         verus_lib_path = os.path.join(extraction_dir, "src/lib.rs")
         if os.path.exists(verus_lib_path):
             stats['verus_loc'] = get_verus_loc(verus_lib_path)
@@ -275,11 +245,9 @@ def format_table(data: List[Dict]) -> str:
     if not data:
         return "No data to display"
     
-    # Create PrettyTable with reordered columns
     table = PrettyTable()
-    table.field_names = ["Case Study", "OWL_LOC", "VERUS_LOC", "OWL_TIME", "VERUS_TIME"]
+    table.field_names = ["Case Study", "Owl_LOC", "VERUS_LOC", "Owl_TIME", "VERUS_TIME"]
     
-    # Add rows
     for row in data:
         owl_time_str = f"{row['owl_time']:.2f}s" if row['owl_time'] != -1 else "FAILED"
         verus_time_str = f"{row['verus_time']:.2f}s" if row['verus_time'] != -1 else "FAILED"
@@ -292,17 +260,15 @@ def format_table(data: List[Dict]) -> str:
             verus_time_str
         ])
     
-    # Configure table appearance
-    table.align = "l"  # Left align by default
-    table.align["OWL_LOC"] = "r"  # Right align numeric columns
+    table.align = "l"
+    table.align["Owl_LOC"] = "r"
     table.align["VERUS_LOC"] = "r"
-    table.align["OWL_TIME"] = "r"
+    table.align["Owl_TIME"] = "r"
     table.align["VERUS_TIME"] = "r"
     
     return str(table)
 
 def clean_smtcache_files(directory: str):
-    """Remove all .smtcache files from the specified directory and subdirectories."""
     removed_count = 0
     try:
         for root, dirs, files in os.walk(directory):
@@ -323,18 +289,14 @@ def clean_smtcache_files(directory: str):
         print(f"Warning: Error cleaning .smtcache files from {directory}: {e}")
 
 def main():
-    """Main function to orchestrate the statistics collection."""
-    
-    # Build OWL first to ensure we don't measure compilation time (might take longer)
-    print("(Re)building OWL...")
+    print("(Re)building OwlC...")
     build_time, build_stdout, build_stderr = run_command_with_time(["cabal", "build", "owl"])
     if build_time == -1:
-        print(f"Error: Failed to build OWL: {build_stderr}")
+        print(f"Error: Failed to build OwlC: {build_stderr}")
         return 1
     else:
-        print(f"OWL build completed in {build_time:.2f}s")
+        print(f"OwlC build completed in {build_time:.2f}s")
 
-    # Clean .smtcache files from relevant directories
     directories_to_clean = ["owl_toy_protocols", "full_protocol_case_studies"]
     for directory in directories_to_clean:
         if os.path.exists(directory):
@@ -342,7 +304,6 @@ def main():
             clean_smtcache_files(directory)
     print("=" * 50)   
 
-    # Process files in the specified order
     all_stats = []
     for display_name, file_path, is_full_case_study in ORDERED_FILES:
         if not os.path.exists(file_path):
@@ -360,23 +321,20 @@ def main():
     if not all_stats:
         print("No statistics collected")
         return 1
-    
-    # Save CSV
+
     save_csv(all_stats, "run_owlc_on_all.csv")
     
-    # Generate and display formatted table
     table = format_table(all_stats)
     print("\nFormatted Results:")
     print("=" * 50)
     print(table)
     
-    # Save formatted table to file
     with open("run_owlc_on_all.txt", "w", encoding="utf-8") as f:
         f.write("OwlC Results\n")
         f.write("=" * 50 + "\n\n")
         f.write(table)
     
-    print(f"\nFormatted table saved to run_owlc_on_all.txt")
+    print("\nFormatted table saved to run_owlc_on_all.txt")
     
     return 0
 

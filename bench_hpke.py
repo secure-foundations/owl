@@ -1,18 +1,3 @@
-"""
-HPKE Benchmark Runner
-
-This script runs cargo benchmarks for HPKE (Hybrid Public Key Encryption) implementations
-comparing performance between Rust and Owl implementations in different configurations.
-
-The benchmarks test four different sender/receiver combinations:
-- rs -> rs: Rust sender to Rust receiver (baseline)
-- owl -> rs: Owl sender to Rust receiver  
-- rs -> owl: Rust sender to Owl receiver
-- owl -> owl: Owl sender to Owl receiver
-
-Results are displayed in a matrix format showing runs/sec and relative slowdown percentages.
-"""
-
 import json
 import subprocess
 import threading
@@ -25,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from prettytable import PrettyTable
 
 
-# Configuration constants
+# Configurations to test
 BASELINE = "rs -> rs"
 BASELINE_PAT = "bench_rust_rust"
 OWL_TO_RUST = "owl -> rs"
@@ -53,38 +38,7 @@ BENCHMARK_PATTERNS = [
     (OWL_TO_OWL, OWL_TO_OWL_PAT),
 ]
 
-
-def validate_benchmark_directory():
-    """
-    Check if the benchmark directory exists and contains a valid Rust project.
-    
-    Exits the program with an error message if validation fails.
-    """
-    benchmark_path = Path(BENCHMARK_DIR)
-    
-    if not benchmark_path.exists():
-        print(f"Error: Benchmark directory not found: {benchmark_path}")
-        print("Please ensure you're running this script from the correct location.")
-        sys.exit(1)
-    
-    if not (benchmark_path / "Cargo.toml").exists():
-        print(f"Error: No Cargo.toml found in {benchmark_path}")
-        print("This doesn't appear to be a valid Rust project directory.")
-        sys.exit(1)
-    
-    print(f"Using benchmark directory: {benchmark_path.resolve()}")
-
-
 def build_cargo_command(base_args: str) -> str:
-    """
-    Build the complete cargo bench command string.
-    
-    Args:
-        base_args: Additional arguments for cargo bench command
-        
-    Returns:
-        Complete command string ready for execution
-    """
     return " ".join([
         BASE_COMMAND,
         base_args,
@@ -96,16 +50,6 @@ def build_cargo_command(base_args: str) -> str:
 
 
 def run_cargo_bench(command: str) -> Optional[List[Dict]]:
-    """
-    Execute cargo bench command and parse JSON output with progress indicator.
-    
-    Args:
-        command: The complete shell command to execute
-        
-    Returns:
-        List of parsed JSON objects, or None if execution failed
-    """
-    # Animation state
     animation_active = True
     
     def animate():
@@ -119,10 +63,7 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
             time.sleep(0.1)
             i += 1
     
-    try:
-        # print(f"Running: {command}")
-        
-        # Start animation in separate thread
+    try:       
         animation_thread = threading.Thread(target=animate)
         animation_thread.daemon = True
         animation_thread.start()
@@ -134,18 +75,16 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
             cwd=BENCHMARK_DIR
         )
         
-        # Stop animation and clear line
         animation_active = False
         sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the animation line
         sys.stdout.flush()
         
-        # Parse each line as JSON (cargo bench outputs one JSON object per line)
         parsed_output = []
         for line in output.strip().split('\n'):
-            if line.strip():  # Skip empty lines
+            if line.strip():  
                 try:
                     parsed_output.append(json.loads(line))
-                except json.JSONDecodeError as e:
+                except json.JSONDecodeError:
                     print(f"Warning: Failed to parse JSON line: {line[:100]}...")
                     continue
         
@@ -166,18 +105,9 @@ def run_cargo_bench(command: str) -> Optional[List[Dict]]:
         return None
 
 
-def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
-    """
-    Process raw cargo bench output into structured benchmark results.
-    
-    Args:
-        obj_list: List of JSON objects from cargo bench
-        
-    Returns:
-        Dictionary mapping benchmark names to their results
-    """
+def process_benchmark_output(cargo_bench_output: List[Dict]) -> Dict[str, Dict]:
     # Filter for actual benchmark results
-    bench_results = [obj for obj in obj_list if obj.get('type') == 'bench']
+    bench_results = [obj for obj in cargo_bench_output if obj.get('type') == 'bench']
     
     if not bench_results:
         print("Warning: No benchmark results found in output")
@@ -186,7 +116,6 @@ def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
     structured_results = {}
     
     for display_name, pattern in BENCHMARK_PATTERNS:
-        # Find matching benchmark result
         matching_results = [
             result for result in bench_results 
             if pattern in result.get('name', '')
@@ -208,36 +137,17 @@ def process_benchmark_output(obj_list: List[Dict]) -> Dict[str, Dict]:
 
 
 def calculate_metrics(data: Dict[str, Dict]) -> Dict[str, Dict]:
-    """
-    Calculate additional metrics like runs/sec and relative slowdowns.
-    
-    Args:
-        data: Raw benchmark data with median and deviation
-        
-    Returns:
-        Enhanced data with calculated metrics
-    """
     enhanced_data = {}
     
     for name, values in data.items():
         median_ns = values['median']
         deviation_ns = values['deviation']
         
-        # Calculate runs per second (convert from ns/iter to runs/sec)
         runs_per_sec = 1e9 / median_ns if median_ns > 0 else 0
-        
-        # Calculate deviation for runs/sec using error propagation
-        if median_ns > 0 and deviation_ns > 0:
-            # Using approximation: if f(x) = 1/x, then σ_f ≈ σ_x / x²
-            runs_per_sec_dev = (deviation_ns * 1e9) / (median_ns ** 2)
-        else:
-            runs_per_sec_dev = 0
-        
+                
         enhanced_data[name] = {
             'median_ns': median_ns,
-            'deviation_ns': deviation_ns,
             'runs_per_sec': runs_per_sec,
-            'runs_per_sec_dev': runs_per_sec_dev,
         }
     
     # Calculate relative slowdowns compared to baseline
@@ -247,29 +157,18 @@ def calculate_metrics(data: Dict[str, Dict]) -> Dict[str, Dict]:
         
         for name, values in enhanced_data.items():
             if name == BASELINE:
-                values['slowdown_pct'] = 0.0  # Baseline has no slowdown
+                values['slowdown_pct'] = 0.0
             else:
-                # Calculate percentage change: (current - baseline) / baseline * 100
                 current_rps = values['runs_per_sec']
                 if current_rps > 0:
                     values['slowdown_pct'] = ((current_rps - baseline_rps) / baseline_rps) * 100
                 else:
-                    values['slowdown_pct'] = -100.0  # Complete slowdown
+                    values['slowdown_pct'] = -100.0
     
     return enhanced_data
 
 
 def format_matrix_cell(name: str, enhanced_data: Dict[str, Dict]) -> str:
-    """
-    Format a single cell in the performance matrix.
-    
-    Args:
-        name: Benchmark configuration name
-        enhanced_data: Calculated benchmark metrics
-        
-    Returns:
-        Formatted string for matrix cell
-    """
     if name not in enhanced_data:
         return "N/A"
     
@@ -284,87 +183,59 @@ def format_matrix_cell(name: str, enhanced_data: Dict[str, Dict]) -> str:
 
 
 def get_implementation_name(impl_type: str, is_verified: bool) -> str:
-    """
-    Get the display name for an implementation based on type and crypto verification.
-    
-    Args:
-        impl_type: Either "rust" or "owl"
-        is_verified: True for verified crypto, False for unverified crypto
-        
-    Returns:
-        Formatted implementation name
-    """
     if impl_type == "rust":
         return "rust-hpke"
     elif impl_type == "owl":
         return "OwlC_V" if is_verified else "OwlC_B"
     else:
-        return impl_type  # fallback
+        return impl_type
 
 
-def display_matrix_results(data: Dict[str, Dict], is_verified: bool = True):
-    """
-    Display benchmark results in a 2x2 matrix format.
-    Each column represents the same sender, each row represents the same receiver.
-    
-    Args:
-        data: Raw benchmark data
-        is_verified: True for verified crypto, False for unverified crypto
-    """
-    if not data:
-        print("No benchmark data to display")
-        return
-    
+def mk_table(data: Dict[str, Dict], is_verified: bool) -> PrettyTable:
     enhanced_data = calculate_metrics(data)
     
-    # Get implementation names based on crypto type
     rust_name = get_implementation_name("rust", is_verified)
     owl_name = get_implementation_name("owl", is_verified)
     
-    # Create the matrix table with clearer headers
     table = PrettyTable()
     table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
     
-    # Add data rows with receiver labels
     table.add_row([
         f"Receiver: {rust_name}",
-        format_matrix_cell(BASELINE, enhanced_data),      # rs -> rs
-        format_matrix_cell(OWL_TO_RUST, enhanced_data)    # owl -> rs
+        format_matrix_cell(BASELINE, enhanced_data),
+        format_matrix_cell(OWL_TO_RUST, enhanced_data)
     ])
     
     table.add_row([
         f"Receiver: {owl_name}",
-        format_matrix_cell(RUST_TO_OWL, enhanced_data),   # rs -> owl
-        format_matrix_cell(OWL_TO_OWL, enhanced_data)     # owl -> owl
+        format_matrix_cell(RUST_TO_OWL, enhanced_data),
+        format_matrix_cell(OWL_TO_OWL, enhanced_data)
     ])
     
-    # Customize alignment
     table.align = "c"
-    table.align[""] = "l"  # Left align the receiver labels
+    table.align[""] = "l"
     
-    print(table)
+    return table
 
+def display_matrix_results(data: Dict[str, Dict], is_verified: bool):
+    if not data:
+        print("No benchmark data to display")
+        return
+
+    table = mk_table(data, is_verified)
+    print(table)
+    
 
 def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: str):
-    """
-    Save raw benchmark data to CSV file.
-    
-    Args:
-        verif_results: Benchmark results with verified crypto
-        unverif_results: Benchmark results with unverified crypto
-        filename: Output CSV filename
-    """
     try:
         with open(filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             
-            # Write header
             writer.writerow([
                 'crypto_type', 'configuration', 'sender', 'receiver', 
-                'median_ns', 'deviation_ns', 'runs_per_sec', 'performance_change_pct'
+                'median_ns', 'runs_per_sec', 'performance_change_pct'
             ])
             
-            # Helper function to write data for one benchmark suite
             def write_suite_data(results: Dict, crypto_type: str):
                 if not results:
                     return
@@ -372,7 +243,6 @@ def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: s
                 enhanced_data = calculate_metrics(results)
                 
                 for config_name, values in enhanced_data.items():
-                    # Parse sender and receiver from config name
                     if config_name == BASELINE:
                         sender, receiver = "rust", "rust"
                     elif config_name == OWL_TO_RUST:
@@ -392,15 +262,11 @@ def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: s
                         sender,
                         receiver,
                         values['median_ns'],
-                        values['deviation_ns'],
                         values['runs_per_sec'],
                         performance_pct
                     ])
             
-            # Write verified crypto data
             write_suite_data(verif_results, 'verified')
-            
-            # Write unverified crypto data
             write_suite_data(unverif_results, 'unverified')
             
         print(f"Raw data saved to {filename}")
@@ -410,17 +276,8 @@ def save_raw_data_to_csv(verif_results: Dict, unverif_results: Dict, filename: s
 
 
 def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, filename: str):
-    """
-    Save formatted benchmark tables to text file.
-    
-    Args:
-        verif_results: Benchmark results with verified crypto
-        unverif_results: Benchmark results with unverified crypto
-        filename: Output text filename
-    """
     try:
         with open(filename, 'w') as txtfile:
-            # Capture the matrix output for verified crypto
             txtfile.write("HPKE Benchmark Results\n")
             txtfile.write("=" * 60 + "\n\n")
             
@@ -428,28 +285,7 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
             txtfile.write("-" * 40 + "\n")
             
             if verif_results:
-                # Capture matrix table
-                enhanced_data = calculate_metrics(verif_results)
-                rust_name = get_implementation_name("rust", True)
-                owl_name = get_implementation_name("owl", True)
-                
-                table = PrettyTable()
-                table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
-                
-                table.add_row([
-                    f"Receiver: {rust_name}",
-                    format_matrix_cell(BASELINE, enhanced_data),
-                    format_matrix_cell(OWL_TO_RUST, enhanced_data)
-                ])
-                table.add_row([
-                    f"Receiver: {owl_name}",
-                    format_matrix_cell(RUST_TO_OWL, enhanced_data),
-                    format_matrix_cell(OWL_TO_OWL, enhanced_data)
-                ])
-                
-                table.align = "c"
-                table.align[""] = "l"
-                
+                table = mk_table(verif_results, True)
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run verified crypto benchmarks\n")
@@ -460,28 +296,7 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
             txtfile.write("-" * 40 + "\n")
             
             if unverif_results:
-                # Capture matrix table
-                enhanced_data = calculate_metrics(unverif_results)
-                rust_name = get_implementation_name("rust", False)
-                owl_name = get_implementation_name("owl", False)
-                
-                table = PrettyTable()
-                table.field_names = ["", f"Sender: {rust_name}", f"Sender: {owl_name}"]
-                
-                table.add_row([
-                    f"Receiver: {rust_name}",
-                    format_matrix_cell(BASELINE, enhanced_data),
-                    format_matrix_cell(OWL_TO_RUST, enhanced_data)
-                ])
-                table.add_row([
-                    f"Receiver: {owl_name}",
-                    format_matrix_cell(RUST_TO_OWL, enhanced_data),
-                    format_matrix_cell(OWL_TO_OWL, enhanced_data)
-                ])
-                
-                table.align = "c"
-                table.align[""] = "l"
-                
+                table = mk_table(unverif_results, False)
                 txtfile.write(str(table) + "\n")
             else:
                 txtfile.write("Failed to run unverified crypto benchmarks\n")
@@ -496,15 +311,6 @@ def save_formatted_tables_to_txt(verif_results: Dict, unverif_results: Dict, fil
 
 
 def run_benchmark_suite(base_args: str = "") -> Optional[Dict[str, Dict]]:
-    """
-    Run complete benchmark suite and return processed results.
-    
-    Args:
-        base_args: Additional arguments for cargo bench command
-        
-    Returns:
-        Dictionary of benchmark results, or None if execution failed
-    """
     command = build_cargo_command(base_args)
     raw_output = run_cargo_bench(command)
     
@@ -514,15 +320,11 @@ def run_benchmark_suite(base_args: str = "") -> Optional[Dict[str, Dict]]:
     return process_benchmark_output(raw_output)
 
 
-def main():
-    """Main execution function."""
-    validate_benchmark_directory()
-    
+def main():    
     print("=" * 60)
     print("HPKE Benchmark Suite")
     print("=" * 60)
     
-    # Run benchmarks with verified crypto first
     print("\nBenchmarks with verified crypto:")
     print("-" * 40)
     verif_results = run_benchmark_suite("")
@@ -535,7 +337,6 @@ def main():
     
     print("\n" + "=" * 60)
     
-    # Run benchmarks with unverified crypto second
     print("\nBenchmarks with unverified crypto:")
     print("-" * 40)
     unverif_results = run_benchmark_suite(UNVERIF_CRYPTO_ARGS)
@@ -549,7 +350,6 @@ def main():
     print("\n" + "=" * 60)
     print("Benchmark suite completed")
     
-    # Save results to files
     print("\nSaving results...")
     save_raw_data_to_csv(verif_results, unverif_results, "bench_hpke.csv")
     save_formatted_tables_to_txt(verif_results, unverif_results, "bench_hpke.txt")
