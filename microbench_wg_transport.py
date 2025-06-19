@@ -32,8 +32,7 @@ BENCHMARK_DIR = "full_protocol_case_studies/implementations/wireguard/wireguard-
 TEST_FILE_PATH = "src/wireguard/router/tests/tests.rs"
 
 # Packet sizes to test
-PACKET_SIZES = [0, 1] + list(range(50, 1440, 50)) + [1440]
-
+PACKET_SIZES = [0, 1] + list(range(50, 1400, 50))
 # Each iteration of the `cargo bench` processes 1000 packets
 PACKETS_PER_ITERATION = 1000
 
