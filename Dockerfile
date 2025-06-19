@@ -116,4 +116,16 @@ RUN . /root/.ghcup/env && \
     cabal update && \
     cabal build owl
 
+# Backup the build artifacts
+RUN cp -r /root/owlc/dist-newstyle /root/owlc-build-cached
+
+# Create a script to restore build artifacts when source is mounted
+RUN echo '#!/bin/bash\n\
+if [ ! -d "/root/owlc/dist-newstyle" ] && [ -d "/root/owlc-build-cached" ]; then\n\
+    echo "Restoring build artifacts..."\n\
+    cp -r /root/owlc-build-cached /root/owlc/dist-newstyle\n\
+fi\n\
+exec "$@"' > /root/entrypoint.sh && chmod +x /root/entrypoint.sh
+
+ENTRYPOINT ["/root/entrypoint.sh"]
 CMD ["/bin/bash"]
