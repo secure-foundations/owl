@@ -318,7 +318,7 @@ concreteLength (CUsizeConst s) = do
         "PKEKEY_SIZE"    -> return 1219
         "PKE_PK_SIZE"    -> return 1219
         _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
-    debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
+    -- debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
     return l
 concreteLength (CUsizePlus a b) = do
     a' <- concreteLength a

@@ -39,7 +39,7 @@ fi
 echo ""
 echo "CARGO VERUS BUILD"
 pushd $ext_dir_path
-cargo verus verify -- --rlimit=100 --no-lifetime $verus_args
+RUSTFLAGS=-Awarnings cargo verus verify -- --rlimit=100 --no-lifetime $verus_args
 popd
 
 

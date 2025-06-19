@@ -110,7 +110,7 @@ preprocessModBody mb = do
         sortCtr :: (LocalityName -> ExtractionMonad t LocalityName) -> M.Map LocalityName OwlLocalityData -> (String, Bind ([IdxVar], [IdxVar]) Locality) -> ExtractionMonad t (M.Map LocalityName OwlLocalityData)
         sortCtr lookupLoc locMap (name, b) = do
             let ((sids, pids), Locality locP _) = unsafeUnbind b
-            when (length sids > 0) $ debugPrint $ "WARNING: ignoring sid indices on counter " ++ name
+            -- when (length sids > 0) $ debugPrint $ "WARNING: ignoring sid indices on counter " ++ name
             locName <- lookupLoc =<< flattenPath locP
             let f = counters %~ flip (++) [name]
             return $ M.adjust f locName locMap
