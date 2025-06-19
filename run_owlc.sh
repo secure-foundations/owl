@@ -9,4 +9,6 @@ fi
 
 X="$1"
 
-cabal run owl -- --extract "$X" && ./extraction/run_verus.sh $PWD/extraction
+docker run -it --rm -v $(pwd):/root/owlc/ owlc-aeval cabal run owl -- --extract "$X" 
+docker run -it --rm -v $(pwd):/root/owlc/ owlc-aeval ./extraction/run_verus.sh $PWD/extraction
+
