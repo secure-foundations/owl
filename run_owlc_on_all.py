@@ -141,9 +141,11 @@ def get_verus_time_from_json(json_output: str) -> float:
             if isinstance(times_ms, dict) and 'total' in times_ms:
                 total_verify_ms = float(times_ms['total'])
                 return total_verify_ms / 1000.0
-        else:                    
+        else:
             return -1
     except (json.JSONDecodeError, ValueError, KeyError):
+        with open("log.txt", 'w') as f:
+            f.write(json_output)
         return -1
 
 
@@ -198,6 +200,10 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
             print(f"    verusfmt completed in {fmt_time:.2f}s")
         
         print(f"    Running cargo verus verify...")
+        _verus_time, _verus_stdout, _verus_stderr = run_command_with_time(
+            ["cargo", "verus", "verify", "--", "--no-lifetime"],
+            cwd=extraction_dir
+        )
         verus_time, verus_stdout, verus_stderr = run_command_with_time(
             ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
             cwd=extraction_dir
@@ -249,8 +255,8 @@ def format_table(data: List[Dict]) -> str:
     table.field_names = ["Case Study", "Owl_LOC", "VERUS_LOC", "Owl_TIME", "VERUS_TIME"]
     
     for row in data:
-        owl_time_str = f"{row['owl_time']:.2f}s" if row['owl_time'] != -1 else "FAILED"
-        verus_time_str = f"{row['verus_time']:.2f}s" if row['verus_time'] != -1 else "FAILED"
+        owl_time_str = f"{row['owl_time']:.2f}s" if row['owl_time'] != -1 else "ERROR"
+        verus_time_str = f"{row['verus_time']:.2f}s" if row['verus_time'] != -1 else "ERROR"
         
         table.add_row([
             row['file'],
