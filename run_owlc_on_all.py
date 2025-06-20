@@ -144,8 +144,6 @@ def get_verus_time_from_json(json_output: str) -> float:
         else:
             return -1
     except (json.JSONDecodeError, ValueError, KeyError):
-        with open("log.txt", 'w') as f:
-            f.write(json_output)
         return -1
 
 
