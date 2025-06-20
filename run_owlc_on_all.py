@@ -198,28 +198,31 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
             print(f"    Warning: verusfmt failed: {fmt_stderr}")
         else:
             print(f"    verusfmt completed in {fmt_time:.2f}s")
+
+        max_attempts = 2
+        attempt = 1
+
+        while attempt <= max_attempts:
+            print(f"    Running cargo verus verify...")
+            verus_time, verus_stdout, verus_stderr = run_command_with_time(
+                ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
+                cwd=extraction_dir
+            )
         
-        print(f"    Running cargo verus verify...")
-        _verus_time, _verus_stdout, _verus_stderr = run_command_with_time(
-            ["cargo", "verus", "verify", "--", "--no-lifetime"],
-            cwd=extraction_dir
-        )
-        verus_time, verus_stdout, verus_stderr = run_command_with_time(
-            ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
-            cwd=extraction_dir
-        )
-        
-        if verus_time == -1:
-            print(f"    Warning: cargo verus verify failed: {verus_stderr}")
-            stats['verus_time'] = -1
-        else:
-            json_time = get_verus_time_from_json(verus_stdout)
-            if json_time != -1:
-                stats['verus_time'] = json_time
-                print(f"    Extracted verus time from JSON output: {json_time:.2f}s")
+            if verus_time == -1:
+                print(f"    Warning: cargo verus verify failed: {verus_stderr}")
+                stats['verus_time'] = -1
             else:
-                print(f"    Warning: could not extract verus time from JSON")            
-        
+                json_time = get_verus_time_from_json(verus_stdout)
+                if json_time != -1:
+                    stats['verus_time'] = json_time
+                    print(f"    Extracted verus time from JSON output: {json_time:.2f}s")
+                    break
+                else:
+                    print(f"    Warning: could not extract verus time from JSON")            
+            print(f"    Retrying...")
+            attempt += 1 
+                    
         verus_lib_path = os.path.join(extraction_dir, "src/lib.rs")
         if os.path.exists(verus_lib_path):
             stats['verus_loc'] = get_verus_loc(verus_lib_path)
