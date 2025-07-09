@@ -31,7 +31,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf", "succ"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -1740,7 +1740,7 @@ parseParam =
             (reserved "session" >> (return $ Just IdxSession))
             <|>
             (reserved "pid" >> (return $ Just IdxPId))
-        i <- parseIdx
+        i <- parseIdxExp
         return $ ParamIdx i ot)
     <|>
     (try $ do
@@ -1759,11 +1759,34 @@ parseIdx = do
     p' <- getPosition
     return $ IVar (ignore $ mkPos p p') (ignore i) (s2n i)
 
+parseIdxExp :: Parser Idx
+parseIdxExp =
+    (do
+        p <- getPosition
+        i <- identifier
+        p' <- getPosition
+        return $ IVar (ignore $ mkPos p p') (ignore i) (s2n i)
+    ) <|> (do
+        p <- getPosition
+        reserved "succ"
+        symbol "("
+        i <- parseIdxExp
+        symbol ")"
+        p' <- getPosition
+        return $ ISucc (ignore $ mkPos p p') i
+    ) <|> (do
+        p <- getPosition
+        reserved "0"
+        p' <- getPosition
+        return $ IZero (ignore $ mkPos p p')
+    )
+
+
 parseIdxParams :: Parser ([Idx], [Idx])
 parseIdxParams = do
     inds <- optionMaybe $ do
         symbol "<"
-        is <- parseIdx `sepBy` symbol ","
+        is <- parseIdxExp `sepBy` symbol ","
         ps <- optionMaybe $ do
             symbol "@"
             parseIdx `sepBy` symbol ","
@@ -1777,7 +1800,7 @@ parseIdxParams1 :: Parser [Idx]
 parseIdxParams1 = do
     inds <- optionMaybe $ do
         symbol "<"
-        is <- parseIdx `sepBy` symbol ","
+        is <- parseIdxExp `sepBy` symbol ","
         symbol ">"
         return is
     return $ case inds of
@@ -1787,7 +1810,7 @@ parseIdxParams1 = do
 parseIdxParamsNoAngles :: Parser ([Idx], [Idx])
 parseIdxParamsNoAngles = do
     inds <- optionMaybe $ do
-        is <- parseIdx `sepBy` symbol ","
+        is <- parseIdxExp `sepBy` symbol ","
         ps <- optionMaybe $ do
             symbol "@"
             parseIdx `sepBy` symbol ","
