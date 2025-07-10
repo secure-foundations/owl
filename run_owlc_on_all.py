@@ -202,6 +202,11 @@ def collect_file_statistics(display_name: str, file_path: str, is_full_case_stud
 
         while attempt <= max_attempts:
             print(f"    Running cargo verus verify...")
+            if attempt > 1:
+                run_command_with_time(
+                    ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
+                    cwd=extraction_dir
+                )
             verus_time, verus_stdout, verus_stderr = run_command_with_time(
                 ["cargo", "verus", "verify", "--", "--no-lifetime", "--output-json", "--time"],
                 cwd=extraction_dir
