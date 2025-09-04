@@ -52,7 +52,7 @@ main = do
                           when (args^.fLogSMT) $ do
                               z3Results <- readIORef $ tcEnv^.z3Results
                               reportZ3Results fn z3Results
-                          when (args^.fExtract) $ do
+                          when (args^.fExtract /= NoExtraction) $ do
                               let extfn = "extraction/src/lib.rs"
                               -- let libfn = "extraction/src/lib.rs"
                               modBody <- doFlattening tcEnv

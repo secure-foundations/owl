@@ -49,12 +49,13 @@ extract' modbody = do
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
     specs <- specExtractPass concreteExtrData
+    fs <- use flags
     verusTyExtrData <- do
-        fs <- use flags
         if fs ^. fExtractBufOpt then 
             lowerBufOptPass concreteExtrData
         else lowerImmutPass concreteExtrData
-    extractedOwl <- liftExtractionMonad $ genVerusPass verusTyExtrData
+    extractedOwl <- do
+        liftExtractionMonad $ genVerusPass (fs ^. fExtract == ExtractAll) verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
     return (
         p                       <> line <> line <> line <> line <> 
@@ -241,13 +242,18 @@ lowerBufOptPass cfExtrData = do
     where lowerDef (Just d) = Just <$> LowerBufOpt.lowerDef d
           lowerDef Nothing = return Nothing
 
-genVerusPass :: CRExtractionData -> ExtractionMonad VerusTy (Doc ann)
-genVerusPass crExtrData = do
+genVerusPass :: Bool -> CRExtractionData -> ExtractionMonad VerusTy (Doc ann)
+genVerusPass extractCode crExtrData = do
     debugLog "Generating Verus code"
     endpointDef <- GenVerus.genVerusEndpointDef <$> M.keys $ crExtrData ^. locMap
-    tyDefs <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
-    locDefs <- mapM (GenVerus.genVerusLocality $ crExtrData ^. pubKeys) <$> M.assocs $ crExtrData ^. locMap
-    userFuncDefs <- mapM GenVerus.genVerusUserFunc $ crExtrData ^. userFuncs
+    (tyDefs, userFuncDefs) <- do
+        if extractCode then do
+            tyDefs <- GenVerus.genVerusTyDefs $ crExtrData ^. tyDefs
+            userFuncDefs <- mapM GenVerus.genVerusUserFunc $ crExtrData ^. userFuncs
+            return (tyDefs, userFuncDefs)
+        else
+            return (pretty "", [])
+    locDefs <- mapM (GenVerus.genVerusLocality extractCode $ crExtrData ^. pubKeys) <$> M.assocs $ crExtrData ^. locMap
     let verusDefs = vsep $ endpointDef : tyDefs : locDefs ++ userFuncDefs
     return verusDefs
 

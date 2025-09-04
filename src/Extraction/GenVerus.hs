@@ -121,8 +121,8 @@ genVerusEndpointDef lnames = do
     return $ vsep $ locEnum : endpointOfAddr : locAddrDefs
 
 
-genVerusLocality :: [VNameData] -> (LocalityName, VerusLocalityData) -> EM (Doc ann)
-genVerusLocality pubkeys (lname, ldata) = do
+genVerusLocality :: Bool -> [VNameData] -> (LocalityName, VerusLocalityData) -> EM (Doc ann)
+genVerusLocality extractCode pubkeys (lname, ldata) = do
     let stateName = pretty $ "state_" ++ lname
     let cfgName = pretty $ "cfg_" ++ lname
     let lifetimeConst = lname
@@ -134,7 +134,14 @@ genVerusLocality pubkeys (lname, ldata) = do
     let (sharedNameDecls, sharedNameInits) = unzip . map (genVerusName maybeLt True) $ ldata ^. sharedNames
     let (pkDecls, pkInits) = unzip . map (genVerusPk maybeLt True) $ pubkeys
     let (ctrDecls, ctrInits) = unzip . map genVerusCtr $ ldata ^. counters
-    execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) pubkeys $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
+    cfgImplBlock <- if extractCode then do
+        execFns <- withCurNameEnv (ldata ^. localNames ++ ldata ^. sharedNames) pubkeys $ mapM (genVerusDef lname) . catMaybes $ ldata ^. defs
+        return [__di| 
+        impl #{cfgName}#{emptyLifetimeAnnot} {
+            #{vsep . punctuate (line <> line) $ execFns}
+        }
+        |]
+        else return [di||]
     return [__di|
     pub struct #{stateName} {
         #{vsep . punctuate comma $ ctrDecls}
@@ -150,9 +157,7 @@ genVerusLocality pubkeys (lname, ldata) = do
     pub struct #{cfgName}#{lifetimeAnnot} {
         #{vsep . punctuate comma $ localNameDecls ++ sharedNameDecls ++ pkDecls}
     }
-    impl #{cfgName}#{emptyLifetimeAnnot} {
-        #{vsep . punctuate (line <> line) $ execFns}
-    }
+    #{cfgImplBlock}
     |]
     where
         secrecyNeedsLifetime (_,_,_,BufSecret) = True
