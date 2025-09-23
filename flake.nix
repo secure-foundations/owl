@@ -4,6 +4,8 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs-ghc.url = "github:NixOS/nixpkgs/79b3d4bcae8c7007c9fd51c279a8a67acfa73a2a";
     nixpkgs-cabal.url = "github:NixOS/nixpkgs/7cf5ccf1cdb2ba5f08f0ac29fc3d04b0b59a07e4";
+    nixpkgs-z3-4-12-5.url = "github:NixOS/nixpkgs/c792c60b8a97daa7efe41a6e4954497ae410e0c1";
+    nixpkgs-z3-4-14-1.url = "github:NixOS/nixpkgs/3e2cf88148e732abc1d259286123e06a9d8c964a";
   };
   outputs = {
     self,
@@ -11,6 +13,8 @@
     flake-utils,
     nixpkgs-ghc,
     nixpkgs-cabal,
+    nixpkgs-z3-4-12-5,
+    nixpkgs-z3-4-14-1,
     ...
   } @ inputs:
     inputs.flake-utils.lib.eachDefaultSystem (system:
@@ -20,6 +24,8 @@
         pkgs = nixpkgs.legacyPackages.${system};
         pkgs-ghc = nixpkgs-ghc.legacyPackages.${system};
         pkgs-cabal = nixpkgs-cabal.legacyPackages.${system};
+        pkgs-z3-4-12-5 = nixpkgs-z3-4-12-5.legacyPackages.${system};
+        pkgs-z3-4-14-1 = nixpkgs-z3-4-14-1.legacyPackages.${system};
         
         z3-binary = pkgs.stdenv.mkDerivation {
           pname = "z3-bin";
@@ -46,7 +52,8 @@
         
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            z3-binary
+            # z3-binary
+            # z3
             
             # haskell toolchain
             # ghc
@@ -59,11 +66,14 @@
           ] ++ [
             pkgs-ghc.ghc
             pkgs-cabal.cabal-install
+            # pkgs-z3-4-12-5.z3
+            pkgs-z3-4-14-1.z3
           ];
           
           shellHook = ''
             echo "owl flake indeed"
             echo "z3 available at: $(which z3)"
+            echo "z3 version: $(z3 --version)"
             echo "ghc version: $(ghc --version)"
             echo "cabal version: $(cabal --version | head -n1)"
           '';

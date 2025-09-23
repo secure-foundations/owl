@@ -66,12 +66,46 @@
         "type": "github"
       }
     },
+    "nixpkgs-z3-4-12-5": {
+      "locked": {
+        "lastModified": 1735160951,
+        "narHash": "sha256-9h91U6BBNnzShwzlC+r/aXB+WyN3S140lYQbHH95bc0=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c792c60b8a97daa7efe41a6e4954497ae410e0c1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c792c60b8a97daa7efe41a6e4954497ae410e0c1",
+        "type": "github"
+      }
+    },
+    "nixpkgs-z3-4-14-1": {
+      "locked": {
+        "lastModified": 1745533402,
+        "narHash": "sha256-gDcMJdnBJg7ncP+eqENwH9pOW0azcCOW5y50N+jKdL8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3e2cf88148e732abc1d259286123e06a9d8c964a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3e2cf88148e732abc1d259286123e06a9d8c964a",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
         "nixpkgs-cabal": "nixpkgs-cabal",
-        "nixpkgs-ghc": "nixpkgs-ghc"
+        "nixpkgs-ghc": "nixpkgs-ghc",
+        "nixpkgs-z3-4-12-5": "nixpkgs-z3-4-12-5",
+        "nixpkgs-z3-4-14-1": "nixpkgs-z3-4-14-1"
       }
     },
     "systems": {
