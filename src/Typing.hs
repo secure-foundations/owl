@@ -2872,7 +2872,13 @@ unconcatIKM a = do
                  Just True -> return [a']
                  _ -> typeError $ "Unsupported computation for IKM: " ++ show (owlpretty a') ++ " with type " ++ show (owlpretty t)
 
-
+unconcat :: AExpr -> Check [AExpr]
+unconcat a = do
+    a' <- resolveANF a >>= normalizeAExpr
+    case a'^.val of
+     AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
+         liftM2 (++) (unconcat x) (unconcat y)
+     _ -> return [a']
 
 
 nameKindLength :: NameKind -> AExpr
@@ -3198,7 +3204,7 @@ findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
           TSS n m -> return [n, m]
           _ -> return []
     names2 <- do
-        bs <- unconcatIKM b
+        bs <- unconcat b
         ts <- mapM (inferAExpr >=> normalizeTy) bs
         ps <- forM (zip bs ts) $ \(x, t) ->
             case (stripRefinements t)^.val of
