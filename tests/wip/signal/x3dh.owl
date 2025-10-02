@@ -4,6 +4,8 @@ locality bob
 // long-term keys, assumed to be verified out of band
 name d : nonce @ alice
 counter N_c @ alice
+counter N_c_bob @ bob
+
 name long_skA : DH @ alice
 name long_skB : DH @ bob
 odh L : long_skA, long_skB -> 
@@ -102,8 +104,8 @@ def alice_main () @ alice
       
       let ra1 = kdf<;0;enckey || enckey;0>(0x, amaster, 0x) in 
       let ca1 = kdf<;0;enckey || enckey;1>(0x, amaster, 0x) in 
-      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(long_skA)) in
-      let a1 = bob_prekey_msg(gae1, dhpk(long_skA), x1) in
+      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
+      let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
       let _ = output a1 to endpoint(bob) in
 
       ()
@@ -123,20 +125,23 @@ def bob_main () @ bob
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in
-  parse i2 as alice_prekey_msg(a1, a2, a3) in
-  // a1 -> gae1, a2 -> long_pkA, a3 -> x1
-  let s1 = dh_combine(a2, get(bs)) in 
-  let s2 = dh_combine(a1, long_skB) in 
-  let s3 = dh_combine(a1, get(bs)) in 
-  let s4 = dh_combine(a1, get(bo)) in 
-  let dh = s1 ++ s2 ++ s3 ++ s4 in 
+  parse i2 as alice_prekey_msg(a1, a2, a3) in {
+    // a1 -> gae1, a2 -> long_pkA, a3 -> x1
+    let s1 = dh_combine(a2, get(bs)) in 
+    let s2 = dh_combine(a1, get(long_skB)) in 
+    let s3 = dh_combine(a1, get(bs)) in 
+    let s4 = dh_combine(a1, get(bo)) in 
+    let dh = s1 ++ s2 ++ s3 ++ s4 in 
 
-  let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];enckey;0>(0x, dh, 0x) in 
+    let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];enckey;0>(0x, dh, 0x) in 
 
-  let rb1 = kdf<;0;enckey || enckey;0>(0x, bmaster, 0x) in 
-  let cb1 = kdf<;0;enckey || enckey;1>(0x, bmaster, 0x) in 
+    let rb1 = kdf<;0;enckey || enckey;0>(0x, bmaster, 0x) in 
+    let cb1 = kdf<;0;enckey || enckey;1>(0x, bmaster, 0x) in 
 
-  case st_aead_dec(cb1, a3, gae1 ++ a2, N_c) {
-    | None => ()
-    | Some ma1 => ()
+    let n_c = get_counter N_c_bob in
+    case st_aead_dec(cb1, a3, a1 ++ a2, n_c) {
+      | None => ()
+      | Some ma1 => ()
+    }
   }
+  otherwise ()
