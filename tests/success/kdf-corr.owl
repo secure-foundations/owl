@@ -2,13 +2,13 @@ locality alice
 
 name d : nonce @ alice
 name k : kdf {ikm info.
-    True -> strict dualkdf {ikm2 info2.
+    True -> strict kdf {ikm2 info2.
         True -> enckey Name(d)
     }
 } @ alice
 
 name f : dualkdf {salt info.
-    True -> strict dualkdf {ikm2 info2.
+    True -> strict kdf {ikm2 info2.
         True -> enckey Name(d)
     }
 } @ alice   
@@ -19,8 +19,7 @@ def main() @ alice : (x:Unit{corr(k) /\ corr(f) ==> corr(d)}) =
     corr_case k in
     corr_case f in
     let k2 = kdf<0;0;kdfkey;0>(get(k), get(f), 0x) in 
-    let ek = kdf<;0;enckey;0>(0x, k2, 0x) in 
-    debug printTyContext;
+    let ek = kdf<;0;enckey;0>(k2, 0x, 0x) in 
     let c = aenc(ek, get(d)) in 
     output c
 
