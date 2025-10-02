@@ -38,7 +38,7 @@ Our release [here](https://github.com/secure-foundations/owl/releases/tag/ieee-s
 
 To build and run Owl, you need `cabal` and `ghc` in your `PATH`. You can use [ghcup](https://www.haskell.org/ghcup/) to install them. 
 Additionally, you need the [Z3 Prover](https://github.com/Z3Prover/z3) installed
-and in your `PATH`; binary releases are [here](https://github.com/Z3Prover/z3/releases). Owl has been tested with Z3 version `4.12.1`.
+and in your `PATH`; binary releases are [here](https://github.com/Z3Prover/z3/releases). Owl has been tested with Z3 version `4.12.5`.
 
 To build and run, type `cabal run owl -- path/to/protocol.owl`. For more options, type `cabal run owl -- --help`.
 
