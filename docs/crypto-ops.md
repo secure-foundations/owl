@@ -12,8 +12,8 @@ _overapproximating_ rule, which applies when the well-typed rule does not.
 Owl encodes static corruption by modeling the adversary via a label, `adv`,
 that remains constant throughout typechecking. Many cryptographic operations
 rely on secrecy hypotheses of the form `sec(n)`, where `n` is a name; the
-proposition `sec(n)` is an abbreviation for `[n] <= adv`. Similarly, `corr(n)`
-is an abbreviatino for `[n] !<= adv`. 
+proposition `sec(n)` is an abbreviation for `[n] !<= adv`. Similarly, `corr(n)`
+is an abbreviation for `[n] <= adv`. 
 
 Whenever a rule requires that `sec(n)` holds, then we need to perform a
 `corr_case` if one has not already been performed for `n`. For example:
