@@ -1,0 +1,183 @@
+locality alice
+locality bob
+
+// long-term keys, assumed to be verified out of band
+name d : nonce @ alice
+counter N_c @ alice
+counter N_b @ bob
+name long_skA : DH @ alice
+name long_skB : DH @ bob
+odh L : long_skA, long_skB -> 
+    {salt info.
+        True -> enckey Name(d)
+    }
+
+name ae1 : DH @ alice
+name ae2 : DH @ alice
+
+name bo : DH @ bob
+name bs : DH @ bob
+
+name be2 : DH @ bob
+
+name ma1 : nonce @ alice
+name mb2 : nonce @ bob
+
+name long_sskA : sigkey(dhpk(ae1)) @ alice
+name long_sskB : sigkey(dhpk(bs)) @ bob
+
+corr [long_sskA] ==> [long_skA]
+corr [long_sskB] ==> [long_skB]
+
+struct bob_prekey_msg {
+  _b1: dhpk(bo),
+  _b2: dhpk(bs), 
+  _b3: dhpk(long_skB),
+  _b4: Data<adv> ||signature||
+}
+
+struct alice_prekey_msg {
+  _a1: dhpk(ae1),
+  _a2: dhpk(long_skA),
+  _a3: Data<adv>,
+  _a4: dhpk(ae2)
+}
+
+struct bob_message1 {
+  _b5: dhpk(be2),
+  _b6: Data<adv>
+}
+
+// check whether dualkdf or kdf
+nametype Amaster = dualkdf { salt info.
+  True -> nonce /* TODO: this should be recursive KDF ratchet */ 
+            ||
+          st_aead Name(ma1)
+            aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)))
+            nonce N_c
+}
+
+nametype Bratchet = dualkdf { salt info.
+  True -> nonce /* TODO: this should be recursive KDF ratchet */ 
+            ||
+          st_aead Name(mb2)
+            aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
+            nonce N_b
+}
+
+
+
+// these need to be stacked instances of KDF names. wireguard -> nametypes
+odh L1 : bs, long_skA -> 
+  {salt info.
+      True -> strict Amaster
+  }
+
+odh L2 : long_skB, ae1 -> 
+  {salt info.
+      True -> strict Amaster
+  }
+
+odh L3 : bs, ae1 -> 
+  {salt info.
+      True -> strict Amaster
+  }
+
+odh L4 : bo, ae1 -> 
+  {salt info.
+      True -> strict Amaster
+  }
+
+odh L5 : ae2, be2 -> 
+  {salt info.
+      True -> strict Bratchet
+  }
+
+def alice_main () @ alice
+: Unit =
+
+  let long_vkB = get_vk(long_sskB) in
+  let gae1 = dhpk(get(ae1)) in
+  let gae2 = dhpk(get(ae2)) in
+
+  input i1, _ in
+  corr_case long_sskB in
+
+  parse i1 as bob_prekey_msg(b1, b2, b3, b4) in
+  case vrfy(long_vkB, b2, b4) {
+    | None => ()
+    | Some gbs =>
+      // b1 -> gbo, b2 -> gbs, b3 -> long_pkB, b4 -> gbssig
+      corr_case ae1 in
+      corr_case bs in
+      corr_case bo in
+      corr_case long_skA in
+      let s1 = dh_combine(gbs, get(long_skA)) in 
+      let s2 = dh_combine(b3, get(ae1)) in
+      let s3 = dh_combine(gbs, get(ae1)) in
+      let s4 = dh_combine(b1, get(ae1)) in
+      let dh = s1 ++ s2 ++ s3 ++ s4 in 
+
+      let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
+      
+      let ra1 = kdf<;0;enckey || enckey;0>(0x, amaster, 0x) in 
+      let ca1 = kdf<;0;enckey || enckey;1>(0x, amaster, 0x) in 
+      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ gae2 ++ dhpk(long_skA)) in
+      let a1 = bob_prekey_msg(gae1, dhpk(long_skA), x1, gae2) in
+      let _ = output a1 to endpoint(bob) in
+
+      input i2, _ in
+      parse i2 as bob_message1(b5, b6) in
+      // b5 -> gbe2, b6 -> x2
+
+      let ra2 = kdf<;odh L5[0];kdfkey || kdfkey;0>(rb1, dh_combine(b5, gae2), 0x) in 
+      let ca2 = kdf<;odh L5[0];enckey || enckey;1>(rb1, dh_combine(b5, gae2), 0x) in 
+
+      case st_aead_dec(ca2, a6, b5 ++ b3, N_b) {
+        | None => ()
+        | Some mb2 => 
+        ()
+      }
+
+  }
+  otherwise ()
+
+def bob_main () @ bob
+: Unit = 
+  let long_vkA = get_vk(long_sskA) in
+  let long_pkB = dhpk(get(long_skB)) in
+
+  let gbo = dhpk(get(bo)) in
+  let gbs = dhpk(get(bs)) in 
+  let gbssig = sign(get(long_sskB), gbs) in
+  let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB) in
+  let _ = output b1 to endpoint(alice) in
+
+  input i2, _ in
+  parse i2 as alice_prekey_msg(a1, a2, a3) in
+  // a1 -> gae1, a2 -> long_pkA, a3 -> x1, a4 -> gae2
+  let s1 = dh_combine(a2, get(bs)) in 
+  let s2 = dh_combine(a1, long_skB) in 
+  let s3 = dh_combine(a1, get(bs)) in 
+  let s4 = dh_combine(a1, get(bo)) in 
+  let dh = s1 ++ s2 ++ s3 ++ s4 in 
+
+  let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
+
+  let rb1 = kdf<;0;kdfkey || kdfkey;0>(0x, bmaster, 0x) in 
+  let cb1 = kdf<;0;enckey || enckey;1>(0x, bmaster, 0x) in 
+
+  case st_aead_dec(cb1, a3, a1 ++ a4 ++ a2, N_c) {
+    | None => ()
+    | Some ma1 => 
+
+    let gbe2 = dhpk(get(be2)) in 
+
+    let rb2 = kdf<;odh L5[0];kdfkey || kdfkey;0>(rb1, dh_combine(a4, gbe2), 0x) in 
+    let cb2 = kdf<;odh L5[0];enckey || enckey;1>(rb1, dh_combine(a4, gbe2), 0x) in 
+    let x2 = st_aead_enc<N_b>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+    let b2 = bob_message1(gbe2, x2) in
+    let _ = output b2 to endpoint(alice) in 
+
+    ()
+  }
