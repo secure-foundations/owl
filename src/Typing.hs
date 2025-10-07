@@ -2872,7 +2872,13 @@ unconcatIKM a = do
                  Just True -> return [a']
                  _ -> typeError $ "Unsupported computation for IKM: " ++ show (owlpretty a') ++ " with type " ++ show (owlpretty t)
 
-
+unconcat :: AExpr -> Check [AExpr]
+unconcat a = do
+    a' <- resolveANF a >>= normalizeAExpr
+    case a'^.val of
+     AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
+         liftM2 (++) (unconcat x) (unconcat y)
+     _ -> return [a']
 
 
 nameKindLength :: NameKind -> AExpr
@@ -3001,38 +3007,54 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("KDF must take three arguments") $ length args == 3
           let [a, b, c] = args -- a == salt, b == ikm, c == info
           cpub <- tyFlowsTo (snd c) advLbl -- check that info is public
-          assert ("Third argument to KDF must flow to adv") cpub
-          kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j 
-          resT <- manyCasePropTy kdfCaseSplits $ local (set tcScope $ TcGhost False) $ do 
-              falseCase <- doAssertFalse
-              case falseCase of
-                True -> return tAdmit
-                False -> do 
-                    saltResult <- findValidSaltCalls a b c oann1 j nks
-                    ikmResult <- findValidIKMCalls a b c oann2 j nks
-                    unif <- unifyKDFCallResult [saltResult, ikmResult] 
-                    resT <- case unif of 
-                      Left False -> mkSpanned <$> enforcePublicArguments "KDF ill typed, so arguments must be public" [snd a, snd b, snd c]
-                      Left True -> return $ tData advLbl advLbl
-                      Right (strictness, ne) -> do 
-                        let flowAx = case strictness of
-                                       KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
-                                       KDFPub -> pFlow (nameLbl ne) advLbl 
-                                       KDFUnstrict -> pTrue
-                        return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
-                            flowAx 
-                    kdfProp <- do
-                        a' <- resolveANF (fst a)
-                        b' <- resolveANF (fst b)
-                        c' <- resolveANF (fst c)
-                        return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
-                    let outLen = nameKindLength $ nks !! j
-                    let kdfRefinement t = tRefined t ".res" $ 
-                          pAnd
-                              (pEq (aeLength (aeVar ".res")) outLen)
-                              kdfProp
-                    return $ kdfRefinement resT
-          normalizeTy resT
+          apub <- tyFlowsTo (snd a) advLbl
+          bpub <- tyFlowsTo (snd a) advLbl
+          if apub && bpub then do
+            -- Fully corrupt case. TODO: Unify with below code.
+            a' <- resolveANF (fst a)
+            b' <- resolveANF (fst b)
+            c' <- resolveANF (fst c)
+            let kdfProp =  pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
+            let outLen = nameKindLength $ nks !! j
+            let kdfRefinement t = tRefined t ".res" $ 
+                  pAnd
+                      (pEq (aeLength (aeVar ".res")) outLen)
+                      kdfProp
+            return $ kdfRefinement (tData advLbl advLbl)
+          else do 
+            -- Uncorrupt case
+              assert ("Third argument to KDF must flow to adv") cpub
+              kdfCaseSplits <- findGoodKDFSplits (fst a) (fst b) (fst c) oann2 j 
+              resT <- manyCasePropTy kdfCaseSplits $ local (set tcScope $ TcGhost False) $ do 
+                  falseCase <- doAssertFalse
+                  case falseCase of
+                    True -> return tAdmit
+                    False -> do 
+                        saltResult <- findValidSaltCalls a b c oann1 j nks
+                        ikmResult <- findValidIKMCalls a b c oann2 j nks
+                        unif <- unifyKDFCallResult [saltResult, ikmResult] 
+                        resT <- case unif of 
+                          Left False -> mkSpanned <$> enforcePublicArguments "KDF ill typed, so arguments must be public" [snd a, snd b, snd c]
+                          Left True -> return $ tData advLbl advLbl
+                          Right (strictness, ne) -> do 
+                            let flowAx = case strictness of
+                                           KDFStrict -> pNot $ pFlow (nameLbl ne) advLbl -- Justified since one of the keys must be secret
+                                           KDFPub -> pFlow (nameLbl ne) advLbl 
+                                           KDFUnstrict -> pTrue
+                            return $ mkSpanned $ TRefined (tName ne) ".res" $ bind (s2n ".res") $ 
+                                flowAx 
+                        kdfProp <- do
+                            a' <- resolveANF (fst a)
+                            b' <- resolveANF (fst b)
+                            c' <- resolveANF (fst c)
+                            return $ pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j 
+                        let outLen = nameKindLength $ nks !! j
+                        let kdfRefinement t = tRefined t ".res" $ 
+                              pAnd
+                                  (pEq (aeLength (aeVar ".res")) outLen)
+                                  kdfProp
+                        return $ kdfRefinement resT
+              normalizeTy resT
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
@@ -3198,7 +3220,7 @@ findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
           TSS n m -> return [n, m]
           _ -> return []
     names2 <- do
-        bs <- unconcatIKM b
+        bs <- unconcat b
         ts <- mapM (inferAExpr >=> normalizeTy) bs
         ps <- forM (zip bs ts) $ \(x, t) ->
             case (stripRefinements t)^.val of
