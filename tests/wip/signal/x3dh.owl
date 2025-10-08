@@ -27,8 +27,6 @@ name ma2 : nonce @ alice
 name long_sskA : sigkey(dhpk(ae1)) @ alice
 name long_sskB : sigkey(dhpk(bs)) @ bob
 
-corr [long_sskA] ==> [long_skA]
-corr [long_sskB] ==> [long_skB]
 
 struct bob_prekey_msg {
   _b1: dhpk(bo),
@@ -45,73 +43,110 @@ struct alice_prekey_msg {
 
 // check whether dualkdf or kdf
 nametype Amaster = dualkdf { salt info.
-  True -> nonce /* TODO: this should be recursive KDF ratchet */ 
+  True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
             ||
-          st_aead Name(ma1)
+          strict st_aead Name(ma1)
             aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)))
             nonce N_c
 }
 
+// // Corrupt version of Amaster
+// // check whether dualkdf or kdf
+// nametype Amaster_corr = dualkdf { salt info.
+//   True -> nonce /* TODO: this should be recursive KDF ratchet */ 
+//             ||
+//           st_aead (x:Data<adv> ||nonce|| {False}) // corrupt version of Name(ma1)
+//             aad x. true
+//             nonce N_c
+// }
 
 
 // these need to be stacked instances of KDF names. wireguard -> nametypes
 odh L1 : bs, long_skA -> 
   {salt info.
       True -> strict Amaster
+      // (!(sec(long_skA) /\ sec(bs))) -> strict Amaster_corr
   }
 
 odh L2 : long_skB, ae1 -> 
   {salt info.
       True -> strict Amaster
+      // sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo) -> strict Amaster,
+      // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
 odh L3 : bs, ae1 -> 
   {salt info.
       True -> strict Amaster
+      // sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo) -> strict Amaster,
+      // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
 odh L4 : bo, ae1 -> 
   {salt info.
       True -> strict Amaster
+      // sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo) -> strict Amaster,
+      // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
 
+////// Corruption scenarios
+corr [long_sskA] ==> [long_skA]
+corr [long_sskB] ==> [long_skB] /\ [bs] /\ [long_skA] /\ [ma1]
+corr [long_skA] ==> [ma1]
+corr [bs] ==> [ma1]
+
+
 def alice_main () @ alice
-: Unit =
+: Option Unit =
 
   let long_vkB = get_vk(long_sskB) in
   let gae1 = dhpk(get(ae1)) in
 
   input i1, _ in
-  corr_case long_sskB in
+  pcase (sec(long_sskB)) in
 
   parse i1 as bob_prekey_msg(b1, b2, b3, b4) in
+  guard is_group_elem(b1) in 
+  guard is_group_elem(b2) in 
+  guard is_group_elem(b3) in 
   case vrfy(long_vkB, b2, b4) {
-    | None => ()
+    | None => None()
     | Some gbs =>
       // b1 -> gbo, b2 -> gbs, b3 -> long_pkB, b4 -> gbssig
-      corr_case ae1 in
-      corr_case bs in
-      corr_case bo in
-      corr_case long_skA in
+      pcase (sec(ae1)) in
+      pcase (sec(bs)) in
+      pcase (sec(bo)) in
+      pcase (sec(long_skA)) in
+      pcase (sec(long_skB)) in
+      false_elim in
       let s1 = dh_combine(gbs, get(long_skA)) in 
       let s2 = dh_combine(b3, get(ae1)) in
       let s3 = dh_combine(gbs, get(ae1)) in
       let s4 = dh_combine(b1, get(ae1)) in
       let dh = s1 ++ s2 ++ s3 ++ s4 in 
+      debug "====";
+      debug printTyOf(s1);
+      debug printTyOf(s2);
+      debug printTyOf(s3);
+      debug printTyOf(s4);
+      debug "====";
 
       let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
+      // debug printTyContext;
       
-      let ra1 = kdf<;0;enckey || enckey;0>(0x, amaster, 0x) in 
-      let ca1 = kdf<;0;enckey || enckey;1>(0x, amaster, 0x) in 
+      let ra1 = kdf<;0;nonce || enckey;0>(0x, amaster, 0x) in 
+      let ca1 = kdf<;0;nonce || enckey;1>(0x, amaster, 0x) in 
+      pcase corr(ma1) in
+      false_elim in
       let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
       let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
       let _ = output a1 to endpoint(bob) in
 
-      ()
+      Some(())
 
   }
-  otherwise ()
+  otherwise None()
 
 def bob_main () @ bob
 : Unit = 
