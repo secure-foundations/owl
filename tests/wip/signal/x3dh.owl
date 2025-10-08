@@ -89,6 +89,15 @@ odh L4 : bo, ae1 ->
       // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
+/*
+
+TODO: for L2 and L4, figure out how to assign types to the case where
+b1 and b3 are not actually dhpk(long_skB) and dhpk(bo) respectively, and
+how to case on whether these are true in the ODH decl/in the proof of alice_main.
+
+*/
+
+
 
 ////// Corruption scenarios
 corr [long_sskA] ==> [long_skA]
