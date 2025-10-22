@@ -23,10 +23,12 @@ def alice_main() @ alice
     = 
     input input_dhpk_bob_X in
     input input_dhpk_bob_Y in
+
     guard is_group_elem(input_dhpk_bob_X) in
+    guard is_group_elem(input_dhpk_bob_Y) in
+    
     let ss_X = dh_combine(input_dhpk_bob_X, get(alice_X)) in
     let ss_Y = dh_combine(input_dhpk_bob_Y, get(alice_Y)) in
-
     let ss_concat = ss_X ++ ss_Y in
 
     pcase dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)) in
