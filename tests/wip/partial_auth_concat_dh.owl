@@ -1,0 +1,41 @@
+locality alice
+locality bob
+
+name alice_X : DH @ alice
+name bob_X : DH @ bob
+
+// name alice_Y : DH @ alice
+// name bob_Y : DH @ bob
+
+odh X : alice_X, bob_X -> 
+    {salt info.
+        True -> nonce 
+    }
+
+// odh Y : alice_Y, bob_Y -> 
+//     {salt info.
+//         True -> nonce 
+//     }
+
+def alice_main() @ alice 
+    requires sec(alice_X) /\ sec(bob_X) ///\ sec(alice_Y) /\ sec(bob_Y)
+    : Unit 
+    = 
+    input input_dhpk_bob_X in
+    // input input_dhpk_bob_Y in
+
+    let ss_X = dh_combine(input_dhpk_bob_X, get(alice_X)) in
+//    let ss_Y = dh_combine(input_dhpk_bob_Y, get(alice_Y)) in
+
+    let ss_concat = ss_X in // ++ ss_Y in
+
+    pcase input_dhpk_bob_X == dhpk(get(bob_X)) in
+    // pcase input_dhpk_bob_Y == dhpk(get(bob_Y)) in
+
+    let res = kdf<;odh X[0]; nonce; 0>(0x, ss_concat, 0x) in
+
+    debug "---> Success! res types as:";
+    debug printTyOf(res);
+    debug "----";
+
+    ()
