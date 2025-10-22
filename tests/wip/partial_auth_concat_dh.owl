@@ -17,6 +17,29 @@ odh Y : alice_Y, bob_Y ->
         True -> nonce 
     }
 
+def alice_easy() @ alice
+    requires sec(alice_X) /\ sec(bob_X) 
+    : Option Unit 
+    = 
+    input input_dhpk_bob_X in
+
+    guard is_group_elem(input_dhpk_bob_X) in
+    
+    pcase dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)) in
+    cross_dh_lemma<alice_X>(input_dhpk_bob_X);
+
+    let ss_X = dh_combine(input_dhpk_bob_X, get(alice_X)) in
+    debug printTyOf(ss_X);
+
+    let res = kdf<;odh X[0]; nonce; 0>(0x, ss_X, 0x) in
+
+    debug "---> Success! res types as:";
+    debug printTyOf(res);
+    debug "----";
+
+    Some(())
+
+
 def alice_main() @ alice 
     requires sec(alice_X) /\ sec(bob_X) /\ sec(alice_Y) /\ sec(bob_Y)
     : Option Unit 
@@ -27,12 +50,20 @@ def alice_main() @ alice
     guard is_group_elem(input_dhpk_bob_X) in
     guard is_group_elem(input_dhpk_bob_Y) in
     
+    pcase dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)) in
+    pcase dh_combine(input_dhpk_bob_Y, get(alice_Y)) == dh_combine(dhpk(get(bob_Y)), get(alice_Y)) in
+    // pcase 
+    //     ((dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)))
+    //     /\
+    //     (dh_combine(input_dhpk_bob_Y, get(alice_Y)) == dh_combine(dhpk(get(bob_Y)), get(alice_Y)))) in
+    cross_dh_lemma<alice_X>(input_dhpk_bob_X);
+    cross_dh_lemma<alice_Y>(input_dhpk_bob_Y);
+
     let ss_X = dh_combine(input_dhpk_bob_X, get(alice_X)) in
     let ss_Y = dh_combine(input_dhpk_bob_Y, get(alice_Y)) in
     let ss_concat = ss_X ++ ss_Y in
-
-    pcase dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)) in
-    pcase dh_combine(input_dhpk_bob_Y, get(alice_Y)) == dh_combine(dhpk(get(bob_Y)), get(alice_Y)) in
+    debug printTyOf(ss_X);
+    debug printTyOf(ss_Y);
 
     let res = kdf<;odh X[0], odh Y[0]; nonce; 0>(0x, ss_concat, 0x) in
 
