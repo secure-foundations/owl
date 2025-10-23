@@ -144,13 +144,19 @@ def alice_main () @ alice
     | None => None()
     | Some gbs =>
       // b1 -> gbo, b2 -> gbs, b3 -> long_pkB, b4 -> gbssig
-      pcase (sec(ae1)) in
-      pcase (sec(bs)) in
-      pcase (sec(bo)) in
-      pcase (sec(long_skA)) in
-      pcase (sec(long_skB)) in
+      // pcase (sec(ae1)) in
+      // pcase (sec(bs)) in
+      // pcase (sec(bo)) in
+      // pcase (sec(long_skA)) in
+      // pcase (sec(long_skB)) in
       pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
       pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
       cross_dh_lemma<long_skA>(gbs);
       cross_dh_lemma<ae1>(b3);
       cross_dh_lemma<ae1>(gbs);
@@ -161,12 +167,12 @@ def alice_main () @ alice
       let s3 = dh_combine(gbs, get(ae1)) in
       let s4 = dh_combine(b1, get(ae1)) in
       let dh = s1 ++ s2 ++ s3 ++ s4 in 
-      debug "====";
-      debug printTyOf(s1);
-      debug printTyOf(s2);
-      debug printTyOf(s3);
-      debug printTyOf(s4);
-      debug "====";
+      // debug "====";
+      // debug printTyOf(s1);
+      // debug printTyOf(s2);
+      // debug printTyOf(s3);
+      // debug printTyOf(s4);
+      // debug "====";
 
       let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
       // debug printTyContext;
@@ -178,7 +184,7 @@ def alice_main () @ alice
       let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
       let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
       let _ = output a1 to endpoint(bob) in
-      debug "---> successfully typechecked alice_main in this scenario";
+      // debug "---> successfully typechecked alice_main in this scenario";
       Some(())
 
   }
