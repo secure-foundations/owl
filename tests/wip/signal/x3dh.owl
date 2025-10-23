@@ -151,7 +151,9 @@ def alice_main () @ alice
       pcase (sec(long_skB)) in
       pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
       pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      cross_dh_lemma<long_skA>(gbs);
       cross_dh_lemma<ae1>(b3);
+      cross_dh_lemma<ae1>(gbs);
       cross_dh_lemma<ae1>(b1);
       false_elim in
       let s1 = dh_combine(gbs, get(long_skA)) in 

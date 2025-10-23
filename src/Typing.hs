@@ -3009,7 +3009,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           cpub <- tyFlowsTo (snd c) advLbl -- check that info is public
           apub <- tyFlowsTo (snd a) advLbl
           bpub <- tyFlowsTo (snd b) advLbl
-          if apub && bpub then do
+          if apub && bpub && cpub then do
             -- Fully corrupt case. TODO: Unify with below code.
             a' <- resolveANF (fst a)
             b' <- resolveANF (fst b)

@@ -7,15 +7,29 @@ name bob_X : DH @ bob
 name alice_Y : DH @ alice
 name bob_Y : DH @ bob
 
+// name alice_Z : DH @ alice
+// name bob_Z : DH @ bob
+
 odh X : alice_X, bob_X -> 
     {salt info.
-        True -> nonce
+        True -> strict nonce
     }
 
 odh Y : alice_Y, bob_Y -> 
     {salt info.
-        True -> nonce 
+        True -> strict nonce 
     }
+
+odh XY : alice_Y, bob_X -> 
+    {salt info.
+        True -> strict nonce 
+    }
+
+
+// odh Z : alice_Z, bob_Z -> 
+//     {salt info.
+//         True -> strict nonce 
+//     }    
 
 def alice_easy() @ alice
     requires sec(alice_X) /\ sec(bob_X) 
@@ -47,25 +61,47 @@ def alice_main() @ alice
     input input_dhpk_bob_X in
     input input_dhpk_bob_Y in
 
+    // guard b in ... == if b then ... else return None()
     guard is_group_elem(input_dhpk_bob_X) in
     guard is_group_elem(input_dhpk_bob_Y) in
-    
+
     pcase dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)) in
     pcase dh_combine(input_dhpk_bob_Y, get(alice_Y)) == dh_combine(dhpk(get(bob_Y)), get(alice_Y)) in
+    pcase dh_combine(input_dhpk_bob_X, get(alice_Y)) == dh_combine(dhpk(get(bob_X)), get(alice_Y)) in
+    // pcase dh_combine(input_dhpk_bob_Z, get(alice_Z)) == dh_combine(dhpk(get(bob_Z)), get(alice_Z)) in
     // pcase 
-    //     ((dh_combine(input_dhpk_bob_X, get(alice_X)) == dh_combine(dhpk(get(bob_X)), get(alice_X)))
+    //     dh_combine(input_dhpk_bob_X, get(alice_X)) ++ 
+    //     dh_combine(input_dhpk_bob_Y, get(alice_Y)) 
+    //     == 
+    //     dh_combine(dhpk(get(bob_X)), get(alice_X)) ++
+    //     dh_combine(dhpk(get(bob_Y)), get(alice_Y)) in
+    // pcase 
+    //     dh_combine(input_dhpk_bob_X, get(alice_X)) ++ 
+    //     dh_combine(input_dhpk_bob_Y, get(alice_Y)) ++
+    //     dh_combine(input_dhpk_bob_Z, get(alice_Z))
+    //     == 
+    //     dh_combine(dhpk(get(bob_X)), get(alice_X)) ++
+    //     dh_combine(dhpk(get(bob_Y)), get(alice_Y)) ++
+    //     dh_combine(dhpk(get(bob_Z)), get(alice_Z)) in
+    // false_elim in
     //     /\
     //     (dh_combine(input_dhpk_bob_Y, get(alice_Y)) == dh_combine(dhpk(get(bob_Y)), get(alice_Y)))) in
     cross_dh_lemma<alice_X>(input_dhpk_bob_X);
     cross_dh_lemma<alice_Y>(input_dhpk_bob_Y);
+    cross_dh_lemma<alice_Y>(input_dhpk_bob_X);
+    cross_dh_lemma<alice_X>(input_dhpk_bob_Y);
+    // cross_dh_lemma<alice_Z>(input_dhpk_bob_Z);
+    false_elim in
 
     let ss_X = dh_combine(input_dhpk_bob_X, get(alice_X)) in
     let ss_Y = dh_combine(input_dhpk_bob_Y, get(alice_Y)) in
-    let ss_concat = ss_X ++ ss_Y in
+    let ss_XY = dh_combine(input_dhpk_bob_X, get(alice_Y)) in
+    let ss_concat = ss_X ++ ss_Y ++ ss_XY in
     debug printTyOf(ss_X);
     debug printTyOf(ss_Y);
+    debug printTyOf(ss_XY);
 
-    let res = kdf<;odh X[0], odh Y[0]; nonce; 0>(0x, ss_concat, 0x) in
+    let res = kdf<;odh X[0], odh Y[0], odh XY[0]; nonce; 0>(0x, ss_concat, 0x) in
 
     debug "---> Success! res types as:";
     debug printTyOf(res);
