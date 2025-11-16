@@ -33,6 +33,7 @@ Work-in-progress documentation is in the [docs](/docs/) directory. A number of e
 
 The `main` branch tracks recent developments, so the Owl syntax and language features are subject to change. 
 Our release [here](https://github.com/secure-foundations/owl/releases/tag/ieee-sp-2023) corresponds to our [S&P 2023 publication](https://www.computer.org/csdl/proceedings-article/sp/2023/933600b130/1NrbYvgcB4Q).
+The artifact attached to our [USENIX Security 2025 publication](https://www.usenix.org/conference/usenixsecurity25/presentation/singh) is available in archival form [here](https://doi.org/10.5281/zenodo.15605318).
 
 ## Setup
 
@@ -66,3 +67,5 @@ See `vscode/README.md` for details.
 ## Related Publications
 
 Joshua Gancher, Sydney Gibson, Pratap Singh, Samvid Dharanikota, & Bryan Parno. (2023). [Owl: Compositional Verification of Security Protocols via an Information-Flow Type System](https://eprint.iacr.org/2023/473.pdf). 
+
+Pratap Singh, Joshua Gancher, & Bryan Parno. (2025). [OwlC: Compiling Security Protocols to Verified, Secure, High-Performance Libraries](https://eprint.iacr.org/2025/1092.pdf).
