@@ -57,14 +57,14 @@ data TcScope =
 instance Alpha TcScope
 
 instance OwlPretty TcScope where
-    owlpretty (TcGhost b)  = owlpretty "ghost"
-    owlpretty (TcDef l) = owlpretty "def" <> tupled [owlpretty l]
+    owlpretty' _ (TcGhost b)  = owlpretty "ghost"
+    owlpretty' _ (TcDef l) = owlpretty "def" <> tupled [owlpretty l]
 
 
 instance OwlPretty IdxType where
-    owlpretty IdxSession = owlpretty "IdxSession"
-    owlpretty IdxPId = owlpretty "IdxPId"
-    owlpretty IdxGhost = owlpretty "IdxGhost"
+    owlpretty' _ IdxSession = owlpretty "IdxSession"
+    owlpretty' _ IdxPId = owlpretty "IdxPId"
+    owlpretty' _ IdxGhost = owlpretty "IdxGhost"
 
 data Def = 
     DefHeader (Bind ([IdxVar], [IdxVar]) Locality)-- All we we know is the arity
@@ -78,7 +78,8 @@ instance Subst ResolvedPath Def
 data DefSpec = DefSpec {
     _isAbstract :: Ignore Bool, 
     _defLocality :: Locality,
-    _preReq_retTy_body :: DepBind (Prop, Ty, Maybe Expr)
+    _preReq_retTy_body :: DepBind (Prop, Ty, Maybe Expr),
+    _timestampConstraints :: [TimestampConstraint]
 }
     deriving (Show, Generic, Typeable)
 
@@ -124,8 +125,8 @@ data CorrConstraint = CorrImpl Label Label | CorrGroup [Label]
     deriving (Show, Generic, Typeable)
 
 instance OwlPretty CorrConstraint where
-    owlpretty (CorrImpl l1 l2) = owlpretty "corr" <+> owlpretty l1 <+> owlpretty "==>" <+> owlpretty l2
-    owlpretty (CorrGroup ls) = owlpretty "corr_group" <+> owlpretty ls
+    owlpretty' _ (CorrImpl l1 l2) = owlpretty "corr" <+> owlpretty l1 <+> owlpretty "==>" <+> owlpretty l2
+    owlpretty' _ (CorrGroup ls) = owlpretty "corr_group" <+> owlpretty ls
 
 instance Alpha CorrConstraint
 instance Subst Idx CorrConstraint
@@ -196,7 +197,10 @@ data Env senv = Env {
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
     _inSMT :: Bool,
-    _curSpan :: Position
+    _curSpan :: Position,
+    _currentTimestamp :: Maybe Timestamp,
+    _timestampCounter :: IORef Integer,
+    _accumulatedTimestampConstraints :: IORef [TimestampConstraint]
 }
 
 
@@ -230,37 +234,37 @@ data TypeError =
       | ErrNameStillAbstract String
 
 instance OwlPretty (TypeError) where
-    owlpretty (ErrWrongNameType n s nt) = 
+    owlpretty' _ (ErrWrongNameType n s nt) = 
         owlpretty "Wrong name type for " <> owlpretty n <> owlpretty ": expected " <> owlpretty s <> owlpretty ", got " <> owlpretty nt
-    owlpretty (ErrBadArgs s ts) = 
+    owlpretty' _ (ErrBadArgs s ts) = 
         owlpretty "Bad argument types for " <> owlpretty s <> owlpretty ": got " <> owlpretty ts
-    owlpretty (ErrUnknownRO s) = 
+    owlpretty' _ (ErrUnknownRO s) = 
         owlpretty "Unknown random oracle value: " <> owlpretty (show s)
-    owlpretty (ErrUnknownPRF n s) = 
+    owlpretty' _ (ErrUnknownPRF n s) = 
         owlpretty "Unknown prf value for " <> owlpretty n <> owlpretty ": " <> owlpretty s
-    owlpretty (ErrDuplicateVarName s) = 
+    owlpretty' _ (ErrDuplicateVarName s) = 
         owlpretty "Duplicate variable name: " <> owlpretty s
-    owlpretty (ErrWrongCases s a expected actual) = 
+    owlpretty' _ (ErrWrongCases s a expected actual) = 
         owlpretty "Wrong cases for " <> owlpretty s <> owlpretty " with "  <> owlpretty a  <> owlpretty " expected " <> owlpretty (map fst expected) <> owlpretty " but got " <> owlpretty (map fst actual)
-    owlpretty (ErrAssertionFailed fn p) =
+    owlpretty' _ (ErrAssertionFailed fn p) =
         owlpretty "Assertion failed: " <> owlpretty p <> owlpretty " from " <> owlpretty fn
-    owlpretty (ErrUnknownName s) =  
+    owlpretty' _ (ErrUnknownName s) =  
         owlpretty "Unknown name: " <> owlpretty s
-    owlpretty (ErrUnknownFunc s) =  
+    owlpretty' _ (ErrUnknownFunc s) =  
         owlpretty "Unknown func: " <> owlpretty s
-    owlpretty (ErrUnknownVar s) =  
+    owlpretty' _ (ErrUnknownVar s) =  
         owlpretty "Unknown variable: " <> owlpretty s
-    owlpretty (ErrUnknownType s) =  
+    owlpretty' _ (ErrUnknownType s) =  
         owlpretty "Unknown type name: " <> owlpretty s
-    owlpretty (ErrFlowCheck l1 l2) =  
+    owlpretty' _ (ErrFlowCheck l1 l2) =  
         owlpretty "Label " <> owlpretty l1 <> owlpretty " does not flow to " <> owlpretty l2
-    owlpretty (ErrLenAmbiguous t) = 
+    owlpretty' _ (ErrLenAmbiguous t) = 
         owlpretty "Type " <> owlpretty t <> owlpretty " has an ambiguous length"
-    owlpretty (ErrCannotProveSubtype t1 t2) = 
+    owlpretty' _ (ErrCannotProveSubtype t1 t2) = 
         owlpretty "Cannot prove type " <> owlpretty t1 <> owlpretty " is a subtype of " <> owlpretty t2
-    owlpretty (ErrWrongLocality n l ls) = 
+    owlpretty' _ (ErrWrongLocality n l ls) = 
         owlpretty "Locality of name " <> owlpretty n <> owlpretty " is not available to locality " <> owlpretty l
-    owlpretty (ErrNameStillAbstract n) =
+    owlpretty' _ (ErrNameStillAbstract n) =
         owlpretty "Name" <+> owlpretty n <+> owlpretty "is abstract but needs to be concrete here"
 
 instance Show TypeError where
@@ -1505,33 +1509,33 @@ owlprettyMap s m =
     <> line <> rbracket <> line
 
 instance OwlPretty Def where
-    owlpretty (DefHeader x) = 
-        let (ivars, loc) = owlprettyBind x in
+    owlpretty' b (DefHeader x) = 
+        let (ivars, loc) = owlprettyBind' b x in
         owlpretty "DefHeader:" <+> angles ivars <> owlpretty "@" <> loc
-    owlpretty (Def x) =
-        let (ivars, defspec) = owlprettyBind x in
+    owlpretty' b (Def x) =
+        let (ivars, defspec) = owlprettyBind' b x in
         owlpretty "Def:" <+> angles ivars <> defspec
 
 instance OwlPretty UserFunc where
-    owlpretty u = owlpretty $ show u
+    owlpretty' _ u = owlpretty $ show u
 
 -- debug hack
 instance OwlPretty (Bind ([IdxVar], [IdxVar]) (Maybe (NameType, [Locality]))) where
-    owlpretty b =
-        let (ivars, opt) = owlprettyBind b in
+    owlpretty' showTs b =
+        let (ivars, opt) = owlprettyBind' showTs b in
         angles ivars <> owlpretty ":" <> opt
 
-instance OwlPretty (Either Int ResolvedPath) where
-    owlpretty (Left i) = owlpretty "Left" <+> owlpretty i
-    owlpretty (Right rp) = owlpretty "Right" <+> owlpretty rp
+-- instance OwlPretty (Either Int ResolvedPath) where
+--     owlpretty' b (Left i) = owlpretty "Left" <+> owlpretty' b i
+--     owlpretty' b (Right rp) = owlpretty "Right" <+> owlpretty' b rp
 
 instance OwlPretty (Embed Ty) where
-    owlpretty t = owlpretty (unembed t)
+    owlpretty' b t = owlpretty' b (unembed t)
 
 instance OwlPretty DefSpec where
-    owlpretty ds = 
+    owlpretty' b ds = 
         let abs = if unignore $ ds ^. isAbstract then owlpretty "abstract" else owlpretty "" in
-        let loc = owlpretty (ds ^. defLocality) in
+        let loc = owlpretty' b (ds ^. defLocality) in
         owlpretty "DefSpec"
         -- let (args, (req, retTy, body)) = unsafeUnbind (ds ^. preReq_retTy_body) in
         -- let body' = case body of

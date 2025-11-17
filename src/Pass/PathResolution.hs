@@ -581,102 +581,102 @@ resolveCryptOp pos cop =
 
 resolveExpr :: Expr -> Resolve Expr
 resolveExpr e = 
-    case e^.val of
+    case e^.exprVal of
       ECrypt cop xs -> do
           cop' <- resolveCryptOp (e^.spanOf) cop
           xs' <- mapM resolveAExpr xs
-          return $ Spanned (e^.spanOf) $ ECrypt cop' xs'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ECrypt cop' xs'
       EInput s xk -> do
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EInput s $ bind x k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EInput s (bind x k')
       EOutput a oe -> do
           a' <- resolveAExpr a
           oe' <- traverse (resolveEndpoint (e^.spanOf)) oe
-          return $ Spanned (e^.spanOf) $ EOutput a' oe'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EOutput a' oe'
       EBlock k b -> do
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EBlock k' b
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EBlock k' b
       ELetGhost a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ELetGhost a' s (bind x k')
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ELetGhost a' s (bind x k')
       ELet e1 ot anf s xk -> do
           e1' <- resolveExpr e1
           ot' <- traverse resolveTy ot
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ELet e1' ot' anf s (bind x k')
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ELet e1' ot' anf s (bind x k')
       EUnpack a s xk -> do
           a' <- resolveAExpr a
           (x, k) <- unbind xk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EUnpack a' s (bind x k')
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EUnpack a' s (bind x k')
       EChooseIdx s ip ik -> do
           (i, k) <- unbind ik
           (i', p) <- unbind ip                         
           k' <- resolveExpr k
           p' <- resolveProp p
-          return $ Spanned (e^.spanOf) $ EChooseIdx s (bind i' p') (bind i k')
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EChooseIdx s (bind i' p') (bind i k')
       EChooseBV s ip ik -> do
           (i, k) <- unbind ik
           (i', p) <- unbind ip                         
           k' <- resolveExpr k
           p' <- resolveProp p
-          return $ Spanned (e^.spanOf) $ EChooseBV s (bind i' p') (bind i k')
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EChooseBV s (bind i' p') (bind i k')
       EForallBV s xpk -> do
           (x, (op, k)) <- unbind xpk
           k' <- resolveExpr k
           op' <- traverse resolveProp op
-          return $ Spanned (e^.spanOf) $ EForallBV s (bind x (op', k')) 
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EForallBV s (bind x (op', k'))
       EForallIdx s xpk -> do
           (x, (op, k)) <- unbind xpk
           k' <- resolveExpr k
           op' <- traverse resolveProp op
-          return $ Spanned (e^.spanOf) $ EForallIdx s (bind x (op', k'))
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EForallIdx s (bind x (op', k'))
       EPackIdx i a -> do
           a' <- resolveExpr a
-          return $ Spanned (a^.spanOf) $ EPackIdx i a'
+          return $ Spanned (a^.spanOf) $ Timestamped (a^.val.timestampOf) $ EPackIdx i a'
       EIf a e1 e2 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
           e2' <- resolveExpr e2
-          return $ Spanned (e^.spanOf) $ EIf a' e1' e2'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EIf a' e1' e2'
       EGuard a e1 -> do
           a' <- resolveAExpr a
           e1' <- resolveExpr e1
-          return $ Spanned (e^.spanOf) $ EGuard a' e1'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EGuard a' e1'
       ERet a -> do
           a' <- resolveAExpr a
-          return $ Spanned (e^.spanOf) $ ERet a'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ERet a'
       EGetCtr p ps -> do
           p' <- resolvePath (e^.spanOf) PTCounter p
-          return $ Spanned (e^.spanOf) $ EGetCtr p' ps
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EGetCtr p' ps
       EIncCtr p ps -> do
           p' <- resolvePath (e^.spanOf) PTCounter p
-          return $ Spanned (e^.spanOf) $ EIncCtr p' ps
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EIncCtr p' ps
       EDebug dc -> do
           dc' <- resolveDebugCommand dc
-          return $ Spanned (e^.spanOf) $ EDebug dc' 
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EDebug dc'
       EAssert p -> do
           p' <- resolveProp p
-          return $ Spanned (e^.spanOf) $ EAssert p'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EAssert p'
       EAssume p -> do
           p' <- resolveProp p
-          return $ Spanned (e^.spanOf) $ EAssume p'
-      EAdmit -> return e
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EAssume p'
+      EAdmit -> return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EAdmit
       ECall p is as -> do
           p' <- resolvePath (e^.spanOf) PTDef p
           as' <- mapM resolveAExpr as
-          return $ Spanned (e^.spanOf) $ ECall p' is as' 
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ECall p' is as'
       EParse a t ok bk -> do
           a' <- resolveAExpr a
           t' <- resolveTy t
           ok' <- traverse resolveExpr ok
           (b, k) <- unbind bk
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EParse a' t' ok' $ bind b k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EParse a' t' ok' (bind b k')
       ECase a otk cases -> do
           a' <- resolveExpr a
           otk' <- traverse (\(t, k) -> do
@@ -687,37 +687,37 @@ resolveExpr e =
               case lr of
                 Left e1 -> do { e1' <- resolveExpr e1; return (s, Left e1') }
                 Right (s1, xk) -> do { (x, k) <- unbind xk; k' <- resolveExpr k; return (s, Right (s1, bind x k') ) }
-          return $ Spanned (e^.spanOf) $ ECase a' otk' cases'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ECase a' otk' cases'
       EPCase p op ob k -> do
           p' <- resolveProp p
           op' <- traverse resolveProp op
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EPCase p' op' ob k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EPCase p' op' ob k'
       EOpenTyOf a k -> do 
           a' <- resolveAExpr a
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ EOpenTyOf a' k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EOpenTyOf a' k'
       ECorrCaseNameOf a op k -> do 
           a' <- resolveAExpr a
           op' <- traverse resolveProp op
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ECorrCaseNameOf a' op' k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ECorrCaseNameOf a' op' k'
       ESetOption s1 s2 k -> do
           k' <- resolveExpr k
-          return $ Spanned (e^.spanOf) $ ESetOption s1 s2 k'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ESetOption s1 s2 k'
       EFalseElim k op -> do
           k' <- resolveExpr k
           op' <- traverse resolveProp op
-          return $ Spanned (e^.spanOf) $ EFalseElim k' op'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ EFalseElim k' op'
       ETLookup p a -> do
           p' <- resolvePath (e^.spanOf) PTTbl p
           a' <- resolveAExpr a
-          return $ Spanned (e^.spanOf) $ ETLookup p' a'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ETLookup p' a'
       ETWrite p a1 a2 -> do
           p' <- resolvePath (e^.spanOf) PTTbl p
           a1' <- resolveAExpr a1
           a2' <- resolveAExpr a2
-          return $ Spanned (e^.spanOf) $ ETWrite p' a1' a2'
+          return $ Spanned (e^.spanOf) $ Timestamped (e^.val.timestampOf) $ ETWrite p' a1' a2'
 
 resolveDebugCommand :: DebugCommand -> Resolve DebugCommand
 resolveDebugCommand dc = 

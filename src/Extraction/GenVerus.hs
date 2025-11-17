@@ -485,7 +485,7 @@ needsToplevelCast (RTEnum _ _) = True
 needsToplevelCast _ = False
 
 instance OwlPretty VerusTy where
-    owlpretty = pretty
+    owlpretty' _ = pretty
 
 genVerusCExpr :: GenCExprInfo ann -> CExpr VerusTy -> EM (GenRustExpr ann)
 genVerusCExpr info expr = do

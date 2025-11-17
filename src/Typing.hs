@@ -27,6 +27,7 @@ import qualified Data.List.Unique as UL
 import Control.Monad.Reader
 import qualified ANFPass as ANF
 import qualified PathResolution as PR
+import qualified Timestamping as TS
 import Control.Monad.Except
 import Control.Monad.Cont
 import Prettyprinter
@@ -66,9 +67,11 @@ emptyEnv f = do
     r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
-    memo <- mkMemoEntry 
+    memo <- mkMemoEntry
+    tsCounter <- newIORef 0
+    tsConstraints <- newIORef []
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def Nothing tsCounter tsConstraints
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -957,12 +960,12 @@ addDef n df cont = do
       (_, Nothing) -> local (over (curMod . defs) $ insert n df) $ cont
       (DefHeader _, Just _) -> typeError $ "Def already defined: " ++ n
       (Def isdp, Just (DefHeader bl)) -> do
-          (is, DefSpec _ l _) <- unbind isdp
+          (is, DefSpec _ l _ _) <- unbind isdp
           assert ("Locality mismatch for " ++ n) $ (bind is l) `aeq` bl 
           local (over (curMod . defs) $ insert n df) $ cont
       (Def isdp, Just (Def isdp')) -> do
-          (is, DefSpec abs1 l1 ret1) <- unbind isdp
-          (_, DefSpec abs2 _ _) <- unbind isdp'
+          (is, DefSpec abs1 l1 ret1 _) <- unbind isdp
+          (_, DefSpec abs2 _ _ _) <- unbind isdp'
           assert ("Duplicate abstract def: " ++ n) $ not (unignore abs1) 
           assert ("Def already defined: " ++ n) $ unignore abs2
           defMatches n (Just $ Def isdp) (Def isdp') 
@@ -1230,20 +1233,31 @@ checkDecl d cont = withSpan (d^.spanOf) $
                         Just bdy' -> do
                           onlyCheck <- view $ envFlags . fOnlyCheck
                           let doCheck = (onlyCheck == Nothing) || (onlyCheck == Just n)
+                          -- Run timestamping pass before ANF
+                          (bdyTimestamped, constraints) <- liftIO $ TS.timestampDef n bdy'
+                          logTypecheck $ owlpretty "Timestamped body for " <> owlpretty n <> owlpretty ":" <> line <> owlprettyTimestamp bdyTimestamped
+                          logTypecheck $ owlpretty "Timestamp constraints for " <> owlpretty n <> owlpretty ":" <> line <> 
+                                (vsep . punctuate (owlpretty ",") . map owlpretty $ reverse constraints)
                           when doCheck $ do 
-                              bdy'' <- ANF.anf bdy'
+                              bdy'' <- ANF.anf bdyTimestamped
                               logTypecheck $ owlpretty $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
                               pushLogTypecheckScope
-                              local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $ 
+                              local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $
                                   withVars [(s2n x, (ignore x, Nothing, mkSpanned $ TRefined tUnit ".req" (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
                                   _ <- checkExpr (Just tyAnn) bdy''
                                   popLogTypecheckScope
                                   t1 <- liftIO $ getCurrentTime
                                   logTypecheck $ owlpretty $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
-                          return $ (preReq, tyAnn, Just bdy')
+                          return $ (preReq, tyAnn, Just bdyTimestamped)
+          -- Extract timestamp constraints from timestamping pass
+          -- TODO: figure out how to avoid duplication here
+          constraints <- unsafeMapDepBind dspec $ \(_, _, mbdy) -> 
+              case mbdy of
+                  Just bdy' -> liftIO $ TS.timestampDef n bdy' >>= return . snd
+                  Nothing -> return []
           let is_abs = ignore $ unsafeMapDepBind dspec $ \(_, _, o) -> not $ isJust o
-          let df = Def $ bind (is1, is2) $ DefSpec is_abs l dspec
+          let df = Def $ bind (is1, is2) $ DefSpec is_abs l dspec constraints
           addDef n df $ cont
       (DeclCorr ils) -> do
           ensureNoConcreteDefs
@@ -1870,7 +1884,7 @@ ensureNonGhost = do
 -- Infer type for expr
 checkExpr :: Maybe Ty -> Expr -> Check Ty
 checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set expectedTy ot) $ do 
-    case e^.val of
+    case e^.exprVal of
       ECrypt (CLemma lem) aes -> do -- Type check lemma arguments in ghost
           args <- local (set tcScope $ TcGhost False) $ forM aes $ \a -> do
               t <- inferAExpr a
@@ -1916,7 +1930,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           local (set tcScope $ TcGhost False) $ checkProp p
           let lineno =  fst $ begin $ unignore $ e^.spanOf
           getOutTy ot $ tRefined tUnit ("assumption_line_" ++ show lineno) p
-      (EAdmit) -> getOutTy ot $ tAdmit
+      EAdmit -> getOutTy ot $ tAdmit
       (EDebug (DebugCheckMatchesStruct args pth@(PRes (PDot p v)) ps)) -> do 
           argTys <- mapM inferAExpr args
           _ <- openArgs (zip args argTys) $ \args' -> do 
@@ -1989,7 +2003,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                       _ -> tc
           local (set tcScope tc') $ checkExpr ot k
       (ELet e tyAnn anf sx xe') -> do
-          let letTriv = xe' `aeq` (bind (s2n ".res") $ mkSpanned $ ERet (aeVar ".res"))
+          let letTriv = xe' `aeq` (bind (s2n ".res") $ mkSpanned $ Timestamped (ignore $ Timestamp "let") $ ERet (aeVar ".res"))
           tyAnn' <- case tyAnn of
             Just t -> do
                 checkTy t
@@ -2095,14 +2109,14 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (ECall f (is1, is2) args) -> do
           ensureNonGhost -- TODO: fix for ghost methods
           bfdef <- getDefSpec f
-          ts <- view tcScope
+          tc <- view tcScope
           ((bi1, bi2), dspec) <- unbind bfdef
           assert (show $ owlpretty "Wrong index arity for " <> owlpretty f) $ length is1 == length bi1
           assert (show $ owlpretty "Wrong index arity for " <> owlpretty f) $ length is2 == length bi2
           forM_ is1 checkIdxSession
           forM_ is2 checkIdxPId
-          let (DefSpec _ fl o) = substs (zip bi1 is1) $ substs (zip bi2 is2) dspec
-          case ts of
+          let (DefSpec _ fl o _) = substs (zip bi1 is1) $ substs (zip bi2 is2) dspec
+          case tc of
             TcDef curr_locality -> do
                 fl' <- normLocality fl
                 curr_locality' <- normLocality curr_locality
@@ -2237,7 +2251,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (ECorrCaseNameOf a op k) -> do
           t <- inferAExpr a
           case extractNameFromType t of
-            Just n ->  checkExpr ot $ Spanned (e^.spanOf) $ EPCase (pFlow (nameLbl n) advLbl) op Nothing k
+            Just n ->  checkExpr ot $ Spanned (e^.spanOf) $ Timestamped (ignore $ Timestamp "pcase") $ EPCase (pFlow (nameLbl n) advLbl) op Nothing k
             Nothing -> checkExpr ot k
       (EPCase p op attr k) -> do
           _ <- local (set tcScope $ TcGhost False) $ checkProp p
@@ -2294,7 +2308,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           normalizeTy retT
       (ECase e1 otk cases) -> do
           t <- checkExpr Nothing e1
-          e1_a <- case e1^.val of
+          e1_a <- case e1^.exprVal of
                     ERet a -> return a
                     _ -> typeError "Expected AExpr for case after ANF"
           t <- stripRefinements <$> normalizeTy t
@@ -3273,11 +3287,11 @@ defMatches s d1 d2 =
     case (d1, d2) of
       (Just (DefHeader bl), DefHeader bl') -> assert ("Def mismatch with headers: " ++ s) $ bl `aeq` bl'
       (Just (DefHeader bl), Def blspec) -> do
-          (is, DefSpec _ l _) <- unbind blspec
+          (is, DefSpec _ l _ _) <- unbind blspec
           assert ("Def mismatch: " ++ s) $ bl `aeq` (bind is l)
       (Just (Def blspec), Def blspec') -> do
-          (is1, DefSpec ab l1 pty) <- unbind blspec
-          (is', DefSpec ab' l1' pty') <- unbind blspec'
+          (is1, DefSpec ab l1 pty _) <- unbind blspec
+          (is', DefSpec ab' l1' pty' _) <- unbind blspec'
           assert ("Def abstractness mismatch: " ++ s) $ (not (unignore ab)) || (unignore ab') -- ab ==> ab'
           assert ("Def locality mismatch") $ (bind is1 l1) `aeq` (bind is' l1')
           prereq_retty1 <- withDepBind pty $ \_ (x, y, _) -> return (x, y)

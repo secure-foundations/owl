@@ -91,43 +91,43 @@ data ExtractionError =
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
-    owlpretty (CantLayoutType t) =
+    owlpretty' _ (CantLayoutType t) =
         owlpretty "Can't make a layout for type:" <+> owlpretty t
-    owlpretty (TypeError s) =
+    owlpretty' _ (TypeError s) =
         owlpretty "Type error during extraction:" <+> owlpretty s
-    owlpretty (UndefinedSymbol s) =
+    owlpretty' _ (UndefinedSymbol s) =
         owlpretty "Undefined symbol: " <+> owlpretty s
-    owlpretty OutputWithUnknownDestination =
+    owlpretty' _ OutputWithUnknownDestination =
         owlpretty "Found a call to `output` without a destination specified. For extraction, all outputs must have a destination locality specified."
-    owlpretty (LocalityWithNoMain s) =
+    owlpretty' _ (LocalityWithNoMain s) =
         owlpretty "Locality" <+> owlpretty s <+> owlpretty "does not have a defined main function. For extraction, there should be a defined entry point function that must not take arguments: def" <+> owlpretty s <> owlpretty "_main () @" <+> owlpretty s
-    owlpretty (UnsupportedOracleReturnType s) =
+    owlpretty' _ (UnsupportedOracleReturnType s) =
         owlpretty "Oracle" <+> owlpretty s <+> owlpretty "does not return a supported oracle return type for extraction."
-    owlpretty (UnsupportedNameExp ne) =
+    owlpretty' _ (UnsupportedNameExp ne) =
         owlpretty "Name expression" <+> owlpretty ne <+> owlpretty "is unsupported for extraction."
-    owlpretty (UnsupportedNameType nt) =
+    owlpretty' _ (UnsupportedNameType nt) =
         owlpretty "Name type" <+> owlpretty nt <+> owlpretty "is unsupported for extraction."
-    owlpretty (UnsupportedDecl s) =
+    owlpretty' _ (UnsupportedDecl s) =
         owlpretty "Unsupported decl type for extraction:" <+> owlpretty s
-    owlpretty (DefWithTooManySids s) =
+    owlpretty' _ (DefWithTooManySids s) =
         owlpretty "Owl procedure" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
-    owlpretty (NameWithTooManySids s) =
+    owlpretty' _ (NameWithTooManySids s) =
         owlpretty "Owl name" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
-    owlpretty (UnsupportedSharedIndices s) =
+    owlpretty' _ (UnsupportedSharedIndices s) =
         owlpretty "Unsupported sharing of indexed name:" <+> owlpretty s
-    owlpretty (CouldntParseInclude s) =
+    owlpretty' _ (CouldntParseInclude s) =
         owlpretty "Couldn't parse included file:" <+> owlpretty s
-    owlpretty OddLengthHexConst =
+    owlpretty' _ OddLengthHexConst =
         owlpretty "Found a hex constant with an odd length, which should not be allowed."
-    owlpretty (PreimageInExec s) =
+    owlpretty' _ (PreimageInExec s) =
         owlpretty "Found a call to `preimage`, which is not allowed in exec code:" <+> owlpretty s
-    owlpretty (GhostInExec s) =
+    owlpretty' _ (GhostInExec s) =
         owlpretty "Found a ghost value in exec code:" <+> owlpretty s
-    owlpretty (LiftedError e) =
+    owlpretty' _ (LiftedError e) =
         owlpretty "Lifted error:" <+> owlpretty e
-    owlpretty (CantCastType v t1 t2) =
+    owlpretty' _ (CantCastType v t1 t2) =
         owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
-    owlpretty (ErrSomethingFailed s) =
+    owlpretty' _ (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
 type LocalityName = String

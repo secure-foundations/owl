@@ -827,11 +827,11 @@ interpretProp = withPropMemo $ \p -> do
         return $ SApp [SAtom "Flows", x, y]
 
 instance OwlPretty CanonLabel where
-    owlpretty (CanonAnd cs) = 
+    owlpretty' _ (CanonAnd cs) = 
         mconcat $ intersperse (owlpretty " /\\ ") (map owlpretty cs) 
 
 instance OwlPretty CanonLabelBig where        
-    owlpretty (CanonBig xia) = 
+    owlpretty' _ (CanonBig xia) = 
         let ((is, xs), a) = unsafeUnbind xia in 
         let b1 = case is of
                    [] -> mempty
@@ -846,11 +846,11 @@ instance OwlPretty CanonLabelBig where
         b1 <> b2 <> p 
 
 instance OwlPretty CanonAtom where
-    owlpretty (CanonLName a) = owlpretty (nameLbl a)
-    owlpretty (CanonAdv) = owlpretty advLbl
-    owlpretty (CanonTop) = owlpretty topLbl
-    owlpretty (CanonGhost) = owlpretty ghostLbl
-    owlpretty (CanonZero) = owlpretty zeroLbl
+    owlpretty' _ (CanonLName a) = owlpretty (nameLbl a)
+    owlpretty' _ (CanonAdv) = owlpretty advLbl
+    owlpretty' _ (CanonTop) = owlpretty topLbl
+    owlpretty' _ (CanonGhost) = owlpretty ghostLbl
+    owlpretty' _ (CanonZero) = owlpretty zeroLbl
 
 
 class SMTNameKindOf a where

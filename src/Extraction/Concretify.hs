@@ -482,7 +482,7 @@ concretifyExpr :: Expr -> EM (CExpr FormatTy, [CLetBinding])
 concretifyExpr e = do
     -- debugPrint $ "Concretifying expr:"
     -- debugPrint $ show $ owlpretty e
-    case e^.val of
+    case e^.exprVal of
       EInput _ xk -> do
           ((x, ep), k) <- unbind xk
           k' <- withVars [(castName x, fPBuf Nothing)] $ concretifyExpr k
@@ -621,7 +621,7 @@ concretifyExpr e = do
                     _ -> throwError $ TypeError $ "Expected buffer or datatype in EParse, got " ++ (show . owlpretty) (a' ^. tty)
 
       ECase e otherwiseCase xsk -> do
-            (ae', ae'Lets) <- case e ^. val of
+            (ae', ae'Lets) <- case e ^. exprVal of
                 ERet a -> concretifyAExpr a
                 _ -> do
                     (e', e'Lets) <- concretifyExpr e
@@ -735,7 +735,7 @@ tySigOfCall :: Path -> EM ([FormatTy], FormatTy)
 tySigOfCall p = do
     bfdef <- liftCheck $ TB.getDefSpec p
     ((bi1, bi2), dspec) <- unbind bfdef
-    let (TB.DefSpec _ _ db) = dspec
+    let (TB.DefSpec _ _ db _) = dspec
     TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) bi1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) bi2)  $ go [] db
         where
             go argtys (DPVar t _ xk) = do

@@ -208,91 +208,91 @@ instance (Typeable t, Alpha a, Alpha t, Subst b a, Subst b t) => Subst b (CDepBi
 -- Pretty
 
 instance OwlPretty FLen where
-    owlpretty (FLConst i) = owlpretty i
-    owlpretty (FLNamed s) = owlpretty s
-    owlpretty (FLPlus x y) = owlpretty x <+> owlpretty "+" <+> owlpretty y
-    owlpretty (FLCipherlen x) = owlpretty "cipherlen" <> parens (owlpretty x)
+    owlpretty' _ (FLConst i) = owlpretty i
+    owlpretty' _ (FLNamed s) = owlpretty s
+    owlpretty' _ (FLPlus x y) = owlpretty x <+> owlpretty "+" <+> owlpretty y
+    owlpretty' _ (FLCipherlen x) = owlpretty "cipherlen" <> parens (owlpretty x)
     
 instance OwlPretty FormatTy where
-    owlpretty FUnit = owlpretty "unit"
-    owlpretty FBool = owlpretty "bool"
-    owlpretty FInt = owlpretty "int"
-    owlpretty (FBuf BufPublic Nothing) = owlpretty "buf[]"
-    owlpretty (FBuf BufPublic (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
-    owlpretty (FBuf BufSecret Nothing) = owlpretty "secbuf[]"
-    owlpretty (FBuf BufSecret (Just l)) = owlpretty "secbuf" <> brackets (owlpretty l)
-    owlpretty (FOption t) = owlpretty "Option" <> parens (owlpretty t)
-    owlpretty (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
-    owlpretty (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
-    owlpretty FGhost = owlpretty "ghost"
-    owlpretty FDummy = owlpretty "dummy"
-    owlpretty (FHexConst s) = owlpretty "HexConst" <> parens (owlpretty "0x" <> owlpretty s)
-    owlpretty FDeclassifyTok = owlpretty "DeclassifyingOpToken"
+    owlpretty' _ FUnit = owlpretty "unit"
+    owlpretty' _ FBool = owlpretty "bool"
+    owlpretty' _ FInt = owlpretty "int"
+    owlpretty' _ (FBuf BufPublic Nothing) = owlpretty "buf[]"
+    owlpretty' _ (FBuf BufPublic (Just l)) = owlpretty "buf" <> brackets (owlpretty l)
+    owlpretty' _ (FBuf BufSecret Nothing) = owlpretty "secbuf[]"
+    owlpretty' _ (FBuf BufSecret (Just l)) = owlpretty "secbuf" <> brackets (owlpretty l)
+    owlpretty' _ (FOption t) = owlpretty "Option" <> parens (owlpretty t)
+    owlpretty' _ (FStruct n fs) = owlpretty "struct" <+> owlpretty n 
+    owlpretty' _ (FEnum n cs) = owlpretty "enum" <+> owlpretty n 
+    owlpretty' _ FGhost = owlpretty "ghost"
+    owlpretty' _ FDummy = owlpretty "dummy"
+    owlpretty' _ (FHexConst s) = owlpretty "HexConst" <> parens (owlpretty "0x" <> owlpretty s)
+    owlpretty' _ FDeclassifyTok = owlpretty "DeclassifyingOpToken"
 
 flagShouldPrettyTypes :: Bool
 flagShouldPrettyTypes = True
 
 instance (OwlPretty v, OwlPretty t) => OwlPretty (Typed v t) where
-    owlpretty (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty t) <+> owlpretty ":" <+> owlpretty v else owlpretty t
+    owlpretty' b (Typed v t) = if flagShouldPrettyTypes then parens (owlpretty' b t) <+> owlpretty ":" <+> owlpretty' b v else owlpretty' b t
 
 instance OwlPretty ParsleyCombinator where
-    owlpretty (PCConstBytes n s) = owlpretty "Tag<BytesN" <> angles (owlpretty n) <> owlpretty ", [u8; " <> owlpretty n <> owlpretty "]" <> parens (owlpretty s)
-    owlpretty (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
-    owlpretty PCTail = owlpretty "Tail"
-    owlpretty PCBuilder = owlpretty "BuilderCombinator"
+    owlpretty' _ (PCConstBytes n s) = owlpretty "Tag<BytesN" <> angles (owlpretty n) <> owlpretty ", [u8; " <> owlpretty n <> owlpretty "]" <> parens (owlpretty s)
+    owlpretty' _ (PCBytes l) = owlpretty "Bytes" <> parens (owlpretty l)
+    owlpretty' _ PCTail = owlpretty "Tail"
+    owlpretty' _ PCBuilder = owlpretty "BuilderCombinator"
 
 instance OwlPretty t => OwlPretty (DeclassifyingOp t) where
-    owlpretty (DOControlFlow e) = owlpretty "ControlFlow" <> parens (owlpretty e)
-    owlpretty (DOEnumParse e) = owlpretty "EnumParse" <> parens (owlpretty e)
-    owlpretty (DOEqCheck (a, b)) = owlpretty "EqCheck" <> parens (owlpretty a <> comma <+> owlpretty b)
-    owlpretty (DOADec (a, b)) = owlpretty "ADec" <> parens (owlpretty a <> comma <+> owlpretty b)
-    owlpretty (DOStAeadDec (a, b, c, d)) = owlpretty "StAeadDec" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c <> comma <+> owlpretty d)
-    owlpretty (DOSigVrfy (a, b, c)) = owlpretty "SigVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
-    owlpretty (DOMacVrfy (a, b, c)) = owlpretty "MacVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
-    owlpretty (DOPkDec (a, b)) = owlpretty "PkDec" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty' _ (DOControlFlow e) = owlpretty "ControlFlow" <> parens (owlpretty e)
+    owlpretty' _ (DOEnumParse e) = owlpretty "EnumParse" <> parens (owlpretty e)
+    owlpretty' _ (DOEqCheck (a, b)) = owlpretty "EqCheck" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty' _ (DOADec (a, b)) = owlpretty "ADec" <> parens (owlpretty a <> comma <+> owlpretty b)
+    owlpretty' _ (DOStAeadDec (a, b, c, d)) = owlpretty "StAeadDec" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c <> comma <+> owlpretty d)
+    owlpretty' _ (DOSigVrfy (a, b, c)) = owlpretty "SigVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty' _ (DOMacVrfy (a, b, c)) = owlpretty "MacVrfy" <> parens (owlpretty a <> comma <+> owlpretty b <> comma <+> owlpretty c)
+    owlpretty' _ (DOPkDec (a, b)) = owlpretty "PkDec" <> parens (owlpretty a <> comma <+> owlpretty b)
 
 instance OwlPretty t => OwlPretty (CAExpr' t) where
-    owlpretty (CAVar _ v) = owlpretty v
-    owlpretty (CAApp f spec_f as) = owlpretty f <> brackets (owlpretty spec_f) <> tupled (map owlpretty as)
-    owlpretty (CAGet n) = owlpretty "get" <> parens (owlpretty n)
-    owlpretty (CAInt i) = owlpretty i
-    owlpretty (CAHexConst s) = owlpretty "0x" <> owlpretty s
-    owlpretty (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
-    owlpretty (CASerializeWith t xs) = 
+    owlpretty' _ (CAVar _ v) = owlpretty v
+    owlpretty' _ (CAApp f spec_f as) = owlpretty f <> brackets (owlpretty spec_f) <> tupled (map owlpretty as)
+    owlpretty' _ (CAGet n) = owlpretty "get" <> parens (owlpretty n)
+    owlpretty' _ (CAInt i) = owlpretty i
+    owlpretty' _ (CAHexConst s) = owlpretty "0x" <> owlpretty s
+    owlpretty' _ (CACounter s) = owlpretty "counter" <> parens (owlpretty s)
+    owlpretty' _ (CASerializeWith t xs) = 
         let xs' = map (\(e, p) -> owlpretty e <+> owlpretty "as" <+> owlpretty p) xs in
         owlpretty "serialize" <> brackets (owlpretty t) <+> owlpretty "(" <> line <> vsep xs' <> owlpretty ")"
-    owlpretty (CAGetEncPK s) = owlpretty "get_enc_pk" <> parens (owlpretty s)
-    owlpretty (CAGetVK s) = owlpretty "get_vk" <> parens (owlpretty s)
-    owlpretty (CACast e t) = parens $ owlpretty "cast" <+> owlpretty e <+> owlpretty "as" <+> owlpretty t
+    owlpretty' _ (CAGetEncPK s) = owlpretty "get_enc_pk" <> parens (owlpretty s)
+    owlpretty' _ (CAGetVK s) = owlpretty "get_vk" <> parens (owlpretty s)
+    owlpretty' _ (CACast e t) = parens $ owlpretty "cast" <+> owlpretty e <+> owlpretty "as" <+> owlpretty t
 
 
 instance OwlPretty ParseKind where
-    owlpretty PFromBuf = owlpretty "FromBuf"
-    owlpretty PFromDatatype = owlpretty "FromDatatype"
-    owlpretty PFromSecBuf = owlpretty "FromSecBuf"
+    owlpretty' _ PFromBuf = owlpretty "FromBuf"
+    owlpretty' _ PFromDatatype = owlpretty "FromDatatype"
+    owlpretty' _ PFromSecBuf = owlpretty "FromSecBuf"
 
 instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
-    owlpretty CSkip = owlpretty "skip"
-    owlpretty (CRet a) = owlpretty "ret" <+> owlpretty a
-    owlpretty (CInput t xsk) = 
+    owlpretty' _ CSkip = owlpretty "skip"
+    owlpretty' _ (CRet a) = owlpretty "ret" <+> owlpretty a
+    owlpretty' _ (CInput t xsk) = 
         let (x, sk) = owlprettyBind xsk in
         owlpretty "input" <+> x <> pretty ";" <+> sk
-    owlpretty (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
+    owlpretty' _ (COutput a l) = owlpretty "output" <+> owlpretty a <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
-    owlpretty (CSample n t xk) = 
+    owlpretty' _ (CSample n t xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "sample" <> brackets (owlpretty n) <+> x <+> owlpretty "in" <+> k
-    owlpretty (CItreeDeclassify dop xk) = 
+    owlpretty' _ (CItreeDeclassify dop xk) = 
         let (x, k) = owlprettyBind xk in
         owlpretty "let" <+> x <+> owlpretty "=" <+> owlpretty "itree_declassify" <> parens (owlpretty dop) <+> owlpretty "in" <+> k
-    owlpretty (CLet e oanf xk) =
+    owlpretty' _ (CLet e oanf xk) =
         let (x, k) = owlprettyBind xk in
         owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
-    owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
-    owlpretty (CIf a e1 e2) =
+    owlpretty' _ (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
+    owlpretty' _ (CIf a e1 e2) =
         owlpretty "if" <+> owlpretty a <+> owlpretty "then" <+> braces (owlpretty e1) <+> owlpretty "else" <+> braces (owlpretty e2)
-    owlpretty (CCase a xs) =
+    owlpretty' _ (CCase a xs) =
         let pcases =
                 map (\(c, o) ->
                     case o of
@@ -301,18 +301,18 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
                         owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
         owlpretty "case" <+> owlpretty a <> line <> vsep pcases
-    owlpretty (CCall f rty as) =
+    owlpretty' _ (CCall f rty as) =
         let args = map owlpretty as in
         owlpretty f <> tupled args <+> owlpretty ":" <+> owlpretty rty
-    owlpretty (CParse pkind ae extraArgs t ok bindpat) =
+    owlpretty' _ (CParse pkind ae extraArgs t ok bindpat) =
         let (pats', k') = unsafeUnbind bindpat in
         let pats = map (\(n, _, _) -> owlpretty n) pats' in
         let k = owlpretty k' in
         owlpretty "parse" <> brackets (owlpretty pkind) <+> owlpretty ae <+> parens (owlpretty extraArgs) <+> owlpretty "as" <+> owlpretty t <> tupled pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
-    owlpretty (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
-    owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
-    owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
-    owlpretty (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
+    owlpretty' _ (CTLookup n a) = owlpretty "lookup" <+> owlpretty n <> brackets (owlpretty a)
+    owlpretty' _ (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
+    owlpretty' _ (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
+    owlpretty' _ (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
 
 
 ---- traversals ----
@@ -638,13 +638,13 @@ instance OwlPretty CTy where
 instance OwlPretty (CExpr t) where
     owlpretty CSkip = owlpretty "skip"
     owlpretty (CInput xsk) = 
-        let (x, sk) = owlprettyBind xsk in
+        let (x, sk) = owlprettyBind' xsk in
         owlpretty "input" <+> x <> pretty ";" <+> sk
     owlpretty (COutput a l) = owlpretty "output " <> owlpretty a <+> (case l of
        Nothing -> owlpretty ""
        Just s -> owlpretty "to" <+> owlpretty s)
     owlpretty (CLet e oanf xk) =
-        let (x, k) = owlprettyBind xk in
+        let (x, k) = owlprettyBind' xk in
         owlpretty "let" <> braces (owlpretty oanf) <+> x <+> owlpretty "=" <+> owlpretty e <+> owlpretty "in" <> line <> k
     owlpretty (CBlock e) = owlpretty "{" <+> owlpretty e <+> owlpretty "}"
     owlpretty (CIf a e1 e2) =
@@ -661,7 +661,7 @@ instance OwlPretty (CExpr t) where
                 map (\(c, o) ->
                     case o of
                       Left e -> owlpretty "|" <+> owlpretty c <+> owlpretty "=>" <+> owlpretty e
-                      Right xe -> let (x, e) = owlprettyBind xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
+                      Right xe -> let (x, e) = owlprettyBind' xe in owlpretty "|" <+> owlpretty c <+> x <+> owlpretty "=>" <+> e
                     ) xs in
         owlpretty "case" <+> owlpretty a <> line <> vsep pcases
     owlpretty (CTLookup n a) = owlpretty "lookup" <> tupled [owlpretty a]
@@ -669,7 +669,7 @@ instance OwlPretty (CExpr t) where
     owlpretty (CIncCtr p idxs) = owlpretty "inc_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CGetCtr p idxs) = owlpretty "get_counter" <> angles (owlpretty idxs) <> parens (owlpretty p)
     owlpretty (CParse ae t ok bindpat) = 
-        let (pats, k) = owlprettyBind bindpat in
+        let (pats, k) = owlprettyBind' bindpat in
         owlpretty "parse" <+> owlpretty ae <+> owlpretty "as" <+> owlpretty t <> parens pats <+> owlpretty "otherwise" <+> owlpretty ok <+> owlpretty "in" <> line <> k
 
 

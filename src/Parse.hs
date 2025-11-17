@@ -585,11 +585,11 @@ mkQuant q ((i, bt):bs) p = case bt of
 
 mkEForall :: [(String, BinderType)] -> Maybe Prop -> Expr -> Expr
 mkEForall [(i, bt)] op k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (op, k)
-    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (op, k)
+    BTIdx -> mkSpanned $ Timestamped (ignore placeholderTimestamp) $ EForallIdx i (bind (s2n i) $ (op, k))
+    BTBV -> mkSpanned $ Timestamped (ignore placeholderTimestamp) $ EForallBV i (bind (s2n i) $ (op, k))
 mkEForall ((i, bt):bs) op k = case bt of
-    BTIdx -> mkSpanned $ EForallIdx i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
-    BTBV -> mkSpanned $ EForallBV i $ bind (s2n i) $ (Nothing, mkEForall bs op k)
+    BTIdx -> mkSpanned $ Timestamped (ignore placeholderTimestamp) $ EForallIdx i (bind (s2n i) $ (Nothing, mkEForall bs op k))
+    BTBV -> mkSpanned $ Timestamped (ignore placeholderTimestamp) $ EForallBV i (bind (s2n i) $ (Nothing, mkEForall bs op k))
 
 
 prefixProp op f =
@@ -1229,16 +1229,32 @@ parseDebugCommand =
 varNameSuggest :: Expr -> String
 varNameSuggest e = 
     let line = fst $ begin $ unignore $ e^.spanOf in
-    case e^.val of
+    case e^.exprVal of
       EAssert _ -> "_assert_" ++ show line
       EAssume _ -> "_assume_" ++ show line
       _ -> "_"
+
+-- Generate placeholder timestamp (will be updated during typechecking)
+placeholderTimestamp :: Timestamp
+placeholderTimestamp = Timestamp "_placeholder_"
+
+-- Helper to create an Expr from ExprX with placeholder timestamp
+mkExprWithPlaceholder :: ExprX -> Expr
+mkExprWithPlaceholder ex = mkSpanned $ Timestamped (ignore placeholderTimestamp) ex
+
+-- Helper to parse an ExprX and wrap it in Expr with position tracking
+parseExprX :: Parser ExprX -> Parser Expr
+parseExprX p = do
+    pos <- getPosition
+    ex <- p
+    pos' <- getPosition
+    return $ Spanned (ignore $ Position (sourceLine pos, sourceColumn pos) (sourceLine pos', sourceColumn pos') (sourceName pos)) $ Timestamped (ignore placeholderTimestamp) ex
 
 parseExpr = buildExpressionParser parseExprTable parseExprTerm
 parseExprTable = 
     [ [ Infix (do
     symbol ";" 
-    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ ELet e1 Nothing Nothing (varNameSuggest e1) (bind (s2n $ varNameSuggest e1) e2))
+    return (\e1 e2 -> mkSpannedWith (joinPosition (unignore $ e1^.spanOf) (unignore $ e2^.spanOf)) $ Timestamped (ignore placeholderTimestamp) $ ELet e1 Nothing Nothing (varNameSuggest e1) (bind (s2n $ varNameSuggest e1) e2))
               )
     AssocLeft ] ]
 
@@ -1253,7 +1269,7 @@ parseExprBlock = do
     v <- parseExpr
     symbol "}"
     p' <- getPosition
-    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) $ EBlock v proof
+    return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) $ Timestamped (ignore placeholderTimestamp) $ EBlock v proof
 
 parseExprTerm = 
     (try $ do -- Short circuit for ()
@@ -1262,14 +1278,14 @@ parseExprTerm =
         char ')'
         p' <- getPosition
         whiteSpace
-        return $ Spanned (ignore $ mkPos p p') $ ERet $ Spanned (ignore $ mkPos p p') (AEApp (topLevelPath "unit") [] [])
+        return $ Spanned (ignore $ mkPos p p') $ Timestamped (ignore placeholderTimestamp) $ ERet (Spanned (ignore $ mkPos p p') (AEApp (topLevelPath "unit") [] []))
         )
     <|>
     parensPos parseExpr
     <|>
     parseExprBlock 
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "input"
         x <- identifier
         oy <- optionMaybe $ do
@@ -1281,24 +1297,24 @@ parseExprTerm =
                   Just y -> y
         reserved "in"
         e <- parseExpr
-        return $ EInput x $ bind (s2n x, s2n y) e
+        return $ EInput x (bind (s2n x, s2n y) e)
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "get_counter"
         p <- parsePath
         ps <- parseIdxParams
         return $ EGetCtr p ps
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "inc_counter"
         p <- parsePath
         ps <- parseIdxParams
         return $ EIncCtr p ps
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         cop <- parseCryptOp
         symbol "("
         as <- parseArgs
@@ -1306,7 +1322,7 @@ parseExprTerm =
         return $ ECrypt cop as
     )
     <|>
-    (parseSpanned $ do 
+    (parseExprX $ do 
         reserved "output" 
         ae <- parseAExpr 
         l <- optionMaybe $ do
@@ -1316,18 +1332,18 @@ parseExprTerm =
         return $ EOutput ae l
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "admit"
-        return EAdmit
+        return $ EAdmit
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "debug"
         dc <- parseDebugCommand
         return $ EDebug dc
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "set_option"
         char '\"'
         s1 <- many $ alphaNum <|> oneOf ":_-."
@@ -1354,7 +1370,7 @@ parseExprTerm =
                 reserved "in"
                 p' <- getPosition
                 e' <- parseExpr
-                return $ Spanned (ignore $ mkPos p p') $ ELetGhost a x $ bind (s2n x) e')
+                return $ Spanned (ignore $ mkPos p p') $ Timestamped (ignore placeholderTimestamp) $ ELetGhost a x (bind (s2n x) e'))
             (do
                 xts <- ((do
                         x <- identifier
@@ -1369,10 +1385,10 @@ parseExprTerm =
                 p' <- getPosition
                 e' <- parseExpr
                 if length xts /= length es then fail "must have same number of binders and expressions" else
-                    let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ ELet e tyAnn Nothing x $ bind (s2n x) k in
+                    let f k ((x, tyAnn), e) = Spanned (ignore $ mkPos p p') $ Timestamped (ignore placeholderTimestamp) $ ELet e tyAnn Nothing x (bind (s2n x) k) in
                     return $ foldl f e' $ zip xts es))
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "unpack"
         i <- identifier
         symbol ","
@@ -1381,27 +1397,27 @@ parseExprTerm =
         a <- parseAExpr
         reserved "in"
         e <- parseExpr
-        return $ EUnpack a (i, x) $ bind (s2n i, s2n x) e)
+        return $ EUnpack a (i, x) (bind (s2n i, s2n x) e))
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "choose_idx"
         i <- identifier
         symbol "|"
         p <- parseProp
         reserved "in"
         k <- parseExpr
-        return $ EChooseIdx i (bind (s2n i) p) $ bind (s2n i) k)
+        return $ EChooseIdx i (bind (s2n i) p) (bind (s2n i) k))
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "choose_bv"
         i <- identifier
         symbol "|"
         p <- parseProp
         reserved "in"
         k <- parseExpr
-        return $ EChooseBV i (bind (s2n i) p) $ bind (s2n i) k)
+        return $ EChooseBV i (bind (s2n i) p) (bind (s2n i) k))
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "call"
         x <- parsePath
         inds <- parseIdxParams
@@ -1410,7 +1426,7 @@ parseExprTerm =
         symbol ")"
         return $ ECall x inds args)
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "if"
         t <- parseAExpr
         reserved "then"
@@ -1419,7 +1435,7 @@ parseExprTerm =
         e2 <- parseExpr
         return $ EIf t e1 e2)
     <|>
-    (parseSpanned $ do 
+    (parseExprX $ do 
         reserved "pack"
         symbol "<"
         i <- parseIdx
@@ -1442,7 +1458,7 @@ parseExprTerm =
         return $ (mkEForall bs oAssume k)^.val
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "guard"
         a <- parseAExpr
         reserved "in"
@@ -1450,7 +1466,7 @@ parseExprTerm =
         return $ EGuard a e
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "case"
         x <- parseExpr
         ot <- optionMaybe $ do
@@ -1474,10 +1490,10 @@ parseExprTerm =
                      k <- parseExpr
                      return $ Just (t, k)
         symbol "}"
-        return $ ECase x otk xs 
+        return $ ECase x otk xs
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "parse"
         a <- parseAExpr
         reserved "as"
@@ -1494,19 +1510,19 @@ parseExprTerm =
 
         )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "assert"
         p <- parseProp
         return $ EAssert p
         )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "assume"
         p <- parseProp
         return $ EAssume p
         )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "corr_case"
         attr <- parsePCaseAttribute
         ccase <- alt
@@ -1531,14 +1547,14 @@ parseExprTerm =
                    Right n  -> EPCase (pFlow (nameLbl n) advLbl) op attr e
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "openTyOf"
         a <- parseAExpr
         reserved "in"
         e <- parseExpr
         return $ EOpenTyOf a e)
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "pcase"
         attr <- parsePCaseAttribute
         p <- parseProp
@@ -1550,7 +1566,7 @@ parseExprTerm =
         return $ EPCase p op attr e
         )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "false_elim"
         op <- optionMaybe $ do
             reserved "when"
@@ -1560,7 +1576,7 @@ parseExprTerm =
         return $ EFalseElim e op
         )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "lookup"
         symbol "("
         n <- parsePath
@@ -1570,7 +1586,7 @@ parseExprTerm =
         return $ ETLookup n a
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         reserved "write"
         symbol "("
         n <- parsePath
@@ -1582,7 +1598,7 @@ parseExprTerm =
         return $ ETWrite n a a2
     )
     <|>
-    (parseSpanned $ do
+    (parseExprX $ do
         a <- parseAExpr
         return $ ERet a
         )
