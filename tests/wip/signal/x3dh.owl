@@ -119,7 +119,8 @@ odh L4 : bo, ae1 ->
 // uses x25519 keys for both signing and DH. So their corruption must be linked.
 corr [long_sskA] ==> [long_skA]
 corr [long_skA] ==> [long_sskA]
-// 
+// ae1 is unsigned. So if long_skA is corrupt, then adversary can just create its own
+// ae1 and impersonate Alice using the stolen long_skA.
 corr [long_skA] ==> [ae1]
 
 
@@ -133,6 +134,8 @@ corr [long_skB] ==> [long_sskB]
 // corrupted, then bo is also corrupted.
 corr [long_sskB] ==> [bs]
 corr [bs] ==> [bo]
+
+corr [bs] ==> [long_skA] // <------- TODO: this is an unrealistic modeling artifact. Can we remove it?
 
 // These corr assumptions are required because Owl doesn't emit the axiom that if the inputs
 // to an ODH declaration are corrupt, then the derived name is also corrupt.
@@ -151,7 +154,7 @@ def alice_main () @ alice
   let gae1 = dhpk(get(ae1)) in
 
   input i1, _ in // Bob's prekey message implicitly from Signal server
-  pcase #[assume false] (sec(long_sskB)) in
+  pcase (sec(long_sskB)) in
 
   parse i1 as bob_prekey_msg(b1, b2, b3, b4) in
   guard is_group_elem(b1) in 
@@ -166,19 +169,14 @@ def alice_main () @ alice
       // pcase (sec(bo)) in
       // pcase (sec(long_skA)) in
       // pcase (sec(long_skB)) in
-      pcase #[assume true] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      pcase #[assume true] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
-      // assume (sec(bo));
-      // assume (sec(ae1));
-      // assert (corr(bs));
-      assume(corr(ae1));
-      assume(sec(long_skA));
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
+      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
       false_elim in
       cross_dh_lemma<long_skA>(gbs);
       cross_dh_lemma<ae1>(b3);
@@ -189,21 +187,12 @@ def alice_main () @ alice
       let s3 = dh_combine(gbs, get(ae1)) in
       let s4 = dh_combine(b1, get(ae1)) in
       let dh = s1 ++ s2 ++ s3 ++ s4 in 
-      debug "====";
-      debug printTyOf(s1);
-      debug printTyOf(s2);
-      debug printTyOf(s3);
-      debug printTyOf(s4);
-      debug "====";
-
-      // Type for s1: .res:(if [bs] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else if [long_skA] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else shared_secret(bs, long_skA)){.res == dh_combine( gbs
-      //       , get(long_skA) )}
-      // Type for s2: .res:(Data<[ae1] /\ adv>){.res == dh_combine( b3
-      //       , get(ae1) )}
-      // Type for s3: .res:(if [bs] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else if [ae1] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else shared_secret(bs, ae1)){.res == dh_combine( gbs
-      //       , get(ae1) )}
-      // Type for s4: .res:(Data<[ae1] /\ adv>){.res == dh_combine( b1
-      //       , get(ae1) )}
+      // debug "====";
+      // debug printTyOf(s1);
+      // debug printTyOf(s2);
+      // debug printTyOf(s3);
+      // debug printTyOf(s4);
+      // debug "====";
 
       let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
       // debug printTyContext;
