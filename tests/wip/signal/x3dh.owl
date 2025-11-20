@@ -6,18 +6,22 @@ name d : nonce @ alice
 counter N_c @ alice
 counter N_c_bob @ bob
 
-name long_skA : DH @ alice
-name long_skB : DH @ bob
+name long_skA : DH @ alice // Alices's long-term DH key (never changes)
+name long_skB : DH @ bob // Bob's long-term DH key (never changes)
 odh L : long_skA, long_skB -> 
     {salt info.
         True -> enckey Name(d)
     }
 
+// Alice's ephemeral DH key (changes per individual connection, generated on the fly)
 name ae1 : DH @ alice
 name ae2 : DH @ alice
 
-name bo : DH @ bob
-name bs : DH @ bob
+// Bob's ephemeral one-time DH key (changes per individual connection, set of them uploaded to server)
+name bo : DH @ bob 
+// Bob's ephemeral signed DH key (only one uploaded to the server)
+name bs : DH @ bob 
+// there is one `bs` per set of `bo`s
 
 name be2 : DH @ bob
 
@@ -109,21 +113,34 @@ odh L4 : bo, ae1 ->
       // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
-/*
 
-TODO: for L2 and L4, figure out how to assign types to the case where
-b1 and b3 are not actually dhpk(long_skB) and dhpk(bo) respectively, and
-how to case on whether these are true in the ODH decl/in the proof of alice_main.
-
-*/
-
-
-
-////// Corruption scenarios
+////// Corruption scenarios (assumptions and modeling details)
+// In Signal, long_sskA and long_skA are the SAME byte sequence! because signal
+// uses x25519 keys for both signing and DH. So their corruption must be linked.
 corr [long_sskA] ==> [long_skA]
-corr [long_sskB] ==> [long_skB] /\ [bs] /\ [long_skA] /\ [ma1]
+corr [long_skA] ==> [long_sskA]
+// 
+corr [long_skA] ==> [ae1]
+
+
+// In Signal, long_sskB and long_skB are the SAME byte sequence! because signal
+// uses x25519 keys for both signing and DH. So their corruption must be linked.
+corr [long_sskB] ==> [long_skB]
+corr [long_skB] ==> [long_sskB]
+// if Bob's long-term signing key is corrupt, then Bob's ephemeral key bs is also corrupt
+// (because long_sskB signs bs). bo serves to make each computed premaster secret unique
+// per session, but is not meant to provide secrecy by itself, so we assume that if bs is
+// corrupted, then bo is also corrupted.
+corr [long_sskB] ==> [bs]
+corr [bs] ==> [bo]
+
+// These corr assumptions are required because Owl doesn't emit the axiom that if the inputs
+// to an ODH declaration are corrupt, then the derived name is also corrupt.
 corr [long_skA] ==> [ma1]
+corr [long_skB] ==> [ma1]
 corr [bs] ==> [ma1]
+corr [ae1] ==> [ma1]
+
 
 // Alice initiates conversation with Bob by looking up Bob's prekey message
 // from the signal server and creating the first alice message
@@ -134,7 +151,7 @@ def alice_main () @ alice
   let gae1 = dhpk(get(ae1)) in
 
   input i1, _ in // Bob's prekey message implicitly from Signal server
-  pcase (sec(long_sskB)) in
+  pcase #[assume false] (sec(long_sskB)) in
 
   parse i1 as bob_prekey_msg(b1, b2, b3, b4) in
   guard is_group_elem(b1) in 
@@ -149,30 +166,44 @@ def alice_main () @ alice
       // pcase (sec(bo)) in
       // pcase (sec(long_skA)) in
       // pcase (sec(long_skB)) in
-      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
-      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
+      pcase #[assume true] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
+      pcase #[assume true] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
+      pcase #[assume false] (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
+      // assume (sec(bo));
+      // assume (sec(ae1));
+      // assert (corr(bs));
+      assume(corr(ae1));
+      assume(sec(long_skA));
+      false_elim in
       cross_dh_lemma<long_skA>(gbs);
       cross_dh_lemma<ae1>(b3);
       cross_dh_lemma<ae1>(gbs);
       cross_dh_lemma<ae1>(b1);
-      false_elim in
       let s1 = dh_combine(gbs, get(long_skA)) in 
       let s2 = dh_combine(b3, get(ae1)) in
       let s3 = dh_combine(gbs, get(ae1)) in
       let s4 = dh_combine(b1, get(ae1)) in
       let dh = s1 ++ s2 ++ s3 ++ s4 in 
-      // debug "====";
-      // debug printTyOf(s1);
-      // debug printTyOf(s2);
-      // debug printTyOf(s3);
-      // debug printTyOf(s4);
-      // debug "====";
+      debug "====";
+      debug printTyOf(s1);
+      debug printTyOf(s2);
+      debug printTyOf(s3);
+      debug printTyOf(s4);
+      debug "====";
+
+      // Type for s1: .res:(if [bs] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else if [long_skA] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else shared_secret(bs, long_skA)){.res == dh_combine( gbs
+      //       , get(long_skA) )}
+      // Type for s2: .res:(Data<[ae1] /\ adv>){.res == dh_combine( b3
+      //       , get(ae1) )}
+      // Type for s3: .res:(if [bs] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else if [ae1] <= adv then .res:(Data<adv>){is_group_elem( .res ) == true(  )} else shared_secret(bs, ae1)){.res == dh_combine( gbs
+      //       , get(ae1) )}
+      // Type for s4: .res:(Data<[ae1] /\ adv>){.res == dh_combine( b1
+      //       , get(ae1) )}
 
       let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
       // debug printTyContext;
