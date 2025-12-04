@@ -1,8 +1,8 @@
 # Owl Compiler Pipeline Guide
 
-Owl features a compiler pipeline that translates well-typed Owl programs into efficient Rust code that is machine verified (using Verus) to be correct and secure. Using Owl, you can produce bit-precise models of protocols that adhere to specified ciphersuite choices and binary network formats, in addition to the strong security guarantees provided by our typechecker.
+Owl features a compiler pipeline that translates well-typed Owl programs into efficient Rust code that is machine verified (using Verus) to be correct and secure. Using Owl, you can produce bit-precise models of protocols that adhere to specified cipher suite choices and binary network formats, in addition to the strong security guarantees provided by our typechecker.
 
-The Owl compiler (also known as "OwlC" or "Owl extraction") is described in detail in our [USENIX Security 2025 publication](https://eprint.iacr.org/2025/1092.pdf); this document provides guidance on how to use the Owl compiler and its generated output, and how to model implementation-level details such as ciphersuite choices and message formats.
+The Owl compiler (also known as "OwlC" or "Owl extraction") is described in detail in our [USENIX Security 2025 publication](https://eprint.iacr.org/2025/1092.pdf); this document provides guidance on how to use the Owl compiler and its generated output, and how to model implementation-level details such as cipher suite choices and message formats.
 
 ## Running the compiler
 
@@ -20,21 +20,21 @@ The artifact for our USENIX Security 2025 publication, available [here](https://
 
 ## Verifying the output with Verus
 
-- **Entering the crate.** Change into the extraction directory:
+- Change into the extraction directory:
 
   ```
   cd extraction
   ```
 
-- **Running Verus.** Execute the provided script, passing the workspace root:
+- Execute the provided script, passing the workspace root:
 
   ```
   ./run_verus.sh $PWD
   ```
 
-  The script orchestrates the Verus proof obligations for every generated Rust module. Ensure `verus`, `verusfmt`, and required Rust targets are installed; the script exits with a non-zero status if verification fails.
+  The script orchestrates running Verus to check the proof obligations for the generated Rust module; it also runs Verus's autoformatter, `verusfmt`, to prettify the generated code. Ensure `verus`, `verusfmt`, and required Rust targets are installed; the script will exit with a non-zero status if verification fails.
 
-- **Iterating.** When you re-run the compiler, it overwrites the crate root `extraction/src/lib.rs`. Re-run Verus after every change to the Owl source to re-verify the generated output.
+**Iterating.** When you re-run the compiler, it overwrites the crate root `extraction/src/lib.rs`. Re-run Verus after every change to the Owl source to re-verify the generated output.
 
 ## Owl length constants
 
@@ -57,7 +57,7 @@ The `cipherlen(n)` function computes the length of an AEAD ciphertext given a pl
 
 ## Customising cipher suites
 
-Owl’s runtime library currently hosts implementations of cryptographic in `extraction/src/execlib.rs`. The compiler must assume specific parameter sizes when setting struct layouts, so changing cipher suites requires updates in two locations:
+Owl’s runtime library currently hosts implementations of cryptographic in `extraction/src/execlib.rs`. The compiler must assume specific parameter sizes when setting struct layouts, so changing cipher suites currently requires updates in two locations:
 
 1. **Runtime crypto module (`extraction/src/execlib.rs`).**
    - Update `CIPHER`, `HMAC_MODE`, and related constructors to select the desired primitives (for example, switch from `Chacha20Poly1305` to `Aes256Gcm`).
@@ -82,7 +82,7 @@ Vest provides a front-end, VestDSL, that translates human-readable format descri
 
 ### Combinator primitives
 
-Owl uses the following Vest combinators. 
+Owl uses the following primitive Vest combinators. 
 
 - **`Variable(n)`**: Parses exactly `n` bytes. Used for fixed-size fields like `Data<adv> |4|`.
 - **`Tail`**: Parses all remaining bytes until the end of the input. Used for variable-length trailing fields like `Data<adv>` (without a length annotation).
@@ -151,13 +151,13 @@ We combine the constant `message_type` and `reserved_zero` fields into a single 
 **Translation to Vest combinator**:
 ```rust
 spec fn spec_combinator_owlSpec_msg1() -> (
-    OwlConstBytes<4>,      // _msg1_tag: 0x01000000
-    Variable(4),           // _msg1_sender: 4 bytes
-    Variable(32),          // _msg1_ephemeral: |group| = 32 bytes
-    Variable(48),          // _msg1_static: cipherlen(32) = 32 + 16 tag = 48
-    Variable(28),          // _msg1_timestamp: cipherlen(12) = 12 + 16 tag = 28
-    Variable(16),          // _msg1_mac1: |maclen| = 16 bytes
-    OwlConstBytes<16>      // _msg1_mac2: 16 zero bytes
+    (((((((OwlConstBytes<4>,      // _msg1_tag: 0x01000000
+    Variable(4)),                 // _msg1_sender: 4 bytes
+    Variable(32)),                // _msg1_ephemeral: |group| = 32 bytes
+    Variable(48)),                // _msg1_static: cipherlen(32) = 32 + 16 tag = 48
+    Variable(28)),                // _msg1_timestamp: cipherlen(12) = 12 + 16 tag = 28
+    Variable(16)),                // _msg1_mac1: |maclen| = 16 bytes
+    OwlConstBytes<16>)            // _msg1_mac2: 16 zero bytes
 ) {
     let field_1 = OwlConstBytes::<4>(SPEC_BYTES_CONST_01000000_MSG1);
     let field_2 = Variable(4);
@@ -166,11 +166,11 @@ spec fn spec_combinator_owlSpec_msg1() -> (
     let field_5 = Variable(28);
     let field_6 = Variable(16);
     let field_7 = OwlConstBytes::<16>(SPEC_BYTES_CONST_0000..._MSG1);
-    (field_1, field_2, field_3, field_4, field_5, field_6, field_7)
+    ((((((field_1, field_2), field_3), field_4), field_5), field_6), field_7)
 }
 ```
 
-The combinator is a 7-tuple where each element corresponds to one field. Constants become `OwlConstBytes` with the constant value baked in; fixed-length fields become `Variable(n)` with the concrete length.
+The combinator is a nested 7-tuple where each element corresponds to one field. Constants become `OwlConstBytes` with the constant value baked in; fixed-length fields become `Variable(n)` with the concrete length.
 
 **Translation mapping**: The protocol's `message_type` (1 byte) and `reserved_zero[3]` combine into a single 4-byte constant `0x01000000`. The `u32 sender_index` becomes a 4-byte field. The `unencrypted_ephemeral[32]` maps to `|group|` (32 bytes for Curve25519). The encrypted fields use `cipherlen(n)` which accounts for the AEAD tag: `cipherlen(32) = 48` and `cipherlen(12) = 28`.
 
@@ -289,7 +289,10 @@ Owl embeds protocol specifications using **interaction trees** (ITrees), which p
 
 ### What are interaction trees?
 
-An `ITree<A>` is a recursive data structure that represents an effectful computation returning a value of type `A`. ITrees have the following variants:
+An `ITree<A>` is a recursive data structure that represents an effectful computation returning a value of type `A`. ITrees have the following variants[^1]:
+
+[^1]: Formally, our `ITree`s are a simplified, inductive variant of the interaction trees defined in the original work, restricted to just the effects that we care about in Owl. The original paper that defined interaction trees is: Li-yao Xia, Yannick Zakowski, Paul He, Chung-Kil Hur, Gregory Malecha, Benjamin C. Pierce, and Steve Zdancewic. 2019. Interaction trees: representing recursive and impure programs in Coq. POPL 2020. https://doi.org/10.1145/3371119
+
 
 - **`Input`**: Represents receiving data from the network, containing a continuation that specifies how to proceed with the received data.
 - **`Output`**: Represents sending data to the network, containing the data to send, an optional endpoint to send to, and a continuation.
