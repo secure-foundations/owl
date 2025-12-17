@@ -8,14 +8,14 @@ counter N_c_bob @ bob
 
 name long_skA : DH @ alice // Alices's long-term DH key (never changes)
 name long_skB : DH @ bob // Bob's long-term DH key (never changes)
-odh L : long_skA, long_skB -> 
-    {salt info.
-        True -> enckey Name(d)
-    }
+// odh L : long_skA, long_skB -> 
+//     {salt info.
+//         True -> enckey Name(d)
+//     }
 
 // Alice's ephemeral DH key (changes per individual connection, generated on the fly)
 name ae1 : DH @ alice
-name ae2 : DH @ alice
+// name ae2 : DH @ alice
 
 // Bob's ephemeral one-time DH key (changes per individual connection, set of them uploaded to server)
 name bo : DH @ bob 
@@ -28,7 +28,7 @@ name be2 : DH @ bob
 name ma1 : nonce @ alice
 name ma2 : nonce @ alice
 
-name long_sskA : sigkey(dhpk(ae1)) @ alice
+// name long_sskA : sigkey(dhpk(ae1)) @ alice
 name long_sskB : sigkey(dhpk(bs)) @ bob
 
 
@@ -60,24 +60,25 @@ func alice_honest_dh() =
 func alice_honest_amaster() =
   gkdf<kdfkey;0>(0x, alice_honest_dh(), 0x)
 
+nametype ma1_enc = st_aead (x:Name(ma1) {True})
+      aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)))
+      nonce N_c
 
-// check whether dualkdf or kdf
+nametype ma1_enc_corr = st_aead (x:Name(ma1) {False}) // corrupt version of Name(ma1)
+      aad x. true
+      nonce N_c
+
 nametype Amaster = dualkdf { salt info.
   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
             ||
-          strict st_aead Name(ma1)
-            aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)))
-            nonce N_c
+          strict ma1_enc
 }
 
 // Corrupt version of Amaster
-// check whether dualkdf or kdf
 nametype Amaster_corr = dualkdf { salt info.
-  True -> nonce /* TODO: this should be recursive KDF ratchet */ 
+  True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
             ||
-          st_aead (x:Data<adv> ||nonce|| {False}) // corrupt version of Name(ma1)
-            aad x. true
-            nonce N_c
+          strict ma1_enc_corr
 }
 
 
@@ -113,13 +114,26 @@ odh L4 : bo, ae1 ->
       // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
+// off-chain ODH pairs for bob_main. These arise when the adv supplies
+// the wrong values for a1 and a2
+
+odh L2_corr : long_skB, long_skA -> 
+  {salt info.
+      True -> strict Amaster_corr
+  }
+
+odh L4_corr : bo, long_skA -> 
+  {salt info.
+      True -> strict Amaster_corr
+  }
+
 
 ////// Corruption scenarios (assumptions and modeling details)
 // In Signal, long_sskA and long_skA are the SAME byte sequence! because signal
 // uses x25519 keys for both signing and DH. So their corruption must be linked.
-corr [long_sskA] ==> [long_skA]
-corr [long_skA] ==> [long_sskA]
-// ae1 is unsigned. So if long_skA is corrupt, then adversary can just create its own
+// corr [long_sskA] ==> [long_skA]
+// corr [long_skA] ==> [long_sskA]
+// ae1 is unsigned in the handshake. So if long_skA is corrupt, then adversary can just create its own
 // ae1 and impersonate Alice using the stolen long_skA.
 corr [long_skA] ==> [ae1]
 
@@ -136,6 +150,9 @@ corr [long_sskB] ==> [bs]
 corr [bs] ==> [bo]
 
 corr [bs] ==> [long_skA] // <------- TODO: this is an unrealistic modeling artifact. Can we remove it?
+corr [ae1] ==> [long_skB] // <------- TODO: this is an unrealistic modeling artifact. Can we remove it?
+corr [bo] ==> [ae1]
+// corr [bo] ==> [long_skA]
 
 // These corr assumptions are required because Owl doesn't emit the axiom that if the inputs
 // to an ODH declaration are corrupt, then the derived name is also corrupt.
@@ -210,35 +227,71 @@ def alice_main () @ alice
   }
   otherwise None()
 
-// def bob_main () @ bob
-// : Unit = 
-//   let long_vkA = get_vk(long_sskA) in
-//   let long_pkB = dhpk(get(long_skB)) in
+def bob_main () @ bob
+: Unit = 
+  // let long_vkA = get_vk(long_sskA) in
+  let long_pkB = dhpk(get(long_skB)) in
 
-//   let gbo = dhpk(get(bo)) in
-//   let gbs = dhpk(get(bs)) in 
-//   let gbssig = sign(get(long_sskB), gbs) in
-//   let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB) in
-//   let _ = output b1 to endpoint(alice) in
+  let gbo = dhpk(get(bo)) in
+  let gbs = dhpk(get(bs)) in 
+  let gbssig = sign(get(long_sskB), gbs) in
+  let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB) in
+  let _ = output b1 to endpoint(alice) in
 
-//   input i2, _ in
-//   parse i2 as alice_prekey_msg(a1, a2, a3) in {
-//     // a1 -> gae1, a2 -> long_pkA, a3 -> x1
-//     let s1 = dh_combine(a2, get(bs)) in 
-//     let s2 = dh_combine(a1, get(long_skB)) in 
-//     let s3 = dh_combine(a1, get(bs)) in 
-//     let s4 = dh_combine(a1, get(bo)) in 
-//     let dh = s1 ++ s2 ++ s3 ++ s4 in 
+  input i2, _ in
+  parse i2 as alice_prekey_msg(a1, a2, a3) in {
+    guard is_group_elem(a1) in 
+    guard is_group_elem(a2) in
+    // a1 -> gae1, a2 -> long_pkA, a3 -> x1
 
-//     let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];enckey;0>(0x, dh, 0x) in 
+    pcase #[assume true] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
+    pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    
+    pcase #[assume false] (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
+    pcase #[assume true] (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
 
-//     let rb1 = kdf<;0;enckey || enckey;0>(0x, bmaster, 0x) in 
-//     let cb1 = kdf<;0;enckey || enckey;1>(0x, bmaster, 0x) in 
+    pcase #[assume false] (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    pcase #[assume true] (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
 
-//     let n_c = get_counter N_c_bob in
-//     case st_aead_dec(cb1, a3, a1 ++ a2, n_c) {
-//       | None => ()
-//       | Some ma1 => ()
-//     }
-//   }
-//   otherwise ()
+    pcase #[assume false] (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
+    pcase #[assume true] (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
+
+    false_elim in
+    cross_dh_lemma<bs>(a2);
+    cross_dh_lemma<long_skB>(a1);
+    cross_dh_lemma<bs>(a1);
+    cross_dh_lemma<bo>(a1);
+
+    corr_case long_skA in
+    corr_case ae1 in
+    corr_case bo in
+    corr_case bs in
+    corr_case long_skB in
+    false_elim in
+
+    let s1 = dh_combine(a2, get(bs)) in       // long_skA x bs | long_skA x bs
+    let s2 = dh_combine(a1, get(long_skB)) in // long_skA x long_skB | ae1 x long_skB
+    let s3 = dh_combine(a1, get(bs)) in       // long_skA x bs | ae1 x bs
+    let s4 = dh_combine(a1, get(bo)) in       // long_skA x bo | ae1 x bo
+    let dh = s1 ++ s2 ++ s3 ++ s4 in 
+    debug "====";
+    debug printTyOf(s1);
+    debug printTyOf(s2);
+    debug printTyOf(s3);
+    debug printTyOf(s4);
+    debug "====";
+
+    let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0], odh L2_corr[0], odh L4_corr[0];kdfkey;0>(0x, dh, 0x) in 
+
+    let rb1 = kdf<;0;nonce || enckey;0>(0x, bmaster, 0x) in 
+    let cb1 = kdf<;0;nonce || enckey;1>(0x, bmaster, 0x) in 
+
+    let n_c = get_counter N_c_bob in
+    corr_case long_skA in
+    false_elim in
+    case st_aead_dec(cb1, a3, a1 ++ a2, n_c) {
+      | None => ()
+      | Some ma1 => ()
+    }
+  }
+  otherwise ()
