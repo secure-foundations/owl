@@ -1,4 +1,4 @@
-TODO: Move to [official Owl docs](gancher.dev/owl-docs).
+TODO: Move to [official Owl docs](https://gancher.dev/owl-docs).
 
 
 # Overview of cryptographic typing rules

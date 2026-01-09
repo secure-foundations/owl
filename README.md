@@ -27,7 +27,7 @@ Owl currently supports the following cryptographic primitives:
 
 ## Documentation 
 
-Reference documentation for the Owl language is [here](gancher.dev/owl-docs). 
+Reference documentation for the Owl language is [here](https://gancher.dev/owl-docs). 
 
 For the compiler, we have a 
 [compiler guide](/docs/compiler-guide.md) 
