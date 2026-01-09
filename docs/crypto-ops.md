@@ -1,3 +1,6 @@
+TODO: Move to [official Owl docs](gancher.dev/owl-docs).
+
+
 # Overview of cryptographic typing rules
 
 Each cryptographic primitive in Owl is modeled in the following way:

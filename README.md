@@ -27,7 +27,11 @@ Owl currently supports the following cryptographic primitives:
 
 ## Documentation 
 
-Work-in-progress documentation is in the [docs](/docs/) directory, including a [compiler guide](/docs/compiler-guide.md) with information on how to produce bit-precise protocol models using Owl's compiler pipeline. A number of example Owl protocols are in the [tests/success](/tests/success/) directory, illustrating various features of the Owl language and type system.
+Reference documentation for the Owl language is [here](gancher.dev/owl-docs). 
+
+For the compiler, we have a 
+[compiler guide](/docs/compiler-guide.md) 
+ with information on how to produce bit-precise protocol models using Owl's compiler pipeline. A number of example Owl protocols are in the [tests/success](/tests/success/) directory, illustrating various features of the Owl language and type system.
 
 ## Relevant branches
 
