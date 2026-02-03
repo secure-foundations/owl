@@ -45,6 +45,7 @@ struct alice_prekey_msg {
   _a3: Data<adv>
 }
 
+
 // predicate alice_main_clean(b1, b3) =
 //   (b3 == dhpk(get(long_skB))) /\
 //   (b1 == dhpk(get(bo)))
@@ -79,20 +80,35 @@ struct alice_prekey_msg {
 //           strict ma1_enc_corr
 // }
 
+func correct_amaster_arg() =
+    dh_combine(dhpk(get(bs)), get(long_skA))
+     ++ dh_combine(dhpk(get(long_skB)), get(ae1))
+     ++ dh_combine(dhpk(get(bs)), get(ae1))
+     ++ dh_combine(dhpk(get(bo)), get(ae1))
+
+
 func correct_bmaster_arg() =
     dh_combine(dhpk(get(long_skA)), get(bs))
      ++ dh_combine(dhpk(get(ae1)), get(long_skB))
      ++ dh_combine(dhpk(get(ae1)), get(bs))
      ++ dh_combine(dhpk(get(ae1)), get(bo))
 
+predicate bob_good(dh) =
+  dh == correct_bmaster_arg()
+  /\
+  sec(ma1)
+  //((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
+
 // these need to be stacked instances of KDF names. wireguard -> nametypes
 odh L1 : bs, long_skA -> 
   {salt info self.
-      True -> strict nonce 
-                ||
-              strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                nonce N_c
+      True -> strict dualkdf { salt2 info2.
+        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+                  ||
+                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+                  nonce N_c      
+      }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -104,11 +120,13 @@ odh L1 : bs, long_skA ->
 
 odh L2 : long_skB, ae1 -> 
   {salt info self.
-      True -> strict nonce 
-                ||
-              strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                nonce N_c
+      True -> strict dualkdf { salt2 info2.
+        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+                  ||
+                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+                  nonce N_c      
+      }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -121,11 +139,13 @@ odh L2 : long_skB, ae1 ->
 
 odh L3 : bs, ae1 -> 
   {salt info self.
-      True -> strict nonce 
-                ||
-              strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                nonce N_c
+      True -> strict dualkdf { salt2 info2.
+        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+                  ||
+                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+                  nonce N_c      
+      }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -136,11 +156,13 @@ odh L3 : bs, ae1 ->
 
 odh L4 : bo, ae1 -> 
   {salt info self.
-      True -> strict nonce 
-                ||
-              strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                nonce N_c
+      True -> strict dualkdf { salt2 info2.
+        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+                  ||
+                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+                  nonce N_c      
+      }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -161,7 +183,6 @@ odh L4 : bo, ae1 ->
 //   {salt info.
 //       True -> strict Amaster_corr
 //   }
-
 
 ////// Corruption scenarios (assumptions and modeling details)
 // In Signal, long_sskA and long_skA are the SAME byte sequence! because signal
@@ -247,17 +268,13 @@ def alice_main () @ alice
       // debug printTyOf(s4);
       // debug "====";
 
-      // let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in       
-      // let ra1 = kdf<;0;nonce || enckey;0>(0x, amaster, 0x) in 
-      // let ca1 = kdf<;0;nonce || enckey;1>(0x, amaster, 0x) in 
+      let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in       
+      let ra1 = kdf<;0;nonce || enckey;0>(0x, amaster, 0x) in 
+      let ca1 = kdf<;0;nonce || enckey;1>(0x, amaster, 0x) in 
 
-      let ra1 = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];nonce || enckey;0>(0x, dh, 0x) in
-      let ca1 = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];nonce || enckey;1>(0x, dh, 0x) in
-
-      pcase corr(ma1) in
+      pcase sec(ma1) in
       false_elim in
-      let ma1_val: Name(ma1)  = get(ma1) in
-      let x1 = st_aead_enc<N_c>(ca1, ma1_val, gae1 ++ dhpk(get(long_skA))) in
+      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
       let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
       let _ = output a1 to endpoint(bob) in
       // debug "---> successfully typechecked alice_main in this scenario";
@@ -323,17 +340,15 @@ def bob_main () @ bob
     // debug printTyOf(s4);
     // debug "====";
 
-    // let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
-    // let rb1 = kdf<;0;nonce || enckey;0>(0x, bmaster, 0x) in 
-    // let cb1 = kdf<;0;nonce || enckey;1>(0x, bmaster, 0x) in 
+    let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
+    let rb1 = kdf<;0;nonce || enckey;0>(0x, bmaster, 0x) in 
+    let cb1 = kdf<;0;nonce || enckey;1>(0x, bmaster, 0x) in 
     
-    let rb1 = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];nonce || enckey;0>(0x, dh, 0x) in 
-    let cb1 = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];nonce || enckey;1>(0x, dh, 0x) in 
-
     let n_c = get_counter N_c_bob in
     corr_case long_skA in
     false_elim in
-    case st_aead_dec(cb1, a3, a1 ++ a2, n_c) {
+    let ma1_opt: Option (if bob_good[dh] then Name(ma1) else Data<adv>) = st_aead_dec(cb1, a3, a1 ++ a2, n_c) in
+    case ma1_opt {
       | None => None()
       | Some ma1 => Some(())
     }
