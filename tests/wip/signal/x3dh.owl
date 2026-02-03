@@ -191,11 +191,10 @@ corr [bo] ==> [ae1]
 
 // These corr assumptions are required because Owl doesn't emit the axiom that if the inputs
 // to an ODH declaration are corrupt, then the derived name is also corrupt.
-corr [long_skA] ==> [ma1]
-corr [long_skB] ==> [ma1]
-corr [bs] ==> [ma1]
-corr [ae1] ==> [ma1]
-
+corr [long_skA] /\ [ae1] ==> [ma1]
+corr [long_skB] /\ [bs] /\ [bo] ==> [ma1]
+// corr [ma1] ==> [long_skA] /\ [ae1]
+// corr [ma1] ==> [long_skB] /\ [bs] /\ [bo]
 
 // Alice initiates conversation with Bob by looking up Bob's prekey message
 // from the signal server and creating the first alice message
