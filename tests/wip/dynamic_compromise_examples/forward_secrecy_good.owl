@@ -1,15 +1,22 @@
+/*
+ *  Forward secrecy example with ephemeral DH keys for Alice and Bob.
+ *  Idea: Bob's long term signing key can be compromised, but as long as
+ *  the ephemeral DH keys are not compromised, the derived channel key should
+ *  remain secret.
+ *  TODO: we don't have a distinction between ephemeral and static, so this
+ *  example encompasses both the "good" and "bad" cases?
+ */ 
+
 locality alice
 locality bob
 
+// Ephemeral DH keys for Alice and Bob.
+// We lose forward secrecy, but retain basic non-temporal secrecy, if these are 
+// treated as static keys instead. 
 name alice_eph: DH @ alice
 name bob_eph: DH @ bob
 
-struct pubkeys {
-    _pkA: Data<adv> ||group||, // dhpk(alice_eph),
-    _pkB: dhpk(bob_eph)
-}
-
-// name bob_sigkey : sigkey pubkeys @ bob
+// Bob's signing key, which can be long-lived (?)
 name bob_sigkey : sigkey dhpk(bob_eph) @ bob
 
 name channel_secret : nonce @ alice, bob // lattice point for messages
@@ -42,14 +49,8 @@ def alice_main() @ alice: Option Unit =
     input bob_inpt in
     parse bob_inpt as bob_msg(bob_pk, bob_sig) in {
     corr_case bob_sigkey in
-    // case vrfy(get_vk(bob_sigkey), pubkeys(dhpk(get(alice_eph)), bob_pk), bob_sig) {
     case vrfy(get_vk(bob_sigkey), bob_pk, bob_sig) {
     | Some pubkeys_msg => {
-        // parse pubkeys_msg as pubkeys(pkA, pkB) in {
-        // guard is_group_elem(pkA) in
-        // guard is_group_elem(pkB) in        
-        // guard eq(pkA, dhpk(get(alice_eph))) in
-        // guard eq(pkB, bob_pk) in
         guard is_group_elem(pubkeys_msg) in
         guard eq(pubkeys_msg, bob_pk) in
         let ss = dh_combine(bob_pk, get(alice_eph)) in
@@ -73,8 +74,6 @@ def alice_main() @ alice: Option Unit =
             Some(())
         | None => None()
         }
-
-        // } otherwise None()
     }
     | None => None()
     }
@@ -84,7 +83,6 @@ def bob_main() @ bob: Option Unit =
     input alice_pk in
     guard is_group_elem(alice_pk) in
     pcase (alice_pk == dhpk(get(alice_eph))) in
-    // let pubkeys_sig = sign(get(bob_sigkey), pubkeys(alice_pk, dhpk(get(bob_eph)))) in
     let pubkeys_sig = sign(get(bob_sigkey), dhpk(get(bob_eph))) in
     let bob_msg = bob_msg(dhpk(get(bob_eph)), pubkeys_sig) in
     let _ = output bob_msg to endpoint(alice) in
@@ -100,7 +98,7 @@ def bob_main() @ bob: Option Unit =
     corr_case bob_eph in
     corr_case nameOf(k) in
     case adec(k, c) {
-    | Some ptxt =>
+    | Some ptxt => {
         let _ = assert(bob_clean[alice_pk] ==> ptxt == get(channel_secret)) in
 
         // TODO: bob should be able to prove alice_pk == dhpk(get(alice_eph)) here
@@ -111,5 +109,6 @@ def bob_main() @ bob: Option Unit =
         let _ = output c to endpoint(alice) in
 
         Some(())
+        }
     | None => None()
     }
