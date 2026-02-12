@@ -89,9 +89,9 @@ func correct_bmaster_arg() =
 predicate bob_good(dh) =
   dh == correct_bmaster_arg()
   /\
-  sec(ma1)
+  // sec(ma1)
   // disjunction of both sides of each DH shared secret being secret
-  // ((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
+  ((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
 
 
 nametype ma1_enc(dh) = st_aead (x:Name(ma1) {dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False})
@@ -201,18 +201,6 @@ odh L4 : bo, ae1 ->
       // (!(sec(long_skA) /\ sec(long_skB) /\ sec(ae1) /\ sec(bs) /\ sec(bo))) -> strict Amaster_corr
   }
 
-// off-chain ODH pairs for bob_main. These arise when the adv supplies
-// the wrong values for a1 and a2
-
-// odh L2_corr : long_skB, long_skA -> 
-//   {salt info.
-//       True -> strict Amaster_corr
-//   }
-
-// odh L4_corr : bo, long_skA -> 
-//   {salt info.
-//       True -> strict Amaster_corr
-//   }
 
 ////// Corruption scenarios (assumptions and modeling details)
 // In Signal, long_sskA and long_skA are the SAME byte sequence! because signal
