@@ -73,13 +73,6 @@ struct alice_prekey_msg {
 //           strict ma1_enc
 // }
 
-// // Corrupt version of Amaster
-// nametype Amaster_corr = dualkdf { salt info.
-//   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
-//             ||
-//           strict ma1_enc_corr
-// }
-
 func correct_amaster_arg() =
     dh_combine(dhpk(get(bs)), get(long_skA))
      ++ dh_combine(dhpk(get(long_skB)), get(ae1))
@@ -97,18 +90,52 @@ predicate bob_good(dh) =
   dh == correct_bmaster_arg()
   /\
   sec(ma1)
-  //((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
+  // disjunction of both sides of each DH shared secret being secret
+  // ((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
+
+
+nametype ma1_enc(dh) = st_aead (x:Name(ma1) {dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False})
+      aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)))
+      nonce N_c
+
+nametype Amaster(dh) = dualkdf { salt info.
+  True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+            ||
+          strict ma1_enc(dh)
+}
+
+
+/*
+Need to figure out exactly how to specify what goes into the IKM:
+  - need to have a more flexible relation between IKM values and names attached to outputs
+  - require:
+    - one DH pair
+    - concat of DH pairs (Signal)
+    - concat of DH pairs with extra constant public stuff (HPKE)
+    - ....?
+  - need at least one local name/DH pair/secret in the IKM so that it doesn't overlap other modules
+    (analogous to current disjointness check)
+  - 
+*/
+
+// odh L : bs, long_skA ++ bs, ae1 ++ .. ->
+//   something
+
+// alice: kdf(dh_combine(bs, long_skA))  :: by L1, x:KDFName<...>(dh_combine(bs, long_skA)){x = gkdf(dh_combine(bs, long_skA))}
+// alice: kdf(dh_combine(long_skB, ae1)) :: by L1, x:KDFName<...>(dh_combine(long_skB, ae1)){x = gkdf(dh_combine(long_skB, ae1))}
+
 
 // these need to be stacked instances of KDF names. wireguard -> nametypes
 odh L1 : bs, long_skA -> 
   {salt info self.
-      True -> strict dualkdf { salt2 info2.
-        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
-                  ||
-                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                  nonce N_c      
-      }
+      True -> strict Amaster(self)
+      // True -> strict dualkdf { salt2 info2.
+      //   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+      //             ||
+      //           strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+      //             aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+      //             nonce N_c      
+      // }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -120,13 +147,14 @@ odh L1 : bs, long_skA ->
 
 odh L2 : long_skB, ae1 -> 
   {salt info self.
-      True -> strict dualkdf { salt2 info2.
-        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
-                  ||
-                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                  nonce N_c      
-      }
+      True -> strict Amaster(self)
+      // True -> strict dualkdf { salt2 info2.
+      //   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+      //             ||
+      //           strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+      //             aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+      //             nonce N_c      
+      // }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -139,13 +167,14 @@ odh L2 : long_skB, ae1 ->
 
 odh L3 : bs, ae1 -> 
   {salt info self.
-      True -> strict dualkdf { salt2 info2.
-        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
-                  ||
-                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                  nonce N_c      
-      }
+      True -> strict Amaster(self)
+      // True -> strict dualkdf { salt2 info2.
+      //   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+      //             ||
+      //           strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+      //             aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+      //             nonce N_c      
+      // }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -156,13 +185,14 @@ odh L3 : bs, ae1 ->
 
 odh L4 : bo, ae1 -> 
   {salt info self.
-      True -> strict dualkdf { salt2 info2.
-        True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
-                  ||
-                strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
-                  aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
-                  nonce N_c      
-      }
+      True -> strict Amaster(self)
+      // True -> strict dualkdf { salt2 info2.
+      //   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+      //             ||
+      //           strict st_aead (x:Name(ma1) {((self == correct_bmaster_arg()) ==> True) /\ ((self != correct_bmaster_arg()) ==> False)})
+      //             aad x. ((self == correct_bmaster_arg()) ==> x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) /\ ((self != correct_bmaster_arg()) ==> False))
+      //             nonce N_c      
+      // }
       // True -> ((self == correct_bmaster_arg()) ==> strict Amaster) /\ ((self != correct_bmaster_arg()) ==> strict Amaster_corr)
       // self == correct_bmaster_arg() -> strict Amaster,
       // self != correct_bmaster_arg() -> strict Amaster_corr
@@ -277,7 +307,6 @@ def alice_main () @ alice
       let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
       let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
       let _ = output a1 to endpoint(bob) in
-      // debug "---> successfully typechecked alice_main in this scenario";
       Some(())
 
   }
@@ -350,7 +379,7 @@ def bob_main () @ bob
     let ma1_opt: Option (if bob_good[dh] then Name(ma1) else Data<adv>) = st_aead_dec(cb1, a3, a1 ++ a2, n_c) in
     case ma1_opt {
       | None => None()
-      | Some ma1 => Some(())
+      | Some ma1 => Some(()) // Some(rb1: if bob_good[dh] then ... ratchet_key ... else Data<adv>)
     }
   }
   otherwise None()

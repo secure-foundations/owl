@@ -736,10 +736,8 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
     mapM_ inferIdx is_case
@@ -750,10 +748,9 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           ((ixs, pxs), bdy) <- unbind bd
           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
+          let bpcases  = subst x a $ subst y c $ subst z ikm $ cases !! i
           (xs_case, pcases')  <- unbind bpcases
           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
           let (p, cases') = substs (zip xs_case is_case) pcases'

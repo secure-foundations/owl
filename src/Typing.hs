@@ -2676,7 +2676,7 @@ findValidIKMCalls a b c anns j nks = do
           Left _ -> return []
           Right (s, ips, i) -> do
               pth <- curModName
-              (ne1, ne2, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+              (ne1, ne2, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst b) (fst c) i j
               return [(ne1, ne2)]
     let dhs = concat dhs_
     b_results <- forM bs $ \b' -> do
@@ -2712,7 +2712,7 @@ matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExp
     Check (Either Bool (KDFStrictness, NameExp))
 matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
     pth <- curModName
-    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst c) i j
+    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) bFull (fst c) i j
     nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
     assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
     let (str, nt) = str_nts !! j
@@ -3237,7 +3237,7 @@ findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
           Left _ -> return []
           Right (s, ips, i) -> do
             pth <- curModName
-            (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips a c i j
+            (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips a b c i j
             return [ne1, ne2] 
     return $ map (\n -> pFlow (nameLbl n) advLbl) $ aundup $ names1 ++ names2 ++ (concat names3)
 
