@@ -193,6 +193,15 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [ma1]
 
 // TODO: corr-cases should also connect ae2, be2, to the long-term keys? Otherwise rb1 can be corrupt but
 // the DH shared secret for Bob's send ratchet may be secret
+// Maybe these for ephemeral key corruption?
+corr [long_skA] /\ [ae1] ==> [ae2]
+corr [long_skB] /\ [bs] /\ [bo] ==> [be2]
+
+// These are required because Owl doesn't emit the axiom that if the inputs
+// to an ODH declaration are corrupt, then the derived name is also corrupt.
+corr [long_skA] /\ [ae1] ==> [mb2]
+corr [long_skB] /\ [bs] /\ [bo] ==> [mb2]
+
 
 // def bob_double_ratchet_send(
 //   dh: Ghost, 
@@ -351,7 +360,7 @@ def bob_x3dh () @ bob
 
         let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
         let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-        let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+        let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
         let b2 = bob_message1(gbe2, x2) in
         let _ = output b2 to endpoint(alice) in 
         Some(()) // TODO: call bob_double_ratchet_recv here
