@@ -191,22 +191,23 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [ma1]
 // corr [ma1] ==> [long_skA] /\ [ae1]
 // corr [ma1] ==> [long_skB] /\ [bs] /\ [bo]
 
+// TODO: corr-cases should also connect ae2, be2, to the long-term keys? Otherwise rb1 can be corrupt but
+// the DH shared secret for Bob's send ratchet may be secret
 
+// def bob_double_ratchet_send(
+//   dh: Ghost, 
+//   rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv>, 
+//   gae2: if bob_good[dh] then dhpk(ae2) else Data<adv> ||group||
+// ) @ bob: Option Unit =
 
-def bob_double_ratchet_send(
-  dh: Ghost, 
-  rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv>, 
-  gae2: if bob_good[dh] then dhpk(ae2) else Data<adv> ||group||
-) @ bob: Option Unit =
+//   let gbe2 = dhpk(get(be2)) in 
 
-  let gbe2 = dhpk(get(be2)) in 
-
-  let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-  let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
-  let b2 = bob_message1(gbe2, x2) in
-  let _ = output b2 to endpoint(alice) in 
-  Some(()) // TODO: call bob_double_ratchet_recv here
+//   let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+//   let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+//   let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+//   let b2 = bob_message1(gbe2, x2) in
+//   let _ = output b2 to endpoint(alice) in 
+//   Some(()) // TODO: call bob_double_ratchet_recv here
 
 
 
@@ -337,13 +338,24 @@ def bob_x3dh () @ bob
         // assert(bob_good[dh] ==> a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)));
         assert(bob_good[dh] ==> a4 == dhpk(get(ae2)));
 
-        debug "----------------------------------------------";
-        debug "----------------------------------------------";
-        debug decideProp(bob_good[dh]);
-        debug "----------------------------------------------";
-        debug "----------------------------------------------";
+        // debug "----------------------------------------------";
+        // debug "----------------------------------------------";
+        // debug decideProp(bob_good[dh]);
+        // debug "----------------------------------------------";
+        // debug "----------------------------------------------";
 
-        call bob_double_ratchet_send(dh, rb1, a4)
+        // call bob_double_ratchet_send(dh, rb1, a4)
+        let gae2 = a4 in
+        
+        let gbe2 = dhpk(get(be2)) in 
+
+        let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+        let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+        let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+        let b2 = bob_message1(gbe2, x2) in
+        let _ = output b2 to endpoint(alice) in 
+        Some(()) // TODO: call bob_double_ratchet_recv here
+
       }
     }
   }
