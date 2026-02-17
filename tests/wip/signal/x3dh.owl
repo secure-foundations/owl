@@ -8,14 +8,9 @@ counter N_c_bob @ bob
 
 name long_skA : DH @ alice // Alices's long-term DH key (never changes)
 name long_skB : DH @ bob // Bob's long-term DH key (never changes)
-// odh L : long_skA, long_skB -> 
-//     {salt info.
-//         True -> enckey Name(d)
-//     }
 
 // Alice's ephemeral DH key (changes per individual connection, generated on the fly)
 name ae1 : DH @ alice
-// name ae2 : DH @ alice
 
 // Bob's ephemeral one-time DH key (changes per individual connection, set of them uploaded to server)
 name bo : DH @ bob 
@@ -23,13 +18,18 @@ name bo : DH @ bob
 name bs : DH @ bob 
 // there is one `bs` per set of `bo`s
 
-name be2 : DH @ bob
-
-name ma1 : nonce @ alice
-name ma2 : nonce @ alice
+name ma1 : nonce @ alice // Alice's first message
+name ma2 : nonce @ alice // Alice's second message (currently unused)
 
 // name long_sskA : sigkey(dhpk(ae1)) @ alice
 name long_sskB : sigkey(dhpk(bs)) @ bob
+
+// ---------- DOUBLE RATCHET NAMES ------------
+
+name ae2: DH @ alice // ephemeral 
+name be2: DH @ bob // ephemeral
+
+name mb2: nonce @ bob // Bob's first ratchet message
 
 
 struct bob_prekey_msg {
@@ -42,7 +42,13 @@ struct bob_prekey_msg {
 struct alice_prekey_msg {
   _a1: dhpk(ae1),
   _a2: dhpk(long_skA),
-  _a3: Data<adv>
+  _a3: Data<adv>,
+  _a4: dhpk(ae2) // Alice's public key for the first round of double ratchet
+}
+
+struct bob_message1 {
+  _b5: dhpk(be2),
+  _b6: Data<adv>
 }
 
 
@@ -60,21 +66,69 @@ func correct_bmaster_arg() =
      ++ dh_combine(dhpk(get(ae1)), get(bo))
 
 predicate bob_good(dh) =
+// predicate bob_good(a1, a2) =
   dh == correct_bmaster_arg()
+  // (
+  //   ((
+  //     (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs)))
+  //     \/
+  //     (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs)))
+  //   ) 
+  //   /\
+  //   (
+  //     (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB)))
+  //     \/
+  //     (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB)))
+  //   )  
+  //   /\
+  //   (
+  //     (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs)))
+  //     \/
+  //     (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs)))
+  //   ))
+  //   \/
+  //   ((
+  //     (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo)))
+  //     \/
+  //     (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo)))
+  //   ))
+  // )
   /\
   // disjunction of both sides of each DH shared secret being secret
   ((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
 
 
+// TODO: AEAD encryption in Signal contains a KDF inside of the encryption to produce the
+// IV. See https://signal.org/docs/specifications/doubleratchet/#recommended-cryptographic-algorithms
+nametype mb2_enc = st_aead Name(mb2)
+      aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
+      nonce N_c_bob
+
+
+// nametype Bratchet = dualkdf { salt info.
+//   True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+//             ||
+//           strict mb2_enc
+// }
+
+nametype ratchet1 = kdf { ikm info. 
+  True -> strict nonce // TODO: recursive KDF ratchet
+          || 
+          strict mb2_enc
+}
+
 nametype ma1_enc(dh) = st_aead (x:Name(ma1) {dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False})
-      aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)))
+      aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)))
       nonce N_c
 
 nametype Amaster(dh) = dualkdf { salt info.
-  True -> strict nonce /* TODO: this should be recursive KDF ratchet */ 
+  True -> strict ratchet1
             ||
           strict ma1_enc(dh)
 }
+
+
+// ------ ODH DECLS -----------
 
 // these need to be stacked instances of KDF names. wireguard -> nametypes
 odh L1 : bs, long_skA -> 
@@ -97,6 +151,12 @@ odh L4 : bo, ae1 ->
       True -> strict Amaster(self)
   }
 
+odh L5 : be2, ae2 ->
+ {salt info self.
+      True -> strict nonce // TODO: recursive KDF ratchet
+              || 
+              strict mb2_enc
+ }
 
 ////// Corruption scenarios (assumptions and modeling details)
 // In Signal, long_sskA and long_skA are the SAME byte sequence! because signal
@@ -131,9 +191,28 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [ma1]
 // corr [ma1] ==> [long_skA] /\ [ae1]
 // corr [ma1] ==> [long_skB] /\ [bs] /\ [bo]
 
+
+
+def bob_double_ratchet_send(
+  dh: Ghost, 
+  rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv>, 
+  gae2: if bob_good[dh] then dhpk(ae2) else Data<adv> ||group||
+) @ bob: Option Unit =
+
+  let gbe2 = dhpk(get(be2)) in 
+
+  let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+  let b2 = bob_message1(gbe2, x2) in
+  let _ = output b2 to endpoint(alice) in 
+  Some(()) // TODO: call bob_double_ratchet_recv here
+
+
+
 // Alice initiates conversation with Bob by looking up Bob's prekey message
 // from the signal server and creating the first alice message
-def alice_main () @ alice
+def alice_x3dh () @ alice
 : Option Unit =
 
   let long_vkB = get_vk(long_sskB) in
@@ -177,20 +256,21 @@ def alice_main () @ alice
       let dh = s1 ++ s2 ++ s3 ++ s4 in 
 
       let amaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in       
-      let ra1 = kdf<;0;nonce || enckey;0>(0x, amaster, 0x) in 
-      let ca1 = kdf<;0;nonce || enckey;1>(0x, amaster, 0x) in 
+      let ra1 = kdf<;0;kdfkey || enckey;0>(0x, amaster, 0x) in 
+      let ca1 = kdf<;0;kdfkey || enckey;1>(0x, amaster, 0x) in 
 
       pcase sec(ma1) in
       false_elim in
-      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA))) in
-      let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1) in
+      let gae2 = dhpk(get(ae2)) in
+      let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA)) ++ gae2) in
+      let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1, gae2) in
       let _ = output a1 to endpoint(bob) in
       Some(())
 
   }
   otherwise None()
 
-def bob_main () @ bob
+def bob_x3dh () @ bob
 : Option Unit = 
   let long_pkB = dhpk(get(long_skB)) in
 
@@ -201,10 +281,11 @@ def bob_main () @ bob
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in
-  parse i2 as alice_prekey_msg(a1, a2, a3) in {
+  parse i2 as alice_prekey_msg(a1, a2, a3, a4) in {
     guard is_group_elem(a1) in 
     guard is_group_elem(a2) in
-    // a1 -> gae1, a2 -> long_pkA, a3 -> x1
+    guard is_group_elem(a4) in
+    // a1 -> gae1, a2 -> long_pkA, a3 -> x1, a4 -> gae2
 
     pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
     pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
@@ -241,16 +322,30 @@ def bob_main () @ bob
     let dh = s1 ++ s2 ++ s3 ++ s4 in 
 
     let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
-    let rb1 = kdf<;0;nonce || enckey;0>(0x, bmaster, 0x) in 
-    let cb1 = kdf<;0;nonce || enckey;1>(0x, bmaster, 0x) in 
+    // let rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,bmaster,0x)) else Data<adv> 
+    //   = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in 
+    let rb1 = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in
+    let cb1 = kdf<;0;kdfkey || enckey;1>(0x, bmaster, 0x) in 
     
     let n_c = get_counter N_c_bob in
     corr_case long_skA in
     false_elim in
-    let ma1_opt: Option (if bob_good[dh] then Name(ma1) else Data<adv>) = st_aead_dec(cb1, a3, a1 ++ a2, n_c) in
+    let ma1_opt: Option (if bob_good[dh] then (x:Name(ma1){a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))}) else Data<adv>) = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
     case ma1_opt {
       | None => None()
-      | Some ma1 => Some(()) // Some(rb1: if bob_good[dh] then ... ratchet_key ... else Data<adv>)
+      | Some ma1 => {
+        // assert(bob_good[dh] ==> a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)));
+        assert(bob_good[dh] ==> a4 == dhpk(get(ae2)));
+
+        debug "----------------------------------------------";
+        debug "----------------------------------------------";
+        debug decideProp(bob_good[dh]);
+        debug "----------------------------------------------";
+        debug "----------------------------------------------";
+
+        call bob_double_ratchet_send(dh, rb1, a4)
+      }
     }
   }
   otherwise None()
+
