@@ -6,7 +6,7 @@ name Y : DH @ alice
 name n : nonce @ alice
 
 odh L : 
-    X, Y -> {salt info.
+    X, Y ++ 0x1234 -> {salt info.
         salt == 0x -> strict enckey Name(n)
     }
 

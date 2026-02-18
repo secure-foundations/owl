@@ -1308,21 +1308,24 @@ checkDecl d cont = withSpan (d^.spanOf) $
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclODH s b -> do
           ensureNoConcreteDefs
-          ((is, ps), (ne1, ne2, kdf)) <- unbind b
-          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do 
-                nt <- getNameType ne1
-                nt2 <- getNameType ne2
-                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
-                assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
-                b1 <- nameExpIsLocal ne1
-                b2 <- nameExpIsLocal ne2
-
-                assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
-                assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
-                let indsLocal = all (\i -> i `elem` (toListOf fv ne1 ++ toListOf fv ne2)) (is ++ ps)
+          ((is, ps), (atoms, kdf)) <- unbind b
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
+                let dhPairs = odhDHPairs atoms
+                assert ("ODH declaration must have at least one DH pair") $ not (null dhPairs)
+                forM_ dhPairs $ \(ne1, ne2) -> do
+                    nt <- getNameType ne1
+                    nt2 <- getNameType ne2
+                    assert ("Name " ++ show (owlpretty ne1) ++ " must be DH") $ nt `aeq` (mkSpanned $ NT_DH)
+                    assert ("Name " ++ show (owlpretty ne2) ++ " must be DH") $ nt2 `aeq` (mkSpanned $ NT_DH)
+                    b1 <- nameExpIsLocal ne1
+                    b2 <- nameExpIsLocal ne2
+                    assert ("Name must be local to module: " ++ show (owlpretty ne1)) $ b1
+                    assert ("Name must be local to module: " ++ show (owlpretty ne2)) $ b2
+                let allNames = concatMap (\(ne1, ne2) -> toListOf fv ne1 ++ toListOf fv ne2) dhPairs
+                let indsLocal = all (\i -> i `elem` allNames) (is ++ ps)
                 assert ("All indices in odh must appear in name expressions") indsLocal
                 checkNameType $ Spanned (d^.spanOf) $ NT_KDF KDF_IKMPos kdf
-          ensureODHDisjoint (bind (is, ps) (ne1, ne2))
+          ensureODHDisjoint (bind (is, ps) atoms)
           local (over (curMod . odh) $ insert s b) $ cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
@@ -1347,21 +1350,37 @@ checkDecl d cont = withSpan (d^.spanOf) $
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
 
-ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
+ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) [ODHIKMAtom] -> Check ()
 ensureODHDisjoint b = do
     cur_odh <- view $ curMod . odh
-    ((is, ps), (ne1, ne2)) <- unbind b
+    ((is, ps), atoms) <- unbind b
+    let newPairs = odhDHPairs atoms
     withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
-            forM_ cur_odh $ \(_, bnd2) -> do
-                    ((is2, ps2), ((ne1', ne2', _))) <- unbind bnd2
-                    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps2) $ do
-                            let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
-                                            (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
-                            let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
-                                            (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
-                            let pdisj = pNot $ pOr peq1 peq2
-                            (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
-                            assert ("ODH Disjointness") b
+        -- Check against existing declarations
+        forM_ cur_odh $ \(_, bnd2) -> do
+            ((is2, ps2), (atoms2, _)) <- unbind bnd2
+            let existingPairs = odhDHPairs atoms2
+            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps2) $ do
+                forM_ newPairs $ \(ne1, ne2) ->
+                    forM_ existingPairs $ \(ne1', ne2') ->
+                        checkPairDisjoint ne1 ne2 ne1' ne2'
+        -- Check within the new declaration itself
+        checkInternalDisjointness newPairs
+  where
+    checkPairDisjoint ne1 ne2 ne1' ne2' = do
+        let peq1 = pAnd (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne1'))
+                        (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne2'))
+        let peq2 = pAnd (pEq (mkSpanned $ AEGet ne2) (mkSpanned $ AEGet ne1'))
+                        (pEq (mkSpanned $ AEGet ne1) (mkSpanned $ AEGet ne2'))
+        let pdisj = pNot $ pOr peq1 peq2
+        (_, b) <- SMT.smtTypingQuery "" $ SMT.symAssert pdisj
+        assert ("ODH Disjointness") b
+
+    checkInternalDisjointness [] = return ()
+    checkInternalDisjointness ((ne1, ne2) : rest) = do
+        forM_ rest $ \(ne1', ne2') ->
+            checkPairDisjoint ne1 ne2 ne1' ne2'
+        checkInternalDisjointness rest
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -2664,22 +2683,34 @@ findValidSaltCalls a b c anns j nks = do
     findBestKDFCallResult results
 
 -- Find all possible KDF IKM position calls that match the given annotations `anns` and choose the best one.
--- Use `unconcatIKM` to split out all concats from the IKM position arg `b`. For each subrange `b'` of `b`, try to find
--- a name in `b'`; if successful, use either `matchKDF` or `matchODH` (depending on the selectors in the annotation)
--- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the IKM argument is public.
+-- ODH annotations are matched against the full IKM argument `b` directly using `matchODH`.
+-- Non-ODH (regular KDF) annotations are matched per-component: use `unconcatIKM` to split `b` into subranges,
+-- and for each subrange `b'`, try to find a name in `b'`; if successful, use `matchKDF`;
+-- if unsuccessful, check whether the IKM argument is public.
+-- The results of both passes are combined with `unifyKDFCallResult`.
 findValidIKMCalls :: (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)] 
                   -> Int -> [NameKind] -> Check (Either Bool (KDFStrictness, NameExp))
 findValidIKMCalls a b c anns j nks = do
-    bs <- unconcatIKM (fst b)
+    -- Collect DH pairs from ODH annotations (for kdfOOB)
     dhs_ <- forM anns $ \e ->
         case e of
           Left _ -> return []
           Right (s, ips, i) -> do
               pth <- curModName
-              (ne1, ne2, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst b) (fst c) i j
-              return [(ne1, ne2)]
+              (atoms, _, _) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) (fst b) (fst c) i j
+              return (odhDHPairs atoms)
     let dhs = concat dhs_
-    b_results <- forM bs $ \b' -> do
+    -- Try ODH annotations against the full IKM
+    odhResults <- forM anns $ \e ->
+        case e of
+          Left _ -> return Nothing
+          Right (s, ips, i) -> do
+              r <- matchODH dhs a b c (s, ips, i) j nks
+              return (Just r)
+    let odhResults' = catMaybes odhResults
+    -- Try non-ODH (regular KDF) annotations per-component
+    bs <- unconcatIKM (fst b)
+    nonODHResults <- forM bs $ \b' -> do
         bt' <- inferAExpr b' >>= normalizeTy
         b'_res <- forM anns $ \e -> do
             case e of
@@ -2690,50 +2721,52 @@ findValidIKMCalls a b c anns j nks = do
                     Just ne -> do
                         nt <- getNameType ne
                         case nt^.val of
-                          NT_KDF KDF_IKMPos kdfbody -> do
+                          NT_KDF KDF_IKMPos kdfbody ->
                               matchKDF dhs KDF_IKMPos ne kdfbody a ((fst b, b'), bt') c (i, is_case) j nks
-                          _ -> do
-                              Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
-              Right (s, ips, i) -> matchODH dhs a ((fst b, b'), bt') c (s, ips, i) j nks
+                          _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b', bt') c
+              Right _ -> return (Left True)  -- ODH annotations handled above; treat as neutral here
         findBestKDFCallResult b'_res
-    unifyKDFCallResult $ b_results
+    nonODHUnified <- unifyKDFCallResult nonODHResults
+    -- Combine ODH results with non-ODH results
+    unifyKDFCallResult (odhResults' ++ [nonODHUnified])
 
 
 -- Compute the result name exp for an ODH call using a particular ODH selector. Arguments:
 --  dhs: DH key pairs from the odh declaration
 --  a: salt argument
---  ((bFull, b), bt): ikm argument (`bFull` is the original argument, `b` is the concat component to analyze, `bt` is the type of `b`)
+--  (bExpr, bt): full IKM argument and its type
 --  c: info argument
 --  (s, ips, i): ODH selector (ODH name, sid/pid arguments, selector)
 --  j: index into the name kind row `nks`
 --  nks: output name kind row
 -- Returns either a boolean indicating whether the ODH call is public (if it doesn't match the case), or the strictness and the name exp of the result
-matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> ((AExpr, AExpr), Ty) -> (AExpr, Ty) -> (String, ([Idx], [Idx]), KDFSelector) -> Int -> [NameKind] -> 
+matchODH :: [(NameExp, NameExp)] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> (String, ([Idx], [Idx]), KDFSelector) -> Int -> [NameKind] ->
     Check (Either Bool (KDFStrictness, NameExp))
-matchODH dhs a ((bFull, b), bt) c (s, ips, i) j nks = do
+matchODH dhs a (bExpr, bt) c (s, ips, i) j nks = do
     pth <- curModName
-    (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) bFull (fst c) i j
+    (atoms, p, str_nts) <- getODHNameInfo (PRes $ PDot pth s) ips (fst a) bExpr (fst c) i j
     nks2 <- mapM (\(_, nt) -> getNameKind nt) str_nts
     assert ("Mismatch on name kinds for kdf: annotation says " ++ show (owlpretty $ NameKindRow nks) ++ " but key says " ++ show (owlpretty $ NameKindRow nks2)) $ L.isPrefixOf nks nks2
     let (str, nt) = str_nts !! j
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    let real_ss = dhCombine (dhpk (mkSpanned $ AEGet ne1)) (mkSpanned $ AEGet ne2)
-    -- We ask if one of the unconcatted elements is equal to the specified
-    -- DH name
-    beq <- decideProp $ pEq real_ss b 
-    case beq of 
+    let declaredIKM = mkODHIKMExpr atoms
+    -- Check if the full IKM matches the declared pattern
+    beq <- decideProp $ pEq declaredIKM bExpr
+    case beq of
       Just True -> do
           b2 <- decideProp p
-          b3 <- flowsTo (nameLbl ne1) advLbl
-          b4 <- flowsTo (nameLbl ne2) advLbl
-          -- If it is, and if the DH name is a secret, then we are good
-          if (b2 == Just True) then 
-                if (not b3) && (not b4) then do
-                      return $ Right (str, mkSpanned $ KDFName (fst a) bFull (fst c) nks2 j nt (ignore $ True))
-                else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
-          else Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
-      _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (b, bt) c
+          if b2 == Just True then do
+              -- Check secrecy: at least one DH pair must have both keys secret
+              let dhPairs = odhDHPairs atoms
+              pairResults <- forM dhPairs $ \(ne1, ne2) -> do
+                  b3 <- flowsTo (nameLbl ne1) advLbl
+                  b4 <- flowsTo (nameLbl ne2) advLbl
+                  return (not b3 && not b4)
+              if or pairResults then
+                  return $ Right (str, mkSpanned $ KDFName (fst a) bExpr (fst c) nks2 j nt (ignore $ True))
+              else
+                  return $ Left True
+          else Left <$> kdfArgPublic dhs KDF_IKMPos a (bExpr, bt) c
+      _ -> Left <$> kdfArgPublic dhs KDF_IKMPos a (bExpr, bt) c
 
 
 -- Compute the result name exp for a KDF call using a particular selector. Arguments:
@@ -2965,6 +2998,8 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           return $ tRefined tUnit "._" $ pNot $ pEq x' y'
       CLemma (LemmaCrossDH n) -> do
           -- Below states that, given g^x, y, and z, it is hard to construct h such that h^x = g^(y * z)
+          -- In the code, `x` above is the `n: NameExp` and `h` is the `[(x,t)]` argument. 
+          -- `y` and `z` range over all DH keypairs used in ODH declarations in the module
           assert ("Wrong number of arguments to cross_dh_lemma") $ length args == 1
           let [(x, t)] = args
           b <- tyFlowsTo t advLbl
@@ -2976,13 +3011,16 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
           let pSec m = pNot $ pFlow (nameLbl m) advLbl
           ps <- forM odhs $ \(_, b) -> do
-              ((is, ps), (n2, n3, _)) <- unbind b
-              p <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) ps) $ do
-                  n_disj <- liftM2 pAnd (pNot <$> pNameExpEq n n2) (pNot <$> pNameExpEq n n3)
-                  return $ pImpl (n_disj `pAnd` (pSec n))
-                                        (pNot $ pEq (dhCombine x $ aeGet n)
-                                                    (dhCombine (dhpk $ aeGet n2) (aeGet n3)))
-              return $ mkForallIdx (is ++ ps) p
+              ((is, qs), (atoms, _)) <- unbind b
+              let dhPairs = odhDHPairs atoms
+              p <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++ map (\i -> (i, (ignore $ show i, IdxPId))) qs) $ do
+                  perPair <- forM dhPairs $ \(n2, n3) -> do
+                      n_disj <- liftM2 pAnd (pNot <$> pNameExpEq n n2) (pNot <$> pNameExpEq n n3)
+                      return $ pImpl (n_disj `pAnd` (pSec n))
+                                            (pNot $ pEq (dhCombine x $ aeGet n)
+                                                        (dhCombine (dhpk $ aeGet n2) (aeGet n3)))
+                  return $ foldr pAnd pTrue perPair
+              return $ mkForallIdx (is ++ qs) p
           p <- normalizeProp $ (foldr pAnd pTrue ps) 
           return $ tLemma p
       CLemma (LemmaConstant)  -> do
@@ -3237,8 +3275,9 @@ findGoodKDFSplits a b c oann2 j = local (set tcScope $ TcGhost False) $ do
           Left _ -> return []
           Right (s, ips, i) -> do
             pth <- curModName
-            (ne1, ne2, p, str_nts) <- getODHNameInfo (PRes (PDot pth s)) ips a b c i j
-            return [ne1, ne2] 
+            (atoms, _, _) <- getODHNameInfo (PRes (PDot pth s)) ips a b c i j
+            let pairs = odhDHPairs atoms
+            return $ concatMap (\(ne1, ne2) -> [ne1, ne2]) pairs
     return $ map (\n -> pFlow (nameLbl n) advLbl) $ aundup $ names1 ++ names2 ++ (concat names3)
 
 aundup :: Alpha a => [a] -> [a]

@@ -319,8 +319,33 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
-type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
+type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar))
         [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
+
+-- An atomic component of the IKM pattern in an `odh` declaration.
+-- Either a DH pair `ne1, ne2` or a hex constant
+data ODHIKMAtom =
+      ODHDHPair NameExp NameExp    -- dh_combine(dhpk(ne1), ne2) == dh_combine(dhpk(ne2), ne1)
+    | ODHHexConst String           -- 0xABCD
+    deriving (Show, Generic, Typeable)
+
+-- extract all DH pairs from an IKM pattern
+odhDHPairs :: [ODHIKMAtom] -> [(NameExp, NameExp)]
+odhDHPairs atoms = [(ne1, ne2) | ODHDHPair ne1 ne2 <- atoms]
+
+-- Build the IKM AExpr from an IKM pattern.
+-- X,Y becomes dh_combine(dhpk(get(X)), get(Y))
+-- 0xABCD becomes AEHex "ABCD"
+-- Multiple atoms are concatenated with `concat`
+mkODHIKMExpr :: [ODHIKMAtom] -> AExpr
+mkODHIKMExpr atoms = foldl1 concatE (map atomToExpr atoms)
+  where
+    atomToExpr (ODHDHPair ne1 ne2) =
+        mkSpanned $ AEApp (topLevelPath "dh_combine") []
+            [mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1],
+             mkSpanned $ AEGet ne2]
+    atomToExpr (ODHHexConst h) = mkSpanned $ AEHex h
+    concatE x y = mkSpanned $ AEApp (topLevelPath "concat") [] [x, y]
 
 
 -- Decls are surface syntax
@@ -338,7 +363,7 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
-    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
+    | DeclODH String (Bind ([IdxVar], [IdxVar]) ([ODHIKMAtom], KDFBody))
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
@@ -531,6 +556,11 @@ depBindNames (DPDone _) = []
 depBindNames (DPVar _ s k) =
     let (_, k2) = unsafeUnbind k in 
     s : depBindNames k2
+
+instance Alpha ODHIKMAtom
+instance Subst Idx ODHIKMAtom
+instance Subst AExpr ODHIKMAtom
+instance Subst ResolvedPath ODHIKMAtom
 
 instance Alpha DeclX
 instance Subst ResolvedPath DeclX

@@ -245,18 +245,17 @@ resolveDecls (d:ds) =
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
       DeclODH s b -> do
-          (is, (ne1, ne2, kdfBody)) <- unbind b
-          ne1' <- resolveNameExp ne1
-          ne2' <- resolveNameExp ne2
+          (is, (atoms, kdfBody)) <- unbind b
+          atoms' <- mapM resolveODHAtom atoms
           (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \bpnts -> do 
-              (ixs, (p, nts)) <- unbind bpnts 
+          cases' <- forM cases $ \bpnts -> do
+              (ixs, (p, nts)) <- unbind bpnts
               p' <- resolveProp p
               nts' <- forM nts $ \(str, nt) -> do
                   nt' <- resolveNameType nt
                   return (str, nt')
               return $ bind ixs $ (p', nts')
-          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (atoms', bind args cases')
           p <- view curPath
           ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
@@ -405,6 +404,10 @@ resolveTy e = do
                       return $ TCase p' t1' t2'
                   THexConst a -> return $ THexConst a
 
+
+resolveODHAtom :: ODHIKMAtom -> Resolve ODHIKMAtom
+resolveODHAtom (ODHDHPair ne1 ne2) = ODHDHPair <$> resolveNameExp ne1 <*> resolveNameExp ne2
+resolveODHAtom (ODHHexConst h) = return (ODHHexConst h)
 
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 

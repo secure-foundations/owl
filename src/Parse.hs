@@ -714,6 +714,25 @@ parseKDFStrictness =
     (reserved "public" >> return KDFPub)
 
 
+-- Parse an ODH IKM pattern: a list of atoms separated by ++.
+-- Each atom is either a DH pair `ne1, ne2` or a hex constant `0xABCD`.
+parseODHIKMPattern :: Parser [ODHIKMAtom]
+parseODHIKMPattern = parseODHAtom `sepBy1` symbol "++"
+  where
+    parseODHAtom =
+        (try $ do
+            ne1 <- parseNameExp
+            symbol ","
+            ne2 <- parseNameExp
+            return $ ODHDHPair ne1 ne2)
+        <|>
+        (do whiteSpace
+            _ <- char '0'
+            _ <- char 'x'
+            z <- many hexDigit
+            whiteSpace
+            return $ ODHHexConst z)
+
 kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
 kdfCase = do 
     ois <- parseIdxParamBinds1
@@ -855,9 +874,7 @@ parseDecls =
         n <- identifier
         ps <- parseIdxParamBinds
         symbol ":"
-        ne1 <- parseNameExp
-        symbol ","
-        ne2 <- parseNameExp
+        atoms <- parseODHIKMPattern
         symbol "->"
         symbol "{"
         x <- identifier
@@ -869,7 +886,7 @@ parseDecls =
         symbol "."
         kdfCases <- kdfCase `sepBy1` (symbol ",")
         symbol "}"
-        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
+        return $ DeclODH n (bind ps $ (atoms, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
     )
     <|>
     (parseSpanned $ do

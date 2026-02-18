@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
+    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) ([ODHIKMAtom], KDFBody)),
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -611,16 +611,12 @@ inKDFBody kdfBody salt info self = do
 
 inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
 inODHProp salt ikm info = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
     cur_odh <- view $ curMod . odh
     ps <- forM cur_odh $ \(_, bnd2) -> do
-        ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
-        let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
-                                                          (mkSpanned $ AEGet ne2)
-                                               )
+        ((is, qs), (atoms, kdfBody)) <- unbind bnd2
+        let pd1 = pEq ikm (mkODHIKMExpr atoms)
         pd2 <- inKDFBody kdfBody salt info ikm
-        return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
+        return $ mkExistsIdx (is ++ qs) $ pd1 `pAnd` pd2
     return $ foldr pOr pFalse ps
 
 --getROStrictness :: NameExp -> Check' senv ROStrictness 
@@ -736,7 +732,7 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv ([ODHIKMAtom], Prop, [(KDFStrictness, NameType)])
 getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
@@ -747,7 +743,7 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
       Just bd -> do
           ((ixs, pxs), bdy) <- unbind bd
           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
-          let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
+          let (atoms, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
           let bpcases  = subst x a $ subst y c $ subst z ikm $ cases !! i
@@ -755,7 +751,7 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
           let (p, cases') = substs (zip xs_case is_case) pcases'
           assert ("KDF name row mismatch") $ j < length cases'
-          return (ne1, ne2, p, cases')
+          return (atoms, p, cases')
 
 
 getNameKind :: NameType -> Check' senv NameKind
