@@ -1,0 +1,26 @@
+locality alice
+
+name X1 : DH @ alice
+name Y1 : DH @ alice
+name X2 : DH @ alice
+name Y2 : DH @ alice
+
+name n : nonce @ alice
+
+odh L : X1, Y1 ++ X2, Y2 -> {salt info.
+    True -> enckey Name(n)
+}
+
+corr [X1] ==> [n]
+corr [Y1] ==> [n]
+corr [X2] ==> [n]
+corr [Y2] ==> [n]
+
+def main() @ alice : Unit =
+    corr_case X1 in
+    corr_case Y1 in
+    corr_case X2 in
+    corr_case Y2 in
+    let k = kdf<;odh L[0];enckey;0>(0x, dh_combine(dhpk(get(X1)), get(Y1)) ++ dh_combine(dhpk(get(X2)), get(Y2)), 0x) in
+    let c = aenc(k, get(n)) in
+    output c

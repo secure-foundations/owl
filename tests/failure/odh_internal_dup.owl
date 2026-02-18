@@ -1,0 +1,13 @@
+locality alice
+
+name X : DH @ alice
+name Y : DH @ alice
+
+name n : nonce @ alice
+
+// (X, Y) appears twice -- should fail internal ODH disjointness check
+odh L : X, Y ++ 0x1234 ++ X, Y -> {salt info.
+    True -> enckey Name(n)
+}
+
+def main() @ alice : Unit = ()

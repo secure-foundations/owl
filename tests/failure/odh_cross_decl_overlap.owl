@@ -1,0 +1,18 @@
+locality alice
+
+name X : DH @ alice
+name Y : DH @ alice
+
+name n : nonce @ alice
+name n2 : nonce @ alice
+
+odh L1 : X, Y -> {salt info.
+    True -> enckey Name(n)
+}
+
+// L2 reuses the pair (X, Y) -- should fail ODH disjointness check
+odh L2 : X, Y ++ 0x1234 -> {salt info.
+    True -> enckey Name(n2)
+}
+
+def main() @ alice : Unit = ()

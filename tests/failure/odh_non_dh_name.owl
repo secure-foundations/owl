@@ -1,0 +1,13 @@
+locality alice
+
+name X : DH @ alice
+name K : nonce @ alice
+
+name n : nonce @ alice
+
+// K has name type `nonce`, not `DH`
+odh L : X, K -> {salt info.
+    True -> enckey Name(n)
+}
+
+def main() @ alice : Unit = ()

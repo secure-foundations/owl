@@ -1,0 +1,13 @@
+locality alice
+
+name X : DH @ alice
+name Y : DH @ alice
+
+name n : nonce @ alice
+
+// (X, Y) and (Y, X) are the same DH pair -- should fail disjointness check
+odh L : X, Y ++ Y, X -> {salt info.
+    True -> enckey Name(n)
+}
+
+def main() @ alice : Unit = ()
