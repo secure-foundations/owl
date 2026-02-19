@@ -2728,7 +2728,10 @@ findValidIKMCalls a b c anns j nks = do
         findBestKDFCallResult b'_res
     nonODHUnified <- unifyKDFCallResult nonODHResults
     -- Combine ODH results with non-ODH results
-    unifyKDFCallResult (odhResults' ++ [nonODHUnified])
+    -- Find the best result from the ODH hints, then unify the winner with the 
+    -- per-component non-ODH result via unifyKDFCallResult 
+    odhUnified <- findBestKDFCallResult odhResults'
+    unifyKDFCallResult [odhUnified, nonODHUnified]
 
 
 -- Compute the result name exp for an ODH call using a particular ODH selector. Arguments:
