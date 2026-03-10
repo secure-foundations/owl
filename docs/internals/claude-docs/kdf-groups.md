@@ -145,7 +145,8 @@ the ODH security assumption for the key pair `(A, B)`.
 **`salt_expr`**: The first KDF argument. Allowed forms:
 - A nametype kdfkey declared in this group (e.g., `Chain1`).
 - A hex constant (e.g., `0x`).
-- A public computed value (e.g., `crh(construction())`). *(Syntax gap: see I1)*
+- Any public expression: a `func` applied to public arguments (e.g., `crh(construction())`,
+  `honest_c1<i@n>()`).
 
 **`ikm_expr`**: The second KDF argument (the key material). An `ikm_expr` is a
 `++`-concatenation of one or more **ikm atoms**, where each atom is one of:
@@ -175,7 +176,8 @@ Representative examples:
 
 **`info_expr`**: The third KDF argument. Allowed forms:
 - A hex constant (e.g., `0x`).
-- A public computed value (e.g., `base_nonce_kdf_info()`). *(Syntax gap: see I1)*
+- Any public expression: a `func` applied to public arguments (e.g., `base_nonce_kdf_info()`,
+  `AuthEncap_honest_info<session i>()`).
 
 **`output_spec`**: Describes what type(s) the KDF output has. Forms:
 - `-> T` — a single output of type `T`.
@@ -448,7 +450,7 @@ The issue numbers below refer to that document.
 
 | # | Summary | Severity |
 |---|---------|----------|
-| I1 | Public computed values (e.g., `crh(f())`) not allowed in salt/info | Syntax gap |
+| ~~I1~~ | ~~Public computed values (e.g., `crh(f())`) not allowed in salt/info~~ | **Resolved** |
 | ~~I2~~ | ~~DH public keys (`dhpk(N)`) not allowed in ikm~~ | **Resolved** |
 | I3 | No index-inequality constraints between overlapping rules | Soundness risk |
 | I4 | No catch-all / negation pattern for rule conditions | Expressiveness |

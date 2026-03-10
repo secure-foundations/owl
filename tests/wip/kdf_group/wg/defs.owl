@@ -192,9 +192,9 @@ kdf_group WG_KDF {
     // an unlabeled kdf call. The salt for this rule is expressed as the
     // ghost function honest_c1<i@n>() which describes the expected value.
     //
-    // ISSUE (I1): honest_c1<i@n>() is a public computed value in the salt
-    // position. The current syntax allows only kdfkeys and hex constants
-    // there; this is a known gap.
+    // RESOLVED (I1): honest_c1<i@n>() is a public computed value (a func
+    // applied to public arguments), and public expressions are now allowed
+    // in the salt and info positions.
     //
     // The output type also includes an AEAD key for encrypting the
     // initiator's static public key in message 1.

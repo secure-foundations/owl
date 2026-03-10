@@ -8,7 +8,7 @@ This document records issues discovered while converting the WireGuard case stud
 
 | # | Category | Severity | Affects |
 |---|----------|----------|---------|
-| I1 | Public constant as salt | Syntax gap | `L0` rule in `defs.owl` |
+| ~~I1~~ | ~~Public constant as salt~~ | **Resolved** | `L0` rule in `defs.owl` |
 | ~~I2~~ | ~~DH public key in ikm~~ | **Resolved** | `L0`, `L3` rules |
 | I3 | Index-inequality between rules | Soundness risk | `L2`/`L2_corr`, `L5`/`L5_corr` |
 | I4 | No catch-all / negation pattern | Expressiveness | Many rules |
@@ -28,33 +28,18 @@ This document records issues discovered while converting the WireGuard case stud
 
 ---
 
-## I1 — Public constant as salt
+## ~~I1 — Public constant as salt~~ **[RESOLVED]**
 
-**Rule:** The `kdf_group` spec says the **salt** argument may contain
-`kdfkey`s and hex constants.
+**Resolution:** Any `func` applied to public arguments produces a public result
+(label `adv`) and is now allowed in the `salt_expr` and `info_expr` positions.
+Additionally, `kdf L0` has been removed: C1 is computed inline at call sites
+using an unlabeled `kdf` call, so no `kdf_group` rule for that step is needed.
+The remaining instance — `honest_c1<i@n>()` in the salt of `odh L1` — is a
+public function of public arguments and is valid under this rule.
 
-**Problem:** WireGuard's first KDF step derives C1 as
-
-```
-C1 = KDF(crh(construction()), dhpk(E_init), 0x)
-```
-
-where the salt is `crh(construction())` — a collision-resistant hash of a
-public string constant.  This is neither a named `kdfkey` nor a bare hex
-literal; it is a *computed* public constant.
-
-**Impact:** The rule `kdf L0` in the new `defs.owl` writes
-
-```
-kdf L0<i@n> : crh(construction()), dhpk(E_init<i@n>), 0x -> C1<@n>
-```
-
-which is outside the stated syntactic envelope.
-
-**Suggested resolution:** Allow arbitrary *public functions of public
-values* (i.e., terms whose label is `adv`) in the salt and info positions,
-not just literal hex constants.  Alternatively, treat named `func`
-definitions that return a constant as sugar for hex constants.
+~~**Problem:** The salt `crh(construction())` in the C1 derivation was a computed
+public constant, not a bare kdfkey or hex literal, so `kdf L0` fell outside the
+stated syntactic envelope.~~
 
 ---
 
