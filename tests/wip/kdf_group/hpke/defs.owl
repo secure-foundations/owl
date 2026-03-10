@@ -156,7 +156,9 @@ kdf_group HPKE_KDF {
     // nametype. Now it is a plain kdfkey; the security conditions that were
     // encoded in psk_t are instead captured by rules L_sched_* below,
     // where psk (wrapped in dh_secret_kdf_ikm) appears in the ikm position.
-    // See ISSUE I12 (dualkdf keyword removal) and ISSUE I15 (ikm wrapping).
+    // See ISSUE I12 (dualkdf keyword removal). RESOLVED (I15): ikm wrapping
+    // via dh_secret_kdf_ikm is now valid — a func applied to a kdfkey expands
+    // to a concatenation of public atoms and a kdfkey atom, which is allowed.
     name psk : kdfkey // @ sender, receiver
 
     // -----------------------------------------------------------------
@@ -184,32 +186,20 @@ kdf_group HPKE_KDF {
     //   odh se<i>: skR, skE<i> -> { salt info. ... }   (ephemeral DH)
     // and at call sites both witnesses were listed: odh ss[0], odh se<i>[0].
     //
-    // ISSUE (I13): The new syntax's odh rule form is:
-    //   odh L : salt, dh_combine(X, Y), info -> output_type
-    // which supports exactly ONE DH secret in the ikm position. HPKE's
-    // KEM step concatenates TWO DH secrets (skE<i>×skR and skS×skR).
-    // This is not directly expressible with a single dh_combine(X,Y).
-    // We write the tentative multi-DH form
-    //   dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)
-    // below; a syntax extension allowing concatenated DH secrets in the
-    // ikm position of odh rules is needed.
+    // RESOLVED (I13): The ikm_expr grammar now allows ++ concatenation of
+    // dh_combine atoms; multiple DH secrets in one rule are valid.
     //
-    // ISSUE (I14): Beyond the concatenation, the DH secrets are further
-    // wrapped inside lbl_ikm(kem_suite_id(), eae_prk(), ...) — a public
-    // function application — before being passed as the ikm argument.
-    // The new syntax allows bare dh_combine(X,Y) in ikm; it does not
-    // accommodate function-wrapped or concatenated DH expressions. An
-    // extension analogous to I1 (public functions in salt/info) is needed
-    // for the ikm position as well.
+    // RESOLVED (I14): func definitions in the ikm_expr are expanded by the
+    // checker. lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(...) ++ ...)
+    // expands to a sequence of public atoms followed by dh_combine atoms,
+    // all of which are valid ikm atoms. The rule is classified odh.
     // -----------------------------------------------------------------
 
     // L_kem<i>: KEM shared_secret, correct case for session i.
     // Applies when: info == AuthEncap_honest_info<session i>().
     // Replaces the `exists i. info == AuthEncap_honest_info<session i>()`
     // branch of both old `odh ss` and `odh se<i>`.
-    /* ISSUE (I13, I14): ikm is lbl_ikm(..., dh_combine(skE<i>,skR) ++
-       dh_combine(skS,skR)); concatenated multi-DH and lbl_ikm wrapping
-       are not directly expressible in the new syntax. */
+    /* RESOLVED (I13, I14): lbl_ikm wrapping expands to public ++ dh_combine atoms. */
     odh L_kem<i> : 0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
         AuthEncap_honest_info<session i>()
@@ -218,7 +208,7 @@ kdf_group HPKE_KDF {
     // L_kem_corr<i>: KEM step, ephemeral skE<i> is present in ikm but
     // the info does NOT match the honest info for session i. Replaces the
     // `info != AuthEncap_honest_info<session i>()` branch of `odh se<i>`.
-    /* ISSUE (I13, I14): same multi-DH and lbl_ikm wrapping issue. */
+    /* RESOLVED (I13, I14): same lbl_ikm wrapping — now valid. */
     /* ISSUE (I4): cannot express `info != AuthEncap_honest_info<session i>()`
        as a negation/catch-all pattern. The `0x` below is a placeholder;
        proper handling requires either a `where` clause (see I3) or a
@@ -235,7 +225,7 @@ kdf_group HPKE_KDF {
     // Note: since this uses only dh_combine(skS, skR) (not the ephemeral),
     // it is technically not a multi-DH rule; it covers the "static-only"
     // contribution when no honest ephemeral is present.
-    /* ISSUE (I13, I14): lbl_ikm wrapping around the single DH secret. */
+    /* RESOLVED (I13, I14): lbl_ikm wrapping around a single dh_combine — now valid. */
     /* ISSUE (I4): This is effectively a catch-all when no L_kem<i> matches. */
     odh L_kem_ss_corr : 0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skS, skR)),
@@ -258,15 +248,10 @@ kdf_group HPKE_KDF {
     // The three conditional branches become three separate kdf rules.
     // Corrupted variants (old shared_secret_corr_t) add three more rules.
     //
-    // ISSUE (I15): In WireGuard, the PSK appears directly as the ikm
-    // argument in the kdf rule: `kdf L6 : C6, psk<@n,m>, 0x -> ...`.
-    // In HPKE, the psk is WRAPPED in dh_secret_kdf_ikm(psk) =
-    // lbl_ikm(hpke_suite_id(), secret_string(), psk_bytes) before being
-    // used as ikm. The new kdf rule syntax expects a bare kdfkey name
-    // (or hex constant, or dh_combine) in the ikm position; it does not
-    // accommodate function application on a kdfkey. We write
-    // `dh_secret_kdf_ikm(psk)` tentatively as the ikm pattern, pending
-    // a syntax extension analogous to I1/I14.
+    // RESOLVED (I15): dh_secret_kdf_ikm(psk) expands to
+    // hpke_v1() ++ hpke_suite_id() ++ "secret" ++ psk — a concatenation
+    // of public atoms followed by a kdfkey atom. This is now a valid ikm
+    // expression; the rule is classified kdf and PRF security applies.
     //
     // ISSUE (I5, applied to HPKE): The correctness of L_sched_key's output
     // type (an honest encryption key rather than hpke_corr_key_t) relies
@@ -279,13 +264,12 @@ kdf_group HPKE_KDF {
 
     // L_sched_nonce: key_schedule → base nonce (correct case)
     // salt has type SS_t (honest KEM output), ikm is psk-derived.
-    /* ISSUE (I15): ikm is dh_secret_kdf_ikm(psk), not bare psk */
+    /* RESOLVED (I15): dh_secret_kdf_ikm(psk) is a valid ikm atom sequence. */
     kdf L_sched_nonce : SS_t, dh_secret_kdf_ikm(psk), base_nonce_kdf_info()
         -> public nonce |counter|
 
     // L_sched_key: key_schedule → encryption key (correct case)
-    /* ISSUE (I15): same ikm wrapping. */
-    /* RESOLVED (I7): The nonce pattern uses label-free gkdf<type; index>(self, ...)
+    /* RESOLVED (I15, I7): ikm wrapping now valid; gkdf uses label-free form gkdf<type; index>(self, ...)
        where `self` refers to the salt value of the current rule (the SS_t
        shared secret). No label-passing mechanism is needed. */
     kdf L_sched_key : SS_t, dh_secret_kdf_ikm(psk), key_kdf_info()
@@ -296,14 +280,14 @@ kdf_group HPKE_KDF {
                                          dh_secret_kdf_ikm(psk), base_nonce_kdf_info()))
 
     // L_sched_export: key_schedule → export key (correct case)
-    /* ISSUE (I15): same ikm wrapping. */
+    /* RESOLVED (I15): same — dh_secret_kdf_ikm(psk) is a valid ikm atom sequence. */
     kdf L_sched_export : SS_t, dh_secret_kdf_ikm(psk), export_kdf_info()
         -> strict nonce
 
     // Corrupted variants: when the shared_secret has type SS_corr_t
     // (produced by L_kem_corr<i> or L_kem_ss_corr instead of L_kem<i>).
     // These replace the old shared_secret_corr_t nametype's three branches.
-    /* ISSUE (I15): same ikm wrapping for all three rules below. */
+    /* RESOLVED (I15): same — dh_secret_kdf_ikm(psk) valid for all three rules below. */
     kdf L_sched_nonce_corr : SS_corr_t, dh_secret_kdf_ikm(psk), base_nonce_kdf_info()
         -> public nonce |counter|
 

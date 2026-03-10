@@ -9,21 +9,21 @@ This document records issues discovered while converting the WireGuard case stud
 | # | Category | Severity | Affects |
 |---|----------|----------|---------|
 | I1 | Public constant as salt | Syntax gap | `L0` rule in `defs.owl` |
-| I2 | DH public key in ikm | Syntax gap | `L0`, `L3` rules |
+| ~~I2~~ | ~~DH public key in ikm~~ | **Resolved** | `L0`, `L3` rules |
 | I3 | Index-inequality between rules | Soundness risk | `L2`/`L2_corr`, `L5`/`L5_corr` |
 | I4 | No catch-all / negation pattern | Expressiveness | Many rules |
 | I5 | Implicit honesty via types (C6_dual) | Soundness assumption | `L6` rules |
-| I6 | Index-parametric helper functions | Mechanical | `tk1_of_c6`, `tk2_of_c6` |
-| I7 | Labels as values in output-type predicates | Syntax gap | `L6` output types |
-| I8 | `honest_cx` functions and new label syntax | Mechanical | `defs.owl` |
+| ~~I6~~ | ~~Index-parametric helper functions~~ | **Resolved** | `tk1_of_c6`, `tk2_of_c6` |
+| ~~I7~~ | ~~Labels as values in output-type predicates~~ | **Resolved** | `L6` output types |
+| ~~I8~~ | ~~`honest_cx` functions and new label syntax~~ | **Resolved** | `defs.owl` |
 | I9 | Multi-witness kdf calls | Syntax gap | `init.owl`, `resp.owl` |
 | I10 | PSK/no-PSK branch and rule selection | Design reminder | `init.owl`, `resp.owl` |
 | I11 | Session-index specificity of C1 | Type precision | `defs.owl` |
 | I12 | `dualkdf` keyword removed | Design change | `defs.owl` |
-| I13 | Concatenated DH secrets in ODH ikm (HPKE) | Syntax gap | `L_kem<i>`, `L_kem_corr<i>` rules |
-| I14 | Function-wrapped DH expressions in ikm (HPKE) | Syntax gap | `L_kem*` rules, `L_sched*` rules |
-| I15 | Function-wrapped kdfkey in ikm (`dh_secret_kdf_ikm`) (HPKE) | Syntax gap | `L_sched*` rules |
-| I16 | Unindexed ghost label for `AuthDecap_shared_secret` (HPKE) | Mechanical | `defs.owl` |
+| ~~I13~~ | ~~Concatenated DH secrets in ODH ikm (HPKE)~~ | **Resolved** | `L_kem<i>`, `L_kem_corr<i>` rules |
+| ~~I14~~ | ~~Function-wrapped DH expressions in ikm (HPKE)~~ | **Resolved** | `L_kem*` rules, `L_sched*` rules |
+| ~~I15~~ | ~~Function-wrapped kdfkey in ikm (`dh_secret_kdf_ikm`) (HPKE)~~ | **Resolved** | `L_sched*` rules |
+| ~~I16~~ | ~~Unindexed ghost label for `AuthDecap_shared_secret` (HPKE)~~ | **Resolved** | `defs.owl` |
 
 
 ---
@@ -58,35 +58,17 @@ definitions that return a constant as sugar for hex constants.
 
 ---
 
-## I2 — DH public key in the ikm position
+## ~~I2 — DH public key in the ikm position~~ **[RESOLVED]**
 
-**Rule:** The **ikm** argument may contain `kdfkey`s, DH shared secrets
-(`dh_combine(X,Y)`), and hex constants.
+**Resolution:** The `ikm_expr` grammar now allows any **public expression** as
+an ikm atom, including `dhpk(N)` for a group DH name `N`.  Since `dhpk(N)` is
+public (label `adv`), it requires no ODH assumption; the rule is classified `kdf`
+and the security treatment is standard PRF.  Both `L0` (ikm = `dhpk(E_init)`)
+and `L3` (ikm = `dhpk(E_resp)`) are valid under the new grammar.
 
-**Problem 1 (C1 derivation):** As noted in I1, the ikm for the C1 step is
-`dhpk(E_init<i@n>)` — the *public* DH key, not a shared secret.  This is
-used as part of the `MixHash`/`MixKey` logic in Noise and is not a secret
-at all.
-
-**Problem 2 (C4 derivation):** WireGuard's C3→C4 step (new rule `L3`)
-uses the responder's ephemeral *public key* as ikm:
-
-```
-C4 = KDF(C3, dhpk(E_resp), 0x)
-```
-
-This binds the hash chain to the responder's ephemeral without a DH
-exchange.  `dhpk(E_resp)` is a group element in the public part of the
-transcript, not a DH shared secret.
-
-**Impact:** The rules `L0` and `L3` both use `dhpk(...)` in the ikm
-position, which falls outside the stated categories.
-
-**Suggested resolution:** Add a fourth allowed form for the ikm position:
-**DH public keys** (`dhpk(N)` for a group name `N` declared in the
-`kdf_group`), distinct from DH shared secrets (`dh_combine(N1,N2)`).  The
-security treatment would be that of a regular PRF (no ODH assumption
-needed, since no secret is in ikm).
+~~**Problem:** `dhpk(N)` — the DH public key — appeared in the ikm position of
+rules `L0` and `L3` but fell outside the originally stated categories (kdfkey,
+hex constant, dh_combine).~~
 
 ---
 
@@ -189,68 +171,46 @@ requirement and enforced in the type system.
 
 ---
 
-## I6 — `tk1_of_c6` / `tk2_of_c6` functions need index parameters
+## ~~I6 — `tk1_of_c6` / `tk2_of_c6` functions need index parameters~~ **[RESOLVED]**
 
-**Problem:** The old functions
+**Resolution:** `gkdf` calls use the label-free form `gkdf<type; index>(...)`, so
+helper functions like `tk1_of_c6` do not need to reference a specific group label
+and do not need to be made parametric in session indices for this reason.  The
+functions can remain unindexed (or be indexed only for other reasons).
 
-```
-func tk1_of_c6(x, psk) = gkdf<enckey||enckey;0>(gkdf<kdfkey||nonce||enckey;0>(x, psk, 0x), 0x, 0x)
-```
+~~**Problem:** The old functions~~
 
-used unlabeled `gkdf<type;index>` calls.  In the new syntax, every
-`gkdf` call must reference a specific group label, e.g.,
-`gkdf<WG_KDF.L6<@n,m>; ...>`.  But `L6` carries index parameters `@n,m`,
-so `tk1_of_c6` must be made parametric in `@n,m`:
-
-```
-func tk1_of_c6<@n,m>(x, psk) = gkdf<WG_KDF.L7<@n,m>; enckey||enckey; 0>(
-    gkdf<WG_KDF.L6<@n,m>; kdfkey||nonce||enckey; 0>(x, psk, 0x), 0x, 0x)
-```
-
-This is a mechanical change but requires the function definition syntax to
-support index parameters, and the usage sites inside output-type
-predicates (inside `kdf_group` rule bodies) to instantiate those indices.
+~~used unlabeled `gkdf<type;index>` calls.  In the new syntax, every `gkdf` call
+must reference a specific group label.  But `L6` carries index parameters `@n,m`,
+so `tk1_of_c6` must be made parametric in `@n,m`.~~
 
 ---
 
-## I7 — Passing kdf_group labels as arguments to output-type predicates
+## ~~I7 — Passing kdf_group labels as arguments to output-type predicates~~ **[RESOLVED]**
 
-**Problem:** The L6 rule's output type references the authentication events
-`happened(key_confirm_responder_recv<@m>(tk1_of_c6<@n,m>(L6)))`.  Here
-`L6` is being passed as an argument to `tk1_of_c6` to select which gkdf
-label to use internally.
+**Resolution:** `gkdf` calls use the label-free form `gkdf<type; index>(self, ...)`,
+where `self` is a bound variable referring to the runtime value of the current
+rule's salt.  Helper functions such as `tk1_of_c6` do not need a label argument
+to select the right `gkdf` — they take the salt value directly.  No label-passing
+mechanism is required.
 
-The new syntax has no established mechanism for passing kdf_group labels
-as values in output-type expressions.  In the old `C6_dual` nametype, the
-equivalent used `salt` and `self` bound variables that referred to the
-runtime values of the salt and ikm respectively.
-
-**Suggested resolution:** Either
-
-(a) Retain `self`/`salt` binding as in the old nametype syntax, allowing
-output-type expressions to reference the inputs to the current rule; or
-
-(b) Introduce a first-class concept of "the current rule label" that can
-be referenced inside an output-type expression.
-
-In the new `defs.owl` we write `tk1_of_c6<@n,m>(L6)` as a tentative
-notation; the exact mechanism needs to be designed.
+~~**Problem:** The L6 rule's output type passes `L6` as an argument to `tk1_of_c6`
+to select which gkdf label to use internally.  The new syntax had no mechanism
+for passing kdf_group labels as values in output-type expressions.~~
 
 ---
 
-## I8 — Updating `honest_cx` ghost functions for new label syntax
+## ~~I8 — Updating `honest_cx` ghost functions for new label syntax~~ **[RESOLVED]**
 
-**Problem:** The `honest_c1` through `honest_c7` functions are used in
-proof obligations (`kdf_inj_lemma`, `cross_dh_lemma`, etc.) in `init.owl`
-and `resp.owl`.  They use `gkdf<type;index>` calls without labels.  In the
-new system every `gkdf` call must carry a group label.
+**Resolution:** `gkdf` calls use the label-free form `gkdf<type; index>(...)`.
+The `honest_c1` through `honest_c7` functions (and the HPKE equivalents) do not
+need to reference group labels at all — the ghost value is determined entirely by
+the runtime arguments.  No label-threaded rewrite of these functions is required.
 
-The updated functions `honest_c3`, `honest_c4`, and `honest_c5` reference
-multiple nested gkdf calls.  In particular `honest_c4` now calls
-`gkdf<WG_KDF.L3<j,n_pk,m>; ...>` but the original L3 rule for C4 has an
-index structure `L3<j@n,m>` (where `n` is the initiator and `j@m` is the
-responder's ephemeral session).  The exact index assignment in `honest_c4`
-needs careful review.
+~~**Problem:** The `honest_c1` through `honest_c7` functions used `gkdf<type;index>`
+calls without labels, and in the new system every `gkdf` call was required to
+carry a group label, creating a mechanical rewrite burden and index-assignment
+questions for functions like `honest_c4`.~~
 
 ---
 
@@ -369,32 +329,11 @@ new instance of a WireGuard issue, it is cross-referenced below.
 
 ---
 
-## I13 — Concatenated DH secrets in the ODH ikm position (HPKE)
+## ~~I13 — Concatenated DH secrets in the ODH ikm position (HPKE)~~ **[RESOLVED]**
 
-**Background:** The WireGuard ODH rules use exactly one DH secret per rule:
-
-```
-odh L1<i@n,m> : C1<@n>, dh_combine(E_init<i@n>, S_resp<@m>), 0x -> ...
-```
-
-**Problem:** HPKE's KEM step computes:
-
-```
-shared_secret = KDF(0x,
-    lbl_ikm(kem_suite_id(), eae_prk(), dh(skE<i>, skR) ++ dh(skS, skR)),
-    lbl_info(...))
-```
-
-The ikm contains the **concatenation** of two DH secrets: `dh_combine(skE<i>, skR)`
-and `dh_combine(skS, skR)`.  In the old syntax this was handled by declaring
-two separate ODH instances (`odh ss` and `odh se<i>`) and listing both as
-witnesses at call sites.
-
-In the new syntax, each `odh` rule has a single `dh_combine(X, Y)` in the
-ikm position.  A concatenation of two DH secrets is not a valid ikm pattern
-in the stated syntax.
-
-**In the HPKE conversion:** We write:
+**Resolution:** The `ikm_expr` grammar now allows `++`-concatenation of ikm
+atoms.  Multiple `dh_combine` atoms are valid; the rule is classified `odh` and
+the ODH assumption is applied to each DH pair independently.  The HPKE rule
 
 ```owl
 odh L_kem<i> : 0x,
@@ -402,141 +341,62 @@ odh L_kem<i> : 0x,
     AuthEncap_honest_info<session i>() -> strict SS_t
 ```
 
-The `dh_combine(X1,Y1) ++ dh_combine(X2,Y2)` concatenated form in the ikm
-position is **tentative** and requires a syntax extension.
+is now within the stated syntactic envelope (see also I14).
 
-**Impact:** Rules `L_kem<i>` and `L_kem_corr<i>` are both outside the stated
-syntactic envelope.
-
-**Suggested resolution:** Extend the ikm syntax to allow a finite list of
-`dh_combine(X, Y)` terms to be concatenated.  The security treatment would
-apply the ODH assumption to each DH pair independently (analogous to how the
-old multi-witness call applied two ODH assumptions).  Alternatively, add a
-dedicated `multi_odh` rule form that explicitly lists multiple DH pairs.
+~~**Problem:** Each `odh` rule was restricted to a single `dh_combine(X, Y)` in
+the ikm position; HPKE's KEM step concatenates two DH secrets, which fell outside
+the stated syntax.~~
 
 ---
 
-## I14 — Function-wrapped DH expressions in the ikm position (HPKE)
+## ~~I14 — Function-wrapped DH expressions in the ikm position (HPKE)~~ **[RESOLVED]**
 
-**Problem:** Beyond the concatenation issue (I13), the DH secrets in HPKE's
-KEM step are further wrapped in `lbl_ikm(suite_id, label_string, ...)`:
+**Resolution:** The `ikm_expr` grammar allows any `++`-concatenation of public
+expressions and DH secret atoms.  When a `func` definition (such as `lbl_ikm`)
+appears in the `ikm_expr`, the checker expands it; the result is a concatenation
+of public atoms and `dh_combine` atoms, all of which are valid.  For example,
+`lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(A,B) ++ dh_combine(C,D))`
+expands to `pub ++ pub ++ pub ++ dh_combine(A,B) ++ dh_combine(C,D)`, which is
+a valid `odh`-rule ikm expression.
 
-```
-lbl_ikm(kem_suite_id(), eae_prk(), dh_val)
-  = hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_val
-```
-
-The actual bytes passed as the ikm to the underlying HKDF Extract call are
-a concatenation of public constants with the DH secret bytes.  The new syntax
-allows only a bare `dh_combine(X, Y)` in the ikm position of an `odh` rule —
-not a function applied to it.
-
-This is distinct from I13 (which concerns multiple DH secrets) and from I2
-(which concerns DH *public* keys in ikm): here the ikm is a function of a
-DH *secret*, but not directly the secret itself.
-
-**In the HPKE conversion:** We write `lbl_ikm(..., dh_combine(skE<i>, skR) ++ ...)`
-as the ikm pattern, treating `lbl_ikm` as a function the rule system must
-look through.  This requires a syntax extension.
-
-**Related:** I1 notes a similar issue for public functions in the salt/info
-positions.  I14 is the ikm-position analogue for functions applied to
-(possibly secret) DH expressions.
-
-**Suggested resolution:** Allow arbitrary *public-prefix-padded* DH expressions
-in the ikm position, i.e., `f(dh_combine(X, Y))` where `f` is a public
-function (a `func` definition whose arguments are all public except for the
-DH secret component).  The type system would strip the public prefix and apply
-the ODH assumption only to the DH component.
+~~**Problem:** The old syntax allowed only a bare `dh_combine(X, Y)` in the ikm
+position of an `odh` rule; `lbl_ikm(...)` applied to DH secrets fell outside the
+stated syntactic envelope.~~
 
 ---
 
-## I15 — Function-wrapped kdfkey in the ikm position (`dh_secret_kdf_ikm`) (HPKE)
+## ~~I15 — Function-wrapped kdfkey in the ikm position (`dh_secret_kdf_ikm`) (HPKE)~~ **[RESOLVED]**
 
-**Problem:** In WireGuard, the PSK appears directly as the ikm of the L6 rule:
+**Resolution:** The `ikm_expr` grammar allows `++`-concatenations of public
+expressions and kdfkey atoms.  When a `func` definition such as
+`dh_secret_kdf_ikm(psk) = hpke_v1() ++ hpke_suite_id() ++ "secret" ++ psk`
+appears in the `ikm_expr`, the checker expands it; the result is a sequence of
+public atoms followed by a kdfkey atom, all of which are valid.  The rule is
+classified `kdf` (no `dh_combine` present) and PRF security applies to the
+composite ikm.
 
-```owl
-kdf L6<@n,m> : C6<@n,m>, psk<@n,m>, 0x -> strict C7<@n,m> || ...
-```
-
-In HPKE, the PSK bytes are embedded inside a function call before being used
-as ikm:
-
-```
-dh_secret_kdf_ikm(psk_bytes) = lbl_ikm(hpke_suite_id(), secret_string(), psk_bytes)
-  = hpke_v1() ++ hpke_suite_id() ++ "secret" ++ psk_bytes
-```
-
-The actual kdf call uses `dh_secret_kdf_ikm(get(psk))` as the ikm, not the
-raw psk bytes.  The new kdf rule syntax for the ikm position allows bare
-kdfkey names, bare `dh_combine(X,Y)`, and hex constants.  It does not allow
-`f(kdfkey_name)` where `f` is a public function.
-
-**In the HPKE conversion:** We write:
-
-```owl
-kdf L_sched_nonce : SS_t, dh_secret_kdf_ikm(psk), base_nonce_kdf_info() -> ...
-```
-
-where `dh_secret_kdf_ikm(psk)` is a function application on a kdfkey name.
-This is **tentative** and requires a syntax extension.
-
-**Impact:** All six `L_sched_*` rules in `HPKE_KDF` use this pattern.
-
-**Relationship to I12:** I12 notes that the `dualkdf` keyword is removed. I15
-is the deeper consequence: in the old `dualkdf` design, `self` referred to the
-raw psk bytes and the condition `ikm == dh_secret_kdf_ikm(self)` was an
-*explicit* runtime check. In the new design, that check must be expressed as
-a structural pattern in the rule, requiring function application in ikm.
-
-**Suggested resolution:** Allow `f(kdfkey_name)` in the ikm position of a kdf
-rule, where `f` is a `func` definition whose argument is a kdfkey. The security
-model would treat `f(psk)` as ikm, relying on the PRF assumption for the KDF
-with that composite ikm. Alternatively, introduce a `wrapped_kdfkey` type for
-keys that are always used through a specific wrapper function.
+~~**Problem:** The old syntax allowed only bare kdfkey names, `dh_combine`, or
+hex constants in the ikm position; `dh_secret_kdf_ikm(psk)` — a public function
+applied to a kdfkey — fell outside the stated syntactic envelope.~~
 
 ---
 
-## I16 — Unindexed ghost label for `AuthDecap_shared_secret` (HPKE)
+## ~~I16 — Unindexed ghost label for `AuthDecap_shared_secret` (HPKE)~~ **[RESOLVED]**
 
-**Problem:** The function `AuthDecap_shared_secret(eph)` computes the ideal
-KDF output for an arbitrary ephemeral group element `eph`.  In the new syntax,
-every `gkdf` call must reference a specific group label, e.g.,
-`gkdf<HPKE_KDF.L_kem<i>; kdfkey; 0>(...)`.  But `L_kem<i>` is indexed by a
-session `i`, and `AuthDecap_shared_secret` does not take a session index —
-it is defined for any `eph`.
-
-In contrast, `AuthEncap_shared_secret<i>()` always has a concrete session index
-and can use `HPKE_KDF.L_kem<i>` directly.
-
-**In the HPKE conversion:** We write the tentative notation:
+**Resolution:** `gkdf` calls use the label-free form `gkdf<type; index>(...)`.
+`AuthDecap_shared_secret(eph)` can be defined as:
 
 ```owl
 func AuthDecap_shared_secret(eph) =
-    gkdf<HPKE_KDF.L_kem; kdfkey; 0>(...)
+    gkdf<kdfkey; 0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
+                       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
+                       AuthDecap_kem_context(eph)))
 ```
 
-where `HPKE_KDF.L_kem` without an index means "the KEM rule at any session".
+with no session index and no group-qualified label.  The ghost value is
+determined entirely by the runtime arguments `(eph, skR, skS)`.  The tentative
+`HPKE_KDF.L_kem` (unindexed label family) notation is not needed.
 
-**Impact:** The `adr_shared_secret_inj` ghost field in `AuthDecapResult`
-and the `kdf_inj_lemma` calls in `AuthDecap` rely on `AuthDecap_shared_secret`
-being well-defined. At the point where `choose_idx i` gives a concrete index,
-using `L_kem<i>` inside `AuthDecap` itself (for `shared_secret_ghost`) is
-possible — but the top-level ghost function definition still lacks a concrete
-index.
-
-**Relationship to I6 (WireGuard):** I6 notes that `tk1_of_c6` / `tk2_of_c6`
-needed index parameters in the new syntax. I16 is the dual problem: a ghost
-function that should ideally be *index-polymorphic* rather than parametric
-in a fixed index.
-
-**Suggested resolution:** Either
-
-(a) Make `AuthDecap_shared_secret` parametric in `i` (mirroring
-`AuthEncap_shared_secret<i>`), accepting that callers must supply a session
-index even when it is existentially quantified; or
-
-(b) Introduce a `gkdf<Group.Label_family; type; index>(...)` form where
-`Label_family` refers to a family of indexed labels (e.g., all instances of
-`L_kem<i>` for any `i`), with the semantics that the ghost value is
-determined by the runtime arguments regardless of which concrete `i` applies.
+~~**Problem:** Every `gkdf` call was required to reference a specific group label
+such as `gkdf<HPKE_KDF.L_kem<i>; ...>`, but `AuthDecap_shared_secret` takes no
+session index `i`, making it impossible to supply a concrete label.~~

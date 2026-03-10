@@ -237,13 +237,10 @@ kdf_group WG_KDF {
     // -----------------------------------------------------------------
     // Rule L3: Derive C4 from C3 using the responder's ephemeral public key
     //
-    // ISSUE (I2): The ikm here is dhpk(E_resp<j@m>), the PUBLIC DH key of
-    // the responder's ephemeral. This is not a DH shared secret, a kdfkey,
-    // or a hex constant — it is a DH public key. WireGuard uses this as a
-    // key-binding step (binding the hash chain to the responder's ephemeral
-    // without using a secret). The new syntax does not have a designated
-    // category for "DH public key in ikm position"; an extension or special
-    // annotation would be required.
+    // RESOLVED (I2): The ikm here is dhpk(E_resp<j@m>), the PUBLIC DH key of
+    // the responder's ephemeral. DH public keys are public expressions and are
+    // now a valid ikm atom. No ODH assumption is needed; the rule is classified
+    // kdf and standard PRF security applies.
     // -----------------------------------------------------------------
     kdf L3<j@n,m> : C3<@n,m>, dhpk(E_resp<j@m>), 0x ->
         strict C4<@n,m> || strict useless_enc

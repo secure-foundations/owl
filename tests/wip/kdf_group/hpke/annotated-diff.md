@@ -135,7 +135,7 @@ odh se<i> : skR, skE<i> -> {salt info.
 ```owl
 kdf_group HPKE_KDF {
     ...
-    /* ISSUE (I13, I14): multi-DH and lbl_ikm wrapping — see below */
+    /* RESOLVED (I13, I14): multi-DH concatenation and lbl_ikm wrapping are valid ikm atoms */
     odh L_kem<i>       : 0x, lbl_ikm(..., dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
                          AuthEncap_honest_info<session i>() -> strict SS_t
 

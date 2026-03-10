@@ -147,18 +147,31 @@ the ODH security assumption for the key pair `(A, B)`.
 - A hex constant (e.g., `0x`).
 - A public computed value (e.g., `crh(construction())`). *(Syntax gap: see I1)*
 
-**`ikm_expr`**: The second KDF argument (the key material). Allowed forms for `kdf`:
-- A kdfkey name declared in this group (e.g., `psk`).
-- A hex constant (e.g., `0x`).
-- A DH public key (`dhpk(N)` for a group DH name `N`). *(Syntax gap: see I2)*
-- A function applied to a kdfkey (e.g., `dh_secret_kdf_ikm(psk)`). *(Syntax gap: see I15)*
+**`ikm_expr`**: The second KDF argument (the key material). An `ikm_expr` is a
+`++`-concatenation of one or more **ikm atoms**, where each atom is one of:
 
-Allowed forms for `odh`:
-- `dh_combine(A, B)` where `A` and `B` are DH names declared in this group.
-- A function applied to `dh_combine(A, B)` (e.g., `lbl_ikm(..., dh_combine(A,B))`).
-  *(Syntax gap: see I14)*
-- A concatenation of DH secrets (e.g., `dh_combine(A,B) ++ dh_combine(C,D)`).
-  *(Syntax gap: see I13)*
+- A **public expression**: a hex constant (`0x`), a DH public key (`dhpk(N)` for
+  a group DH name `N`), or any public function applied to public arguments (e.g.,
+  `kem_suite_id()`, `lbl_ikm(suite_id, label, 0x)`).
+- A **kdfkey name** declared in this group (e.g., `psk`).
+- A **DH shared secret**: `dh_combine(A, B)` where `A` and `B` are DH names
+  declared in this group.
+
+A single atom with no `++` is the common case. When a `func` definition appears
+in the `ikm_expr`, the checker expands it and re-checks the resulting atom
+sequence. The `odh` / `kdf` classification follows from the expanded form: a rule
+is `odh` if and only if at least one atom is a `dh_combine` term; otherwise it is
+a `kdf` rule.
+
+Representative examples:
+- `psk` — bare kdfkey atom (`kdf` rule)
+- `0x` — hex constant, a public atom (`kdf` rule)
+- `dhpk(E_resp)` — DH public key, a public atom (`kdf` rule)
+- `dh_combine(A, B)` — single DH secret atom (`odh` rule)
+- `dh_combine(A,B) ++ dh_combine(C,D)` — two DH secret atoms (`odh` rule)
+- `lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(A,B) ++ dh_combine(C,D))` —
+  expands to `pub ++ pub ++ pub ++ dh_combine(A,B) ++ dh_combine(C,D)` (`odh` rule)
+- `dh_secret_kdf_ikm(psk)` — expands to `pub ++ pub ++ pub ++ psk` (`kdf` rule)
 
 **`info_expr`**: The third KDF argument. Allowed forms:
 - A hex constant (e.g., `0x`).
@@ -436,18 +449,18 @@ The issue numbers below refer to that document.
 | # | Summary | Severity |
 |---|---------|----------|
 | I1 | Public computed values (e.g., `crh(f())`) not allowed in salt/info | Syntax gap |
-| I2 | DH public keys (`dhpk(N)`) not allowed in ikm | Syntax gap |
+| ~~I2~~ | ~~DH public keys (`dhpk(N)`) not allowed in ikm~~ | **Resolved** |
 | I3 | No index-inequality constraints between overlapping rules | Soundness risk |
 | I4 | No catch-all / negation pattern for rule conditions | Expressiveness |
 | I5 | Implicit honesty via type provenance (replaces old explicit predicates) | Soundness assumption |
-| I6 | ~~Helper functions in output-type predicates need index parameters~~ | **Resolved** |
-| I7 | ~~No mechanism to pass a group label as a value in output-type expressions~~ | **Resolved** |
-| I8 | ~~`honest_cx`-style ghost functions must be updated to use group labels~~ | **Resolved** |
+| ~~I6~~ | ~~Helper functions in output-type predicates need index parameters~~ | **Resolved** |
+| ~~I7~~ | ~~No mechanism to pass a group label as a value in output-type expressions~~ | **Resolved** |
+| ~~I8~~ | ~~`honest_cx`-style ghost functions must be updated to use group labels~~ | **Resolved** |
 | I9 | Multi-label kdf calls have no formally defined semantics | Syntax gap |
 | I10 | PSK/no-PSK branch requires selecting different labels | Design reminder |
 | I11 | Session-index specificity of C1-style nametypes | Type precision |
 | I12 | `dualkdf` keyword removed; positional annotation may be needed | Design change |
-| I13 | Concatenated DH secrets in ikm (HPKE) | Syntax gap |
-| I14 | Function-wrapped DH expression in ikm (HPKE) | Syntax gap |
-| I15 | Function-wrapped kdfkey in ikm, e.g., `dh_secret_kdf_ikm(psk)` (HPKE) | Syntax gap |
-| I16 | ~~Unindexed ghost label for index-polymorphic ghost functions (HPKE)~~ | **Resolved** |
+| ~~I13~~ | ~~Concatenated DH secrets in ikm (HPKE)~~ | **Resolved** |
+| ~~I14~~ | ~~Function-wrapped DH expression in ikm (HPKE)~~ | **Resolved** |
+| ~~I15~~ | ~~Function-wrapped kdfkey in ikm, e.g., `dh_secret_kdf_ikm(psk)` (HPKE)~~ | **Resolved** |
+| ~~I16~~ | ~~Unindexed ghost label for index-polymorphic ghost functions (HPKE)~~ | **Resolved** |
