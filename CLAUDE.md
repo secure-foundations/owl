@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Branch purpose: `kdf-groups-expts`
+
+This branch (`kdf-groups-expts`) is dedicated to designing and implementing the new `kdf_group` declaration syntax for Owl's key derivation framework. The goal is to replace the old `kdf`/`dualkdf`/`odh` mechanism with a single unified block that collects all KDF chain steps, DH key names, and ODH assumptions in one place.
+
+**Documentation:**
+- Design spec: `docs/internals/claude-docs/kdf-groups.md`
+- Known issues/limitations: `docs/internals/claude-docs/kdf-group-issues.md`
+
+**Case study conversions (in `tests/wip/kdf_group/`):**
+- `wg/` — WireGuard (8-step KDF chain, `kdf_group WG_KDF`): conversion largely complete; issues I1–I12 documented
+- `hpke/` — HPKE (KEM + key-schedule, `kdf_group HPKE_KDF`): conversion in progress; additional issues I13–I16 documented (concatenated DH secrets, function-wrapped DH/kdfkey in ikm, unindexed ghost labels)
+
+**Open issues summary (see `kdf-group-issues.md` for details):**
+
+| # | Summary | Status |
+|---|---------|--------|
+| I1 | Public computed values in salt/info | Open (syntax gap) |
+| I2 | DH public keys in ikm | Open (syntax gap) |
+| I3 | Index-inequality between overlapping rules | Open (soundness risk) |
+| I4 | No catch-all/negation pattern | Open |
+| I5 | Type provenance soundness | Open |
+| I6–I8, I16 | Ghost function / label indexing issues | Resolved |
+| I9 | Multi-label kdf call semantics | Open (tentative syntax) |
+| I10 | PSK/no-PSK branch label selection | Open (design reminder) |
+| I11 | Session-index specificity of C1 | Open |
+| I12 | `dualkdf` removal positional annotation | Open |
+| I13 | Concatenated DH secrets in ikm (HPKE) | Open (syntax gap) |
+| I14 | Function-wrapped DH in ikm (HPKE) | Open (syntax gap) |
+| I15 | Function-wrapped kdfkey in ikm (HPKE) | Open (syntax gap) |
+
+---
+
 ## Overview
 
 Owl is a tool for developing cryptographic protocols with formal, machine-checked guarantees of security. It consists of:
