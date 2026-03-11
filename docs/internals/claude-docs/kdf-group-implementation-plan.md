@@ -58,9 +58,39 @@ dedicated parse test files in `tests/parse/kdf_group/`.
 
 ---
 
-## Step 1: New AST types (`src/AST.hs`)
+## Step 1: Parser testing (`--only-parse` flag)
 
-### 1a. `NT_KDF` — bare kdfkey label (updated)
+### 1a. Add `--only-parse` to `src/CmdArgs.hs` and `src/Main.hs`
+
+When `--only-parse` is set: run the parser only; print the parsed module as
+pretty-printed Owl (or a success/failure message); exit before type checking.
+
+### 1b. Test files in `tests/parse/kdf_group/`
+
+Each file is checked with `cabal run owl -- --only-parse tests/parse/kdf_group/<file>.owl`.
+
+| File | Tests |
+|------|-------|
+| `basic_dh_name.owl` | `name N : DH @ loc` inside kdf_group |
+| `basic_kdfkey_name.owl` | `name psk : kdfkey` inside kdf_group |
+| `basic_nametype.owl` | `nametype C : kdfkey` inside kdf_group |
+| `kdf_rule_simple.owl` | `kdf L : C1, psk, 0x -> strict C2` |
+| `odh_rule_simple.owl` | `odh L<i> : C1, dh_combine(A, B), 0x -> strict C2` |
+| `where_clause.owl` | `odh L<n_eph@n,m> where n_eph !=idx n : ...` |
+| `info_wildcard.owl` | `odh L<i> : 0x, dh_combine(A,B), _ -> strict T` |
+| `multi_output.owl` | `kdf L : C, k, info -> strict T1 \|\| strict T2` |
+| `call_site_single.owl` | `kdf<G.L<i>; kdfkey; 0>(s, k, 0x)` |
+| `call_site_multi.owl` | `kdf<G.L1<i>, G.L2<i>; kdfkey; 0>(s, k, 0x)` |
+| `ikm_concat.owl` | `odh L : 0x, dh_combine(A,B) ++ dh_combine(C,D), 0x -> ...` |
+| `ikm_func_wrap.owl` | `odh L<i> : 0x, lbl_ikm(f(), g(), dh_combine(A,B)), 0x -> ...` |
+| `full_wg_group.owl` | Stripped-down WG_KDF block (no defs, just the kdf_group) |
+
+
+---
+
+## Step 2: New AST types (`src/AST.hs`)
+
+### 2a. `NT_KDF` — bare kdfkey label (updated)
 
 ```haskell
 -- Before: NT_KDF KDFPos KDFBody
@@ -75,7 +105,7 @@ Remove `KDFPos` and `KDFBody` type aliases entirely. Remove `KDF_SaltPos` /
 - Intermediate kdfkey nametype labels: `nametype C2<@n,m> : kdfkey` inside a group
 - Plain kdfkey names: `name psk : kdfkey` inside a group
 
-### 1b. Supporting expression types for group rules
+### 2b. Supporting expression types for group rules
 
 ```haskell
 data IKMAtom
@@ -98,7 +128,7 @@ data KDFOutputSpec = KDFOutputSpec [(KDFStrictness, NameType)]
 -- ||-separated output row; index j selects the output
 ```
 
-### 1c. `KDFGroupRuleBody` and `KDFGroupRule`
+### 2c. `KDFGroupRuleBody` and `KDFGroupRule`
 
 ```haskell
 data KDFGroupRuleBody = KDFGroupRuleBody {
@@ -117,7 +147,7 @@ data KDFGroupRule = KDFGroupRule {
 }
 ```
 
-### 1d. `KDFGroupEntry` — name/nametype declarations inside a group
+### 2d. `KDFGroupEntry` — name/nametype declarations inside a group
 
 ```haskell
 data KDFGroupEntry
@@ -126,7 +156,7 @@ data KDFGroupEntry
     | KGENameType String (Bind ([IdxVar], [DataVar]) ())
 ```
 
-### 1e. `DeclKDFGroup`
+### 2e. `DeclKDFGroup`
 
 ```haskell
 -- Added to DeclX:
@@ -134,7 +164,7 @@ data KDFGroupEntry
 --             name   entries          rules
 ```
 
-### 1f. `KDFGroupRuleRef` — rule reference at call sites
+### 2f. `KDFGroupRuleRef` — rule reference at call sites
 
 ```haskell
 data KDFGroupRuleRef = KDFGroupRuleRef {
@@ -144,7 +174,7 @@ data KDFGroupRuleRef = KDFGroupRuleRef {
 }
 ```
 
-### 1g. Updated `CKDF`
+### 2g. Updated `CKDF`
 
 ```haskell
 -- Before: CKDF [KDFSelector] [Either KDFSelector (...)] [NameKind] Int
@@ -154,9 +184,9 @@ CKDF [KDFGroupRuleRef] [NameKind] Int
 
 ---
 
-## Step 2: Parser changes (`src/Parse.hs`)
+## Step 3: Parser changes (`src/Parse.hs`)
 
-### 2a. Remove
+### 3a. Remove
 
 - `parseKDFSelector`
 - `nametype = kdf { ... }` / `dualkdf { ... }` cases in `parseNameType`
@@ -164,13 +194,13 @@ CKDF [KDFGroupRuleRef] [NameKind] Int
 - Old `kdf<digit,... ; odh ...; nks; j>` parser form
 - `KDFPos` / `KDFBody` / `kdfCase` parsers
 
-### 2b. `NT_KDF` in `parseNameType`
+### 3b. `NT_KDF` in `parseNameType`
 
 ```haskell
 reserved "kdfkey" >> return (mkSpanned NT_KDF)
 ```
 
-### 2c. Add `kdf_group` parser
+### 3c. Add `kdf_group` parser
 
 ```
 kdf_group <Name> {
@@ -195,7 +225,7 @@ New sub-parsers:
 - `parseKDFGroupWhere :: Parser KDFGroupWhere`
 - `parseKDFOutputSpec :: Parser KDFOutputSpec` — `[strict|public]? nt [|| ...]`
 
-### 2d. Updated `CKDF` call site parser
+### 3d. Updated `CKDF` call site parser
 
 ```
 kdf < Group.Label<idxs> [, Group.Label<idxs>]* ; nks ; j > (salt, ikm, info)
@@ -204,13 +234,20 @@ kdf < Group.Label<idxs> [, Group.Label<idxs>]* ; nks ; j > (salt, ikm, info)
 Detection: if the token after `<` is a path identifier (not a digit), parse as new
 form using `parseKDFGroupRuleRef`.
 
-### 2e. `gkdf` ghost calls — unchanged
+### 3e. `gkdf` ghost calls — unchanged
 
 ---
 
-## Step 3: `ModBody` / `TypingBase.hs`
+## Step 4: Pretty-printing changes (`src/Pretty.hs`)
 
-### 3a. Remove `_odh`, add `_kdfGroups`
+**`src/Pretty.hs`:** Add pretty-printers for all new types so `--debug` output
+is human-readable. Output format should match the syntax in `kdf-groups.md`.
+
+---
+
+## Step 7: `ModBody` / `TypingBase.hs`
+
+### 7a. Remove `_odh`, add `_kdfGroups`
 
 ```haskell
 -- In ModBody, remove:
@@ -225,7 +262,7 @@ data KDFGroupDef = KDFGroupDef {
 }
 ```
 
-### 3b. Replace `getODHNameInfo` with `lookupKDFGroupRule`
+### 7b. Replace `getODHNameInfo` with `lookupKDFGroupRule`
 
 ```haskell
 lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> TcM (Maybe KDFGroupRuleBody)
@@ -233,17 +270,17 @@ lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> TcM (Maybe KDFGroupRul
 
 ---
 
-## Step 4: Elaboration (`src/Typing.hs`)
+## Step 8: Elaboration (`src/Typing.hs`)
 
 Replace `checkDecl DeclODH` with `checkDecl DeclKDFGroup groupName entries rules`:
 
-### 4a. Entries
+### 8a. Entries
 
 - `KGEDHName n b` → register `GroupName.n` in `_nameDefs` with `NT_DH`
 - `KGEKdfKey n b` → register `GroupName.n` in `_nameDefs` with `NT_KDF`
 - `KGENameType n b` → register `GroupName.n` in `_nameTypeDefs` with `NT_KDF`
 
-### 4b. Rules
+### 8b. Rules
 
 For each `KDFGroupRule`:
 
@@ -265,7 +302,7 @@ Collect `(ne1, ne2)` from odh rules; check no two share a DH pair; reuse
 Add to `curMod._kdfGroups[groupName]` → rule body keyed by label; for odh rules,
 push to `_kgdOdhPairs`.
 
-### 4c. `checkNameType NT_KDF`
+### 8c. `checkNameType NT_KDF`
 
 ```haskell
 NT_KDF -> return ()   -- bare marker; no cases to check
@@ -275,7 +312,7 @@ Remove the old `NT_KDF pos body` case with disjointness query.
 
 ---
 
-## Step 5: Rewrite `CKDF` type checking (`src/Typing.hs`)
+## Step 8 (continued): Rewrite `CKDF` type checking (`src/Typing.hs`)
 
 ```haskell
 CKDF hints nks j -> do
@@ -286,7 +323,7 @@ CKDF hints nks j -> do
     unifyHintResults results nks j
 ```
 
-### 5a. `tryHint`
+### 8a. `tryHint`
 
 1. `lookupKDFGroupRule` by group + label + idxs
 2. Check `_kgrbWhere` via `checkWhere` (SMT index inequality queries)
@@ -296,13 +333,13 @@ CKDF hints nks j -> do
 6. On full match: substitute `_kgrbSelf` → `saltE` in output type; call existing
    `buildKDFName` + `TRefined` construction
 
-### 5b. `checkSaltMatch`
+### 8b. `checkSaltMatch`
 
 - `SaltPublicExpr e`: `tyFlowsTo saltT advLbl`
 - `SaltNameType p idxs`: use `extractNameFromType saltT` → check extracted path
   and indices alpha-equal the instantiated rule path/indices
 
-### 5c. `checkIKMMatch`
+### 8c. `checkIKMMatch`
 
 Match `ikmE` against the list of `IKMAtom`s after func expansion:
 - `IKMPublicExpr e`: corresponding sub-expression is public
@@ -313,67 +350,39 @@ Match `ikmE` against the list of `IKMAtom`s after func expansion:
 Func expansion: during elaboration, call `_funcDefs` lookup to inline one level of
 known public func applications before matching against the atom list.
 
-### 5d. `checkInfoMatch`
+### 8d. `checkInfoMatch`
 
 - `InfoWildcard`: `return True`
 - `InfoPublic e`: `checkEntails (PEq infoE e)` via SMT
 
-### 5e. `checkWhere`
+### 8e. `checkWhere`
 
 For each `(i, j, neq)`:
 - `checkEntails $ if neq then PNot (PEq (aeIdx i) (aeIdx j)) else PEq (aeIdx i) (aeIdx j)`
 
-### 5f. `unifyHintResults`
+### 8f. `unifyHintResults`
 
 If all results agree → return common type. If they differ → return join via
 existing `joinTy` / weakest-strictness logic.
 
-### 5g. Remove
+### 8g. Remove
 
 `matchKDF`, `matchODH`, `findValidSaltCalls`, `findValidIKMCalls`.
 
 ---
 
-## Step 6: LabelChecking, SMT, Pretty
+## Step 9: Label-Checking
 
 **`src/LabelChecking.hs`:** Add `NT_KDF -> return []` case (bare label, no flow axioms).
 Remove old `NT_KDF pos body` case.
 
+---
+
+## Steps 10: SMT
+
 **`src/SMT.hs` / `src/SMTBase.hs`:** Add `NT_KDF` interpretation as a bare kdfkey
 SMT sort (same sort as before; just remove the conditional-body machinery). Keep
 `symInODHProp`, `pInODH`, `PInODH`, `getKDFArgs` unchanged.
-
-**`src/Pretty.hs`:** Add pretty-printers for all new types so `--debug` output
-is human-readable. Output format should match the syntax in `kdf-groups.md`.
-
----
-
-## Step 7: Parser testing (`--only-parse` flag)
-
-### 7a. Add `--only-parse` to `src/CmdArgs.hs` and `src/Main.hs`
-
-When `--only-parse` is set: run the parser only; print the parsed module as
-pretty-printed Owl (or a success/failure message); exit before type checking.
-
-### 7b. Test files in `tests/parse/kdf_group/`
-
-Each file is checked with `cabal run owl -- --only-parse tests/parse/kdf_group/<file>.owl`.
-
-| File | Tests |
-|------|-------|
-| `basic_dh_name.owl` | `name N : DH @ loc` inside kdf_group |
-| `basic_kdfkey_name.owl` | `name psk : kdfkey` inside kdf_group |
-| `basic_nametype.owl` | `nametype C : kdfkey` inside kdf_group |
-| `kdf_rule_simple.owl` | `kdf L : C1, psk, 0x -> strict C2` |
-| `odh_rule_simple.owl` | `odh L<i> : C1, dh_combine(A, B), 0x -> strict C2` |
-| `where_clause.owl` | `odh L<n_eph@n,m> where n_eph !=idx n : ...` |
-| `info_wildcard.owl` | `odh L<i> : 0x, dh_combine(A,B), _ -> strict T` |
-| `multi_output.owl` | `kdf L : C, k, info -> strict T1 \|\| strict T2` |
-| `call_site_single.owl` | `kdf<G.L<i>; kdfkey; 0>(s, k, 0x)` |
-| `call_site_multi.owl` | `kdf<G.L1<i>, G.L2<i>; kdfkey; 0>(s, k, 0x)` |
-| `ikm_concat.owl` | `odh L : 0x, dh_combine(A,B) ++ dh_combine(C,D), 0x -> ...` |
-| `ikm_func_wrap.owl` | `odh L<i> : 0x, lbl_ikm(f(), g(), dh_combine(A,B)), 0x -> ...` |
-| `full_wg_group.owl` | Stripped-down WG_KDF block (no defs, just the kdf_group) |
 
 ---
 
@@ -389,7 +398,7 @@ Each file is checked with `cabal run owl -- --only-parse tests/parse/kdf_group/<
 8. `src/Typing.hs`: add `DeclKDFGroup` elaboration; rewrite `CKDF` case
 9. `src/LabelChecking.hs`: update `NT_KDF` case
 10. `src/SMT.hs` / `src/SMTBase.hs`: update `NT_KDF` interpretation
-11. Verify end-to-end: `cabal run owl -- tests/wip/kdf_group/wg/full.owl`
+11. Verify end-to-end build: `cabal build owl`
 
 ---
 
@@ -408,7 +417,7 @@ agent (Sonnet) manages the sequence; specialized agents perform each step.
 | 5+6 — Test files + verification | `sonnet` | File creation + CLI invocation |
 | 7+8 — TypingBase + Typing | `opus` | Most complex: monadic type-checker rewrite, subtle semantic choices |
 | 9+10 — LabelChecking + SMT | `sonnet` | Narrow changes; existing machinery mostly intact |
-| 11 — End-to-end verification | `sonnet` | Build + run |
+| 11 — End-to-end verification | `sonnet` | Build + fix compile errors |
 
 ### Worktree isolation
 
@@ -441,7 +450,7 @@ Step 1 (main tree)
                           └── Step 8 (Typing)   ← opus
                                 ├── Step 9 (LabelChecking) ─┐ parallel
                                 └── Step 10 (SMT)          ─┘
-                                      └── Step 11 (end-to-end verification)
+                                      └── Step 11 (end-to-end compilation)
 ```
 
 ### Commit discipline and resumability
@@ -486,7 +495,7 @@ Track completed steps here. Each agent checks off a line before committing.
 - [ ] Step 8d: Typing — remove old functions
 - [ ] Step 9: LabelChecking.hs
 - [ ] Step 10: SMT.hs / SMTBase.hs
-- [ ] Step 11: End-to-end verification
+- [ ] Step 11: End-to-end compilation
 
 ---
 
