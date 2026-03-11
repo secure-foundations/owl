@@ -18,7 +18,7 @@ This document records issues discovered while converting the WireGuard case stud
 | ~~I8~~ | ~~`honest_cx` functions and new label syntax~~ | **Resolved** | `defs.owl` |
 | ~~I9~~ | ~~Multi-witness kdf calls~~ | **Resolved** | `init.owl`, `resp.owl` |
 | ~~I10~~ | ~~PSK/no-PSK branch and rule selection~~ | **Resolved** | `init.owl`, `resp.owl` |
-| I11 | Session-index specificity of C1 | Type precision | `defs.owl` |
+| ~~I11~~ | ~~Session-index specificity of C1~~ | **Resolved** | `defs.owl` |
 | I12 | `dualkdf` keyword removed | Design change | `defs.owl` |
 | ~~I13~~ | ~~Concatenated DH secrets in ODH ikm (HPKE)~~ | **Resolved** | `L_kem<i>`, `L_kem_corr<i>` rules |
 | ~~I14~~ | ~~Function-wrapped DH expressions in ikm (HPKE)~~ | **Resolved** | `L_kem*` rules, `L_sched*` rules |
@@ -240,23 +240,16 @@ semantics being defined.
 
 ---
 
-## I11 — Nametype C1 index structure and session specificity
+## ~~I11 — Nametype C1 index structure and session specificity~~ **[RESOLVED]**
 
-**Problem:** In the old design, `nametype C1<@n,m>` was indexed by party
-indices `n` and `m`.  But C1 is derived from `crh(construction())` and
-`dhpk(E_init<i@n>)`, which depend on the *session* index `i` (not on `m`).
+**Resolution:** The `kdf L0` rule and the `nametype C1` declaration have been
+removed.  C1 is now computed inline at call sites using an unlabeled `kdf` call,
+so the over-approximation (any C1 for party `n` usable as salt for L1) no longer
+arises — the salt of `odh L1<i@n,m>` is the ghost function `honest_c1<i@n>()`
+which carries the session index `i` directly.
 
-The new design declares `nametype C1<@n>` (without `m`), which is correct
-for derivation, but then uses `C1<@n>` as the salt for `odh L1<i@n,m>`,
-where `m` reappears.  This means *any* C1 for party `n` (regardless of
-which session `i` it was derived in) can serve as the salt for L1, which
-is an over-approximation: in reality, only `C1<i@n>` derived in the same
-session should be usable as the salt for `L1<i@n,m>`.
-
-**Suggested resolution:** Index C1 by session too: `nametype C1<i@n>`,
-and have `L0<i@n>` produce `C1<i@n>` and `L1<i@n,m>` consume `C1<i@n>`.
-This requires the session index to thread through the group nametype
-declarations, which is currently unsupported in the example syntax.
+~~**Problem:** `nametype C1<@n>` lacked the session index `i`, creating an
+over-approximation where any session's C1 could serve as salt for `L1<i@n,m>`.~~
 
 ---
 

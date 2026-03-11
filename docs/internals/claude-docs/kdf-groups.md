@@ -463,7 +463,7 @@ The issue numbers below refer to that document.
 | ~~I8~~ | ~~`honest_cx`-style ghost functions must be updated to use group labels~~ | **Resolved** |
 | ~~I9~~ | ~~Multi-label kdf calls have no formally defined semantics~~ | **Resolved** |
 | ~~I10~~ | ~~PSK/no-PSK branch requires selecting different labels~~ | **Resolved** |
-| I11 | Session-index specificity of C1-style nametypes | Type precision |
+| ~~I11~~ | ~~Session-index specificity of C1-style nametypes~~ | **Resolved** |
 | I12 | `dualkdf` keyword removed; positional annotation may be needed | Design change |
 | ~~I13~~ | ~~Concatenated DH secrets in ikm (HPKE)~~ | **Resolved** |
 | ~~I14~~ | ~~Function-wrapped DH expression in ikm (HPKE)~~ | **Resolved** |
