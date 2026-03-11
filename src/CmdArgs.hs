@@ -24,6 +24,7 @@ data Flags = Flags {
     _fLocalTypeError :: Bool,
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
+    _fOnlyParse :: Bool,
     _fFileContents :: String
                    }
 
@@ -62,6 +63,8 @@ parseArgs =
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )
       <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
+      <*> switch
+          ( long "only-parse" <> help "Run parser only; print parsed module and exit" )
       <*> (pure "")
     where
         extractAllFlag = switch (long "extract" <> short 'e' <> help "Extract all specs and code")
