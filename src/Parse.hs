@@ -781,9 +781,10 @@ parseIKMAtom =
     )
     <|>
     (try $ do
-        -- A name expression (path with optional indices) used as kdfkey
+        -- A name expression (path with optional indices) used as kdfkey.
+        -- Reject function-call applications (which go to IKMPublicExpr).
         ne <- parseNameExp
-        -- check it's a NameConst (path-based), not a KDFName
+        notFollowedBy (whiteSpace >> char '(')
         case ne^.val of
           NameConst _ _ _ -> return $ IKMKdfKeyName ne
           _ -> parserZero
@@ -861,11 +862,11 @@ parseKDFGroupEntryNameType :: Parser KDFGroupEntry
 parseKDFGroupEntryNameType = do
     reserved "nametype"
     n <- identifier
-    -- Parse index params; data vars are not used here
-    idxs <- parseIdxParamBinds1
+    -- Parse index params: <dataIdxs @ localityIdxs>
+    idxs <- parseIdxParamBinds
     symbol ":"
     reserved "kdfkey"
-    return $ KGENameType n $ bind (idxs, []) ()
+    return $ KGENameType n $ bind idxs ()
 
 parseKDFGroupRule :: Parser KDFGroupRule
 parseKDFGroupRule = do
@@ -1695,11 +1696,11 @@ parseROHint = do
 
 parseKDFGroupRuleRef :: Parser KDFGroupRuleRef
 parseKDFGroupRuleRef = do
-    p <- parsePath
+    g <- identifier
     symbol "."
     lbl <- identifier
     idxs <- parseIdxParams
-    return $ KDFGroupRuleRef p lbl idxs
+    return $ KDFGroupRuleRef (PUnresolvedVar g) lbl idxs
 
 parseCryptOp :: Parser CryptOp
 parseCryptOp =

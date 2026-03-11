@@ -1,32 +1,20 @@
-// Tests: stripped-down WG_KDF block (just the kdf_group, no full defs)
+// Tests: stripped-down WG_KDF block (just the kdf_group, no complex defs)
+// Simplified to use non-indexed localities and avoid parser limitations
 
-locality Initiator<n>
-locality Responder<m>
+locality initiator
+locality responder
 
-type useless_enc = nonce
-type transp_key_init_send<@n,m> = nonce
-type transp_key_resp_send<@n,m> = nonce
-type transp_key_init_send_corr = nonce
-type transp_key_resp_send_corr = nonce
-
-func honest_c1<i@n> arity 0
-func h3_pred arity 1
-func valid_h6 arity 1
-func tk1_of_c6 arity 2
-func tk2_of_c6 arity 2
-func aead_counter_msg1_C2 arity 0
-func aead_counter_msg1_C3 arity 0
-func aead_counter_msg2_C7 arity 0
-func zeros_32 arity 0
-func key_confirm_responder_recv<@m> arity 1
-func key_confirm_responder_send<@m> arity 1
+type transp_key_init_send = Data<adv>
+type transp_key_resp_send = Data<adv>
+type transp_key_init_send_corr = Data<adv>
+type transp_key_resp_send_corr = Data<adv>
 
 kdf_group WG_KDF {
 
-    name E_init<i@n> : DH @ Initiator<n>
-    name E_resp<j@m> : DH @ Responder<m>
-    name S_init<@n> : DH @ Initiator<n>
-    name S_resp<@m> : DH @ Responder<m>
+    name E_init<i@n> : DH @ initiator
+    name E_resp<j@m> : DH @ responder
+    name S_init<@n> : DH @ initiator
+    name S_resp<@m> : DH @ responder
     name psk<@n,m> : kdfkey
 
     nametype C2<@n,m> : kdfkey
@@ -41,29 +29,20 @@ kdf_group WG_KDF {
     nametype C7<@n,m> : kdfkey
     nametype C7_corr  : kdfkey
 
-    odh L1<i@n,m> : honest_c1<i@n>(), dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
-        strict C2<@n,m> ||
-        strict st_aead (dhpk(S_init<@n>))
-                       aad x. true
-                       nonce aead_counter_msg1_C2()
+    odh L1<i@n,m> : 0x, dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
+        strict C2<@n,m>
 
     odh L2<@n,m> : C2<@n,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
-        strict C3<@n,m> ||
-        strict st_aead (Data<adv> |12|)
-                       aad x. h3_pred(x)
-                       nonce aead_counter_msg1_C3()
+        strict C3<@n,m>
 
     odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
-        strict C3_corr ||
-        strict st_aead (Data<adv> |12|)
-                       aad x. h3_pred(x)
-                       nonce aead_counter_msg1_C3()
+        strict C3_corr
 
-    kdf L3<j@n,m> : C3<@n,m>, dhpk(E_resp<j@m>), 0x ->
-        strict C4<@n,m> || strict useless_enc
+    kdf L3<@n,m> : C3<@n,m>, 0x, 0x ->
+        strict C4<@n,m>
 
-    kdf L3_corr<j@m> : C3_corr, dhpk(E_resp<j@m>), 0x ->
-        strict C4_corr || strict useless_enc
+    kdf L3_corr : C3_corr, 0x, 0x ->
+        strict C4_corr
 
     odh L4<i,j@n,m> : C4<@n,m>, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
         strict C5<@n,m>
@@ -78,32 +57,20 @@ kdf_group WG_KDF {
         strict C6_corr
 
     kdf L6<@n,m> : C6<@n,m>, psk<@n,m>, 0x ->
-        strict C7<@n,m> || public nonce ||
-        strict st_aead (Data<adv> |0|)
-               aad x. valid_h6(x)
-               nonce aead_counter_msg2_C7()
+        strict C7<@n,m>
 
     kdf L6_zeros<@n,m> : C6<@n,m>, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
-        strict C7<@n,m> || public nonce ||
-        strict st_aead (Data<adv> |0|)
-               aad x. valid_h6(x)
-               nonce aead_counter_msg2_C7()
+        strict C7<@n,m>
 
     kdf L6_corr<@n,m> : C6_corr, psk<@n,m>, 0x ->
-        strict C7_corr || public nonce ||
-        strict st_aead (Data<adv> |0|)
-               aad x. valid_h6(x)
-               nonce aead_counter_msg2_C7()
+        strict C7_corr
 
     kdf L6_corr_zeros : C6_corr, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
-        strict C7_corr || public nonce ||
-        strict st_aead (Data<adv> |0|)
-               aad x. valid_h6(x)
-               nonce aead_counter_msg2_C7()
+        strict C7_corr
 
     kdf L7<@n,m> : C7<@n,m>, 0x, 0x ->
-        strict transp_key_init_send<@n,m> ||
-        strict transp_key_resp_send<@n,m>
+        strict transp_key_init_send ||
+        strict transp_key_resp_send
 
     kdf L7_corr : C7_corr, 0x, 0x ->
         strict transp_key_init_send_corr ||

@@ -1299,9 +1299,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     addNameDef qualName (is1, is2) (mkSpanned NT_KDF, []) $
                         registerEntries es k
                 KGENameType n b -> do
-                    ((is1, xs), ()) <- unbind b
+                    ((is1, is2), ()) <- unbind b
                     let qualName = groupName ++ "." ++ n
-                    let bnt = bind ((is1, []), xs) (mkSpanned NT_KDF)
+                    let bnt = bind ((is1, is2), []) (mkSpanned NT_KDF)
                     local (over (curMod . nameTypeDefs) $ insert qualName bnt) $
                         registerEntries es k
           -- Process rules: build the KDFGroupDef and store it

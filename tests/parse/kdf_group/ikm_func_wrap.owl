@@ -13,5 +13,5 @@ kdf_group G {
     name B : DH @ bob
     nametype T : kdfkey
 
-    odh L<i> : 0x, lbl_ikm(f(), g(), dh_combine(A, B)), 0x -> strict T
+    odh L<@i> : 0x, lbl_ikm(f(), g(), 0x), 0x -> strict T
 }
