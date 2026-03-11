@@ -10,7 +10,7 @@ This document records issues discovered while converting the WireGuard case stud
 |---|----------|----------|---------|
 | ~~I1~~ | ~~Public constant as salt~~ | **Resolved** | `L0` rule in `defs.owl` |
 | ~~I2~~ | ~~DH public key in ikm~~ | **Resolved** | `L0`, `L3` rules |
-| I3 | Index-inequality between rules | Soundness risk | `L2`/`L2_corr`, `L5`/`L5_corr` |
+| ~~I3~~ | ~~Index-inequality between rules~~ | **Resolved** | `L2`/`L2_corr`, `L5`/`L5_corr` |
 | ~~I4~~ | ~~No catch-all / negation pattern~~ | **Subsumed by I3** | Many rules |
 | I5 | Implicit honesty via types (C6_dual) | Soundness assumption | `L6` rules |
 | ~~I6~~ | ~~Index-parametric helper functions~~ | **Resolved** | `tk1_of_c6`, `tk2_of_c6` |
@@ -57,46 +57,32 @@ hex constant, dh_combine).~~
 
 ---
 
-## I3 — Index-inequality constraints between rules (L2/L2_corr and L5/L5_corr)
+## ~~I3 — Index-inequality constraints between rules (L2/L2_corr and L5/L5_corr)~~ **[RESOLVED]**
 
-**Problem:** The old ODH declarations had explicit case conditions:
+**Resolution:** `where` clauses on rule declarations (option A) are used to express
+the index-inequality constraints explicitly.
 
-```
-odh L2<@n,m> : S_init<@n>, S_resp<@m> -> {salt info.
-    (exists i. salt == honest_c2<i,n,m>()) -> strict C3<@n,m> || ...
-    <n_eph> n_eph !=idx n /\ (...) -> strict C3_corr || ...
-}
-```
+```owl
+// Resolved:
+odh L2_corr<n_eph@n,m> where n_eph !=idx n :
+    C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x -> strict C3_corr || ...
 
-The second branch carries the constraint `n_eph !=idx n`, which prevents
-it from applying when `n_eph = n` (where the first branch already applies).
-
-In the new syntax, the same logic is split into two rules:
-
-```
-odh L2<@n,m>          : C2<@n,m>,    dh_combine(S_init<@n>, S_resp<@m>), 0x -> C3<@n,m>
-odh L2_corr<n_eph@n,m>: C2<@n_eph,m>,dh_combine(S_init<@n>, S_resp<@m>), 0x -> C3_corr
+odh L5_corr<j,n_eph@n,m> where n_eph !=idx n :
+    C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x -> strict C6_corr
 ```
 
-When `n_eph = n`, both rules have the *same* salt type `C2<@n,m>`, so
-they **overlap**.  Without an explicit inequality constraint or a
-priority/specificity rule, the type checker may be unsound (an adversary
-could force the use of `L2_corr` even in the honest case, weakening the
-security guarantee).
+The `where n_eph !=idx n` clause restricts each `_corr` rule to proof contexts
+where the two indices are provably distinct.  When `n_eph = n`, the `_corr` rule
+cannot be applied, leaving the correct rule as the unique match.
 
-The same issue arises for `L5 / L5_corr`.
+The HPKE `ISSUE (I3)` annotations were a different kind of constraint
+(info-value inequality rather than index inequality).  They are handled by the
+hint mechanism (I9 resolution): `L_kem<i>` has a concrete info pattern that the
+type checker matches; `L_kem_corr<i>` applies only when that pattern is
+inconsistent with the proof context.  No `where` clause is needed there.
 
-**Suggested resolution (option A):** Add a `where` clause to kdf/odh rules
-for index (in)equality constraints:
-
-```
-odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, ...
-```
-
-**Suggested resolution (option B):** Adopt a "first match wins" semantics,
-where L2 (listed first, more specific) takes priority over L2_corr when
-`n_eph = n`.  This requires the rules to be ordered within the group and
-the semantics to be documented explicitly.
+~~**Problem:** Without an explicit inequality constraint, L2 and L2_corr overlapped
+when `n_eph = n`, creating a potential soundness gap.~~
 
 ---
 

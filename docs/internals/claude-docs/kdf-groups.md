@@ -128,7 +128,7 @@ a "junk" value (e.g., a wrong-index DH secret).
 Each rule has the form:
 
 ```
-(kdf | odh) Label<optional_indices> :
+(kdf | odh) Label<optional_indices> [where constraint] :
     salt_expr ,
     ikm_expr  ,
     info_expr
@@ -137,6 +137,21 @@ Each rule has the form:
 
 **Label**: An identifier (with optional index parameters) that names this rule.
 Outside the group, this label is referenced as `GroupName.Label<indices>`.
+
+**`where` clause** (optional): A conjunction of index-(in)equality predicates that
+restricts the rule to proof contexts where the constraint is provable.  Allowed
+predicates: `i !=idx j` and `i =idx j` for index variables `i`, `j` declared in
+the rule's index list.  The clause prevents overlap between sibling rules that would
+otherwise share the same salt type.  Example:
+
+```owl
+odh L2_corr<n_eph@n,m> where n_eph !=idx n :
+    C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x -> strict C3_corr
+```
+
+Here, `where n_eph !=idx n` ensures L2_corr is only matched in proof contexts
+where the two indices are provably distinct, leaving L2 as the unique match when
+`n_eph = n`.
 
 **`kdf` vs `odh`**: Use `kdf` when no DH shared secret appears in `ikm_expr`.
 Use `odh` when `ikm_expr` contains a `dh_combine(A, B)` term — this triggers
@@ -178,6 +193,17 @@ Representative examples:
 - A hex constant (e.g., `0x`).
 - Any public expression: a `func` applied to public arguments (e.g., `base_nonce_kdf_info()`,
   `AuthEncap_honest_info<session i>()`).
+- `_` — a wildcard that matches any info value. Used when a rule applies regardless
+  of the info argument (e.g., a catch-all `_corr` variant where the info is not
+  constrained). A rule with a concrete `info_expr` takes precedence over a sibling
+  rule with `_` via the hint mechanism.
+
+  **Open design question:** Relying on priority alone may be insufficient for
+  soundness — a `_`-info rule overlaps with its concrete sibling on the info
+  dimension and is only "less specific", not provably disjoint.  It may be
+  necessary to require that wildcard rules are explicitly proven disjoint from
+  concrete siblings (e.g., via a `where info !=val ...` constraint analogous to
+  the index `where` clause), rather than depending solely on hint ordering.
 
 **`output_spec`**: Describes what type(s) the KDF output has. Forms:
 - `-> T` — a single output of type `T`.
@@ -455,7 +481,7 @@ The issue numbers below refer to that document.
 |---|---------|----------|
 | ~~I1~~ | ~~Public computed values (e.g., `crh(f())`) not allowed in salt/info~~ | **Resolved** |
 | ~~I2~~ | ~~DH public keys (`dhpk(N)`) not allowed in ikm~~ | **Resolved** |
-| I3 | No index-inequality constraints between overlapping rules | Soundness risk |
+| ~~I3~~ | ~~No index-inequality constraints between overlapping rules~~ | **Resolved** |
 | ~~I4~~ | ~~No catch-all / negation pattern for rule conditions~~ | **Subsumed by I3** |
 | I5 | Implicit honesty via type provenance (replaces old explicit predicates) | Soundness assumption |
 | ~~I6~~ | ~~Helper functions in output-type predicates need index parameters~~ | **Resolved** |

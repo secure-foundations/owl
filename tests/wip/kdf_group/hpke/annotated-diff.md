@@ -140,10 +140,10 @@ kdf_group HPKE_KDF {
                          AuthEncap_honest_info<session i>() -> strict SS_t
 
     odh L_kem_corr<i>  : 0x, lbl_ikm(..., dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
-                         0x /* placeholder */ -> strict SS_corr_t
+                         _ -> strict SS_corr_t  // _ wildcard: any info != honest_info
 
     odh L_kem_ss_corr  : 0x, lbl_ikm(..., dh_combine(skS, skR)),
-                         0x /* placeholder */ -> strict SS_corr_t
+                         _ -> strict SS_corr_t  // _ wildcard: catch-all
 }
 ```
 

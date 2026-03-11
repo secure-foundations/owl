@@ -210,13 +210,10 @@ kdf_group WG_KDF {
     // This covers the case where the salt is an honest C2 for the same n
     // that owns S_init<@n>.  The corresponding "wrong n_eph" case is L2_corr.
     //
-    // ISSUE (I3): The old `odh L2<@n,m>` had the explicit case condition
-    //   `exists i:idx. salt == honest_c2<session i, pid n, pid m>()`
-    // and the L2_corr case had `n_eph !=idx n`. The new syntax has no
-    // mechanism for expressing index-inequality constraints between rules,
-    // so L2 and L2_corr overlap when n_eph = n. A "most specific rule
-    // wins" tie-breaking semantics would be needed, or explicit constraint
-    // syntax should be added.
+    // RESOLVED (I3): The `where n_eph !=idx n` clause on L2_corr ensures it
+    // only applies when the C2 salt's owner (n_eph) differs from the S_init
+    // owner (n). When n_eph = n both rules would otherwise have the same salt
+    // type; the where clause prevents the overlap, making L2 the unique match.
     // -----------------------------------------------------------------
     odh L2<@n,m> : C2<@n,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
         strict C3<@n,m> ||
@@ -224,10 +221,10 @@ kdf_group WG_KDF {
                        aad x. h3_pred[x]
                        nonce aead_counter_msg1_C3
 
-    // Rule L2_corr: Derive C3_corr via ODH — "wrong n_eph" case
+    // Rule L2_corr: Derive C3_corr via ODH — "wrong n_eph" case.
     // n_eph is the index of the C2 value's owner; n is the index of S_init.
-    // When n_eph != n (see ISSUE I3 above), the output is C3_corr.
-    odh L2_corr<n_eph@n,m> : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+    // The where clause restricts this rule to proof contexts where n_eph != n.
+    odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
         strict C3_corr ||
         strict st_aead (Data<adv> |12|)
                        aad x. h3_pred[x]
@@ -263,12 +260,13 @@ kdf_group WG_KDF {
     // (produced by L4); the wrong-n_eph case uses a C5 for a different
     // party (produced by L5_corr).
     //
-    // ISSUE (I3 again): Same index-constraint overlap issue as L2/L2_corr.
+    // RESOLVED (I3): Same resolution as L2/L2_corr — `where n_eph !=idx n`
+    // on L5_corr prevents overlap when n_eph = n.
     // -----------------------------------------------------------------
     odh L5<j@n,m> : C5<@n,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
         strict C6<@n,m>
 
-    odh L5_corr<j,n_eph@n,m> : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+    odh L5_corr<j,n_eph@n,m> where n_eph !=idx n : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
         strict C6_corr
 
     // -----------------------------------------------------------------
