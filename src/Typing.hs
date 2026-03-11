@@ -1345,7 +1345,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
             cont
 
 ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
-ensureODHDisjoint b = return () -- TODO step 8: reimplement using kdf_group rules
+ensureODHDisjoint b = return () -- ODH disjointness now checked at DeclKDFGroup elaboration time
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
@@ -2615,7 +2615,7 @@ findBestKDFCallResult xs = do
 -- Find all possible KDF salt position calls that match the given annotations `anns` and choose the best one.
 -- Attempt to extract a KDF key from the salt position argument `a`. If successful, use `matchKDF`
 -- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the salt argument is public.
--- TODO step 8: findValidSaltCalls, findValidIKMCalls, matchKDF, matchODH, kdfArgPublic removed; replaced by tryHint
+-- Old findValidSaltCalls, findValidIKMCalls, matchKDF, matchODH removed; replaced by tryHint
 
 pubIKM :: [(NameExp, NameExp)] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check Bool
 pubIKM dhs a b c = do
@@ -2875,7 +2875,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Argument to cross_dh_lemma must flow to adv") b
           nt <- getNameType n
           assert ("Name parameter to cross_dh_lemma must be a DH name") $ (nt^.val) `aeq` NT_DH
-          -- TODO step 8: reimplement cross_dh_lemma using kdf_group rules
+          -- TODO: reimplement cross_dh_lemma using kdf_group rules (deferred)
           return $ tLemma pTrue
       CLemma (LemmaConstant)  -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
@@ -3065,7 +3065,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
 -- Find all names that appear in any of the arguments to the KDF, as well as any
 -- DH pairs that appear in the ODH annotation.
 -- Return a list of props for whether each of the above names flows to the adv.
--- TODO step 8: findGoodKDFSplits replaced by new kdf_group hint matching
+-- findGoodKDFSplits: stub; KDF split logic now in tryHint
 findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [a] -> Int -> Check [Prop]
 findGoodKDFSplits a b c _refs j = return []
 

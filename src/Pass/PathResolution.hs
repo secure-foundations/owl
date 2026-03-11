@@ -245,7 +245,7 @@ resolveDecls (d:ds) =
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
       DeclKDFGroup s entries rules -> do
-          -- TODO step 7: full resolution of kdf_group entries and rules
+          -- TODO: full resolution of kdf_group entries and rules (deferred)
           let d' = d
           p <- view curPath
           ds' <- resolveDecls ds
