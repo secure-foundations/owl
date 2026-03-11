@@ -488,14 +488,14 @@ Track completed steps here. Each agent checks off a line before committing.
 - [x] Step 3: Parse.hs
 - [x] Step 4: Pretty.hs
 - [x] Step 5+6: Parse test files + verification
-- [ ] Step 7: TypingBase.hs
-- [ ] Step 8a: Typing — tryHint + sub-checkers
-- [ ] Step 8b: Typing — CKDF case rewrite
-- [ ] Step 8c: Typing — DeclKDFGroup elaboration
-- [ ] Step 8d: Typing — remove old functions
-- [ ] Step 9: LabelChecking.hs
-- [ ] Step 10: SMT.hs / SMTBase.hs
-- [ ] Step 11: End-to-end compilation
+- [x] Step 7: TypingBase.hs
+- [x] Step 8a: Typing — tryHint + sub-checkers
+- [x] Step 8b: Typing — CKDF case rewrite
+- [x] Step 8c: Typing — DeclKDFGroup elaboration
+- [x] Step 8d: Typing — remove old functions
+- [x] Step 9: LabelChecking.hs
+- [x] Step 10: SMT.hs / SMTBase.hs
+- [x] Step 11: End-to-end compilation
 
 ---
 
