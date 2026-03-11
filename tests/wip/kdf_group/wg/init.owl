@@ -215,18 +215,19 @@ def init_stage2<i@n,m>
                 c6 != honest_c6<session i, session j, pid n, pid n, pid
                 m>()
         );
-        // Derive C7 and tau and k0 from C6 using the PSK
-        // The PSK case and no-PSK case use different labels (L6 vs L6_zeros).
+        // Derive C7 and tau and k0 from C6 using the PSK.
+        // RESOLVED (I10): Both labels listed; pcase HasPSK?(opsk) is ghost-only
+        // so the type checker narrows per branch (L6 or L6_zeros) while the
+        // runtime call is identical in both branches.
         let psk : if HasPSK?(opsk) then Name(WG_KDF.psk<@n,m>) else ty_zeros_32 =
         case opsk {
                    | HasPSK v => v
                    | NoPSK => zeros_32()
         } in
         pcase HasPSK?(opsk) in
-        // HasPSK branch uses L6; NoPSK branch uses L6_zeros (see ISSUE I10)
-        let c7 = kdf<WG_KDF.L6<n,m>; kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
-        let tau = kdf<WG_KDF.L6<n,m>; kdfkey || nonce || enckey; 1>(c6, psk, 0x) in
-        let k0 = kdf<WG_KDF.L6<n,m>; kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
+        let c7 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>; kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
+        let tau = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>; kdfkey || nonce || enckey; 1>(c6, psk, 0x) in
+        let k0 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>; kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
         let h6 = crh(h5 ++ tau) in
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x)
         as Option (Data<adv>|0|) {

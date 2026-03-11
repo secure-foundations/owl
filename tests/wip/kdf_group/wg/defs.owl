@@ -119,9 +119,8 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 // transport keys.
 //
 // The KDF chain in WireGuard proceeds as follows:
+//   C1  = KDF(crh(construction()), dhpk(E_init), 0x)
 //   C2  = KDF(C1,  dh(E_init, S_resp),              0x)   [ODH L1]
-//   (C1 = KDF(crh(construction()), dhpk(E_init), 0x) is a publicly
-//    computable value computed inline; no kdf_group rule is needed for it.)
 //   C3  = KDF(C2,  dh(S_init, S_resp),              0x)   [ODH L2]
 //   C4  = KDF(C3,  dhpk(E_resp),                    0x)   [kdf L3 — public key in ikm]
 //   C5  = KDF(C4,  dh(E_init, E_resp),              0x)   [ODH L4]

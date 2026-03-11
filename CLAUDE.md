@@ -152,6 +152,7 @@ Key features:
 - Information flow security via labels
 - Computational security model (probabilistic adversaries)
 - Compositional verification (parties checked independently)
+- **`pcase P`** — a ghost proof annotation (no runtime effect) that splits the type checker into two branches: one where predicate `P` holds and one where it does not. Because it is ghost-only, the same runtime expression (e.g., a multi-label `kdf` call listing all applicable labels) can be used in both branches; the type checker narrows which labels apply per branch. Similarly `corr_case N` is equivalent to `pcase sec(N)`: it splits on whether name `N` is secret or corrupt.
 
 ## Dependencies
 

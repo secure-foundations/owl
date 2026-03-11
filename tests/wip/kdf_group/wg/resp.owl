@@ -266,7 +266,11 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
     forall i:idx,j:idx. c6 != honest_c6<session i, session j, pid n3, pid
     n3, pid m>()
  );
-// Derive C7, tau, k0 from C6 using the PSK (rule L6 or L6_corr)
+// Derive C7, tau, k0 from C6 using the PSK (rule L6 or L6_corr).
+// RESOLVED (I10): All four labels are listed in each call. pcase HasPSK?(psk)
+// is a ghost annotation; the type checker uses it to narrow which labels apply
+// per branch (HasPSK: L6/L6_corr; NoPSK: L6_zeros/L6_corr_zeros), but the
+// runtime call is the same in both branches.
 let psk_val : if HasPSK?(psk) then
     if n =idx n3 then
         Name(WG_KDF.psk<@n,m>)
@@ -278,15 +282,9 @@ case psk {
            | NoPSK => zeros_32()
 } in
 pcase HasPSK?(psk) in
- // HasPSK branch: use L6 (with psk) or L6_corr (when chain might be wrong).
- // Multi-witness: two labels cover correct and incorrect C6 cases.
- // ISSUE (I10): In the NoPSK branch (handled by pcase above), L6_zeros and
- // L6_corr_zeros should be used instead. The pcase creates two branches;
- // here only the HasPSK branch is shown. In the NoPSK branch, the labels
- // would be WG_KDF.L6_zeros<n,m> and WG_KDF.L6_corr_zeros.
- let c7 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_corr<n,m>; kdfkey || nonce || enckey; 0>(c6, psk_val, 0x) in
- let tau = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_corr<n,m>; kdfkey || nonce || enckey; 1>(c6, psk_val, 0x) in
- let k0 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_corr<n,m>; kdfkey || nonce || enckey; 2>(c6, psk_val, 0x) in
+ let c7 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>, WG_KDF.L6_corr<n,m>, WG_KDF.L6_corr_zeros; kdfkey || nonce || enckey; 0>(c6, psk_val, 0x) in
+ let tau = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>, WG_KDF.L6_corr<n,m>, WG_KDF.L6_corr_zeros; kdfkey || nonce || enckey; 1>(c6, psk_val, 0x) in
+ let k0 = kdf<WG_KDF.L6<n,m>, WG_KDF.L6_zeros<n,m>, WG_KDF.L6_corr<n,m>, WG_KDF.L6_corr_zeros; kdfkey || nonce || enckey; 2>(c6, psk_val, 0x) in
  let msg2_tag = msg2_tag_value() in
  let msg2_sender : Data<adv> |4| = call get_sender_r<@m>() in
  let msg2_mac1_k = crh(mac1() ++ dhpk_S_init) in

@@ -11,13 +11,13 @@ This document records issues discovered while converting the WireGuard case stud
 | ~~I1~~ | ~~Public constant as salt~~ | **Resolved** | `L0` rule in `defs.owl` |
 | ~~I2~~ | ~~DH public key in ikm~~ | **Resolved** | `L0`, `L3` rules |
 | I3 | Index-inequality between rules | Soundness risk | `L2`/`L2_corr`, `L5`/`L5_corr` |
-| I4 | No catch-all / negation pattern | Expressiveness | Many rules |
+| ~~I4~~ | ~~No catch-all / negation pattern~~ | **Subsumed by I3** | Many rules |
 | I5 | Implicit honesty via types (C6_dual) | Soundness assumption | `L6` rules |
 | ~~I6~~ | ~~Index-parametric helper functions~~ | **Resolved** | `tk1_of_c6`, `tk2_of_c6` |
 | ~~I7~~ | ~~Labels as values in output-type predicates~~ | **Resolved** | `L6` output types |
 | ~~I8~~ | ~~`honest_cx` functions and new label syntax~~ | **Resolved** | `defs.owl` |
 | I9 | Multi-witness kdf calls | Syntax gap | `init.owl`, `resp.owl` |
-| I10 | PSK/no-PSK branch and rule selection | Design reminder | `init.owl`, `resp.owl` |
+| ~~I10~~ | ~~PSK/no-PSK branch and rule selection~~ | **Resolved** | `init.owl`, `resp.owl` |
 | I11 | Session-index specificity of C1 | Type precision | `defs.owl` |
 | I12 | `dualkdf` keyword removed | Design change | `defs.owl` |
 | ~~I13~~ | ~~Concatenated DH secrets in ODH ikm (HPKE)~~ | **Resolved** | `L_kem<i>`, `L_kem_corr<i>` rules |
@@ -100,25 +100,23 @@ the semantics to be documented explicitly.
 
 ---
 
-## I4 — No "catch-all" or negation patterns
+## ~~I4 — No "catch-all" or negation patterns~~ **[SUBSUMED BY I3]**
 
-**Problem:** Several old nametypes had an explicit negation or catch-all
-case, for example:
+**Why this is subsumed:** In WireGuard, I4 is entirely eliminated by the
+`kdf_group` design: every correct/corrupted distinction is expressed at the
+type level (e.g., `C6<@n,m>` vs `C6_corr` as salt types), so no runtime
+negation condition is needed.  C6 and C6_dual have been merged into a single
+`C6<@n,m>` kdfkey; the "forall salt ≠ honest" catch-all branch of C6_dual
+is replaced by the L6_corr rule whose salt simply has type `C6_corr`.
 
-```
-nametype C4<@n,m> = kdf {ikm info.
-    (exists i,j. ikm == dh_combine(dhpk(E_init<i@n>), E_resp<j@m>)) -> strict C5<@n,m>
-    (forall i,j. ikm != ...)                                          -> strict C5_corr
-}
-```
+In HPKE, two instances remain (L_kem_corr<i> and L_kem_ss_corr needing
+"info ≠ honest_info"), but both resolve the same way as I3: under priority
+semantics (first match wins), rules listed earlier take precedence and later
+rules become implicit fallbacks.  No separate `default` keyword is required.
 
-The new syntax has no way to express "this rule applies only if no other
-rule in the group matches".  I3 above is a specific instance of this
-general problem.
-
-**Suggested resolution:** Consider adding a `default` or `otherwise` rule
-keyword that acts as a catch-all when all other rules for that salt type
-fail to match.
+~~**Problem:** The old syntax had explicit negation conditions (`forall i,j. ikm !=
+...`) that the new rule syntax could not express. I3 was identified as a specific
+instance of this general problem.~~
 
 ---
 
@@ -239,23 +237,26 @@ The affected call sites in the WireGuard translation are:
 
 ---
 
-## I10 — PSK/no-PSK branch and rule selection
+## ~~I10 — PSK/no-PSK branch and rule selection~~ **[RESOLVED]**
 
-**Problem:** The protocol uses `pcase HasPSK?(opsk)` to split into two
-branches.  In the HasPSK branch, `L6<@n,m>` (with the PSK in ikm) should
-be used.  In the NoPSK branch, `L6_zeros<@n,m>` (with `zeros_32()` in
-ikm) should be used.  In `resp.owl` the responder also needs `L6_corr` /
-`L6_corr_zeros` when the C6 chain may be incorrect.
+**Resolution:** `pcase P` is a **ghost proof annotation**: it tells the
+type checker to split into two branches (one where `P` holds, one where it
+does not), but it has no effect on runtime behavior.  Therefore the runtime
+KDF call does not need to select a single label per branch.  Instead, all
+four applicable labels are listed in a single multi-label call:
 
-In the new `resp.owl`, the NoPSK branch of the `pcase` is left implicit
-(the `pcase` creates the two branches, but the kdf calls shown use `L6`
-and `L6_corr`).  The full treatment requires four kdf labels:
-`L6`, `L6_zeros`, `L6_corr`, `L6_corr_zeros`, selected by the
-combination of (HasPSK?, chain-correct?).
+```owl
+kdf<WG_KDF.L6<@n,m>, WG_KDF.L6_zeros<@n,m>,
+    WG_KDF.L6_corr<@n,m>, WG_KDF.L6_corr_zeros; ...; ...>(c6, ikm, 0x)
+```
 
-**Suggested resolution:** This is not a syntax issue per se, but a reminder
-that each `pcase` branch may need to use different group labels.  Nested
-`pcase` or `case` expressions should select the appropriate label.
+Within each `pcase` branch the type checker can narrow which labels are
+consistent with the branch condition (`HasPSK?` true or false) and derive
+the appropriate output type.  No source-level branch-specific label
+selection is needed.
+
+Note: the soundness of multi-label calls still depends on I9's formal
+semantics being defined.
 
 ---
 

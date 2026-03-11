@@ -453,13 +453,13 @@ The issue numbers below refer to that document.
 | ~~I1~~ | ~~Public computed values (e.g., `crh(f())`) not allowed in salt/info~~ | **Resolved** |
 | ~~I2~~ | ~~DH public keys (`dhpk(N)`) not allowed in ikm~~ | **Resolved** |
 | I3 | No index-inequality constraints between overlapping rules | Soundness risk |
-| I4 | No catch-all / negation pattern for rule conditions | Expressiveness |
+| ~~I4~~ | ~~No catch-all / negation pattern for rule conditions~~ | **Subsumed by I3** |
 | I5 | Implicit honesty via type provenance (replaces old explicit predicates) | Soundness assumption |
 | ~~I6~~ | ~~Helper functions in output-type predicates need index parameters~~ | **Resolved** |
 | ~~I7~~ | ~~No mechanism to pass a group label as a value in output-type expressions~~ | **Resolved** |
 | ~~I8~~ | ~~`honest_cx`-style ghost functions must be updated to use group labels~~ | **Resolved** |
 | I9 | Multi-label kdf calls have no formally defined semantics | Syntax gap |
-| I10 | PSK/no-PSK branch requires selecting different labels | Design reminder |
+| ~~I10~~ | ~~PSK/no-PSK branch requires selecting different labels~~ | **Resolved** |
 | I11 | Session-index specificity of C1-style nametypes | Type precision |
 | I12 | `dualkdf` keyword removed; positional annotation may be needed | Design change |
 | ~~I13~~ | ~~Concatenated DH secrets in ikm (HPKE)~~ | **Resolved** |
