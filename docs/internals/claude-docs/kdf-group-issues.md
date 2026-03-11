@@ -16,7 +16,7 @@ This document records issues discovered while converting the WireGuard case stud
 | ~~I6~~ | ~~Index-parametric helper functions~~ | **Resolved** | `tk1_of_c6`, `tk2_of_c6` |
 | ~~I7~~ | ~~Labels as values in output-type predicates~~ | **Resolved** | `L6` output types |
 | ~~I8~~ | ~~`honest_cx` functions and new label syntax~~ | **Resolved** | `defs.owl` |
-| I9 | Multi-witness kdf calls | Syntax gap | `init.owl`, `resp.owl` |
+| ~~I9~~ | ~~Multi-witness kdf calls~~ | **Resolved** | `init.owl`, `resp.owl` |
 | ~~I10~~ | ~~PSK/no-PSK branch and rule selection~~ | **Resolved** | `init.owl`, `resp.owl` |
 | I11 | Session-index specificity of C1 | Type precision | `defs.owl` |
 | I12 | `dualkdf` keyword removed | Design change | `defs.owl` |
@@ -197,43 +197,23 @@ questions for functions like `honest_c4`.~~
 
 ---
 
-## I9 — Multi-witness (multi-label) kdf calls
+## ~~I9 — Multi-witness (multi-label) kdf calls~~ **[RESOLVED]**
 
-**Problem:** Several points in `init.owl` and `resp.owl` use a single KDF
-call with *two* ODH witnesses simultaneously, e.g.:
+**Resolution:** Multi-label kdf calls are defined as **hints** to the type
+checker.  Each label in the comma-separated list is a candidate rule; the type
+checker tries all of them and unifies the results of those whose preconditions
+are consistent with the current proof context.  The unification semantics follow
+the existing KDF type-checking mechanism.  Hints are ghost — they affect only
+the type checker's view of the output type; the runtime computation is unchanged.
 
-```
-// Old syntax:
-let c5 = kdf<0,1; odh L4<i,j@n,m>[0], odh L4<i,j@n,m2>[1]; kdfkey; 0>(c4, ss, 0x)
-```
-
-This says: "the salt `c4` satisfies either the first or the second case of
-the C4 nametype, and the corresponding ODH witnesses are L4 for `m` and L4
-for `m2`."
-
-In the new syntax, each rule covers one case.  Using two labels in a
-comma-separated list (as written in the new `init.owl`)
-
-```
+```owl
+// Resolved: both labels are hints; the type checker unifies the results
+// of whichever are consistent with the proof context.
 let c5 = kdf<WG_KDF.L4<i,j@n,m>, WG_KDF.L4<i,j@n,m2>; kdfkey; 0>(c4, ss, 0x)
 ```
 
-is **tentative** — the semantics of a multi-label kdf call is not defined
-in the new syntax specification.  The verifier would need to understand
-this as "the salt can match either rule; use whichever applies".
-
-**Suggested resolution:** Define a multi-label kdf call as a "disjunctive
-witness": the call succeeds if at least one of the listed labels matches
-the runtime arguments.  The output type would be the *intersection* of the
-output types of the matching rules (or the weakest type that covers all
-cases, if they differ).
-
-The affected call sites in the WireGuard translation are:
-- `c5` derivation (L4 / L4 for two `m` values)
-- `c6` derivation (L5 / L5 for two `m` values)
-- `c7`, `tau`, `k0` derivation (L6 / L6_corr for correct vs. wrong C6)
-- `tk1`, `tk2` derivation (L7 / L7_corr)
-- `C3`, `k1` derivation in the responder (L2 / L2_corr)
+~~**Problem:** The semantics of a comma-separated label list in a kdf call was not
+defined; the notation was marked tentative.~~
 
 ---
 

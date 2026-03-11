@@ -223,18 +223,21 @@ let k0 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
 
 ### 3.2 Multi-label calls
 
-When the type checker cannot statically determine which of two rules applies
+When the type checker cannot statically determine which of several rules applies
 (e.g., because the responder does not know if the incoming ephemeral key belongs
-to the correct session), both rules are listed as a comma-separated label set:
+to the correct session), the labels are listed as a comma-separated set of
+**hints**:
 
 ```owl
-// Tentative syntax — semantics not yet formally defined (see Issue I9):
 let C3 = kdf<WG_KDF.L2<n,m>, WG_KDF.L2_corr<n3,n,m>; kdfkey||enckey; 0>(C2, ss, 0x) in
 ```
 
-The intended semantics is: "the salt satisfies at least one of the listed rules;
-use whichever one matches at runtime." The output type is the intersection (most
-conservative type) of the matching rules' outputs.
+**Hint semantics:** Each label is a candidate rule.  The type checker tries all
+hints and unifies the results of those that are consistent with the current proof
+context (i.e., whose preconditions are satisfied by the types of the runtime
+arguments).  The unification semantics are the same as the existing KDF
+type-checking mechanism.  Hints are **ghost** — they affect only the type
+checker's view of the output; the runtime KDF computation is unchanged.
 
 ### 3.3 Ghost `gkdf` calls
 
@@ -458,7 +461,7 @@ The issue numbers below refer to that document.
 | ~~I6~~ | ~~Helper functions in output-type predicates need index parameters~~ | **Resolved** |
 | ~~I7~~ | ~~No mechanism to pass a group label as a value in output-type expressions~~ | **Resolved** |
 | ~~I8~~ | ~~`honest_cx`-style ghost functions must be updated to use group labels~~ | **Resolved** |
-| I9 | Multi-label kdf calls have no formally defined semantics | Syntax gap |
+| ~~I9~~ | ~~Multi-label kdf calls have no formally defined semantics~~ | **Resolved** |
 | ~~I10~~ | ~~PSK/no-PSK branch requires selecting different labels~~ | **Resolved** |
 | I11 | Session-index specificity of C1-style nametypes | Type precision |
 | I12 | `dualkdf` keyword removed; positional annotation may be needed | Design change |
