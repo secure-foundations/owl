@@ -78,7 +78,7 @@ nameDefFlows n nt = do
           lv <- symLabel l
           ln <- symLabel $ mkSpanned $ LName n
           return $ sFlows lv ln
-      NT_KDF -> return $ SAtom "true" -- TODO step 9: add kdf_group flow axioms
+      NT_KDF -> return $ SAtom "true" -- bare kdfkey marker; no flow axioms
 
 smtLabelSetup :: Sym ()
 smtLabelSetup = do
