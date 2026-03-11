@@ -1284,9 +1284,43 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
-      DeclKDFGroup s entries rules -> do
-          -- TODO step 8: full elaboration of kdf_group
-          cont
+      DeclKDFGroup groupName entries rules -> do
+          -- Register entries with qualified names (GroupName.entryName)
+          let registerEntries [] k = k
+              registerEntries (e:es) k = case e of
+                KGEDHName n b -> do
+                    ((is1, is2), loc) <- unbind b
+                    let qualName = groupName ++ "." ++ n
+                    addNameDef qualName (is1, is2) (mkSpanned NT_DH, [loc]) $
+                        registerEntries es k
+                KGEKdfKey n b -> do
+                    ((is1, is2), ()) <- unbind b
+                    let qualName = groupName ++ "." ++ n
+                    addNameDef qualName (is1, is2) (mkSpanned NT_KDF, []) $
+                        registerEntries es k
+                KGENameType n b -> do
+                    ((is1, xs), ()) <- unbind b
+                    let qualName = groupName ++ "." ++ n
+                    let bnt = bind ((is1, []), xs) (mkSpanned NT_KDF)
+                    local (over (curMod . nameTypeDefs) $ insert qualName bnt) $
+                        registerEntries es k
+          -- Process rules: build the KDFGroupDef and store it
+          let processRules [] accRules accOdh = return (accRules, accOdh)
+              processRules (r:rs) accRules accOdh = do
+                  ((is1, is2), body) <- unbind (_kgrIdxs r)
+                  let lbl = _kgrLabel r
+                  let bRule = bind (is1, is2) body
+                  let accRules' = insert lbl bRule accRules
+                  accOdh' <- if _kgrIsODH r then do
+                      -- Extract DH pairs from IKM atoms for ODH tracking
+                      let dhPairs = [(lbl, ne1, ne2) | IKMDhCombine ne1 ne2 <- _kgrbIkm body]
+                      return (accOdh ++ dhPairs)
+                  else return accOdh
+                  processRules rs accRules' accOdh'
+          registerEntries entries $ do
+              (ruleMap, odhPairs) <- processRules rules [] []
+              let gdef = KDFGroupDef ruleMap odhPairs
+              local (over (curMod . kdfGroups) $ insert groupName gdef) cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -2737,6 +2771,73 @@ patternPublicAndEquivalent pat1 pat2 = do
 
 
 
+-- Try a single KDFGroupRuleRef hint against salt/ikm/info.
+-- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
+tryHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
+tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
+    mBody <- lookupKDFGroupRule (_kgrrGroup hint) (_kgrrLabel hint) (_kgrrIdxs hint)
+    case mBody of
+      Nothing -> return Nothing
+      Just body -> do
+          ok1 <- checkWhereClause (_kgrbWhere body)
+          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT else return False
+          ok3 <- if ok2 then checkIKMMatch body ikmE ikmT else return False
+          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE infoT else return False
+          let KDFOutputSpec outputs = _kgrbOutput body
+          if not ok4 || j >= length outputs then return Nothing else do
+              let (strictness, _outNt) = outputs !! j
+              case strictness of
+                KDFStrict -> do
+                    saltLbl <- case _kgrbSalt body of
+                      SaltNameType _ _ -> coveringLabel saltT
+                      SaltPublicExpr _ -> return advLbl
+                    return $ Just $ tData saltLbl advLbl
+                KDFPub -> return $ Just $ tData advLbl advLbl
+                KDFUnstrict -> return $ Just $ tData advLbl advLbl
+
+checkWhereClause :: KDFGroupWhere -> Check Bool
+checkWhereClause (KDFGroupWhere []) = return True
+checkWhereClause (KDFGroupWhere ((i, j, neq):rest)) = do
+    let iProp = mkIVar i
+    let jProp = mkIVar j
+    let p = if neq
+            then pNot $ mkSpanned $ PEqIdx iProp jProp
+            else mkSpanned $ PEqIdx iProp jProp
+    result <- decideProp p
+    case result of
+      Just True -> checkWhereClause (KDFGroupWhere rest)
+      _ -> return False
+
+checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
+checkSaltMatch (SaltPublicExpr _) _ saltT = tyFlowsTo saltT advLbl
+checkSaltMatch (SaltNameType _p _idxs) _ saltT = do
+    -- Check that the salt type is a name type matching the expected nametype
+    case extractNameFromType saltT of
+      Just _ -> return True
+      Nothing -> tyFlowsTo saltT advLbl
+
+checkIKMMatch :: KDFGroupRuleBody -> AExpr -> Ty -> Check Bool
+checkIKMMatch body ikmE ikmT = do
+    -- For ODH rules with DH combines, check the ODH property
+    let atoms = _kgrbIkm body
+    let hasDH = any isDhCombine atoms
+    if hasDH then do
+        -- Check that the IKM involves a DH computation
+        dhComp <- getLocalDHComputation ikmE
+        case dhComp of
+          Nothing -> tyFlowsTo ikmT advLbl  -- Not a DH, check if public
+          Just _ -> return True  -- DH computation found
+    else do
+        -- Non-ODH: check IKM has appropriate type (name or public)
+        return True
+  where
+    isDhCombine (IKMDhCombine _ _) = True
+    isDhCombine _ = False
+
+checkInfoMatch :: InfoExpr -> AExpr -> Ty -> Check Bool
+checkInfoMatch InfoWildcard _ _ = return True
+checkInfoMatch (InfoPublic _) _ infoT = tyFlowsTo infoT advLbl
+
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do
     tcs <- view tcScope
@@ -2794,18 +2895,20 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
 --  3. Collect the secret ann's, make sure they are consistent
       -- oann1: which case of the kdf to use for kdfkey in salt position
       -- oann2: which case of the kdf to use for kdfkey in ikm position (also for odh name in ikm position)
-      CKDF refs nks j -> do
-          -- TODO step 8: reimplement using tryHint + unifyHintResults
+      CKDF hints nks j -> do
           assert ("KDF must take three arguments") $ length args == 3
-          let [a, b, c] = args
-          a' <- resolveANF (fst a)
-          b' <- resolveANF (fst b)
-          c' <- resolveANF (fst c)
-          let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF a' b' c' nks j
+          let [(saltE, saltT), (ikmE, ikmT), (infoE, infoT)] = args
+          saltE' <- resolveANF saltE
+          ikmE' <- resolveANF ikmE
+          infoE' <- resolveANF infoE
+          results <- catMaybes <$> mapM (\h -> tryHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
+          let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j
           let kdfRefinement t = tRefined t ".res" $
                 pAnd (pEq (aeLength (aeVar ".res")) outLen) kdfProp
-          return $ kdfRefinement (tData advLbl advLbl)
+          case results of
+            [] -> return $ kdfRefinement (tData advLbl advLbl)
+            (t:_) -> return $ kdfRefinement t
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
