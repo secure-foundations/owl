@@ -1,0 +1,7 @@
+// Tests: nametype C : kdfkey inside kdf_group
+
+locality alice
+
+kdf_group G {
+    nametype C : kdfkey
+}

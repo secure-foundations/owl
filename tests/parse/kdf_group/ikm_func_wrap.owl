@@ -1,0 +1,17 @@
+// Tests: odh L<i> : 0x, lbl_ikm(f(), g(), dh_combine(A,B)), 0x -> ...
+// lbl_ikm is parsed as IKMPublicExpr wrapping a function application
+
+locality alice
+locality bob
+
+func f arity 0
+func g arity 0
+func lbl_ikm arity 3
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ bob
+    nametype T : kdfkey
+
+    odh L<i> : 0x, lbl_ikm(f(), g(), dh_combine(A, B)), 0x -> strict T
+}

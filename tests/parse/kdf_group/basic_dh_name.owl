@@ -1,0 +1,7 @@
+// Tests: name N : DH @ loc inside kdf_group
+
+locality alice
+
+kdf_group G {
+    name A : DH @ alice
+}

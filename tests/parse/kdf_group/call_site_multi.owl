@@ -1,0 +1,19 @@
+// Tests: kdf<G.L1<i>, G.L2<i>; kdfkey; 0>(s, k, 0x) multi-label call site
+
+locality alice
+locality bob
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ bob
+    nametype C1 : kdfkey
+    nametype C2 : kdfkey
+    nametype C2_corr : kdfkey
+
+    odh L1<i> : C1, dh_combine(A, B), 0x -> strict C2
+    odh L2<i> : C1, dh_combine(A, B), 0x -> strict C2_corr
+}
+
+def test<i> (salt: Data<adv>, ikm: Data<adv>) @ alice : Data<adv> =
+    let result = kdf<G.L1<i>, G.L2<i>; kdfkey; 0>(salt, ikm, 0x) in
+    result

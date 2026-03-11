@@ -1,0 +1,112 @@
+// Tests: stripped-down WG_KDF block (just the kdf_group, no full defs)
+
+locality Initiator<n>
+locality Responder<m>
+
+type useless_enc = nonce
+type transp_key_init_send<@n,m> = nonce
+type transp_key_resp_send<@n,m> = nonce
+type transp_key_init_send_corr = nonce
+type transp_key_resp_send_corr = nonce
+
+func honest_c1<i@n> arity 0
+func h3_pred arity 1
+func valid_h6 arity 1
+func tk1_of_c6 arity 2
+func tk2_of_c6 arity 2
+func aead_counter_msg1_C2 arity 0
+func aead_counter_msg1_C3 arity 0
+func aead_counter_msg2_C7 arity 0
+func zeros_32 arity 0
+func key_confirm_responder_recv<@m> arity 1
+func key_confirm_responder_send<@m> arity 1
+
+kdf_group WG_KDF {
+
+    name E_init<i@n> : DH @ Initiator<n>
+    name E_resp<j@m> : DH @ Responder<m>
+    name S_init<@n> : DH @ Initiator<n>
+    name S_resp<@m> : DH @ Responder<m>
+    name psk<@n,m> : kdfkey
+
+    nametype C2<@n,m> : kdfkey
+    nametype C3<@n,m> : kdfkey
+    nametype C3_corr  : kdfkey
+    nametype C4<@n,m> : kdfkey
+    nametype C4_corr  : kdfkey
+    nametype C5<@n,m> : kdfkey
+    nametype C5_corr  : kdfkey
+    nametype C6<@n,m> : kdfkey
+    nametype C6_corr  : kdfkey
+    nametype C7<@n,m> : kdfkey
+    nametype C7_corr  : kdfkey
+
+    odh L1<i@n,m> : honest_c1<i@n>(), dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
+        strict C2<@n,m> ||
+        strict st_aead (dhpk(S_init<@n>))
+                       aad x. true
+                       nonce aead_counter_msg1_C2()
+
+    odh L2<@n,m> : C2<@n,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+        strict C3<@n,m> ||
+        strict st_aead (Data<adv> |12|)
+                       aad x. h3_pred(x)
+                       nonce aead_counter_msg1_C3()
+
+    odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+        strict C3_corr ||
+        strict st_aead (Data<adv> |12|)
+                       aad x. h3_pred(x)
+                       nonce aead_counter_msg1_C3()
+
+    kdf L3<j@n,m> : C3<@n,m>, dhpk(E_resp<j@m>), 0x ->
+        strict C4<@n,m> || strict useless_enc
+
+    kdf L3_corr<j@m> : C3_corr, dhpk(E_resp<j@m>), 0x ->
+        strict C4_corr || strict useless_enc
+
+    odh L4<i,j@n,m> : C4<@n,m>, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
+        strict C5<@n,m>
+
+    odh L4_corr<i,j@n,m> : C4_corr, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
+        strict C5_corr
+
+    odh L5<j@n,m> : C5<@n,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+        strict C6<@n,m>
+
+    odh L5_corr<j,n_eph@n,m> where n_eph !=idx n : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+        strict C6_corr
+
+    kdf L6<@n,m> : C6<@n,m>, psk<@n,m>, 0x ->
+        strict C7<@n,m> || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad x. valid_h6(x)
+               nonce aead_counter_msg2_C7()
+
+    kdf L6_zeros<@n,m> : C6<@n,m>, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
+        strict C7<@n,m> || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad x. valid_h6(x)
+               nonce aead_counter_msg2_C7()
+
+    kdf L6_corr<@n,m> : C6_corr, psk<@n,m>, 0x ->
+        strict C7_corr || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad x. valid_h6(x)
+               nonce aead_counter_msg2_C7()
+
+    kdf L6_corr_zeros : C6_corr, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
+        strict C7_corr || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad x. valid_h6(x)
+               nonce aead_counter_msg2_C7()
+
+    kdf L7<@n,m> : C7<@n,m>, 0x, 0x ->
+        strict transp_key_init_send<@n,m> ||
+        strict transp_key_resp_send<@n,m>
+
+    kdf L7_corr : C7_corr, 0x, 0x ->
+        strict transp_key_init_send_corr ||
+        strict transp_key_resp_send_corr
+
+}

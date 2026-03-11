@@ -1,0 +1,12 @@
+// Tests: kdf L : C, k, info -> strict T1 || strict T2
+
+locality alice
+
+kdf_group G {
+    name psk : kdfkey
+    nametype C : kdfkey
+    nametype T1 : kdfkey
+    nametype T2 : kdfkey
+
+    kdf L : C, psk, 0x -> strict T1 || strict T2
+}

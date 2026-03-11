@@ -1,0 +1,12 @@
+// Tests: odh L<i> : 0x, dh_combine(A,B), _ -> strict T
+
+locality alice
+locality bob
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ bob
+    nametype T : kdfkey
+
+    odh L<i> : 0x, dh_combine(A, B), _ -> strict T
+}

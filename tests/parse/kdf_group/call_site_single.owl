@@ -1,0 +1,16 @@
+// Tests: kdf<G.L<i>; kdfkey; 0>(s, k, 0x) call site
+
+locality alice
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ alice
+    nametype C1 : kdfkey
+    nametype C2 : kdfkey
+
+    odh L<i> : C1, dh_combine(A, B), 0x -> strict C2
+}
+
+def test<i> (salt: Data<adv>, ikm: Data<adv>) @ alice : Data<adv> =
+    let result = kdf<G.L<i>; kdfkey; 0>(salt, ikm, 0x) in
+    result

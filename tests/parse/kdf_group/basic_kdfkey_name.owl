@@ -1,0 +1,7 @@
+// Tests: name psk : kdfkey inside kdf_group
+
+locality alice
+
+kdf_group G {
+    name psk : kdfkey
+}
