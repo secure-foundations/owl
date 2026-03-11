@@ -131,7 +131,7 @@ instance Alpha CorrConstraint
 instance Subst Idx CorrConstraint
 instance Subst ResolvedPath CorrConstraint
 
-data ModBody = ModBody { 
+data ModBody = ModBody {
     _isModuleType :: IsModuleType,
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
     _defs :: Map String Def, 
@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _odh    :: Map String (), -- TODO step 7: replace with _kdfGroups
+    _kdfGroups :: Map String KDFGroupDef,
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -148,6 +148,16 @@ data ModBody = ModBody {
     _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
+
+data KDFGroupDef = KDFGroupDef {
+    _kgdRules    :: Map String (Bind ([IdxVar], [IdxVar]) KDFGroupRuleBody),
+    _kgdOdhPairs :: [(String, NameExp, NameExp)]  -- (label, ne1, ne2)
+}
+    deriving (Show, Generic, Typeable)
+
+instance Alpha KDFGroupDef
+instance Subst ResolvedPath KDFGroupDef
+instance Subst Idx KDFGroupDef
 
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
@@ -277,6 +287,7 @@ makeLenses ''MemoEntry
 makeLenses ''Env
 
 makeLenses ''ModBody
+makeLenses ''KDFGroupDef
 
 modDefKind :: ModDef -> Check' senv IsModuleType
 modDefKind (MBody xd) =
@@ -705,7 +716,19 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
--- TODO step 7+8: getODHNameInfo replaced by lookupKDFGroupRule
+lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> Check' senv (Maybe KDFGroupRuleBody)
+lookupKDFGroupRule pth@(PRes (PDot p groupName)) lbl (vs1, vs2) = do
+    md <- openModule p
+    case lookup groupName (md^.kdfGroups) of
+      Nothing -> return Nothing
+      Just gdef -> case lookup lbl (gdef^.kgdRules) of
+        Nothing -> return Nothing
+        Just bRule -> do
+            ((is1, is2), body) <- unbind bRule
+            if (length vs1, length vs2) /= (length is1, length is2)
+              then return Nothing
+              else return $ Just $ substs (zip is1 vs1) $ substs (zip is2 vs2) body
+lookupKDFGroupRule _ _ _ = return Nothing
 
 
 getNameKind :: NameType -> Check' senv NameKind
