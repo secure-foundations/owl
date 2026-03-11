@@ -748,7 +748,7 @@ tySigOfCall p = do
 
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
-concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
+concretifyCryptOp resolvedArgs (CKDF _ nks nkidx) [salt, ikm, info] = do
     let nk = nks !! nkidx
     kdfLen <- kdfLenOf nks
     outLen <- fLenOfNameKind nk

@@ -60,10 +60,6 @@ flowColor = Cyan
 corrColor = Red
 tyColor = Magenta
 
-owlprettyKDFSelector :: KDFSelector -> OwlDoc
-owlprettyKDFSelector (i, []) = owlpretty i
-owlprettyKDFSelector (i, xs) = owlpretty i <> angles (mconcat $ intersperse (owlpretty ",") (map owlpretty xs))
-
 instance  OwlPretty NameExpX where
     owlpretty (KDFName a b c nks j nt _) = 
         Prettyprinter.group $ 
@@ -202,7 +198,80 @@ instance OwlPretty NameKindRow where
     owlpretty (NameKindRow n) = mconcat $ intersperse (owlpretty "||") (map owlpretty n)
 
 
-instance  OwlPretty PropX where 
+instance OwlPretty IKMAtom where
+    owlpretty (IKMPublicExpr e)     = owlpretty e
+    owlpretty (IKMKdfKeyName ne)    = owlpretty ne
+    owlpretty (IKMDhCombine ne1 ne2) =
+        owlpretty "dh_combine(" <> owlpretty ne1 <> owlpretty ", " <> owlpretty ne2 <> owlpretty ")"
+
+instance OwlPretty SaltExpr where
+    owlpretty (SaltNameType p idxs) = owlpretty p <> owlprettyIdxParams idxs
+    owlpretty (SaltPublicExpr e)    = owlpretty e
+
+instance OwlPretty InfoExpr where
+    owlpretty InfoWildcard   = owlpretty "_"
+    owlpretty (InfoPublic e) = owlpretty e
+
+instance OwlPretty KDFGroupWhere where
+    owlpretty (KDFGroupWhere []) = mempty
+    owlpretty (KDFGroupWhere cs) =
+        owlpretty " where " <>
+        hsep (intersperse (owlpretty ", ") $ map ppC cs)
+      where
+        ppC (i, j, True)  = owlpretty (show i) <> owlpretty " !=idx " <> owlpretty (show j)
+        ppC (i, j, False) = owlpretty (show i) <> owlpretty " =idx "  <> owlpretty (show j)
+
+instance OwlPretty KDFOutputSpec where
+    owlpretty (KDFOutputSpec nts) =
+        hsep $ intersperse (owlpretty " ||") $
+        map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts
+
+instance OwlPretty KDFGroupRuleBody where
+    owlpretty body =
+        let (KDFGroupRuleBody wh salt ikm info out _) = body
+            pikmList = hsep $ intersperse (owlpretty " ++") $ map owlpretty ikm
+        in
+        owlpretty salt <> owlpretty ", " <> pikmList <> owlpretty ", " <> owlpretty info
+        <> owlpretty " -> " <> owlpretty out
+
+instance OwlPretty KDFGroupRule where
+    owlpretty rule =
+        let kw     = if _kgrIsODH rule then owlpretty "odh" else owlpretty "kdf"
+            lbl    = owlpretty (_kgrLabel rule)
+            (idxs, body) = unsafeUnbind (_kgrIdxs rule)
+            pidxs  = owlprettyIdxBindsPair idxs
+            wh     = owlpretty (_kgrbWhere body)
+        in
+        kw <+> lbl <> pidxs <> wh <> owlpretty " : " <> owlpretty body
+
+owlprettyIdxBindsPair :: ([IdxVar], [IdxVar]) -> OwlDoc
+owlprettyIdxBindsPair ([], []) = mempty
+owlprettyIdxBindsPair (xs, ys) =
+    owlpretty "<" <>
+    hsep (intersperse (owlpretty ",") $ map owlpretty xs) <>
+    (if null ys then mempty else owlpretty "@" <> hsep (intersperse (owlpretty ",") $ map owlpretty ys)) <>
+    owlpretty ">"
+
+instance OwlPretty KDFGroupEntry where
+    owlpretty (KGEDHName n b) =
+        let (idxs, loc) = unsafeUnbind b in
+        owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
+        <> owlpretty " : DH @ " <> owlpretty loc
+    owlpretty (KGEKdfKey n b) =
+        let (idxs, _) = unsafeUnbind b in
+        owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
+        <> owlpretty " : kdfkey"
+    owlpretty (KGENameType n b) =
+        let ((idxs, dvars), _) = unsafeUnbind b in
+        owlpretty "nametype " <> owlpretty n <> owlprettyIdxBindsPair (idxs, [])
+        <> owlpretty " : kdfkey"
+
+instance OwlPretty KDFGroupRuleRef where
+    owlpretty ref =
+        owlpretty (_kgrrGroup ref) <> owlpretty "." <> owlpretty (_kgrrLabel ref) <>
+        owlprettyIdxParams (_kgrrIdxs ref)
+
+instance  OwlPretty PropX where
     owlpretty PTrue = owlpretty "true"
     owlpretty PFalse = owlpretty "false"
     owlpretty (PAnd p1 p2) = 
@@ -260,18 +329,7 @@ owlprettyIdxBinds1 xs = owlpretty "<" <> hsep (intersperse (owlpretty ",") $ map
 
 
 instance  OwlPretty NameTypeX where
-    owlpretty (NT_KDF kpos cases) = 
-        let (((sx, _), (sy, _), (sself, _)), c) = unsafeUnbind cases in 
-        let pcases = map (\b ->
-                            let (is, (p, nts)) = unsafeUnbind b in 
-                            owlprettyIdxBinds1 is <> owlpretty p <+> owlpretty "->" <+> (hsep $ intersperse (owlpretty "||") $
-                                                                    map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts)) c
-        in
-        let hd = case kpos of
-                   KDF_SaltPos -> owlpretty "KDF"
-                   KDF_IKMPos -> owlpretty "DualKDF"
-        in
-        hd <> owlpretty "{" <> owlpretty sx <> owlpretty sy <> owlpretty sself <> owlpretty "." <> nest 4 (vsep pcases) <> owlpretty "}"
+    owlpretty NT_KDF = owlpretty "kdfkey"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
     owlpretty (NT_StAEAD ty xaad p pat) = 
         let (x, aad) = owlprettyBind xaad in
@@ -344,7 +402,14 @@ instance  OwlPretty CryptOp where
     owlpretty CMacVrfy = owlpretty "mac_vrfy"
     owlpretty CSign = owlpretty "sign"
     owlpretty CSigVrfy = owlpretty "vrfy"
-    owlpretty (CKDF _ _ _ _) = owlpretty "kdf"
+    owlpretty (CKDF refs nks j) =
+        owlpretty "kdf<" <>
+        hsep (intersperse (owlpretty ",") (map owlpretty refs)) <>
+        owlpretty ";" <>
+        owlpretty (NameKindRow nks) <>
+        owlpretty ";" <>
+        owlpretty j <>
+        owlpretty ">"
     owlpretty (CEncStAEAD p (idx1, idx2) _) = owlpretty "st_aead_enc" <> angles (owlpretty p <> angles (tupled (map owlpretty idx1) <> owlpretty "@" <> tupled (map owlpretty idx2)))
     owlpretty (CDecStAEAD) = owlpretty "st_aead_dec"
 

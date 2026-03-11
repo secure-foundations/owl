@@ -244,21 +244,11 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclODH s b -> do
-          (is, (ne1, ne2, kdfBody)) <- unbind b
-          ne1' <- resolveNameExp ne1
-          ne2' <- resolveNameExp ne2
-          (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \bpnts -> do 
-              (ixs, (p, nts)) <- unbind bpnts 
-              p' <- resolveProp p
-              nts' <- forM nts $ \(str, nt) -> do
-                  nt' <- resolveNameType nt
-                  return (str, nt')
-              return $ bind ixs $ (p', nts')
-          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+      DeclKDFGroup s entries rules -> do
+          -- TODO step 7: full resolution of kdf_group entries and rules
+          let d' = d
           p <- view curPath
-          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
+          ds' <- resolveDecls ds
           return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
@@ -349,16 +339,7 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
-                  NT_KDF pos b -> do
-                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
-                      cases' <- forM cases $ \bpnts -> do 
-                          (is, (p, nts)) <- unbind bpnts
-                          p' <- resolveProp p
-                          nts' <- forM nts $ \(str, nt) -> do
-                              nt' <- resolveNameType nt
-                              return (str, nt')
-                          return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
+                  NT_KDF -> return NT_KDF
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -561,7 +542,11 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF x y nks i -> return cop
+      CKDF refs nks i -> do
+          refs' <- mapM (\ref -> do
+              grp' <- resolvePath pos PTDef (_kgrrGroup ref)
+              return $ ref { _kgrrGroup = grp' }) refs
+          return $ CKDF refs' nks i
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat

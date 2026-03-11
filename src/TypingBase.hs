@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
+    _odh    :: Map String (), -- TODO step 7: replace with _kdfGroups
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -600,28 +600,9 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
-inKDFBody kdfBody salt info self = do
-    (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
-    let cases = subst x salt $ subst y info $ subst z self $ cases'
-    bs <- forM cases $ \bcase -> do
-        (xs, (p, _)) <- unbind bcase
-        return $ mkExistsIdx xs p
-    return $ foldr pOr pFalse bs
-
+-- TODO step 7: inKDFBody replaced by new kdf_group matching logic
 inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
-inODHProp salt ikm info = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    cur_odh <- view $ curMod . odh
-    ps <- forM cur_odh $ \(_, bnd2) -> do
-        ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
-        let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
-                                                          (mkSpanned $ AEGet ne2)
-                                               )
-        pd2 <- inKDFBody kdfBody salt info ikm
-        return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
-    return $ foldr pOr pFalse ps
+inODHProp salt ikm info = return pFalse -- TODO step 8: reimplement using kdf_group rules
 
 --getROStrictness :: NameExp -> Check' senv ROStrictness 
 --getROStrictness ne = 
@@ -675,19 +656,7 @@ normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
-      NT_KDF pos bcases -> do
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
-          cases' <- withVars 
-            [(x, (ignore sx, Nothing, tGhost)), 
-             (y, (ignore sy, Nothing, tGhost)), 
-             (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
-                (is, (p, nts)) <- unbind bcase
-                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-                    nts' <- forM nts $ \(str, nt) -> do
-                        nt' <- normalizeNameType nt
-                        return (str, nt')
-                    return $ bind is (p, nts')
-          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
+      NT_KDF -> return nt  -- bare kdfkey, no cases to normalize
       _ -> return nt
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
@@ -736,26 +705,7 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
-    mapM_ checkIdxSession is
-    mapM_ checkIdxPId ps
-    mapM_ inferIdx is_case
-    md <- openModule p
-    case lookup s (md^.odh) of
-      Nothing -> typeError $ "Unknown ODH handle: " ++ show s
-      Just bd -> do
-          ((ixs, pxs), bdy) <- unbind bd
-          assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
-          let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
-          assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ subst z ikm $ cases !! i
-          (xs_case, pcases')  <- unbind bpcases
-          assert ("KDF case index arity mismatch") $ length xs_case == length is_case
-          let (p, cases') = substs (zip xs_case is_case) pcases'
-          assert ("KDF name row mismatch") $ j < length cases'
-          return (ne1, ne2, p, cases')
+-- TODO step 7+8: getODHNameInfo replaced by lookupKDFGroupRule
 
 
 getNameKind :: NameType -> Check' senv NameKind
@@ -769,7 +719,7 @@ getNameKind nt =
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
-      NT_KDF _ _ -> return $ NK_KDF
+      NT_KDF -> return $ NK_KDF
     
 resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
@@ -895,7 +845,7 @@ lenConstOfUniformName ne = do
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    NT_KDF -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 

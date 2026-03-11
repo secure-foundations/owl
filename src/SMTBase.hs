@@ -864,7 +864,7 @@ instance SMTNameKindOf NameType where
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
-          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_KDF -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
               let v = lengthConstant l 
