@@ -261,9 +261,9 @@ resolveDecls (d:ds) =
               loc' <- resolveLocality pos loc
               return $ KGEDHName n (bind ixs loc')
           resolveEntry pos (KGEKdfKey n b) = do
-              (ixs, loc) <- unbind b
-              loc' <- resolveLocality pos loc
-              return $ KGEKdfKey n (bind ixs loc')
+              (ixs, locs) <- unbind b
+              locs' <- mapM (resolveLocality pos) locs
+              return $ KGEKdfKey n (bind ixs locs')
           resolveEntry _ e = return e
       DeclDetFunc s _ _ -> do
           let d' = d

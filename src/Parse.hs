@@ -892,8 +892,8 @@ parseKDFGroupEntryKdfKey = do
     symbol ":"
     reserved "kdfkey"
     symbol "@"
-    loc <- parseLocality
-    return $ KGEKdfKey n $ bind idxs loc
+    locs <- parseLocality `sepBy1` (symbol ",")
+    return $ KGEKdfKey n $ bind idxs locs
 
 parseKDFGroupEntryNameType :: Parser KDFGroupEntry
 parseKDFGroupEntryNameType = do

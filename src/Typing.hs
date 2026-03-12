@@ -1299,9 +1299,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     addNameDef qualName (is1, is2) (mkSpanned NT_DH, [loc]) $
                         registerEntries es k
                 KGEKdfKey n b -> do
-                    ((is1, is2), loc) <- unbind b
+                    ((is1, is2), locs) <- unbind b
                     let qualName = groupName ++ "." ++ n
-                    addNameDef qualName (is1, is2) (mkSpanned NT_KDF, [loc]) $
+                    addNameDef qualName (is1, is2) (mkSpanned NT_KDF, locs) $
                         registerEntries es k
                 KGENameType n b -> do
                     ((is1, is2), ()) <- unbind b
