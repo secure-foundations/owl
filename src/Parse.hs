@@ -79,8 +79,44 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
+-- Convert a NameKind to a NameType (for KDF name expressions using the new
+-- kdf_group-based format, where the NameType is inferred from the name kind).
+nameKindToNameType :: NameKind -> NameType
+nameKindToNameType NK_KDF       = mkSpanned NT_KDF
+nameKindToNameType (NK_Nonce s) = mkSpanned $ NT_Nonce s
+nameKindToNameType NK_Enc       = mkSpanned $ NT_Enc (tData advLbl advLbl)
+nameKindToNameType NK_MAC       = mkSpanned $ NT_MAC (tData advLbl advLbl)
+nameKindToNameType NK_Sig       = mkSpanned $ NT_Sig (tData advLbl advLbl)
+nameKindToNameType NK_DH        = mkSpanned NT_DH
+nameKindToNameType NK_PKE       = mkSpanned $ NT_PKE (tData advLbl advLbl)
+
 parseNameExp :: Parser NameExp
-parseNameExp = 
+parseNameExp =
+    -- New kdf_group format: KDF<G.L<i>; nks; j>(a, b, c)
+    -- Rule refs are parsed but discarded; nt is inferred from nks[j].
+    (try $ parseSpanned $ do
+        reserved "KDF"
+        symbol "<"
+        _refs <- parseKDFGroupRuleRef `sepBy1` (symbol ",")
+        symbol ";"
+        nks <- parseNameKind `sepBy1` (symbol "||")
+        symbol ";"
+        j <- many1 digit
+        symbol ">"
+        symbol "("
+        a <- parseAExpr
+        symbol ","
+        b <- parseAExpr
+        symbol ","
+        c <- parseAExpr
+        symbol ")"
+        let ji = read j
+        let nt = if ji < length nks then nameKindToNameType (nks !! ji)
+                 else mkSpanned NT_KDF  -- fallback
+        return $ KDFName a b c nks ji nt (ignore False)
+    )
+    <|>
+    -- Old format: KDF<nks; j; nt>(a, b, c)
     (parseSpanned $ do
         reserved "KDF"
         symbol "<"
