@@ -245,11 +245,18 @@ resolveDecls (d:ds) =
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
       DeclKDFGroup s entries rules -> do
-          -- TODO: full resolution of kdf_group entries and rules (deferred)
-          let d' = d
+          let pos = d^.spanOf
+          entries' <- mapM (resolveEntry pos) entries
+          let d' = Spanned pos $ DeclKDFGroup s entries' rules
           p <- view curPath
-          ds' <- resolveDecls ds
+          ds' <- local (over defPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
+        where
+          resolveEntry pos (KGEDHName n b) = do
+              (ixs, loc) <- unbind b
+              loc' <- resolveLocality pos loc
+              return $ KGEDHName n (bind ixs loc')
+          resolveEntry _ e = return e
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
