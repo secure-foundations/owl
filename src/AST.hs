@@ -130,8 +130,9 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
+    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool) [KDFGroupRuleRef]
            -- Ignore Bool is whether we trust that the name is well-formed
+           -- [KDFGroupRuleRef] is non-empty for the new kdf_group syntax; empty for the old syntax
     deriving (Show, Generic, Typeable)
 
 

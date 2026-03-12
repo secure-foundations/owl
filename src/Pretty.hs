@@ -61,20 +61,19 @@ corrColor = Red
 tyColor = Magenta
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName a b c nks j nt _) = 
-        Prettyprinter.group $ 
-        owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
-                            <>
-                            owlpretty ";"
-                            <>
-                            owlpretty j
-                            <>
-                            owlpretty ";"
-                            <>
-                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-                            owlpretty nt
-                            <> owlpretty ">"
-                            <> tupled (map owlpretty [a, b, c])
+    owlpretty (KDFName a b c nks j nt _ refs) =
+        Prettyprinter.group $
+        if null refs
+        -- Old format: KDF<nks; j; nt>(a, b, c)
+        then owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
+                                <> owlpretty ";" <> owlpretty j
+                                <> owlpretty ";" <> owlpretty nt
+                                <> owlpretty ">" <> tupled (map owlpretty [a, b, c])
+        -- New format: KDF<rule_refs; nks; j>(a, b, c)
+        else owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty ",") (map owlpretty refs))
+                                <> owlpretty ";" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
+                                <> owlpretty ";" <> owlpretty j
+                                <> owlpretty ">" <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 
         let pxs = case xs of
                     [] -> mempty

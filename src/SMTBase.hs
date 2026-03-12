@@ -688,7 +688,7 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
-      KDFName a b c nks j nt _ -> do
+      KDFName a b c nks j nt _ _ -> do
           va <- interpretAExp a
           vb <- interpretAExp b
           vc <- interpretAExp c

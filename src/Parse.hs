@@ -97,7 +97,7 @@ parseNameExp =
     (try $ parseSpanned $ do
         reserved "KDF"
         symbol "<"
-        _refs <- parseKDFGroupRuleRef `sepBy1` (symbol ",")
+        refs <- parseKDFGroupRuleRef `sepBy1` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
@@ -111,9 +111,8 @@ parseNameExp =
         c <- parseAExpr
         symbol ")"
         let ji = read j
-        let nt = if ji < length nks then nameKindToNameType (nks !! ji)
-                 else mkSpanned NT_KDF  -- fallback
-        return $ KDFName a b c nks ji nt (ignore False)
+        let nt = mkSpanned NT_KDF  -- placeholder; typechecker uses refs to identify output
+        return $ KDFName a b c nks ji nt (ignore False) refs
     )
     <|>
     -- Old format: KDF<nks; j; nt>(a, b, c)
@@ -133,7 +132,7 @@ parseNameExp =
         symbol ","
         c <- parseAExpr
         symbol ")"
-        return $ KDFName a b c nks (read j) nt (ignore False)
+        return $ KDFName a b c nks (read j) nt (ignore False) []
     )
     <|>
     (parseSpanned $ do

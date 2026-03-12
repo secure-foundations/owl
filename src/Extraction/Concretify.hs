@@ -184,7 +184,7 @@ formatTyOfNameExp ne = do
             fl <- fLenOfNameTy nt
             sec <- secrecyOfNameTy nt
             return $ FBuf sec $ Just fl
-        KDFName _ _ _ nks i _ _ -> do
+        KDFName _ _ _ nks i _ _ _ -> do
             let nk = nks !! i
             sec <- secrecyOfNameKind nk
             FBuf sec . Just <$> fLenOfNameKind nk

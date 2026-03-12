@@ -409,12 +409,15 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName a b c nks j nt ib -> do
+        KDFName a b c nks j nt ib refs -> do
             a' <- resolveAExpr a
             b' <- resolveAExpr b
             c' <- resolveAExpr c
             nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+            refs' <- mapM (\ref -> do
+                grp' <- resolvePath (ne^.spanOf) PTDef (_kgrrGroup ref)
+                return $ ref { _kgrrGroup = grp' }) refs
+            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib refs'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
