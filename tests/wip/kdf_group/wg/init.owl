@@ -46,12 +46,12 @@ def init_stage1<i@n,m>
     let H1 = crh(H0 ++ dhpk_S_resp) in
     let e_init = dhpk(get(WG_KDF.E_init<i@n>)) in
     // C1 is publicly computable; no kdf_group rule needed, use unlabeled kdf
-    let C1 = kdf<;;kdfkey;0>(C0, e_init, 0x) in
+    let C1 = kdf<;kdfkey;0>(C0, e_init, 0x) in
     let H2 = crh(H1 ++ e_init) in
     let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(WG_KDF.E_init<i@n>)) in
     // Derive C2 and k0 via ODH L1 (E_init x S_resp)
-    let C2 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
-    let k0 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
+    let C2 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
+    let k0 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
     let msg1_static
         = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, dhpk_S_init, H2) in
     let H3 = crh(H2 ++ msg1_static) in
@@ -106,7 +106,7 @@ def init_stage2<i@n,m>
         in
             choose_idx m3 | msg2_ephemeral == dhpk(get(WG_KDF.S_resp<@m3>)) in
         // Derive C4 from C3 using the responder's ephemeral public key (rule L3)
-        let c4 = kdf<WG_KDF.L3<j,n,m>; kdfkey; 0>(c3, msg2_ephemeral, 0x) in
+        let c4 = kdf<WG_KDF.L3<j,n,m>, WG_KDF.L3_corr<n>(msg2_ephemeral); kdfkey; 0>(c3, msg2_ephemeral, 0x) in
         let ghost c4_ghost = gkdf<kdfkey; 0>(c3, msg2_ephemeral, 0x) in
         let h5 = crh(h4 ++ msg2_ephemeral) in
         let ss = dh_combine(msg2_ephemeral, e_init) in

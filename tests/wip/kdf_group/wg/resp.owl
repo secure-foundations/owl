@@ -57,12 +57,11 @@ struct resp_received_state<j,n_pk, n_eph, m> {
         x == crh(crh(crh(crh(crh(crh(construction()) ++ identifier()) ++
         dhpk(get(WG_KDF.S_resp<@m>))) ++ rrs_msg1_ephemeral) ++ c) ++ ts)
     }),
-    // KDF reference updated: KDF<WG_KDF.L2<...>; kdfkey||enckey; 0>
     rrs_c3 : if resp_stage1_clean<j,n_pk,n_eph,m>[rrs_msg1_ephemeral] then
         if n_pk =idx n_eph then
             SecName(KDF<WG_KDF.L2<n_eph,m>; kdfkey||enckey; 0>(rrs_c2, dh_combine(dhpk(get(WG_KDF.S_init<@n_pk>)), get(WG_KDF.S_resp<@m>)), 0x))
         else
-            SecName(KDF<WG_KDF.L2_corr<n_pk,n_eph,m>; kdfkey||enckey; 0>(rrs_c2, dh_combine(dhpk(get(WG_KDF.S_init<@n_pk>)), get(WG_KDF.S_resp<@m>)), 0x))
+            SecName(KDF<WG_KDF.L2_corr<n_eph,n_pk,m>; kdfkey||enckey; 0>(rrs_c2, dh_combine(dhpk(get(WG_KDF.S_init<@n_pk>)), get(WG_KDF.S_resp<@m>)), 0x))
 
         else
             (x:Data<adv>{x == gkdf<kdfkey||enckey; 0>(rrs_c2,
@@ -116,9 +115,9 @@ input inp in
          assert (forall n:idx. ! exists i:idx. C1 == honest_c2<session i, pid n, pid m>())
      };
      // Derive C2 via ODH L1 (E_init x S_resp)
-     let C2 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in
+     let C2 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 0>(C1, ss_msg1_ephemeral_S_resp, 0x) in
      let ghost c2_ghost = gkdf<kdfkey||enckey; 0>(c1_ghost, ss_msg1_ephemeral_S_resp, 0x) in
-     let k0 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in
+     let k0 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 1>(C1, ss_msg1_ephemeral_S_resp, 0x) in
      case st_aead_dec(k0, msg1_static, H2, 0x) as Option (Data<adv>) {
          | None => None()
          | Some msg1_static_dec =>
@@ -153,8 +152,6 @@ input inp in
                         // Derive C3 via ODH L2 / L2_corr (S_init x S_resp)
                         // When n =idx n3: use L2 (correct case).
                         // When n !=idx n3: use L2_corr (wrong-index case).
-                        // Multi-witness case (see ISSUE I9): two ODH witnesses for
-                        // two possible values of n.
                         let C3 = kdf<WG_KDF.L2<n,m>, WG_KDF.L2_corr<n3,n,m>; kdfkey || enckey; 0>(C2, ss, 0x) in
                         let ghost c3_ghost = gkdf<kdfkey||enckey; 0>(c2_ghost,
                         ss, 0x) in
@@ -208,7 +205,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
  let ghost c3_ghost = gkdf<kdfkey||enckey; 0>(c2_ghost,
             dh_combine(dhpk(get(WG_KDF.S_init<@n3>)), get(WG_KDF.S_resp<@m>)), 0x) in
  // Derive C4 from C3 using responder's ephemeral pk (rule L3)
- let c4 = kdf<WG_KDF.L3<j,n,m>; kdfkey; 0>(C3, e_resp_pk, 0x) in
+ let c4 = kdf<WG_KDF.L3<j,n,m>, WG_KDF.L3_corr<n>(e_resp_pk); kdfkey; 0>(C3, e_resp_pk, 0x) in
  let ghost c4_ghost = gkdf<kdfkey; 0>(c3_ghost, e_resp_pk, 0x) in
  let h5 = crh(H4 ++ e_resp_pk) in
  let ss = dh_combine(msg1_ephemeral, get(WG_KDF.E_resp<j@m>)) in
@@ -234,7 +231,6 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
      pid n2, pid m>()
  );
  // Derive C5 via ODH L4 (E_init x E_resp)
- // Multi-witness case (see ISSUE I9)
  let c5 = kdf<WG_KDF.L4<i,j@n,m>, WG_KDF.L4<i,j@n,m>; kdfkey; 0>(c4, ss, 0x) in
  let ghost c5_ghost = gkdf<kdfkey; 0>(c4_ghost, ss, 0x) in
  forall n1:idx,n2:idx,i:idx {
@@ -255,7 +251,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
          nb =idx n3));
  // Derive C6 via ODH L5 / L5_corr (S_init x E_resp)
  // Multi-witness case (see ISSUE I9): two witnesses for two possible n indices.
- let c6 = kdf<WG_KDF.L5<j,n,m>, WG_KDF.L5_corr<j,n3,n,m>; kdfkey; 0>(c5, dh_combine(dhpk_S_init, get(WG_KDF.E_resp<j@m>)), 0x) in
+ let c6 = kdf<WG_KDF.L5<j@n,m>, WG_KDF.L5_corr<j@n3,n,m>; kdfkey; 0>(c5, dh_combine(dhpk_S_init, get(WG_KDF.E_resp<j@m>)), 0x) in
  let ghost c6_ghost = gkdf<kdfkey; 0>(c5_ghost, dh_combine(dhpk_S_init,
  get(WG_KDF.E_resp<j@m>)), 0x) in
  forall i:idx,j:idx,n1:idx,n2:idx {
