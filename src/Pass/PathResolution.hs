@@ -7,6 +7,7 @@
 {-# LANGUAGE DataKinds #-} 
 {-# LANGUAGE DeriveGeneric #-}
 module PathResolution where
+import Data.List (intercalate)
 import AST
 import Error.Diagnose.Position (Position)
 import Control.Lens
@@ -75,6 +76,7 @@ data ResolveEnv = ResolveEnv {
     _funcPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
+    _kdfGroupPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
     _predPaths :: T.Map String ResolvedPath,
     _ctrPaths :: T.Map String ResolvedPath,
@@ -105,7 +107,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -249,13 +251,19 @@ resolveDecls (d:ds) =
           entries' <- mapM (resolveEntry pos) entries
           let d' = Spanned pos $ DeclKDFGroup s entries' rules
           p <- view curPath
-          ds' <- local (over defPaths $ T.insert s p) $ resolveDecls ds
+          ds' <- local (over defPaths $ T.insert s p)
+               $ local (over kdfGroupPaths $ T.insert s p)
+               $ resolveDecls ds
           return (d' : ds')
         where
           resolveEntry pos (KGEDHName n b) = do
               (ixs, loc) <- unbind b
               loc' <- resolveLocality pos loc
               return $ KGEDHName n (bind ixs loc')
+          resolveEntry pos (KGEKdfKey n b) = do
+              (ixs, loc) <- unbind b
+              loc' <- resolveLocality pos loc
+              return $ KGEKdfKey n (bind ixs loc')
           resolveEntry _ e = return e
       DeclDetFunc s _ _ -> do
           let d' = d
@@ -429,12 +437,19 @@ resolvePath' pos pt p =
       PRes _ -> return p
       PUnresolvedPath x xs -> do
           mp <- view modPaths
+          kgp <- view kdfGroupPaths
           res <- case lookup x mp of
                   Just (b, p) -> do
                       let xs' = if b then xs else x:xs
                       return $ PRes $ go (Just p) (reverse xs')
-                  Nothing -> do
-                      return $ PRes $ go Nothing (reverse (x:xs))
+                  Nothing ->
+                      -- If x is a kdf_group name, flatten G.C1 to PDot p "G.C1"
+                      -- so the typechecker can find it in the top-level nameDefs.
+                      case lookup x kgp of
+                        Just p | not (null xs) ->
+                            return $ PRes $ PDot p (intercalate "." (x:xs))
+                        _ ->
+                            return $ PRes $ go Nothing (reverse (x:xs))
           return res
       PUnresolvedVar s -> 
           if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else 

@@ -258,9 +258,9 @@ instance OwlPretty KDFGroupEntry where
         owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
         <> owlpretty " : DH @ " <> owlpretty loc
     owlpretty (KGEKdfKey n b) =
-        let (idxs, _) = unsafeUnbind b in
+        let (idxs, loc) = unsafeUnbind b in
         owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
-        <> owlpretty " : kdfkey"
+        <> owlpretty " : kdfkey @ " <> owlpretty loc
     owlpretty (KGENameType n b) =
         let ((idxs, dvars), _) = unsafeUnbind b in
         owlpretty "nametype " <> owlpretty n <> owlprettyIdxBindsPair (idxs, [])

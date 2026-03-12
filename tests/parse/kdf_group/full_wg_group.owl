@@ -15,7 +15,7 @@ kdf_group WG_KDF {
     name E_resp<j@m> : DH @ responder
     name S_init<@n> : DH @ initiator
     name S_resp<@m> : DH @ responder
-    name psk<@n,m> : kdfkey
+    name psk<@n,m> : kdfkey @ initiator
 
     nametype C2<@n,m> : kdfkey
     nametype C3<@n,m> : kdfkey

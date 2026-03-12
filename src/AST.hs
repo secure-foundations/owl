@@ -356,7 +356,7 @@ data KDFGroupRule = KDFGroupRule {
 
 data KDFGroupEntry
     = KGEDHName   String (Bind ([IdxVar], [IdxVar]) Locality)
-    | KGEKdfKey   String (Bind ([IdxVar], [IdxVar]) ())
+    | KGEKdfKey   String (Bind ([IdxVar], [IdxVar]) Locality)
     | KGENameType String (Bind ([IdxVar], [IdxVar]) ())
     deriving (Show, Generic, Typeable)
 

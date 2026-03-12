@@ -3,5 +3,5 @@
 locality alice
 
 kdf_group G {
-    name psk : kdfkey
+    name psk : kdfkey @ alice
 }

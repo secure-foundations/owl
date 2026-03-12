@@ -3,7 +3,7 @@
 locality alice
 
 kdf_group G {
-    name psk : kdfkey
+    name psk : kdfkey @ alice
     nametype C : kdfkey
     nametype T1 : kdfkey
     nametype T2 : kdfkey

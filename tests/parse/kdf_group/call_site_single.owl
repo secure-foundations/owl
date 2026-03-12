@@ -5,12 +5,14 @@ locality alice
 kdf_group G {
     name A : DH @ alice
     name B : DH @ alice
-    nametype C1 : kdfkey
+    name C1 : kdfkey @ alice
     nametype C2 : kdfkey
 
     odh L<i> : C1, dh_combine(A, B), 0x -> strict C2
 }
 
-def test<i> (salt: Data<adv>, ikm: Data<adv>) @ alice : Data<adv> =
+def test<i> () @ alice : Data<adv> =
+    let salt = get(G.C1) in
+    let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
     let result = kdf<G.L<i>; kdfkey; 0>(salt, ikm, 0x) in
-    result
+    ()
