@@ -483,11 +483,11 @@ kdf_group step 8d: Typing — remove matchKDF, matchODH, findValidSaltCalls/IKMC
 
 Track completed steps here. Each agent checks off a line before committing.
 
-- [ ] Step 1: `--only-parse` flag (CmdArgs + Main)
+- [x] Step 1: `--only-parse` flag (CmdArgs + Main)
 - [x] Step 2: AST.hs
 - [x] Step 3: Parse.hs
 - [x] Step 4: Pretty.hs
-- [ ] Step 5+6: Parse test files + verification
+- [x] Step 5+6: Parse test files + verification
 - [ ] Step 7: TypingBase.hs
 - [ ] Step 8a: Typing — tryHint + sub-checkers
 - [ ] Step 8b: Typing — CKDF case rewrite
