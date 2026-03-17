@@ -767,11 +767,18 @@ parseNameDeclBody =
 -- kdf_group sub-parsers
 
 parseSaltExpr :: Parser SaltExpr
-parseSaltExpr =
+parseSaltExpr = parseSaltExprF []
+
+parseSaltExprF :: [String] -> Parser SaltExpr
+parseSaltExprF formalNames =
     (try $ do
         p <- parsePath
         idxs <- parseIdxParams
-        return $ SaltNameType p idxs
+        -- If this is a bare identifier matching a formal, treat it as AEVar (AExpr)
+        case (p, fst idxs, snd idxs) of
+          (PUnresolvedVar n, [], []) | n `elem` formalNames ->
+              return $ SaltPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
+          _ -> return $ SaltNameType p idxs
     )
     <|>
     (do
@@ -780,7 +787,10 @@ parseSaltExpr =
     )
 
 parseIKMAtom :: Parser IKMAtom
-parseIKMAtom =
+parseIKMAtom = parseIKMAtomF []
+
+parseIKMAtomF :: [String] -> Parser IKMAtom
+parseIKMAtomF formalNames =
     (try $ do
         reserved "dh_combine"
         symbol "("
@@ -794,9 +804,12 @@ parseIKMAtom =
     (try $ do
         -- A name expression (path with optional indices) used as kdfkey.
         -- Reject function-call applications (which go to IKMPublicExpr).
+        -- Also reject bare identifiers that match formal parameters.
         ne <- parseNameExp
         notFollowedBy (whiteSpace >> char '(')
         case ne^.val of
+          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` formalNames ->
+              return $ IKMPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
           NameConst _ _ _ -> return $ IKMKdfKeyName ne
           _ -> parserZero
     )
@@ -807,7 +820,7 @@ parseIKMAtom =
     )
 
 parseIKMAtomList :: Parser [IKMAtom]
-parseIKMAtomList = parseIKMAtom `sepBy1` (try $ symbol "++")
+parseIKMAtomList = parseIKMAtomF [] `sepBy1` (try $ symbol "++")
 
 parseInfoExpr :: Parser InfoExpr
 parseInfoExpr = do
@@ -874,22 +887,32 @@ parseKDFGroupEntryNameType = do
     reserved "kdfkey"
     return $ KGENameType n $ bind idxs ()
 
+parseKDFRuleFormals :: Parser [DataVar]
+parseKDFRuleFormals =
+    option [] $ do
+        symbol "("
+        names <- identifier `sepBy1` (symbol ",")
+        symbol ")"
+        return $ map s2n names
+
 parseKDFGroupRule :: Parser KDFGroupRule
 parseKDFGroupRule = do
     isODH <- alt (reserved "odh" >> return True) (reserved "kdf" >> return False)
     lbl <- identifier
     idxs <- parseIdxParamBinds
+    args <- parseKDFRuleFormals
+    let formalNames = map name2String args
     wh <- parseKDFGroupWhere
     symbol ":"
-    salt <- parseSaltExpr
+    salt <- parseSaltExprF formalNames
     symbol ","
-    ikm <- parseIKMAtomList
+    ikm <- parseIKMAtomF formalNames `sepBy1` (try $ symbol "++")
     symbol ","
     info <- parseInfoExpr
     symbol "->"
     out <- parseKDFOutputSpec
     let body = KDFGroupRuleBody wh salt ikm info out
-    return $ KDFGroupRule isODH lbl $ bind idxs body
+    return $ KDFGroupRule isODH lbl $ bind (idxs, args) body
 
 parseKDFGroup :: Parser Decl
 parseKDFGroup = parseSpanned $ do
@@ -1706,7 +1729,12 @@ parseKDFGroupRuleRef = do
     symbol "."
     lbl <- identifier
     idxs <- parseIdxParams
-    return $ KDFGroupRuleRef (PUnresolvedVar g) lbl idxs
+    actuals <- option [] $ do
+        symbol "("
+        es <- parseAExpr `sepBy1` (symbol ",")
+        symbol ")"
+        return es
+    return $ KDFGroupRuleRef (PUnresolvedVar g) lbl idxs actuals
 
 parseCryptOp :: Parser CryptOp
 parseCryptOp =

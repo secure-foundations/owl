@@ -350,7 +350,7 @@ data KDFGroupRuleBody = KDFGroupRuleBody {
 data KDFGroupRule = KDFGroupRule {
     _kgrIsODH :: Bool,
     _kgrLabel :: String,
-    _kgrIdxs  :: Bind ([IdxVar], [IdxVar]) KDFGroupRuleBody
+    _kgrIdxs  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody
 } deriving (Show, Generic, Typeable)
 
 data KDFGroupEntry
@@ -362,7 +362,8 @@ data KDFGroupEntry
 data KDFGroupRuleRef = KDFGroupRuleRef {
     _kgrrGroup :: Path,
     _kgrrLabel :: String,
-    _kgrrIdxs  :: ([Idx], [Idx])
+    _kgrrIdxs  :: ([Idx], [Idx]),
+    _kgrrArgs  :: [AExpr]
 } deriving (Show, Generic, Typeable)
 
 -- Decls are surface syntax

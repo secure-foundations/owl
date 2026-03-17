@@ -150,7 +150,7 @@ data ModBody = ModBody {
     deriving (Show, Generic, Typeable)
 
 data KDFGroupDef = KDFGroupDef {
-    _kgdRules    :: Map String (Bind ([IdxVar], [IdxVar]) KDFGroupRuleBody),
+    _kgdRules    :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody),
     _kgdOdhPairs :: [(String, NameExp, NameExp)]  -- (label, ne1, ne2)
 }
     deriving (Show, Generic, Typeable)
@@ -715,19 +715,24 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> Check' senv (Maybe KDFGroupRuleBody)
-lookupKDFGroupRule pth@(PRes (PDot p groupName)) lbl (vs1, vs2) = do
+lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFGroupRuleBody)
+lookupKDFGroupRule pth@(PRes (PDot p groupName)) lbl (vs1, vs2) actuals = do
     md <- openModule p
     case lookup groupName (md^.kdfGroups) of
       Nothing -> return Nothing
       Just gdef -> case lookup lbl (gdef^.kgdRules) of
         Nothing -> return Nothing
         Just bRule -> do
-            ((is1, is2), body) <- unbind bRule
+            (((is1, is2), dvars), body) <- unbind bRule
             if (length vs1, length vs2) /= (length is1, length is2)
               then return Nothing
-              else return $ Just $ substs (zip is1 vs1) $ substs (zip is2 vs2) body
-lookupKDFGroupRule _ _ _ = return Nothing
+              else if length dvars /= length actuals
+              then return Nothing
+              else return $ Just
+                     $ substs (zip dvars actuals)
+                     $ substs (zip is1 vs1)
+                     $ substs (zip is2 vs2) body
+lookupKDFGroupRule _ _ _ _ = return Nothing
 
 
 getNameKind :: NameType -> Check' senv NameKind

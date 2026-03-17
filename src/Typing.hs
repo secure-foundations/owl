@@ -1305,9 +1305,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           -- Process rules: build the KDFGroupDef and store it
           let processRules [] accRules accOdh = return (accRules, accOdh)
               processRules (r:rs) accRules accOdh = do
-                  ((is1, is2), body) <- unbind (_kgrIdxs r)
+                  (((is1, is2), _dvars), body) <- unbind (_kgrIdxs r)
                   let lbl = _kgrLabel r
-                  let bRule = bind (is1, is2) body
+                  let bRule = _kgrIdxs r
                   let accRules' = insert lbl bRule accRules
                   accOdh' <- if _kgrIsODH r then do
                       -- Extract DH pairs from IKM atoms for ODH tracking
@@ -2773,26 +2773,29 @@ patternPublicAndEquivalent pat1 pat2 = do
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
 tryHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
 tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
-    mBody <- lookupKDFGroupRule (_kgrrGroup hint) (_kgrrLabel hint) (_kgrrIdxs hint)
+    let actuals = _kgrrArgs hint
+    let hasArgs = not (null actuals)
+    mBody <- lookupKDFGroupRule (_kgrrGroup hint) (_kgrrLabel hint) (_kgrrIdxs hint) actuals
     case mBody of
       Nothing -> return Nothing
       Just body -> do
           ok1 <- checkWhereClause (_kgrbWhere body)
-          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT else return False
-          ok3 <- if ok2 then checkIKMMatch body ikmE ikmT else return False
-          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE infoT else return False
+          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT hasArgs else return False
+          ok3 <- if ok2 then checkIKMMatch body ikmE ikmT hasArgs else return False
+          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE infoT hasArgs else return False
           let KDFOutputSpec outputs = _kgrbOutput body
           if not ok4 || j >= length outputs then return Nothing else do
               let (strictness, _outNt) = outputs !! j
+              let isODH = any (\a -> case a of IKMDhCombine _ _ -> True; _ -> False) (_kgrbIkm body)
               case strictness of
                 KDFStrict -> do
-                    -- Only return TName (secret output) when the salt is actually a name
-                    -- (i.e. the salt rule matched a secret, not just public data).
-                    -- If the salt is public (flows to adv), the output is also public.
+                    -- Return TName when:
+                    -- (a) the salt is a name (secret KDF), OR
+                    -- (b) the rule is an ODH rule (IKM secrecy comes from DH, independent of salt).
                     saltIsName <- case extractNameFromType saltT of
                         Just _  -> return True
                         Nothing -> not <$> tyFlowsTo saltT advLbl
-                    if saltIsName then do
+                    if saltIsName || isODH then do
                         -- Embed the label secrecy as a refinement (mirrors old matchODH).
                         -- checkSubRefinement can then prove SecName's [ne] !<= adv trivially.
                         let ne = mkSpanned $ KDFName nks j (mkSpanned NT_KDF) (ignore True) [hint]
@@ -2817,34 +2820,67 @@ checkWhereClause (KDFGroupWhere ((i, j, neq):rest)) = do
       Just True -> checkWhereClause (KDFGroupWhere rest)
       _ -> return False
 
-checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
-checkSaltMatch (SaltPublicExpr _) _ saltT = tyFlowsTo saltT advLbl
-checkSaltMatch (SaltNameType _p _idxs) _ saltT = do
+checkExprEqual :: AExpr -> AExpr -> Check Bool
+checkExprEqual actual expected = do
+    actual'   <- resolveANF actual   >>= normalizeAExpr
+    expected' <- resolveANF expected >>= normalizeAExpr
+    if aeq actual' expected'
+      then return True
+      else fmap (== Just True) $ decideProp (mkSpanned $ PEq actual' expected')
+
+atomToAExpr :: IKMAtom -> AExpr
+atomToAExpr (IKMPublicExpr e)      = e
+atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
+atomToAExpr (IKMDhCombine ne1 ne2) =
+    mkSpanned $ AEApp (topLevelPath "dh_combine") [] [mkSpanned $ AEGet ne1, mkSpanned $ AEGet ne2]
+
+ikmAtomsToAExpr :: [IKMAtom] -> AExpr
+ikmAtomsToAExpr [atom] = atomToAExpr atom
+ikmAtomsToAExpr atoms  =
+    foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
+           (map atomToAExpr atoms)
+
+checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Bool -> Check Bool
+checkSaltMatch (SaltPublicExpr expectedE) actualE saltT hasArgs = do
+    pub <- tyFlowsTo saltT advLbl
+    if not pub then return False
+    else if hasArgs then checkExprEqual actualE expectedE
+    else return True
+checkSaltMatch (SaltNameType _p _idxs) _ saltT _ = do
     -- Check that the salt type is a name type matching the expected nametype
     case extractNameFromType saltT of
       Just _ -> return True
       Nothing -> tyFlowsTo saltT advLbl
 
-checkIKMMatch :: KDFGroupRuleBody -> AExpr -> Ty -> Check Bool
-checkIKMMatch body ikmE ikmT = do
+checkIKMMatch :: KDFGroupRuleBody -> AExpr -> Ty -> Bool -> Check Bool
+checkIKMMatch body ikmE ikmT hasArgs = do
     -- For ODH rules with DH combines, check the ODH property
     let atoms = _kgrbIkm body
     let hasDH = any isDhCombine atoms
-    if hasDH then do
-        -- Check that the IKM involves a DH computation
+    odhOk <- if hasDH then do
         dhComp <- getLocalDHComputation ikmE
         case dhComp of
           Nothing -> tyFlowsTo ikmT advLbl  -- Not a DH, check if public
           Just _ -> return True  -- DH computation found
-    else do
-        -- Non-ODH: check IKM has appropriate type (name or public)
-        return True
+    else return True
+    if not odhOk then return False
+    -- Only do equality check when all atoms are IKMPublicExpr (formals only appear there).
+    -- IKMDhCombine/IKMKdfKeyName atoms contain unresolved name paths and use ODH checking instead.
+    else if hasArgs && all isPublicExpr atoms then
+        checkExprEqual ikmE (ikmAtomsToAExpr atoms)
+    else return True
   where
     isDhCombine (IKMDhCombine _ _) = True
     isDhCombine _ = False
+    isPublicExpr (IKMPublicExpr _) = True
+    isPublicExpr _ = False
 
-checkInfoMatch :: InfoExpr -> AExpr -> Ty -> Check Bool
-checkInfoMatch (InfoPublic _) _ infoT = tyFlowsTo infoT advLbl
+checkInfoMatch :: InfoExpr -> AExpr -> Ty -> Bool -> Check Bool
+checkInfoMatch (InfoPublic expectedE) actualE infoT hasArgs = do
+    pub <- tyFlowsTo infoT advLbl
+    if not pub then return False
+    else if hasArgs then checkExprEqual actualE expectedE
+    else return True
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do

@@ -229,11 +229,15 @@ instance OwlPretty KDFGroupRule where
     owlpretty rule =
         let kw     = if _kgrIsODH rule then owlpretty "odh" else owlpretty "kdf"
             lbl    = owlpretty (_kgrLabel rule)
-            (idxs, body) = unsafeUnbind (_kgrIdxs rule)
+            ((idxs, fargs), body) = unsafeUnbind (_kgrIdxs rule)
             pidxs  = owlprettyIdxBindsPair idxs
+            pfargs | null fargs = mempty
+                   | otherwise  = owlpretty "(" <>
+                                  hsep (intersperse (owlpretty ",") $ map owlpretty fargs) <>
+                                  owlpretty ")"
             wh     = owlpretty (_kgrbWhere body)
         in
-        kw <+> lbl <> pidxs <> wh <> owlpretty " : " <> owlpretty body
+        kw <+> lbl <> pidxs <> pfargs <> wh <> owlpretty " : " <> owlpretty body
 
 owlprettyIdxBindsPair :: ([IdxVar], [IdxVar]) -> OwlDoc
 owlprettyIdxBindsPair ([], []) = mempty
@@ -259,8 +263,12 @@ instance OwlPretty KDFGroupEntry where
 
 instance OwlPretty KDFGroupRuleRef where
     owlpretty ref =
-        owlpretty (_kgrrGroup ref) <> owlpretty "." <> owlpretty (_kgrrLabel ref) <>
-        owlprettyIdxParams (_kgrrIdxs ref)
+        let pargs | null (_kgrrArgs ref) = mempty
+                  | otherwise = owlpretty "(" <>
+                                hsep (intersperse (owlpretty ",") $ map owlpretty (_kgrrArgs ref)) <>
+                                owlpretty ")"
+        in owlpretty (_kgrrGroup ref) <> owlpretty "." <> owlpretty (_kgrrLabel ref) <>
+           owlprettyIdxParams (_kgrrIdxs ref) <> pargs
 
 instance  OwlPretty PropX where
     owlpretty PTrue = owlpretty "true"
