@@ -219,7 +219,7 @@ instance OwlPretty KDFOutputSpec where
 
 instance OwlPretty KDFGroupRuleBody where
     owlpretty body =
-        let (KDFGroupRuleBody wh salt ikm info out _) = body
+        let (KDFGroupRuleBody wh salt ikm info out) = body
             pikmList = hsep $ intersperse (owlpretty " ++") $ map owlpretty ikm
         in
         owlpretty salt <> owlpretty ", " <> pikmList <> owlpretty ", " <> owlpretty info

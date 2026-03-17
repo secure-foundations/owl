@@ -888,7 +888,7 @@ parseKDFGroupRule = do
     info <- parseInfoExpr
     symbol "->"
     out <- parseKDFOutputSpec
-    let body = KDFGroupRuleBody wh salt ikm info out (s2n "%self")
+    let body = KDFGroupRuleBody wh salt ikm info out
     return $ KDFGroupRule isODH lbl $ bind idxs body
 
 parseKDFGroup :: Parser Decl

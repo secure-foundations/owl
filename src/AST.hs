@@ -344,8 +344,7 @@ data KDFGroupRuleBody = KDFGroupRuleBody {
     _kgrbSalt   :: SaltExpr,
     _kgrbIkm    :: [IKMAtom],
     _kgrbInfo   :: InfoExpr,
-    _kgrbOutput :: KDFOutputSpec,
-    _kgrbSelf   :: DataVar
+    _kgrbOutput :: KDFOutputSpec
 } deriving (Show, Generic, Typeable)
 
 data KDFGroupRule = KDFGroupRule {
