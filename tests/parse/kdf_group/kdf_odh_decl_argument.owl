@@ -11,7 +11,7 @@ kdf_group G {
     kdf L1(x): C1, x, 0x ->
         strict C2 || public nonce
     
-    odh L2(y,z): y, dh_combine(z, get(G.A)), 0x ->
+    odh L2(y): y, dh_combine(A, B), 0x ->
         strict nonce
 }
 
@@ -21,10 +21,10 @@ def test () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
     let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
     result
 
-def test2 () @ alice : SecName(KDF<G.L2(0x1234, dhpk(get(G.B))); nonce; 0>) =
+def test2 () @ alice : SecName(KDF<G.L2(0x1234); nonce; 0>) =
     let salt = 0x1234 in
     let ikm = dh_combine(dhpk(get(G.B)), get(G.A)) in
-    let result = kdf<G.L2(0x1234, dhpk(get(G.B))); nonce; 0>(salt, ikm, 0x) in
+    let result = kdf<G.L2(0x1234); nonce; 0>(salt, ikm, 0x) in
     result
 
 // def this_should_fail () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
