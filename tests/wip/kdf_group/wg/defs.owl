@@ -113,11 +113,6 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 // =====================================================================
 // KDF Group: WG_KDF
 //
-// This group collects all DH key names and the PSK used in WireGuard's
-// Noise handshake, along with the intermediate kdfkey nametypes and the
-// kdf/odh rules that define the KDF chain from C2 through the final
-// transport keys.
-//
 // The KDF chain in WireGuard proceeds as follows:
 //   C1  = KDF(crh(construction()), dhpk(E_init), 0x)
 //   C2  = KDF(C1,  dh(E_init, S_resp),              0x)   [ODH L1]
@@ -131,41 +126,19 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 kdf_group WG_KDF {
 
-    // -----------------------------------------------------------------
-    // DH key names (moved from global scope)
-    // -----------------------------------------------------------------
-
     // Ephemeral Diffie-Hellman keys
     name E_init<i@n> : DH @ Initiator<n>
     name E_resp<j@m> : DH @ Responder<m>
 
-    // Static Diffie-Hellman keys (public keys should be preshared)
+    // Static Diffie-Hellman keys 
     name S_init<@n> : DH @ Initiator<n>
     name S_resp<@m> : DH @ Responder<m>
 
     // Pre-shared key between initiator and responder.
-    // Previously declared as `name psk<@n,m> : C6_dual<@n,m>` (a dualkdf
-    // nametype). Now it is a plain kdfkey; the security conditions that
-    // were encoded in C6_dual are instead captured by rules L6 and L6_zeros
-    // below, where psk appears in the ikm position.
-    name psk<@n,m> : kdfkey // @ Initiator<n>, Responder<m>
+    name psk<@n,m> : kdfkey @ Initiator<n>, Responder<m>
 
-    // -----------------------------------------------------------------
-    // Intermediate kdfkey nametypes for the KDF chain
-    //
-    // C2 through C7 name the intermediate hash-chain values. The old
-    // design expressed these as `nametype Cx = kdf { ... }` at top level.
-    // C1 is omitted because it is a publicly computable value that requires
-    // no type-level tracking; it is computed inline at call sites.
-    // Here they are declared as plain kdfkey nametypes; the rules below
-    // capture what each value can be used to derive.
-    //
-    // "_corr" variants cover the cases where the hash chain contains an
-    // adversarially influenced value (wrong DH partner, wrong session index,
-    // etc.), for which the final transport keys encrypt only the predicate
-    // False, thus are never actually used.
-    // -----------------------------------------------------------------
-
+    // Forward-declared nametypes for the intermediate chain keys in the KDF
+    // chain (used as salts).
     nametype C2<@n,m> : kdfkey
     nametype C3<@n,m> : kdfkey
     nametype C3_corr  : kdfkey
@@ -183,37 +156,18 @@ kdf_group WG_KDF {
     nametype C7_corr  : kdfkey
 
     // -----------------------------------------------------------------
-    // Rule L1: Derive C2 via ODH (E_init x S_resp)
-    //
-    // This replaces `odh L1<i@n,m>`. C1 is a publicly computable value
-    // (KDF(crh(construction()), dhpk(E_init<i@n>), 0x)) that requires no
-    // kdf_group rule of its own; it is computed inline at call sites using
-    // an unlabeled kdf call. The salt for this rule is expressed as the
-    // ghost function honest_c1<i@n>() which describes the expected value.
-    //
-    // RESOLVED (I1): honest_c1<i@n>() is a public computed value (a func
-    // applied to public arguments), and public expressions are now allowed
-    // in the salt and info positions.
-    //
-    // The output type also includes an AEAD key for encrypting the
-    // initiator's static public key in message 1.
+    // Rule L1: Derive C2 and enckey for S_init via ODH (E_init x S_resp)
     // -----------------------------------------------------------------
-    odh L1<i@n,m> : honest_c1<i@n>(), dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
+    odh L1<i@n,m>(salt) where (salt == honest_c1<i@n>()) : salt, dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
         strict C2<@n,m> ||
         strict st_aead (dhpk(S_init<@n>))
                        aad x. true
                        nonce aead_counter_msg1_C2
 
     // -----------------------------------------------------------------
-    // Rule L2: Derive C3 via ODH (S_init x S_resp) — correct case
-    //
-    // This covers the case where the salt is an honest C2 for the same n
+    // Rule L2 and L2_corr: Derive C3 via ODH (S_init x S_resp)
+    // L2 covers the case where the salt is an honest C2 for the same n
     // that owns S_init<@n>.  The corresponding "wrong n_eph" case is L2_corr.
-    //
-    // RESOLVED (I3): The `where n_eph !=idx n` clause on L2_corr ensures it
-    // only applies when the C2 salt's owner (n_eph) differs from the S_init
-    // owner (n). When n_eph = n both rules would otherwise have the same salt
-    // type; the where clause prevents the overlap, making L2 the unique match.
     // -----------------------------------------------------------------
     odh L2<@n,m> : C2<@n,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
         strict C3<@n,m> ||
@@ -224,7 +178,8 @@ kdf_group WG_KDF {
     // Rule L2_corr: Derive C3_corr via ODH — "wrong n_eph" case.
     // n_eph is the index of the C2 value's owner; n is the index of S_init.
     // The where clause restricts this rule to proof contexts where n_eph != n.
-    odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+    // TODO: multi-index argument like this should be fine?
+    odh L2_corr<@n_eph,n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
         strict C3_corr ||
         strict st_aead (Data<adv> |12|)
                        aad x. h3_pred[x]
@@ -232,16 +187,14 @@ kdf_group WG_KDF {
 
     // -----------------------------------------------------------------
     // Rule L3: Derive C4 from C3 using the responder's ephemeral public key
-    //
-    // RESOLVED (I2): The ikm here is dhpk(E_resp<j@m>), the PUBLIC DH key of
-    // the responder's ephemeral. DH public keys are public expressions and are
-    // now a valid ikm atom. No ODH assumption is needed; the rule is classified
-    // kdf and standard PRF security applies.
+    // `kdf` not `odh` since the information-flow content derives from the kdfkey
+    // C3 passed as salt
     // -----------------------------------------------------------------
     kdf L3<j@n,m> : C3<@n,m>, dhpk(E_resp<j@m>), 0x ->
         strict C4<@n,m> || strict useless_enc
 
-    kdf L3_corr<j@m> : C3_corr, dhpk(E_resp<j@m>), 0x ->
+    // TODO: is the where clause on L3_corr correct?
+    kdf L3_corr<@m>(ikm) where (forall j:idx. ikm != dhpk(get(E_resp<j@m>))): C3_corr, ikm, 0x ->
         strict C4_corr || strict useless_enc
 
     // -----------------------------------------------------------------
@@ -256,17 +209,14 @@ kdf_group WG_KDF {
     // -----------------------------------------------------------------
     // Rule L5: Derive C6 via ODH (S_init x E_resp)
     //
-    // This replaces `odh L5<j@n,m>`. The correct case uses an honest C5
+    // Replaces `odh L5<j@n,m>`. The correct case uses an honest C5
     // (produced by L4); the wrong-n_eph case uses a C5 for a different
     // party (produced by L5_corr).
-    //
-    // RESOLVED (I3): Same resolution as L2/L2_corr — `where n_eph !=idx n`
-    // on L5_corr prevents overlap when n_eph = n.
     // -----------------------------------------------------------------
     odh L5<j@n,m> : C5<@n,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
         strict C6<@n,m>
 
-    odh L5_corr<j,n_eph@n,m> where n_eph !=idx n : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+    odh L5_corr<j@n_eph,n,m> where n_eph !=idx n : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
         strict C6_corr
 
     // -----------------------------------------------------------------
@@ -279,19 +229,6 @@ kdf_group WG_KDF {
     //
     // In the new design, the two cases (HasPSK / NoPSK) become two
     // separate rules sharing the same salt type C6<@n,m>.
-    //
-    // The authentication conditions in the output type of L6 previously
-    // referred to `tk1_of_c6(salt, self)` and `tk2_of_c6(salt, self)`,
-    // where `self` is the PSK. These are now expressed via the updated
-    // functions tk1_of_c6<@n,m> and tk2_of_c6<@n,m> below.
-    //
-    // ISSUE (I5): The old C6_dual had an explicit condition on the SALT
-    // (`exists i,j. salt == honest_c6<...>()`), distinguishing between an
-    // honest C6 and any other value used as salt. In the new design this
-    // is captured TYPE-STRUCTURALLY: a value of type C6<@n,m> can only
-    // arise from rule L5, so it IS an honest C6 by construction. This
-    // implicit guarantee replaces the explicit existential condition, which
-    // is a semantic change that should be validated by the type system.
     // -----------------------------------------------------------------
     kdf L6<@n,m> : C6<@n,m>, psk<@n,m>, 0x ->
         strict C7<@n,m> || public nonce ||
@@ -321,10 +258,6 @@ kdf_group WG_KDF {
 
     // -----------------------------------------------------------------
     // Rules L7 / L7_corr: Derive transport keys from C7
-    //
-    // This replaces the old C7<@n,m> and C7_corr nametypes:
-    //   nametype C7<@n,m> = kdf { True -> strict transp_key_init_send<@n,m>
-    //                                   || strict transp_key_resp_send<@n,m> }
     // -----------------------------------------------------------------
     kdf L7<@n,m> : C7<@n,m>, 0x, 0x ->
         strict transp_key_init_send<@n,m> ||
@@ -339,19 +272,6 @@ kdf_group WG_KDF {
 
 // =====================================================================
 // Helper functions for authentication conditions in L6's output type.
-//
-// These take the C6 salt value (x) and the PSK/ikm value (psk) directly,
-// and use label-free gkdf<type; index>(...) calls.
-//
-// RESOLVED (I6): The old version was parametric in <@n,m> solely to carry
-// the WG_KDF.L6<@n,m> and WG_KDF.L7<@n,m> labels into the gkdf calls.
-// With label-free gkdf those index parameters are unnecessary.
-//
-// RESOLVED (I7): The L6/L6_zeros output-type predicates previously passed
-// the label name (L6 or L6_zeros) as a symbolic argument to select which
-// labeled gkdf to call internally. With label-free gkdf the functions take
-// the actual data values (self, get(psk) or zeros_32()) directly, so no
-// label-passing mechanism is needed.
 // =====================================================================
 func tk1_of_c6(x, psk) =
     gkdf<enckey||enckey; 0>(
@@ -365,8 +285,7 @@ func tk2_of_c6(x, psk) =
 
 
 // =====================================================================
-// Enum for the PSK mode (unchanged structurally, but type now references
-// the group-qualified name WG_KDF.psk<@n,m>)
+// Enum for the PSK mode
 // =====================================================================
 enum PSKMode<n,m> {
     | HasPSK Name(WG_KDF.psk<@n,m>)
@@ -389,14 +308,9 @@ func honest_H4_pre<i@n,m>(c, ts) = h4_pre(dhpk(get(WG_KDF.S_resp<@m>)), dhpk(get
 
 // =====================================================================
 // "Honest" ghost functions for verification: these compute what the
-// intermediate KDF chain values SHOULD be in an honest execution.
+// intermediate KDF chain values should be in an honest execution.
 // They are used in kdf_inj_lemma and other proof obligations in
 // init.owl and resp.owl.
-//
-// RESOLVED (I8): gkdf calls use the label-free form gkdf<type; index>(...)
-// rather than the labeled form gkdf<WG_KDF.Lx<...>; type; index>(...).
-// The type and index are sufficient to identify which output is intended;
-// the rule is determined by the types of the arguments at the call site.
 // =====================================================================
 
 func honest_c1<i@n_eph>() =

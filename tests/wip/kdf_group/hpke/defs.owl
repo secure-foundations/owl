@@ -137,28 +137,16 @@ nametype hpke_corr_key_t =
 // =====================================================================
 
 kdf_group HPKE_KDF {
-
-    // -----------------------------------------------------------------
-    // DH key names (moved from global scope)
-    // -----------------------------------------------------------------
-
     // Receiver's static key
     name skR : DH @ receiver
 
-    // Ephemeral keys for the sender; one per session
+    // Sender's ephemeral key
     name skE<i> : DH @ sender
 
     // Sender's static key
     name skS : DH @ sender
 
-    // Pre-shared key between sender and receiver.
-    // Previously declared as `name psk : psk_t` where psk_t was a dualkdf
-    // nametype. Now it is a plain kdfkey; the security conditions that were
-    // encoded in psk_t are instead captured by rules L_sched_* below,
-    // where psk (wrapped in dh_secret_kdf_ikm) appears in the ikm position.
-    // See ISSUE I12 (dualkdf keyword removal). RESOLVED (I15): ikm wrapping
-    // via dh_secret_kdf_ikm is now valid — a func applied to a kdfkey expands
-    // to a concatenation of public atoms and a kdfkey atom, which is allowed.
+    // Pre-shared key between sender and receiver
     name psk : kdfkey // @ sender, receiver
 
     // -----------------------------------------------------------------
@@ -181,67 +169,28 @@ kdf_group HPKE_KDF {
     //       lbl_ikm(kem_suite_id(), eae_prk(), dh(skE<i>,skR) ++ dh(skS,skR)),
     //       lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context))
     //
-    // In the old syntax this was covered by TWO ODH declarations:
+    // In the old syntax this was covered by tw ODH declarations:
     //   odh ss  : skR, skS    -> { salt info. ... }   (static DH)
     //   odh se<i>: skR, skE<i> -> { salt info. ... }   (ephemeral DH)
-    // and at call sites both witnesses were listed: odh ss[0], odh se<i>[0].
-    //
-    // RESOLVED (I13): The ikm_expr grammar now allows ++ concatenation of
-    // dh_combine atoms; multiple DH secrets in one rule are valid.
-    //
-    // RESOLVED (I14): func definitions in the ikm_expr are expanded by the
-    // checker. lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(...) ++ ...)
-    // expands to a sequence of public atoms followed by dh_combine atoms,
-    // all of which are valid ikm atoms. The rule is classified odh.
+    // and at call sites both hints were listed: odh ss[0], odh se<i>[0].
     // -----------------------------------------------------------------
 
     // L_kem<i>: KEM shared_secret, correct case for session i.
     // Applies when: info == AuthEncap_honest_info<session i>().
     // Replaces the `exists i. info == AuthEncap_honest_info<session i>()`
     // branch of both old `odh ss` and `odh se<i>`.
-    /* RESOLVED (I13, I14): lbl_ikm wrapping expands to public ++ dh_combine atoms. */
-    odh L_kem<i> : 0x,
+    // TODO: will we need to manually expand `lbl_ikm`? Hopefully not
+    odh L_kem<i>(info) where (info == AuthEncap_honest_info<session i>()) : 0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
-        AuthEncap_honest_info<session i>()
+        info
         -> strict SS_t
 
     // L_kem_corr<i>: KEM step, ephemeral skE<i> is present in ikm but
     // the info does NOT match the honest info for session i. Replaces the
     // `info != AuthEncap_honest_info<session i>()` branch of `odh se<i>`.
-    /* RESOLVED (I13, I14): same lbl_ikm wrapping — now valid. */
-    /* NOTE: This is an info-value inequality, not an index inequality — `where`
-       clauses on indices do not apply here. The type checker's hint mechanism
-       (I9 resolution) handles it: L_kem<i> has a concrete info pattern
-       AuthEncap_honest_info<session i>() that is consistent only when the info
-       matches; L_kem_corr<i> (info = _ wildcard = any) applies otherwise.
-       TODO: The _ wildcard currently makes L_kem_corr<i> overlap with L_kem<i>
-       on the info dimension — it is only "less specific", not disjoint. It may
-       be necessary to enforce disjointness explicitly (e.g., via a where clause
-       on the info argument, or by requiring that wildcard rules are proven
-       disjoint from their concrete siblings) rather than relying solely on
-       priority/specificity ordering in the hint mechanism. */
-    odh L_kem_corr<i> : 0x,
+    odh L_kem_corr<i>(info) where (info != AuthEncap_honest_info<session i>()) : 0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
-        _  // wildcard: matches any info != AuthEncap_honest_info<session i>()
-        -> strict SS_corr_t
-
-    // L_kem_ss_corr: KEM step with only the static DH secret skS×skR.
-    // Covers the case: for all i, the ephemeral key is not an honest skE<i>
-    // (i.e., the `forall i. info != AuthEncap_honest_info<session i>()`
-    // branch of old `odh ss`).
-    // Note: since this uses only dh_combine(skS, skR) (not the ephemeral),
-    // it is technically not a multi-DH rule; it covers the "static-only"
-    // contribution when no honest ephemeral is present.
-    /* RESOLVED (I13, I14): lbl_ikm wrapping around a single dh_combine — now valid. */
-    /* NOTE: Same info-value distinction as L_kem_corr<i> above; handled by the
-       hint mechanism. L_kem_ss_corr has a different ikm (static-only, no skE<i>)
-       so it does not overlap with L_kem_corr<i> on the ikm dimension.
-       TODO: Same disjointness concern as L_kem_corr<i> — the _ wildcard needs
-       to be provably disjoint from L_kem<i>'s concrete info pattern, not merely
-       lower-priority. */
-    odh L_kem_ss_corr : 0x,
-        lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skS, skR)),
-        _  // wildcard: matches any info (catch-all when no L_kem<i> applies)
+        info
         -> strict SS_corr_t
 
     // -----------------------------------------------------------------
@@ -259,54 +208,36 @@ kdf_group HPKE_KDF {
     //   }
     // The three conditional branches become three separate kdf rules.
     // Corrupted variants (old shared_secret_corr_t) add three more rules.
-    //
-    // RESOLVED (I15): dh_secret_kdf_ikm(psk) expands to
-    // hpke_v1() ++ hpke_suite_id() ++ "secret" ++ psk — a concatenation
-    // of public atoms followed by a kdfkey atom. This is now a valid ikm
-    // expression; the rule is classified kdf and PRF security applies.
-    //
-    // ISSUE (I5, applied to HPKE): The correctness of L_sched_key's output
-    // type (an honest encryption key rather than hpke_corr_key_t) relies
-    // on the salt having TYPE SS_t — i.e., having been produced by rule
-    // L_kem<i>. This type-structural guarantee replaces the old explicit
-    // condition `exists i. salt == AuthEncap_shared_secret<session i>()`.
-    // The implicit honesty condition must be formally justified as a
-    // type-provenance property (see I5).
     // -----------------------------------------------------------------
 
     // L_sched_nonce: key_schedule → base nonce (correct case)
     // salt has type SS_t (honest KEM output), ikm is psk-derived.
-    /* RESOLVED (I15): dh_secret_kdf_ikm(psk) is a valid ikm atom sequence. */
-    kdf L_sched_nonce : SS_t, dh_secret_kdf_ikm(psk), base_nonce_kdf_info()
+    // TODO: do we need to take ikm as argument and add `where ikm == dh_secret_kdf_ikm(get(psk))`? Or will this be fine?
+    kdf L_sched_nonce : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()
         -> public nonce |counter|
 
     // L_sched_key: key_schedule → encryption key (correct case)
-    /* RESOLVED (I15, I7): ikm wrapping now valid; gkdf uses label-free form gkdf<type; index>(self, ...)
-       where `self` refers to the salt value of the current rule (the SS_t
-       shared secret). No label-passing mechanism is needed. */
-    kdf L_sched_key : SS_t, dh_secret_kdf_ikm(psk), key_kdf_info()
+    kdf L_sched_key : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), key_kdf_info()
         -> strict st_aead plaintext_t
                           aad x. true
                           nonce send_counter
                           pattern i. xor(i, gkdf<nonce |counter|; 0>(self,
-                                         dh_secret_kdf_ikm(psk), base_nonce_kdf_info()))
+                                         dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()))
 
     // L_sched_export: key_schedule → export key (correct case)
-    /* RESOLVED (I15): same — dh_secret_kdf_ikm(psk) is a valid ikm atom sequence. */
-    kdf L_sched_export : SS_t, dh_secret_kdf_ikm(psk), export_kdf_info()
+    kdf L_sched_export : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), export_kdf_info()
         -> strict nonce
 
     // Corrupted variants: when the shared_secret has type SS_corr_t
     // (produced by L_kem_corr<i> or L_kem_ss_corr instead of L_kem<i>).
     // These replace the old shared_secret_corr_t nametype's three branches.
-    /* RESOLVED (I15): same — dh_secret_kdf_ikm(psk) valid for all three rules below. */
-    kdf L_sched_nonce_corr : SS_corr_t, dh_secret_kdf_ikm(psk), base_nonce_kdf_info()
+    kdf L_sched_nonce_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()
         -> public nonce |counter|
 
-    kdf L_sched_key_corr : SS_corr_t, dh_secret_kdf_ikm(psk), key_kdf_info()
+    kdf L_sched_key_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), key_kdf_info()
         -> strict hpke_corr_key_t
 
-    kdf L_sched_export_corr : SS_corr_t, dh_secret_kdf_ikm(psk), export_kdf_info()
+    kdf L_sched_export_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), export_kdf_info()
         -> strict nonce
 
 } // end kdf_group HPKE_KDF
@@ -364,18 +295,13 @@ func AuthDecap_kem_context(eph) =
     ++
     dhpk(get(HPKE_KDF.skS))
 
-// RESOLVED (I16): With label-free gkdf, AuthDecap_shared_secret needs no
-// session index and no tentative "unindexed label" notation. The ghost
-// value is determined entirely by the arguments (eph, skR, skS).
 func AuthDecap_shared_secret(eph) =
     gkdf<kdfkey; 0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
                        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
                        AuthDecap_kem_context(eph)))
 
 
-/* The actual encryption key for data.
- * Updated: gkdf reference uses HPKE_KDF.L_sched_nonce label.
- */
+/* The actual encryption key for data. */
 nametype hpke_key_t<i> =
     st_aead plaintext_t
         aad x. true

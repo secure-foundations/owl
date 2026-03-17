@@ -8,16 +8,13 @@ struct AuthDecapResult<i> {
     // actually secret, then we get the correct, secret output
     adr_shared_secret :
         if adr_eph == dhpk(get(HPKE_KDF.skE<i>)) /\ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ sec(HPKE_KDF.skE<i>))) then
-            SecName(KDF<HPKE_KDF.L_kem<i>; kdfkey; 0>(0x,
+            SecName(KDF<HPKE_KDF.L_kem<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>(0x,
             lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)),
             lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
         // Otherwise, if the static DH shared secret is actually secret, we
         // get a "junk" secret that we can rule out later.
-        // ISSUE (I9): this case covers both L_kem_corr<i> (eph matches session i
-        // but conditions fail) and L_kem_ss_corr (no matching honest ephemeral).
-        // We use a multi-label KDF reference tentatively.
         else if sec(HPKE_KDF.skR) /\ sec(HPKE_KDF.skS) then
-            SecName(KDF<HPKE_KDF.L_kem_corr<i>, HPKE_KDF.L_kem_ss_corr; kdfkey; 0>(0x,
+            SecName(KDF<HPKE_KDF.L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>(0x,
             lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)),
             lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
         // Otherwise, public
@@ -46,15 +43,15 @@ def AuthDecap(pkS : dhpk(HPKE_KDF.skS), pkR: dhpk(HPKE_KDF.skR), eph : Data<adv>
     let dh = dh_combine(eph, get(HPKE_KDF.skR)) ++ dh_combine(pkS, get(HPKE_KDF.skR))  in
     let kem_context = eph ++ pkR ++ pkS in
     // Multi-label kdf call: the shared_secret could satisfy L_kem<i>
-    // (correct, if eph == dhpk(skE<i>) and info is honest), L_kem_corr<i>
-    // (wrong info for session i), or L_kem_ss_corr (static-only).
-    // ISSUE (I9): multi-label kdf call semantics are not yet defined.
-    let shared_secret = kdf<HPKE_KDF.L_kem<i>, HPKE_KDF.L_kem_corr<i>, HPKE_KDF.L_kem_ss_corr; kdfkey; 0>(0x,
+    // (correct, if eph == dhpk(skE<i>) and info is honest) or L_kem_corr<i>
+    // (wrong info for session i).
+    let info = lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context) in
+    let shared_secret = kdf<HPKE_KDF.L_kem<i>(info), HPKE_KDF.L_kem_corr<i>(info); kdfkey; 0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh),
-        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
+        info) in
     let shared_secret_ghost = gkdf<kdfkey; 0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh),
-        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context)) in
+        info) in
     forall j:idx {
         // This calls out to collision-resistance of the KDF
         kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret<session j>())

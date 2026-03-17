@@ -51,6 +51,7 @@ Owl is written in Haskell and uses Cabal as its build system. The main executabl
 ```bash
 cabal build owl              
 ```
+The build may take 5-10 minutes to complete.
 
 **Run Owl on a protocol:**
 ```bash
@@ -194,3 +195,82 @@ When debugging type errors:
 - Lenses from `Control.Lens` are used extensively for record access
 - Pretty-printing uses the `prettyprinter` library
 - IO and state management uses `IORef` and monad transformers
+
+## Important Implementation Notes
+
+### Running tests in the worktree
+
+The implementation lives in a git worktree at `.claude/worktrees/agent-a12914f9/`.
+**Always `cd` into that directory before running `cabal`** — running from the main
+working directory uses the old binary that lacks `kdf_group` parser support.
+
+```bash
+cd .claude/worktrees/agent-a12914f9
+cabal run owl -- tests/parse/kdf_group/some_test.owl
+```
+
+### kdf_group — type system internals
+
+**Path resolution for kdf_group names:**
+- `DeclKDFGroup "G" entries rules` registers `"G"` in both `defPaths` (for
+  call-site `kdf<G.L<i>; ...>` resolution) and `kdfGroupPaths` (for name-path
+  resolution).
+- `kdfGroupPaths` causes `PUnresolvedPath "G" ["C1"]` to resolve to `PDot PTop
+  "G.C1"` (flat) rather than navigating into `G` as a sub-module. This matches
+  how names are stored in `nameDefs` with key `"G.C1"`.
+- `KGEDHName` and `KGEKdfKey` localities are resolved during path resolution;
+  `KGENameType` has no locality to resolve.
+
+**`SecName(KDF<G.L<i>; kdfkey; 0>(...))` — how it typechecks:**
+- The new `KDF<rule_refs; nks; j>(a,b,c)` parser format stores refs in `KDFName`'s
+  new `[KDFGroupRuleRef]` field (8th argument; empty for old format).
+- `tryHint` for a `KDFStrict` rule with a secret salt returns
+  `TRefined (TName (KDFName ... [hint])) ".res" (pNot (pFlow (nameLbl ne) advLbl))`.
+  This embeds the label secrecy directly in the type so `checkSubRefinement` can
+  prove `SecName`'s `[ne] !<= adv` constraint without needing ODH axioms in the SMT.
+- `subKDFName` compares `[KDFGroupRuleRef]` alpha-equality when both sides are
+  non-empty, replacing `subNameType` (ref equality implies type compatibility).
+- For a public (adversary-controlled) salt, `tryHint` returns `tData advLbl advLbl`
+  even for `KDFStrict` rules — secrecy is only granted when the salt is actually a name.
+
+**`KDFName` AST node (8 arguments):**
+```haskell
+KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool) [KDFGroupRuleRef]
+--      salt  ikm   info  nks        j   nt        trusted?      rule refs (new syntax)
+```
+The `[KDFGroupRuleRef]` field is `[]` for the old `KDF<nks; j; nt>` format and
+non-empty for the new `KDF<G.L<i>; kdfkey; 0>` format.
+
+**SMT / label checking:**
+- `prelude.smt2` at the repo root defines the base SMT theory. `KDFName` is declared
+  as `(declare-fun KDFName (Bits Bits Bits Int Int) Name)`. `LabelOf(KDFName(...))`
+  is an opaque SMT term with no built-in flow axioms — secrecy must be injected via
+  type refinements (as above) rather than SMT axioms.
+- `inODHProp` in `TypingBase.hs` is currently a stub returning `pFalse` — the old
+  ODH checking via `PInODH` in SMT was replaced by `tryHint` in `Typing.hs`.
+- Flow axioms for name types are emitted by `nameDefFlows` in `LabelChecking.hs`.
+  `NT_KDF` emits no flow axioms (`return sTrue`).
+
+### Reserved words
+
+`dh_combine` must **not** be in `reservedNames` — it appears as a function call in
+expression position (e.g., `dh_combine(dhpk(get(X)), get(Y))`). Adding it to
+`reservedNames` breaks expression-level parsing. The keywords `kdf_group`, `kdfkey`,
+`odh`, `kdf`, `where`, `nametype`, and `public` are correctly reserved.
+
+### Indexed localities
+
+Localities with index parameters must be declared with explicit arity:
+```
+locality Initiator : 1   -- takes one PId index
+locality Responder : 1
+```
+An unindexed `locality alice` has arity 0. Using `alice<n>` with arity-0 locality
+produces a "Wrong arity" error.
+
+### `addNameDef` — registering names
+
+`addNameDef n (is1, is2) (nt, locs) k` registers name `n` with session indices
+`is1`, PId indices `is2`, name type `nt`, and localities `locs`. For kdf_group
+names, the qualified string `"G.C1"` is used as the key in `curMod.nameDefs`.
+The `locs` list can have multiple elements (e.g., PSK shared across two localities).
