@@ -92,8 +92,7 @@ nameKindToNameType NK_PKE       = mkSpanned $ NT_PKE (tData advLbl advLbl)
 
 parseNameExp :: Parser NameExp
 parseNameExp =
-    -- New kdf_group format: KDF<G.L<i>; nks; j>(a, b, c)
-    -- Rule refs are parsed but discarded; nt is inferred from nks[j].
+    -- kdf_group format: KDF<G.L<i>; nks; j>
     (try $ parseSpanned $ do
         reserved "KDF"
         symbol "<"
@@ -103,36 +102,8 @@ parseNameExp =
         symbol ";"
         j <- many1 digit
         symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ","
-        b <- parseAExpr
-        symbol ","
-        c <- parseAExpr
-        symbol ")"
         let ji = read j
-        let nt = mkSpanned NT_KDF  -- placeholder; typechecker uses refs to identify output
-        return $ KDFName a b c nks ji nt (ignore False) refs
-    )
-    <|>
-    -- Old format: KDF<nks; j; nt>(a, b, c)
-    (parseSpanned $ do
-        reserved "KDF"
-        symbol "<"
-        nks <- parseNameKind `sepBy1` (symbol "||")
-        symbol ";"
-        j <- many1 digit
-        symbol ";"
-        nt <- parseNameType
-        symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ","
-        b <- parseAExpr
-        symbol ","
-        c <- parseAExpr
-        symbol ")"
-        return $ KDFName a b c nks (read j) nt (ignore False) []
+        return $ KDFName nks ji (mkSpanned NT_KDF) (ignore False) refs
     )
     <|>
     (parseSpanned $ do
@@ -312,7 +283,12 @@ parseTyTerm =
         symbol ")"
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
-        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
+        return $ case n^.val of
+          KDFName _ _ _ _ refs | not (null refs) ->
+              -- arg-free kdf_group form: secrecy is structural (TName is never a leaf type),
+              -- so skip the TRefined wrapper to avoid LName(KDFName) in SMT
+              Spanned pos $ TName n
+          _ -> Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
     )
     <|>
     (do

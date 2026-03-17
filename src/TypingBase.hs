@@ -703,8 +703,7 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName a b c nks j nt ib _refs -> do
-                 _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
+             KDFName nks j nt ib _refs -> do
                  when (not $ unignore ib) $ do
                      nth <- view checkNameTypeHook
                      nth nt
@@ -1292,12 +1291,9 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName a b c nks j nt ib refs -> do
-          a' <- resolveANF a >>= normalizeAExpr
-          b' <- resolveANF b >>= normalizeAExpr
-          c' <- resolveANF c >>= normalizeAExpr
+      KDFName nks j nt ib refs -> do
           nt' <- normalizeNameType nt
-          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib refs
+          return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib refs
 
 -- Traversing modules to collect global info
 
@@ -1622,13 +1618,10 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName a b c nks j nt ib refs -> do
-          a' <- resolveANF a
-          b' <- resolveANF b
-          c' <- resolveANF c
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then
+      KDFName nks j nt ib refs -> do
+          if x `elem` toListOf fv nt then
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt ib refs
+          else return $ Spanned (e^.spanOf) $ KDFName nks j nt ib refs
       
 stripLabel :: DataVar -> Label -> Check' senv Label
 stripLabel x l = return l

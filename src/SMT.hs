@@ -348,10 +348,7 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             KDFName a b c nks j nt _ _ -> do
-                                 (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
-                                 -- p <- kdfPerm va vb vc start segment nt
-                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             KDFName nks j nt _ _ -> return sTrue
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do

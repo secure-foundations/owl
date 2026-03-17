@@ -759,10 +759,12 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                 case ob of
                   Nothing -> return False
                   Just b -> return b
-            (_, TName (Spanned _ (KDFName a2 b2 c2 nks2 j2 nt2 _ refs2))) ->
+            (_, TName (Spanned _ (KDFName nks2 j2 nt2 _ refs2))) ->
                 case (stripRefinements t1)^.val of
-                  TName (Spanned _ (KDFName a1 b1 c1 nks1 j1 nt1 _ refs1)) | (nks1 == nks2 && j1 == j2)
-                      -> subKDFName a1 b1 c1 nt1 refs1 a2 b2 c2 nt2 refs2
+                  TName (Spanned _ (KDFName nks1 j1 nt1 _ refs1)) | (nks1 == nks2 && j1 == j2)
+                      -> if not (null refs1) && not (null refs2)
+                         then return $ aeq refs1 refs2
+                         else subNameType nt1 nt2
                   _ -> return False
             _ | isSingleton t2 -> return True
             (TConst x ps1, TConst y ps2) -> do
@@ -820,15 +822,6 @@ isSubtypeLeaf t =
       THexConst _ -> True
       _ -> False 
 
-subKDFName a1 b1 c1 nt1 refs1 a2 b2 c2 nt2 refs2 = do
-    argsEq <- decideProp $ (pEq a1 a2) `pAnd` (pEq b1 b2) `pAnd` (pEq c1 c2)
-    -- When both sides have rule refs (new kdf_group format), ref equality implies
-    -- nt equality (the output type is determined by the rule), so skip subNameType.
-    -- When either side uses the old format (empty refs), fall back to subNameType.
-    ntOk <- if not (null refs1) && not (null refs2)
-            then return $ aeq refs1 refs2
-            else subNameType nt1 nt2
-    return $ (argsEq == Just True) && ntOk
 
 allM :: Monad m => [a] -> (a -> m Bool) -> m Bool
 allM [] f = return True
@@ -867,7 +860,7 @@ isSingleton t =
     case t^.val of
       TName ne -> 
           case ne^.val of
-            KDFName _ _ _ _ _ _ _ _ -> False
+            KDFName _ _ _ _ _ -> False
             NameConst _ _ _ -> True
       TVK _ -> True
       TDH_PK _ -> True
@@ -2802,7 +2795,7 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                     if saltIsName then do
                         -- Embed the label secrecy as a refinement (mirrors old matchODH).
                         -- checkSubRefinement can then prove SecName's [ne] !<= adv trivially.
-                        let ne = mkSpanned $ KDFName saltE ikmE infoE nks j (mkSpanned NT_KDF) (ignore True) [hint]
+                        let ne = mkSpanned $ KDFName nks j (mkSpanned NT_KDF) (ignore True) [hint]
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
                         return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
                             bind (s2n ".res") flowAx
