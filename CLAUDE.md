@@ -198,16 +198,7 @@ When debugging type errors:
 
 ## Important Implementation Notes
 
-### Running tests in the worktree
-
-The implementation lives in a git worktree at `.claude/worktrees/agent-a12914f9/`.
-**Always `cd` into that directory before running `cabal`** — running from the main
-working directory uses the old binary that lacks `kdf_group` parser support.
-
-```bash
-cd .claude/worktrees/agent-a12914f9
-cabal run owl -- tests/parse/kdf_group/some_test.owl
-```
+The implementation lives on branch `kdf-groups-impl` at the repository root.
 
 ### kdf_group — type system internals
 
