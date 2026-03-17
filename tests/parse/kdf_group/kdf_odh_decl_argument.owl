@@ -1,0 +1,35 @@
+// Tests kdf rules arguments
+
+locality alice
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ alice
+    name C1 : kdfkey @ alice
+    nametype C2 : kdfkey
+
+    kdf L1(x): C1, x, 0x ->
+        strict C2 || public nonce
+    
+    odh L2(y,z): y, dh_combine(z, get(G.A)), 0x ->
+        strict nonce
+}
+
+def test () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(G.C1) in
+    let ikm = 0x1234 in
+    let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    result
+
+def test2 () @ alice : SecName(KDF<G.L2(0x1234, dhpk(get(G.B))); nonce; 0>) =
+    let salt = 0x1234 in
+    let ikm = dh_combine(dhpk(get(G.B)), get(G.A)) in
+    let result = kdf<G.L2(0x1234, dhpk(get(G.B))); nonce; 0>(salt, ikm, 0x) in
+    result
+
+// def this_should_fail () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
+//     let salt = get(G.C1) in
+//     let ikm = dhpk(get(G.B)) in
+//     // The provided `ikm` doesn't match the expected value of `0x1234` in the kdf rule, so this should fail to type check.
+//     let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+//     result
