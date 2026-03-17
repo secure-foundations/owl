@@ -330,7 +330,6 @@ data SaltExpr
 
 data InfoExpr
     = InfoPublic AExpr  -- concrete public value
-    | InfoWildcard      -- _
     deriving (Show, Generic, Typeable)
 
 newtype KDFGroupWhere = KDFGroupWhere [(IdxVar, IdxVar, Bool)]

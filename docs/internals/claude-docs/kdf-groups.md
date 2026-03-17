@@ -193,17 +193,6 @@ Representative examples:
 - A hex constant (e.g., `0x`).
 - Any public expression: a `func` applied to public arguments (e.g., `base_nonce_kdf_info()`,
   `AuthEncap_honest_info<session i>()`).
-- `_` — a wildcard that matches any info value. Used when a rule applies regardless
-  of the info argument (e.g., a catch-all `_corr` variant where the info is not
-  constrained). A rule with a concrete `info_expr` takes precedence over a sibling
-  rule with `_` via the hint mechanism.
-
-  **Open design question:** Relying on priority alone may be insufficient for
-  soundness — a `_`-info rule overlaps with its concrete sibling on the info
-  dimension and is only "less specific", not provably disjoint.  It may be
-  necessary to require that wildcard rules are explicitly proven disjoint from
-  concrete siblings (e.g., via a `where info !=val ...` constraint analogous to
-  the index `where` clause), rather than depending solely on hint ordering.
 
 **`output_spec`**: Describes what type(s) the KDF output has. Forms:
 - `-> T` — a single output of type `T`.

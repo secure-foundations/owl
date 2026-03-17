@@ -201,7 +201,6 @@ instance OwlPretty SaltExpr where
     owlpretty (SaltPublicExpr e)    = owlpretty e
 
 instance OwlPretty InfoExpr where
-    owlpretty InfoWildcard   = owlpretty "_"
     owlpretty (InfoPublic e) = owlpretty e
 
 instance OwlPretty KDFGroupWhere where

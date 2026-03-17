@@ -810,16 +810,9 @@ parseIKMAtomList :: Parser [IKMAtom]
 parseIKMAtomList = parseIKMAtom `sepBy1` (try $ symbol "++")
 
 parseInfoExpr :: Parser InfoExpr
-parseInfoExpr =
-    (do
-        symbol "_"
-        return InfoWildcard
-    )
-    <|>
-    (do
-        e <- parseAExpr
-        return $ InfoPublic e
-    )
+parseInfoExpr = do
+    e <- parseAExpr
+    return $ InfoPublic e
 
 parseKDFOutputSpec :: Parser KDFOutputSpec
 parseKDFOutputSpec = do

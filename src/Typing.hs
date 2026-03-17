@@ -2844,7 +2844,6 @@ checkIKMMatch body ikmE ikmT = do
     isDhCombine _ = False
 
 checkInfoMatch :: InfoExpr -> AExpr -> Ty -> Check Bool
-checkInfoMatch InfoWildcard _ _ = return True
 checkInfoMatch (InfoPublic _) _ infoT = tyFlowsTo infoT advLbl
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
