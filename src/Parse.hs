@@ -1725,7 +1725,7 @@ parseCryptOp =
     (do
         reserved "kdf"
         symbol "<"
-        refs <- parseKDFGroupRuleRef `sepBy1` (symbol ",")
+        refs <- parseKDFGroupRuleRef `sepBy` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
