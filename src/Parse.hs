@@ -773,6 +773,7 @@ parseSaltExprF :: [String] -> Parser SaltExpr
 parseSaltExprF formalNames =
     (try $ do
         p <- parsePath
+        notFollowedBy (whiteSpace >> char '(')  -- don't consume function calls
         idxs <- parseIdxParams
         -- If this is a bare identifier matching a formal, treat it as AEVar (AExpr)
         case (p, fst idxs, snd idxs) of
