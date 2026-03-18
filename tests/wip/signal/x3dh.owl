@@ -121,7 +121,7 @@ nametype ratchet1 = kdf { ikm info.
 }
 
 nametype ma1_enc(dh) = st_aead (x:Name(ma1) {dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False})
-      aad x. (x == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)) /\ (dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False))
+      aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))) /\ ((dh == correct_bmaster_arg() ==> True) /\ (dh != correct_bmaster_arg() ==> False)))
       nonce N_c
 
 nametype Amaster(dh) = dualkdf { salt info.
@@ -211,6 +211,7 @@ corr [ae2] ==> [be2]
 
 def bob_double_ratchet_send(
   dh: Ghost, 
+  // last_round_preimage: Ghost, // hash preimage, needs to have some predicate relating to `dh` and `bob_good`
   rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv>, 
   gae2: if bob_good[dh] then dhpk(ae2) else Data<adv> ||group||
 ) @ bob: Option Unit =
@@ -306,20 +307,25 @@ def bob_x3dh () @ bob
     guard is_group_elem(a4) in
     // a1 -> gae1, a2 -> long_pkA, a3 -> x1, a4 -> gae2
 
-    pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    // Out-of-band auth assumption: TODO replace with a method `check_key_transparency(a2)` with
+    // a postcondition that says `a2 == dhpk(get(long_skA))`
+    assume(a2 == dhpk(get(long_skA)));  
+
+
+    // pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
+    // pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    // false_elim in
+
+    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
+    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
     false_elim in
 
-    pcase #[assume false] (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
-    pcase #[assume false] (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
+    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
     false_elim in
 
-    pcase #[assume false] (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
-    pcase #[assume false] (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    false_elim in
-
-    pcase #[assume false] (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
-    pcase #[assume false] (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
+    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
+    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
     false_elim in
 
     cross_dh_lemma<bs>(a2);
@@ -354,12 +360,17 @@ def bob_x3dh () @ bob
     let n_c = get_counter N_c_bob in
     corr_case long_skA in
     false_elim in
+    let ma1_opt' = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
+
+
+
+    // assert( (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) /\ (Some?(ma1_opt')) ==> (dh == correct_bmaster_arg())));
     let ma1_opt: (y:Option (
       if (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
           /\ (a1 == dhpk(get(ae1)) \/ a1 == dhpk(get(long_skA))) 
           /\ (a2 == dhpk(get(ae1)) \/ a2 == dhpk(get(long_skA)))) 
       then (x:Name(ma1){a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))}) 
-      else Data<adv>){(Some?(y) /\ dh != correct_bmaster_arg()) ==> False}) = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
+      else Data<adv>){(Some?(y) /\ dh != correct_bmaster_arg()) ==> False}) = ma1_opt' in
     case ma1_opt {
       | None => None()
       | Some ma1 => {
@@ -378,12 +389,12 @@ def bob_x3dh () @ bob
         // This assert should always pass. Since we are in the decryption succeeds case, if all of the keys are secret, then 
         // we must have derived the correct enckey. This can only happen if we derived the correct `dh` value.
         // Do we need KDF injectivity?
-        assert(((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) ==> dh == correct_bmaster_arg());
+        assert(((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) ==> (dh == correct_bmaster_arg()));
 
 
         // false_elim in
 
-        // // call bob_double_ratchet_send(dh, rb1, a4)
+        call bob_double_ratchet_send(dh, rb1, a4)
         // let gae2 = a4 in
 
         // pcase sec(be2) in
@@ -399,7 +410,7 @@ def bob_x3dh () @ bob
         // let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
         // let b2 = bob_message1(gbe2, x2) in
         // let _ = output b2 to endpoint(alice) in 
-        Some(()) // TODO: call bob_double_ratchet_recv here
+        // Some(()) // TODO: call bob_double_ratchet_recv here
 
       }
     }
