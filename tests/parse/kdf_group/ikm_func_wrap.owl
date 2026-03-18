@@ -6,6 +6,7 @@ locality bob
 
 func f arity 0
 func g arity 0
+func h() = 0x12345678
 func lbl_ikm arity 3
 
 kdf_group G {
@@ -13,5 +14,5 @@ kdf_group G {
     name B : DH @ bob
     nametype T : kdfkey
 
-    odh L<@i> : 0x, lbl_ikm(f(), g(), 0x), 0x -> strict T
+    odh L<i@n> : h<session i, pid n>(), lbl_ikm<session i, pid n>(f<session i, pid n>(), g(), 0x), 0x -> strict T
 }
