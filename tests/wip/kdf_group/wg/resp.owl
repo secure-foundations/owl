@@ -59,9 +59,9 @@ struct resp_received_state<j,n_pk, n_eph, m> {
     }),
     rrs_c3 : if resp_stage1_clean<j,n_pk,n_eph,m>[rrs_msg1_ephemeral] then
         if n_pk =idx n_eph then
-            SecName(KDF<WG_KDF.L2<n_eph,m>; kdfkey||enckey; 0>(rrs_c2, dh_combine(dhpk(get(WG_KDF.S_init<@n_pk>)), get(WG_KDF.S_resp<@m>)), 0x))
+            SecName(KDF<WG_KDF.L2<n_eph,m>; kdfkey||enckey; 0>)
         else
-            SecName(KDF<WG_KDF.L2_corr<n_eph,n_pk,m>; kdfkey||enckey; 0>(rrs_c2, dh_combine(dhpk(get(WG_KDF.S_init<@n_pk>)), get(WG_KDF.S_resp<@m>)), 0x))
+            SecName(KDF<WG_KDF.L2_corr<n_eph,n_pk,m>; kdfkey||enckey; 0>)
 
         else
             (x:Data<adv>{x == gkdf<kdfkey||enckey; 0>(rrs_c2,
@@ -94,7 +94,7 @@ input inp in
         // If so, let it be for initiator n2
         choose_idx n2 | msg1_ephemeral == dhpk(get(WG_KDF.S_init<@n2>)) in
      // C1 is publicly computable; no kdf_group rule needed, use unlabeled kdf
-     let C1 = kdf<;;kdfkey;0>(C0, msg1_ephemeral, 0x) in
+     let C1 = kdf<;kdfkey;0>(C0, msg1_ephemeral, 0x) in
      let ghost c1_ghost = gkdf<kdfkey; 0>(C0, msg1_ephemeral, 0x) in
      let H2 = crh(H1 ++ msg1_ephemeral) in
      let ss_msg1_ephemeral_S_resp = dh_combine(msg1_ephemeral, get(WG_KDF.S_resp<@m>)) in
@@ -216,7 +216,7 @@ def resp_stage2<j@m> (st : exists n_eph. exists n_pk. resp_received_state<sessio
     };
  assert (n !=idx n3 ==>
      c4 != honest_c4<session i, session j, pid n, pid n, pid m>());
- assert (n !=idx n3 =>
+ assert (n !=idx n3 ==>
      c4 != honest_c4<session i, session j, pid n3,
      pid n3, pid m>());
  forall n_eph:idx, i:idx {

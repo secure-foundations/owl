@@ -31,7 +31,7 @@ struct init_sent_state<i,n,m> {
     n,pid m>(c, ts))}),
     // KDF reference updated: KDF<WG_KDF.L2<@n,m>; kdfkey||enckey; 0>
     iss_c3 : if init_safe<i,n,m>[] then
-        SecName(KDF<WG_KDF.L2<n,m>; kdfkey||enckey; 0>(iss_c2, iss_static_ss, 0x))
+        SecName(KDF<WG_KDF.L2<n,m>; kdfkey||enckey; 0>)
         else
             (x:Data<adv>{x == honest_c3<session i, pid n, pid n, pid m>()})
 }
