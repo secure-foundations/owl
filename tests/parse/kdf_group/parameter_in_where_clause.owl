@@ -1,0 +1,36 @@
+// Tests kdf rules arguments
+
+locality alice
+
+kdf_group G {
+    name A : DH @ alice
+    name B : DH @ alice
+    name C1 : kdfkey @ alice
+    nametype C2 : kdfkey
+    nametype C2_corr : kdfkey
+
+    odh L1: C1, dh_combine(A, B), 0x ->
+        strict C2 || public nonce
+    
+    kdf L2(x) where (x == 0x1234): C1, x, 0x ->
+        strict C2_corr || public nonce
+}
+
+def test () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(G.C1) in
+    let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
+    let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    result
+
+def test2 () @ alice : SecName(KDF<G.L2(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(G.C1) in
+    let ikm = 0x1234 in
+    let result = kdf<G.L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    result
+
+// def this_should_fail () @ alice : SecName(KDF<G.L2(0x1234); kdfkey || nonce; 0>) =
+//     let salt = get(G.C1) in
+//     let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
+//     // The provided `ikm` matches the disallowed value of dh_combine(dhpk(get(G.A)), get(G.B)) in the kdf rule, so this should fail to type check.
+//     let result = kdf<G.L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+//     result
