@@ -797,13 +797,18 @@ withPushLog k = do
     popLogTypecheckScope
     return r
 
+liftPutDoc :: OwlDoc -> Check' senv ()
+liftPutDoc doc = do
+    noColor <- view $ envFlags . fNoColor
+    liftIO $ if noColor then putDoc (unAnnotate doc) else putDoc doc
+
 logTypecheck :: OwlDoc -> Check' senv ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
         r <- view $ typeCheckLogDepth
         n <- liftIO $ readIORef r
-        liftIO $ putDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
+        liftPutDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 

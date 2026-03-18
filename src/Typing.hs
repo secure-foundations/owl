@@ -1936,7 +1936,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (EDebug (DebugPrintTyContext anf)) -> do
           tC <- view tyContext
           let tC' = if anf then removeAnfVars tC else tC
-          liftIO $ putDoc $ owlprettyTyContext tC'
+          liftPutDoc $ owlprettyTyContext tC'
           getOutTy ot $ tUnit
       (EDebug (DebugPrintExpr e)) -> do
           liftIO $ putStrLn $ show $ owlpretty e
@@ -2808,12 +2808,6 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                 KDFUnstrict -> return $ Just $ tData advLbl advLbl
 
 checkWhereClause :: Prop -> Check Bool
--- The where clause passes unless it is provably FALSE.
--- "Nothing" (undecidable) is treated as passing: the rule is only excluded when
--- the constraint is refuted by the SMT solver (Just False).
--- This handles expression disequalities like (x != dh_combine(...)) where Z3
--- cannot prove the inequality symbolically, but the constraint is obviously
--- satisfied when x is a concrete public value.
 checkWhereClause p = fmap (/= Just False) (decideProp p)
 
 checkExprEqual :: AExpr -> AExpr -> Check Bool
@@ -3281,13 +3275,14 @@ typeError' msg = do
                     local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
-    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
+    liftPutDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
     e <- ask
-    E.printDiagnostic S.stdout True True 4 E.defaultStyle diag 
+    noColor <- view $ envFlags . fNoColor
+    E.printDiagnostic S.stdout True (not noColor) 4 E.defaultStyle diag
     pc <- view pathCondition
     case pc of
       [] -> return ()
-      _ -> liftIO $ putDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
+      _ -> liftPutDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
     writeSMTCache
     -- Uncomment for debugging
     -- rs <- view tcRoutineStack

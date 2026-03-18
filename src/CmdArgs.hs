@@ -25,6 +25,7 @@ data Flags = Flags {
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
     _fOnlyParse :: Bool,
+    _fNoColor :: Bool,
     _fFileContents :: String
                    }
 
@@ -65,6 +66,8 @@ parseArgs =
       <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
       <*> switch
           ( long "only-parse" <> help "Run parser only; print parsed module and exit" )
+      <*> switch
+          ( long "no-color-output" <> help "Print errors without terminal colors (suitable for file output)" )
       <*> (pure "")
     where
         extractAllFlag = switch (long "extract" <> short 'e' <> help "Extract all specs and code")
