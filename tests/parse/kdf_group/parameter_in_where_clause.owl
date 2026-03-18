@@ -25,6 +25,7 @@ def test () @ alice : SecName(KDF<G.L1; kdfkey || nonce; 0>) =
 def test2 () @ alice : SecName(KDF<G.L2(0x1234); kdfkey || nonce; 0>) =
     let salt = get(G.C1) in
     let ikm = 0x1234 in
+    assume(0x1234 != dh_combine(dhpk(get(G.A)), get(G.B))); 
     let result = kdf<G.L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
     result
 
