@@ -838,23 +838,6 @@ parseKDFOutputSpec = do
         return (strictness, nt)) `sepBy1` (symbol "||")
     return $ KDFOutputSpec nts
 
-parseKDFGroupWhere :: Parser KDFGroupWhere
-parseKDFGroupWhere = do
-    ocs <- optionMaybe $ do
-        reserved "where"
-        parseKDFWhereCstr `sepBy1` (symbol ",")
-    return $ KDFGroupWhere $ case ocs of
-                               Nothing -> []
-                               Just cs -> cs
-  where
-    parseKDFWhereCstr = do
-        i <- identifier
-        neq <- alt
-            (symbol "!=idx" >> return True)
-            (symbol "=idx" >> return False)
-        j <- identifier
-        return (s2n i, s2n j, neq)
-
 parseKDFGroupEntry :: Parser KDFGroupEntry
 parseKDFGroupEntry = do
     reserved "name"
@@ -902,7 +885,7 @@ parseKDFGroupRule = do
     idxs <- parseIdxParamBinds
     args <- parseKDFRuleFormals
     let formalNames = map name2String args
-    wh <- parseKDFGroupWhere
+    wh <- option (mkSpanned PTrue) (reserved "where" >> parseProp)
     symbol ":"
     salt <- parseSaltExprF formalNames
     symbol ","

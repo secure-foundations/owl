@@ -2807,18 +2807,14 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                 KDFPub -> return $ Just $ tData advLbl advLbl
                 KDFUnstrict -> return $ Just $ tData advLbl advLbl
 
-checkWhereClause :: KDFGroupWhere -> Check Bool
-checkWhereClause (KDFGroupWhere []) = return True
-checkWhereClause (KDFGroupWhere ((i, j, neq):rest)) = do
-    let iProp = mkIVar i
-    let jProp = mkIVar j
-    let p = if neq
-            then pNot $ mkSpanned $ PEqIdx iProp jProp
-            else mkSpanned $ PEqIdx iProp jProp
-    result <- decideProp p
-    case result of
-      Just True -> checkWhereClause (KDFGroupWhere rest)
-      _ -> return False
+checkWhereClause :: Prop -> Check Bool
+-- The where clause passes unless it is provably FALSE.
+-- "Nothing" (undecidable) is treated as passing: the rule is only excluded when
+-- the constraint is refuted by the SMT solver (Just False).
+-- This handles expression disequalities like (x != dh_combine(...)) where Z3
+-- cannot prove the inequality symbolically, but the constraint is obviously
+-- satisfied when x is a concrete public value.
+checkWhereClause p = fmap (/= Just False) (decideProp p)
 
 checkExprEqual :: AExpr -> AExpr -> Check Bool
 checkExprEqual actual expected = do

@@ -332,15 +332,11 @@ data InfoExpr
     = InfoPublic AExpr  -- concrete public value
     deriving (Show, Generic, Typeable)
 
-newtype KDFGroupWhere = KDFGroupWhere [(IdxVar, IdxVar, Bool)]
-    -- (i, j, True) = i !=idx j;  (i, j, False) = i =idx j
-    deriving (Show, Generic, Typeable)
-
 data KDFOutputSpec = KDFOutputSpec [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
 
 data KDFGroupRuleBody = KDFGroupRuleBody {
-    _kgrbWhere  :: KDFGroupWhere,
+    _kgrbWhere  :: Prop,        -- PTrue when no where clause
     _kgrbSalt   :: SaltExpr,
     _kgrbIkm    :: [IKMAtom],
     _kgrbInfo   :: InfoExpr,
@@ -607,11 +603,6 @@ instance Alpha InfoExpr
 instance Subst Idx InfoExpr
 instance Subst AExpr InfoExpr
 instance Subst ResolvedPath InfoExpr
-
-instance Alpha KDFGroupWhere
-instance Subst Idx KDFGroupWhere
-instance Subst AExpr KDFGroupWhere
-instance Subst ResolvedPath KDFGroupWhere
 
 instance Alpha KDFOutputSpec
 instance Subst Idx KDFOutputSpec

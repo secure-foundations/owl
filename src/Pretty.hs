@@ -203,15 +203,6 @@ instance OwlPretty SaltExpr where
 instance OwlPretty InfoExpr where
     owlpretty (InfoPublic e) = owlpretty e
 
-instance OwlPretty KDFGroupWhere where
-    owlpretty (KDFGroupWhere []) = mempty
-    owlpretty (KDFGroupWhere cs) =
-        owlpretty " where " <>
-        hsep (intersperse (owlpretty ", ") $ map ppC cs)
-      where
-        ppC (i, j, True)  = owlpretty (show i) <> owlpretty " !=idx " <> owlpretty (show j)
-        ppC (i, j, False) = owlpretty (show i) <> owlpretty " =idx "  <> owlpretty (show j)
-
 instance OwlPretty KDFOutputSpec where
     owlpretty (KDFOutputSpec nts) =
         hsep $ intersperse (owlpretty " ||") $
@@ -235,7 +226,9 @@ instance OwlPretty KDFGroupRule where
                    | otherwise  = owlpretty "(" <>
                                   hsep (intersperse (owlpretty ",") $ map owlpretty fargs) <>
                                   owlpretty ")"
-            wh     = owlpretty (_kgrbWhere body)
+            wh     = case _kgrbWhere body of
+                         Spanned _ PTrue -> mempty
+                         p               -> owlpretty " where " <> owlpretty p
         in
         kw <+> lbl <> pidxs <> pfargs <> wh <> owlpretty " : " <> owlpretty body
 

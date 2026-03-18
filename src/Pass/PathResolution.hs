@@ -249,7 +249,10 @@ resolveDecls (d:ds) =
       DeclKDFGroup s entries rules -> do
           let pos = d^.spanOf
           entries' <- mapM (resolveEntry pos) entries
-          let d' = Spanned pos $ DeclKDFGroup s entries' rules
+          p0 <- view curPath
+          rules'   <- local (over kdfGroupPaths $ T.insert s p0)
+                    $ mapM resolveRule rules
+          let d' = Spanned pos $ DeclKDFGroup s entries' rules'
           p <- view curPath
           ds' <- local (over defPaths $ T.insert s p)
                $ local (over kdfGroupPaths $ T.insert s p)
@@ -265,6 +268,11 @@ resolveDecls (d:ds) =
               locs' <- mapM (resolveLocality pos) locs
               return $ KGEKdfKey n (bind ixs locs')
           resolveEntry _ e = return e
+          resolveRule rule = do
+              ((idxs, dvars), body) <- unbind (_kgrIdxs rule)
+              wh' <- resolveProp (_kgrbWhere body)
+              let body' = body { _kgrbWhere = wh' }
+              return $ rule { _kgrIdxs = bind (idxs, dvars) body' }
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
