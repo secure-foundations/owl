@@ -2772,41 +2772,28 @@ patternPublicAndEquivalent pat1 pat2 = do
 tryHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
 tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
     let actuals = _kgrrArgs hint
-    let hasArgs = not (null actuals)
     mBody <- lookupKDFGroupRule (_kgrrGroup hint) (_kgrrLabel hint) (_kgrrIdxs hint) actuals
     case mBody of
       Nothing -> return Nothing
       Just body -> do
           ok1 <- checkWhereClause (_kgrbWhere body)
-          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT hasArgs else return False
-          ok3 <- if ok2 then checkIKMMatch body ikmE ikmT hasArgs else return False
-          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE infoT hasArgs else return False
+          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE else return False
+          ok3 <- if ok2 then checkIKMMatch (_kgrbIkm body) ikmE else return False
+          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE else return False
           let KDFOutputSpec outputs = _kgrbOutput body
+          liftIO $ putStrLn $ "tryHint: " ++ show (owlpretty hint) ++ " got " ++ show ok1 ++ " " ++ show ok2 ++ " " ++ show ok3 ++ " " ++ show ok4
           if not ok4 || j >= length outputs then return Nothing else do
-              let (strictness, _outNt) = outputs !! j
-              let isODH = any (\a -> case a of IKMDhCombine _ _ -> True; _ -> False) (_kgrbIkm body)
-              case strictness of
-                KDFStrict -> do
-                    -- Return TName when:
-                    -- (a) the salt is a name (secret KDF), OR
-                    -- (b) the rule is an ODH rule (IKM secrecy comes from DH, independent of salt).
-                    saltIsName <- case extractNameFromType saltT of
-                        Just _  -> return True
-                        Nothing -> not <$> tyFlowsTo saltT advLbl
-                    if saltIsName || isODH then do
-                        -- Embed the label secrecy as a refinement (mirrors old matchODH).
-                        -- checkSubRefinement can then prove SecName's [ne] !<= adv trivially.
-                        let ne = mkSpanned $ KDFName nks j (mkSpanned NT_KDF) (ignore True) hint
-                        let flowAx = pNot $ pFlow (nameLbl ne) advLbl
-                        return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
-                            bind (s2n ".res") flowAx
-                    else
-                        return $ Just $ tData advLbl advLbl
-                KDFPub -> return $ Just $ tData advLbl advLbl
-                KDFUnstrict -> return $ Just $ tData advLbl advLbl
+              let (strictness, outNt) = outputs !! j
+              let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
+              let flowAx = case strictness of
+                              KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
+                              KDFPub      -> pFlow (nameLbl ne) advLbl
+                              KDFUnstrict -> pTrue
+              return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
+                  bind (s2n ".res") flowAx
 
 checkWhereClause :: Prop -> Check Bool
-checkWhereClause p = fmap (/= Just False) (decideProp p)
+checkWhereClause p = fmap (== Just True) (decideProp p)
 
 checkExprEqual :: AExpr -> AExpr -> Check Bool
 checkExprEqual actual expected = do
@@ -2828,47 +2815,19 @@ ikmAtomsToAExpr atoms  =
     foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
            (map atomToAExpr atoms)
 
-checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Bool -> Check Bool
-checkSaltMatch (SaltPublicExpr expectedE) actualE saltT hasArgs = do
-    pub <- tyFlowsTo saltT advLbl
-    if not pub then return False
-    else if hasArgs then checkExprEqual actualE expectedE
-    else return True
-checkSaltMatch (SaltNameType _p _idxs) _ saltT _ = do
-    -- Check that the salt type is a name type matching the expected nametype
-    case extractNameFromType saltT of
-      Just _ -> return True
-      Nothing -> tyFlowsTo saltT advLbl
+checkSaltMatch :: SaltExpr -> AExpr -> Check Bool
+checkSaltMatch (SaltPublicExpr expectedE) actualE =
+    checkExprEqual actualE expectedE
+checkSaltMatch (SaltNameType p idxs) actualE =
+    checkExprEqual actualE (mkSpanned $ AEGet (mkSpanned $ NameConst idxs p []))
 
-checkIKMMatch :: KDFGroupRuleBody -> AExpr -> Ty -> Bool -> Check Bool
-checkIKMMatch body ikmE ikmT hasArgs = do
-    -- For ODH rules with DH combines, check the ODH property
-    let atoms = _kgrbIkm body
-    let hasDH = any isDhCombine atoms
-    odhOk <- if hasDH then do
-        dhComp <- getLocalDHComputation ikmE
-        case dhComp of
-          Nothing -> tyFlowsTo ikmT advLbl  -- Not a DH, check if public
-          Just _ -> return True  -- DH computation found
-    else return True
-    if not odhOk then return False
-    -- Only do equality check when all atoms are IKMPublicExpr (formals only appear there).
-    -- IKMDhCombine/IKMKdfKeyName atoms contain unresolved name paths and use ODH checking instead.
-    else if hasArgs && all isPublicExpr atoms then
-        checkExprEqual ikmE (ikmAtomsToAExpr atoms)
-    else return True
-  where
-    isDhCombine (IKMDhCombine _ _) = True
-    isDhCombine _ = False
-    isPublicExpr (IKMPublicExpr _) = True
-    isPublicExpr _ = False
+checkIKMMatch :: [IKMAtom] -> AExpr -> Check Bool
+checkIKMMatch atoms ikmE =
+    checkExprEqual ikmE (ikmAtomsToAExpr atoms)
 
-checkInfoMatch :: InfoExpr -> AExpr -> Ty -> Bool -> Check Bool
-checkInfoMatch (InfoPublic expectedE) actualE infoT hasArgs = do
-    pub <- tyFlowsTo infoT advLbl
-    if not pub then return False
-    else if hasArgs then checkExprEqual actualE expectedE
-    else return True
+checkInfoMatch :: InfoExpr -> AExpr -> Check Bool
+checkInfoMatch (InfoPublic expectedE) actualE =
+    checkExprEqual actualE expectedE
 
 checkCryptoOp :: CryptOp -> [(AExpr, Ty)] -> Check Ty
 checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) ++ ")") $ do

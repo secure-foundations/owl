@@ -272,7 +272,9 @@ resolveDecls (d:ds) =
           resolveRule rule = do
               ((idxs, dvars), body) <- unbind (_kgrIdxs rule)
               wh' <- resolveProp (_kgrbWhere body)
-              let body' = body { _kgrbWhere = wh' }
+              let KDFOutputSpec outputs = _kgrbOutput body
+              outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
+              let body' = body { _kgrbWhere = wh', _kgrbOutput = KDFOutputSpec outputs' }
               return $ rule { _kgrIdxs = bind (idxs, dvars) body' }
       DeclDetFunc s _ _ -> do
           let d' = d

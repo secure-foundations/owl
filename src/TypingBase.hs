@@ -1304,6 +1304,7 @@ normalizeNameExp ne =
       KDFName nks j nt ib ref -> do
           nt' <- normalizeNameType nt
           return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref
+      _ -> error ("Not normalizing name exp: " ++ show (owlpretty ne))
 
 -- Traversing modules to collect global info
 
