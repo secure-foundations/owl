@@ -252,7 +252,7 @@ resolveDecls (d:ds) =
           entries' <- mapM (resolveEntry pos) entries
           p0 <- view curPath
           rules'   <- local (over kdfGroupPaths $ T.insert s p0)
-                    $ mapM resolveRule rules
+                    $ mapM (resolveRule pos) rules
           let d' = Spanned pos $ DeclKDFGroup s entries' rules'
           p <- view curPath
           ds' <- local (over defPaths $ T.insert s p)
@@ -269,12 +269,24 @@ resolveDecls (d:ds) =
               locs' <- mapM (resolveLocality pos) locs
               return $ KGEKdfKey n (bind ixs locs')
           resolveEntry _ e = return e
-          resolveRule rule = do
+          resolveSalt pos (SaltNameType p idxs) = do
+              p' <- resolvePath pos PTName p
+              return $ SaltNameType p' idxs
+          resolveSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
+          resolveIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
+          resolveIKMAtom (IKMDhCombine ne1 ne2) = IKMDhCombine <$> resolveNameExp ne1 <*> resolveNameExp ne2
+          resolveIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
+          resolveInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
+          resolveRule pos rule = do
               ((idxs, dvars), body) <- unbind (_kgrIdxs rule)
-              wh' <- resolveProp (_kgrbWhere body)
+              wh'   <- resolveProp (_kgrbWhere body)
+              salt' <- resolveSalt pos (_kgrbSalt body)
+              ikm'  <- mapM resolveIKMAtom (_kgrbIkm body)
+              info' <- resolveInfo (_kgrbInfo body)
               let KDFOutputSpec outputs = _kgrbOutput body
               outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
-              let body' = body { _kgrbWhere = wh', _kgrbOutput = KDFOutputSpec outputs' }
+              let body' = body { _kgrbWhere = wh', _kgrbSalt = salt', _kgrbIkm = ikm',
+                                 _kgrbInfo = info', _kgrbOutput = KDFOutputSpec outputs' }
               return $ rule { _kgrIdxs = bind (idxs, dvars) body' }
       DeclDetFunc s _ _ -> do
           let d' = d

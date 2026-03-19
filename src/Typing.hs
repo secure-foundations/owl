@@ -2777,7 +2777,7 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
       Nothing -> return Nothing
       Just body -> do
           ok1 <- checkWhereClause (_kgrbWhere body)
-          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE else return False
+          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT else return False
           ok3 <- if ok2 then checkIKMMatch (_kgrbIkm body) ikmE else return False
           ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE else return False
           let KDFOutputSpec outputs = _kgrbOutput body
@@ -2785,12 +2785,27 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
           if not ok4 || j >= length outputs then return Nothing else do
               let (strictness, outNt) = outputs !! j
               let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
-              let flowAx = case strictness of
-                              KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
-                              KDFPub      -> pFlow (nameLbl ne) advLbl
-                              KDFUnstrict -> pTrue
-              return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
-                  bind (s2n ".res") flowAx
+              -- (1) info must always be public
+              infoPub <- tyFlowsTo infoT advLbl
+              assert "KDF info argument must be public" infoPub
+              -- (2-4) check actual publicness of salt and ikm
+              saltPub <- tyFlowsTo saltT advLbl
+              ikmPub  <- tyFlowsTo ikmT advLbl
+              let saltHasKey = case _kgrbSalt body of
+                                   SaltNameType _ _ -> True
+                                   SaltPublicExpr _ -> False
+              let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKMDhCombine _ _ -> True; _ -> False })
+                                   (_kgrbIkm body)
+              let secretFlowAx = case strictness of
+                                    KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
+                                    KDFPub      -> pFlow (nameLbl ne) advLbl
+                                    KDFUnstrict -> pTrue
+              if saltPub && ikmPub
+              then return $ Just $ tData advLbl advLbl
+              else if (not saltPub && saltHasKey) || (not ikmPub && ikmHasKey)
+              then return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
+                       bind (s2n ".res") secretFlowAx
+              else typeError "KDF ill-typed but not fully public: unable to determine output type"
 
 checkWhereClause :: Prop -> Check Bool
 checkWhereClause p = fmap (== Just True) (decideProp p)
@@ -2807,7 +2822,9 @@ atomToAExpr :: IKMAtom -> AExpr
 atomToAExpr (IKMPublicExpr e)      = e
 atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
 atomToAExpr (IKMDhCombine ne1 ne2) =
-    mkSpanned $ AEApp (topLevelPath "dh_combine") [] [mkSpanned $ AEGet ne1, mkSpanned $ AEGet ne2]
+    mkSpanned $ AEApp (topLevelPath "dh_combine") []
+        [ mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1]
+        , mkSpanned $ AEGet ne2 ]
 
 ikmAtomsToAExpr :: [IKMAtom] -> AExpr
 ikmAtomsToAExpr [atom] = atomToAExpr atom
@@ -2815,11 +2832,21 @@ ikmAtomsToAExpr atoms  =
     foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
            (map atomToAExpr atoms)
 
-checkSaltMatch :: SaltExpr -> AExpr -> Check Bool
-checkSaltMatch (SaltPublicExpr expectedE) actualE =
+checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
+checkSaltMatch (SaltPublicExpr expectedE) actualE _ =
     checkExprEqual actualE expectedE
-checkSaltMatch (SaltNameType p idxs) actualE =
-    checkExprEqual actualE (mkSpanned $ AEGet (mkSpanned $ NameConst idxs p []))
+checkSaltMatch (SaltNameType p idxs) actualE actualT =
+    case extractNameFromType actualT of
+      Nothing -> return False
+      Just _ -> case p of
+          PRes (PDot modPath n) -> do
+              md <- openModule modPath
+              case lookup n (md^.nameDefs) of
+                -- p is a concrete name: compare the actual expression to get(p<idxs>)
+                Just _ -> checkExprEqual actualE (mkSpanned $ AEGet (mkSpanned $ NameConst idxs p []))
+                -- p is an abstract nametype (in nameTypeDefs): any name salt is accepted
+                Nothing -> return True
+          _ -> return True
 
 checkIKMMatch :: [IKMAtom] -> AExpr -> Check Bool
 checkIKMMatch atoms ikmE =

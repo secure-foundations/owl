@@ -898,10 +898,61 @@ parseKDFGroupRule = do
     let body = KDFGroupRuleBody wh salt ikm info out
     return $ KDFGroupRule isODH lbl $ bind (idxs, args) body
 
+-- Qualification pass: rewrite bare group-declared names in rule bodies.
+-- After parsing, bare PUnresolvedVar "n" → PUnresolvedPath grp ["n"] for
+-- any name "n" declared as an entry in the kdf_group.
+
+kgEntryName :: KDFGroupEntry -> String
+kgEntryName (KGEDHName   n _) = n
+kgEntryName (KGEKdfKey   n _) = n
+kgEntryName (KGENameType n _) = n
+
+qualifyGroupPath :: String -> S.Set String -> Path -> Path
+qualifyGroupPath grp declared (PUnresolvedVar n)
+    | S.member n declared = PUnresolvedPath grp [n]
+qualifyGroupPath _ _ p = p
+
+qualifyGroupNameExp :: String -> S.Set String -> NameExp -> NameExp
+qualifyGroupNameExp grp declared ne = case ne^.val of
+    NameConst idxs p args -> ne { _val = NameConst idxs (qualifyGroupPath grp declared p) args }
+    _ -> ne
+
+qualifyGroupSalt :: String -> S.Set String -> SaltExpr -> SaltExpr
+qualifyGroupSalt grp declared (SaltNameType p idxs) =
+    SaltNameType (qualifyGroupPath grp declared p) idxs
+qualifyGroupSalt _ _ s = s
+
+qualifyGroupIKM :: String -> S.Set String -> IKMAtom -> IKMAtom
+qualifyGroupIKM grp declared (IKMKdfKeyName ne)     = IKMKdfKeyName (qualifyGroupNameExp grp declared ne)
+qualifyGroupIKM grp declared (IKMDhCombine ne1 ne2) = IKMDhCombine (qualifyGroupNameExp grp declared ne1)
+                                                                    (qualifyGroupNameExp grp declared ne2)
+qualifyGroupIKM _ _ a = a
+
+qualifyGroupNameType :: String -> S.Set String -> NameType -> NameType
+qualifyGroupNameType grp declared nt = case nt^.val of
+    NT_App p idxs args -> nt { _val = NT_App (qualifyGroupPath grp declared p) idxs args }
+    _ -> nt
+
+qualifyGroupOutputSpec :: String -> S.Set String -> KDFOutputSpec -> KDFOutputSpec
+qualifyGroupOutputSpec grp declared (KDFOutputSpec nts) =
+    KDFOutputSpec [(s, qualifyGroupNameType grp declared nt) | (s, nt) <- nts]
+
+qualifyGroupRuleBody :: String -> S.Set String -> KDFGroupRuleBody -> KDFGroupRuleBody
+qualifyGroupRuleBody grp declared body = body
+    { _kgrbSalt   = qualifyGroupSalt grp declared (_kgrbSalt body)
+    , _kgrbIkm    = map (qualifyGroupIKM grp declared) (_kgrbIkm body)
+    , _kgrbOutput = qualifyGroupOutputSpec grp declared (_kgrbOutput body)
+    }
+
+qualifyGroupRule :: String -> S.Set String -> KDFGroupRule -> KDFGroupRule
+qualifyGroupRule grp declared (KDFGroupRule isODH lbl bnd) =
+    let (pat, body) = runFreshM (unbind bnd)
+    in KDFGroupRule isODH lbl $ bind pat (qualifyGroupRuleBody grp declared body)
+
 parseKDFGroup :: Parser Decl
 parseKDFGroup = parseSpanned $ do
     reserved "kdf_group"
-    n <- identifier
+    grp <- identifier
     symbol "{"
     items <- many $
         (try $ fmap Left parseKDFGroupEntry)
@@ -912,9 +963,11 @@ parseKDFGroup = parseSpanned $ do
         <|>
         (fmap Right parseKDFGroupRule)
     symbol "}"
-    let entries = [e | Left e <- items]
-    let rules   = [r | Right r <- items]
-    return $ DeclKDFGroup n entries rules
+    let entries  = [e | Left  e <- items]
+    let rules    = [r | Right r <- items]
+    let declared = S.fromList (map kgEntryName entries)
+    let rules'   = map (qualifyGroupRule grp declared) rules
+    return $ DeclKDFGroup grp entries rules'
 
 parseDecls =
     many $
