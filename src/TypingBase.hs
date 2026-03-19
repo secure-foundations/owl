@@ -1301,9 +1301,9 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName nks j nt ib refs -> do
+      KDFName nks j nt ib ref -> do
           nt' <- normalizeNameType nt
-          return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib refs
+          return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref
 
 -- Traversing modules to collect global info
 
@@ -1628,10 +1628,10 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName nks j nt ib refs -> do
+      KDFName nks j nt ib ref -> do
           if x `elem` toListOf fv nt then
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return $ Spanned (e^.spanOf) $ KDFName nks j nt ib refs
+          else return $ Spanned (e^.spanOf) $ KDFName nks j nt ib ref
       
 stripLabel :: DataVar -> Label -> Check' senv Label
 stripLabel x l = return l

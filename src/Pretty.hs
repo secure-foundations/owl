@@ -61,9 +61,9 @@ corrColor = Red
 tyColor = Magenta
 
 instance  OwlPretty NameExpX where
-    owlpretty (KDFName nks j nt _ refs) =
+    owlpretty (KDFName nks j nt _ ref) =
         Prettyprinter.group $
-        owlpretty "KDF<" <> (mconcat $ intersperse (owlpretty ",") (map owlpretty refs))
+        owlpretty "KDF<" <> owlpretty ref
                           <> owlpretty ";" <> (mconcat $ intersperse (owlpretty "||") (map owlpretty nks))
                           <> owlpretty ";" <> owlpretty j
                           <> owlpretty ">"

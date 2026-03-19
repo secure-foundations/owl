@@ -464,7 +464,7 @@ instance Subst AExpr (CExpr t)
 compatTys :: CTy -> CTy -> Bool
 compatTys (CTName n1) (CTName n2) =
     case (n1 ^. val, n2 ^. val) of
-        (KDFName nks1 i1 _ _, KDFName nks2 i2 _ _) ->
+        (KDFName nks1 i1 _ _ _, KDFName nks2 i2 _ _ _) ->
             (nks1 !! i1) `aeq` (nks2 !! i2)
         _ -> n1 `aeq` n2
 compatTys (CTDH_PK _) (CTDH_PK _) = True

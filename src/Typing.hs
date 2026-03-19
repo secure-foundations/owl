@@ -759,12 +759,10 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                 case ob of
                   Nothing -> return False
                   Just b -> return b
-            (_, TName (Spanned _ (KDFName nks2 j2 nt2 _ refs2))) ->
+            (_, TName (Spanned _ (KDFName nks2 j2 nt2 _ ref2))) ->
                 case (stripRefinements t1)^.val of
-                  TName (Spanned _ (KDFName nks1 j1 nt1 _ refs1)) | (nks1 == nks2 && j1 == j2)
-                      -> if not (null refs1) && not (null refs2)
-                         then return $ aeq refs1 refs2
-                         else subNameType nt1 nt2
+                  TName (Spanned _ (KDFName nks1 j1 nt1 _ ref1)) | (nks1 == nks2 && j1 == j2)
+                      -> return $ aeq ref1 ref2
                   _ -> return False
             _ | isSingleton t2 -> return True
             (TConst x ps1, TConst y ps2) -> do
@@ -2798,7 +2796,7 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                     if saltIsName || isODH then do
                         -- Embed the label secrecy as a refinement (mirrors old matchODH).
                         -- checkSubRefinement can then prove SecName's [ne] !<= adv trivially.
-                        let ne = mkSpanned $ KDFName nks j (mkSpanned NT_KDF) (ignore True) [hint]
+                        let ne = mkSpanned $ KDFName nks j (mkSpanned NT_KDF) (ignore True) hint
                         let flowAx = pNot $ pFlow (nameLbl ne) advLbl
                         return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
                             bind (s2n ".res") flowAx

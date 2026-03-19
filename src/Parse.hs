@@ -96,14 +96,14 @@ parseNameExp =
     (try $ parseSpanned $ do
         reserved "KDF"
         symbol "<"
-        refs <- parseKDFGroupRuleRef `sepBy1` (symbol ",")
+        ref <- parseKDFGroupRuleRef
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
         symbol ">"
         let ji = read j
-        return $ KDFName nks ji (mkSpanned NT_KDF) (ignore False) refs
+        return $ KDFName nks ji (mkSpanned NT_KDF) (ignore False) ref
     )
     <|>
     (parseSpanned $ do
@@ -284,8 +284,8 @@ parseTyTerm =
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
         return $ case n^.val of
-          KDFName _ _ _ _ refs | not (null refs) ->
-              -- arg-free kdf_group form: secrecy is structural (TName is never a leaf type),
+          KDFName _ _ _ _ _ ->
+              -- kdf_group form: secrecy is structural (TName is never a leaf type),
               -- so skip the TRefined wrapper to avoid LName(KDFName) in SMT
               Spanned pos $ TName n
           _ -> Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
