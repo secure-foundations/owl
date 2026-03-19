@@ -55,12 +55,13 @@ The build may take 5-10 minutes to complete.
 
 **Run Owl on a protocol:**
 ```bash
-cabal run owl -- path/to/protocol.owl
+cabal run owl -- --no-color-output path/to/protocol.owl
 ```
+Always pass `--no-color-output` so error output is free of ANSI escape codes and readable in logs.
 
 **Type check with extraction to Verus:**
 ```bash
-cabal run owl -- --extract path/to/protocol.owl
+cabal run owl -- --no-color-output --extract path/to/protocol.owl
 ```
 
 **Verify extracted code with Verus:**
