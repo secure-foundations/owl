@@ -2776,13 +2776,13 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
     case mBody of
       Nothing -> return Nothing
       Just body -> do
-          ok1 <- checkWhereClause (_kgrbWhere body)
-          ok2 <- if ok1 then checkSaltMatch (_kgrbSalt body) saltE saltT else return False
-          ok3 <- if ok2 then checkIKMMatch (_kgrbIkm body) ikmE else return False
-          ok4 <- if ok3 then checkInfoMatch (_kgrbInfo body) infoE else return False
+          checkSaltMatch (_kgrbSalt body) saltE saltT >>= assert "Salt argument does not match KDF rule"
+          checkIKMMatch (_kgrbIkm body) ikmE          >>= assert "IKM argument does not match KDF rule"
+          checkInfoMatch (_kgrbInfo body) infoE       >>= assert "Info argument does not match KDF rule"
+          checkWhereClause (_kgrbWhere body)          >>= assert "KDF rule's where clause not satisfied"
           let KDFOutputSpec outputs = _kgrbOutput body
-          liftIO $ putStrLn $ "tryHint: " ++ show (owlpretty hint) ++ " got " ++ show ok1 ++ " " ++ show ok2 ++ " " ++ show ok3 ++ " " ++ show ok4
-          if not ok4 || j >= length outputs then return Nothing else do
+          -- liftIO $ putStrLn $ "tryHint: " ++ show (owlpretty hint) ++ " saltOk = " ++ show saltOk ++ ", ikmOk = " ++ show ikmOk ++ ", infoOk = " ++ show infoOk ++ ", whereOk = " ++ show whereOk
+          if j >= length outputs then return Nothing else do
               let (strictness, outNt) = outputs !! j
               let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
               -- (1) info must always be public
@@ -2835,7 +2835,8 @@ ikmAtomsToAExpr atoms  =
 checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
 checkSaltMatch (SaltPublicExpr expectedE) actualE _ =
     checkExprEqual actualE expectedE
-checkSaltMatch (SaltNameType p idxs) actualE actualT =
+checkSaltMatch (SaltNameType p idxs) actualE actualT = do
+    liftIO $ putStrLn ("Checking salt match for " ++ show (owlpretty p) ++ " with actual " ++ show (owlpretty actualE) ++ " and type " ++ show (owlpretty actualT)) 
     case extractNameFromType actualT of
       Nothing -> return False
       Just _ -> case p of
@@ -2845,8 +2846,10 @@ checkSaltMatch (SaltNameType p idxs) actualE actualT =
                 -- p is a concrete name: compare the actual expression to get(p<idxs>)
                 Just _ -> checkExprEqual actualE (mkSpanned $ AEGet (mkSpanned $ NameConst idxs p []))
                 -- p is an abstract nametype (in nameTypeDefs): any name salt is accepted
-                Nothing -> return True
-          _ -> return True
+                Nothing -> do
+                    liftIO $ putStrLn ("Salt match: " ++ show (owlpretty p) ++ " is an abstract name, accepting any salt with appropriate type")
+                    return True
+          _ -> typeError $ "Unsupported pattern for salt: " ++ show (owlpretty p)
 
 checkIKMMatch :: [IKMAtom] -> AExpr -> Check Bool
 checkIKMMatch atoms ikmE =
