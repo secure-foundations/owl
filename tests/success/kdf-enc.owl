@@ -43,31 +43,31 @@ kdf_group G {
 //     }
 // } @ alice, bob
 
-corr [G.k] ==> [alice1]
-corr [G.k] ==> [alice2]
+corr [k] ==> [alice1]
+corr [k] ==> [alice2]
 
 
 // name kk : kdf {ikm info.
 //     True -> strict (nonce) || nonce
 // } @ bob
-corr adv ==> [G.kk]
+corr adv ==> [kk]
 
 def alice_main() @ alice : Unit = 
     // corr_case k in
-    let ek = kdf<G.L1_enc;enckey;0>(get(G.k), 0x, 0x01) in 
+    let ek = kdf<L1_enc;enckey;0>(get(k), 0x, 0x01) in 
     // assert (corr(k) ==> corr(KDF<k;0>(0x, 0x01)[0]));
     let c = aenc(ek, get(alice1)) in 
     output c to endpoint(bob);
-    let k2 = kdf<G.L1_kdf;kdfkey;0>(get(G.k), 0x, 0x02) in
-    let ek2 = kdf<G.L2_enc;enckey;0>(k2, 0x, 0x01) in
+    let k2 = kdf<L1_kdf;kdfkey;0>(get(k), 0x, 0x02) in
+    let ek2 = kdf<L2_enc;enckey;0>(k2, 0x, 0x01) in
     debug printTyContext;
     let c2 = aenc(ek2, get(alice2)) in 
     output c2 to endpoint(bob);
     ()
 
 def bob_main() @ bob : Unit = 
-    let k1 = kdf<G.L4;nonce || nonce; 0>(get(G.kk), 0x, 0x) in 
-    let k2 = kdf<G.L4;nonce || nonce; 1>(get(G.kk), 0x, 0x) in 
+    let k1 = kdf<L4;nonce || nonce; 0>(get(kk), 0x, 0x) in 
+    let k2 = kdf<L4;nonce || nonce; 1>(get(kk), 0x, 0x) in 
     ()
 
 /*
