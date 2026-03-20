@@ -1,4 +1,4 @@
-// Tests: kdf<G.L<i>; kdfkey; 0> call site
+// Tests: kdf<L<i>; kdfkey; 0> call site
 
 locality alice
 
@@ -11,8 +11,8 @@ kdf_group G {
     odh L<i> : C1, dh_combine(A<i>, B<i>), 0x -> strict C2
 }
 
-def test<i> () @ alice : SecName(KDF<G.L<i>; kdfkey; 0>) =
-    let salt = get(G.C1) in
-    let ikm = dh_combine(dhpk(get(G.A<i>)), get(G.B<i>)) in
-    let result = kdf<G.L<i>; kdfkey; 0>(salt, ikm, 0x) in
+def test<i> () @ alice : SecName(KDF<L<i>; kdfkey; 0>) =
+    let salt = get(C1) in
+    let ikm = dh_combine(dhpk(get(A<i>)), get(B<i>)) in
+    let result = kdf<L<i>; kdfkey; 0>(salt, ikm, 0x) in
     result

@@ -1,14 +1,15 @@
 locality alice
 
-name X : DH @ alice
-name Y : DH @ alice
-
 name n : nonce @ alice
 
-odh L : 
-    X, Y -> {salt info.
-        salt == 0x -> strict enckey Name(n)
-    }
+kdf_group G {
+
+    name X : DH @ alice
+    name Y : DH @ alice
+
+    odh L : 0x, dh_combine(X, Y) ++ 0x1234, 0x -> strict enckey Name(n)
+
+}
 
 corr [X] ==> [n]
 corr [Y] ==> [n]
@@ -16,6 +17,9 @@ corr [Y] ==> [n]
 def main() @ alice : Unit = 
     corr_case X in 
     corr_case Y in 
-    let k = kdf<;odh L[0];enckey;0>(0x, dh_combine(dhpk(get(X)), get(Y)) ++ 0x1234, 0x) in 
+    let k = kdf<L;enckey;0>(0x, dh_combine(dhpk(get(X)), get(Y)) ++ 0x1234, 0x) in 
+    debug printTyContext;
+    debug printTyOf(k);
+    debug decideProp([KDF<L;enckey;0>] <= adv);
     let c = aenc(k, get(n)) in 
     output c

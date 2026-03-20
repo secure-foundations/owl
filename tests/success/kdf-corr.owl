@@ -1,25 +1,37 @@
 locality alice
 
 name d : nonce @ alice
-name k : kdf {ikm info.
-    True -> strict kdf {ikm2 info2.
-        True -> enckey Name(d)
-    }
-} @ alice
 
-name f : dualkdf {salt info.
-    True -> strict kdf {ikm2 info2.
-        True -> enckey Name(d)
-    }
-} @ alice   
+kdf_group G {
 
-corr [k] /\ [f] ==> [d]
+    name k : kdfkey @ alice
+    name f : kdfkey @ alice
+    nametype k2 : kdfkey
 
-def main() @ alice : (x:Unit{corr(k) /\ corr(f) ==> corr(d)}) = 
-    corr_case k in
-    corr_case f in
-    let k2 = kdf<0;0;kdfkey;0>(get(k), get(f), 0x) in 
-    let ek = kdf<0;;enckey;0>(k2, 0x, 0x) in 
+    kdf L1 : k, f, 0x -> strict k2
+    kdf L2 : k2, 0x, 0x -> enckey Name(d)
+
+    // name k : kdf {ikm info.
+    //     True -> strict kdf {ikm2 info2.
+    //         True -> enckey Name(d)
+    //     }
+    // } @ alice
+
+    // name f : dualkdf {salt info.
+    //     True -> strict kdf {ikm2 info2.
+    //         True -> enckey Name(d)
+    //     }
+    // } @ alice   
+}
+
+
+corr [G.k] /\ [G.f] ==> [d]
+
+def main() @ alice : (x:Unit{corr(G.k) /\ corr(G.f) ==> corr(d)}) = 
+    corr_case G.k in
+    corr_case G.f in
+    let k2 = kdf<G.L1;kdfkey;0>(get(G.k), get(G.f), 0x) in 
+    let ek = kdf<G.L2;enckey;0>(k2, 0x, 0x) in 
     let c = aenc(ek, get(d)) in 
     output c
 

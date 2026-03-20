@@ -12,7 +12,9 @@ func lbl_ikm arity 3
 kdf_group G {
     name A : DH @ alice
     name B : DH @ bob
+    name C : DH @ alice
+    name D : DH @ bob
     nametype T : kdfkey
 
-    odh L<i@n> : h<session i, pid n>(), lbl_ikm<session i, pid n>(f<session i, pid n>(), g(), 0x), 0x -> strict T
+    odh L<i@n> : h<session i, pid n>(), lbl_ikm<session i, pid n>(f<session i, pid n>(), g(), dh_combine(A,B) ++ dh_combine(C,D)), 0x -> strict T
 }
