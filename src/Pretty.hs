@@ -260,7 +260,7 @@ instance OwlPretty KDFGroupRuleRef where
                   | otherwise = owlpretty "(" <>
                                 hsep (intersperse (owlpretty ",") $ map owlpretty (_kgrrArgs ref)) <>
                                 owlpretty ")"
-        in owlpretty (_kgrrGroup ref) <> owlpretty "." <> owlpretty (_kgrrLabel ref) <>
+        in owlpretty (_kgrrLabel ref) <>
            owlprettyIdxParams (_kgrrIdxs ref) <> pargs
 
 instance  OwlPretty PropX where

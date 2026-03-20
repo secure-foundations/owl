@@ -1286,19 +1286,16 @@ checkDecl d cont = withSpan (d^.spanOf) $
               registerEntries (e:es) k = case e of
                 KGEDHName n b -> do
                     ((is1, is2), loc) <- unbind b
-                    let qualName = groupName ++ "." ++ n
-                    addNameDef qualName (is1, is2) (mkSpanned NT_DH, [loc]) $
+                    addNameDef n (is1, is2) (mkSpanned NT_DH, [loc]) $
                         registerEntries es k
                 KGEKdfKey n b -> do
                     ((is1, is2), locs) <- unbind b
-                    let qualName = groupName ++ "." ++ n
-                    addNameDef qualName (is1, is2) (mkSpanned NT_KDF, locs) $
+                    addNameDef n (is1, is2) (mkSpanned NT_KDF, locs) $
                         registerEntries es k
                 KGENameType n b -> do
                     ((is1, is2), ()) <- unbind b
-                    let qualName = groupName ++ "." ++ n
                     let bnt = bind ((is1, is2), []) (mkSpanned NT_KDF)
-                    local (over (curMod . nameTypeDefs) $ insert qualName bnt) $
+                    local (over (curMod . nameTypeDefs) $ insert n bnt) $
                         registerEntries es k
           -- Process rules: build the KDFGroupDef and store it
           let processRules [] accRules accOdh = return (accRules, accOdh)
@@ -2772,40 +2769,40 @@ patternPublicAndEquivalent pat1 pat2 = do
 tryHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
 tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
     let actuals = _kgrrArgs hint
-    mBody <- lookupKDFGroupRule (_kgrrGroup hint) (_kgrrLabel hint) (_kgrrIdxs hint) actuals
+    mBody <- lookupKDFGroupRule (_kgrrLabel hint) (_kgrrIdxs hint) actuals
     case mBody of
       Nothing -> return Nothing
       Just body -> do
-          checkSaltMatch (_kgrbSalt body) saltE saltT >>= assert "Salt argument does not match KDF rule"
-          checkIKMMatch (_kgrbIkm body) ikmE          >>= assert "IKM argument does not match KDF rule"
-          checkInfoMatch (_kgrbInfo body) infoE       >>= assert "Info argument does not match KDF rule"
-          checkWhereClause (_kgrbWhere body)          >>= assert "KDF rule's where clause not satisfied"
-          let KDFOutputSpec outputs = _kgrbOutput body
-          -- liftIO $ putStrLn $ "tryHint: " ++ show (owlpretty hint) ++ " saltOk = " ++ show saltOk ++ ", ikmOk = " ++ show ikmOk ++ ", infoOk = " ++ show infoOk ++ ", whereOk = " ++ show whereOk
-          if j >= length outputs then return Nothing else do
-              let (strictness, outNt) = outputs !! j
-              let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
-              -- (1) info must always be public
-              infoPub <- tyFlowsTo infoT advLbl
-              assert "KDF info argument must be public" infoPub
-              -- (2-4) check actual publicness of salt and ikm
-              saltPub <- tyFlowsTo saltT advLbl
-              ikmPub  <- tyFlowsTo ikmT advLbl
-              let saltHasKey = case _kgrbSalt body of
-                                   SaltNameType _ _ -> True
-                                   SaltPublicExpr _ -> False
-              let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKMDhCombine _ _ -> True; _ -> False })
-                                   (_kgrbIkm body)
-              let secretFlowAx = case strictness of
-                                    KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
-                                    KDFPub      -> pFlow (nameLbl ne) advLbl
-                                    KDFUnstrict -> pTrue
-              if saltPub && ikmPub
-              then return $ Just $ tData advLbl advLbl
-              else if (not saltPub && saltHasKey) || (not ikmPub && ikmHasKey)
-              then return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
-                       bind (s2n ".res") secretFlowAx
-              else typeError "KDF ill-typed but not fully public: unable to determine output type"
+          saltOk  <- checkSaltMatch (_kgrbSalt body) saltE saltT
+          ikmOk   <- checkIKMMatch (_kgrbIkm body) ikmE
+          infoOk  <- checkInfoMatch (_kgrbInfo body) infoE
+          whereOk <- checkWhereClause (_kgrbWhere body)
+          if not (saltOk && ikmOk && infoOk && whereOk) then return Nothing else do
+              let KDFOutputSpec outputs = _kgrbOutput body
+              if j >= length outputs then return Nothing else do
+                  let (strictness, outNt) = outputs !! j
+                  let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
+                  -- (1) info must always be public
+                  infoPub <- tyFlowsTo infoT advLbl
+                  assert "KDF info argument must be public" infoPub
+                  -- (2-4) check actual publicness of salt and ikm
+                  saltPub <- tyFlowsTo saltT advLbl
+                  ikmPub  <- tyFlowsTo ikmT advLbl
+                  let saltHasKey = case _kgrbSalt body of
+                                       SaltNameType _ _ -> True
+                                       SaltPublicExpr _ -> False
+                  let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKMDhCombine _ _ -> True; _ -> False })
+                                       (_kgrbIkm body)
+                  let secretFlowAx = case strictness of
+                                        KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
+                                        KDFPub      -> pFlow (nameLbl ne) advLbl
+                                        KDFUnstrict -> pTrue
+                  if saltPub && ikmPub
+                  then return $ Just $ tData advLbl advLbl
+                  else if (not saltPub && saltHasKey) || (not ikmPub && ikmHasKey)
+                  then return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
+                           bind (s2n ".res") secretFlowAx
+                  else typeError "KDF ill-typed but not fully public: unable to determine output type"
 
 checkWhereClause :: Prop -> Check Bool
 checkWhereClause p = fmap (== Just True) (decideProp p)

@@ -12,9 +12,9 @@ kdf_group G {
         strict C2 || public nonce
 }
 
-def this_should_fail () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
-    let salt = get(G.C1) in
-    let ikm = dhpk(get(G.B)) in
+def this_should_fail () @ alice : SecName(KDF<L1(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(C1) in
+    let ikm = dhpk(get(B)) in
     // The provided `ikm` doesn't match the expected value of `0x1234` in the kdf rule, so this should fail to type check.
-    let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    let result = kdf<L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
     result

@@ -356,7 +356,6 @@ data KDFGroupEntry
     deriving (Show, Generic, Typeable)
 
 data KDFGroupRuleRef = KDFGroupRuleRef {
-    _kgrrGroup :: Path,
     _kgrrLabel :: String,
     _kgrrIdxs  :: ([Idx], [Idx]),
     _kgrrArgs  :: [AExpr]

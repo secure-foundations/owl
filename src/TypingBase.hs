@@ -715,24 +715,24 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-lookupKDFGroupRule :: Path -> String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFGroupRuleBody)
-lookupKDFGroupRule pth@(PRes (PDot p groupName)) lbl (vs1, vs2) actuals = do
-    md <- openModule p
-    case lookup groupName (md^.kdfGroups) of
-      Nothing -> return Nothing
-      Just gdef -> case lookup lbl (gdef^.kgdRules) of
-        Nothing -> return Nothing
-        Just bRule -> do
-            (((is1, is2), dvars), body) <- unbind bRule
-            if (length vs1, length vs2) /= (length is1, length is2)
-              then return Nothing
-              else if length dvars /= length actuals
-              then return Nothing
-              else return $ Just
-                     $ substs (zip dvars actuals)
-                     $ substs (zip is1 vs1)
-                     $ substs (zip is2 vs2) body
-lookupKDFGroupRule _ _ _ _ = return Nothing
+lookupKDFGroupRule :: String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFGroupRuleBody)
+lookupKDFGroupRule lbl (vs1, vs2) actuals = do
+    kgs <- view (curMod . kdfGroups)
+    let findInGroups [] = return Nothing
+        findInGroups ((_, gdef):rest) =
+            case lookup lbl (gdef^.kgdRules) of
+              Nothing -> findInGroups rest
+              Just bRule -> do
+                  (((is1, is2), dvars), body) <- unbind bRule
+                  if (length vs1, length vs2) /= (length is1, length is2)
+                    then findInGroups rest
+                    else if length dvars /= length actuals
+                    then findInGroups rest
+                    else return $ Just
+                           $ substs (zip dvars actuals)
+                           $ substs (zip is1 vs1)
+                           $ substs (zip is2 vs2) body
+    findInGroups kgs
 
 
 getNameKind :: NameType -> Check' senv NameKind

@@ -12,26 +12,26 @@ kdf_group G {
     odh L1: C1, dh_combine(A, B), 0x ->
         strict C2 || public nonce
     
-    kdf L2(x) where (x != dh_combine(dhpk(get(G.A)), get(G.B))): C1, x, 0x ->
+    kdf L2(x) where (x != dh_combine(dhpk(get(A)), get(B))): C1, x, 0x ->
         strict C2_corr || public nonce
 }
 
-def test () @ alice : SecName(KDF<G.L1; kdfkey || nonce; 0>) =
-    let salt = get(G.C1) in
-    let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
-    let result = kdf<G.L1; kdfkey || nonce; 0>(salt, ikm, 0x) in
+def test () @ alice : SecName(KDF<L1; kdfkey || nonce; 0>) =
+    let salt = get(C1) in
+    let ikm = dh_combine(dhpk(get(A)), get(B)) in
+    let result = kdf<L1; kdfkey || nonce; 0>(salt, ikm, 0x) in
     result
 
-def test2 () @ alice : SecName(KDF<G.L2(0x1234); kdfkey || nonce; 0>) =
-    let salt = get(G.C1) in
+def test2 () @ alice : SecName(KDF<L2(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(C1) in
     let ikm = 0x1234 in
-    assume(0x1234 != dh_combine(dhpk(get(G.A)), get(G.B))); 
-    let result = kdf<G.L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    assume(0x1234 != dh_combine(dhpk(get(A)), get(B))); 
+    let result = kdf<L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
     result
 
-// def this_should_fail () @ alice : SecName(KDF<G.L2(0x1234); kdfkey || nonce; 0>) =
-//     let salt = get(G.C1) in
-//     let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
-//     // The provided `ikm` matches the disallowed value of dh_combine(dhpk(get(G.A)), get(G.B)) in the kdf rule, so this should fail to type check.
-//     let result = kdf<G.L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+// def this_should_fail () @ alice : SecName(KDF<L2(0x1234); kdfkey || nonce; 0>) =
+//     let salt = get(C1) in
+//     let ikm = dh_combine(dhpk(get(A)), get(B)) in
+//     // The provided `ikm` matches the disallowed value of dh_combine(dhpk(get(A)), get(B)) in the kdf rule, so this should fail to type check.
+//     let result = kdf<L2(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
 //     result

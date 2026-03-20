@@ -15,21 +15,21 @@ kdf_group G {
         strict nonce
 }
 
-def test () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
-    let salt = get(G.C1) in
+def test () @ alice : SecName(KDF<L1(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(C1) in
     let ikm = 0x1234 in
-    let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    let result = kdf<L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
     result
 
-def test2 () @ alice : SecName(KDF<G.L2(0x1234); nonce; 0>) =
+def test2 () @ alice : SecName(KDF<L2(0x1234); nonce; 0>) =
     let salt = 0x1234 in
-    let ikm = dh_combine(dhpk(get(G.B)), get(G.A)) in
-    let result = kdf<G.L2(0x1234); nonce; 0>(salt, ikm, 0x) in
+    let ikm = dh_combine(dhpk(get(B)), get(A)) in
+    let result = kdf<L2(0x1234); nonce; 0>(salt, ikm, 0x) in
     result
 
-// def this_should_fail () @ alice : SecName(KDF<G.L1(0x1234); kdfkey || nonce; 0>) =
-//     let salt = get(G.C1) in
-//     let ikm = dhpk(get(G.B)) in
+// def this_should_fail () @ alice : SecName(KDF<L1(0x1234); kdfkey || nonce; 0>) =
+//     let salt = get(C1) in
+//     let ikm = dhpk(get(B)) in
 //     // The provided `ikm` doesn't match the expected value of `0x1234` in the kdf rule, so this should fail to type check.
-//     let result = kdf<G.L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+//     let result = kdf<L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
 //     result

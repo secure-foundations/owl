@@ -76,7 +76,6 @@ data ResolveEnv = ResolveEnv {
     _funcPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
-    _kdfGroupPaths :: T.Map String ResolvedPath,
     _tablePaths :: T.Map String ResolvedPath,
     _predPaths :: T.Map String ResolvedPath,
     _ctrPaths :: T.Map String ResolvedPath,
@@ -107,7 +106,7 @@ freshModVar s = do
 emptyResolveEnv :: Flags -> IO ResolveEnv
 emptyResolveEnv f = do
     r <- newIORef 0
-    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] [] [] r
+    return $ ResolveEnv f S.empty (PTop) [] [] [] [] [] [] [] [] [] [] [] r
 
 runResolve :: Flags -> Resolve a -> IO (Either () a) 
 runResolve f (Resolve k) = do
@@ -250,14 +249,16 @@ resolveDecls (d:ds) =
       DeclKDFGroup s entries rules -> do
           let pos = d^.spanOf
           entries' <- mapM (resolveEntry pos) entries
-          p0 <- view curPath
-          rules'   <- local (over kdfGroupPaths $ T.insert s p0)
-                    $ mapM (resolveRule pos) rules
-          let d' = Spanned pos $ DeclKDFGroup s entries' rules'
           p <- view curPath
-          ds' <- local (over defPaths $ T.insert s p)
-               $ local (over kdfGroupPaths $ T.insert s p)
-               $ resolveDecls ds
+          -- Add entry names to the appropriate path maps so rule bodies and
+          -- subsequent declarations can reference them without qualification.
+          let withEntryPaths k = foldr addOne k entries
+              addOne (KGEDHName   n _) k = local (over namePaths     $ T.insert n p) k
+              addOne (KGEKdfKey   n _) k = local (over namePaths     $ T.insert n p) k
+              addOne (KGENameType n _) k = local (over namePaths $ T.insert n p) $ local (over nameTypePaths $ T.insert n p) k
+          rules' <- withEntryPaths $ mapM (resolveRule pos) rules
+          let d' = Spanned pos $ DeclKDFGroup s entries' rules'
+          ds' <- withEntryPaths $ local (over defPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
         where
           resolveEntry pos (KGEDHName n b) = do
@@ -434,9 +435,7 @@ resolveNameExp ne =
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
         KDFName nks j nt ib ref -> do
             nt' <- resolveNameType nt
-            grp' <- resolvePath (ne^.spanOf) PTDef (_kgrrGroup ref)
-            let ref' = ref { _kgrrGroup = grp' }
-            return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref'
+            return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -459,19 +458,12 @@ resolvePath' pos pt p =
       PRes _ -> return p
       PUnresolvedPath x xs -> do
           mp <- view modPaths
-          kgp <- view kdfGroupPaths
           res <- case lookup x mp of
                   Just (b, p) -> do
                       let xs' = if b then xs else x:xs
                       return $ PRes $ go (Just p) (reverse xs')
                   Nothing ->
-                      -- If x is a kdf_group name, flatten G.C1 to PDot p "G.C1"
-                      -- so the typechecker can find it in the top-level nameDefs.
-                      case lookup x kgp of
-                        Just p | not (null xs) ->
-                            return $ PRes $ PDot p (intercalate "." (x:xs))
-                        _ ->
-                            return $ PRes $ go Nothing (reverse (x:xs))
+                      return $ PRes $ go Nothing (reverse (x:xs))
           return res
       PUnresolvedVar s -> 
           if (pt == PTFunc) && (s `elem` builtinFuncs) then return (PRes $ PDot PTop s) else 
@@ -586,11 +578,7 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF refs nks i -> do
-          refs' <- mapM (\ref -> do
-              grp' <- resolvePath pos PTDef (_kgrrGroup ref)
-              return $ ref { _kgrrGroup = grp' }) refs
-          return $ CKDF refs' nks i
+      CKDF {} -> return cop
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat
