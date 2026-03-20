@@ -107,8 +107,8 @@ kdf_group GroupName {
 ### 2.1 Name declarations inside the group
 
 **DH names** (`name N : DH @ locality`): Any DH key used in an `odh` rule
-inside this group must be declared here.  Outside the group, these names are
-referenced as `GroupName.N`.
+inside this group must be declared here.  These names are visible at top level
+and referenced by their bare name (e.g., `get(X)`, `dhpk(Y)`).
 
 **Plain kdfkey names** (`name k : kdfkey`): Keys that appear in the **ikm**
 or **salt** position of `kdf` rules (but not as a DH shared secret) are
@@ -136,7 +136,8 @@ Each rule has the form:
 ```
 
 **Label**: An identifier (with optional index parameters) that names this rule.
-Outside the group, this label is referenced as `GroupName.Label<indices>`.
+It is referenced at call sites by its bare label (e.g., `kdf<L1<i@n,m>; ...>`)
+without any group qualifier.
 
 **`where` clause** (optional): A conjunction of index-(in)equality predicates that
 restricts the rule to proof contexts where the constraint is provable.  Allowed
@@ -218,10 +219,10 @@ kdf<salt_case; odh_witnesses; output_type; output_index>(salt, ikm, info)
 
 New syntax:
 ```owl
-kdf<GroupName.Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val)
+kdf<Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val)
 ```
 
-The group label replaces both the `salt_case` and `odh_witnesses` fields.
+The rule label replaces both the `salt_case` and `odh_witnesses` fields.
 `output_type` and `output_index` remain, identifying which of the rule's
 `||`-separated outputs is being extracted.
 
@@ -232,8 +233,8 @@ let C2 = kdf<; odh L1<i@n,m>[0]; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
 let k0 = kdf<; odh L1<i@n,m>[0]; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
 
 // New:
-let C2 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
-let k0 = kdf<WG_KDF.L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
+let C2 = kdf<L1<i@n,m>; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
+let k0 = kdf<L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
 ```
 
 ### 3.2 Multi-label calls
@@ -244,7 +245,7 @@ to the correct session), the labels are listed as a comma-separated set of
 **hints**:
 
 ```owl
-let C3 = kdf<WG_KDF.L2<n,m>, WG_KDF.L2_corr<n3,n,m>; kdfkey||enckey; 0>(C2, ss, 0x) in
+let C3 = kdf<L2<n,m>, L2_corr<n3,n,m>; kdfkey||enckey; 0>(C2, ss, 0x) in
 ```
 
 **Hint semantics:** Each label is a candidate rule.  The type checker tries all
@@ -263,7 +264,7 @@ gkdf<output_type; output_index>(salt, ikm, info)
 
 New syntax:
 ```owl
-gkdf<GroupName.Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val)
+gkdf<Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val)
 ```
 
 Ghost KDF calls appear in `func` definitions, struct field ghost constraints,
@@ -278,8 +279,8 @@ func honest_c2<i@n_eph,m>() =
 
 // New:
 func honest_c2<i@n_eph,m>() =
-    gkdf<WG_KDF.L1<i@n_eph,m>; kdfkey||enckey; 0>(honest_c1<...>(),
-        dh_combine(dhpk(get(WG_KDF.E_init<i@n_eph>)), get(WG_KDF.S_resp<@m>)), 0x)
+    gkdf<L1<i@n_eph,m>; kdfkey||enckey; 0>(honest_c1<...>(),
+        dh_combine(dhpk(get(E_init<i@n_eph>)), get(S_resp<@m>)), 0x)
 ```
 
 ### 3.4 `KDF<...>` type references in struct fields
@@ -291,7 +292,7 @@ SecName(KDF<output_type; output_index; NameType>(salt, ikm, info))
 
 New syntax:
 ```owl
-SecName(KDF<GroupName.Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val))
+SecName(KDF<Label<indices>; output_type; output_index>(salt_val, ikm_val, info_val))
 ```
 
 This form appears in struct field type annotations and conditional type
@@ -305,22 +306,23 @@ tki_k_init_send : if init_clean<...> then
 
 // New:
 tki_k_init_send : if init_clean<...> then
-    (x:SecName(KDF<WG_KDF.L7<@n,m>; enckey||enckey; 0>(tki_c7, 0x, 0x)){...})
+    (x:SecName(KDF<L7<@n,m>; enckey||enckey; 0>(tki_c7, 0x, 0x)){...})
 ```
 
-### 3.5 External name references
+### 3.5 Name references outside the group
 
-Any name declared inside a `kdf_group` must be qualified outside the group:
+Names declared inside a `kdf_group` are registered at the top level with no
+group qualifier — the group is a pure container with no namespace effect:
 
 ```owl
 // Inside the group:
 name skR : DH @ receiver
 
-// Outside the group (everywhere else in the file):
-get(HPKE_KDF.skR)       // get the secret key
-dhpk(HPKE_KDF.skR)      // public key expression
-sec(HPKE_KDF.skR)       // secrecy predicate
-[HPKE_KDF.skR]          // label in corr declarations
+// Everywhere else in the file (bare name, no qualifier):
+get(skR)       // get the secret key
+dhpk(skR)      // public key expression
+sec(skR)       // secrecy predicate
+[skR]          // label in corr declarations
 ```
 
 ---
@@ -334,8 +336,7 @@ The `kdf_group` block should be placed in `defs.owl`:
   `base_nonce_kdf_info()`, counter declarations, junk-secret nametypes like
   `hpke_corr_key_t`).
 - **Before** any top-level `nametype`, `predicate`, or `struct` definitions
-  that reference names declared inside the group (using the `GroupName.X`
-  qualified form).
+  that reference names declared inside the group.
 - **Before** `corr` declarations that reference group names.
 
 Owl supports forward references in most positions (predicates and functions
@@ -373,14 +374,15 @@ multi-label calls (see §3.2).
   of the salt type (e.g., `L1<i@n,m>`, `L_kem<i>`, `L_sched_nonce`).
 - **Intermediate nametypes**: `C1`, `C2`, ..., `C1_corr`, `C2_corr` (WireGuard
   style), or descriptive names like `SS_t`, `SS_corr_t` (HPKE style).
-- **External references**: always `GroupName.name` — never the bare name.
+- **Name references**: always the bare name — the `kdf_group` block does not create a namespace.
 
 ### 5.4 Ghost functions referencing the group
 
-All `func` definitions that compute ghost "honest" KDF values must use the new
-label-based `gkdf<GroupName.Label; type; index>(...)` syntax and must qualify
-all DH names as `GroupName.X`.  These functions are typically placed after the
-`kdf_group` block since they reference `GroupName.*` names.
+All `func` definitions that compute ghost "honest" KDF values must use the
+label-based `gkdf<Label; type; index>(...)` syntax and reference DH names by
+their bare names (e.g., `get(E_init<i@n_eph>)`, `get(S_resp<@m>)`).  These
+functions are typically placed after the `kdf_group` block since they reference
+names declared inside it.
 
 ---
 
@@ -391,10 +393,10 @@ all DH names as `GroupName.X`.  These functions are typically placed after the
 | `nametype Cx = kdf { ... }` | `nametype Cx : kdfkey` inside group + `kdf Lx : ...` rule |
 | `nametype Cx = dualkdf { ... }` | `name psk : kdfkey` inside group + rules where psk is in ikm |
 | `odh L : A, B -> { salt info. cond -> T }` | `odh L : salt_type, dh_combine(A,B), info -> strict T` rule inside group |
-| `kdf<s; odh L[i]; type; idx>(...)` | `kdf<GroupName.L; type; idx>(...)` |
-| `kdf<s; odh L1[i], odh L2[j]; type; idx>(...)` | `kdf<GroupName.L1, GroupName.L2; type; idx>(...)` *(tentative)* |
-| `gkdf<type; idx>(...)` | `gkdf<GroupName.L; type; idx>(...)` |
-| `KDF<type; idx; NameType>(...)` | `KDF<GroupName.L; type; idx>(...)` |
+| `kdf<s; odh L[i]; type; idx>(...)` | `kdf<L; type; idx>(...)` |
+| `kdf<s; odh L1[i], odh L2[j]; type; idx>(...)` | `kdf<L1, L2; type; idx>(...)` |
+| `gkdf<type; idx>(...)` | `gkdf<L; type; idx>(...)` |
+| `KDF<type; idx; NameType>(...)` | `KDF<L; type; idx>(...)` |
 | `name N : DH @ loc` (top-level) | `name N : DH @ loc` inside `kdf_group` |
 | `name psk : DualKdfType` (top-level) | `name psk : kdfkey` inside `kdf_group` |
 

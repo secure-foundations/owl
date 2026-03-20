@@ -204,16 +204,17 @@ The implementation lives on branch `kdf-groups-impl` at the repository root.
 ### kdf_group — type system internals
 
 **Path resolution for kdf_group names:**
-- `DeclKDFGroup "G" entries rules` registers `"G"` in both `defPaths` (for
-  call-site `kdf<G.L<i>; ...>` resolution) and `kdfGroupPaths` (for name-path
-  resolution).
-- `kdfGroupPaths` causes `PUnresolvedPath "G" ["C1"]` to resolve to `PDot PTop
-  "G.C1"` (flat) rather than navigating into `G` as a sub-module. This matches
-  how names are stored in `nameDefs` with key `"G.C1"`.
+- `kdf_group` is a **pure container** — it has no namespace effect.  Names
+  declared inside (`name X : DH @ loc`, `name k : kdfkey`, `nametype Cx :
+  kdfkey`) are registered at top level with their bare names, not qualified.
+- `DeclKDFGroup "G" entries rules` registers `"G"` in `defPaths` (for
+  call-site `kdf<L<i>; ...>` rule lookup) and adds entry names to `namePaths`
+  (and `nameTypePaths` for `KGENameType`) so that rule bodies can resolve bare
+  references like `C1`, `X`, `Y` without a group qualifier.
 - `KGEDHName` and `KGEKdfKey` localities are resolved during path resolution;
   `KGENameType` has no locality to resolve.
 
-**`SecName(KDF<G.L<i>; kdfkey; 0>(...))` — how it typechecks:**
+**`SecName(KDF<L<i>; kdfkey; 0>(...))` — how it typechecks:**
 - The new `KDF<rule_refs; nks; j>(a,b,c)` parser format stores refs in `KDFName`'s
   new `[KDFGroupRuleRef]` field (8th argument; empty for old format).
 - `tryHint` for a `KDFStrict` rule with a secret salt returns
@@ -231,7 +232,7 @@ KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool) [KDFGroupRuleRef
 --      salt  ikm   info  nks        j   nt        trusted?      rule refs (new syntax)
 ```
 The `[KDFGroupRuleRef]` field is `[]` for the old `KDF<nks; j; nt>` format and
-non-empty for the new `KDF<G.L<i>; kdfkey; 0>` format.
+non-empty for the new `KDF<L<i>; kdfkey; 0>` format.
 
 **SMT / label checking:**
 - `prelude.smt2` at the repo root defines the base SMT theory. `KDFName` is declared
@@ -264,5 +265,5 @@ produces a "Wrong arity" error.
 
 `addNameDef n (is1, is2) (nt, locs) k` registers name `n` with session indices
 `is1`, PId indices `is2`, name type `nt`, and localities `locs`. For kdf_group
-names, the qualified string `"G.C1"` is used as the key in `curMod.nameDefs`.
+names, the bare string `"C1"` (not `"G.C1"`) is used as the key in `curMod.nameDefs`.
 The `locs` list can have multiple elements (e.g., PSK shared across two localities).
