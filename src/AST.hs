@@ -343,17 +343,21 @@ data KDFGroupRuleBody = KDFGroupRuleBody {
     _kgrbOutput :: KDFOutputSpec
 } deriving (Show, Generic, Typeable)
 
-data KDFGroupRule = KDFGroupRule {
+data KDFGroupRuleX = KDFGroupRule {
     _kgrIsODH :: Bool,
     _kgrLabel :: String,
     _kgrIdxs  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody
 } deriving (Show, Generic, Typeable)
 
-data KDFGroupEntry
+type KDFGroupRule = Spanned KDFGroupRuleX
+
+data KDFGroupEntryX
     = KGEDHName   String (Bind ([IdxVar], [IdxVar]) Locality)
     | KGEKdfKey   String (Bind ([IdxVar], [IdxVar]) [Locality])
     | KGENameType String (Bind ([IdxVar], [IdxVar]) ())
     deriving (Show, Generic, Typeable)
+
+type KDFGroupEntry = Spanned KDFGroupEntryX
 
 data KDFGroupRuleRef = KDFGroupRuleRef {
     _kgrrLabel :: String,
@@ -527,7 +531,7 @@ data FuncParam =
 
 
 makeLenses ''KDFGroupRuleBody
-makeLenses ''KDFGroupRule
+makeLenses ''KDFGroupRuleX
 makeLenses ''KDFGroupRuleRef
 
 -- LocallyNameless instances
@@ -613,15 +617,15 @@ instance Subst Idx KDFGroupRuleBody
 instance Subst AExpr KDFGroupRuleBody
 instance Subst ResolvedPath KDFGroupRuleBody
 
-instance Alpha KDFGroupRule
-instance Subst Idx KDFGroupRule
-instance Subst AExpr KDFGroupRule
-instance Subst ResolvedPath KDFGroupRule
+instance Alpha KDFGroupRuleX
+instance Subst Idx KDFGroupRuleX
+instance Subst AExpr KDFGroupRuleX
+instance Subst ResolvedPath KDFGroupRuleX
 
-instance Alpha KDFGroupEntry
-instance Subst Idx KDFGroupEntry
-instance Subst AExpr KDFGroupEntry
-instance Subst ResolvedPath KDFGroupEntry
+instance Alpha KDFGroupEntryX
+instance Subst Idx KDFGroupEntryX
+instance Subst AExpr KDFGroupEntryX
+instance Subst ResolvedPath KDFGroupEntryX
 
 instance Alpha KDFGroupRuleRef
 instance Subst Idx KDFGroupRuleRef

@@ -216,7 +216,7 @@ instance OwlPretty KDFGroupRuleBody where
         owlpretty salt <> owlpretty ", " <> pikmList <> owlpretty ", " <> owlpretty info
         <> owlpretty " -> " <> owlpretty out
 
-instance OwlPretty KDFGroupRule where
+instance OwlPretty KDFGroupRuleX where
     owlpretty rule =
         let kw     = if _kgrIsODH rule then owlpretty "odh" else owlpretty "kdf"
             lbl    = owlpretty (_kgrLabel rule)
@@ -240,7 +240,7 @@ owlprettyIdxBindsPair (xs, ys) =
     (if null ys then mempty else owlpretty "@" <> hsep (intersperse (owlpretty ",") $ map owlpretty ys)) <>
     owlpretty ">"
 
-instance OwlPretty KDFGroupEntry where
+instance OwlPretty KDFGroupEntryX where
     owlpretty (KGEDHName n b) =
         let (idxs, loc) = unsafeUnbind b in
         owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs

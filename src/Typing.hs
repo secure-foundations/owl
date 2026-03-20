@@ -1283,16 +1283,16 @@ checkDecl d cont = withSpan (d^.spanOf) $
       DeclKDFGroup groupName entries rules -> do
           -- Register entries with qualified names (GroupName.entryName)
           let registerEntries [] k = k
-              registerEntries (e:es) k = case e of
-                KGEDHName n b -> do
+              registerEntries (e:es) k = case e^.val of
+                KGEDHName n b -> withSpan (e^.spanOf) $ do
                     ((is1, is2), loc) <- unbind b
                     addNameDef n (is1, is2) (mkSpanned NT_DH, [loc]) $
                         registerEntries es k
-                KGEKdfKey n b -> do
+                KGEKdfKey n b -> withSpan (e^.spanOf) $ do
                     ((is1, is2), locs) <- unbind b
                     addNameDef n (is1, is2) (mkSpanned NT_KDF, locs) $
                         registerEntries es k
-                KGENameType n b -> do
+                KGENameType n b -> withSpan (e^.spanOf) $ do
                     ((is1, is2), ()) <- unbind b
                     let bnt = bind ((is1, is2), []) (mkSpanned NT_KDF)
                     local (over (curMod . nameTypeDefs) $ insert n bnt) $
@@ -1300,11 +1300,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
           -- Process rules: build the KDFGroupDef and store it
           let processRules [] accRules accOdh = return (accRules, accOdh)
               processRules (r:rs) accRules accOdh = do
-                  (((is1, is2), _dvars), body) <- unbind (_kgrIdxs r)
-                  let lbl = _kgrLabel r
-                  let bRule = _kgrIdxs r
+                  (((is1, is2), _dvars), body) <- unbind (_kgrIdxs (r^.val))
+                  let lbl = _kgrLabel (r^.val)
+                  let bRule = _kgrIdxs (r^.val)
                   let accRules' = insert lbl bRule accRules
-                  accOdh' <- if _kgrIsODH r then do
+                  accOdh' <- if _kgrIsODH (r^.val) then do
                       -- Extract DH pairs from IKM atoms for ODH tracking
                       let dhPairs = [(lbl, ne1, ne2) | IKMDhCombine ne1 ne2 <- _kgrbIkm body]
                       return (accOdh ++ dhPairs)

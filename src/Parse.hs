@@ -840,7 +840,7 @@ parseKDFOutputSpec = do
     return $ KDFOutputSpec nts
 
 parseKDFGroupEntry :: Parser KDFGroupEntry
-parseKDFGroupEntry = do
+parseKDFGroupEntry = parseSpanned $ do
     reserved "name"
     n <- identifier
     idxs <- parseIdxParamBinds
@@ -851,7 +851,7 @@ parseKDFGroupEntry = do
     return $ KGEDHName n $ bind idxs loc
 
 parseKDFGroupEntryKdfKey :: Parser KDFGroupEntry
-parseKDFGroupEntryKdfKey = do
+parseKDFGroupEntryKdfKey = parseSpanned $ do
     reserved "name"
     n <- identifier
     idxs <- parseIdxParamBinds
@@ -862,7 +862,7 @@ parseKDFGroupEntryKdfKey = do
     return $ KGEKdfKey n $ bind idxs locs
 
 parseKDFGroupEntryNameType :: Parser KDFGroupEntry
-parseKDFGroupEntryNameType = do
+parseKDFGroupEntryNameType = parseSpanned $ do
     reserved "nametype"
     n <- identifier
     -- Parse index params: <dataIdxs @ localityIdxs>
@@ -880,7 +880,7 @@ parseKDFRuleFormals =
         return $ map s2n names
 
 parseKDFGroupRule :: Parser KDFGroupRule
-parseKDFGroupRule = do
+parseKDFGroupRule = parseSpanned $ do
     isODH <- alt (reserved "odh" >> return True) (reserved "kdf" >> return False)
     lbl <- identifier
     idxs <- parseIdxParamBinds

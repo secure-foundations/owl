@@ -1,0 +1,21 @@
+locality alice
+locality bob
+
+name alice1 : nonce @ alice
+name alice2 : nonce @ alice
+name alice3 : nonce @ alice
+
+kdf_group G {
+    name alice1 : kdfkey @ alice // SHOULD FAIL: identifier reused
+
+    name k : kdfkey @ alice, bob
+    nametype k2 : kdfkey
+    nametype k3 : kdfkey
+    
+    kdf L1_enc : k, 0x, 0x01 -> enckey Name(alice1)
+    kdf L1_kdf : k, 0x, 0x02 -> strict k2
+    kdf L2_enc : k2, 0x, 0x01 -> enckey Name(alice2)
+    kdf L2_kdf : k2, 0x, 0x02 -> strict k3
+    kdf L3_enc : k3, 0x, 0x01 -> enckey Name(alice3)
+
+}

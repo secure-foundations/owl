@@ -253,23 +253,25 @@ resolveDecls (d:ds) =
           -- Add entry names to the appropriate path maps so rule bodies and
           -- subsequent declarations can reference them without qualification.
           let withEntryPaths k = foldr addOne k entries
-              addOne (KGEDHName   n _) k = local (over namePaths     $ T.insert n p) k
-              addOne (KGEKdfKey   n _) k = local (over namePaths     $ T.insert n p) k
-              addOne (KGENameType n _) k = local (over namePaths $ T.insert n p) $ local (over nameTypePaths $ T.insert n p) k
+              addOne e k = case e^.val of
+                KGEDHName   n _ -> local (over namePaths     $ T.insert n p) k
+                KGEKdfKey   n _ -> local (over namePaths     $ T.insert n p) k
+                KGENameType n _ -> local (over namePaths $ T.insert n p) $ local (over nameTypePaths $ T.insert n p) k
           rules' <- withEntryPaths $ mapM (resolveRule pos) rules
           let d' = Spanned pos $ DeclKDFGroup s entries' rules'
           ds' <- withEntryPaths $ local (over defPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
         where
-          resolveEntry pos (KGEDHName n b) = do
-              (ixs, loc) <- unbind b
-              loc' <- resolveLocality pos loc
-              return $ KGEDHName n (bind ixs loc')
-          resolveEntry pos (KGEKdfKey n b) = do
-              (ixs, locs) <- unbind b
-              locs' <- mapM (resolveLocality pos) locs
-              return $ KGEKdfKey n (bind ixs locs')
-          resolveEntry _ e = return e
+          resolveEntry pos e = case e^.val of
+              KGEDHName n b -> do
+                  (ixs, loc) <- unbind b
+                  loc' <- resolveLocality pos loc
+                  return $ Spanned (e^.spanOf) $ KGEDHName n (bind ixs loc')
+              KGEKdfKey n b -> do
+                  (ixs, locs) <- unbind b
+                  locs' <- mapM (resolveLocality pos) locs
+                  return $ Spanned (e^.spanOf) $ KGEKdfKey n (bind ixs locs')
+              _ -> return e
           resolveSalt pos (SaltNameType p idxs) = do
               p' <- resolvePath pos PTName p
               return $ SaltNameType p' idxs
@@ -279,7 +281,7 @@ resolveDecls (d:ds) =
           resolveIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
           resolveInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
           resolveRule pos rule = do
-              ((idxs, dvars), body) <- unbind (_kgrIdxs rule)
+              ((idxs, dvars), body) <- unbind (_kgrIdxs (rule^.val))
               wh'   <- resolveProp (_kgrbWhere body)
               salt' <- resolveSalt pos (_kgrbSalt body)
               ikm'  <- mapM resolveIKMAtom (_kgrbIkm body)
@@ -288,7 +290,7 @@ resolveDecls (d:ds) =
               outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
               let body' = body { _kgrbWhere = wh', _kgrbSalt = salt', _kgrbIkm = ikm',
                                  _kgrbInfo = info', _kgrbOutput = KDFOutputSpec outputs' }
-              return $ rule { _kgrIdxs = bind (idxs, dvars) body' }
+              return $ Spanned (rule^.spanOf) $ (rule^.val) { _kgrIdxs = bind (idxs, dvars) body' }
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
