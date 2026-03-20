@@ -25,13 +25,13 @@ kdf_group G {
 }
 
 
-corr [G.k] /\ [G.f] ==> [d]
+corr [k] /\ [f] ==> [d]
 
-def main() @ alice : (x:Unit{corr(G.k) /\ corr(G.f) ==> corr(d)}) = 
-    corr_case G.k in
-    corr_case G.f in
-    let k2 = kdf<G.L1;kdfkey;0>(get(G.k), get(G.f), 0x) in 
-    let ek = kdf<G.L2;enckey;0>(k2, 0x, 0x) in 
+def main() @ alice : (x:Unit{corr(k) /\ corr(f) ==> corr(d)}) = 
+    corr_case k in
+    corr_case f in
+    let k2 = kdf<L1;kdfkey;0>(get(k), get(f), 0x) in 
+    let ek = kdf<L2;enckey;0>(k2, 0x, 0x) in 
     let c = aenc(ek, get(d)) in 
     output c
 
