@@ -1,0 +1,129 @@
+locality alice
+locality bob
+
+name long_skA : DH @ alice // Alice's long-term DH key (never changes)
+name long_skB : DH @ bob // Bob's long-term DH key (never changes)
+
+counter N_c_alice @ alice
+counter N_c_bob @ bob
+
+// ---------- DOUBLE RATCHET ROUND 3 ------------
+
+name ae3: DH @ alice // ephemeral 
+name be3: DH @ bob // ephemeral
+
+name mb3: nonce @ alice // Alice's first ratchet message
+
+
+nametype mb3_enc = st_aead Name(mb3)
+      aad x. (x == dhpk(get(ae3)) ++ dhpk(get(long_skA)))
+      nonce N_c_alice
+
+
+// This is the output of the X3DH handshake, which is the input to the first round
+// of double ratchet
+
+nametype r3 = kdf { ikm info. 
+  True -> strict nonce /* TODO: r4 */ || strict nonce /* TODO: mb4_enc */
+}
+
+// ---------- DOUBLE RATCHET ROUND 2 ------------
+
+name ae2: DH @ alice // ephemeral 
+name be2: DH @ bob // ephemeral
+
+name mb2: nonce @ bob // Bob's first ratchet message
+
+
+nametype mb2_enc = st_aead Name(mb2)
+      aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
+      nonce N_c_bob
+
+nametype r2 = kdf { ikm info. 
+  True -> strict r3 || strict mb3_enc
+}
+
+odh LR2 : be3, ae3 ->
+ {salt info self.
+      True -> strict r3
+              || 
+              strict mb3_enc
+ }
+
+
+// ----------- DOUBLE RATCHET ROUND 1 ------------
+// Double ratchet round 1 is encoded in the handshake
+
+// This is the output of the X3DH handshake, which is the input to the first round
+// of double ratchet
+name r1 : kdf { ikm info. 
+  True -> strict r2 || strict mb2_enc
+}
+
+odh LR1 : be2, ae2 ->
+ {salt info self.
+      True -> strict r2
+              || 
+              strict mb2_enc
+ }
+
+
+
+// ------------ CORR AXIOMS ------------
+
+// These encode the relationship between long-term keys and the ratchet key that
+// comes from the handshake
+corr [long_skA] ==> [r1]
+corr [long_skB] ==> [r1]
+
+
+
+// ------------ Cleanliness predicates ------------
+
+predicate bob_good() = sec(long_skB) \/ sec(long_skA)
+
+
+
+
+
+def bob_send_round_2(
+  rb1: if bob_good[] then Name(r1) else Data<adv>, 
+  gae2: if bob_good[] then dhpk(ae2) else Data<adv> ||group||
+) @ bob: Option Unit =
+
+//   pcase bob_good[dh] in
+//   pcase sec(ae2) in
+//   pcase sec(mb2) in
+//   pcase sec(be2) in
+//   // corr_case nameOf(dh) in
+//   // corr_case nameOf(rb1) in
+//   pcase dh == correct_bmaster_arg() in
+//   pcase (sec(long_skA) /\ sec(ae1)) in
+//   pcase (sec(long_skB) /\ sec(bs) /\ sec(bo)) in
+
+//   pcase sec(KDF<kdfkey||enckey;0;ratchet1>(0x, gkdf<kdfkey;0>(0x, dh, 0x), 0x)) in
+
+  pcase sec(r1) in
+  false_elim in
+
+  let gbe2 = dhpk(get(be2)) in 
+
+  // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
+
+
+  let rb2 = kdf<0;odh LR1[0];kdfkey || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let cb2 = kdf<0;odh LR1[0];kdfkey || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  debug "===============================";
+  debug printTyOf(rb1);
+  debug printTyOf(rb2);
+  debug printTyOf(cb2);
+  debug "===============================";
+
+  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
+  output x2 to endpoint(alice);
+//   let b2 = bob_message1(gbe2, x2) in
+//   let _ = output b2 to endpoint(alice) in 
+  Some(()) // TODO: call bob_double_ratchet_recv here
+
+
+
