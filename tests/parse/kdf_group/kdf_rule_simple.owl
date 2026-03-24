@@ -1,11 +1,10 @@
-// Tests: kdf L : C1, psk, 0x -> strict C2
+// Tests: kdf L : C1, psk, 0x -> strict kdfkey
 
 locality alice
 
 kdf_group G {
     name psk : kdfkey @ alice
-    nametype C1 : kdfkey
-    nametype C2 : kdfkey
+    name C1 : kdfkey @ alice
 
-    kdf L : C1, psk, 0x -> strict C2
+    kdf L : C1, psk, 0x -> strict kdfkey
 }

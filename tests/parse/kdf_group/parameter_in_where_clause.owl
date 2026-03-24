@@ -6,14 +6,12 @@ kdf_group G {
     name A : DH @ alice
     name B : DH @ alice
     name C1 : kdfkey @ alice
-    nametype C2 : kdfkey
-    nametype C2_corr : kdfkey
 
     odh L1: C1, dh_combine(A, B), 0x ->
-        strict C2 || public nonce
-    
+        strict kdfkey || public nonce
+
     kdf L2(x) where (x != dh_combine(dhpk(get(A)), get(B))): C1, x, 0x ->
-        strict C2_corr || public nonce
+        strict kdfkey || public nonce
 }
 
 def test () @ alice : SecName(KDF<L1; kdfkey || nonce; 0>) =

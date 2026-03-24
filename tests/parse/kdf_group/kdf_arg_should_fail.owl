@@ -6,10 +6,9 @@ kdf_group G {
     name A : DH @ alice
     name B : DH @ alice
     name C1 : kdfkey @ alice
-    nametype C2 : kdfkey
 
     kdf L1(x): C1, x, 0x ->
-        strict C2 || public nonce
+        strict kdfkey || public nonce
 }
 
 def this_should_fail () @ alice : SecName(KDF<L1(0x1234); kdfkey || nonce; 0>) =

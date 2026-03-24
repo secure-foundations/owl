@@ -14,7 +14,6 @@ kdf_group G {
     name B : DH @ bob
     name C : DH @ alice
     name D : DH @ bob
-    nametype T : kdfkey
 
-    odh L<i@n> : h<session i, pid n>(), lbl_ikm<session i, pid n>(f<session i, pid n>(), g(), dh_combine(A,B) ++ dh_combine(C,D)), 0x -> strict T
+    odh L<i@n> : h<session i, pid n>(), lbl_ikm<session i, pid n>(f<session i, pid n>(), g(), dh_combine(A,B) ++ dh_combine(C,D)), 0x -> strict kdfkey
 }

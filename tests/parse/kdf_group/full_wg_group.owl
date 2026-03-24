@@ -17,62 +17,50 @@ kdf_group WG_KDF {
     name S_resp<@m> : DH @ responder
     name psk<@n,m> : kdfkey @ initiator, responder
 
-    nametype C2<@n,m> : kdfkey
-    nametype C3<@n,m> : kdfkey
-    nametype C3_corr  : kdfkey
-    nametype C4<@n,m> : kdfkey
-    nametype C4_corr  : kdfkey
-    nametype C5<@n,m> : kdfkey
-    nametype C5_corr  : kdfkey
-    nametype C6<@n,m> : kdfkey
-    nametype C6_corr  : kdfkey
-    nametype C7<@n,m> : kdfkey
-    nametype C7_corr  : kdfkey
-
     odh L1<i@n,m> : 0x, dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
-        strict C2<@n,m>
+        strict kdfkey
 
-    odh L2<@n,m> : C2<@n,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
-        strict C3<@n,m>
+    odh L2<@n,m> : KDF<L1;kdfkey;0>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+        strict kdfkey
 
-    odh L2_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph,m>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
-        strict C3_corr
+    odh L2_corr<n_eph@n,m> where n_eph !=idx n : KDF<L1;kdfkey;0>, dh_combine(S_init<@n>, S_resp<@m>), 0x ->
+        strict kdfkey
 
-    kdf L3<@n,m> : C3<@n,m>, 0x, 0x ->
-        strict C4<@n,m>
+    kdf L3<@n,m> : KDF<L2;kdfkey;0>, 0x, 0x ->
+        strict kdfkey
 
-    kdf L3_corr : C3_corr, 0x, 0x ->
-        strict C4_corr
+    kdf L3_corr : KDF<L2_corr;kdfkey;0>, 0x, 0x ->
+        strict kdfkey
 
-    odh L4<i,j@n,m> : C4<@n,m>, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
-        strict C5<@n,m>
+    odh L4<i,j@n,m> : KDF<L3;kdfkey;0>, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
+        strict kdfkey
 
-    odh L4_corr<i,j@n,m> : C4_corr, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
-        strict C5_corr
+    odh L4_corr<i,j@n,m> : KDF<L3_corr;kdfkey;0>, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->
+        strict kdfkey
 
-    odh L5<j@n,m> : C5<@n,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
-        strict C6<@n,m>
+    odh L5<j@n,m> : KDF<L4;kdfkey;0>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+        strict kdfkey
 
-    odh L5_corr<j,n_eph@n,m> where n_eph !=idx n : C5<@n_eph,m>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
-        strict C6_corr
+    odh L5_corr<j,n_eph@n,m> where n_eph !=idx n : KDF<L4_corr;kdfkey;0>, dh_combine(S_init<@n>, E_resp<j@m>), 0x ->
+        strict kdfkey
 
-    kdf L6<@n,m> : C6<@n,m>, psk<@n,m>, 0x ->
-        strict C7<@n,m>
+    kdf L6<@n,m> : KDF<L5;kdfkey;0>, psk<@n,m>, 0x ->
+        strict kdfkey
 
-    kdf L6_zeros<@n,m> : C6<@n,m>, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
-        strict C7<@n,m>
+    kdf L6_zeros<@n,m> : KDF<L5;kdfkey;0>, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
+        strict kdfkey
 
-    kdf L6_corr<@n,m> : C6_corr, psk<@n,m>, 0x ->
-        strict C7_corr
+    kdf L6_corr<@n,m> : KDF<L5_corr;kdfkey;0>, psk<@n,m>, 0x ->
+        strict kdfkey
 
-    kdf L6_corr_zeros : C6_corr, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
-        strict C7_corr
+    kdf L6_corr_zeros : KDF<L5_corr;kdfkey;0>, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x ->
+        strict kdfkey
 
-    kdf L7<@n,m> : C7<@n,m>, 0x, 0x ->
+    kdf L7<@n,m> : KDF<L6;kdfkey;0>, 0x, 0x ->
         strict transp_key_init_send ||
         strict transp_key_resp_send
 
-    kdf L7_corr : C7_corr, 0x, 0x ->
+    kdf L7_corr : KDF<L6_corr;kdfkey;0>, 0x, 0x ->
         strict transp_key_init_send_corr ||
         strict transp_key_resp_send_corr
 

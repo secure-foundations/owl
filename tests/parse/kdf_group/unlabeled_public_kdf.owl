@@ -2,9 +2,8 @@ locality alice
 
 kdf_group G {
     name C1 : kdfkey @ alice
-    nametype C2 : kdfkey
 
-    kdf L: 0x, C1, 0x -> strict C2
+    kdf L: 0x, C1, 0x -> strict kdfkey
 }
 
 def test<i> () @ alice : Data<adv> =

@@ -8,7 +8,6 @@ kdf_group G {
     name B : DH @ bob
     name C : DH @ alice
     name D : DH @ bob
-    nametype T : kdfkey
 
-    odh L : 0x, dh_combine(A, B) ++ dh_combine(C, D), 0x -> strict T
+    odh L : 0x, dh_combine(A, B) ++ dh_combine(C, D), 0x -> strict kdfkey
 }

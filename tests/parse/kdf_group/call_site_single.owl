@@ -6,9 +6,8 @@ kdf_group G {
     name A<i> : DH @ alice
     name B<i> : DH @ alice
     name C1 : kdfkey @ alice
-    nametype C2 : kdfkey
 
-    odh L<i> : C1, dh_combine(A<i>, B<i>), 0x -> strict C2
+    odh L<i> : C1, dh_combine(A<i>, B<i>), 0x -> strict kdfkey
 }
 
 def test<i> () @ alice : SecName(KDF<L<i>; kdfkey; 0>) =

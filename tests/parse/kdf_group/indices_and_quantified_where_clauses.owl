@@ -6,10 +6,9 @@ kdf_group G {
     name A<i@m> : DH @ alice<m>
     name B<i@m> : DH @ alice<m>
     name C1<@m> : kdfkey @ alice<m>
-    nametype C2<@m> : kdfkey
 
     kdf L3<@m>(ikm) where (forall j:idx. ikm != dhpk(get(A<i@m>))): C1, ikm, 0x ->
-        strict C2 || public nonce
+        strict kdfkey || public nonce
 }
 
 // def test<i> () @ alice : SecName(KDF<G.L<i>; kdfkey; 0>) =

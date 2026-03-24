@@ -1,4 +1,4 @@
-// Tests: odh L<i> : C1, dh_combine(A, B), 0x -> strict C2
+// Tests: odh L<i> : C1, dh_combine(A, B), 0x -> strict kdfkey
 
 locality alice
 locality bob
@@ -6,8 +6,7 @@ locality bob
 kdf_group G {
     name A : DH @ alice
     name B : DH @ bob
-    nametype C1 : kdfkey
-    nametype C2 : kdfkey
+    name C1 : kdfkey @ alice
 
-    odh L<i> : C1, dh_combine(A, B), 0x -> strict C2
+    odh L<i> : C1, dh_combine(A, B), 0x -> strict kdfkey
 }

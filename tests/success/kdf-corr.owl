@@ -6,10 +6,9 @@ kdf_group G {
 
     name k : kdfkey @ alice
     name f : kdfkey @ alice
-    nametype k2 : kdfkey
 
-    kdf L1 : k, f, 0x -> strict k2
-    kdf L2 : k2, 0x, 0x -> enckey Name(d)
+    kdf L1 : k, f, 0x -> strict kdfkey
+    kdf L2 : KDF<L1;kdfkey;0>, 0x, 0x -> enckey Name(d)
 
     // name k : kdf {ikm info.
     //     True -> strict kdf {ikm2 info2.
