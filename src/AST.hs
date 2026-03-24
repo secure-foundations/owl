@@ -324,8 +324,8 @@ data IKMAtom
     deriving (Show, Generic, Typeable)
 
 data SaltExpr
-    = SaltNameType Path ([Idx], [Idx]) -- nametype label from this group
-    | SaltPublicExpr AExpr             -- hex const or public func
+    = SaltName NameExp         -- any named salt: simple kdfkey or KDF<label;nks;j> ref
+    | SaltPublicExpr AExpr     -- hex const or public func
     deriving (Show, Generic, Typeable)
 
 data InfoExpr

@@ -17,14 +17,12 @@ struct s {
 
 kdf_group G {
     name k : kdfkey @ alice, bob
-    nametype k2 : kdfkey
-    nametype k3 : kdfkey
     
     kdf L1_enc : k, 0x, 0x01 -> enckey Name(alice1)
-    kdf L1_kdf : k, 0x, 0x02 -> strict k2
-    kdf L2_enc : k2, 0x, 0x01 -> enckey Name(alice2)
-    kdf L2_kdf : k2, 0x, 0x02 -> strict k3
-    kdf L3_enc : k3, 0x, 0x01 -> enckey Name(alice3)
+    kdf L1_kdf : k, 0x, 0x02 -> strict kdfkey
+    kdf L2_enc : KDF<L1_kdf;kdfkey;0>, 0x, 0x01 -> enckey Name(alice2)
+    kdf L2_kdf : KDF<L1_kdf;kdfkey;0>, 0x, 0x02 -> strict kdfkey
+    kdf L3_enc : KDF<L2_kdf;kdfkey;0>, 0x, 0x01 -> enckey Name(alice3)
 
     // This is just a hack for extraction to test slicing the KDF output
     // It's not supposed to mean anything cryptographically
@@ -60,7 +58,7 @@ def alice_main() @ alice : Unit =
     output c to endpoint(bob);
     let k2 = kdf<L1_kdf;kdfkey;0>(get(k), 0x, 0x02) in
     let ek2 = kdf<L2_enc;enckey;0>(k2, 0x, 0x01) in
-    debug printTyContext;
+    // debug printTyContext;
     let c2 = aenc(ek2, get(alice2)) in 
     output c2 to endpoint(bob);
     ()

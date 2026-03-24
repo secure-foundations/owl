@@ -1281,7 +1281,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclKDFGroup groupName entries rules -> do
-          -- Register entries with qualified names (GroupName.entryName)
+          -- Register entries 
           let registerEntries [] k = k
               registerEntries (e:es) k = case e^.val of
                 KGEDHName n b -> withSpan (e^.spanOf) $ do
@@ -2789,7 +2789,7 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                   saltPub <- tyFlowsTo saltT advLbl
                   ikmPub  <- tyFlowsTo ikmT advLbl
                   let saltHasKey = case _kgrbSalt body of
-                                       SaltNameType _ _ -> True
+                                       SaltName _       -> True
                                        SaltPublicExpr _ -> False
                   let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKMDhCombine _ _ -> True; _ -> False })
                                        (_kgrbIkm body)
@@ -2832,21 +2832,8 @@ ikmAtomsToAExpr atoms  =
 checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
 checkSaltMatch (SaltPublicExpr expectedE) actualE _ =
     checkExprEqual actualE expectedE
-checkSaltMatch (SaltNameType p idxs) actualE actualT = do
-    liftIO $ putStrLn ("Checking salt match for " ++ show (owlpretty p) ++ " with actual " ++ show (owlpretty actualE) ++ " and type " ++ show (owlpretty actualT)) 
-    case extractNameFromType actualT of
-      Nothing -> return False
-      Just _ -> case p of
-          PRes (PDot modPath n) -> do
-              md <- openModule modPath
-              case lookup n (md^.nameDefs) of
-                -- p is a concrete name: compare the actual expression to get(p<idxs>)
-                Just _ -> checkExprEqual actualE (mkSpanned $ AEGet (mkSpanned $ NameConst idxs p []))
-                -- p is an abstract nametype (in nameTypeDefs): any name salt is accepted
-                Nothing -> do
-                    liftIO $ putStrLn ("Salt match: " ++ show (owlpretty p) ++ " is an abstract name, accepting any salt with appropriate type")
-                    return True
-          _ -> typeError $ "Unsupported pattern for salt: " ++ show (owlpretty p)
+checkSaltMatch (SaltName ne) actualE _ =
+    checkExprEqual actualE (mkSpanned $ AEGet ne)
 
 checkIKMMatch :: [IKMAtom] -> AExpr -> Check Bool
 checkIKMMatch atoms ikmE =

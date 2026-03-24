@@ -197,8 +197,8 @@ instance OwlPretty IKMAtom where
         owlpretty "dh_combine(" <> owlpretty ne1 <> owlpretty ", " <> owlpretty ne2 <> owlpretty ")"
 
 instance OwlPretty SaltExpr where
-    owlpretty (SaltNameType p idxs) = owlpretty p <> owlprettyIdxParams idxs
-    owlpretty (SaltPublicExpr e)    = owlpretty e
+    owlpretty (SaltName ne)      = owlpretty ne
+    owlpretty (SaltPublicExpr e) = owlpretty e
 
 instance OwlPretty InfoExpr where
     owlpretty (InfoPublic e) = owlpretty e

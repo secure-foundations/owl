@@ -272,9 +272,7 @@ resolveDecls (d:ds) =
                   locs' <- mapM (resolveLocality pos) locs
                   return $ Spanned (e^.spanOf) $ KGEKdfKey n (bind ixs locs')
               _ -> return e
-          resolveSalt pos (SaltNameType p idxs) = do
-              p' <- resolvePath pos PTName p
-              return $ SaltNameType p' idxs
+          resolveSalt _ (SaltName ne)      = SaltName <$> resolveNameExp ne
           resolveSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
           resolveIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
           resolveIKMAtom (IKMDhCombine ne1 ne2) = IKMDhCombine <$> resolveNameExp ne1 <*> resolveNameExp ne2

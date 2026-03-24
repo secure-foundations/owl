@@ -770,16 +770,15 @@ parseSaltExpr :: Parser SaltExpr
 parseSaltExpr = parseSaltExprF []
 
 parseSaltExprF :: [String] -> Parser SaltExpr
-parseSaltExprF formalNames =
+parseSaltExprF ruleParams =
     (try $ do
-        p <- parsePath
+        ne <- parseNameExp
         notFollowedBy (whiteSpace >> char '(')  -- don't consume function calls
-        idxs <- parseIdxParams
-        -- If this is a bare identifier matching a formal, treat it as AEVar (AExpr)
-        case (p, fst idxs, snd idxs) of
-          (PUnresolvedVar n, [], []) | n `elem` formalNames ->
+        -- If this is a bare identifier matching a rule param, treat it as AEVar (AExpr)
+        case ne^.val of
+          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` ruleParams ->
               return $ SaltPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
-          _ -> return $ SaltNameType p idxs
+          _ -> return $ SaltName ne
     )
     <|>
     (do
@@ -791,7 +790,7 @@ parseIKMAtom :: Parser IKMAtom
 parseIKMAtom = parseIKMAtomF []
 
 parseIKMAtomF :: [String] -> Parser IKMAtom
-parseIKMAtomF formalNames =
+parseIKMAtomF ruleParams =
     (try $ do
         reserved "dh_combine"
         symbol "("
@@ -805,14 +804,13 @@ parseIKMAtomF formalNames =
     (try $ do
         -- A name expression (path with optional indices) used as kdfkey.
         -- Reject function-call applications (which go to IKMPublicExpr).
-        -- Also reject bare identifiers that match formal parameters.
+        -- Also reject bare identifiers that match rule parameters.
         ne <- parseNameExp
         notFollowedBy (whiteSpace >> char '(')
         case ne^.val of
-          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` formalNames ->
+          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` ruleParams ->
               return $ IKMPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
-          NameConst _ _ _ -> return $ IKMKdfKeyName ne
-          _ -> parserZero
+          _ -> return $ IKMKdfKeyName ne
     )
     <|>
     (do
@@ -885,12 +883,12 @@ parseKDFGroupRule = parseSpanned $ do
     lbl <- identifier
     idxs <- parseIdxParamBinds
     args <- parseKDFRuleFormals
-    let formalNames = map name2String args
+    let ruleParams = map name2String args
     wh <- option (mkSpanned PTrue) (reserved "where" >> parseProp)
     symbol ":"
-    salt <- parseSaltExprF formalNames
+    salt <- parseSaltExprF ruleParams
     symbol ","
-    ikm <- parseIKMAtomF formalNames `sepBy1` (try $ symbol "++")
+    ikm <- parseIKMAtomF ruleParams `sepBy1` (try $ symbol "++")
     symbol ","
     info <- parseInfoExpr
     symbol "->"
