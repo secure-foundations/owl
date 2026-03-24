@@ -2,11 +2,11 @@ locality alice
 locality bob
 
 // long-term keys, assumed to be verified out of band
-name d : nonce @ alice
+// name d : nonce @ alice
 counter N_c @ alice
 counter N_c_bob @ bob
 
-name long_skA : DH @ alice // Alices's long-term DH key (never changes)
+name long_skA : DH @ alice // Alice's long-term DH key (never changes)
 name long_skB : DH @ bob // Bob's long-term DH key (never changes)
 
 // Alice's ephemeral DH key (changes per individual connection, generated on the fly)
@@ -66,33 +66,7 @@ func correct_bmaster_arg() =
      ++ dh_combine(dhpk(get(ae1)), get(bo))
 
 predicate bob_good(dh) =
-// predicate bob_good(a1, a2) =
   dh == correct_bmaster_arg()
-  // (
-  //   ((
-  //     (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs)))
-  //     \/
-  //     (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs)))
-  //   ) 
-  //   /\
-  //   (
-  //     (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB)))
-  //     \/
-  //     (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB)))
-  //   )  
-  //   /\
-  //   (
-  //     (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs)))
-  //     \/
-  //     (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs)))
-  //   ))
-  //   \/
-  //   ((
-  //     (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo)))
-  //     \/
-  //     (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo)))
-  //   ))
-  // )
   /\
   // disjunction of both sides of each DH shared secret being secret
   ((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
@@ -202,8 +176,8 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [be2]
 
 // These are required because Owl doesn't emit the axiom that if the inputs
 // to an ODH declaration are corrupt, then the derived name is also corrupt.
-corr [long_skA] /\ [ae1] ==> [mb2]
-corr [long_skB] /\ [bs] /\ [bo] ==> [mb2]
+corr [long_skA] /\ [ae1] /\ [ae2] ==> [mb2]
+corr [long_skB] /\ [bs] /\ [bo] /\ [be2] ==> [mb2]
 
 // TODO: these are weird modeling artifacts too?
 corr [be2] ==> [ae2]
@@ -241,6 +215,20 @@ def bob_double_ratchet_send(
   gae2: if bob_good[dh] then dhpk(ae2) else Data<adv> ||group||
 ) @ bob: Option Unit =
 
+  pcase bob_good[dh] in
+  pcase sec(ae2) in
+  pcase sec(mb2) in
+  pcase sec(be2) in
+  // corr_case nameOf(dh) in
+  // corr_case nameOf(rb1) in
+  pcase dh == correct_bmaster_arg() in
+  pcase (sec(long_skA) /\ sec(ae1)) in
+  pcase (sec(long_skB) /\ sec(bs) /\ sec(bo)) in
+
+  pcase sec(KDF<kdfkey||enckey;0;ratchet1>(0x, gkdf<kdfkey;0>(0x, dh, 0x), 0x)) in
+
+  false_elim in
+
   let gbe2 = dhpk(get(be2)) in 
 
   // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
@@ -248,7 +236,13 @@ def bob_double_ratchet_send(
 
   let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
   let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(long_skB)) in
+  debug "===============================";
+  debug printTyOf(rb1);
+  debug printTyOf(rb2);
+  debug printTyOf(cb2);
+  debug "===============================";
+
+  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
   let b2 = bob_message1(gbe2, x2) in
   let _ = output b2 to endpoint(alice) in 
   Some(()) // TODO: call bob_double_ratchet_recv here
