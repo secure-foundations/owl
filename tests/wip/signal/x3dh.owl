@@ -121,7 +121,7 @@ nametype ratchet1 = kdf { ikm info.
 }
 
 nametype ma1_enc(dh) = st_aead (x:Name(ma1) {dh == correct_bmaster_arg() ==> True /\ dh != correct_bmaster_arg() ==> False})
-      aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))) /\ ((dh == correct_bmaster_arg() ==> True) /\ (dh != correct_bmaster_arg() ==> False)))
+      aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
       nonce N_c
 
 nametype Amaster(dh) = dualkdf { salt info.
@@ -209,6 +209,31 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [mb2]
 corr [be2] ==> [ae2]
 corr [ae2] ==> [be2]
 
+/*
+
+Alice                            Bob
+        alice_pk_i=dhpk(ark_i)
+        ctxt_i
+ark_i   ------------------->    brk_i
+                               enckey_i+1 || rk_i+1 = kdf(rk_i, dh_combine(alice_pk_i, brk_i), 0x)
+                               plaintext_i = aead_decrypt(enckey_i+1, ctxt_i, aad contains alice_pk_i and i)
+
+
+Need an off-chain ODH. 3 cases
+1. a == dhpk(ark_i)
+2. a == some other valid dhpk ---> off-chain case
+3. a is not a valid dhpk ---> should be ruled out by AEAD (?)
+
+
+sec(rk_i) ==> sec(enckey_i+1) ==> aead_decrypt succeeds ==> alice_pk_i must have been authentic
+                                       ===> sec(rk_i+1)
+
+
+TODO: just do 2 or 3 rounds by themselves to figure out what the modular predicate between sessions should be
+*/
+
+
+
 def bob_double_ratchet_send(
   dh: Ghost, 
   // last_round_preimage: Ghost, // hash preimage, needs to have some predicate relating to `dh` and `bob_good`
@@ -290,6 +315,9 @@ def alice_x3dh () @ alice
   }
   otherwise None()
 
+def out_of_band_auth (a2: Data<adv> ||group||) @ bob 
+  : Option (x:Data<adv>||group||{x == a2 /\ x == dhpk(get(long_skA))}) 
+
 def bob_x3dh () @ bob
 : Option Unit = 
   let long_pkB = dhpk(get(long_skB)) in
@@ -301,117 +329,106 @@ def bob_x3dh () @ bob
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in
-  parse i2 as alice_prekey_msg(a1, a2, a3, a4) in {
+  parse i2 as alice_prekey_msg(a1, a2_unauth, a3, a4) in {
     guard is_group_elem(a1) in 
-    guard is_group_elem(a2) in
+    guard is_group_elem(a2_unauth) in
     guard is_group_elem(a4) in
     // a1 -> gae1, a2 -> long_pkA, a3 -> x1, a4 -> gae2
 
-    // Out-of-band auth assumption: TODO replace with a method `check_key_transparency(a2)` with
-    // a postcondition that says `a2 == dhpk(get(long_skA))`
-    assume(a2 == dhpk(get(long_skA)));  
-
-
-    // pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    // pcase #[assume false] (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
-    // false_elim in
-
-    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
-    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
-    false_elim in
-
-    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
-    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    false_elim in
-
-    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
-    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
-    false_elim in
-
-    cross_dh_lemma<bs>(a2);
-    cross_dh_lemma<long_skB>(a1);
-    cross_dh_lemma<bs>(a1);
-    cross_dh_lemma<bo>(a1);
-
-    corr_case long_skA in
-    corr_case ae1 in
-    corr_case bo in
-    corr_case bs in
-    corr_case long_skB in
-    false_elim in
-
-    let s1 = dh_combine(a2, get(bs)) in       
-    let s2 = dh_combine(a1, get(long_skB)) in 
-    let s3 = dh_combine(a1, get(bs)) in       
-    let s4 = dh_combine(a1, get(bo)) in       
-    let dh = s1 ++ s2 ++ s3 ++ s4 in 
-
-    let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
-    // let rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,bmaster,0x)) else Data<adv> 
-    //   = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in 
-    let rb1 = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in
-    let cb1 = kdf<;0;kdfkey || enckey;1>(0x, bmaster, 0x) in 
-    
-    // rb1 || cb1 <- kdf(...)
-    // decryption(cb1, ..., aad == .. a4 ..) succeeds ==> cb1 is good
-    // ====> conclude rb1 is good
-
-
-    let n_c = get_counter N_c_bob in
-    corr_case long_skA in
-    false_elim in
-    let ma1_opt' = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
-
-
-
-    // assert( (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) /\ (Some?(ma1_opt')) ==> (dh == correct_bmaster_arg())));
-    let ma1_opt: (y:Option (
-      if (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))
-          /\ (a1 == dhpk(get(ae1)) \/ a1 == dhpk(get(long_skA))) 
-          /\ (a2 == dhpk(get(ae1)) \/ a2 == dhpk(get(long_skA)))) 
-      then (x:Name(ma1){a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))}) 
-      else Data<adv>){(Some?(y) /\ dh != correct_bmaster_arg()) ==> False}) = ma1_opt' in
-    case ma1_opt {
+    // Out-of-band auth assumption. This is a property of Signal
+    let a2_opt = call out_of_band_auth(a2_unauth) in
+    case a2_opt {
       | None => None()
-      | Some ma1 => {
-        // assert(bob_good[dh] ==> a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)));
-        
+      | Some a2 => {
 
-        assert(bob_good[dh] ==> a4 == dhpk(get(ae2)));
+        pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
+        pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
+        false_elim in
 
-        // debug "----------------------------------------------";
-        // debug "----------------------------------------------";
-        debug decideProp(bob_good[dh]);
-        debug decideProp(bob_good_2[dh]);
-        // debug "----------------------------------------------";
-        // debug "----------------------------------------------";
+        pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+        pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
+        false_elim in
 
-        // This assert should always pass. Since we are in the decryption succeeds case, if all of the keys are secret, then 
-        // we must have derived the correct enckey. This can only happen if we derived the correct `dh` value.
-        // Do we need KDF injectivity?
-        assert(((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) ==> (dh == correct_bmaster_arg()));
+        pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
+        pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
+        false_elim in
+
+        cross_dh_lemma<bs>(a2);
+        cross_dh_lemma<long_skB>(a1);
+        cross_dh_lemma<bs>(a1);
+        cross_dh_lemma<bo>(a1);
+
+        corr_case long_skA in
+        corr_case ae1 in
+        corr_case bo in
+        corr_case bs in
+        corr_case long_skB in
+        false_elim in
+
+        let s1 = dh_combine(a2, get(bs)) in       
+        let s2 = dh_combine(a1, get(long_skB)) in 
+        let s3 = dh_combine(a1, get(bs)) in       
+        let s4 = dh_combine(a1, get(bo)) in       
+        let dh = s1 ++ s2 ++ s3 ++ s4 in 
+
+        let bmaster = kdf<;odh L1[0], odh L2[0], odh L3[0], odh L4[0];kdfkey;0>(0x, dh, 0x) in 
+        // let rb1: if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,bmaster,0x)) else Data<adv> 
+        //   = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in 
+        let rb1 = kdf<;0;kdfkey || enckey;0>(0x, bmaster, 0x) in
+        let cb1 = kdf<;0;kdfkey || enckey;1>(0x, bmaster, 0x) in 
+
+        let n_c = get_counter N_c_bob in
+        corr_case long_skA in
+        false_elim in
+        let ma1_opt' = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
 
 
-        // false_elim in
 
-        call bob_double_ratchet_send(dh, rb1, a4)
-        // let gae2 = a4 in
+        // assert( (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) /\ (Some?(ma1_opt')) ==> (dh == correct_bmaster_arg())));
+        let ma1_opt: (y:Option (
+          if (((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo)))) 
+          then (x:Name(ma1){a1 ++ a2 ++ a4 == dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))}) 
+          else Data<adv>){(Some?(y) ==> dh == correct_bmaster_arg())}) = ma1_opt' in
+        case ma1_opt {
+          | None => None()
+          | Some ma1 => {
 
-        // pcase sec(be2) in
-        // pcase sec(ae2) in
-        // pcase (dh_combine(gae2, get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
-        // false_elim in
-        
-        // let gbe2 = dhpk(get(be2)) in 
-        // let rb1' : if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv> = rb1 in
 
-        // let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1', dh_combine(gae2, get(be2)), 0x) in 
-        // let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1', dh_combine(gae2, get(be2)), 0x) in 
-        // let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
-        // let b2 = bob_message1(gbe2, x2) in
-        // let _ = output b2 to endpoint(alice) in 
-        // Some(()) // TODO: call bob_double_ratchet_recv here
+            assert(bob_good[dh] ==> a4 == dhpk(get(ae2)));
 
+            // debug "----------------------------------------------";
+            // debug "----------------------------------------------";
+            // debug decideProp(bob_good[dh]);
+            // debug decideProp(bob_good_2[dh]);
+            // debug "----------------------------------------------";
+            // debug "----------------------------------------------";
+
+
+            assert(((sec(long_skA) /\ sec(ae1)) \/ (sec(long_skB) /\ sec(bs) /\ sec(bo))) ==> (dh == correct_bmaster_arg()));
+
+
+            // false_elim in
+
+            call bob_double_ratchet_send(dh, rb1, a4)
+            // let gae2 = a4 in
+
+            // pcase sec(be2) in
+            // pcase sec(ae2) in
+            // pcase (dh_combine(gae2, get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
+            // false_elim in
+            
+            // let gbe2 = dhpk(get(be2)) in 
+            // let rb1' : if bob_good[dh] then Name(KDF<kdfkey||enckey;0;ratchet1>(0x,gkdf<kdfkey;0>(0x,dh,0x),0x)) else Data<adv> = rb1 in
+
+            // let rb2 = kdf<0;odh L5[0];nonce || enckey;0>(rb1', dh_combine(gae2, get(be2)), 0x) in 
+            // let cb2 = kdf<0;odh L5[0];nonce || enckey;1>(rb1', dh_combine(gae2, get(be2)), 0x) in 
+            // let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
+            // let b2 = bob_message1(gbe2, x2) in
+            // let _ = output b2 to endpoint(alice) in 
+            // Some(()) // TODO: call bob_double_ratchet_recv here
+
+          }
+        }
       }
     }
   }
