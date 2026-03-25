@@ -1,0 +1,15 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_group G {
+    name k : kdfkey @ alice
+
+    // Rule has a single output (kdfkey)
+    kdf L : k, 0x, 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit =
+    // SHOULD FAIL: rule L declares 1 output, but name kinds list has 2
+    let x = kdf<L;kdfkey||kdfkey;0>(get(k), 0x, 0x) in
+    ()

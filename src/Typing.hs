@@ -2827,6 +2827,16 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
           whereOk <- checkWhereClause (_kgrbWhere body)
           if not (saltOk && ikmOk && infoOk && whereOk) then return Nothing else do
               let KDFOutputSpec outputs = _kgrbOutput body
+              -- Validate that call-site name kinds match rule's declared output types
+              assert ("KDF name kinds length mismatch for rule " ++ _kgrrLabel hint ++
+                      ": call has " ++ show (length nks) ++ " output(s), rule declares " ++
+                      show (length outputs))
+                     (length nks == length outputs)
+              expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
+              assert ("KDF name kinds mismatch for rule " ++ _kgrrLabel hint ++
+                      ": call has " ++ show (owlpretty (NameKindRow nks)) ++
+                      ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
+                     (nks == expectedNks)
               if j >= length outputs then return Nothing else do
                   let (strictness, outNt) = outputs !! j
                   let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint

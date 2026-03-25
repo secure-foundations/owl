@@ -703,12 +703,29 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName nks j nt ib _refs -> do
-                 when (not $ unignore ib) $ do
-                     nth <- view checkNameTypeHook
-                     nth nt
-                 assert ("Name kind row index out of scope") $ j < length nks
-                 return $ Just (nt, Nothing)
+             KDFName nks j _nt ib ref -> do
+                 mBody <- lookupKDFGroupRule (_kgrrLabel ref) (_kgrrIdxs ref) (_kgrrArgs ref)
+                 case mBody of
+                   Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _kgrrLabel ref
+                   Just body -> do
+                     let KDFOutputSpec outputs = _kgrbOutput body
+                     unless (unignore ib) $ do
+                         assert ("KDF name kinds length mismatch for rule " ++ _kgrrLabel ref ++
+                                 ": annotation has " ++ show (length nks) ++
+                                 " output(s), rule declares " ++ show (length outputs))
+                                (length nks == length outputs)
+                         expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
+                         assert ("KDF name kinds mismatch for rule " ++ _kgrrLabel ref ++
+                                 ": annotation has " ++ show (owlpretty (NameKindRow nks)) ++
+                                 ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
+                                (nks == expectedNks)
+                     assert "Name kind row index out of scope" $ j < length nks
+                     assert "KDF j out of scope for rule outputs" $ j < length outputs
+                     let (_, outNt) = outputs !! j
+                     unless (unignore ib) $ do
+                         nth <- view checkNameTypeHook
+                         nth outNt
+                     return $ Just (outNt, Nothing)
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
