@@ -1117,6 +1117,48 @@ checkTyPubLenOrGhost t = do
                 
 
                   
+validateKDFGroupRule :: String -> [String] -> [String] -> KDFGroupRule -> Check ()
+validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
+    withSpan (rule^.spanOf) $ do
+        (((is1, is2), dvars), body) <- unbind (_kgrIdxs (rule^.val))
+        let lbl = _kgrLabel (rule^.val)
+        let saltHasGroupKdfKey = case _kgrbSalt body of
+              SaltName ne -> case ne^.val of
+                  NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
+                  KDFName nks j _ _ _             -> j < length nks && (nks !! j) == NK_KDF
+                  _                               -> False
+              SaltPublicExpr _                    -> False
+        let ikmHasGroupKdfKey = any isGroupKdfKeyAtom (_kgrbIkm body)
+              where
+                isGroupKdfKeyAtom (IKMKdfKeyName ne) = case ne^.val of
+                    NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
+                    KDFName nks j _ _ _             -> j < length nks && (nks !! j) == NK_KDF
+                    _                               -> False
+                isGroupKdfKeyAtom _                  = False
+        let ikmHasLocalDH = any isLocalDHAtom (_kgrbIkm body)
+              where
+                isLocalDHAtom (IKMDhCombine ne1 ne2) = isGroupDH ne1 || isGroupDH ne2
+                isLocalDHAtom _                       = False
+                isGroupDH ne = case ne^.val of
+                    NameConst _ (PRes (PDot _ n)) _ -> n `elem` dhEntryNames
+                    _                               -> False
+        assert ("kdf_group rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                "': salt or IKM must contain a kdfkey from the group, " ++
+                "or IKM must contain dh_combine with a local DH key") $
+            saltHasGroupKdfKey || ikmHasGroupKdfKey || ikmHasLocalDH
+        -- Conditions 2 & 3: each parameter must appear free in (salt, ikm, info)
+        let lhs = (_kgrbSalt body, _kgrbIkm body, _kgrbInfo body)
+        let freeIdxVars  = toListOf fv lhs :: [IdxVar]
+        let freeDataVars = toListOf fv lhs :: [DataVar]
+        forM_ (is1 ++ is2) $ \i ->
+            assert ("kdf_group rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                    "': index parameter '" ++ show i ++ "' does not appear in salt/IKM/info") $
+                i `elem` freeIdxVars
+        forM_ dvars $ \d ->
+            assert ("kdf_group rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                    "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
+                d `elem` freeDataVars
+
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
     case d^.val of
@@ -1281,7 +1323,12 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
       DeclKDFGroup groupName entries rules -> do
-          -- Register entries 
+          -- Collect entry name sets for validation
+          let kdfKeyEntryNames = [n | e <- entries, n <- case e^.val of
+                                          KGEKdfKey n _ -> [n]; _ -> []]
+          let dhEntryNames     = [n | e <- entries, n <- case e^.val of
+                                          KGEDHName n _ -> [n]; _ -> []]
+          -- Register entries
           let registerEntries [] k = k
               registerEntries (e:es) k = case e^.val of
                 KGEDHName n b -> withSpan (e^.spanOf) $ do
@@ -1309,6 +1356,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                       let dhPairs = [(lbl, ne1, ne2) | IKMDhCombine ne1 ne2 <- _kgrbIkm body]
                       return (accOdh ++ dhPairs)
                   else return accOdh
+                  validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames r
                   processRules rs accRules' accOdh'
           registerEntries entries $ do
               (ruleMap, odhPairs) <- processRules rules [] []

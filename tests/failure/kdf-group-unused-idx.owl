@@ -1,0 +1,11 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_group G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL (constraint 2): index parameters i (session) and p (PId)
+    // do not appear anywhere in the salt, IKM, or info.
+    kdf L<i@p> : k, 0x, 0x -> enckey Name(n)
+}
