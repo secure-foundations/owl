@@ -1,3 +1,24 @@
+/*
+
+Alice                            Bob
+        alice_pk_i=dhpk(ark_i)
+        ctxt_i
+ark_i   ------------------->    brk_i
+                               enckey_i+1 || rk_i+1 = kdf(rk_i, dh_combine(alice_pk_i, brk_i), 0x)
+                               plaintext_i = aead_decrypt(enckey_i+1, ctxt_i, aad contains alice_pk_i and i)
+
+
+Need an off-chain ODH. 3 cases
+1. a == dhpk(ark_i)
+2. a == some other valid dhpk ---> off-chain case
+3. a is not a valid dhpk ---> should be ruled out by AEAD (?)
+
+
+sec(rk_i) ==> sec(enckey_i+1) ==> aead_decrypt succeeds ==> alice_pk_i must have been authentic
+                                       ===> sec(rk_i+1)
+
+*/
+
 locality alice
 locality bob
 
@@ -19,11 +40,20 @@ nametype mb3_enc = st_aead Name(mb3)
       aad x. (x == dhpk(get(ae3)) ++ dhpk(get(long_skA)))
       nonce N_c_alice
 
+nametype mb3_corr = st_aead (x: Data<adv>{False})
+      aad x. True
+      nonce N_c_alice
+
+
 
 // This is the output of the X3DH handshake, which is the input to the first round
 // of double ratchet
 
 nametype r3 = kdf { ikm info. 
+  True -> strict nonce /* TODO: r4 */ || strict nonce /* TODO: mb4_enc */
+}
+
+nametype r3_corr = kdf { ikm info. 
   True -> strict nonce /* TODO: r4 */ || strict nonce /* TODO: mb4_enc */
 }
 
@@ -38,6 +68,14 @@ name mb2: nonce @ bob // Bob's first ratchet message
 nametype mb2_enc = st_aead Name(mb2)
       aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
       nonce N_c_bob
+
+nametype mb2_corr = st_aead (x: Name(mb2){False})
+      aad x. True
+      nonce N_c_bob
+
+nametype r2_corr = kdf { ikm info. 
+  True -> strict r3_corr || strict mb3_corr
+}
 
 nametype r2 = kdf { ikm info. 
   True -> strict r3 || strict mb3_enc
@@ -57,7 +95,8 @@ odh LR2 : be3, ae3 ->
 // This is the output of the X3DH handshake, which is the input to the first round
 // of double ratchet
 name r1 : kdf { ikm info. 
-  True -> strict r2 || strict mb2_enc
+  info == dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2 || strict mb2_enc,
+  info != dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2_corr || strict mb2_corr
 }
 
 odh LR1 : be2, ae2 ->
@@ -77,6 +116,10 @@ corr [long_skA] ==> [r1]
 corr [long_skB] ==> [r1]
 
 
+corr [ae2] /\ [long_skA] ==> [mb2]
+corr [be2] /\ [long_skB] ==> [mb2]
+
+corr [r1] ==> [mb2]
 
 // ------------ Cleanliness predicates ------------
 
@@ -104,6 +147,13 @@ def bob_send_round_2(
 //   pcase sec(KDF<kdfkey||enckey;0;ratchet1>(0x, gkdf<kdfkey;0>(0x, dh, 0x), 0x)) in
 
   pcase sec(r1) in
+  pcase bob_good[] in
+  pcase sec(ae2) in
+  pcase sec(be2) in
+  pcase sec(mb2) in
+  pcase sec(long_skA) in
+  pcase sec(long_skB) in
+  pcase gae2 == dhpk(get(ae2)) in
   false_elim in
 
   let gbe2 = dhpk(get(be2)) in 
@@ -111,8 +161,8 @@ def bob_send_round_2(
   // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
 
 
-  let rb2 = kdf<0;odh LR1[0];kdfkey || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-  let cb2 = kdf<0;odh LR1[0];kdfkey || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let rb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let cb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
   debug "===============================";
   debug printTyOf(rb1);
   debug printTyOf(rb2);
@@ -124,6 +174,8 @@ def bob_send_round_2(
 //   let b2 = bob_message1(gbe2, x2) in
 //   let _ = output b2 to endpoint(alice) in 
   Some(()) // TODO: call bob_double_ratchet_recv here
+
+
 
 
 
