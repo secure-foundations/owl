@@ -688,7 +688,7 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
-      KDFName nks j nt _ _ -> do
+      KDFName nks j _ _ -> do
           nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
           let start = sPlus $ take j nk_lengths
           let segment = nk_lengths !! j

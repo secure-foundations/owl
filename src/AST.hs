@@ -130,7 +130,7 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName [NameKind] Int NameType (Ignore Bool) KDFGroupRuleRef
+    | KDFName [NameKind] Int (Ignore Bool) KDFGroupRuleRef
            -- Ignore Bool is whether we trust that the name is well-formed
            -- KDFGroupRuleRef identifies the kdf_group rule that produced this name
     deriving (Show, Generic, Typeable)

@@ -703,7 +703,7 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName nks j _nt ib ref -> do
+             KDFName nks j ib ref -> do
                  mBody <- lookupKDFGroupRule (_kgrrLabel ref) (_kgrrIdxs ref) (_kgrrArgs ref)
                  case mBody of
                    Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _kgrrLabel ref
@@ -1318,9 +1318,7 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName nks j nt ib ref -> do
-          nt' <- normalizeNameType nt
-          return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref
+      KDFName nks j ib ref -> return ne
       _ -> error ("Not normalizing name exp: " ++ show (owlpretty ne))
 
 -- Traversing modules to collect global info
@@ -1646,10 +1644,11 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName nks j nt ib ref -> do
-          if x `elem` toListOf fv nt then
+      KDFName nks j ib ref -> do
+          outNt <- getNameType e
+          if x `elem` toListOf fv outNt then
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return $ Spanned (e^.spanOf) $ KDFName nks j nt ib ref
+          else return $ Spanned (e^.spanOf) $ KDFName nks j ib ref
       
 stripLabel :: DataVar -> Label -> Check' senv Label
 stripLabel x l = return l

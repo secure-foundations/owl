@@ -433,9 +433,7 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName nks j nt ib ref -> do
-            nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName nks j nt' ib ref
+        KDFName nks j ib ref -> return ne
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 

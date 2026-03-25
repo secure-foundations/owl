@@ -348,7 +348,7 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             KDFName nks j nt _ _ -> return sTrue
+                             KDFName nks j _ _ -> return sTrue
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do

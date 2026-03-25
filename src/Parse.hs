@@ -103,7 +103,7 @@ parseNameExp =
         j <- many1 digit
         symbol ">"
         let ji = read j
-        return $ KDFName nks ji (mkSpanned NT_KDF) (ignore False) ref
+        return $ KDFName nks ji (ignore False) ref
     )
     <|>
     (parseSpanned $ do
@@ -284,7 +284,7 @@ parseTyTerm =
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
         return $ case n^.val of
-          KDFName _ _ _ _ _ ->
+          KDFName _ _ _ _ ->
               -- kdf_group form: secrecy is structural (TName is never a leaf type),
               -- so skip the TRefined wrapper to avoid LName(KDFName) in SMT
               Spanned pos $ TName n

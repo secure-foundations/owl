@@ -759,9 +759,9 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                 case ob of
                   Nothing -> return False
                   Just b -> return b
-            (_, TName (Spanned _ (KDFName nks2 j2 nt2 _ ref2))) ->
+            (_, TName (Spanned _ (KDFName nks2 j2 _ ref2))) ->
                 case (stripRefinements t1)^.val of
-                  TName (Spanned _ (KDFName nks1 j1 nt1 _ ref1)) | (nks1 == nks2 && j1 == j2)
+                  TName (Spanned _ (KDFName nks1 j1 _ ref1)) | (nks1 == nks2 && j1 == j2)
                       -> return $ aeq ref1 ref2
                   _ -> return False
             _ | isSingleton t2 -> return True
@@ -858,7 +858,7 @@ isSingleton t =
     case t^.val of
       TName ne -> 
           case ne^.val of
-            KDFName _ _ _ _ _ -> False
+            KDFName _ _ _ _ -> False
             NameConst _ _ _ -> True
       TVK _ -> True
       TDH_PK _ -> True
@@ -1125,14 +1125,14 @@ validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
         let saltHasGroupKdfKey = case _kgrbSalt body of
               SaltName ne -> case ne^.val of
                   NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
-                  KDFName nks j _ _ _             -> j < length nks && (nks !! j) == NK_KDF
+                  KDFName nks j _ _               -> j < length nks && (nks !! j) == NK_KDF
                   _                               -> False
               SaltPublicExpr _                    -> False
         let ikmHasGroupKdfKey = any isGroupKdfKeyAtom (_kgrbIkm body)
               where
                 isGroupKdfKeyAtom (IKMKdfKeyName ne) = case ne^.val of
                     NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
-                    KDFName nks j _ _ _             -> j < length nks && (nks !! j) == NK_KDF
+                    KDFName nks j _ _               -> j < length nks && (nks !! j) == NK_KDF
                     _                               -> False
                 isGroupKdfKeyAtom _                  = False
         let ikmHasLocalDH = any isLocalDHAtom (_kgrbIkm body)
@@ -2839,7 +2839,7 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                      (nks == expectedNks)
               if j >= length outputs then return Nothing else do
                   let (strictness, outNt) = outputs !! j
-                  let ne = mkSpanned $ KDFName nks j outNt (ignore True) hint
+                  let ne = mkSpanned $ KDFName nks j (ignore True) hint
                   -- (1) info must always be public
                   infoPub <- tyFlowsTo infoT advLbl
                   assert "KDF info argument must be public" infoPub
