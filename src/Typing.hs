@@ -1137,14 +1137,14 @@ validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
                 isGroupKdfKeyAtom _                  = False
         let ikmHasLocalDH = any isLocalDHAtom (_kgrbIkm body)
               where
-                isLocalDHAtom (IKMDhCombine ne1 ne2) = isGroupDH ne1 || isGroupDH ne2
+                isLocalDHAtom (IKMDhCombine ne1 ne2) = isGroupDH ne1 && isGroupDH ne2
                 isLocalDHAtom _                       = False
                 isGroupDH ne = case ne^.val of
                     NameConst _ (PRes (PDot _ n)) _ -> n `elem` dhEntryNames
                     _                               -> False
         assert ("kdf_group rule '" ++ lbl ++ "' in group '" ++ groupName ++
                 "': salt or IKM must contain a kdfkey from the group, " ++
-                "or IKM must contain dh_combine with a local DH key") $
+                "or IKM must contain dh_combine where both arguments are local DH keys from the group") $
             saltHasGroupKdfKey || ikmHasGroupKdfKey || ikmHasLocalDH
         -- Conditions 2 & 3: each parameter must appear free in (salt, ikm, info)
         let lhs = (_kgrbSalt body, _kgrbIkm body, _kgrbInfo body)
@@ -1158,6 +1158,13 @@ validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
             assert ("kdf_group rule '" ++ lbl ++ "' in group '" ++ groupName ++
                     "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
                 d `elem` freeDataVars
+        -- Validate output name types
+        let KDFOutputSpec outputs = _kgrbOutput body
+        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                     map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
+            forM_ outputs $ \(_, nt) -> do
+                checkNameType nt
+                nameTypeUniform nt
 
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 

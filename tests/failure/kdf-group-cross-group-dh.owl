@@ -1,0 +1,20 @@
+locality alice
+
+name d : nonce @ alice
+
+// G2 must come first so Y is in scope during path resolution of G1's rules
+kdf_group G2 {
+    name Y : DH @ alice
+}
+
+kdf_group G1 {
+    name X : DH @ alice
+
+    // SHOULD FAIL: Y is a DH key from G2, not G1.
+    // dh_combine in an ODH rule requires both arguments to be local DH keys
+    // of the same group.
+    odh L : 0x, dh_combine(X, Y), 0x -> enckey Name(d)
+}
+
+corr [X] ==> [d]
+corr [Y] ==> [d]
