@@ -1,24 +1,24 @@
 locality client : 1
 locality server 
-name X<@g> : DH @ client<g>
 
-name Y : DH @ server
 
 name data<@h> : nonce @ client<h>
+
+kdf_group G {
+    name X<@g> : DH @ client<g>
+    name Y : DH @ server
+    odh L<@f> : 0x, dh_combine(X<@f>, Y), 0x -> enckey Name(data<@f>)
+}
+
 corr<i> [X<@i>] ==> [data<@i>]
 corr<i> [Y] ==> [data<@i>]
-
-odh L<@f> : 
-    X<@f>, Y -> {salt info.
-        True -> enckey Name(data<@f>)
-    }
 
 def client_main<@i>(pky : dhpk(Y)) @ client<i> : Unit = 
     let h = dhpk(get(X<@i>)) in
     output h;
     corr_case X<@i> in 
     corr_case Y in 
-    let y = kdf<;odh L<@i>[0]; enckey; 0>(0x, dh_combine(pky, get(X<@i>)), 0x)
+    let y = kdf<L<@i>; enckey; 0>(0x, dh_combine(pky, get(X<@i>)), 0x)
     in 
     let c = aenc(y, get(data<@i>)) in 
     output c
@@ -30,9 +30,7 @@ struct server_getkey_result<j> {
             /\
             sec(X<@j>)
             /\ sec(Y)
-        then
-        Name(KDF<enckey;0;enckey Name(data<@j>)>(0x,
-        dh_combine(dhpk(get(X<@j>)), get(Y)), 0x))
+        then Name(KDF<L<@j>;enckey;0>)
         else Data<adv>
 }
 
@@ -46,7 +44,7 @@ def server_getkey() @ server : Option (exists j. server_getkey_result<session j>
             = dh_combine(h, get(Y)) in 
         corr_case X<@j> in 
         corr_case Y in 
-        let y = kdf<;odh L<@j>[0]; enckey; 0>(0x, ss, 0x) in 
+        let y = kdf<L<@j>; enckey; 0>(0x, ss, 0x) in 
         let res = pack<j>(server_getkey_result<session j>(h, y))
         in
         Some(res)

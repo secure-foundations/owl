@@ -2,15 +2,15 @@ include "ke.owli"
 
 module DH_KE (P : Params) : KE(P) = {
             name k : enckey Name(P.data) @ P.Server
-            name S : DH @ P.Server
-            name C : DH @ P.Client
+            
+            kdf_group G {
+                name S : DH @ P.Server
+                name C : DH @ P.Client
+                odh L : 0x, dh_combine(C, S), 0x -> strict enckey Name(k)
+            }
+
             name skS : sigkey (dhpk(S)) @ P.Server
             name skC : sigkey (dhpk(C)) @ P.Client
-            
-            odh L : C, S -> 
-                {salt info.
-                    True -> strict enckey Name(k)
-                }
 
             struct server_msg {
                 _s1: dhpk(S),
@@ -47,7 +47,7 @@ module DH_KE (P : Params) : KE(P) = {
                    corr_case C in 
                    let ss = dh_combine(client_pk, get(S)) in
                    pcase (ss == dh_combine(dhpk(get(C)), get(S))) in  
-                   let dhk  = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
+                   let dhk  = kdf<L;enckey;0>(0x, ss, 0x) in 
                    let c =  aenc(dhk, get(k)) in
                    corr_case k in
                    false_elim in
@@ -72,7 +72,7 @@ module DH_KE (P : Params) : KE(P) = {
                  | Some server_pk => 
                    let ss  = dh_combine(server_pk, get(C)) in
                    pcase (ss == dh_combine(dhpk(get(C)), get(S))) in  
-                   let dhk  = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
+                   let dhk  = kdf<L;enckey;0>(0x, ss, 0x) in 
                    input ii, _ in 
                    corr_case k in 
                    false_elim in
