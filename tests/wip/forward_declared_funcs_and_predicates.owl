@@ -1,0 +1,35 @@
+locality Initiator : 1
+locality Responder : 1
+
+// Constants used in WireGuard. They get interpreted as ASCII hex
+func construction() = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+func identifier() = "WireGuard v1 zx2c4 Jason@zx2c4.com"
+func mac1() = "mac1----"
+
+counter aead_counter_msg1_C2<i@n> @ Initiator<n>
+
+
+kdf_group G {
+    // Ephemeral Diffie-Hellman keys
+    name E_init<i@n> : DH @ Initiator<n>
+    name E_resp<j@m> : DH @ Responder<m>
+
+    // Static Diffie-Hellman keys 
+    name S_init<@n> : DH @ Initiator<n>
+    name S_resp<@m> : DH @ Responder<m>
+
+    // Pre-shared key between initiator and responder.
+    name psk<@n,m> : kdfkey @ Initiator<n>, Responder<m>
+    
+    odh L1<i@n,m> : honest_c1<session i, pid n>(), dh_combine(E_init<i@n>, S_resp<@m>), 0x ->
+        strict nonce ||
+        strict st_aead (dhpk(S_init<@n>))
+                       aad x. true
+                       nonce aead_counter_msg1_C2
+
+}
+
+func honest_c1<i@n_eph>() =
+    gkdf<kdfkey; 0>(crh(construction()), dhpk(get(E_init<i@n_eph>)), 0x)
+
+
