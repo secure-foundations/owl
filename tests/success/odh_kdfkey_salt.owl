@@ -1,0 +1,25 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_group G {
+
+    name k : kdfkey @ alice
+    name X : DH @ alice
+    name Y : DH @ alice
+
+    odh L : k, dh_combine(X, Y), 0x -> strict enckey Name(n)
+
+}
+
+corr [k] ==> [n]
+corr [X] ==> [n]
+corr [Y] ==> [n]
+
+def main() @ alice : Unit =
+    corr_case k in
+    corr_case X in
+    corr_case Y in
+    let enc_key = kdf<L;enckey;0>(get(k), dh_combine(dhpk(get(X)), get(Y)), 0x) in
+    let c = aenc(enc_key, get(n)) in
+    output c
