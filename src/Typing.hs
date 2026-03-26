@@ -1117,6 +1117,38 @@ checkTyPubLenOrGhost t = do
                 
 
                   
+nameEqProp :: NameExp -> NameExp -> Maybe Prop
+nameEqProp ne1 ne2 = case (ne1^.val, ne2^.val) of
+    (NameConst _ p1 _, NameConst _ p2 _)
+        | aeq p1 p2 -> Just (pEq (aeGet ne1) (aeGet ne2))
+        | otherwise -> Nothing  -- different resolved paths 
+    (KDFName _ _ _ ref1, KDFName _ _ _ ref2)
+        | _kgrrLabel ref1 == _kgrrLabel ref2 -> Just (pEq (aeGet ne1) (aeGet ne2))
+        | otherwise -> Nothing  -- different KDF labels 
+    _ -> Nothing  -- NameConst vs KDFName 
+
+saltEqProp :: SaltExpr -> SaltExpr -> Maybe Prop
+saltEqProp (SaltName ne1)      (SaltName ne2)      = nameEqProp ne1 ne2
+saltEqProp (SaltPublicExpr a1) (SaltPublicExpr a2) = Just (pEq a1 a2)
+saltEqProp _                   _                   = Nothing
+
+ikmEqProp :: [IKMAtom] -> [IKMAtom] -> Maybe Prop
+ikmEqProp as bs
+    | length as /= length bs = Nothing
+    | otherwise = foldl step (Just pTrue) (zip as bs)
+  where
+    step Nothing _ = Nothing
+    step (Just acc) (IKMPublicExpr a1,   IKMPublicExpr a2)   = Just (pAnd acc (pEq a1 a2))
+    step (Just acc) (IKMKdfKeyName n1,   IKMKdfKeyName n2)   =
+        case nameEqProp n1 n2 of
+            Just p  -> Just (pAnd acc p)
+            Nothing -> Nothing
+    step (Just acc) (IKMDhCombine a1 b1, IKMDhCombine a2 b2) =
+        case (nameEqProp a1 a2, nameEqProp b1 b2) of
+            (Just pa, Just pb) -> Just (pAnd acc (pAnd pa pb))
+            _                  -> Nothing
+    step _ _ = Nothing
+
 validateKDFGroupRule :: String -> [String] -> [String] -> KDFGroupRule -> Check ()
 validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
     withSpan (rule^.spanOf) $ do
@@ -1165,6 +1197,51 @@ validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
             forM_ outputs $ \(_, nt) -> do
                 checkNameType nt
                 nameTypeUniform nt
+
+ensureOdhPairDisjoint
+    :: String
+    -> NameExp
+    -> NameExp
+    -> [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+    -> Check ()
+ensureOdhPairDisjoint groupName ne1 ne2 existingPairs =
+    forM_ existingPairs $ \(lbl2, bnd2) -> do
+        (((is2, ps2), _dvars2), (ne1', ne2')) <- unbind bnd2
+        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++
+                     map (\i -> (i, (ignore $ show i, IdxPId    ))) ps2) $ do
+            let peq1  = pAnd (pEq (aeGet ne1) (aeGet ne1')) (pEq (aeGet ne2) (aeGet ne2'))
+            let peq2  = pAnd (pEq (aeGet ne2) (aeGet ne1')) (pEq (aeGet ne1) (aeGet ne2'))
+            let pdisj = pNot (pOr peq1 peq2)
+            (_, b) <- SMT.smtTypingQuery "odh_disjoint" $ SMT.symAssert pdisj
+            assert ("ODH Disjointness in group '" ++ groupName ++
+                    "': DH pair overlaps with rule '" ++ lbl2 ++ "'") b
+
+ensureSIIDisjoint
+    :: String
+    -> String
+    -> KDFGroupRuleBody
+    -> [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody)]
+    -> Check ()
+ensureSIIDisjoint groupName lbl body existingRules =
+    forM_ existingRules $ \(lbl2, bnd2) -> do
+        (((is2, ps2), dvars2), body2) <- unbind bnd2
+        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++
+                     map (\i -> (i, (ignore $ show i, IdxPId    ))) ps2) $
+            withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) dvars2) $ do
+                let mSalt = saltEqProp (_kgrbSalt body) (_kgrbSalt body2)
+                let mIkm  = ikmEqProp  (_kgrbIkm  body) (_kgrbIkm  body2)
+                let InfoPublic info1 = _kgrbInfo body
+                    InfoPublic info2 = _kgrbInfo body2
+                let pInfo = pEq info1 info2
+                case (mSalt, mIkm) of
+                    (Just pSalt, Just pIkm) -> do
+                        let pSame    = pAnd pSalt (pAnd pIkm pInfo)
+                        let pOverlap = pAnd pSame (pAnd (_kgrbWhere body) (_kgrbWhere body2))
+                        (_, b) <- SMT.smtTypingQuery "kdf_rule_disjoint" $
+                                      SMT.symAssert (pNot pOverlap)
+                        assert ("KDF rule disjointness in group '" ++ groupName ++
+                                "': rule '" ++ lbl ++ "' overlaps with rule '" ++ lbl2 ++ "'") b
+                    _ -> return ()
 
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
@@ -1354,15 +1431,20 @@ checkDecl d cont = withSpan (d^.spanOf) $
           -- Process rules: build the KDFGroupDef and store it
           let processRules [] accRules accOdh = return (accRules, accOdh)
               processRules (r:rs) accRules accOdh = do
-                  (((is1, is2), _dvars), body) <- unbind (_kgrBody (r^.val))
-                  let lbl = _kgrLabel (r^.val)
-                  let bRule = _kgrBody (r^.val)
+                  (((is1, is2), dvars), body) <- unbind (_kgrBody (r^.val))
+                  let lbl   = _kgrLabel (r^.val)
+                  let bRule = _kgrBody  (r^.val)
                   let accRules' = insert lbl bRule accRules
-                  accOdh' <- if _kgrIsODH (r^.val) then do
-                      -- Extract DH pairs from IKM atoms for ODH tracking
-                      let dhPairs = [(lbl, ne1, ne2) | IKMDhCombine ne1 ne2 <- _kgrbIkm body]
-                      return (accOdh ++ dhPairs)
-                  else return accOdh
+                  withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                               map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+                      withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) dvars) $ do
+                          ensureSIIDisjoint groupName lbl body accRules
+                          let dhPairs = [(ne1, ne2) | IKMDhCombine ne1 ne2 <- _kgrbIkm body]
+                          forM_ dhPairs $ \(ne1, ne2) ->
+                              ensureOdhPairDisjoint groupName ne1 ne2 accOdh
+                  let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
+                                    | IKMDhCombine ne1 ne2 <- _kgrbIkm body ]
+                  let accOdh' = accOdh ++ newOdhPairs
                   validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames r
                   processRules rs accRules' accOdh'
           registerEntries entries $ do

@@ -1,0 +1,12 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_group G {
+    name X : DH @ alice
+    name Y : DH @ alice
+
+    // SHOULD FAIL: two ODH rules using the same DH pair (X, Y)
+    odh L1 : 0x, dh_combine(X, Y), 0x -> enckey Name(n)
+    odh L2 : 0x, dh_combine(X, Y), 0x1234 -> enckey Name(n)
+}

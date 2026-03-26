@@ -151,7 +151,7 @@ data ModBody = ModBody {
 
 data KDFGroupDef = KDFGroupDef {
     _kgdRules    :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody),
-    _kgdOdhPairs :: [(String, NameExp, NameExp)]  -- (label, ne1, ne2)
+    _kgdOdhPairs :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
 }
     deriving (Show, Generic, Typeable)
 
