@@ -346,7 +346,7 @@ data KDFGroupRuleBody = KDFGroupRuleBody {
 data KDFGroupRuleX = KDFGroupRule {
     _kgrIsODH :: Bool,
     _kgrLabel :: String,
-    _kgrIdxs  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody
+    _kgrBody  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody
 } deriving (Show, Generic, Typeable)
 
 type KDFGroupRule = Spanned KDFGroupRuleX

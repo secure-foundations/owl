@@ -1120,7 +1120,7 @@ checkTyPubLenOrGhost t = do
 validateKDFGroupRule :: String -> [String] -> [String] -> KDFGroupRule -> Check ()
 validateKDFGroupRule groupName kdfKeyEntryNames dhEntryNames rule =
     withSpan (rule^.spanOf) $ do
-        (((is1, is2), dvars), body) <- unbind (_kgrIdxs (rule^.val))
+        (((is1, is2), dvars), body) <- unbind (_kgrBody (rule^.val))
         let lbl = _kgrLabel (rule^.val)
         let saltHasGroupKdfKey = case _kgrbSalt body of
               SaltName ne -> case ne^.val of
@@ -1347,9 +1347,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
           -- Process rules: build the KDFGroupDef and store it
           let processRules [] accRules accOdh = return (accRules, accOdh)
               processRules (r:rs) accRules accOdh = do
-                  (((is1, is2), _dvars), body) <- unbind (_kgrIdxs (r^.val))
+                  (((is1, is2), _dvars), body) <- unbind (_kgrBody (r^.val))
                   let lbl = _kgrLabel (r^.val)
-                  let bRule = _kgrIdxs (r^.val)
+                  let bRule = _kgrBody (r^.val)
                   let accRules' = insert lbl bRule accRules
                   accOdh' <- if _kgrIsODH (r^.val) then do
                       -- Extract DH pairs from IKM atoms for ODH tracking

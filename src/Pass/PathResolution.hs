@@ -279,7 +279,7 @@ resolveDecls (d:ds) =
           resolveIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
           resolveInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
           resolveRule pos rule = do
-              ((idxs, dvars), body) <- unbind (_kgrIdxs (rule^.val))
+              ((idxs, dvars), body) <- unbind (_kgrBody (rule^.val))
               wh'   <- resolveProp (_kgrbWhere body)
               salt' <- resolveSalt pos (_kgrbSalt body)
               ikm'  <- mapM resolveIKMAtom (_kgrbIkm body)
@@ -288,7 +288,7 @@ resolveDecls (d:ds) =
               outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
               let body' = body { _kgrbWhere = wh', _kgrbSalt = salt', _kgrbIkm = ikm',
                                  _kgrbInfo = info', _kgrbOutput = KDFOutputSpec outputs' }
-              return $ Spanned (rule^.spanOf) $ (rule^.val) { _kgrIdxs = bind (idxs, dvars) body' }
+              return $ Spanned (rule^.spanOf) $ (rule^.val) { _kgrBody = bind (idxs, dvars) body' }
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath

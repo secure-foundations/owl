@@ -220,7 +220,7 @@ instance OwlPretty KDFGroupRuleX where
     owlpretty rule =
         let kw     = if _kgrIsODH rule then owlpretty "odh" else owlpretty "kdf"
             lbl    = owlpretty (_kgrLabel rule)
-            ((idxs, fargs), body) = unsafeUnbind (_kgrIdxs rule)
+            ((idxs, fargs), body) = unsafeUnbind (_kgrBody rule)
             pidxs  = owlprettyIdxBindsPair idxs
             pfargs | null fargs = mempty
                    | otherwise  = owlpretty "(" <>
