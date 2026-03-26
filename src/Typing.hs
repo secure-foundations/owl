@@ -2619,7 +2619,6 @@ unifyValidKDFResults valids = do
 -- If the result is `Left True`, the KDF key is public (either flows to adv or is an out-of-bounds DH shared secret).
 -- If the result is `Left False`, the KDF call is ill-typed in some way.
 
-
 -- Unify the results of multiple KDF calls (sort of inverse to `findBestKDFCallResult`).
 -- Used to join the results of checking multiple candidate concats in IKM position (so all must either be public or match a KDF case).
 -- If we got any bad KDF calls from the concats, then we have an ill-typed KDF call overall.
@@ -2656,7 +2655,7 @@ findBestKDFCallResult xs = do
 -- Find all possible KDF salt position calls that match the given annotations `anns` and choose the best one.
 -- Attempt to extract a KDF key from the salt position argument `a`. If successful, use `matchKDF`
 -- to find all calls to the KDF that match the annotations `anns`; if unsuccessful, check whether the salt argument is public.
--- Old findValidSaltCalls, findValidIKMCalls, matchKDF, matchODH removed; replaced by tryHint
+-- Old findValidSaltCalls, findValidIKMCalls, matchKDF, matchODH removed; replaced by tryKDFRuleHint
 
 pubIKM :: [(NameExp, NameExp)] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check Bool
 pubIKM dhs a b c = do
@@ -2814,8 +2813,8 @@ patternPublicAndEquivalent pat1 pat2 = do
 
 -- Try a single KDFGroupRuleRef hint against salt/ikm/info.
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
-tryHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
-tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
+tryKDFRuleHint :: KDFGroupRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
+tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
     let actuals = _kgrrArgs hint
     mBody <- lookupKDFGroupRule (_kgrrLabel hint) (_kgrrIdxs hint) actuals
     case mBody of
@@ -2967,7 +2966,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           saltE' <- resolveANF saltE
           ikmE' <- resolveANF ikmE
           infoE' <- resolveANF infoE
-          results <- catMaybes <$> mapM (\h -> tryHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
+          results <- catMaybes <$> mapM (\h -> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
           let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j
           let kdfRefinement t = tRefined t ".res" $
@@ -3127,13 +3126,6 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                           if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
                           else mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
-
--- Find all names that appear in any of the arguments to the KDF, as well as any
--- DH pairs that appear in the ODH annotation.
--- Return a list of props for whether each of the above names flows to the adv.
--- findGoodKDFSplits: stub; KDF split logic now in tryHint
-findGoodKDFSplits :: AExpr -> AExpr -> AExpr -> [a] -> Int -> Check [Prop]
-findGoodKDFSplits a b c _refs j = return []
 
 aundup :: Alpha a => [a] -> [a]
 aundup [] = []

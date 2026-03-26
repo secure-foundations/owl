@@ -611,7 +611,7 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
--- inODHProp: stub returning False; ODH checking now done via tryHint in Typing.hs
+-- inODHProp: stub returning False; ODH checking now done via tryKDFRuleHint in Typing.hs
 inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
 inODHProp salt ikm info = return pFalse
 
