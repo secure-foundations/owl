@@ -2972,7 +2972,17 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let kdfRefinement t = tRefined t ".res" $
                 pAnd (pEq (aeLength (aeVar ".res")) outLen) kdfProp
           case results of
-            [] -> return $ kdfRefinement (tData advLbl advLbl)
+            [] -> do
+                bSalt <- tyFlowsTo saltT advLbl
+                bIkm  <- tyFlowsTo ikmT  advLbl
+                bInfo <- tyFlowsTo infoT advLbl
+                let nonPublicArg | not bSalt = "salt"
+                                 | not bIkm  = "ikm"
+                                 | otherwise  = "info"
+                assert ("No KDF rule applies, so all arguments must be public, but " ++
+                        nonPublicArg ++ " argument cannot be proven public")
+                       (bSalt && bIkm && bInfo)
+                return $ kdfRefinement (tData advLbl advLbl)
             (t:_) -> return $ kdfRefinement t
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
