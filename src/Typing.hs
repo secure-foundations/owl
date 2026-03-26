@@ -2825,7 +2825,10 @@ tryHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
           ikmOk   <- checkIKMMatch (_kgrbIkm body) ikmE
           infoOk  <- checkInfoMatch (_kgrbInfo body) infoE
           whereOk <- checkWhereClause (_kgrbWhere body)
-          if not (saltOk && ikmOk && infoOk && whereOk) then return Nothing else do
+          if not (saltOk && ikmOk && infoOk && whereOk) then do
+            -- TODO: can/should we provide some kind of warning here?
+            return Nothing 
+          else do
               let KDFOutputSpec outputs = _kgrbOutput body
               -- Validate that call-site name kinds match rule's declared output types
               assert ("KDF name kinds length mismatch for rule " ++ _kgrrLabel hint ++

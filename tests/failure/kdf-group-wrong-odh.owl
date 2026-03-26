@@ -1,0 +1,24 @@
+locality alice
+
+name d : nonce @ alice
+
+kdf_group G {
+    name X  : DH @ alice
+    name X2 : DH @ alice
+    name Y  : DH @ alice
+
+    // Rule expects dh_combine(X, Y) in the IKM position
+    odh L : 0x, dh_combine(X, Y), 0x -> enckey Name(d)
+}
+
+corr [X] ==> [d]
+corr [Y] ==> [d]
+
+def main() @ alice : Unit =
+    // SHOULD FAIL: X2 != X, so dh_combine(dhpk(get(X2)), get(Y)) does not match
+    // dh_combine(X, Y). The KDF call produces Data<adv>, which cannot be used
+    // as an encryption key for a secret nonce.
+    let ss = dh_combine(dhpk(get(X2)), get(Y)) in
+    let ek = kdf<L;enckey;0>(0x, ss, 0x) in
+    let c = aenc(ek, get(d)) in
+    output c

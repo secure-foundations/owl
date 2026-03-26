@@ -1,0 +1,19 @@
+locality alice
+
+name d : nonce @ alice
+
+kdf_group G {
+    name k  : kdfkey @ alice
+    name k2 : kdfkey @ alice
+
+    // Rule expects k in the IKM position
+    kdf L : 0x, k, 0x -> enckey Name(d)
+}
+
+def main() @ alice : Unit =
+    // SHOULD FAIL: k2 does not match k in the ikm position, so
+    // kdf<L;enckey;0>(0x, get(k2), 0x) produces Data<adv>.
+    // Using Data<adv> as an encryption key for a secret nonce fails.
+    let ek = kdf<L;enckey;0>(0x, get(k2), 0x) in
+    let c = aenc(ek, get(d)) in
+    output c
