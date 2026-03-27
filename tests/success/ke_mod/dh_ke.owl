@@ -3,7 +3,7 @@ include "ke.owli"
 module DH_KE (P : Params) : KE(P) = {
             name k : enckey Name(P.data) @ P.Server
             
-            kdf_group G {
+            kdf_scope G {
                 name S : DH @ P.Server
                 name C : DH @ P.Client
                 odh L : 0x, dh_combine(C, S), 0x -> strict enckey Name(k)

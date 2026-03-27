@@ -30,7 +30,7 @@ enum sign_request_response {
     | _res Data<adv>
 }
 
-kdf_group G {
+kdf_scope G {
     name a : DH @ PFA
     name b : DH @ PDIS
     name b1 : DH @ PDIS

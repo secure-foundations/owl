@@ -1,0 +1,7 @@
+// Tests: name psk : kdfkey inside kdf_scope
+
+locality alice
+
+kdf_scope G {
+    name psk : kdfkey @ alice
+}

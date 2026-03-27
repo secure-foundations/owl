@@ -4,7 +4,7 @@ name alice_secret : nonce @ alice
 
 counter C @ alice
 
-kdf_group G {
+kdf_scope G {
     name k0 : kdfkey @ alice
     
     kdf L1 : k0, 0x, 0x01 -> public nonce |counter|

@@ -136,7 +136,7 @@ nametype hpke_corr_key_t =
 //                    info=export_kdf_info())          [kdf L_sched_export]
 // =====================================================================
 
-kdf_group HPKE_KDF {
+kdf_scope HPKE_KDF {
     // Receiver's static key
     name skR : DH @ receiver
 
@@ -240,7 +240,7 @@ kdf_group HPKE_KDF {
     kdf L_sched_export_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), export_kdf_info()
         -> strict nonce
 
-} // end kdf_group HPKE_KDF
+} // end kdf_scope HPKE_KDF
 
 
 /* Corruption scenario we model for HPKE. */

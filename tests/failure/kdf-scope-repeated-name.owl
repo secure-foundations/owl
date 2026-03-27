@@ -5,7 +5,7 @@ name alice1 : nonce @ alice
 name alice2 : nonce @ alice
 name alice3 : nonce @ alice
 
-kdf_group G {
+kdf_scope G {
     name alice1 : kdfkey @ alice // SHOULD FAIL: identifier reused
 
     name k : kdfkey @ alice, bob

@@ -208,25 +208,25 @@ instance OwlPretty KDFOutputSpec where
         hsep $ intersperse (owlpretty " ||") $
         map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts
 
-instance OwlPretty KDFGroupRuleBody where
+instance OwlPretty KDFScopeRuleBody where
     owlpretty body =
-        let (KDFGroupRuleBody wh salt ikm info out) = body
+        let (KDFScopeRuleBody wh salt ikm info out) = body
             pikmList = hsep $ intersperse (owlpretty " ++") $ map owlpretty ikm
         in
         owlpretty salt <> owlpretty ", " <> pikmList <> owlpretty ", " <> owlpretty info
         <> owlpretty " -> " <> owlpretty out
 
-instance OwlPretty KDFGroupRuleX where
+instance OwlPretty KDFScopeRuleX where
     owlpretty rule =
-        let kw     = if _kgrIsODH rule then owlpretty "odh" else owlpretty "kdf"
-            lbl    = owlpretty (_kgrLabel rule)
-            ((idxs, fargs), body) = unsafeUnbind (_kgrBody rule)
+        let kw     = if _ksrIsODH rule then owlpretty "odh" else owlpretty "kdf"
+            lbl    = owlpretty (_ksrLabel rule)
+            ((idxs, fargs), body) = unsafeUnbind (_ksrBody rule)
             pidxs  = owlprettyIdxBindsPair idxs
             pfargs | null fargs = mempty
                    | otherwise  = owlpretty "(" <>
                                   hsep (intersperse (owlpretty ",") $ map owlpretty fargs) <>
                                   owlpretty ")"
-            wh     = case _kgrbWhere body of
+            wh     = case _ksrbWhere body of
                          Spanned _ PTrue -> mempty
                          p               -> owlpretty " where " <> owlpretty p
         in
@@ -240,28 +240,28 @@ owlprettyIdxBindsPair (xs, ys) =
     (if null ys then mempty else owlpretty "@" <> hsep (intersperse (owlpretty ",") $ map owlpretty ys)) <>
     owlpretty ">"
 
-instance OwlPretty KDFGroupEntryX where
-    owlpretty (KGEDHName n b) =
+instance OwlPretty KDFScopeEntryX where
+    owlpretty (KSEDHName n b) =
         let (idxs, loc) = unsafeUnbind b in
         owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
         <> owlpretty " : DH @ " <> owlpretty loc
-    owlpretty (KGEKdfKey n b) =
+    owlpretty (KSEKdfKey n b) =
         let (idxs, locs) = unsafeUnbind b in
         owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
         <> owlpretty " : kdfkey @ " <> mconcat (intersperse (owlpretty ", ") (map owlpretty locs))
-    owlpretty (KGENameType n b) =
+    owlpretty (KSENameType n b) =
         let ((idxs, dvars), _) = unsafeUnbind b in
         owlpretty "nametype " <> owlpretty n <> owlprettyIdxBindsPair (idxs, [])
         <> owlpretty " : kdfkey"
 
-instance OwlPretty KDFGroupRuleRef where
+instance OwlPretty KDFScopeRuleRef where
     owlpretty ref =
-        let pargs | null (_kgrrArgs ref) = mempty
+        let pargs | null (_ksrrArgs ref) = mempty
                   | otherwise = owlpretty "(" <>
-                                hsep (intersperse (owlpretty ",") $ map owlpretty (_kgrrArgs ref)) <>
+                                hsep (intersperse (owlpretty ",") $ map owlpretty (_ksrrArgs ref)) <>
                                 owlpretty ")"
-        in owlpretty (_kgrrLabel ref) <>
-           owlprettyIdxParams (_kgrrIdxs ref) <> pargs
+        in owlpretty (_ksrrLabel ref) <>
+           owlprettyIdxParams (_ksrrIdxs ref) <> pargs
 
 instance  OwlPretty PropX where
     owlpretty PTrue = owlpretty "true"

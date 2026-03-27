@@ -2,7 +2,7 @@
 
 locality alice
 
-kdf_group G {
+kdf_scope G {
     name A<i> : DH @ alice
     name B<i> : DH @ alice
     name C1 : kdfkey @ alice

@@ -3,11 +3,11 @@ locality alice
 name d : nonce @ alice
 
 // G2 must come first so Y is in scope during path resolution of G1's rules
-kdf_group G2 {
+kdf_scope G2 {
     name Y : DH @ alice
 }
 
-kdf_group G1 {
+kdf_scope G1 {
     name X : DH @ alice
 
     // SHOULD FAIL: Y is a DH key from G2, not G1.

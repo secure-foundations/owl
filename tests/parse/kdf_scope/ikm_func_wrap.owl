@@ -9,7 +9,7 @@ func g arity 0
 func h() = 0x12345678
 func lbl_ikm arity 3
 
-kdf_group G {
+kdf_scope G {
     name A : DH @ alice
     name B : DH @ bob
     name C : DH @ alice

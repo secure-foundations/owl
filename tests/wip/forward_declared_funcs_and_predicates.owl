@@ -9,7 +9,7 @@ func mac1() = "mac1----"
 counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
 
-kdf_group G {
+kdf_scope G {
     // Ephemeral Diffie-Hellman keys
     name E_init<i@n> : DH @ Initiator<n>
     name E_resp<j@m> : DH @ Responder<m>

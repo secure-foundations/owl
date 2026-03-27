@@ -1,6 +1,6 @@
 locality alice
 
-kdf_group G {
+kdf_scope G {
     name C1 : kdfkey @ alice
 
     kdf L: 0x, C1, 0x -> strict kdfkey

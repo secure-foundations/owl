@@ -4,7 +4,7 @@ locality bob
 
 name d : nonce @ alice
 
-kdf_group G {
+kdf_scope G {
     name X : DH @ alice
     name Y : DH @ bob
     odh L : 0x, dh_combine(X,Y), 0x -> enckey Name(d)

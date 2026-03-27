@@ -1,6 +1,6 @@
 include "ke.owli"
 
-kdf_group G {
+kdf_scope G {
     name S : DH @ Server
     name C : DH @ Client
     odh L : 0x, dh_combine(C, S), 0x -> strict enckey Name(k)

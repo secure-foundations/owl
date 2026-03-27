@@ -111,7 +111,7 @@ counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 //   TK  = KDF(C7,  0x,                              0x)   [kdf L7]
 // =====================================================================
 
-kdf_group WG_KDF {
+kdf_scope WG_KDF {
 
     // Ephemeral Diffie-Hellman keys
     name E_init<i@n> : DH @ Initiator<n>
@@ -255,7 +255,7 @@ kdf_group WG_KDF {
         strict transp_key_init_send_corr ||
         strict transp_key_resp_send_corr
 
-} // end kdf_group WG_KDF
+} // end kdf_scope WG_KDF
 
 
 // =====================================================================

@@ -93,7 +93,7 @@ input inp in
      pcase (is_s_init[msg1_ephemeral]) when (!is_e_init[msg1_ephemeral]) in
         // If so, let it be for initiator n2
         choose_idx n2 | msg1_ephemeral == dhpk(get(WG_KDF.S_init<@n2>)) in
-     // C1 is publicly computable; no kdf_group rule needed, use unlabeled kdf
+     // C1 is publicly computable; no kdf_scope rule needed, use unlabeled kdf
      let C1 = kdf<;kdfkey;0>(C0, msg1_ephemeral, 0x) in
      let ghost c1_ghost = gkdf<kdfkey; 0>(C0, msg1_ephemeral, 0x) in
      let H2 = crh(H1 ++ msg1_ephemeral) in

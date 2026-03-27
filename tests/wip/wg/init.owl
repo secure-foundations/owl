@@ -45,7 +45,7 @@ def init_stage1<i@n,m>
     let H0 = crh(C0 ++ identifier()) in
     let H1 = crh(H0 ++ dhpk_S_resp) in
     let e_init = dhpk(get(WG_KDF.E_init<i@n>)) in
-    // C1 is publicly computable; no kdf_group rule needed, use unlabeled kdf
+    // C1 is publicly computable; no kdf_scope rule needed, use unlabeled kdf
     let C1 = kdf<;kdfkey;0>(C0, e_init, 0x) in
     let H2 = crh(H1 ++ e_init) in
     let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(WG_KDF.E_init<i@n>)) in

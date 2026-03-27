@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _kdfGroups :: Map String KDFGroupDef,
+    _kdfScopes :: Map String KDFScopeDef,
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -149,15 +149,15 @@ data ModBody = ModBody {
 }
     deriving (Show, Generic, Typeable)
 
-data KDFGroupDef = KDFGroupDef {
-    _kgdRules    :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody),
-    _kgdOdhPairs :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+data KDFScopeDef = KDFScopeDef {
+    _ksdRules    :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody),
+    _ksdOdhPairs :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
 }
     deriving (Show, Generic, Typeable)
 
-instance Alpha KDFGroupDef
-instance Subst ResolvedPath KDFGroupDef
-instance Subst Idx KDFGroupDef
+instance Alpha KDFScopeDef
+instance Subst ResolvedPath KDFScopeDef
+instance Subst Idx KDFScopeDef
 
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
@@ -287,7 +287,7 @@ makeLenses ''MemoEntry
 makeLenses ''Env
 
 makeLenses ''ModBody
-makeLenses ''KDFGroupDef
+makeLenses ''KDFScopeDef
 
 modDefKind :: ModDef -> Check' senv IsModuleType
 modDefKind (MBody xd) =
@@ -704,18 +704,18 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
              KDFName nks j ib ref -> do
-                 mBody <- lookupKDFGroupRule (_kgrrLabel ref) (_kgrrIdxs ref) (_kgrrArgs ref)
+                 mBody <- lookupKDFScopeRule (_ksrrLabel ref) (_ksrrIdxs ref) (_ksrrArgs ref)
                  case mBody of
-                   Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _kgrrLabel ref
+                   Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _ksrrLabel ref
                    Just body -> do
-                     let KDFOutputSpec outputs = _kgrbOutput body
+                     let KDFOutputSpec outputs = _ksrbOutput body
                      unless (unignore ib) $ do
-                         assert ("KDF name kinds length mismatch for rule " ++ _kgrrLabel ref ++
+                         assert ("KDF name kinds length mismatch for rule " ++ _ksrrLabel ref ++
                                  ": annotation has " ++ show (length nks) ++
                                  " output(s), rule declares " ++ show (length outputs))
                                 (length nks == length outputs)
                          expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
-                         assert ("KDF name kinds mismatch for rule " ++ _kgrrLabel ref ++
+                         assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel ref ++
                                  ": annotation has " ++ show (owlpretty (NameKindRow nks)) ++
                                  ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
                                 (nks == expectedNks)
@@ -732,12 +732,12 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-lookupKDFGroupRule :: String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFGroupRuleBody)
-lookupKDFGroupRule lbl (vs1, vs2) actuals = do
-    kgs <- view (curMod . kdfGroups)
+lookupKDFScopeRule :: String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFScopeRuleBody)
+lookupKDFScopeRule lbl (vs1, vs2) actuals = do
+    kgs <- view (curMod . kdfScopes)
     let findInGroups [] = return Nothing
         findInGroups ((_, gdef):rest) =
-            case lookup lbl (gdef^.kgdRules) of
+            case lookup lbl (gdef^.ksdRules) of
               Nothing -> findInGroups rest
               Just bRule -> do
                   (((is1, is2), dvars), body) <- unbind bRule

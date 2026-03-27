@@ -130,9 +130,9 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
 
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
-    | KDFName [NameKind] Int (Ignore Bool) KDFGroupRuleRef
+    | KDFName [NameKind] Int (Ignore Bool) KDFScopeRuleRef
            -- Ignore Bool is whether we trust that the name is well-formed
-           -- KDFGroupRuleRef identifies the kdf_group rule that produced this name
+           -- KDFScopeRuleRef identifies the kdf_scope rule that produced this name
     deriving (Show, Generic, Typeable)
 
 
@@ -315,7 +315,7 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
--- New kdf_group AST types
+-- New kdf_scope AST types
 
 data IKMAtom
     = IKMPublicExpr AExpr          -- hex const, dhpk(N), public func(...)
@@ -335,34 +335,34 @@ data InfoExpr
 data KDFOutputSpec = KDFOutputSpec [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
 
-data KDFGroupRuleBody = KDFGroupRuleBody {
-    _kgrbWhere  :: Prop,        -- PTrue when no where clause
-    _kgrbSalt   :: SaltExpr,
-    _kgrbIkm    :: [IKMAtom],
-    _kgrbInfo   :: InfoExpr,
-    _kgrbOutput :: KDFOutputSpec
+data KDFScopeRuleBody = KDFScopeRuleBody {
+    _ksrbWhere  :: Prop,        -- PTrue when no where clause
+    _ksrbSalt   :: SaltExpr,
+    _ksrbIkm    :: [IKMAtom],
+    _ksrbInfo   :: InfoExpr,
+    _ksrbOutput :: KDFOutputSpec
 } deriving (Show, Generic, Typeable)
 
-data KDFGroupRuleX = KDFGroupRule {
-    _kgrIsODH :: Bool,
-    _kgrLabel :: String,
-    _kgrBody  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFGroupRuleBody
+data KDFScopeRuleX = KDFScopeRule {
+    _ksrIsODH :: Bool,
+    _ksrLabel :: String,
+    _ksrBody  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody
 } deriving (Show, Generic, Typeable)
 
-type KDFGroupRule = Spanned KDFGroupRuleX
+type KDFScopeRule = Spanned KDFScopeRuleX
 
-data KDFGroupEntryX
-    = KGEDHName   String (Bind ([IdxVar], [IdxVar]) Locality)
-    | KGEKdfKey   String (Bind ([IdxVar], [IdxVar]) [Locality])
-    | KGENameType String (Bind ([IdxVar], [IdxVar]) ())
+data KDFScopeEntryX
+    = KSEDHName   String (Bind ([IdxVar], [IdxVar]) Locality)
+    | KSEKdfKey   String (Bind ([IdxVar], [IdxVar]) [Locality])
+    | KSENameType String (Bind ([IdxVar], [IdxVar]) ())
     deriving (Show, Generic, Typeable)
 
-type KDFGroupEntry = Spanned KDFGroupEntryX
+type KDFScopeEntry = Spanned KDFScopeEntryX
 
-data KDFGroupRuleRef = KDFGroupRuleRef {
-    _kgrrLabel :: String,
-    _kgrrIdxs  :: ([Idx], [Idx]),
-    _kgrrArgs  :: [AExpr]
+data KDFScopeRuleRef = KDFScopeRuleRef {
+    _ksrrLabel :: String,
+    _ksrrIdxs  :: ([Idx], [Idx]),
+    _ksrrArgs  :: [AExpr]
 } deriving (Show, Generic, Typeable)
 
 -- Decls are surface syntax
@@ -388,7 +388,7 @@ data DeclX =
     | DeclCorrGroup (Bind ([IdxVar], [DataVar]) [Label])
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp)
-    | DeclKDFGroup String [KDFGroupEntry] [KDFGroupRule]
+    | DeclKDFScope String [KDFScopeEntry] [KDFScopeRule]
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -478,7 +478,7 @@ data ExprX =
 type Expr = Spanned ExprX
 
 data CryptOp =
-      CKDF [KDFGroupRuleRef] [NameKind] Int
+      CKDF [KDFScopeRuleRef] [NameKind] Int
       | CLemma BuiltinLemma
       | CAEnc 
       | CADec 
@@ -530,9 +530,9 @@ data FuncParam =
       deriving (Show, Generic, Typeable)
 
 
-makeLenses ''KDFGroupRuleBody
-makeLenses ''KDFGroupRuleX
-makeLenses ''KDFGroupRuleRef
+makeLenses ''KDFScopeRuleBody
+makeLenses ''KDFScopeRuleX
+makeLenses ''KDFScopeRuleRef
 
 -- LocallyNameless instances
 
@@ -612,25 +612,25 @@ instance Subst Idx KDFOutputSpec
 instance Subst AExpr KDFOutputSpec
 instance Subst ResolvedPath KDFOutputSpec
 
-instance Alpha KDFGroupRuleBody
-instance Subst Idx KDFGroupRuleBody
-instance Subst AExpr KDFGroupRuleBody
-instance Subst ResolvedPath KDFGroupRuleBody
+instance Alpha KDFScopeRuleBody
+instance Subst Idx KDFScopeRuleBody
+instance Subst AExpr KDFScopeRuleBody
+instance Subst ResolvedPath KDFScopeRuleBody
 
-instance Alpha KDFGroupRuleX
-instance Subst Idx KDFGroupRuleX
-instance Subst AExpr KDFGroupRuleX
-instance Subst ResolvedPath KDFGroupRuleX
+instance Alpha KDFScopeRuleX
+instance Subst Idx KDFScopeRuleX
+instance Subst AExpr KDFScopeRuleX
+instance Subst ResolvedPath KDFScopeRuleX
 
-instance Alpha KDFGroupEntryX
-instance Subst Idx KDFGroupEntryX
-instance Subst AExpr KDFGroupEntryX
-instance Subst ResolvedPath KDFGroupEntryX
+instance Alpha KDFScopeEntryX
+instance Subst Idx KDFScopeEntryX
+instance Subst AExpr KDFScopeEntryX
+instance Subst ResolvedPath KDFScopeEntryX
 
-instance Alpha KDFGroupRuleRef
-instance Subst Idx KDFGroupRuleRef
-instance Subst AExpr KDFGroupRuleRef
-instance Subst ResolvedPath KDFGroupRuleRef
+instance Alpha KDFScopeRuleRef
+instance Subst Idx KDFScopeRuleRef
+instance Subst AExpr KDFScopeRuleRef
+instance Subst ResolvedPath KDFScopeRuleRef
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX
