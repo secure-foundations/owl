@@ -3030,6 +3030,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           nt <- getNameType n
           assert ("Name parameter to cross_dh_lemma must be a DH name") $ (nt^.val) `aeq` NT_DH
           -- TODO: reimplement cross_dh_lemma using kdf_scope rules (deferred)
+          liftIO $ putStrLn "TODO: reimplement cross_dh_lemma using kdf_scope rules (deferred)"
           return $ tLemma pTrue
       CLemma (LemmaConstant)  -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
@@ -3039,28 +3040,18 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let b = isConstant x''
           assert ("Argument is not a constant: " ++ show (owlpretty x'')) b
           return $ tRefined tUnit "._" $ mkSpanned $ PIsConstant x''
--- For CKDF:
---  0. Ensure that info is public
---  1. For the salt:
---      - Ensure it matches a secret, or is public
---  2. For the IKM:
---      - Split it into components
---      - For each component, ensure it matches a secret, or is public
---  3. Collect the secret ann's, make sure they are consistent
-      -- oann1: which case of the kdf to use for kdfkey in salt position
-      -- oann2: which case of the kdf to use for kdfkey in ikm position (also for odh name in ikm position)
       CKDF hints nks j -> do
           assert ("KDF must take three arguments") $ length args == 3
           let [(saltE, saltT), (ikmE, ikmT), (infoE, infoT)] = args
           saltE' <- resolveANF saltE
           ikmE' <- resolveANF ikmE
           infoE' <- resolveANF infoE
-          results <- catMaybes <$> mapM (\h -> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
+          resultsWithHints <- catMaybes <$> mapM (\h -> fmap (\t -> (h, t)) <$> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
           let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j
           let kdfRefinement t = tRefined t ".res" $
                 pAnd (pEq (aeLength (aeVar ".res")) outLen) kdfProp
-          case results of
+          case resultsWithHints of
             [] -> do
                 bSalt <- tyFlowsTo saltT advLbl
                 bIkm  <- tyFlowsTo ikmT  advLbl
@@ -3072,7 +3063,10 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                         nonPublicArg ++ " argument cannot be proven public")
                        (bSalt && bIkm && bInfo)
                 return $ kdfRefinement (tData advLbl advLbl)
-            (t:_) -> return $ kdfRefinement t
+            [(_, t)] -> return $ kdfRefinement t
+            matched ->
+                typeError ("Ambiguous KDF call: multiple hints matched: " ++
+                           L.intercalate ", " (map (_ksrrLabel . fst) matched))
       CAEnc -> do
           assert ("Wrong number of arguments to encryption") $ length args == 2
           let [(_, t1), (x, t)] = args
