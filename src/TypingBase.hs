@@ -1389,6 +1389,10 @@ collectEnvAxioms f = do
 collectNameDefs :: Check' senv (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef))
 collectNameDefs = collectEnvInfo (_nameDefs)
 
+collectKDFScopeRules :: Check' senv [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
+collectKDFScopeRules = collectEnvAxioms $ \mb ->
+    concatMap (\(_, gdef) -> _ksdRules gdef) (_kdfScopes mb)
+
 collectFlowAxioms :: Check' senv ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
 

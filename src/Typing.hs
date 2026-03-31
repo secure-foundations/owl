@@ -1448,9 +1448,15 @@ checkDecl d cont = withSpan (d^.spanOf) $
                   validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames r
                   processRules rs accRules' accOdh'
           registerEntries entries $ do
-              (ruleMap, odhPairs) <- processRules rules [] []
-              let gdef = KDFScopeDef ruleMap odhPairs
-              local (over (curMod . kdfScopes) $ insert groupName gdef) cont
+              -- Pre-populate kdfScopes with all rule bindings before validation,
+              -- so that SMT preludes built during processRules (e.g. for
+              -- ensureSIIDisjoint) include %kdf_L declarations for any KDFName
+              -- references appearing in rule salt/ikm.
+              let ruleMap0 = foldl (\acc r -> insert (_ksrLabel (r^.val)) (_ksrBody (r^.val)) acc) [] rules
+              local (over (curMod . kdfScopes) $ insert groupName (KDFScopeDef ruleMap0 [])) $ do
+                  (ruleMap, odhPairs) <- processRules rules [] []
+                  let gdef = KDFScopeDef ruleMap odhPairs
+                  local (over (curMod . kdfScopes) $ insert groupName gdef) cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of

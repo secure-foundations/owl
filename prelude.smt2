@@ -330,7 +330,6 @@
 ; intersect. For soundness, this set must have measure zero
 
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
-(declare-fun KDFName (Int Int) Name)
 
 (assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
     (=>
