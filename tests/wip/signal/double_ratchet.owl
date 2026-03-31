@@ -40,7 +40,7 @@ nametype mb3_enc = st_aead Name(mb3)
       aad x. (x == dhpk(get(ae3)) ++ dhpk(get(long_skA)))
       nonce N_c_alice
 
-nametype mb3_corr = st_aead (x: Data<adv>{False})
+nametype mb3_corr = st_aead (x: Name(mb3){False})
       aad x. True
       nonce N_c_alice
 
@@ -54,7 +54,7 @@ nametype r3 = kdf { ikm info.
 }
 
 nametype r3_corr = kdf { ikm info. 
-  True -> strict nonce /* TODO: r4 */ || strict nonce /* TODO: mb4_enc */
+  True -> strict nonce /* TODO: r4_corr */ || strict nonce /* TODO: mb4_enc */
 }
 
 // ---------- DOUBLE RATCHET ROUND 2 ------------
@@ -88,6 +88,27 @@ odh LR2 : be3, ae3 ->
               strict mb3_enc
  }
 
+// kdf_scope SignalRatchet {
+
+//   name alice_dh<i> : DH @ alice
+//   name bob_dh<i> : DH @ bob
+
+//   rec(i) odh ratchet<i> : 
+//     | i = 0 : something_from_the_handshake, dh_combine(alice_dh<0>, bob_dh<0>) -> strict ratchet<1> || strict mb1_enc
+//     | KDF<ratchet<i-1>;kdfkey;0> , dh_combine(alice_dh<i>, bob_dh<i>) ->
+//                 strict ratchet<i+1>
+//                 || 
+//                 strict mb<i+1>_enc
+
+
+
+// }
+
+
+// def bob_round<i>(state<i>: ...) : state<i+1> =
+//   send || recv;
+//   re-ratchet
+
 
 // ----------- DOUBLE RATCHET ROUND 1 ------------
 // Double ratchet round 1 is encoded in the handshake
@@ -95,11 +116,11 @@ odh LR2 : be3, ae3 ->
 // This is the output of the X3DH handshake, which is the input to the first round
 // of double ratchet
 name r1 : kdf { ikm info. 
-  info == dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2 || strict mb2_enc,
-  info != dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2_corr || strict mb2_corr
+  ikm == dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2 || strict mb2_enc,
+  ikm != dh_combine(dhpk(get(ae2)), get(be2)) -> strict r2_corr || strict mb2_corr
 }
 
-odh LR1 : be2, ae2 ->
+odh LR1 : ae2, be2 ->
  {salt info self.
       True -> strict r2
               || 
@@ -116,22 +137,72 @@ corr [long_skA] ==> [r1]
 corr [long_skB] ==> [r1]
 
 
-corr [ae2] /\ [long_skA] ==> [mb2]
-corr [be2] /\ [long_skB] ==> [mb2]
+// corr [ae2] /\ [long_skA] ==> [mb2]
+// corr [be2] /\ [long_skB] ==> [mb2]
 
-corr [r1] ==> [mb2]
+corr [r1] /\ [ae2] /\ [be2] ==> [mb2]
+// corr [r1] /\ [be2] ==> [mb2]
+
+// corr [ae2] ==> [be2]
+// corr [be2] ==> [ae2]
+// These are used to express that dh_combine is public if EITHER input name is public
+// Owl doesn't always derive this if it can't syntactically infer the dh_combine args
+// to be dhpk and name
+corr [r1] /\ [ae2] ==> [be2] // TODO: this is too strong
+corr [r1] /\ [be2] ==> [ae2] // TODO: this is too strong
 
 // ------------ Cleanliness predicates ------------
 
 predicate bob_good() = sec(long_skB) \/ sec(long_skA)
 
 
+struct bob_message1 {
+  _b5: dhpk(be2),
+  _b6: Data<adv>
+}
 
+
+
+def alice_recv_round_2(
+  ra1: if bob_good[] then Name(r1) else Data<adv> ||kdfkey||, 
+  b3: if bob_good[] then dhpk(long_skB) else Data<adv> ||group||
+) @ alice: Option Unit = 
+  input i2, _ in
+  parse i2 as bob_message1(gbe2, a6) in {
+    // b5 -> gbe2, b6 -> x2
+    guard is_group_elem(gbe2) in
+    pcase sec(r1) in
+    pcase bob_good[] in
+    pcase sec(ae2) in
+    pcase sec(be2) in
+    pcase sec(mb2) in
+    pcase sec(long_skA) in
+    pcase sec(long_skB) in
+    pcase b3 == dhpk(get(long_skB)) in
+    pcase gbe2 == dhpk(get(be2)) in
+    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
+    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
+    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
+    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
+    cross_dh_lemma<ae2>(gbe2);
+    false_elim in
+
+    let ra2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(ra1, dh_combine(gbe2, get(ae2)), 0x) in 
+    let ca2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(ra1, dh_combine(gbe2, get(ae2)), 0x) in 
+
+    let N_c = get_counter N_c_alice in
+    case st_aead_dec(ca2, a6, gbe2 ++ b3, N_c) {
+      | None => None()
+      | Some mb2 => 
+      // some good stuff happens here
+      Some(())
+    }
+  } otherwise None()
 
 
 def bob_send_round_2(
-  rb1: if bob_good[] then Name(r1) else Data<adv>, 
-  gae2: if bob_good[] then dhpk(ae2) else Data<adv> ||group||
+  rb1: if bob_good[] then Name(r1) else Data<adv> ||kdfkey||, 
+  gae2: if bob_good[] then dhpk(ae2) else (x:Data<adv> ||group||{corr(ae2)})
 ) @ bob: Option Unit =
 
 //   pcase bob_good[dh] in
@@ -159,10 +230,18 @@ def bob_send_round_2(
   let gbe2 = dhpk(get(be2)) in 
 
   // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
-
-
-  let rb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(rb1, dh_combine(gae2, get(be2)), 0x) in 
-  let cb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(rb1, dh_combine(gae2, get(be2)), 0x) in 
+  let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else Data<adv> ||group|| = gae2 in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be2)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae3)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be3)), get(be2))) in
+  cross_dh_lemma<be2>(gae2');
+  false_elim in
+  let ss_ae2_be2 = dh_combine(gae2', get(be2)) in
+  debug printTyOf(gae2');
+  debug printTyOf(ss_ae2_be2);
+  let rb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(rb1, ss_ae2_be2, 0x) in 
+  let cb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(rb1, ss_ae2_be2, 0x) in 
   debug "===============================";
   debug printTyOf(rb1);
   debug printTyOf(rb2);
@@ -170,9 +249,9 @@ def bob_send_round_2(
   debug "===============================";
 
   let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
-  output x2 to endpoint(alice);
-//   let b2 = bob_message1(gbe2, x2) in
-//   let _ = output b2 to endpoint(alice) in 
+  // output x2 to endpoint(alice);
+  let b2 = bob_message1(gbe2, x2) in
+  let _ = output b2 to endpoint(alice) in 
   Some(()) // TODO: call bob_double_ratchet_recv here
 
 
