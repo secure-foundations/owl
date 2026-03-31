@@ -150,8 +150,9 @@ data ModBody = ModBody {
     deriving (Show, Generic, Typeable)
 
 data KDFScopeDef = KDFScopeDef {
-    _ksdRules    :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody),
-    _ksdOdhPairs :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+    _ksdRules      :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody),
+    _ksdOdhPairs   :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))],
+    _ksdEntryNames :: [String]   -- names (DH + kdfkey) declared in this scope
 }
     deriving (Show, Generic, Typeable)
 
@@ -750,6 +751,18 @@ lookupKDFScopeRule lbl (vs1, vs2) actuals = do
                            $ substs (zip is1 vs1)
                            $ substs (zip is2 vs2) body
     findInGroups kgs
+
+
+findScopeForLabel :: String -> Check' senv (Maybe (String, KDFScopeDef))
+findScopeForLabel lbl = do
+    kgs <- view (curMod . kdfScopes)
+    return $ go kgs
+  where
+    go [] = Nothing
+    go ((gname, gdef):rest) =
+        case lookup lbl (_ksdRules gdef) of
+          Just _  -> Just (gname, gdef)
+          Nothing -> go rest
 
 
 getNameKind :: NameType -> Check' senv NameKind

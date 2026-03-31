@@ -749,3 +749,11 @@ mkExistsIdx :: [IdxVar] -> Prop -> Prop
 mkExistsIdx [] p = p
 mkExistsIdx (x:xs) p = mkSpanned $ PQuantIdx Exists (ignore $ show x) $ bind x $ mkExistsIdx xs p
 
+mkForallBv :: [DataVar] -> Prop -> Prop
+mkForallBv [] p = p
+mkForallBv (x:xs) p = mkSpanned $ PQuantBV Forall (ignore $ show x) $ bind x $ mkForallBv xs p
+
+mkExistsBv :: [DataVar] -> Prop -> Prop
+mkExistsBv [] p = p
+mkExistsBv (x:xs) p = mkSpanned $ PQuantBV Exists (ignore $ show x) $ bind x $ mkExistsBv xs p
+
