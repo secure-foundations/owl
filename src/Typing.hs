@@ -1149,11 +1149,10 @@ ikmEqProp as bs
             _                  -> Nothing
     step _ _ = Nothing
 
-validateKDFScopeRule :: String -> [String] -> [String] -> KDFScopeRule -> Check ()
-validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames rule =
-    withSpan (rule^.spanOf) $ do
-        (((is1, is2), dvars), body) <- unbind (_ksrBody (rule^.val))
-        let lbl = _ksrLabel (rule^.val)
+validateKDFScopeRule :: String -> [String] -> [String] -> KDFScopeRuleX -> Check ()
+validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
+        (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
+        let lbl = _ksrLabel ruleX
         let saltHasGroupKdfKey = case _ksrbSalt body of
               SaltName ne -> case ne^.val of
                   NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
@@ -1406,58 +1405,72 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
-      DeclKDFScope groupName entries rules -> do
-          -- Collect entry name sets for validation
-          let kdfKeyEntryNames = [n | e <- entries, n <- case e^.val of
-                                          KSEKdfKey n _ -> [n]; _ -> []]
-          let dhEntryNames     = [n | e <- entries, n <- case e^.val of
-                                          KSEDHName n _ -> [n]; _ -> []]
+      DeclKDFRule _ ->
+          typeError "kdf/odh rules must appear inside a kdf_scope block"
+      DeclKDFScope groupName innerDecls -> do
+          -- Phase 1: validate inner decls and collect metadata
+          forM_ innerDecls $ \innerD -> withSpan (innerD^.spanOf) $ case innerD^.val of
+              DeclLocality{}  -> typeError "locality declarations not allowed inside kdf_scope"
+              DeclModule{}    -> typeError "module declarations not allowed inside kdf_scope"
+              DeclInclude{}   -> typeError "include statements not allowed inside kdf_scope"
+              DeclKDFScope{}  -> typeError "nested kdf_scope blocks not allowed"
+              DeclDef{}       -> typeError "def declarations not allowed inside kdf_scope"
+              DeclDefHeader{} -> typeError "def header declarations not allowed inside kdf_scope"
+              DeclName n o -> do
+                  let (_, ndecl) = unsafeUnbind o
+                  case ndecl of
+                      DeclBaseName nt _ -> case nt^.val of
+                          NT_DH  -> return ()
+                          NT_KDF -> return ()
+                          _      -> typeError $ "Only DH and kdfkey names are allowed in kdf_scope (bad type for '" ++ n ++ "')"
+                      DeclAbstractName -> typeError $ "Abstract name declarations not allowed in kdf_scope: " ++ n
+                      DeclAbbrev _     -> typeError $ "Name abbreviations not allowed in kdf_scope: " ++ n
+              _ -> return ()
+          -- Collect entry names for rule validation
+          let extractBaseName o = case snd (unsafeUnbind o) of
+                  DeclBaseName nt _ -> Just nt
+                  _                 -> Nothing
+          let kdfKeyEntryNames =
+                [ n | innerD <- innerDecls
+                    , DeclName n o <- [innerD^.val]
+                    , Just nt <- [extractBaseName o]
+                    , NT_KDF <- [nt^.val] ]
+          let dhEntryNames =
+                [ n | innerD <- innerDecls
+                    , DeclName n o <- [innerD^.val]
+                    , Just nt <- [extractBaseName o]
+                    , NT_DH <- [nt^.val] ]
           let allEntryNames = kdfKeyEntryNames ++ dhEntryNames
-          -- Register entries
-          let registerEntries [] k = k
-              registerEntries (e:es) k = case e^.val of
-                KSEDHName n b -> withSpan (e^.spanOf) $ do
-                    ((is1, is2), loc) <- unbind b
-                    addNameDef n (is1, is2) (mkSpanned NT_DH, [loc]) $
-                        registerEntries es k
-                KSEKdfKey n b -> withSpan (e^.spanOf) $ do
-                    ((is1, is2), locs) <- unbind b
-                    addNameDef n (is1, is2) (mkSpanned NT_KDF, locs) $
-                        registerEntries es k
-                KSENameType n b -> withSpan (e^.spanOf) $ do
-                    ((is1, is2), ()) <- unbind b
-                    let bnt = bind ((is1, is2), []) (mkSpanned NT_KDF)
-                    local (over (curMod . nameTypeDefs) $ insert n bnt) $
-                        registerEntries es k
-          -- Process rules: build the KDFScopeDef and store it
-          let processRules [] accRules accOdh = return (accRules, accOdh)
-              processRules (r:rs) accRules accOdh = do
-                  (((is1, is2), dvars), body) <- unbind (_ksrBody (r^.val))
-                  let lbl   = _ksrLabel (r^.val)
-                  let bRule = _ksrBody  (r^.val)
-                  let accRules' = insert lbl bRule accRules
-                  withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                               map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
-                      withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) dvars) $ do
-                          ensureSIIDisjoint groupName lbl body accRules
-                          let dhPairs = [(ne1, ne2) | IKMDhCombine ne1 ne2 <- _ksrbIkm body]
-                          forM_ dhPairs $ \(ne1, ne2) ->
-                              ensureOdhPairDisjoint groupName ne1 ne2 accOdh
-                  let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
-                                    | IKMDhCombine ne1 ne2 <- _ksrbIkm body ]
-                  let accOdh' = accOdh ++ newOdhPairs
-                  validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames r
-                  processRules rs accRules' accOdh'
-          registerEntries entries $ do
-              -- Pre-populate kdfScopes with all rule bindings before validation,
-              -- so that SMT preludes built during processRules (e.g. for
-              -- ensureSIIDisjoint) include %kdf_L declarations for any KDFName
-              -- references appearing in rule salt/ikm.
-              let ruleMap0 = foldl (\acc r -> insert (_ksrLabel (r^.val)) (_ksrBody (r^.val)) acc) [] rules
-              local (over (curMod . kdfScopes) $ insert groupName (KDFScopeDef ruleMap0 [] allEntryNames)) $ do
-                  (ruleMap, odhPairs) <- processRules rules [] []
-                  let gdef = KDFScopeDef ruleMap odhPairs allEntryNames
-                  local (over (curMod . kdfScopes) $ insert groupName gdef) cont
+          -- Pre-populate kdfScopes with all rule bindings before any processing,
+          -- so that SMT preludes built during rule validation include %kdf_L
+          -- declarations for any KDFName references appearing in rule salt/ikm.
+          let rulesFromDecls = [ ruleX | innerD <- innerDecls, DeclKDFRule ruleX <- [innerD^.val] ]
+          let ruleMap0 = foldl (\acc ruleX -> insert (_ksrLabel ruleX) (_ksrBody ruleX) acc) [] rulesFromDecls
+          local (over (curMod . kdfScopes) $ insert groupName (KDFScopeDef ruleMap0 [] allEntryNames)) $ do
+              -- Phase 2: process inner decls CPS-style, accumulating KDF rule info
+              let go [] accRules accOdh k = do
+                      let gdef = KDFScopeDef accRules accOdh allEntryNames
+                      local (over (curMod . kdfScopes) $ insert groupName gdef) k
+                  go (innerD:ds) accRules accOdh k = case innerD^.val of
+                      DeclKDFRule ruleX -> withSpan (innerD^.spanOf) $ do
+                          (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
+                          let lbl   = _ksrLabel ruleX
+                          let bRule = _ksrBody  ruleX
+                          let accRules' = insert lbl bRule accRules
+                          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                                       map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+                              withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
+                                  ensureSIIDisjoint groupName lbl body accRules
+                                  let dhPairs = [(ne1, ne2) | IKMDhCombine ne1 ne2 <- _ksrbIkm body]
+                                  forM_ dhPairs $ \(ne1, ne2) ->
+                                      ensureOdhPairDisjoint groupName ne1 ne2 accOdh
+                          let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
+                                            | IKMDhCombine ne1 ne2 <- _ksrbIkm body ]
+                          let accOdh' = accOdh ++ newOdhPairs
+                          validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX
+                          go ds accRules' accOdh' k
+                      _ -> checkDecl innerD (go ds accRules accOdh k)
+              go innerDecls [] [] cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of

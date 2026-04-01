@@ -351,14 +351,6 @@ data KDFScopeRuleX = KDFScopeRule {
 
 type KDFScopeRule = Spanned KDFScopeRuleX
 
-data KDFScopeEntryX
-    = KSEDHName   String (Bind ([IdxVar], [IdxVar]) Locality)
-    | KSEKdfKey   String (Bind ([IdxVar], [IdxVar]) [Locality])
-    | KSENameType String (Bind ([IdxVar], [IdxVar]) ())
-    deriving (Show, Generic, Typeable)
-
-type KDFScopeEntry = Spanned KDFScopeEntryX
-
 data KDFScopeRuleRef = KDFScopeRuleRef {
     _ksrrLabel :: String,
     _ksrrIdxs  :: ([Idx], [Idx]),
@@ -388,7 +380,8 @@ data DeclX =
     | DeclCorrGroup (Bind ([IdxVar], [DataVar]) [Label])
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp)
-    | DeclKDFScope String [KDFScopeEntry] [KDFScopeRule]
+    | DeclKDFScope String [Decl]
+    | DeclKDFRule KDFScopeRuleX
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -621,11 +614,6 @@ instance Alpha KDFScopeRuleX
 instance Subst Idx KDFScopeRuleX
 instance Subst AExpr KDFScopeRuleX
 instance Subst ResolvedPath KDFScopeRuleX
-
-instance Alpha KDFScopeEntryX
-instance Subst Idx KDFScopeEntryX
-instance Subst AExpr KDFScopeEntryX
-instance Subst ResolvedPath KDFScopeEntryX
 
 instance Alpha KDFScopeRuleRef
 instance Subst Idx KDFScopeRuleRef

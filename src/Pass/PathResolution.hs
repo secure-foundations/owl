@@ -246,49 +246,19 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclKDFScope s entries rules -> do
-          let pos = d^.spanOf
-          entries' <- mapM (resolveEntry pos) entries
-          p <- view curPath
-          -- Add entry names to the appropriate path maps so rule bodies and
-          -- subsequent declarations can reference them without qualification.
-          let withEntryPaths k = foldr addOne k entries
-              addOne e k = case e^.val of
-                KSEDHName   n _ -> local (over namePaths     $ T.insert n p) k
-                KSEKdfKey   n _ -> local (over namePaths     $ T.insert n p) k
-                KSENameType n _ -> local (over namePaths $ T.insert n p) $ local (over nameTypePaths $ T.insert n p) k
-          rules' <- withEntryPaths $ mapM (resolveRule pos) rules
-          let d' = Spanned pos $ DeclKDFScope s entries' rules'
-          ds' <- withEntryPaths $ local (over defPaths $ T.insert s p) $ resolveDecls ds
+      DeclKDFRule ruleX -> do
+          ruleX' <- resolveKDFRuleX (d^.spanOf) ruleX
+          let d' = Spanned (d^.spanOf) $ DeclKDFRule ruleX'
+          ds' <- resolveDecls ds
           return (d' : ds')
-        where
-          resolveEntry pos e = case e^.val of
-              KSEDHName n b -> do
-                  (ixs, loc) <- unbind b
-                  loc' <- resolveLocality pos loc
-                  return $ Spanned (e^.spanOf) $ KSEDHName n (bind ixs loc')
-              KSEKdfKey n b -> do
-                  (ixs, locs) <- unbind b
-                  locs' <- mapM (resolveLocality pos) locs
-                  return $ Spanned (e^.spanOf) $ KSEKdfKey n (bind ixs locs')
-              _ -> return e
-          resolveSalt _ (SaltName ne)      = SaltName <$> resolveNameExp ne
-          resolveSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
-          resolveIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
-          resolveIKMAtom (IKMDhCombine ne1 ne2) = IKMDhCombine <$> resolveNameExp ne1 <*> resolveNameExp ne2
-          resolveIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
-          resolveInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
-          resolveRule pos rule = do
-              ((idxs, dvars), body) <- unbind (_ksrBody (rule^.val))
-              wh'   <- resolveProp (_ksrbWhere body)
-              salt' <- resolveSalt pos (_ksrbSalt body)
-              ikm'  <- mapM resolveIKMAtom (_ksrbIkm body)
-              info' <- resolveInfo (_ksrbInfo body)
-              let KDFOutputSpec outputs = _ksrbOutput body
-              outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
-              let body' = body { _ksrbWhere = wh', _ksrbSalt = salt', _ksrbIkm = ikm',
-                                 _ksrbInfo = info', _ksrbOutput = KDFOutputSpec outputs' }
-              return $ Spanned (rule^.spanOf) $ (rule^.val) { _ksrBody = bind (idxs, dvars) body' }
+      DeclKDFScope s innerDecls -> do
+          p <- view curPath
+          innerDecls' <- resolveDecls innerDecls
+          let d' = Spanned (d^.spanOf) $ DeclKDFScope s innerDecls'
+          -- Propagate paths from inner decls to subsequent outer decls.
+          -- The scope name itself is NOT added to any path map.
+          ds' <- withDeclPaths innerDecls' p $ resolveDecls ds
+          return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
@@ -331,6 +301,64 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
+
+-- | Propagate path-map additions from a list of (already-resolved) inner
+--   decls to a subsequent computation, so that names declared inside a
+--   kdf_scope are visible to outer declarations.
+withDeclPaths :: [Decl] -> ResolvedPath -> Resolve a -> Resolve a
+withDeclPaths innerDecls p k = foldr (\d -> local (declPathUpdates d p)) k innerDecls
+
+declPathUpdates :: Decl -> ResolvedPath -> ResolveEnv -> ResolveEnv
+declPathUpdates d p = case d^.val of
+    DeclName s _      -> over namePaths (T.insert s p)
+    DeclNameType s _  -> over nameTypePaths (T.insert s p)
+    DeclFun s _       -> over funcPaths (T.insert s p)
+    DeclPredicate s _ -> over predPaths (T.insert s p)
+    DeclDefHeader s _ -> over defPaths (T.insert s p)
+    DeclDef s _       -> over defPaths (T.insert s p)
+    DeclEnum s bnd    ->
+        let (_, vs) = unsafeUnbind bnd
+        in  over tyPaths   (T.insert s p)
+          . over funcPaths (T.insertMany $ map (\(x, _) -> (x, p)) vs)
+          . over funcPaths (T.insertMany $ map (\(x, _) -> (x ++ "?", p)) vs)
+    DeclStruct s bnd  ->
+        let (_, vs) = unsafeUnbind bnd
+        in  over tyPaths   (T.insert s p)
+          . over funcPaths (T.insert s p)
+          . over funcPaths (T.insertMany $ map (\x -> (x, p)) (depBindNames vs))
+    DeclTy s _        -> over tyPaths (T.insert s p)
+    DeclCounter s _   -> over ctrPaths (T.insert s p)
+    DeclDetFunc s _ _ -> over funcPaths (T.insert s p)
+    DeclTable s _ _   -> over tablePaths (T.insert s p)
+    DeclLocality s _  -> over localityPaths (T.insert s p)
+    DeclModule s _ _ _ -> over modPaths (T.insert s (False, p))
+    _                  -> id
+
+-- | Resolve all fields of a KDFScopeRuleX in place.
+resolveKDFRuleX :: Ignore Position -> KDFScopeRuleX -> Resolve KDFScopeRuleX
+resolveKDFRuleX pos ruleX = do
+    ((idxs, dvars), body) <- unbind (_ksrBody ruleX)
+    wh'   <- resolveProp (_ksrbWhere body)
+    salt' <- resolveKDFSalt pos (_ksrbSalt body)
+    ikm'  <- mapM resolveKDFIKMAtom (_ksrbIkm body)
+    info' <- resolveKDFInfo (_ksrbInfo body)
+    let KDFOutputSpec outputs = _ksrbOutput body
+    outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
+    let body' = body { _ksrbWhere = wh', _ksrbSalt = salt', _ksrbIkm = ikm',
+                       _ksrbInfo = info', _ksrbOutput = KDFOutputSpec outputs' }
+    return $ ruleX { _ksrBody = bind (idxs, dvars) body' }
+
+resolveKDFSalt :: Ignore Position -> SaltExpr -> Resolve SaltExpr
+resolveKDFSalt _ (SaltName ne)      = SaltName <$> resolveNameExp ne
+resolveKDFSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
+
+resolveKDFIKMAtom :: IKMAtom -> Resolve IKMAtom
+resolveKDFIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
+resolveKDFIKMAtom (IKMDhCombine ne1 ne2) = IKMDhCombine <$> resolveNameExp ne1 <*> resolveNameExp ne2
+resolveKDFIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
+
+resolveKDFInfo :: InfoExpr -> Resolve InfoExpr
+resolveKDFInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 

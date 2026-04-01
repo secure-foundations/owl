@@ -1,0 +1,12 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL: def declarations not allowed inside kdf_scope
+    def helper() @ alice : Unit = ()
+
+    kdf L1 : k, 0x, 0x01 -> enckey Name(n)
+}

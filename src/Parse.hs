@@ -837,38 +837,6 @@ parseKDFOutputSpec = do
         return (strictness, nt)) `sepBy1` (symbol "||")
     return $ KDFOutputSpec nts
 
-parseKDFScopeEntry :: Parser KDFScopeEntry
-parseKDFScopeEntry = parseSpanned $ do
-    reserved "name"
-    n <- identifier
-    idxs <- parseIdxParamBinds
-    symbol ":"
-    reserved "DH"
-    symbol "@"
-    loc <- parseLocality
-    return $ KSEDHName n $ bind idxs loc
-
-parseKDFScopeEntryKdfKey :: Parser KDFScopeEntry
-parseKDFScopeEntryKdfKey = parseSpanned $ do
-    reserved "name"
-    n <- identifier
-    idxs <- parseIdxParamBinds
-    symbol ":"
-    reserved "kdfkey"
-    symbol "@"
-    locs <- parseLocality `sepBy1` (symbol ",")
-    return $ KSEKdfKey n $ bind idxs locs
-
-parseKDFScopeEntryNameType :: Parser KDFScopeEntry
-parseKDFScopeEntryNameType = parseSpanned $ do
-    reserved "nametype"
-    n <- identifier
-    -- Parse index params: <dataIdxs @ localityIdxs>
-    idxs <- parseIdxParamBinds
-    symbol ":"
-    reserved "kdfkey"
-    return $ KSENameType n $ bind idxs ()
-
 parseKDFRuleFormals :: Parser [DataVar]
 parseKDFRuleFormals =
     option [] $ do
@@ -877,8 +845,8 @@ parseKDFRuleFormals =
         symbol ")"
         return $ map s2n names
 
-parseKDFScopeRule :: Parser KDFScopeRule
-parseKDFScopeRule = parseSpanned $ do
+parseKDFRule :: Parser Decl
+parseKDFRule = parseSpanned $ do
     isODH <- alt (reserved "odh" >> return True) (reserved "kdf" >> return False)
     lbl <- identifier
     idxs <- parseIdxParamBinds
@@ -894,29 +862,22 @@ parseKDFScopeRule = parseSpanned $ do
     symbol "->"
     out <- parseKDFOutputSpec
     let body = KDFScopeRuleBody wh salt ikm info out
-    return $ KDFScopeRule isODH lbl $ bind (idxs, args) body
+    return $ DeclKDFRule $ KDFScopeRule isODH lbl $ bind (idxs, args) body
 
 parseKDFScope :: Parser Decl
 parseKDFScope = parseSpanned $ do
     reserved "kdf_scope"
     grp <- identifier
     symbol "{"
-    items <- many $
-        (try $ fmap Left parseKDFScopeEntry)
-        <|>
-        (try $ fmap Left parseKDFScopeEntryKdfKey)
-        <|>
-        (try $ fmap Left parseKDFScopeEntryNameType)
-        <|>
-        (fmap Right parseKDFScopeRule)
+    items <- many parseOneDecl
     symbol "}"
-    let entries = [e | Left  e <- items]
-    let rules   = [r | Right r <- items]
-    return $ DeclKDFScope grp entries rules
+    return $ DeclKDFScope grp items
 
-parseDecls =
-    many $
+parseOneDecl :: Parser Decl
+parseOneDecl =
     parseKDFScope
+    <|>
+    parseKDFRule
     <|>
     parseNameDecl
     <|>
@@ -1086,7 +1047,7 @@ parseDecls =
         loc <- parseLocality
         return $ DeclTable n t loc)
     <|>
-    (parseSpanned $ do       
+    (parseSpanned $ do
         reserved "module"
         imt <- parseIsModType
         n <- identifier
@@ -1105,9 +1066,11 @@ parseDecls =
             parseModuleExp ModType $ "TYPEOF" ++ n
         symbol "="
         me <- parseModuleExp imt n
-        let (bdy, otype) = mkModuleBinders modArgs me omt 
-        return $ DeclModule n imt bdy otype 
+        let (bdy, otype) = mkModuleBinders modArgs me omt
+        return $ DeclModule n imt bdy otype
     )
+
+parseDecls = many parseOneDecl
 
 parseDepBind :: Alpha a => Parser (a -> DepBind a)
 parseDepBind = do

@@ -240,20 +240,6 @@ owlprettyIdxBindsPair (xs, ys) =
     (if null ys then mempty else owlpretty "@" <> hsep (intersperse (owlpretty ",") $ map owlpretty ys)) <>
     owlpretty ">"
 
-instance OwlPretty KDFScopeEntryX where
-    owlpretty (KSEDHName n b) =
-        let (idxs, loc) = unsafeUnbind b in
-        owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
-        <> owlpretty " : DH @ " <> owlpretty loc
-    owlpretty (KSEKdfKey n b) =
-        let (idxs, locs) = unsafeUnbind b in
-        owlpretty "name " <> owlpretty n <> owlprettyIdxBindsPair idxs
-        <> owlpretty " : kdfkey @ " <> mconcat (intersperse (owlpretty ", ") (map owlpretty locs))
-    owlpretty (KSENameType n b) =
-        let ((idxs, dvars), _) = unsafeUnbind b in
-        owlpretty "nametype " <> owlpretty n <> owlprettyIdxBindsPair (idxs, [])
-        <> owlpretty " : kdfkey"
-
 instance OwlPretty KDFScopeRuleRef where
     owlpretty ref =
         let pargs | null (_ksrrArgs ref) = mempty
