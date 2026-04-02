@@ -3186,9 +3186,28 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           assert ("Argument to cross_dh_lemma must flow to adv") b
           nt <- getNameType n
           assert ("Name parameter to cross_dh_lemma must be a DH name") $ (nt^.val) `aeq` NT_DH
-          -- TODO: reimplement cross_dh_lemma using kdf_scope rules (deferred)
-          liftIO $ putStrLn "TODO: reimplement cross_dh_lemma using kdf_scope rules (deferred)"
-          return $ tLemma pTrue
+          allScopes <- view $ curMod . kdfScopes
+          let nStr = case n^.val of
+                       NameConst _ (PRes (PDot _ s)) _ -> s
+                       _ -> ""
+          let odhs = [ odhPair
+                     | (_, gdef) <- allScopes
+                     , nStr `elem` _ksdEntryNames gdef
+                     , odhPair <- _ksdOdhPairs gdef ]
+          let dhCombine a b' = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [a, b']
+          let dhpk a = mkSpanned $ AEApp (topLevelPath "dhpk") [] [a]
+          let pSec m = pNot $ pFlow (nameLbl m) advLbl
+          ps <- forM odhs $ \(_, bnd) -> do
+              (((is, pids), _dvars), (n2, n3)) <- unbind bnd
+              p <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++
+                                map (\i -> (i, (ignore $ show i, IdxPId))) pids) $ do
+                  n_disj <- liftM2 pAnd (pNot <$> pNameExpEq n n2) (pNot <$> pNameExpEq n n3)
+                  return $ pImpl (n_disj `pAnd` (pSec n))
+                                 (pNot $ pEq (dhCombine x $ aeGet n)
+                                             (dhCombine (dhpk $ aeGet n2) (aeGet n3)))
+              return $ mkForallIdx (is ++ pids) p
+          p <- normalizeProp $ foldr pAnd pTrue ps
+          return $ tLemma p
       CLemma (LemmaConstant)  -> do
           assert ("Wrong number of arguments to is_constant_lemma") $ length args == 1
           let [(x, _)] = args
