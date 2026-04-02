@@ -1192,10 +1192,11 @@ validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
         -- Validate output name types
         let KDFOutputSpec outputs = _ksrbOutput body
         withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                     map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
-            forM_ outputs $ \(_, nt) -> do
-                checkNameType nt
-                nameTypeUniform nt
+                     map (\i -> (i, (ignore $ show i, IdxPId))) is2) $
+            withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
+                forM_ outputs $ \(_, nt) -> do
+                    checkNameType nt
+                    nameTypeUniform nt
 
 ensureOdhPairDisjoint
     :: String
