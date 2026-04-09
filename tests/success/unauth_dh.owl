@@ -7,7 +7,7 @@ name data<@h> : nonce @ client<h>
 kdf_scope G {
     name X<@g> : DH @ client<g>
     name Y : DH @ server
-    odh L<@f> : 0x, dh_combine(X<@f>, Y), 0x -> enckey Name(data<@f>)
+    odh L<@f> : 0x, dh_ss(X<@f>, Y), 0x -> enckey Name(data<@f>)
 }
 
 corr<i> [X<@i>] ==> [data<@i>]

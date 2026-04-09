@@ -354,7 +354,7 @@ resolveKDFSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
 
 resolveKDFIKMAtom :: IKMAtom -> Resolve IKMAtom
 resolveKDFIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
-resolveKDFIKMAtom (IKMDhCombine ne1 ne2) = IKMDhCombine <$> resolveNameExp ne1 <*> resolveNameExp ne2
+resolveKDFIKMAtom (IKM_DH_SS ne1 ne2) = IKM_DH_SS <$> resolveNameExp ne1 <*> resolveNameExp ne2
 resolveKDFIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
 
 resolveKDFInfo :: InfoExpr -> Resolve InfoExpr

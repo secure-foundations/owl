@@ -3,7 +3,7 @@ include "ke.owli"
 kdf_scope G {
     name S : DH @ Server
     name C : DH @ Client
-    odh L : 0x, dh_combine(C, S), 0x -> strict enckey Name(k)
+    odh L : 0x, dh_ss(C, S), 0x -> strict enckey Name(k)
 }
 
 name skS : sigkey (dhpk(S)) @ Server

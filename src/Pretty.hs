@@ -193,8 +193,8 @@ instance OwlPretty NameKindRow where
 instance OwlPretty IKMAtom where
     owlpretty (IKMPublicExpr e)     = owlpretty e
     owlpretty (IKMKdfKeyName ne)    = owlpretty ne
-    owlpretty (IKMDhCombine ne1 ne2) =
-        owlpretty "dh_combine(" <> owlpretty ne1 <> owlpretty ", " <> owlpretty ne2 <> owlpretty ")"
+    owlpretty (IKM_DH_SS ne1 ne2) =
+        owlpretty "dh_ss(" <> owlpretty ne1 <> owlpretty ", " <> owlpretty ne2 <> owlpretty ")"
 
 instance OwlPretty SaltExpr where
     owlpretty (SaltName ne)      = owlpretty ne

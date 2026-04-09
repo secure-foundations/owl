@@ -1143,7 +1143,7 @@ ikmEqProp as bs
         case nameEqProp n1 n2 of
             Just p  -> Just (pAnd acc p)
             Nothing -> Nothing
-    step (Just acc) (IKMDhCombine a1 b1, IKMDhCombine a2 b2) =
+    step (Just acc) (IKM_DH_SS a1 b1, IKM_DH_SS a2 b2) =
         case (nameEqProp a1 a2, nameEqProp b1 b2) of
             (Just pa, Just pb) -> Just (pAnd acc (pAnd pa pb))
             _                  -> Nothing
@@ -1168,7 +1168,7 @@ validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
                 isGroupKdfKeyAtom _                  = False
         let ikmHasLocalDH = any isLocalDHAtom (_ksrbIkm body)
               where
-                isLocalDHAtom (IKMDhCombine ne1 ne2) = isGroupDH ne1 && isGroupDH ne2
+                isLocalDHAtom (IKM_DH_SS ne1 ne2) = isGroupDH ne1 && isGroupDH ne2
                 isLocalDHAtom _                       = False
                 isGroupDH ne = case ne^.val of
                     NameConst _ (PRes (PDot _ n)) _ -> n `elem` dhEntryNames
@@ -1462,11 +1462,11 @@ checkDecl d cont = withSpan (d^.spanOf) $
                                        map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
                               withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
                                   ensureSIIDisjoint groupName lbl body accRules
-                                  let dhPairs = [(ne1, ne2) | IKMDhCombine ne1 ne2 <- _ksrbIkm body]
+                                  let dhPairs = [(ne1, ne2) | IKM_DH_SS ne1 ne2 <- _ksrbIkm body]
                                   forM_ dhPairs $ \(ne1, ne2) ->
                                       ensureOdhPairDisjoint groupName ne1 ne2 accOdh
                           let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
-                                            | IKMDhCombine ne1 ne2 <- _ksrbIkm body ]
+                                            | IKM_DH_SS ne1 ne2 <- _ksrbIkm body ]
                           let accOdh' = accOdh ++ newOdhPairs
                           validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX
                           go ds accRules' accOdh' k
@@ -2963,7 +2963,7 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                   let saltHasKey = case _ksrbSalt body of
                                        SaltName _       -> True
                                        SaltPublicExpr _ -> False
-                  let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKMDhCombine _ _ -> True; _ -> False })
+                  let ikmHasKey  = any (\a -> case a of { IKMKdfKeyName _ -> True; IKM_DH_SS _ _ -> True; _ -> False })
                                        (_ksrbIkm body)
                   let secretFlowAx = case strictness of
                                         KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
@@ -2990,7 +2990,7 @@ checkExprEqual actual expected = do
 atomToAExpr :: IKMAtom -> AExpr
 atomToAExpr (IKMPublicExpr e)      = e
 atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
-atomToAExpr (IKMDhCombine ne1 ne2) =
+atomToAExpr (IKM_DH_SS ne1 ne2) =
     mkSpanned $ AEApp (topLevelPath "dh_combine") []
         [ mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1]
         , mkSpanned $ AEGet ne2 ]

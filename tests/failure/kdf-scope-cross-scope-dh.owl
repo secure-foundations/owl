@@ -13,7 +13,7 @@ kdf_scope G1 {
     // SHOULD FAIL: Y is a DH key from G2, not G1.
     // dh_combine in an ODH rule requires both arguments to be local DH keys
     // of the same group.
-    odh L : 0x, dh_combine(X, Y), 0x -> enckey Name(d)
+    odh L : 0x, dh_ss(X, Y), 0x -> enckey Name(d)
 }
 
 corr [X] ==> [d]

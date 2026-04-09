@@ -8,7 +8,7 @@ kdf_scope G {
     name X : DH @ alice
     name Y : DH @ alice
 
-    odh L : k, dh_combine(X, Y), 0x -> strict enckey Name(n)
+    odh L : k, dh_ss(X, Y), 0x -> strict enckey Name(n)
 
 }
 

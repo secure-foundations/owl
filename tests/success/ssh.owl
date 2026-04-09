@@ -35,8 +35,8 @@ kdf_scope G {
     name b : DH @ PDIS
     name b1 : DH @ PDIS
     name c : DH @ SDIS
-    odh l1 : 0x, dh_combine(b,a), 0x01 -> enckey sign_request_response
-    odh l2 : 0x, dh_combine(b1,c), 0x02 -> enckey Data<adv>
+    odh l1 : 0x, dh_ss(b,a), 0x01 -> enckey sign_request_response
+    odh l2 : 0x, dh_ss(b1,c), 0x02 -> enckey Data<adv>
 }
 
 enum dhpk_b {

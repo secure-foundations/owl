@@ -6,7 +6,7 @@ module DH_KE (P : Params) : KE(P) = {
             kdf_scope G {
                 name S : DH @ P.Server
                 name C : DH @ P.Client
-                odh L : 0x, dh_combine(C, S), 0x -> strict enckey Name(k)
+                odh L : 0x, dh_ss(C, S), 0x -> strict enckey Name(k)
             }
 
             name skS : sigkey (dhpk(S)) @ P.Server

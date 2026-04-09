@@ -8,6 +8,6 @@ kdf_scope G {
     name Y : DH @ alice
 
     // SHOULD FAIL: two ODH rules using the same DH pair (X, Y)
-    odh L1 : 0x, dh_combine(X, Y), 0x -> enckey Name(n)
-    odh L2 : 0x, dh_combine(X, Y), 0x1234 -> enckey Name(n2)
+    odh L1 : 0x, dh_ss(X, Y), 0x -> enckey Name(n)
+    odh L2 : 0x, dh_ss(X, Y), 0x1234 -> enckey Name(n2)
 }

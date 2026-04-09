@@ -10,12 +10,12 @@ corr adv ==> [n1]
 kdf_scope S1 {
   name A: DH @ bob
   name B: DH @ alice
-  odh L1 : 0x, dh_combine(A,B), 0x -> strict enckey Name(n1)
+  odh L1 : 0x, dh_ss(A,B), 0x -> strict enckey Name(n1)
 }
 kdf_scope S2 {
   name C: DH @ bob
   name D: DH @ alice
-  odh L2 : 0x, dh_combine(C,D), 0x -> strict enckey Name(n2)
+  odh L2 : 0x, dh_ss(C,D), 0x -> strict enckey Name(n2)
 }
 
 corr [A] ==> [n1]

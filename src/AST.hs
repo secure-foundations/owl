@@ -320,7 +320,7 @@ data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
 data IKMAtom
     = IKMPublicExpr AExpr          -- hex const, dhpk(N), public func(...)
     | IKMKdfKeyName NameExp        -- named kdfkey name from this group
-    | IKMDhCombine NameExp NameExp -- dh_combine(A, B)
+    | IKM_DH_SS NameExp NameExp -- dh_ss(A, B)
     deriving (Show, Generic, Typeable)
 
 data SaltExpr
