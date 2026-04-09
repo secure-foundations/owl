@@ -4,6 +4,9 @@ locality bob
 name n1 : nonce @ alice
 name n2 : nonce @ alice
 
+corr adv ==> [n1]
+// corr adv ==> [n2]
+
 kdf_scope S1 {
   name A: DH @ bob
   name B: DH @ alice
@@ -20,8 +23,9 @@ corr [B] ==> [n1]
 corr [C] ==> [n2]
 corr [D] ==> [n2]
 
-def alice_main() @ alice : Unit =
+def alice_main() @ alice : Option Unit =
     input x in
+    guard is_group_elem(x) in
     let ss = dh_combine(x, get(B)) in
     corr_case B in
     corr_case A in
@@ -30,4 +34,5 @@ def alice_main() @ alice : Unit =
     let k = kdf<L1; enckey; 0>(0x, ss, 0x) in
     debug printTyOf(k);
     let c = aenc(k, get(n1)) in
-    output c
+    output c;
+    Some(())

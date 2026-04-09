@@ -1,0 +1,33 @@
+locality alice
+
+kdf_scope G {
+
+    name A : DH @ alice
+    name B : DH @ alice
+    name C : DH @ alice
+    name D : DH @ alice
+
+    odh L : 0x, dh_combine(A, B) ++ dh_combine(C, D), 0x -> strict enckey Data<adv> |0|
+
+}
+
+
+def main() @ alice : Option Unit =
+    // corr_case A in
+    // corr_case B in
+    // corr_case C in
+    // corr_case D in
+    // assume(sec(A) /\ sec(B) /\ corr(C) /\ corr(D)); // This is one of the "interesting" cases
+    input pk_of_A in
+    input pk_of_C in
+    guard is_group_elem(pk_of_A) in
+    guard is_group_elem(pk_of_C) in
+    // Without the below case-splitting, we can't decide for sure whether or not the adversary-supplied
+    // group elements are indeed the public keys for A and C, so we don't know whether rule L applies or not
+    // pcase (pk_of_A == dhpk(get(A))) in
+    // pcase (pk_of_C == dhpk(get(C))) in
+    let k = kdf<L;enckey;0>(0x, dh_combine(pk_of_A, get(B)) ++ dh_combine(pk_of_C, get(D)), 0x) in
+    let c = aenc(k, 0x) in
+    debug printTyOf(k);
+    output c;
+    Some(())

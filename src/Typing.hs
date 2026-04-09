@@ -2949,7 +2949,9 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                       ": call has " ++ show (owlpretty (NameKindRow nks)) ++
                       ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
                      (nks == expectedNks)
-              if j >= length outputs then return Nothing else do
+              if j >= length outputs then 
+                typeError $ "KDF rule hint index " ++ show j ++ " out of bounds for rule " ++ _ksrrLabel hint
+              else do
                   let (strictness, outNt) = outputs !! j
                   let ne = mkSpanned $ KDFName nks j (ignore True) hint
                   -- (1) info must always be public
@@ -3025,12 +3027,15 @@ buildRuleMatchProp :: AExpr -> AExpr -> AExpr
                    -> Check Prop
 buildRuleMatchProp actualSalt actualIkm actualInfo bRule = do
     (((is1, is2), dvars), body) <- unbind bRule
+    let allEqProp aes = 
+            let eqs = map (\(ae1, ae2) -> if ae1 `aeq` ae2 then Nothing else Just (pEq ae1 ae2)) aes 
+            in case catMaybes eqs of
+                [] -> pTrue
+                eqs' -> foldr1 pAnd eqs'
     let expectedSalt = saltExprToAExpr (_ksrbSalt body)
         expectedIkm  = ikmAtomsToAExpr (_ksrbIkm body)
         expectedInfo = infoExprToAExpr (_ksrbInfo body)
-        matchProp = pAnd (pEq actualSalt expectedSalt)
-                  $ pAnd (pEq actualIkm expectedIkm)
-                         (pEq actualInfo expectedInfo)
+        matchProp = allEqProp [(actualSalt, expectedSalt), (actualIkm, expectedIkm), (actualInfo, expectedInfo)]
         withWhere = case (_ksrbWhere body)^.val of
                       PTrue -> matchProp
                       _     -> pAnd (_ksrbWhere body) matchProp
@@ -3042,7 +3047,8 @@ nameExpInScope entryNames ne =
       NameConst _ (PRes (PDot _ s)) _ -> s `elem` entryNames
       _ -> False
 
-checkDHCombineLSBE :: [String] -> AExpr -> AExpr -> Check Bool
+-- returns (isLSBE, isPublic)
+checkDHCombineLSBE :: [String] -> AExpr -> AExpr -> Check (Bool, Bool)
 checkDHCombineLSBE entryNames x y = do
     tx <- inferAExpr x >>= normalizeTy
     ty' <- inferAExpr y >>= normalizeTy
@@ -3050,42 +3056,52 @@ checkDHCombineLSBE entryNames x y = do
                     TDH_PK ne -> Just ne
                     _ -> extractDHPKFromType tx
         mSkName = extractNameFromType ty'
-    let nameInScopeAndSecret mNe = case mNe of
-            Just ne -> do
-                let inScope = nameExpInScope entryNames ne 
-                pub <- flowsTo (nameLbl ne) advLbl
-                return $ inScope && not pub
+    let nameInScope mNe = case mNe of
+            Just ne -> nameExpInScope entryNames ne 
+            Nothing -> False
+    let namePublic mNe = case mNe of
+            Just ne -> flowsTo (nameLbl ne) advLbl
             Nothing -> return False
-    pkResult <- nameInScopeAndSecret mPkName
-    skResult <- nameInScopeAndSecret mSkName
-    return $ pkResult || skResult
+    let pkBinding = nameInScope mPkName
+    let skBinding = nameInScope mSkName
+    pkPublic <- namePublic mPkName
+    skPublic <- namePublic mSkName
+    let isLSBE = (pkBinding && not pkPublic) || (skBinding && not skPublic)
+    let isPub = pkPublic || skPublic -- if either side is public, the shared secret is public
+    return (isLSBE, isPub)
 
-
-fallbackFromType :: [String] -> AExpr -> Check Bool
+-- returns (isLSBE, isPublic)
+fallbackFromType :: [String] -> AExpr -> Check (Bool, Bool)
 fallbackFromType entryNames a = do
     t <- inferAExpr a >>= normalizeTy
     case (stripRefinements t)^.val of
-      TName ne | nameExpInScope entryNames ne -> return True
+      TName ne | nameExpInScope entryNames ne -> do
+        pub <- flowsTo (nameLbl ne) advLbl
+        return (True, pub)
       TSS ne1 ne2 -> do
           let ne1InScope = nameExpInScope entryNames ne1
               ne2InScope = nameExpInScope entryNames ne2
+          ne1Public <- flowsTo (nameLbl ne1) advLbl
+          ne2Public <- flowsTo (nameLbl ne2) advLbl
+          let ssPublic = ne1Public || ne2Public -- if either side is public, the shared secret is public
           if not (ne1InScope || ne2InScope)
-            then return False
+            then return (False, ssPublic)
             else do
-              pub1 <- flowsTo (nameLbl ne1) advLbl
-              pub2 <- flowsTo (nameLbl ne2) advLbl
               -- at least one in scope and not public
-              return $ (ne1InScope && not pub1) || (ne2InScope && not pub2)
-      _ -> return False
+              return $ ((ne1InScope && not ne1Public) || (ne2InScope && not ne2Public), ssPublic)
+      _ -> do
+        pub <- tyFlowsTo t advLbl
+        return (False, pub)
 
 classifyComponent :: [String] -> AExpr -> Ty -> Check (Bool, Bool)
 classifyComponent entryNames expr ty = do
     a <- resolveANF expr >>= normalizeAExpr
-    lsbe <- case a^.val of
-      AEGet ne | nameExpInScope entryNames ne -> return True
+    (lsbe, pub) <- case a^.val of
+      AEGet ne | nameExpInScope entryNames ne -> do
+        tyPub <- tyFlowsTo ty advLbl
+        return (True, tyPub)
       AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> checkDHCombineLSBE entryNames x y
       _ -> fallbackFromType entryNames a
-    pub <- tyFlowsTo ty advLbl
     return (lsbe, pub)
 
 unconcatIKMWithTypes :: AExpr -> Check [(AExpr, Ty)]
@@ -3120,11 +3136,12 @@ handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement 
         let allRules = _ksdRules scopeDef
         cannotMatchAll <- forM allRules $ \(_, bRule) -> do
             pmatch <- buildRuleMatchProp saltE ikmE infoE bRule
-            result <- decideProp pmatch
-            return (result == Just False)
-
-        if and cannotMatchAll
-          then return $ kdfRefinement (tData advLbl advLbl)
+            decideProp pmatch
+        assert "Inconclusive: cannot match this KDF call with a rule or prove that it doesn't match any of the rules" $ any (\x -> x == Just True) cannotMatchAll || all (\x -> x == Just False) cannotMatchAll
+        if all (\x -> x == Just False) cannotMatchAll
+          then 
+            -- Out-of-bounds case: the KDF call provably doesn't match any rule in the scope, so it should be public
+            return $ kdfRefinement (tData advLbl advLbl)
           else do
             -- Step 2+3: Check scope-binding via salt + IKM components
             assert "KDF info argument must be public" bInfo
@@ -3142,10 +3159,10 @@ handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement 
                    hasLSBE
 
             forM_ (zip allComponents results) $ \((comp, _), (isLSBE, isPub)) ->
-                if isLSBE then return ()
-                else assert ("Non-scope-binding component " ++
+                    assert ("KDF call doesn't match any of its rule hints and can't be proven out of bounds, " ++
+                             "so all arguments must be public, but component " ++
                              show (owlpretty comp) ++
-                             " must be public but cannot be proven public") isPub
+                             " cannot be proven public") isPub
 
             return $ kdfRefinement (tData advLbl advLbl)
 

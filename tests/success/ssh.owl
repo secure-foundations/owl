@@ -217,12 +217,10 @@ def PFA_KE () @ PFA
                 corr_case b in 
                 if !is_group_elem(g_pow_b) then () else {
                     // TODO: can we avoid the explicit subtyping somehow
-                    let g_pow_b' : if (g_pow_b == dhpk(get(b))) then dhpk(b) else Data<adv> ||group|| = g_pow_b in
+                    let g_pow_b' : if (g_pow_b == dhpk(get(b))) then dhpk(b) else (x:Data<adv> ||group||{is_group_elem(x) /\ x == g_pow_b}) = g_pow_b in
                     let ss     = dh_combine(g_pow_b', get(a)) in
                     // pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
-                    debug printTyOf(ss);
                     let k11 = kdf<l1; enckey; 0>(0x, ss, 0x01) in
-                    debug printTyOf(k11);
                     call PFA_FW(ss, k11)
                 }
             otherwise => ()
@@ -251,7 +249,7 @@ def PDIS_KE () @ PDIS
                     corr_case a in
                     corr_case b in
                     if !is_group_elem(g_pow_a) then () else {
-                        let g_pow_a' : if (g_pow_a == dhpk(get(a))) then dhpk(a) else Data<adv> ||group|| = g_pow_a in
+                        let g_pow_a' : if (g_pow_a == dhpk(get(a))) then dhpk(a) else (x:Data<adv> ||group||{is_group_elem(x) /\ x == g_pow_a}) = g_pow_a in
                         let ss   = dh_combine(g_pow_a', get(b)) in
                         let k11 = kdf<l1; enckey; 0>(0x, ss, 0x01) in
                         let _ = output 0x to endpoint(SDIS) in // TODO: The hash stuff
