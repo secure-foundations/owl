@@ -33,14 +33,14 @@ counter N_c_bob @ bob
 name ae3: DH @ alice // ephemeral 
 name be3: DH @ bob // ephemeral
 
-name mb3: nonce @ alice // Alice's first ratchet message
+name ma3: nonce @ alice // Alice's first ratchet message
 
 
-nametype mb3_enc = st_aead Name(mb3)
+nametype mb3_enc = st_aead Name(ma3)
       aad x. (x == dhpk(get(ae3)) ++ dhpk(get(long_skA)))
       nonce N_c_alice
 
-nametype mb3_corr = st_aead (x: Name(mb3){False})
+nametype mb3_corr = st_aead (x: Name(ma3){False})
       aad x. True
       nonce N_c_alice
 
@@ -78,10 +78,11 @@ nametype r2_corr = kdf { ikm info.
 }
 
 nametype r2 = kdf { ikm info. 
-  True -> strict r3 || strict mb3_enc
+  ikm == dh_combine(dhpk(get(ae3)), get(be2)) -> strict r3 || strict mb3_enc,
+  ikm != dh_combine(dhpk(get(ae3)), get(be2)) -> strict r3_corr || strict mb3_corr
 }
 
-odh LR2 : be3, ae3 ->
+odh LR2 : be2, ae3 ->
  {salt info self.
       True -> strict r3
               || 
@@ -143,6 +144,10 @@ corr [long_skB] ==> [r1]
 corr [r1] /\ [ae2] /\ [be2] ==> [mb2]
 // corr [r1] /\ [be2] ==> [mb2]
 
+// TODO: should be r2 instead of r1
+corr [r1] /\ [ae2] /\ [ae3] /\ [be2] ==> [ma3]
+
+
 // corr [ae2] ==> [be2]
 // corr [be2] ==> [ae2]
 // These are used to express that dh_combine is public if EITHER input name is public
@@ -156,10 +161,74 @@ corr [r1] /\ [be2] ==> [ae2] // TODO: this is too strong
 predicate bob_good() = sec(long_skB) \/ sec(long_skA)
 
 
+struct alice_message2 {
+  _a_pk: dhpk(ae3),
+  _a_ctxt: Data<adv>
+}
+
 struct bob_message1 {
   _b5: dhpk(be2),
   _b6: Data<adv>
 }
+
+// def alice_send_round_3(
+//   ra2: if bob_good[] then Name(KDF<kdfkey||enckey;0;r1>()) else Data<adv> ||kdfkey||, 
+//   gbe2: if bob_good[] then dhpk(be2) else Data<adv> ||group||
+// ) @ alice: Option Unit =
+//   let ss_ae3_be2 = dh_combine(gbe2, get(ae3)) in
+//   // debug printTyOf(gae2');
+//   // debug printTyOf(ss_ae3_be2);
+//   let ra3 = kdf<0,1;odh LR2[0];kdfkey || enckey;0>(ra2, ss_ae3_be2, 0x) in 
+//   let ca3 = kdf<0,1;odh LR2[0];kdfkey || enckey;1>(ra2, ss_ae3_be2, 0x) in 
+//   // debug "===============================";
+//   // debug printTyOf(rb1);
+//   // debug printTyOf(rb2);
+//   // debug printTyOf(cb2);
+//   // debug "===============================";
+
+//   let x3 = st_aead_enc<N_c_alice>(cb3, get(ma3), gbe2 ++ dhpk(get(long_skB))) in
+//   // output x3 to endpoint(alice);
+//   let msg = alice_message2(gae3, x3) in
+//   let _ = output msg to endpoint(alice) in 
+//   Some(()) // TODO: call alice_recv_round_4 here
+
+  // pcase sec(r1) in
+  // pcase bob_good[] in
+  // pcase sec(ae2) in
+  // pcase sec(be2) in
+  // pcase sec(mb2) in
+  // pcase sec(long_skA) in
+  // pcase sec(long_skB) in
+  // pcase gae2 == dhpk(get(ae2)) in
+  // false_elim in
+
+  // let gbe2 = dhpk(get(be2)) in 
+
+  // // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
+  // let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else Data<adv> ||group|| = gae2 in
+  // pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
+  // pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be2)), get(be2))) in
+  // pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae3)), get(be2))) in
+  // pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be3)), get(be2))) in
+  // cross_dh_lemma<be2>(gae2');
+  // false_elim in
+  // let ss_ae2_be2 = dh_combine(gae2', get(be2)) in
+  // debug printTyOf(gae2');
+  // debug printTyOf(ss_ae2_be2);
+  // let rb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(rb1, ss_ae2_be2, 0x) in 
+  // let cb2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(rb1, ss_ae2_be2, 0x) in 
+  // debug "===============================";
+  // debug printTyOf(rb1);
+  // debug printTyOf(rb2);
+  // debug printTyOf(cb2);
+  // debug "===============================";
+
+  // let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
+  // // output x2 to endpoint(alice);
+  // let b2 = bob_message1(gbe2, x2) in
+  // let _ = output b2 to endpoint(alice) in 
+  // Some(()) // TODO: call bob_double_ratchet_recv here
+
 
 
 
@@ -171,19 +240,19 @@ def alice_recv_round_2(
   parse i2 as bob_message1(gbe2, a6) in {
     // b5 -> gbe2, b6 -> x2
     guard is_group_elem(gbe2) in
-    pcase sec(r1) in
-    pcase bob_good[] in
-    pcase sec(ae2) in
-    pcase sec(be2) in
-    pcase sec(mb2) in
-    pcase sec(long_skA) in
-    pcase sec(long_skB) in
-    pcase b3 == dhpk(get(long_skB)) in
-    pcase gbe2 == dhpk(get(be2)) in
-    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
-    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
-    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
-    pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
+    pcase #[assume false] sec(r1) in
+    pcase #[assume true] bob_good[] in
+    pcase #[assume true] sec(ae2) in
+    pcase #[assume true] sec(be2) in
+    pcase #[assume true] sec(mb2) in
+    pcase #[assume true] sec(long_skA) in
+    pcase #[assume true] sec(long_skB) in
+    pcase #[assume true] b3 == dhpk(get(long_skB)) in
+    pcase #[assume false] gbe2 == dhpk(get(be2)) in
+    pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
+    pcase #[assume true] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
+    pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
+    pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
     cross_dh_lemma<ae2>(gbe2);
     false_elim in
 
@@ -191,11 +260,45 @@ def alice_recv_round_2(
     let ca2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(ra1, dh_combine(gbe2, get(ae2)), 0x) in 
 
     let N_c = get_counter N_c_alice in
-    case st_aead_dec(ca2, a6, gbe2 ++ b3, N_c) {
+    let mb2_opt = st_aead_dec(ca2, a6, gbe2 ++ b3, N_c) in
+    debug decideProp(Some?(mb2_opt));
+    assert(Some?(mb2_opt) /\ ((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2))) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))));
+    // let mb2_opt: (y: Option(
+    //       if ((sec(ae2) /\ sec(be2)) \/ (sec(r1))) 
+    //       then (x:Name(mb2){gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))})
+    //       else Data<adv>
+    //     ){Some?(y) ==> gbe2 == dhpk(get(be2))}
+    //   ) = mb2_opt' in
+    case mb2_opt {
       | None => None()
-      | Some mb2 => 
+      | Some mb2 => {
       // some good stuff happens here
-      Some(())
+      //Some(())
+      // call alice_send_round_3(ra2, gbe2)
+      assert((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2)) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))));
+      
+      // below is alice_send_round_3, but we don't want to write the Name(KDF<...>(...)) syntax
+      pcase sec(ae3) in
+      pcase sec(ma3) in
+      false_elim in
+      let ss_ae3_be2 = dh_combine(gbe2, get(ae3)) in
+      // debug printTyOf(gae2');
+      // debug printTyOf(ss_ae3_be2);
+      //false_elim in
+      let ra3 = kdf<0,1;odh LR2[0];kdfkey || enckey;0>(ra2, ss_ae3_be2, 0x) in 
+      let ca3 = kdf<0,1;odh LR2[0];kdfkey || enckey;1>(ra2, ss_ae3_be2, 0x) in 
+      debug "===============================";
+      debug printTyOf(ra3);
+      debug printTyOf(ca3);
+      debug "===============================";
+      false_elim in
+      let x3 = st_aead_enc<N_c_alice>(ca3, get(ma3), dhpk(get(ae3)) ++ dhpk(get(long_skA))) in
+      // output x3 to endpoint(alice);
+      let msg = alice_message2(dhpk(get(ae3)), x3) in
+      let _ = output msg to endpoint(alice) in 
+      Some(()) // TODO: call alice_recv_round_4 here
+      
+      }
     }
   } otherwise None()
 
