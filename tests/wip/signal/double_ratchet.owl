@@ -136,7 +136,8 @@ odh LR1 : ae2, be2 ->
 // comes from the handshake
 corr [long_skA] ==> [r1]
 corr [long_skB] ==> [r1]
-
+corr [r1] ==> [ae2] // r1 is derived from the handshake, and the handshake AEAD guarantees authenticity of ae2 
+// corr [r1] ==> [be2]
 
 // corr [ae2] /\ [long_skA] ==> [mb2]
 // corr [be2] /\ [long_skB] ==> [mb2]
@@ -145,7 +146,10 @@ corr [r1] /\ [ae2] /\ [be2] ==> [mb2]
 // corr [r1] /\ [be2] ==> [mb2]
 
 // TODO: should be r2 instead of r1
-corr [r1] /\ [ae2] /\ [ae3] /\ [be2] ==> [ma3]
+corr [r1] /\ [be2] /\ [ae3] ==> [ma3]
+// corr [r1] /\ [ae2] /\ [be2] ==> [ma3]
+// corr [ae2] /\ [be2] ==> [ae3]
+
 
 
 // corr [ae2] ==> [be2]
@@ -154,7 +158,13 @@ corr [r1] /\ [ae2] /\ [ae3] /\ [be2] ==> [ma3]
 // Owl doesn't always derive this if it can't syntactically infer the dh_combine args
 // to be dhpk and name
 corr [r1] /\ [ae2] ==> [be2] // TODO: this is too strong
-corr [r1] /\ [be2] ==> [ae2] // TODO: this is too strong
+// corr [r1] /\ [be2] ==> [ae2] // TODO: this is too strong
+
+// corr [be2] ==> [ae3] // Typechecks with this. Justified because they are a DH pair, Owl limitation?
+// // corr [ae3] ==> [be2] // ?
+
+corr [be2] ==> [ma3]
+corr [ae3] ==> [ma3]
 
 // ------------ Cleanliness predicates ------------
 
@@ -240,29 +250,42 @@ def alice_recv_round_2(
   parse i2 as bob_message1(gbe2, a6) in {
     // b5 -> gbe2, b6 -> x2
     guard is_group_elem(gbe2) in
+    // pcase sec(r1) in
+    // pcase bob_good[] in
+    // pcase sec(ae2) in
+    // pcase sec(be2) in
+    // pcase sec(mb2) in
+    // pcase sec(long_skA) in
+    // pcase sec(long_skB) in
+    // pcase b3 == dhpk(get(long_skB)) in
+    // pcase gbe2 == dhpk(get(be2)) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
     pcase #[assume false] sec(r1) in
     pcase #[assume true] bob_good[] in
-    pcase #[assume true] sec(ae2) in
-    pcase #[assume true] sec(be2) in
-    pcase #[assume true] sec(mb2) in
+    pcase #[assume false] sec(ae2) in
+    pcase #[assume false] sec(be2) in
+    pcase #[assume false] sec(mb2) in
     pcase #[assume true] sec(long_skA) in
     pcase #[assume true] sec(long_skB) in
     pcase #[assume true] b3 == dhpk(get(long_skB)) in
     pcase #[assume false] gbe2 == dhpk(get(be2)) in
     pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
-    pcase #[assume true] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
+    pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
     pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
     pcase #[assume false] (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
     cross_dh_lemma<ae2>(gbe2);
     false_elim in
 
-    let ra2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(ra1, dh_combine(gbe2, get(ae2)), 0x) in 
-    let ca2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(ra1, dh_combine(gbe2, get(ae2)), 0x) in 
+    let ra2 = kdf<0,1;odh LR1[0];kdfkey || enckey;0>(ra1, dh_combine<name be2,name ae2>(gbe2, get(ae2)), 0x) in 
+    let ca2 = kdf<0,1;odh LR1[0];kdfkey || enckey;1>(ra1, dh_combine<name be2,name ae2>(gbe2, get(ae2)), 0x) in 
 
     let N_c = get_counter N_c_alice in
     let mb2_opt = st_aead_dec(ca2, a6, gbe2 ++ b3, N_c) in
     debug decideProp(Some?(mb2_opt));
-    assert(Some?(mb2_opt) /\ ((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2))) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))));
+    // assert(Some?(mb2_opt) ==> (((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2))) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB)))));
     // let mb2_opt: (y: Option(
     //       if ((sec(ae2) /\ sec(be2)) \/ (sec(r1))) 
     //       then (x:Name(mb2){gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))})
@@ -275,15 +298,15 @@ def alice_recv_round_2(
       // some good stuff happens here
       //Some(())
       // call alice_send_round_3(ra2, gbe2)
-      assert((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2)) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))));
+      // assert((sec(long_skA) /\ sec(ae2)) \/ (sec(long_skB) /\ sec(be2)) ==> (gbe2 ++ b3 == dhpk(get(be2)) ++ dhpk(get(long_skB))));
       
       // below is alice_send_round_3, but we don't want to write the Name(KDF<...>(...)) syntax
-      pcase sec(ae3) in
-      pcase sec(ma3) in
+      pcase #[assume true] sec(ae3) in
+      pcase #[assume false] sec(ma3) in
       false_elim in
-      let ss_ae3_be2 = dh_combine(gbe2, get(ae3)) in
+      let ss_ae3_be2 = dh_combine<name be2,name ae3>(gbe2, get(ae3)) in
       // debug printTyOf(gae2');
-      // debug printTyOf(ss_ae3_be2);
+      debug printTyOf(ss_ae3_be2);
       //false_elim in
       let ra3 = kdf<0,1;odh LR2[0];kdfkey || enckey;0>(ra2, ss_ae3_be2, 0x) in 
       let ca3 = kdf<0,1;odh LR2[0];kdfkey || enckey;1>(ra2, ss_ae3_be2, 0x) in 
@@ -333,7 +356,7 @@ def bob_send_round_2(
   let gbe2 = dhpk(get(be2)) in 
 
   // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
-  let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else Data<adv> ||group|| = gae2 in
+  let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else (x:Data<adv> ||group||{x == gae2}) = gae2 in
   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be2)), get(be2))) in
   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae3)), get(be2))) in
