@@ -30,6 +30,10 @@ kdf_scope X3DH {
           aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
           nonce N_c
 
+    nametype ma1_corr = st_aead (y:Name(ma1){False})
+          aad x. true
+          nonce N_c
+
     // AEAD nametype for Bob's first ratchet message
     nametype mb2_enc = st_aead Name(mb2)
           aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
@@ -37,10 +41,14 @@ kdf_scope X3DH {
 
     // ODH rule for the master key derivation.
     odh L1 : 0x, dh_ss(bs, long_skA) ++ dh_ss(long_skB, ae1) ++ dh_ss(bs, ae1) ++ dh_ss(bo, ae1), 0x -> strict kdfkey
+    odh L1_bad(s2,s4) where (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1))): 
+        0x, dh_ss(bs, long_skA) ++ s2 ++ dh_ss(bs, ae1) ++ s4, 0x -> strict kdfkey
 
     // Chain rule: split amaster (output of L1..L4) into ratchet key + AEAD key.
     // Index 0 gives kdfkey (used as rb1/ra1), index 1 gives ma1_enc (used as cb1/ca1).
     kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc
+    kdf LR1_bad(s2,s4) where (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1))): 
+        0x, KDF<L1_bad(s2,s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_corr
 
     // Bob's first ratchet step (first round of the double ratchet).
     // Salt is the ratchet key from LR1; ikm is the new DH shared secret be2/ae2.
@@ -159,32 +167,21 @@ def alice_x3dh () @ alice
       // b1 -> gbo, b2 -> gbs, b3 -> long_pkB, b4 -> gbssig
       pcase (b1 == dhpk(get(bo))) in
       pcase (b3 == dhpk(get(long_skB))) in
-      let b1' : if (b1 == dhpk(get(bo))) then dhpk(bo) else (x:Data<adv>||group||{is_group_elem(x) /\ x == b1}) = b1 in
-      let b3' : if (b3 == dhpk(get(long_skB))) then dhpk(long_skB) else (x:Data<adv>||group||{is_group_elem(x) /\ x == b3}) = b3 in
+      // let b1' : if (b1 == dhpk(get(bo))) then dhpk(bo) else (x:Data<adv>||group||{is_group_elem(x) /\ x == b1}) = b1 in
+      // let b3' : if (b3 == dhpk(get(long_skB))) then dhpk(long_skB) else (x:Data<adv>||group||{is_group_elem(x) /\ x == b3}) = b3 in
       pcase (sec(ae1)) in
       pcase (sec(bs)) in
       pcase (sec(bo)) in
       pcase (sec(long_skA)) in
       pcase (sec(long_skB)) in
-      // false_elim in
-      // pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
-      // pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      // pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      // pcase (dh_combine(b3, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      // false_elim in
-      // pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bo)), get(ae1))) in
-      // pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(bs)), get(ae1))) in
-      // pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(be2)), get(ae1))) in
-      // pcase (dh_combine(b1, get(ae1)) == dh_combine(dhpk(get(long_skB)), get(ae1))) in
-      // false_elim in
       cross_dh_lemma<long_skA>(gbs);
-      cross_dh_lemma<ae1>(b3');
+      cross_dh_lemma<ae1>(b3);
       cross_dh_lemma<ae1>(gbs);
-      cross_dh_lemma<ae1>(b1');
-      let s1 = dh_combine(gbs, get(long_skA)) in
-      let s2 = dh_combine(b3', get(ae1)) in
-      let s3 = dh_combine(gbs, get(ae1)) in
-      let s4 = dh_combine(b1', get(ae1)) in
+      cross_dh_lemma<ae1>(b1);
+      let s1 = dh_combine<name bs, name long_skA>(gbs, get(long_skA)) in
+      let s2 = dh_combine<name long_skB, name ae1>(b3, get(ae1)) in
+      let s3 = dh_combine<name bs, name ae1>(gbs, get(ae1)) in
+      let s4 = dh_combine<name bo, name ae1>(b1, get(ae1)) in
       let dh = s1 ++ s2 ++ s3 ++ s4 in
       debug printTyOf(dh);
       // debug decideProp(dh == correct_amaster_arg());
@@ -192,10 +189,15 @@ def alice_x3dh () @ alice
       // pcase (dh == correct_amaster_arg()) in
       false_elim in
 
-      let amaster = kdf<L1; kdfkey; 0>(0x, dh, 0x) in
+      assert (b3 != dhpk(get(long_skB)) ==> s2 != dh_combine(dhpk(get(long_skB)), get(ae1)));
+      assert (b1 != dhpk(get(bo)) ==> s4 != dh_combine(dhpk(get(bo)), get(ae1)));
+
+      let amaster = kdf<L1,L1_bad(s2,s4); kdfkey; 0>(0x, dh, 0x) in
+      // // assume (!(exists s2':bv. exists s4':bv. ((s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1))) /\ (amaster == dh_combine(dhpk(get(bs)), get(long_skA)) ++ s2' ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ s4')))); // TODO: this should be provable
+      // assert((b3 != dhpk(get(long_skB)) \/ b1 != dhpk(get(bo))) ==> amaster != get(KDF<L1;kdfkey;0>));
       // Chain: split amaster into ratchet key (ra1) and AEAD key (ca1)
-      let ra1 = kdf<LR1; kdfkey || enckey; 0>(0x, amaster, 0x) in
-      let ca1 = kdf<LR1; kdfkey || enckey; 1>(0x, amaster, 0x) in
+      let ra1 = kdf<LR1,LR1_bad(s2,s4); kdfkey || enckey; 0>(0x, amaster, 0x) in
+      let ca1 = kdf<LR1,LR1_bad(s2,s4); kdfkey || enckey; 1>(0x, amaster, 0x) in
 
       pcase sec(ma1) in
       false_elim in
