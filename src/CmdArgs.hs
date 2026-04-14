@@ -18,6 +18,7 @@ data Flags = Flags {
     _fDebugExtraction :: Bool,
     _fExtractBufOpt :: Bool,
     _fDoTests :: Bool,
+    _fTestWithSMTCache :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
     _fFilePath :: String, 
@@ -50,6 +51,9 @@ parseArgs =
       <*>
           switch
           ( long "test" <> help "Do tests")
+      <*>
+          switch
+          ( long "test-with-smtcache" <> help "Do tests without clearing the SMT cache" )
       <*>
           switch
           ( long "lax" <> help "Lax checking (skip some SMT queries)" )
@@ -87,7 +91,8 @@ doParseArgs = do
 
 postProcessFlags :: Flags -> Flags
 postProcessFlags f = 
-    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f }
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f,
+        _fDoTests = _fTestWithSMTCache f || _fDoTests f }
 
 getHelpMessage :: String
 getHelpMessage = 
