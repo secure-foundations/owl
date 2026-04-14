@@ -1198,23 +1198,23 @@ validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
                     checkNameType nt
                     nameTypeUniform nt
 
-ensureOdhPairDisjoint
-    :: String
-    -> NameExp
-    -> NameExp
-    -> [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
-    -> Check ()
-ensureOdhPairDisjoint groupName ne1 ne2 existingPairs =
-    forM_ existingPairs $ \(lbl2, bnd2) -> do
-        (((is2, ps2), _dvars2), (ne1', ne2')) <- unbind bnd2
-        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++
-                     map (\i -> (i, (ignore $ show i, IdxPId    ))) ps2) $ do
-            let peq1  = pAnd (pEq (aeGet ne1) (aeGet ne1')) (pEq (aeGet ne2) (aeGet ne2'))
-            let peq2  = pAnd (pEq (aeGet ne2) (aeGet ne1')) (pEq (aeGet ne1) (aeGet ne2'))
-            let pdisj = pNot (pOr peq1 peq2)
-            (_, b) <- SMT.smtTypingQuery "odh_disjoint" $ SMT.symAssert pdisj
-            assert ("ODH Disjointness in group '" ++ groupName ++
-                    "': DH pair overlaps with rule '" ++ lbl2 ++ "'") b
+-- ensureOdhPairDisjoint
+--     :: String
+--     -> NameExp
+--     -> NameExp
+--     -> [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+--     -> Check ()
+-- ensureOdhPairDisjoint groupName ne1 ne2 existingPairs =
+--     forM_ existingPairs $ \(lbl2, bnd2) -> do
+--         (((is2, ps2), _dvars2), (ne1', ne2')) <- unbind bnd2
+--         withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++
+--                      map (\i -> (i, (ignore $ show i, IdxPId    ))) ps2) $ do
+--             let peq1  = pAnd (pEq (aeGet ne1) (aeGet ne1')) (pEq (aeGet ne2) (aeGet ne2'))
+--             let peq2  = pAnd (pEq (aeGet ne2) (aeGet ne1')) (pEq (aeGet ne1) (aeGet ne2'))
+--             let pdisj = pNot (pOr peq1 peq2)
+--             (_, b) <- SMT.smtTypingQuery "odh_disjoint" $ SMT.symAssert pdisj
+--             assert ("ODH Disjointness in group '" ++ groupName ++
+--                     "': DH pair overlaps with rule '" ++ lbl2 ++ "'") b
 
 ensureSIIDisjoint
     :: String
@@ -1462,9 +1462,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                                        map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
                               withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
                                   ensureSIIDisjoint groupName lbl body accRules
-                                  let dhPairs = [(ne1, ne2) | IKM_DH_SS ne1 ne2 <- _ksrbIkm body]
-                                  forM_ dhPairs $ \(ne1, ne2) ->
-                                      ensureOdhPairDisjoint groupName ne1 ne2 accOdh
+                                --   let dhPairs = [(ne1, ne2) | IKM_DH_SS ne1 ne2 <- _ksrbIkm body]
+                                --   forM_ dhPairs $ \(ne1, ne2) ->
+                                --       ensureOdhPairDisjoint groupName ne1 ne2 accOdh
                           let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
                                             | IKM_DH_SS ne1 ne2 <- _ksrbIkm body ]
                           let accOdh' = accOdh ++ newOdhPairs
@@ -1494,9 +1494,6 @@ checkDecl d cont = withSpan (d^.spanOf) $
         assert (show $ owlpretty f <+> owlpretty "already defined") $ not $ member f dfs
         local (over (curMod . userFuncs) $ insert f (UninterpUserFunc f ar)) $ 
             cont
-
-ensureODHDisjoint :: Bind ([IdxVar], [IdxVar]) (NameExp, NameExp) -> Check ()
-ensureODHDisjoint b = return () -- ODH disjointness now checked at DeclKDFScope elaboration time
 
 nameExpIsLocal :: NameExp -> Check Bool
 nameExpIsLocal ne = 
