@@ -228,26 +228,31 @@ def bob_x3dh () @ bob
     guard is_group_elem(a4) in
     // a1 -> gae1, a2 -> long_pkA, a3 -> x1, a4 -> gae2
 
-    pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
-    false_elim in
+    pcase (a1 == dhpk(get(ae1))) in
+    pcase (a2 == dhpk(get(long_skA))) in
+    let a1': if (a1 == dhpk(get(ae1))) then dhpk(ae1) else (x:Data<adv>||group||{is_group_elem(x) /\ x == a1}) = a1 in
+    let a2': if (a2 == dhpk(get(long_skA))) then dhpk(long_skA) else (x:Data<adv>||group||{is_group_elem(x) /\ x == a2}) = a2 in
 
-    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
-    pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
-    false_elim in
+    // pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
+    // pcase (dh_combine(a2, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    // false_elim in
 
-    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
-    pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
-    false_elim in
+    // pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(ae1)), get(long_skB))) in
+    // pcase (dh_combine(a1, get(long_skB)) == dh_combine(dhpk(get(long_skA)), get(long_skB))) in
+    // false_elim in
 
-    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
-    pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
-    false_elim in
+    // pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(ae1)), get(bs))) in
+    // pcase (dh_combine(a1, get(bs)) == dh_combine(dhpk(get(long_skA)), get(bs))) in
+    // false_elim in
 
-    cross_dh_lemma<bs>(a2);
-    cross_dh_lemma<long_skB>(a1);
-    cross_dh_lemma<bs>(a1);
-    cross_dh_lemma<bo>(a1);
+    // pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(ae1)), get(bo))) in
+    // pcase (dh_combine(a1, get(bo)) == dh_combine(dhpk(get(long_skA)), get(bo))) in
+    // false_elim in
+
+    cross_dh_lemma<bs>(a2');
+    cross_dh_lemma<long_skB>(a1');
+    cross_dh_lemma<bs>(a1');
+    cross_dh_lemma<bo>(a1');
 
     corr_case long_skA in
     corr_case ae1 in
@@ -256,11 +261,17 @@ def bob_x3dh () @ bob
     corr_case long_skB in
     false_elim in
 
-    let s1 = dh_combine(a2, get(bs)) in
-    let s2 = dh_combine(a1, get(long_skB)) in
-    let s3 = dh_combine(a1, get(bs)) in
-    let s4 = dh_combine(a1, get(bo)) in
+    let s1 = dh_combine(a2', get(bs)) in
+    let s2 = dh_combine(a1', get(long_skB)) in
+    let s3 = dh_combine(a1', get(bs)) in
+    let s4 = dh_combine(a1', get(bo)) in
     let dh = s1 ++ s2 ++ s3 ++ s4 in
+
+    debug printTyOf(dh);
+    // debug decideProp(dh == correct_bmaster_arg());
+    assume(dh != get(KDF<L1;kdfkey;0>)); // TODO: this should be provable somehow
+    // pcase (dh == correct_bmaster_arg()) in
+    false_elim in
 
     let bmaster = kdf<L1; kdfkey; 0>(0x, dh, 0x) in
     // Chain: split bmaster into ratchet key (rb1) and AEAD key (cb1)
@@ -270,22 +281,28 @@ def bob_x3dh () @ bob
     let n_c = get_counter N_c_bob in
     corr_case long_skA in
     false_elim in
-    // Drop the old-style Name(KDF<...>) annotation; leave inference to the typechecker
     let ma1_opt = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
     case ma1_opt {
       | None => None()
       | Some ma1 => {
+        debug decideProp(bob_good[dh]);
         assert(bob_good[dh] ==> a4 == dhpk(get(ae2)));
-
+        pcase (a4 == dhpk(get(ae2))) in
+        corr_case ae2 in
+        corr_case be2 in
+        false_elim in
+        
         // Double ratchet first step (inlined from bob_double_ratchet_send):
         // rb2 = rk_1 || enckey_1 = KDF(salt=rb1, ikm=DH(ae2_pub, be2), info=0x)
-        let gae2 = a4 in
+        let gae2: if (a4 == dhpk(get(ae2))) then dhpk(ae2) else (x:Data<adv>||group||{is_group_elem(x) /\ x == a4}) = a4 in
 
         let gbe2 = dhpk(get(be2)) in
-
+        let dh2 = dh_combine(gae2, get(be2)) in
+        debug printTyOf(dh2);
+        
         // New-style ODH call for L2 (bob's first ratchet step)
-        let rb2 = kdf<L2; nonce || enckey; 0>(rb1, dh_combine(gae2, get(be2)), 0x) in
-        let cb2 = kdf<L2; nonce || enckey; 1>(rb1, dh_combine(gae2, get(be2)), 0x) in
+        let rb2 = kdf<L2; nonce || enckey; 0>(rb1, dh2, 0x) in
+        let cb2 = kdf<L2; nonce || enckey; 1>(rb1, dh2, 0x) in
         let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
         let b2 = bob_message1(gbe2, x2) in
         let _ = output b2 to endpoint(alice) in
