@@ -4,7 +4,7 @@ locality bob
 name n1 : nonce @ alice
 name n2 : nonce @ alice
 
-corr adv ==> [n1]
+corr adv ==> [n1] // needed in case we derive a bad key in this example, since nothing is signed
 // corr adv ==> [n2]
 
 kdf_scope S1 {
