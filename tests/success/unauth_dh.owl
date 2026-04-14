@@ -42,11 +42,8 @@ def server_getkey() @ server : Option (exists j. server_getkey_result<session j>
         // choose_idx j | dh_combine(h, get(Y)) == dh_combine(dhpk(get(X<@j>)), get(Y)) in 
         pcase (exists j:idx. h == dhpk(get(X<@j>))) in 
         choose_idx j | h == dhpk(get(X<@j>)) in 
-        let h': if (h == dhpk(get(X<@j>))) 
-                then dhpk(X<@j>)
-                else (x:Data<adv>{is_group_elem(x) /\ x == h}) = h in
         let ss 
-            = dh_combine(h', get(Y)) in 
+            = dh_combine<name X<@j>, name Y>(h, get(Y)) in 
         corr_case X<@j> in 
         corr_case Y in 
         let y = kdf<L<@j>; enckey; 0>(0x, ss, 0x) in 

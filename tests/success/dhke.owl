@@ -48,11 +48,10 @@ def alice_main () @ alice
        corr_case Y in
        corr_case d in
        if !is_group_elem(bobs_pk) then () else {
-       pcase (dh_combine(bobs_pk, get(X)) == dh_combine(dhpk(get(Y)), get(X))) in
-       let bobs_pk': if (sec(X) /\ sec(Y)) then dhpk(Y) else (x:Data<adv>{is_group_elem(x) /\ x == bobs_pk}) = bobs_pk in
-       let ss = dh_combine(bobs_pk', get(X)) in
-       debug printTyOf(ss);
-       let _ = debug decideProp(ss == dh_combine(dhpk(get(Y)), get(X))) in
+       let ss = dh_combine<name Y, name X>(bobs_pk, get(X)) in
+       // debug printTyOf(ss);
+       // let _ = debug decideProp(ss == dh_combine(dhpk(get(Y)), get(X))) in
+       pcase (bobs_pk == dhpk(get(Y))) in
        let k = kdf<L;enckey;0>(0x, ss, 0x) in 
        let c = aenc(k, get(d)) in
        let _ = output c to endpoint(bob) in 
