@@ -2921,7 +2921,7 @@ patternPublicAndEquivalent pat1 pat2 = do
 -- Try a single KDFScopeRuleRef hint against salt/ikm/info.
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
 tryKDFRuleHint :: KDFScopeRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
-tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
+tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRoutine ("tryKDFRuleHint(" ++ show (owlpretty hint) ++ ")") $ do
     let actuals = _ksrrArgs hint
     mBody <- lookupKDFScopeRule (_ksrrLabel hint) (_ksrrIdxs hint) actuals
     case mBody of
@@ -2941,6 +2941,7 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
                       ": call has " ++ show (length nks) ++ " output(s), rule declares " ++
                       show (length outputs))
                      (length nks == length outputs)
+              -- expectedNks <- mapM (\(_, outNt') -> local (set tcScope $ TcGhost False) $ getNameKind outNt') outputs
               expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
               assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel hint ++
                       ": call has " ++ show (owlpretty (NameKindRow nks)) ++
@@ -3585,5 +3586,5 @@ typeError' msg = do
     -- rs <- view tcRoutineStack
     -- logTypecheck $ owlpretty "Routines: " <> (mconcat $ L.intersperse (owlpretty ", ") $ map owlpretty rs)
     -- inds <- view inScopeIndices
-    -- logTypecheck $ "Indices: " ++ show (owlprettyIndices inds)
+    -- logTypecheck $ owlpretty "Indices: " <> owlprettyIndices inds
     Check $ lift $ throwError e
