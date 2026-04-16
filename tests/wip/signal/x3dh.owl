@@ -48,17 +48,17 @@ kdf_scope X3DH {
     // AEAD nametype for Alice's first message, keyed under the split of amaster
     // TODO: AEAD encryption in Signal contains a KDF inside of the encryption to
     // produce the IV. See https://signal.org/docs/specifications/doubleratchet/#recommended-cryptographic-algorithms
-    // nametype ma1_enc(dh) = st_aead (if dh == correct_amaster_arg() then Name(ma1) else (x:Name(ma1){False}))
-    //       aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
-    //       nonce N_c
-
-    nametype ma1_enc = st_aead Name(ma1)
+    nametype ma1_enc(dh) = st_aead Name(ma1) //(if dh == correct_amaster_arg() then Name(ma1) else (x:Name(ma1){False}))
           aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
           nonce N_c
 
-    nametype ma1_corr = st_aead (y:Name(ma1){False})
-          aad x. true
-          nonce N_c
+    // nametype ma1_enc = st_aead Name(ma1)
+    //       aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
+    //       nonce N_c
+
+    // nametype ma1_corr = st_aead (y:Name(ma1){False})
+    //       aad x. true
+    //       nonce N_c
 
     // AEAD nametype for Bob's first ratchet message
     nametype mb2_enc = st_aead Name(mb2)
@@ -67,22 +67,22 @@ kdf_scope X3DH {
 
     // ODH rule for the master key derivation.
     odh L1 : 0x, dh_ss(bs, long_skA) ++ dh_ss(long_skB, ae1) ++ dh_ss(bs, ae1) ++ dh_ss(bo, ae1), 0x -> strict kdfkey
-    odh L1_bad(s2,s3,s4) where 
-        (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s3 != dh_combine(dhpk(get(bs)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1)))
-      : 0x, dh_ss(bs, long_skA) ++ s2 ++ s3 ++ s4, 0x -> strict kdfkey
+    odh L1_bad(stail) where 
+        (stail != dh_combine(dhpk(get(long_skB)), get(ae1)) ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ dh_combine(dhpk(get(bo)), get(ae1)))
+      : 0x, dh_ss(bs, long_skA) ++ stail, 0x -> strict kdfkey
 
     // Chain rule: split amaster (output of L1..L4) into ratchet key + AEAD key.
     // Index 0 gives kdfkey (used as rb1/ra1), index 1 gives ma1_enc (used as cb1/ca1).
-    kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc
-    kdf LR1_bad(s2,s3,s4) where 
-        (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s3 != dh_combine(dhpk(get(bs)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1)))
-      : 0x, KDF<L1_bad(s2,s3,s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_corr
-
-    // Version that unifies ma1_enc and ma1_corr:
-    // kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc(correct_amaster_arg())
+    // kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc
     // kdf LR1_bad(s2,s3,s4) where 
     //     (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s3 != dh_combine(dhpk(get(bs)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1)))
-    //   : 0x, KDF<L1_bad(s2,s3,s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc(dh_combine(dhpk(get(bs)), get(long_skA)) ++ s2 ++ s3 ++ s4)
+    //   : 0x, KDF<L1_bad(s2,s3,s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_corr
+
+    // Version that unifies ma1_enc and ma1_corr:
+    kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc(correct_amaster_arg())
+    kdf LR1_bad(stail) where 
+        (stail != dh_combine(dhpk(get(long_skB)), get(ae1)) ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ dh_combine(dhpk(get(bo)), get(ae1)))
+      : 0x, KDF<L1_bad(stail);kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc(dh_combine(dhpk(get(bs)), get(long_skA)) ++ stail)
 
     // Bob's first ratchet step (first round of the double ratchet).
     // Salt is the ratchet key from LR1; ikm is the new DH shared secret be2/ae2.
@@ -212,6 +212,7 @@ def alice_x3dh () @ alice
           let dh = s1 ++ s2 ++ s3 ++ s4 in
           debug printTyOf(dh);
           // debug decideProp(dh == correct_amaster_arg());
+          // TODO: kdf_inj_lemma??? something like this?
           assume(dh != get(KDF<L1;kdfkey;0>)); // TODO: this should be provable somehow
           // pcase (dh == correct_amaster_arg()) in
           false_elim in

@@ -2941,8 +2941,8 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRouti
                       ": call has " ++ show (length nks) ++ " output(s), rule declares " ++
                       show (length outputs))
                      (length nks == length outputs)
-              -- expectedNks <- mapM (\(_, outNt') -> local (set tcScope $ TcGhost False) $ getNameKind outNt') outputs
-              expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
+              expectedNks <- mapM (\(_, outNt') -> local (set tcScope $ TcGhost False) $ getNameKind outNt') outputs
+              --expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
               assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel hint ++
                       ": call has " ++ show (owlpretty (NameKindRow nks)) ++
                       ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
