@@ -1,4 +1,4 @@
-# Key Derivation Functions and `kdf_scope` groups
+# Key Derivation Functions and `kdf_scope`s
 
 Owl models key derivation functions (KDFs) using *KDF scopes*: named blocks
 that encapsulate all the ways that a particular set of names can be used with
