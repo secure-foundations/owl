@@ -1,0 +1,17 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // L1 outputs nonce || kdfkey
+    kdf L1 : k, 0x, 0x01 -> nonce || strict kdfkey
+    // L2 outputs nonce || nonce
+    kdf L2 : k, 0x, 0x02 -> nonce || nonce
+}
+
+def alice_main() @ alice : Unit =
+    // SHOULD FAIL: L1 and L2 have incompatible output namekinds
+    let x = kdf<L1,L2;nonce||kdfkey;0>(get(k), 0x, 0x01) in
+    ()

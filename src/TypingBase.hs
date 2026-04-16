@@ -742,14 +742,18 @@ lookupKDFScopeRule lbl (vs1, vs2) actuals = do
               Nothing -> findInGroups rest
               Just bRule -> do
                   (((is1, is2), dvars), body) <- unbind bRule
-                  if (length vs1, length vs2) /= (length is1, length is2)
-                    then findInGroups rest
-                    else if length dvars /= length actuals
-                    then findInGroups rest
-                    else return $ Just
-                           $ substs (zip dvars actuals)
-                           $ substs (zip is1 vs1)
-                           $ substs (zip is2 vs2) body
+                  when ((length vs1, length vs2) /= (length is1, length is2)) $
+                      typeError $ "Index arity mismatch for KDF scope rule " ++ show lbl ++
+                          ": expected (" ++ show (length is1) ++ ", " ++ show (length is2) ++
+                          ") indices but got (" ++ show (length vs1) ++ ", " ++ show (length vs2) ++ ")"
+                  when (length dvars /= length actuals) $
+                      typeError $ "Bytestring argument arity mismatch for KDF scope rule " ++ show lbl ++
+                          ": expected " ++ show (length dvars) ++
+                          " arguments but got " ++ show (length actuals)
+                  return $ Just
+                         $ substs (zip dvars actuals)
+                         $ substs (zip is1 vs1)
+                         $ substs (zip is2 vs2) body
     findInGroups kgs
 
 

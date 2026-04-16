@@ -2918,6 +2918,28 @@ patternPublicAndEquivalent pat1 pat2 = do
 
 
 
+-- Assert that all KDFScopeRuleRefs in the list declare the same output namekinds.
+checkHintOutputsCompatible :: [KDFScopeRuleRef] -> Check ()
+checkHintOutputsCompatible hints = do
+    mNksList <- forM hints $ \h -> do
+        mBody <- lookupKDFScopeRule (_ksrrLabel h) (_ksrrIdxs h) (_ksrrArgs h)
+        case mBody of
+          Nothing -> return Nothing
+          Just body -> do
+              let KDFOutputSpec outputs = _ksrbOutput body
+              nks' <- local (set tcScope $ TcGhost False) $
+                          mapM (\(_, outNt') -> getNameKind outNt') outputs
+              return $ Just (_ksrrLabel h, nks')
+    case catMaybes mNksList of
+      [] -> return ()
+      ((firstLbl, firstNks):rest) ->
+          forM_ rest $ \(lbl, nks') ->
+              assert ("Incompatible KDF hints: rule " ++ firstLbl ++
+                      " declares output kinds " ++ show (owlpretty (NameKindRow firstNks)) ++
+                      " but rule " ++ lbl ++ " declares " ++
+                      show (owlpretty (NameKindRow nks')))
+                     (firstNks == nks')
+
 -- Try a single KDFScopeRuleRef hint against salt/ikm/info.
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
 tryKDFRuleHint :: KDFScopeRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
@@ -3237,6 +3259,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           saltE' <- resolveANF saltE
           ikmE' <- resolveANF ikmE
           infoE' <- resolveANF infoE
+          checkHintOutputsCompatible hints
           resultsWithHints <- catMaybes <$> mapM (\h -> fmap (\t -> (h, t)) <$> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
           let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j

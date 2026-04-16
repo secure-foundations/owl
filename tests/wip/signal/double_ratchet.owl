@@ -1,0 +1,311 @@
+/*
+
+Alice                            Bob
+        alice_pk_i=dhpk(ark_i)
+        ctxt_i
+ark_i   ------------------->    brk_i
+                               enckey_i+1 || rk_i+1 = kdf(rk_i, dh_combine(alice_pk_i, brk_i), 0x)
+                               plaintext_i = aead_decrypt(enckey_i+1, ctxt_i, aad contains alice_pk_i and i)
+
+
+Need an off-chain ODH. 3 cases
+1. a == dhpk(ark_i)
+2. a == some other valid dhpk ---> off-chain case
+3. a is not a valid dhpk ---> should be ruled out by AEAD (?)
+
+
+sec(rk_i) ==> sec(enckey_i+1) ==> aead_decrypt succeeds ==> alice_pk_i must have been authentic
+                                       ===> sec(rk_i+1)
+
+*/
+
+locality alice
+locality bob
+
+// Long-term DH keys are kept outside the scope: they appear only in AADs,
+// not in any dh_ss(...) rule body. In the full model they will come from X3DH.
+name long_skA : DH @ alice // Alice's long-term DH key (never changes)
+name long_skB : DH @ bob   // Bob's long-term DH key (never changes)
+
+counter N_c_alice @ alice
+counter N_c_bob   @ bob
+
+// Plaintext secrets declared at top level (referenced inside scope nametypes)
+name ma3 : nonce @ alice // Alice's first ratchet message
+name mb2 : nonce @ bob   // Bob's first ratchet message
+
+// Cleanliness predicate used in function signatures
+predicate bob_good() = sec(long_skB) \/ sec(long_skA)
+
+kdf_scope DR {
+
+    // Ephemeral DH keys used in ODH rules go inside the scope
+    name ae2 : DH @ alice // Round-2 ephemeral (Alice)
+    name be2 : DH @ bob   // Round-2 ephemeral (Bob)
+    name ae3 : DH @ alice // Round-3 ephemeral (Alice)
+    name be3 : DH @ bob   // Round-3 ephemeral (Bob, declared for completeness; not yet used in any rule)
+
+    // The handshake output acts as the initial ratchet chain key shared by both parties.
+    // TODO: whether r1 as a bare kdfkey correctly captures the original handshake
+    // output's secrecy relative to long_skA/long_skB is an open question. If the
+    // type-checker cannot prove the required secrecy, we may need an _bad variant
+    // for LR1 that takes both salt and ikm as parameters.
+    name r1 : kdfkey @ alice, bob
+
+    // AEAD nametypes for Bob's round-2 ratchet message
+    nametype mb2_enc = st_aead Name(mb2)
+          aad x. (x == dhpk(get(be2)) ++ dhpk(get(long_skB)))
+          nonce N_c_bob
+    nametype mb2_corr = st_aead (y:Name(mb2){False})
+          aad x. true
+          nonce N_c_bob
+
+    // AEAD nametypes for Alice's round-3 ratchet message
+    nametype mb3_enc = st_aead Name(ma3)
+          aad x. (x == dhpk(get(ae3)) ++ dhpk(get(long_skA)))
+          nonce N_c_alice
+    nametype mb3_corr = st_aead (y:Name(ma3){False})
+          aad x. true
+          nonce N_c_alice
+
+    // Round 2 ODH: Bob's first ratchet step / Alice receives it.
+    // Salt = r1 (initial ratchet key from handshake); ikm = DH(ae2, be2).
+    // Index 0 = new ratchet key; index 1 = AEAD key for mb2_enc.
+    // TODO: LR1 and LR2 share be2, so a cross-rule where n_eph !=idx n clause (issue I3)
+    // may be required. If typechecking surfaces an overlap soundness error, add it.
+    odh LR1 : r1, dh_ss(ae2, be2), 0x
+            -> strict kdfkey || strict mb2_enc
+    odh LR1_bad(s) where (s != dh_combine(dhpk(get(ae2)), get(be2)))
+            : r1, s, 0x
+            -> strict kdfkey || strict mb2_corr
+
+    // Round 3 ODH: Alice's first ratchet step using new ae3 against Bob's be2.
+    // Salt = KDF output of LR1 at index 0 (the ratchet key); ikm = DH(ae3, be2).
+    // Index 0 = new ratchet key; index 1 = AEAD key for mb3_enc.
+    odh LR2 : KDF<LR1;kdfkey||enckey;0>, dh_ss(ae3, be2), 0x
+            -> strict kdfkey || strict mb3_enc
+    odh LR2_bad(s) where (s != dh_combine(dhpk(get(ae3)), get(be2)))
+            : KDF<LR1;kdfkey||enckey;0>, s, 0x
+            -> strict kdfkey || strict mb3_corr
+
+}
+
+// ------------ FUTURE DESIGN SKETCH (recursive ratchet) ------------
+// The following is a sketch of how indexed/recursive ratchet rounds might look
+// using a rec(i) ODH rule. 
+//
+// kdf_scope SignalRatchet {
+//
+//   name alice_dh<i> : DH @ alice
+//   name bob_dh<i> : DH @ bob
+//
+//   rec(i) odh ratchet<i> :
+//     | i = 0 : something_from_the_handshake, dh_combine(alice_dh<0>, bob_dh<0>) -> strict ratchet<1> || strict mb1_enc
+//     | KDF<ratchet<i-1>;kdfkey;0> , dh_combine(alice_dh<i>, bob_dh<i>) ->
+//                 strict ratchet<i+1>
+//                 ||
+//                 strict mb<i+1>_enc
+//
+// }
+
+// def bob_round<i>(state<i>: ...) : state<i+1> =
+//   send || recv;
+//   re-ratchet
+
+// ------------ CORR AXIOMS (verbatim from original) ------------
+
+// These encode the relationship between long-term keys and the ratchet key that
+// comes from the handshake
+corr [long_skA] ==> [r1]
+corr [long_skB] ==> [r1]
+corr [r1] ==> [ae2] // r1 is derived from the handshake, and the handshake AEAD guarantees authenticity of ae2
+
+corr [r1] /\ [ae2] /\ [be2] ==> [mb2]
+
+// TODO: should be r2 instead of r1
+corr [r1] /\ [be2] /\ [ae3] ==> [ma3]
+
+corr [r1] /\ [ae2] ==> [be2] // TODO: this is too strong
+
+corr [be2] ==> [ma3]
+corr [ae3] ==> [ma3]
+
+
+// ------------ STRUCTS ------------
+
+struct alice_message2 {
+  _a_pk: dhpk(ae3),
+  _a_ctxt: Data<adv>
+}
+
+struct bob_message1 {
+  _b5: dhpk(be2),
+  _b6: Data<adv>
+}
+
+
+// ------------ COMMENTED-OUT DEFS (ported syntax) ------------
+
+// def alice_send_round_3 was commented out in the original. Ported changes:
+//   - Name(KDF<kdfkey||enckey;0;r1>()) -> Name(KDF<LR1;kdfkey||enckey;0>)
+//   - kdf<0,1;odh LR2[0];...> -> kdf<LR2, LR2_bad(ss_ae3_be2); ...>
+//   - dh_combine(gbe2, get(ae3)) -> dh_combine<name be2, name ae3>(gbe2, get(ae3))
+//   - cb3 -> ca3 (bug fix: index-1 output of LR2 call)
+//   - gae3 -> dhpk(get(ae3)) (bug fix: alice_message2 first field)
+//   - AAD gbe2 ++ dhpk(get(long_skB)) does not match mb3_enc nametype
+//     (should be dhpk(get(ae3)) ++ dhpk(get(long_skA))); left as-is.
+//
+// def alice_send_round_3(
+//   ra2: if bob_good[] then Name(KDF<LR1;kdfkey||enckey;0>) else Data<adv> ||kdfkey||,
+//   gbe2: if bob_good[] then dhpk(be2) else Data<adv> ||group||
+// ) @ alice: Option Unit =
+//   let ss_ae3_be2 = dh_combine<name be2, name ae3>(gbe2, get(ae3)) in
+//   // debug printTyOf(gae2');
+//   // debug printTyOf(ss_ae3_be2);
+//   let ra3 = kdf<LR2, LR2_bad(ss_ae3_be2); kdfkey || enckey; 0>(ra2, ss_ae3_be2, 0x) in
+//   let ca3 = kdf<LR2, LR2_bad(ss_ae3_be2); kdfkey || enckey; 1>(ra2, ss_ae3_be2, 0x) in
+//   // debug "===============================";
+//   // debug printTyOf(rb1);
+//   // debug printTyOf(rb2);
+//   // debug printTyOf(cb2);
+//   // debug "===============================";
+//
+//   let x3 = st_aead_enc<N_c_alice>(ca3, get(ma3), gbe2 ++ dhpk(get(long_skB))) in
+//   // output x3 to endpoint(alice);
+//   let msg = alice_message2(dhpk(get(ae3)), x3) in
+//   let _ = output msg to endpoint(alice) in
+//   Some(()) // TODO: call alice_recv_round_4 here
+
+// Draft bob_send_round_2 body (no signature; from original lines 205-240).
+// Ported change: kdf<0,1;odh LR1[0];...> -> kdf<LR1, LR1_bad(ss_ae2_be2); ...>
+//
+//   pcase sec(r1) in
+//   pcase bob_good[] in
+//   pcase sec(ae2) in
+//   pcase sec(be2) in
+//   pcase sec(mb2) in
+//   pcase sec(long_skA) in
+//   pcase sec(long_skB) in
+//   pcase gae2 == dhpk(get(ae2)) in
+//   false_elim in
+//
+//   let gbe2 = dhpk(get(be2)) in
+//
+//   // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
+//   let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else Data<adv> ||group|| = gae2 in
+//   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
+//   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be2)), get(be2))) in
+//   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae3)), get(be2))) in
+//   pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be3)), get(be2))) in
+//   cross_dh_lemma<be2>(gae2');
+//   false_elim in
+//   let ss_ae2_be2 = dh_combine(gae2', get(be2)) in
+//   debug printTyOf(gae2');
+//   debug printTyOf(ss_ae2_be2);
+//   let rb2 = kdf<LR1, LR1_bad(ss_ae2_be2); kdfkey || enckey; 0>(rb1, ss_ae2_be2, 0x) in
+//   let cb2 = kdf<LR1, LR1_bad(ss_ae2_be2); kdfkey || enckey; 1>(rb1, ss_ae2_be2, 0x) in
+//   debug "===============================";
+//   debug printTyOf(rb1);
+//   debug printTyOf(rb2);
+//   debug printTyOf(cb2);
+//   debug "===============================";
+//
+//   let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
+//   // output x2 to endpoint(alice);
+//   let b2 = bob_message1(gbe2, x2) in
+//   let _ = output b2 to endpoint(alice) in
+//   Some(()) // TODO: call bob_double_ratchet_recv here
+
+def alice_recv_round_2(
+  ra1: if bob_good[] then Name(r1) else Data<adv> ||kdfkey||,
+  b3: if bob_good[] then dhpk(long_skB) else Data<adv> ||group||
+) @ alice: Option Unit =
+  input i2, _ in
+  parse i2 as bob_message1(gbe2, a6) in {
+    // b5 -> gbe2, b6 -> x2
+    guard is_group_elem(gbe2) in
+    pcase sec(r1) in
+    pcase bob_good[] in
+    pcase sec(ae2) in
+    pcase sec(be2) in
+    pcase sec(mb2) in
+    pcase sec(long_skA) in
+    pcase sec(long_skB) in
+    pcase b3 == dhpk(get(long_skB)) in
+    pcase gbe2 == dhpk(get(be2)) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be2)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae2)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(be3)), get(ae2))) in
+    // pcase (dh_combine(gbe2, get(ae2)) == dh_combine(dhpk(get(ae3)), get(ae2))) in
+    cross_dh_lemma<ae2>(gbe2);
+    false_elim in
+
+    // Pre-bind the DH shared secret so it can be passed to LR1_bad(s)
+    let s = dh_combine<name be2, name ae2>(gbe2, get(ae2)) in
+    let ra2 = kdf<LR1, LR1_bad(s); kdfkey || enckey; 0>(ra1, s, 0x) in
+    let ca2 = kdf<LR1, LR1_bad(s); kdfkey || enckey; 1>(ra1, s, 0x) in
+
+    let N_c = get_counter N_c_alice in
+    let mb2_opt = st_aead_dec(ca2, a6, gbe2 ++ b3, N_c) in
+    case mb2_opt {
+      | None => None()
+      | Some mb2 => {
+      // below is alice_send_round_3 inlined
+      pcase sec(ae3) in
+      pcase sec(ma3) in
+      false_elim in
+      cross_dh_lemma<ae3>(gbe2);
+      // Pre-bind the round-3 DH shared secret so it can be passed to LR2_bad(s3)
+      let ss_ae3_be2 = dh_combine<name be2, name ae3>(gbe2, get(ae3)) in
+      let ra3 = kdf<LR2, LR2_bad(ss_ae3_be2); kdfkey || enckey; 0>(ra2, ss_ae3_be2, 0x) in
+      let ca3 = kdf<LR2, LR2_bad(ss_ae3_be2); kdfkey || enckey; 1>(ra2, ss_ae3_be2, 0x) in
+      let x3 = st_aead_enc<N_c_alice>(ca3, get(ma3), dhpk(get(ae3)) ++ dhpk(get(long_skA))) in
+      let msg = alice_message2(dhpk(get(ae3)), x3) in
+      let _ = output msg to endpoint(alice) in
+      Some(()) // TODO: call alice_recv_round_4 here
+
+      }
+    }
+  } otherwise None()
+
+
+def bob_send_round_2(
+  rb1: if bob_good[] then Name(r1) else Data<adv> ||kdfkey||,
+  gae2: if bob_good[] then dhpk(ae2) else (x:Data<adv> ||group||{corr(ae2)})
+) @ bob: Option Unit =
+
+  pcase sec(r1) in
+  pcase bob_good[] in
+  pcase sec(ae2) in
+  pcase sec(be2) in
+  pcase sec(mb2) in
+  pcase sec(long_skA) in
+  pcase sec(long_skB) in
+  pcase gae2 == dhpk(get(ae2)) in
+  false_elim in
+
+  let gbe2 = dhpk(get(be2)) in
+
+  // rk_i || enckey_i = kdf(salt = rk_{i-1}, ikm = dh_combine(alice_pk_{i-1}, bob_sk_{i-1}), 0x)
+  let gae2': if (gae2 == dhpk(get(ae2))) then dhpk(ae2) else (x:Data<adv> ||group||{x == gae2}) = gae2 in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae2)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be2)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(ae3)), get(be2))) in
+  pcase (dh_combine(gae2', get(be2)) == dh_combine(dhpk(get(be3)), get(be2))) in
+  cross_dh_lemma<be2>(gae2');
+  false_elim in
+  let ss_ae2_be2 = dh_combine(gae2', get(be2)) in
+  debug printTyOf(gae2');
+  debug printTyOf(ss_ae2_be2);
+  let rb2 = kdf<LR1, LR1_bad(ss_ae2_be2); kdfkey || enckey; 0>(rb1, ss_ae2_be2, 0x) in
+  let cb2 = kdf<LR1, LR1_bad(ss_ae2_be2); kdfkey || enckey; 1>(rb1, ss_ae2_be2, 0x) in
+  debug "===============================";
+  debug printTyOf(rb1);
+  debug printTyOf(rb2);
+  debug printTyOf(cb2);
+  debug "===============================";
+
+  let x2 = st_aead_enc<N_c_bob>(cb2, get(mb2), gbe2 ++ dhpk(get(long_skB))) in
+  let b2 = bob_message1(gbe2, x2) in
+  let _ = output b2 to endpoint(alice) in
+  Some(()) // TODO: call bob_double_ratchet_recv here
