@@ -246,9 +246,9 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclKDFRule ruleX -> do
-          ruleX' <- resolveKDFRuleX (d^.spanOf) ruleX
-          let d' = Spanned (d^.spanOf) $ DeclKDFRule ruleX'
+      DeclKDFRule ruleDeclX -> do
+          ruleDeclX' <- resolveKDFRuleDeclX (d^.spanOf) ruleDeclX
+          let d' = Spanned (d^.spanOf) $ DeclKDFRule ruleDeclX'
           ds' <- resolveDecls ds
           return (d' : ds')
       DeclKDFScope s innerDecls -> do
@@ -334,31 +334,21 @@ declPathUpdates d p = case d^.val of
     DeclModule s _ _ _ -> over modPaths (T.insert s (False, p))
     _                  -> id
 
--- | Resolve all fields of a KDFScopeRuleX in place.
-resolveKDFRuleX :: Ignore Position -> KDFScopeRuleX -> Resolve KDFScopeRuleX
-resolveKDFRuleX pos ruleX = do
-    ((idxs, dvars), body) <- unbind (_ksrBody ruleX)
-    wh'   <- resolveProp (_ksrbWhere body)
-    salt' <- resolveKDFSalt pos (_ksrbSalt body)
-    ikm'  <- mapM resolveKDFIKMAtom (_ksrbIkm body)
-    info' <- resolveKDFInfo (_ksrbInfo body)
-    let KDFOutputSpec outputs = _ksrbOutput body
-    outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
-    let body' = body { _ksrbWhere = wh', _ksrbSalt = salt', _ksrbIkm = ikm',
-                       _ksrbInfo = info', _ksrbOutput = KDFOutputSpec outputs' }
-    return $ ruleX { _ksrBody = bind (idxs, dvars) body' }
-
-resolveKDFSalt :: Ignore Position -> SaltExpr -> Resolve SaltExpr
-resolveKDFSalt _ (SaltName ne)      = SaltName <$> resolveNameExp ne
-resolveKDFSalt _ (SaltPublicExpr e) = SaltPublicExpr <$> resolveAExpr e
-
-resolveKDFIKMAtom :: IKMAtom -> Resolve IKMAtom
-resolveKDFIKMAtom (IKMKdfKeyName ne)     = IKMKdfKeyName <$> resolveNameExp ne
-resolveKDFIKMAtom (IKM_DH_SS ne1 ne2) = IKM_DH_SS <$> resolveNameExp ne1 <*> resolveNameExp ne2
-resolveKDFIKMAtom (IKMPublicExpr e)      = IKMPublicExpr <$> resolveAExpr e
-
-resolveKDFInfo :: InfoExpr -> Resolve InfoExpr
-resolveKDFInfo (InfoPublic e) = InfoPublic <$> resolveAExpr e
+-- | Resolve all fields of a KDFScopeRuleDeclX in place.
+resolveKDFRuleDeclX :: Ignore Position -> KDFScopeRuleDeclX -> Resolve KDFScopeRuleDeclX
+resolveKDFRuleDeclX _pos ruleDecl = do
+    ((idxs, dvars), body) <- unbind (_ksrdBody ruleDecl)
+    wh'   <- resolveProp (_ksrbdWhere body)
+    salt' <- resolveAExpr (_ksrbdSalt body)
+    ikm'  <- resolveAExpr (_ksrbdIkm body)
+    info' <- resolveAExpr (_ksrbdInfo body)
+    let KDFOutputSpec outputs = _ksrbdOutput body
+    outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt))
+                     outputs
+    let body' = body { _ksrbdWhere = wh', _ksrbdSalt = salt', _ksrbdIkm = ikm'
+                     , _ksrbdInfo = info', _ksrbdOutput = KDFOutputSpec outputs'
+                     }
+    return $ ruleDecl { _ksrdBody = bind (idxs, dvars) body' }
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 

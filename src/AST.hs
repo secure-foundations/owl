@@ -351,6 +351,25 @@ data KDFScopeRuleX = KDFScopeRule {
 
 type KDFScopeRule = Spanned KDFScopeRuleX
 
+-- Surface-syntax form of a kdf_scope rule (parser output).
+-- The salt/ikm/info are raw AExprs; the typechecker classifies them into
+-- SaltExpr/[IKMAtom]/InfoExpr during DeclKDFScope processing.
+data KDFScopeRuleBodyDecl = KDFScopeRuleBodyDecl {
+    _ksrbdWhere  :: Prop,
+    _ksrbdSalt   :: AExpr,
+    _ksrbdIkm    :: AExpr,
+    _ksrbdInfo   :: AExpr,
+    _ksrbdOutput :: KDFOutputSpec
+} deriving (Show, Generic, Typeable)
+
+data KDFScopeRuleDeclX = KDFScopeRuleDecl {
+    _ksrdIsODH :: Bool,
+    _ksrdLabel :: String,
+    _ksrdBody  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBodyDecl
+} deriving (Show, Generic, Typeable)
+
+type KDFScopeRuleDecl = Spanned KDFScopeRuleDeclX
+
 data KDFScopeRuleRef = KDFScopeRuleRef {
     _ksrrLabel :: String,
     _ksrrIdxs  :: ([Idx], [Idx]),
@@ -381,7 +400,7 @@ data DeclX =
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp)
     | DeclKDFScope String [Decl]
-    | DeclKDFRule KDFScopeRuleX
+    | DeclKDFRule KDFScopeRuleDeclX
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -525,6 +544,8 @@ data FuncParam =
 
 makeLenses ''KDFScopeRuleBody
 makeLenses ''KDFScopeRuleX
+makeLenses ''KDFScopeRuleBodyDecl
+makeLenses ''KDFScopeRuleDeclX
 makeLenses ''KDFScopeRuleRef
 
 -- LocallyNameless instances
@@ -614,6 +635,16 @@ instance Alpha KDFScopeRuleX
 instance Subst Idx KDFScopeRuleX
 instance Subst AExpr KDFScopeRuleX
 instance Subst ResolvedPath KDFScopeRuleX
+
+instance Alpha KDFScopeRuleBodyDecl
+instance Subst Idx KDFScopeRuleBodyDecl
+instance Subst AExpr KDFScopeRuleBodyDecl
+instance Subst ResolvedPath KDFScopeRuleBodyDecl
+
+instance Alpha KDFScopeRuleDeclX
+instance Subst Idx KDFScopeRuleDeclX
+instance Subst AExpr KDFScopeRuleDeclX
+instance Subst ResolvedPath KDFScopeRuleDeclX
 
 instance Alpha KDFScopeRuleRef
 instance Subst Idx KDFScopeRuleRef

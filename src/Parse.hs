@@ -766,65 +766,39 @@ parseNameDeclBody =
  
 -- kdf_scope sub-parsers
 
-parseSaltExpr :: Parser SaltExpr
-parseSaltExpr = parseSaltExprF []
+-- parseAExpr, but with two extra term-level productions recognized in
+-- kdf_scope rule bodies:
+--   1. `dh_ss(A, B)` -> dh_combine(dhpk(get(A)), get(B))
+--   2. bare NameExp  -> AEGet ne  (or AEVar if the bare ident is a rule formal)
+-- Reuses parseAExprTable so `++` folds via the normal AExpr grammar.
+parseRuleBodyAExpr :: [String] -> Parser AExpr
+parseRuleBodyAExpr ruleParams =
+    buildExpressionParser parseAExprTable (parseRuleBodyAExprTerm ruleParams)
 
-parseSaltExprF :: [String] -> Parser SaltExpr
-parseSaltExprF ruleParams =
-    (try $ do
-        ne <- parseNameExp
-        notFollowedBy (whiteSpace >> char '(')  -- don't consume function calls
-        -- If this is a bare identifier matching a rule param, treat it as AEVar (AExpr)
-        case ne^.val of
-          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` ruleParams ->
-              return $ SaltPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
-          _ -> return $ SaltName ne
-    )
-    <|>
-    (do
-        e <- parseAExpr
-        return $ SaltPublicExpr e
-    )
-
-parseIKMAtom :: Parser IKMAtom
-parseIKMAtom = parseIKMAtomF []
-
-parseIKMAtomF :: [String] -> Parser IKMAtom
-parseIKMAtomF ruleParams =
-    (try $ do
+parseRuleBodyAExprTerm :: [String] -> Parser AExpr
+parseRuleBodyAExprTerm ruleParams =
+    try dhSsShort <|> try nameShort <|> parseAExprTerm
+  where
+    dhSsShort = parseSpanned $ do
         reserved "dh_ss"
         symbol "("
         ne1 <- parseNameExp
         symbol ","
         ne2 <- parseNameExp
         symbol ")"
-        return $ IKM_DH_SS ne1 ne2
-    )
-    <|>
-    (try $ do
-        -- A name expression (path with optional indices) used as kdfkey.
-        -- Reject function-call applications (which go to IKMPublicExpr).
-        -- Also reject bare identifiers that match rule parameters.
+        let getNE ne = mkSpanned $ AEGet ne
+        let dhpkOf ne = mkSpanned $
+                AEApp (topLevelPath "dhpk") [] [getNE ne]
+        return $ AEApp (topLevelPath "dh_combine") []
+                       [dhpkOf ne1, getNE ne2]
+    nameShort = parseSpanned $ do
         ne <- parseNameExp
-        notFollowedBy (whiteSpace >> char '(')
+        notFollowedBy (whiteSpace >> char '(')  -- don't consume function calls
         case ne^.val of
-          NameConst ([], []) (PUnresolvedVar n) [] | n `elem` ruleParams ->
-              return $ IKMPublicExpr $ mkSpanned $ AEVar (ignore n) (s2n n)
-          _ -> return $ IKMKdfKeyName ne
-    )
-    <|>
-    (do
-        e <- parseAExpr
-        return $ IKMPublicExpr e
-    )
-
-parseIKMAtomList :: Parser [IKMAtom]
-parseIKMAtomList = parseIKMAtomF [] `sepBy1` (try $ symbol "++")
-
-parseInfoExpr :: Parser InfoExpr
-parseInfoExpr = do
-    e <- parseAExpr
-    return $ InfoPublic e
+          NameConst ([], []) (PUnresolvedVar s) []
+            | s `elem` ruleParams ->
+                return $ AEVar (ignore s) (s2n s)
+          _ -> return $ AEGet ne
 
 parseKDFOutputSpec :: Parser KDFOutputSpec
 parseKDFOutputSpec = do
@@ -854,15 +828,15 @@ parseKDFRule = parseSpanned $ do
     let ruleParams = map name2String args
     wh <- option (mkSpanned PTrue) (reserved "where" >> parseProp)
     symbol ":"
-    salt <- parseSaltExprF ruleParams
+    salt <- parseRuleBodyAExpr ruleParams
     symbol ","
-    ikm <- parseIKMAtomF ruleParams `sepBy1` (try $ symbol "++")
+    ikm <- parseRuleBodyAExpr ruleParams
     symbol ","
-    info <- parseInfoExpr
+    info <- parseAExpr
     symbol "->"
     out <- parseKDFOutputSpec
-    let body = KDFScopeRuleBody wh salt ikm info out
-    return $ DeclKDFRule $ KDFScopeRule isODH lbl $ bind (idxs, args) body
+    let body = KDFScopeRuleBodyDecl wh salt ikm info out
+    return $ DeclKDFRule $ KDFScopeRuleDecl isODH lbl $ bind (idxs, args) body
 
 parseKDFScope :: Parser Decl
 parseKDFScope = parseSpanned $ do

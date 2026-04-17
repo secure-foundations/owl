@@ -1138,54 +1138,119 @@ ikmEqProp [] _  = Nothing
 ikmEqProp _  [] = Nothing
 ikmEqProp as bs = Just (pEq (ikmAtomsToAExpr as) (ikmAtomsToAExpr bs))
 
-validateKDFScopeRule :: String -> [String] -> [String] -> KDFScopeRuleX -> Check ()
-validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
-        (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
-        let lbl = _ksrLabel ruleX
-        let saltHasGroupKdfKey = case _ksrbSalt body of
-              SaltName ne -> case ne^.val of
-                  NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
-                  KDFName nks j _ _               -> j < length nks && (nks !! j) == NK_KDF
-                  _                               -> False
-              SaltPublicExpr _                    -> False
-        let ikmHasGroupKdfKey = any isGroupKdfKeyAtom (_ksrbIkm body)
-              where
-                isGroupKdfKeyAtom (IKMKdfKeyName ne) = case ne^.val of
-                    NameConst _ (PRes (PDot _ n)) _ -> n `elem` kdfKeyEntryNames
-                    KDFName nks j _ _               -> j < length nks && (nks !! j) == NK_KDF
-                    _                               -> False
-                isGroupKdfKeyAtom _                  = False
-        let ikmHasLocalDH = any isLocalDHAtom (_ksrbIkm body)
-              where
-                isLocalDHAtom (IKM_DH_SS ne1 ne2) = isGroupDH ne1 && isGroupDH ne2
-                isLocalDHAtom _                       = False
-                isGroupDH ne = case ne^.val of
-                    NameConst _ (PRes (PDot _ n)) _ -> n `elem` dhEntryNames
-                    _                               -> False
-        assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-                "': salt or IKM must contain a kdfkey from the group, " ++
-                "or IKM must contain dh_combine where both arguments are local DH keys from the group") $
-            saltHasGroupKdfKey || ikmHasGroupKdfKey || ikmHasLocalDH
-        -- Conditions 2 & 3: each parameter must appear free in (salt, ikm, info)
-        let lhs = (_ksrbSalt body, _ksrbIkm body, _ksrbInfo body)
-        let freeIdxVars  = toListOf fv lhs :: [IdxVar]
-        let freeDataVars = toListOf fv lhs :: [DataVar]
-        forM_ (is1 ++ is2) $ \i ->
-            assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-                    "': index parameter '" ++ show i ++ "' does not appear in salt/IKM/info") $
-                i `elem` freeIdxVars
-        forM_ dvars $ \d ->
-            assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-                    "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
-                d `elem` freeDataVars
-        -- Validate output name types
-        let KDFOutputSpec outputs = _ksrbOutput body
+-- Validate a kdf_scope rule declaration and produce the typed form.
+validateKDFScopeRule
+    :: String          -- group name
+    -> [String]        -- kdfkey entry names in the group
+    -> [String]        -- DH entry names in the group
+    -> KDFScopeRuleDeclX
+    -> Check KDFScopeRuleX
+validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleDecl = do
+    let lbl   = _ksrdLabel ruleDecl
+        isODH = _ksrdIsODH ruleDecl
+    (((is1, is2), dvars), bd) <- unbind (_ksrdBody ruleDecl)
+    body <-
         withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                     map (\i -> (i, (ignore $ show i, IdxPId))) is2) $
-            withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
-                forM_ outputs $ \(_, nt) -> do
+                     map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+        withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
+            classifyRuleBody bd
+
+    let saltHasGroupKdfKey = saltHasGroupKdfKeyCheck kdfKeyEntryNames (_ksrbSalt body)
+    let ikmHasGroupKdfKey  = ikmHasGroupKdfKeyCheck  kdfKeyEntryNames (_ksrbIkm body)
+    let ikmHasLocalDH      = ikmHasLocalDHCheck      dhEntryNames     (_ksrbIkm body)
+    assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+            "': salt or IKM must contain a kdfkey from the group, or " ++
+            "IKM must contain dh_combine where both arguments are local DH keys from the group") $
+        saltHasGroupKdfKey || ikmHasGroupKdfKey || ikmHasLocalDH
+
+    -- Conditions 2 & 3: each parameter must appear free in (salt, ikm, info)
+    let lhs = (_ksrbSalt body, _ksrbIkm body, _ksrbInfo body)
+    let freeIdxVars  = toListOf fv lhs :: [IdxVar]
+    let freeDataVars = toListOf fv lhs :: [DataVar]
+    forM_ (is1 ++ is2) $ \i ->
+        assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                "': index parameter '" ++ show i ++ "' does not appear in salt/IKM/info") $
+            i `elem` freeIdxVars
+    forM_ dvars $ \d ->
+        assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
+            d `elem` freeDataVars
+
+    -- Validate output name types
+    let KDFOutputSpec outputs = _ksrbOutput body
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                 map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+        withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
+            forM_ outputs $ \(_, nt) -> do
+                checkNameType nt
+                nameTypeUniform nt
+
+    return $ KDFScopeRule isODH lbl $ bind ((is1, is2), dvars) body
+  where
+    saltHasGroupKdfKeyCheck keyNames (SaltName ne)      = isGroupKdfKey keyNames ne
+    saltHasGroupKdfKeyCheck _        (SaltPublicExpr _) = False
+
+    ikmHasGroupKdfKeyCheck keyNames atoms =
+        any (\a -> case a of
+                 IKMKdfKeyName ne -> isGroupKdfKey keyNames ne
+                 _                -> False)
+            atoms
+
+    ikmHasLocalDHCheck dhNames atoms =
+        any (\a -> case a of
+                 IKM_DH_SS ne1 ne2 -> isGroupDH dhNames ne1 && isGroupDH dhNames ne2
+                 _                 -> False)
+            atoms
+
+    isGroupKdfKey keyNames ne = case ne^.val of
+        NameConst _ (PRes (PDot _ n)) _ -> n `elem` keyNames
+        KDFName nks j _ _               -> j < length nks && (nks !! j) == NK_KDF
+        _                               -> False
+
+    isGroupDH dhNames ne = case ne^.val of
+        NameConst _ (PRes (PDot _ n)) _ -> n `elem` dhNames
+        _                               -> False
+
+-- Pre-register kdf_scope inner `name` and `nametype` declarations into
+-- nameDefs / nameTypeDefs so that rule validation can resolve bare references
+-- like get(C1), get(X) via inferAExpr's fallback inside unconcatIKM.
+preRegisterKDFScopeEntries :: [Decl] -> Check a -> Check a
+preRegisterKDFScopeEntries innerDecls k = go innerDecls
+  where
+    go []     = k
+    go (d:ds) = withSpan (d^.spanOf) $ case d^.val of
+        DeclFun s bnd -> do
+            ufs <- view $ curMod . userFuncs
+            assert ("Duplicate function: " ++ show s) $ not $ member s ufs
+            (((is, ps), xs), a) <- unbind bnd
+            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++
+                         map (\i -> (i, (ignore $ show i, IdxPId    ))) ps) $
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
+                    _ <- inferAExpr a
+                    return ()
+            local (over (curMod . userFuncs) $ insert s (FunDef bnd)) (go ds)
+        DeclPredicate s bnd -> do
+            preds <- view $ curMod . predicates
+            assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
+            ((is, xs), p) <- unbind bnd
+            local (set tcScope $ TcGhost False) $
+                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $
+                    withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
+                        checkProp p
+            local (over (curMod . predicates) $ insert s bnd) (go ds)
+        DeclName n o -> do
+            ((is1, is2), ndecl) <- unbind o
+            case ndecl of
+                DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) (go ds)
+                _                   -> go ds
+        DeclNameType s bnt -> do
+            (((is, ps), xs), nt) <- unbind bnt
+            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++
+                         map (\i -> (i, (ignore $ show i, IdxPId    ))) ps) $
+                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
                     checkNameType nt
-                    nameTypeUniform nt
+            local (over (curMod . nameTypeDefs) $ insert s bnt) (go ds)
+        _ -> go ds
 
 -- ensureOdhPairDisjoint
 --     :: String
@@ -1471,37 +1536,58 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     , Just nt <- [extractBaseName o]
                     , NT_DH <- [nt^.val] ]
           let allEntryNames = kdfKeyEntryNames ++ dhEntryNames
-          -- Pre-populate kdfScopes with all rule bindings before any processing,
-          -- so that SMT preludes built during rule validation include %kdf_L
-          -- declarations for any KDFName references appearing in rule salt/ikm.
-          let rulesFromDecls = [ ruleX | innerD <- innerDecls, DeclKDFRule ruleX <- [innerD^.val] ]
-          let ruleMap0 = foldl (\acc ruleX -> insert (_ksrLabel ruleX) (_ksrBody ruleX) acc) [] rulesFromDecls
-          local (over (curMod . kdfScopes) $ insert groupName (KDFScopeDef ruleMap0 [] allEntryNames)) $ do
-              -- Phase 2: process inner decls CPS-style, accumulating KDF rule info
-              let go [] accRules accOdh k = do
-                      let gdef = KDFScopeDef accRules accOdh allEntryNames
-                      local (over (curMod . kdfScopes) $ insert groupName gdef) k
-                  go (innerD:ds) accRules accOdh k = case innerD^.val of
-                      DeclKDFRule ruleX -> withSpan (innerD^.spanOf) $ do
-                          (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
-                          let lbl   = _ksrLabel ruleX
-                          let bRule = _ksrBody  ruleX
-                          let accRules' = insert lbl bRule accRules
-                          ensureSelfDisjoint groupName lbl bRule
-                          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                                       map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
-                              withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
-                                  ensureSIIDisjoint groupName lbl body accRules
-                                --   let dhPairs = [(ne1, ne2) | IKM_DH_SS ne1 ne2 <- _ksrbIkm body]
-                                --   forM_ dhPairs $ \(ne1, ne2) ->
-                                --       ensureOdhPairDisjoint groupName ne1 ne2 accOdh
-                          let newOdhPairs = [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
-                                            | IKM_DH_SS ne1 ne2 <- _ksrbIkm body ]
-                          let accOdh' = accOdh ++ newOdhPairs
-                          validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX
-                          go ds accRules' accOdh' k
-                      _ -> checkDecl innerD (go ds accRules accOdh k)
-              go innerDecls [] [] cont
+          let allEntryNames = kdfKeyEntryNames ++ dhEntryNames
+          preRegisterKDFScopeEntries innerDecls $ do
+              -- Phase 1b: validate+classify all rules up front so we can
+              -- pre-populate kdfScopes before disjointness checks.
+              let ruleDecls =
+                      [ (innerD^.spanOf, ruleDeclX)
+                      | innerD <- innerDecls
+                      , DeclKDFRule ruleDeclX <- [innerD^.val]
+                      ]
+              transformedRules <- forM ruleDecls $ \(pos, ruleDeclX) ->
+                  withSpan pos $
+                      validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleDeclX
+              let txfMap =
+                      foldl (\acc r -> insert (_ksrLabel r) r acc) []
+                            transformedRules
+              let ruleMap0 =
+                      foldl (\acc r -> insert (_ksrLabel r) (_ksrBody r) acc) []
+                            transformedRules
+              local (over (curMod . kdfScopes) $
+                         insert groupName (KDFScopeDef ruleMap0 [] allEntryNames)) $ do
+                  -- Phase 2: process inner decls CPS-style, accumulating KDF rule info.
+                  -- Skip DeclName / DeclNameType because preRegisterKDFScopeEntries
+                  -- has already installed them.
+                  let go [] accRules accOdh k = do
+                          let gdef = KDFScopeDef accRules accOdh allEntryNames
+                          local (over (curMod . kdfScopes) $ insert groupName gdef) k
+                      go (innerD:ds) accRules accOdh k = case innerD^.val of
+                          DeclKDFRule ruleDeclX -> withSpan (innerD^.spanOf) $ do
+                              let lbl = _ksrdLabel ruleDeclX
+                              ruleX <- case lookup lbl txfMap of
+                                  Just r  -> return r
+                                  Nothing -> typeError $ "internal: missing transformed rule " ++ lbl
+                              (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
+                              let bRule     = _ksrBody ruleX
+                                  accRules' = insert lbl bRule accRules
+                              ensureSelfDisjoint groupName lbl bRule
+                              withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                                           map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+                                  withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
+                                      ensureSIIDisjoint groupName lbl body accRules
+                              let newOdhPairs =
+                                      [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
+                                      | IKM_DH_SS ne1 ne2 <- _ksrbIkm body
+                                      ]
+                              let accOdh' = accOdh ++ newOdhPairs
+                              go ds accRules' accOdh' k
+                          DeclName{}     -> go ds accRules accOdh k
+                          DeclNameType{} -> go ds accRules accOdh k
+                          DeclPredicate{} -> go ds accRules accOdh k
+                          DeclFun{}       -> go ds accRules accOdh k
+                          _ -> checkDecl innerD (go ds accRules accOdh k)
+                  go innerDecls [] [] cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
@@ -3071,6 +3157,40 @@ saltExprToAExpr (SaltName ne)      = mkSpanned $ AEGet ne
 
 infoExprToAExpr :: InfoExpr -> AExpr
 infoExprToAExpr (InfoPublic e) = e
+
+-- Classification helpers for kdf_scope rule bodies (decl-form AExpr fields).
+classifySalt :: AExpr -> SaltExpr
+classifySalt e = case e^.val of
+    AEGet ne -> SaltName ne
+    _        -> SaltPublicExpr e
+
+classifyIKMAtom :: AExpr -> IKMAtom
+classifyIKMAtom e = case e^.val of
+    AEGet ne -> IKMKdfKeyName ne
+    AEApp (PRes (PDot PTop "dh_combine")) _ [x, y]
+      | AEApp (PRes (PDot PTop "dhpk")) _ [xx] <- x^.val
+      , AEGet ne1 <- xx^.val
+      , AEGet ne2 <- y^.val
+          -> IKM_DH_SS ne1 ne2
+    _ -> IKMPublicExpr e
+
+classifyInfo :: AExpr -> InfoExpr
+classifyInfo e = InfoPublic e
+
+classifyRuleBody :: KDFScopeRuleBodyDecl -> Check KDFScopeRuleBody
+classifyRuleBody bd = do
+    ikmE' <- resolveANF (_ksrbdIkm bd) >>= normalizeAExpr
+    ikmAtoms <-
+        case ikmE'^.val of
+          AEVar{} -> return [ikmE']
+          _       -> unconcatIKM ikmE'
+    return KDFScopeRuleBody
+        { _ksrbWhere  = _ksrbdWhere bd
+        , _ksrbSalt   = classifySalt (_ksrbdSalt bd)
+        , _ksrbIkm    = map classifyIKMAtom ikmAtoms
+        , _ksrbInfo   = classifyInfo (_ksrbdInfo bd)
+        , _ksrbOutput = _ksrbdOutput bd
+        }
 
 buildRuleMatchProp :: AExpr -> AExpr -> AExpr
                    -> Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody

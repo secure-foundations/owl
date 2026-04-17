@@ -208,6 +208,30 @@ instance OwlPretty KDFOutputSpec where
         hsep $ intersperse (owlpretty " ||") $
         map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts
 
+instance OwlPretty KDFScopeRuleBodyDecl where
+    owlpretty body =
+        let KDFScopeRuleBodyDecl _ salt ikm info out = body
+        in owlpretty salt <> owlpretty ", "
+           <> owlpretty ikm <> owlpretty ", "
+           <> owlpretty info
+           <> owlpretty " -> " <> owlpretty out
+
+instance OwlPretty KDFScopeRuleDeclX where
+    owlpretty ruleDecl =
+        let kw     = if _ksrdIsODH ruleDecl then owlpretty "odh" else owlpretty "kdf"
+            lbl    = owlpretty (_ksrdLabel ruleDecl)
+            ((idxs, fargs), body) = unsafeUnbind (_ksrdBody ruleDecl)
+            pidxs  = owlprettyIdxBindsPair idxs
+            pfargs | null fargs = mempty
+                   | otherwise  = owlpretty "(" <>
+                                  hsep (intersperse (owlpretty ",") $ map owlpretty fargs) <>
+                                  owlpretty ")"
+            wh     = case _ksrbdWhere body of
+                         Spanned _ PTrue -> mempty
+                         p               -> owlpretty " where " <> owlpretty p
+        in kw <+> lbl <> pidxs <> pfargs <> wh
+             <> owlpretty " : " <> owlpretty body
+
 instance OwlPretty KDFScopeRuleBody where
     owlpretty body =
         let (KDFScopeRuleBody wh salt ikm info out) = body
