@@ -150,18 +150,6 @@ kdf_scope HPKE_KDF {
     name psk : kdfkey // @ sender, receiver
 
     // -----------------------------------------------------------------
-    // Intermediate kdfkey nametypes for the KEM output
-    //
-    // SS_t replaces the old shared_secret_t nametype: the type of a
-    // correct KEM-derived shared secret (one of the DH secrets is honest).
-    //
-    // SS_corr_t replaces shared_secret_corr_t: the type of an incorrect
-    // KEM-derived value (e.g., wrong session, static-only DH secret).
-    // -----------------------------------------------------------------
-    nametype SS_t : kdfkey      // replaces nametype shared_secret_t
-    nametype SS_corr_t : kdfkey // replaces nametype shared_secret_corr_t
-
-    // -----------------------------------------------------------------
     // ODH rules for KEM shared_secret derivation (AuthEncap / AuthDecap)
     //
     // The HPKE KEM derives shared_secret as:
@@ -179,11 +167,13 @@ kdf_scope HPKE_KDF {
     // Applies when: info == AuthEncap_honest_info<session i>().
     // Replaces the `exists i. info == AuthEncap_honest_info<session i>()`
     // branch of both old `odh ss` and `odh se<i>`.
-    // TODO: will we need to manually expand `lbl_ikm`? Hopefully not
+
+    // TODO: This should parse
     odh L_kem<i>(info) where (info == AuthEncap_honest_info<session i>()) : 0x,
-        lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i> skR) ++
+        dh_ss(skS, skR), 
         info
-        -> strict SS_t
+        -> strict kdfkey
 
     // L_kem_corr<i>: KEM step, ephemeral skE<i> is present in ikm but
     // the info does NOT match the honest info for session i. Replaces the
@@ -191,7 +181,7 @@ kdf_scope HPKE_KDF {
     odh L_kem_corr<i>(info) where (info != AuthEncap_honest_info<session i>()) : 0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
         info
-        -> strict SS_corr_t
+        -> strict kdfkey
 
     // -----------------------------------------------------------------
     // KDF rules for the key_schedule (steps 2–4)
