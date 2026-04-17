@@ -1133,21 +1133,10 @@ saltEqProp (SaltPublicExpr a1) (SaltPublicExpr a2) = Just (pEq a1 a2)
 saltEqProp _                   _                   = Nothing
 
 ikmEqProp :: [IKMAtom] -> [IKMAtom] -> Maybe Prop
-ikmEqProp as bs
-    | length as /= length bs = Nothing
-    | otherwise = foldl step (Just pTrue) (zip as bs)
-  where
-    step Nothing _ = Nothing
-    step (Just acc) (IKMPublicExpr a1,   IKMPublicExpr a2)   = Just (pAnd acc (pEq a1 a2))
-    step (Just acc) (IKMKdfKeyName n1,   IKMKdfKeyName n2)   =
-        case nameEqProp n1 n2 of
-            Just p  -> Just (pAnd acc p)
-            Nothing -> Nothing
-    step (Just acc) (IKM_DH_SS a1 b1, IKM_DH_SS a2 b2) =
-        case (nameEqProp a1 a2, nameEqProp b1 b2) of
-            (Just pa, Just pb) -> Just (pAnd acc (pAnd pa pb))
-            _                  -> Nothing
-    step _ _ = Nothing
+ikmEqProp [] [] = Just pTrue
+ikmEqProp [] _  = Nothing
+ikmEqProp _  [] = Nothing
+ikmEqProp as bs = Just (pEq (ikmAtomsToAExpr as) (ikmAtomsToAExpr bs))
 
 validateKDFScopeRule :: String -> [String] -> [String] -> KDFScopeRuleX -> Check ()
 validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
@@ -1215,6 +1204,46 @@ validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX = do
 --             (_, b) <- SMT.smtTypingQuery "odh_disjoint" $ SMT.symAssert pdisj
 --             assert ("ODH Disjointness in group '" ++ groupName ++
 --                     "': DH pair overlaps with rule '" ++ lbl2 ++ "'") b
+
+ensureSelfDisjoint
+    :: String
+    -> String
+    -> Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody
+    -> Check ()
+ensureSelfDisjoint groupName lbl bnd = do
+    (((is1a, is2a), dvarsA), bodyA) <- unbind bnd
+    (((is1b, is2b), dvarsB), bodyB) <- unbind bnd
+    when (not (null is1a && null is2a && null dvarsA)) $
+        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) (is1a ++ is1b) ++
+                     map (\i -> (i, (ignore $ show i, IdxPId    ))) (is2a ++ is2b)) $
+            withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) (dvarsA ++ dvarsB)) $ do
+                let mSalt = saltEqProp (_ksrbSalt bodyA) (_ksrbSalt bodyB)
+                let mIkm  = ikmEqProp  (_ksrbIkm  bodyA) (_ksrbIkm  bodyB)
+                let InfoPublic info1 = _ksrbInfo bodyA
+                    InfoPublic info2 = _ksrbInfo bodyB
+                let pInfo = pEq info1 info2
+                case (mSalt, mIkm) of
+                    (Just pSalt, Just pIkm) -> do
+                        let pSame   = pAnd pSalt (pAnd pIkm pInfo)
+                        let pWhere  = pAnd (_ksrbWhere bodyA) (_ksrbWhere bodyB)
+                        let idxDiffs =
+                                [ pNot (mkSpanned (PEqIdx (mkIVar iA) (mkIVar iB)))
+                                | (iA, iB) <- zip (is1a ++ is2a) (is1b ++ is2b) ]
+                        let dvarDiffs =
+                                [ pNot (pEq (aeVar' dA) (aeVar' dB))
+                                | (dA, dB) <- zip dvarsA dvarsB ]
+                        let diffs = idxDiffs ++ dvarDiffs
+                        case diffs of
+                            [] -> return ()
+                            (d0:ds) -> do
+                                let pDiff    = foldl pOr d0 ds
+                                let pOverlap = pAnd pSame (pAnd pWhere pDiff)
+                                (_, b) <- SMT.smtTypingQuery "kdf_rule_self_disjoint" $
+                                              SMT.symAssert (pNot pOverlap)
+                                assert ("KDF rule self-disjointness in group '" ++ groupName ++
+                                        "': rule '" ++ lbl ++
+                                        "' overlaps with itself under distinct parameter choices") b
+                    _ -> return ()
 
 ensureSIIDisjoint
     :: String
@@ -1458,6 +1487,7 @@ checkDecl d cont = withSpan (d^.spanOf) $
                           let lbl   = _ksrLabel ruleX
                           let bRule = _ksrBody  ruleX
                           let accRules' = insert lbl bRule accRules
+                          ensureSelfDisjoint groupName lbl bRule
                           withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
                                        map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
                               withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do

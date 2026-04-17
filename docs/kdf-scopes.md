@@ -179,7 +179,7 @@ picks which of the outputs is being extracted.
 ### 2.5 Well-formedness of KDF rules
 
 When the checker processes a scope, it validates each rule
-([src/Typing.hs:1152-1199](../src/Typing.hs#L1152-L1199)):
+([src/Typing.hs:1141-1207](../src/Typing.hs#L1141-L1207)):
 
 1. **Scope binding.**  At least one of the following must hold:
    - the salt is a group kdfkey name (or a derived kdfkey whose j-th output
@@ -207,9 +207,19 @@ When the checker processes a scope, it validates each rule
    rules in the same scope, the SMT solver must prove that their
    salt-equality, ikm-equality, info-equality, *and* both `where`-clauses
    cannot simultaneously hold
-   ([src/Typing.hs:1219-1244](../src/Typing.hs#L1219-L1244)). Duplicate
+   ([src/Typing.hs:1248-1273](../src/Typing.hs#L1248-L1273)). Duplicate
    rules with the same shape fail this check
    ([tests/failure/kdf-scope-dup-sii.owl](../tests/failure/kdf-scope-dup-sii.owl)).
+
+5b. **Self-disjointness of each rule.**  Each individual rule must also be
+    disjoint with itself: two distinct choices of its own index / data
+    parameters must not yield the same `(salt, ikm, info)` under its
+    `where` predicate
+    ([src/Typing.hs:1208-1246](../src/Typing.hs#L1208-L1246)). For example,
+    `kdf L(a, b): k, 0x, a ++ b -> ...` is rejected, because
+    `(a=0x12, b=0x34)` and `(a=0x1234, b=0x)` produce the same
+    `info = 0x1234`, yet `(a, b)` differ. A rule with no index or data
+    parameters trivially satisfies this check.
 
 6. **Name identifier uniqueness.**  Names declared inside a scope must not
    collide with any other top-level name
@@ -269,7 +279,7 @@ uniquely defines a name, since KDF rules must have disjoint domains and so
 
 ## 4. How a `kdf` call is type-checked
 
-The logic lives in [src/Typing.hs:3234-3250](../src/Typing.hs#L3234-L3250)
+The logic lives in [src/Typing.hs:3286-3303](../src/Typing.hs#L3286-L3303)
 and the helpers it calls. At a high level, given a call
 
 ```
@@ -281,7 +291,7 @@ the checker proceeds in three stages.
 ### 4.1 Stage 1---match the hints
 
 For each hint `h_k`, `tryKDFRuleHint`
-([src/Typing.hs:2923-2975](../src/Typing.hs#L2923-L2975)) looks up the rule
+([src/Typing.hs:2975-3031](../src/Typing.hs#L2975-L3031)) looks up the rule
 body (substituting the hint's index and bytestring arguments) and then checks:
 
 1. `checkSaltMatch`: the runtime salt expression is provably equal
@@ -335,7 +345,7 @@ The strictness-derived refinement is:
 
 ### 4.3 Stage 2---no hint matched
 
-`handleKDFNoMatch` ([src/Typing.hs:3112-3165](../src/Typing.hs#L3112-L3165))
+`handleKDFNoMatch` ([src/Typing.hs:3164-3218](../src/Typing.hs#L3164-L3218))
 handles the remaining cases.
 
 **Fast path---all-public arguments.** If the salt, ikm, and info are all

@@ -1,0 +1,11 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL: a ++ b in info is untagged concat, so
+    // (a=0x12, b=0x34) and (a=0x1234, b=0x) produce the same info = 0x1234
+    kdf L(a, b) : k, 0x, a ++ b -> enckey Name(n)
+}
