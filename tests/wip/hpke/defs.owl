@@ -170,7 +170,7 @@ kdf_scope HPKE_KDF {
 
     // TODO: This should parse
     odh L_kem<i>(info) where (info == AuthEncap_honest_info<session i>()) : 0x,
-        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i> skR) ++
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++
         dh_ss(skS, skR), 
         info
         -> strict kdfkey
