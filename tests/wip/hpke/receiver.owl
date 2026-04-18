@@ -3,20 +3,16 @@ include "defs.owl"
 struct AuthDecapResult<i> {
     // Ephemeral key. Is either the correct ephemeral key for session i, or is it
     // not an ephemeral key
-    adr_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(HPKE_KDF.skE<i>)) \/ (forall j:idx. x != dhpk(get(HPKE_KDF.skE<j>))))}),
+    adr_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}),
     // If the ephemeral key is correct, AND one of the two DH shared secrets are
     // actually secret, then we get the correct, secret output
     adr_shared_secret :
-        if adr_eph == dhpk(get(HPKE_KDF.skE<i>)) /\ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ sec(HPKE_KDF.skE<i>))) then
-            SecName(KDF<HPKE_KDF.L_kem<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>(0x,
-            lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)),
-            lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        if adr_eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
+            SecName(KDF<L_kem<i>; kdfkey; 0>)
         // Otherwise, if the static DH shared secret is actually secret, we
         // get a "junk" secret that we can rule out later.
-        else if sec(HPKE_KDF.skR) /\ sec(HPKE_KDF.skS) then
-            SecName(KDF<HPKE_KDF.L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>(0x,
-            lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(adr_eph)),
-            lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))))
+        else if sec(skR) /\ sec(skS) then
+            SecName(KDF<L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>)
         // Otherwise, public
         else
             (x:Data<adv> ||kdfkey|| {
@@ -25,28 +21,31 @@ struct AuthDecapResult<i> {
     // A lemma that says that the shared secret is determined by the identity of
     // the ephemeral key
     adr_shared_secret_inj : (x:Ghost{
-            (adr_eph == dhpk(get(HPKE_KDF.skE<i>)) <==> adr_shared_secret == AuthEncap_shared_secret<session i>())
+            (adr_eph == dhpk(get(skE<i>)) <==> adr_shared_secret == AuthEncap_shared_secret<session i>())
           /\
-            (adr_eph != dhpk(get(HPKE_KDF.skE<i>)) ==> (forall j:idx. adr_shared_secret != AuthEncap_shared_secret<session j>()))
+            (adr_eph != dhpk(get(skE<i>)) ==> (forall j:idx. adr_shared_secret != AuthEncap_shared_secret<session j>()))
             })
 }
 
-def AuthDecap(pkS : dhpk(HPKE_KDF.skS), pkR: dhpk(HPKE_KDF.skR), eph : Data<adv>) @ receiver : Option (exists i.AuthDecapResult<session i>) =
+// TODO: the below code results in an unresolved path error. 
+// I removed the HPKE_KDF scope prefixes because other things seemed to not work with them.
+// If they are necessary for some things but not others, we should unify this.
+def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Option (exists i.AuthDecapResult<session i>) =
     // Ensure the ephemeral key is a valid group element
     guard is_group_elem(eph) in
     // Is the ephemeral key actually an ephemeral key?
-    pcase (exists i:idx. eph == dhpk(get(HPKE_KDF.skE<i>))) in
+    pcase (exists i:idx. eph == dhpk(get(skE<i>))) in
     // If it's not, is it a static key of the sender?
-    pcase (eph == dhpk(get(HPKE_KDF.skS))) when (! (exists i:idx. eph == dhpk(get(HPKE_KDF.skE<i>)))) in
+    pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in
     // Let i be the index of the ephemeral key (if it is one)
-    choose_idx i | eph == dhpk(get(HPKE_KDF.skE<i>)) in
-    let dh = dh_combine(eph, get(HPKE_KDF.skR)) ++ dh_combine(pkS, get(HPKE_KDF.skR))  in
+    choose_idx i | eph == dhpk(get(skE<i>)) in
+    let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ pkR ++ pkS in
     // Multi-label kdf call: the shared_secret could satisfy L_kem<i>
     // (correct, if eph == dhpk(skE<i>) and info is honest) or L_kem_corr<i>
     // (wrong info for session i).
     let info = lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context) in
-    let shared_secret = kdf<HPKE_KDF.L_kem<i>(info), HPKE_KDF.L_kem_corr<i>(info); kdfkey; 0>(0x,
+    let shared_secret = kdf<L_kem<i>, L_kem_corr<i>(info); kdfkey; 0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh),
         info) in
     let shared_secret_ghost = gkdf<kdfkey; 0>(0x,
@@ -60,6 +59,7 @@ def AuthDecap(pkS : dhpk(HPKE_KDF.skS), pkR: dhpk(HPKE_KDF.skR), eph : Data<adv>
     let pres = pack<i>(res) in
     Some(pres)
 
+/* 
 
 // Context<ROLE> from the RFC, for the receiver
 struct ContextR<i> {
@@ -169,3 +169,5 @@ def SingleShotOpen<j>(pkS : dhpk(HPKE_KDF.skS), pkR : dhpk(HPKE_KDF.skR)) @ rece
         }
     }
     otherwise None()
+
+*/

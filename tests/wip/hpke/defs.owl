@@ -136,6 +136,7 @@ nametype hpke_corr_key_t =
 //                    info=export_kdf_info())          [kdf L_sched_export]
 // =====================================================================
 
+
 kdf_scope HPKE_KDF {
     // Receiver's static key
     name skR : DH @ receiver
@@ -148,6 +149,18 @@ kdf_scope HPKE_KDF {
 
     // Pre-shared key between sender and receiver
     name psk : kdfkey // @ sender, receiver
+
+    func AuthEncap_kem_context<i>() =
+        dhpk(get(skE<i>))
+        ++
+        dhpk(get(skR))
+        ++
+        dhpk(get(skS))
+
+    func AuthEncap_honest_info<i>() =
+        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
+
+
 
     // -----------------------------------------------------------------
     // ODH rules for KEM shared_secret derivation (AuthEncap / AuthDecap)
@@ -168,18 +181,26 @@ kdf_scope HPKE_KDF {
     // Replaces the `exists i. info == AuthEncap_honest_info<session i>()`
     // branch of both old `odh ss` and `odh se<i>`.
 
-    // TODO: This should parse
-    odh L_kem<i>(info) where (info == AuthEncap_honest_info<session i>()) : 0x,
-        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++
-        dh_ss(skS, skR), 
-        info
+    // TODO: if I omit the info argument from the ODH declaration, the below parses, but shouldn't: 
+    // I think the parser is not using the same mechanism for variable binding as elsewhere in the repo.
+    /*
+    odh L_kem<i> where (info == AuthEncap_honest_info<session i>()) : 0x,
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
+        AuthEncap_honest_info<session i>()
+        -> strict kdfkey
+    */
+
+
+    odh L_kem<i> : 0x,
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
+        AuthEncap_honest_info<session i>()
         -> strict kdfkey
 
     // L_kem_corr<i>: KEM step, ephemeral skE<i> is present in ikm but
     // the info does NOT match the honest info for session i. Replaces the
     // `info != AuthEncap_honest_info<session i>()` branch of `odh se<i>`.
     odh L_kem_corr<i>(info) where (info != AuthEncap_honest_info<session i>()) : 0x,
-        lbl_ikm(kem_suite_id(), eae_prk(), dh_combine(skE<i>, skR) ++ dh_combine(skS, skR)),
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR), 
         info
         -> strict kdfkey
 
@@ -200,34 +221,57 @@ kdf_scope HPKE_KDF {
     // Corrupted variants (old shared_secret_corr_t) add three more rules.
     // -----------------------------------------------------------------
 
-    // L_sched_nonce: key_schedule → base nonce (correct case)
-    // salt has type SS_t (honest KEM output), ikm is psk-derived.
-    // TODO: do we need to take ikm as argument and add `where ikm == dh_secret_kdf_ikm(get(psk))`? Or will this be fine?
-    kdf L_sched_nonce : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()
+    kdf L_sched_nonce<i> : KDF<L_kem<i>;kdfkey;0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         base_nonce_kdf_info() 
+        // dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()
         -> public nonce |counter|
 
+    // TODO: Below: Should work
+
+    /* 
+    func sched_key_base_nonce<i>() = 
+        gkdf<nonce |counter|;0>(get(KDF<L_kem<i>; kdfkey; 0>),
+                                dh_secret_kdf_ikm(get(psk)),
+                                base_nonce_kdf_info())
+                                */
+
     // L_sched_key: key_schedule → encryption key (correct case)
-    kdf L_sched_key : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), key_kdf_info()
+    kdf L_sched_key<i> : KDF<L_kem<i>;kdfkey;0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         key_kdf_info()
         -> strict st_aead plaintext_t
                           aad x. true
                           nonce send_counter
-                          pattern i. xor(i, gkdf<nonce |counter|; 0>(self,
-                                         dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()))
+
+                        // TODO: Should work. Says "Unknown KDF group rule"
+                        //  pattern i. xor(i, get(KDF<L_sched_nonce<i>; nonce |counter|; 0>))
+                        
+                          
+                            // sched_key_base_nonce<i>()) 
 
     // L_sched_export: key_schedule → export key (correct case)
-    kdf L_sched_export : SS_t, dh_secret_kdf_ikm(HPKE_KDF.psk), export_kdf_info()
+    kdf L_sched_export<i> : KDF<L_kem<i>;kdfkey;0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         export_kdf_info()
         -> strict nonce
 
     // Corrupted variants: when the shared_secret has type SS_corr_t
     // (produced by L_kem_corr<i> or L_kem_ss_corr instead of L_kem<i>).
     // These replace the old shared_secret_corr_t nametype's three branches.
-    kdf L_sched_nonce_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), base_nonce_kdf_info()
+    kdf L_sched_nonce_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         base_nonce_kdf_info()
         -> public nonce |counter|
 
-    kdf L_sched_key_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), key_kdf_info()
+    kdf L_sched_key_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         key_kdf_info()
         -> strict hpke_corr_key_t
 
-    kdf L_sched_export_corr : SS_corr_t, dh_secret_kdf_ikm(HPKE_KDF.psk), export_kdf_info()
+    kdf L_sched_export_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+         hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
+         export_kdf_info()
         -> strict nonce
 
 } // end kdf_scope HPKE_KDF
@@ -237,11 +281,11 @@ kdf_scope HPKE_KDF {
 
 /* If the sender is completely corrupt -- its DH secrets and the psk -- then
 we give up on secrecy for the transport layer */
-corr<i> [HPKE_KDF.skE<i>] /\ [HPKE_KDF.skS] /\ [HPKE_KDF.psk] ==> [channel_secret]
+corr<i> [skE<i>] /\ [skS] /\ [psk] ==> [channel_secret]
 
 /* If the receiver is completely corrupt -- its DH key and the psk -- then
 we give up on secrecy for the transport layer */
-corr [HPKE_KDF.skR] /\ [HPKE_KDF.psk] ==> [channel_secret]
+corr [skR] /\ [psk] ==> [channel_secret]
 
 
 // =====================================================================
@@ -253,19 +297,11 @@ corr [HPKE_KDF.skR] /\ [HPKE_KDF.psk] ==> [channel_secret]
 
 /* Diffie-Hellman secrets used in AuthEncap */
 func AuthEncap_dh<i>() =
-    dh_combine(dhpk(get(HPKE_KDF.skR)), get(HPKE_KDF.skE<i>))
+    dh_combine(dhpk(get(skR)), get(skE<i>))
     ++
-    dh_combine(dhpk(get(HPKE_KDF.skR)), get(HPKE_KDF.skS))
+    dh_combine(dhpk(get(skR)), get(skS))
 
-func AuthEncap_kem_context<i>() =
-    dhpk(get(HPKE_KDF.skE<i>))
-    ++
-    dhpk(get(HPKE_KDF.skR))
-    ++
-    dhpk(get(HPKE_KDF.skS))
 
-func AuthEncap_honest_info<i>() =
-    lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
 
 func AuthEncap_shared_secret<i>() =
     gkdf<kdfkey; 0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()),
@@ -274,16 +310,16 @@ func AuthEncap_shared_secret<i>() =
 
 
 func AuthDecap_dh(eph) =
-    dh_combine(eph, get(HPKE_KDF.skR))
+    dh_combine(eph, get(skR))
     ++
-    dh_combine(dhpk(get(HPKE_KDF.skR)), get(HPKE_KDF.skS))
+    dh_combine(dhpk(get(skR)), get(skS))
 
 func AuthDecap_kem_context(eph) =
     eph
     ++
-    dhpk(get(HPKE_KDF.skR))
+    dhpk(get(skR))
     ++
-    dhpk(get(HPKE_KDF.skS))
+    dhpk(get(skS))
 
 func AuthDecap_shared_secret(eph) =
     gkdf<kdfkey; 0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthDecap_dh(eph)),
@@ -298,7 +334,7 @@ nametype hpke_key_t<i> =
         nonce send_counter
         pattern i. xor(i, gkdf<nonce |counter|; 0>(
                                     AuthEncap_shared_secret<session i>(),
-                                    dh_secret_kdf_ikm(get(HPKE_KDF.psk)),
+                                    dh_secret_kdf_ikm(get(psk)),
                                     base_nonce_kdf_info()))
 
 
