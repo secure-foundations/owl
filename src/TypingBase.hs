@@ -160,6 +160,15 @@ instance Alpha KDFScopeDef
 instance Subst ResolvedPath KDFScopeDef
 instance Subst Idx KDFScopeDef
 
+-- Accumulator threaded through checkDecl while inside a kdf_scope block
+data KDFScopeState = KDFScopeState
+    { _kssGroupName   :: String
+    , _kssKdfKeyNames :: [String]
+    , _kssDHNames     :: [String]
+    , _kssRules       :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)
+    , _kssOdhPairs    :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+    }
+
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
 
@@ -204,6 +213,7 @@ data Env senv = Env {
     _normalizePropHook :: Prop -> Check' senv Prop,
     _decidePropHook :: Prop -> Check' senv (Maybe Bool),
     _curDef :: Maybe String,
+    _curKDFScope :: Maybe KDFScopeState,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
     _inSMT :: Bool,
@@ -289,6 +299,7 @@ makeLenses ''Env
 
 makeLenses ''ModBody
 makeLenses ''KDFScopeDef
+makeLenses ''KDFScopeState
 
 modDefKind :: ModDef -> Check' senv IsModuleType
 modDefKind (MBody xd) =

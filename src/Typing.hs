@@ -68,7 +68,7 @@ emptyEnv f = do
     rs <- newIORef []
     memo <- mkMemoEntry 
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
+        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -1212,45 +1212,6 @@ validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleDecl = do
         _                               -> False
 
 -- Pre-register kdf_scope inner `name` and `nametype` declarations into
--- nameDefs / nameTypeDefs so that rule validation can resolve bare references
--- like get(C1), get(X) via inferAExpr's fallback inside unconcatIKM.
-preRegisterKDFScopeEntries :: [Decl] -> Check a -> Check a
-preRegisterKDFScopeEntries innerDecls k = go innerDecls
-  where
-    go []     = k
-    go (d:ds) = withSpan (d^.spanOf) $ case d^.val of
-        DeclFun s bnd -> do
-            ufs <- view $ curMod . userFuncs
-            assert ("Duplicate function: " ++ show s) $ not $ member s ufs
-            (((is, ps), xs), a) <- unbind bnd
-            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++
-                         map (\i -> (i, (ignore $ show i, IdxPId    ))) ps) $
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
-                    _ <- inferAExpr a
-                    return ()
-            local (over (curMod . userFuncs) $ insert s (FunDef bnd)) (go ds)
-        DeclPredicate s bnd -> do
-            preds <- view $ curMod . predicates
-            assert ("Duplicate predicate: " ++ show s) $ not $ member s preds
-            ((is, xs), p) <- unbind bnd
-            local (set tcScope $ TcGhost False) $
-                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $
-                    withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
-                        checkProp p
-            local (over (curMod . predicates) $ insert s bnd) (go ds)
-        DeclName n o -> do
-            ((is1, is2), ndecl) <- unbind o
-            case ndecl of
-                DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) (go ds)
-                _                   -> go ds
-        DeclNameType s bnt -> do
-            (((is, ps), xs), nt) <- unbind bnt
-            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is ++
-                         map (\i -> (i, (ignore $ show i, IdxPId    ))) ps) $
-                withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $
-                    checkNameType nt
-            local (over (curMod . nameTypeDefs) $ insert s bnt) (go ds)
-        _ -> go ds
 
 -- ensureOdhPairDisjoint
 --     :: String
@@ -1341,6 +1302,8 @@ checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
     case d^.val of
       (DeclLocality n dcl) -> do
+          mScope <- view curKDFScope
+          when (isJust mScope) $ typeError "locality declarations not allowed inside kdf_scope"
           ensureNoConcreteDefs
           case dcl of
             Left i -> local (over (curMod . localities) $ insert n (Left i)) $ cont
@@ -1377,13 +1340,28 @@ checkDecl d cont = withSpan (d^.spanOf) $
                     checkProp p
         local (over (curMod . predicates) $ insert s bnd) $ cont
       DeclName n o -> do
-        ensureNoConcreteDefs
+        mScope <- view curKDFScope
         ((is1, is2), ndecl) <- unbind o
-        case ndecl of 
-          DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
-          DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
-          DeclAbbrev bne -> addNameAbbrev n (is1, is2) bne $ cont
+        case mScope of
+          Just _ ->
+            case ndecl of
+              DeclBaseName nt nls -> case nt^.val of
+                NT_DH  -> local (over curKDFScope $ fmap $ \s -> s { _kssDHNames     = _kssDHNames s     ++ [n] }) $
+                              addNameDef n (is1, is2) (nt, nls) cont
+                NT_KDF -> local (over curKDFScope $ fmap $ \s -> s { _kssKdfKeyNames = _kssKdfKeyNames s ++ [n] }) $
+                              addNameDef n (is1, is2) (nt, nls) cont
+                _      -> typeError $ "Only DH and kdfkey names are allowed in kdf_scope (bad type for '" ++ n ++ "')"
+              DeclAbstractName -> typeError $ "Abstract name declarations not allowed in kdf_scope: " ++ n
+              DeclAbbrev _     -> typeError $ "Name abbreviations not allowed in kdf_scope: " ++ n
+          Nothing -> do
+            ensureNoConcreteDefs
+            case ndecl of
+              DeclAbstractName -> local (over (curMod . nameDefs) $ insert n (bind (is1, is2) AbstractName)) $ cont
+              DeclBaseName nt nls -> addNameDef n (is1, is2) (nt, nls) $ cont
+              DeclAbbrev bne -> addNameAbbrev n (is1, is2) bne $ cont
       DeclModule n imt me omt -> do
+          mScope <- view curKDFScope
+          when (isJust mScope) $ typeError "module declarations not allowed inside kdf_scope"
           ensureNoConcreteDefs
           md <- case me^.val of
                   ModuleVar (PRes p) -> return $ MAlias p 
@@ -1401,12 +1379,16 @@ checkDecl d cont = withSpan (d^.spanOf) $
               withSpan (singleLineSpan $ d^.spanOf) $ moduleMatches md mdt 
           local (over (curMod . modules) $ insert n md) $ cont
       DeclDefHeader n isl -> do
+          mScope <- view curKDFScope
+          when (isJust mScope) $ typeError "def header declarations not allowed inside kdf_scope"
           ((is1, is2), l) <- unbind isl
           withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
               normLocality l
           let df = DefHeader isl 
           addDef n df $ cont
       DeclDef n o1 -> do
+          mScope <- view curKDFScope
+          when (isJust mScope) $ typeError "def declarations not allowed inside kdf_scope"
           ((is1, is2), (l, db)) <- unbind o1
           dspec <- withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++ map (\i -> (i, (ignore $ show i, IdxPId))) is2) $ do
                   normLocality l
@@ -1500,94 +1482,43 @@ checkDecl d cont = withSpan (d^.spanOf) $
                 withVars (map (\x -> (x, (ignore $ show x, Nothing, tGhost))) xs) $ do
                     checkNameType nt
           local (over (curMod . nameTypeDefs) $ insert s bnt) $ cont
-      DeclKDFRule _ ->
-          typeError "kdf/odh rules must appear inside a kdf_scope block"
+      DeclKDFRule ruleDeclX -> do
+          mScope <- view curKDFScope
+          case mScope of
+            Nothing -> typeError "kdf/odh rules must appear inside a kdf_scope block"
+            Just kss -> do
+              let groupName        = _kssGroupName kss
+                  kdfKeyEntryNames = _kssKdfKeyNames kss
+                  dhEntryNames     = _kssDHNames kss
+              ruleX <- validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleDeclX
+              let lbl      = _ksrLabel ruleX
+                  bRule    = _ksrBody ruleX
+                  newRules = insert lbl bRule (_kssRules kss)
+              local (over (curMod . kdfScopes) $ insert groupName
+                         (KDFScopeDef newRules [] (_kssKdfKeyNames kss ++ _kssDHNames kss))) $ do
+                  ensureSelfDisjoint groupName lbl bRule
+                  (((is1, is2), dvars), body) <- unbind bRule
+                  withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                               map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+                      withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
+                          ensureSIIDisjoint groupName lbl body (_kssRules kss)
+                  let newOdhPairs =
+                          [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
+                          | IKM_DH_SS ne1 ne2 <- _ksrbIkm body ]
+                  local (over curKDFScope $ fmap $ \s -> s
+                             { _kssRules    = newRules
+                             , _kssOdhPairs = _kssOdhPairs s ++ newOdhPairs
+                             }) cont
       DeclKDFScope groupName innerDecls -> do
-          -- Phase 1: validate inner decls and collect metadata
-          forM_ innerDecls $ \innerD -> withSpan (innerD^.spanOf) $ case innerD^.val of
-              DeclLocality{}  -> typeError "locality declarations not allowed inside kdf_scope"
-              DeclModule{}    -> typeError "module declarations not allowed inside kdf_scope"
-              DeclInclude{}   -> typeError "include statements not allowed inside kdf_scope"
-              DeclKDFScope{}  -> typeError "nested kdf_scope blocks not allowed"
-              DeclDef{}       -> typeError "def declarations not allowed inside kdf_scope"
-              DeclDefHeader{} -> typeError "def header declarations not allowed inside kdf_scope"
-              DeclName n o -> do
-                  let (_, ndecl) = unsafeUnbind o
-                  case ndecl of
-                      DeclBaseName nt _ -> case nt^.val of
-                          NT_DH  -> return ()
-                          NT_KDF -> return ()
-                          _      -> typeError $ "Only DH and kdfkey names are allowed in kdf_scope (bad type for '" ++ n ++ "')"
-                      DeclAbstractName -> typeError $ "Abstract name declarations not allowed in kdf_scope: " ++ n
-                      DeclAbbrev _     -> typeError $ "Name abbreviations not allowed in kdf_scope: " ++ n
-              _ -> return ()
-          -- Collect entry names for rule validation
-          let extractBaseName o = case snd (unsafeUnbind o) of
-                  DeclBaseName nt _ -> Just nt
-                  _                 -> Nothing
-          let kdfKeyEntryNames =
-                [ n | innerD <- innerDecls
-                    , DeclName n o <- [innerD^.val]
-                    , Just nt <- [extractBaseName o]
-                    , NT_KDF <- [nt^.val] ]
-          let dhEntryNames =
-                [ n | innerD <- innerDecls
-                    , DeclName n o <- [innerD^.val]
-                    , Just nt <- [extractBaseName o]
-                    , NT_DH <- [nt^.val] ]
-          let allEntryNames = kdfKeyEntryNames ++ dhEntryNames
-          let allEntryNames = kdfKeyEntryNames ++ dhEntryNames
-          preRegisterKDFScopeEntries innerDecls $ do
-              -- Phase 1b: validate+classify all rules up front so we can
-              -- pre-populate kdfScopes before disjointness checks.
-              let ruleDecls =
-                      [ (innerD^.spanOf, ruleDeclX)
-                      | innerD <- innerDecls
-                      , DeclKDFRule ruleDeclX <- [innerD^.val]
-                      ]
-              transformedRules <- forM ruleDecls $ \(pos, ruleDeclX) ->
-                  withSpan pos $
-                      validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleDeclX
-              let txfMap =
-                      foldl (\acc r -> insert (_ksrLabel r) r acc) []
-                            transformedRules
-              let ruleMap0 =
-                      foldl (\acc r -> insert (_ksrLabel r) (_ksrBody r) acc) []
-                            transformedRules
-              local (over (curMod . kdfScopes) $
-                         insert groupName (KDFScopeDef ruleMap0 [] allEntryNames)) $ do
-                  -- Phase 2: process inner decls CPS-style, accumulating KDF rule info.
-                  -- Skip DeclName / DeclNameType because preRegisterKDFScopeEntries
-                  -- has already installed them.
-                  let go [] accRules accOdh k = do
-                          let gdef = KDFScopeDef accRules accOdh allEntryNames
-                          local (over (curMod . kdfScopes) $ insert groupName gdef) k
-                      go (innerD:ds) accRules accOdh k = case innerD^.val of
-                          DeclKDFRule ruleDeclX -> withSpan (innerD^.spanOf) $ do
-                              let lbl = _ksrdLabel ruleDeclX
-                              ruleX <- case lookup lbl txfMap of
-                                  Just r  -> return r
-                                  Nothing -> typeError $ "internal: missing transformed rule " ++ lbl
-                              (((is1, is2), dvars), body) <- unbind (_ksrBody ruleX)
-                              let bRule     = _ksrBody ruleX
-                                  accRules' = insert lbl bRule accRules
-                              ensureSelfDisjoint groupName lbl bRule
-                              withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                                           map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
-                                  withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
-                                      ensureSIIDisjoint groupName lbl body accRules
-                              let newOdhPairs =
-                                      [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
-                                      | IKM_DH_SS ne1 ne2 <- _ksrbIkm body
-                                      ]
-                              let accOdh' = accOdh ++ newOdhPairs
-                              go ds accRules' accOdh' k
-                          DeclName{}     -> go ds accRules accOdh k
-                          DeclNameType{} -> go ds accRules accOdh k
-                          DeclPredicate{} -> go ds accRules accOdh k
-                          DeclFun{}       -> go ds accRules accOdh k
-                          _ -> checkDecl innerD (go ds accRules accOdh k)
-                  go innerDecls [] [] cont
+          mScope <- view curKDFScope
+          when (isJust mScope) $ typeError "nested kdf_scope blocks not allowed"
+          let initState = KDFScopeState groupName [] [] [] []
+          local (set curKDFScope (Just initState)) $
+              checkDeclsWithCont innerDecls $ do
+                  Just kss <- view curKDFScope
+                  let gdef = KDFScopeDef (_kssRules kss) (_kssOdhPairs kss)
+                                         (_kssKdfKeyNames kss ++ _kssDHNames kss)
+                  local (set curKDFScope Nothing . over (curMod . kdfScopes) (insert groupName gdef)) cont
       (DeclTy s ot) -> do
         tds <- view $ curMod . tyDefs
         case ot of
